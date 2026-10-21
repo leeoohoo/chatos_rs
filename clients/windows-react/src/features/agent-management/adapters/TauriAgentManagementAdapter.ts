@@ -15,6 +15,7 @@ import {
   dispatchedAgentTeamDeliverySchema,
   agentTeamRunHistorySnapshotSchema,
   agentTeamTodoListSchema,
+  agentTeamTodoProgressListSchema,
   agentTeamTodoSchema,
   agentTeamAssetListSchema,
   agentTeamAssetRevisionListSchema,
@@ -230,6 +231,12 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async listTeamTodos(ownerUserId: string, teamId: string, includeTerminal: boolean) {
     return agentTeamTodoListSchema.parse(
       await invoke("list_agent_team_todos", { ownerUserId, teamId, includeTerminal }),
+    );
+  }
+
+  async listTeamTodoProgress(ownerUserId: string, teamId: string, todoId: string, limit = 100) {
+    return agentTeamTodoProgressListSchema.parse(
+      await invoke("list_agent_team_todo_progress", { ownerUserId, teamId, todoId, limit }),
     );
   }
 

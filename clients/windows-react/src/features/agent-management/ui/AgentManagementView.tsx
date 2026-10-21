@@ -31,6 +31,7 @@ import {
   type AgentTeamAsset,
   type AgentTeamAssetCategory,
   type AgentTeamTodo,
+  type AgentTeamTodoProgress,
   type ProjectRequirementSurvey,
   type ProjectRequirementSurveyAnswers,
   type CreateAgentTeamInput,
@@ -877,39 +878,19 @@ function AgentTeamTodosView({
                 <header><div><strong>{column.label}</strong><small>{column.note}</small></div><span>{items.length}</span></header>
                 <div>
                   {items.map((todo, index) => (
-                    <article className={`agent-team-todo-card is-${todo.status}`} key={todo.id}>
-                      <header>
-                        <span>优先级 {todo.priority}</span>
-                        <em>{todo.agentName}</em>
-                      </header>
-                      <button onClick={() => setEditingTodo(todo)} type="button">
-                        <strong>{todo.title}</strong>
-                        <p>{todo.detail || todo.executionContract.objective}</p>
-                      </button>
-                      {todo.dependencyIds.length > 0 && (
-                        <small>依赖 {todo.dependencyIds.length} 项</small>
-                      )}
-                      {todo.blockedReason && <div className="agent-team-todo-card__notice">{todo.blockedReason}</div>}
-                      {todo.result && <div className="agent-team-todo-card__result">{todo.result}</div>}
-                      <footer>
-                        {todo.status === "pending" && (
-                          <>
-                            <button disabled={index === 0 || mutationTodoId != null} onClick={() => void move(port, todo.id, -1)} type="button">上移</button>
-                            <button disabled={index === items.length - 1 || mutationTodoId != null} onClick={() => void move(port, todo.id, 1)} type="button">下移</button>
-                          </>
-                        )}
-                        {(todo.status === "pending" || todo.status === "in_progress" || todo.status === "blocked") && (
-                          <button
-                            className="is-danger"
-                            disabled={mutationTodoId != null}
-                            onClick={() => void cancel(port, todo)}
-                            type="button"
-                          >{todo.status === "in_progress" ? "停止" : "取消"}</button>
-                        )}
-                        {todo.status === "in_progress" && <span>停止会先终止 Host Run，再更新任务状态</span>}
-                        <time>{formatTeamMessageTime(todo.updatedAtUnixMs)}</time>
-                      </footer>
-                    </article>
+                    <AgentTeamTodoCard
+                      index={index}
+                      isMutating={mutationTodoId != null}
+                      key={todo.id}
+                      onCancel={() => void cancel(port, todo)}
+                      onEdit={() => setEditingTodo(todo)}
+                      onMove={(direction) => void move(port, todo.id, direction)}
+                      ownerUserId={ownerUserId}
+                      port={port}
+                      siblingCount={items.length}
+                      teamId={detail.team.id}
+                      todo={todo}
+                    />
                   ))}
                   {items.length === 0 && <div className="agent-team-todo-column__empty">暂无任务</div>}
                 </div>
@@ -939,6 +920,130 @@ function AgentTeamTodosView({
       )}
     </div>
   );
+}
+
+function AgentTeamTodoCard({
+  index,
+  isMutating,
+  onCancel,
+  onEdit,
+  onMove,
+  ownerUserId,
+  port,
+  siblingCount,
+  teamId,
+  todo,
+}: {
+  index: number;
+  isMutating: boolean;
+  onCancel: () => void;
+  onEdit: () => void;
+  onMove: (direction: -1 | 1) => void;
+  ownerUserId: string;
+  port: AgentManagementPort;
+  siblingCount: number;
+  teamId: string;
+  todo: AgentTeamTodo;
+}) {
+  const [progress, setProgress] = useState<AgentTeamTodoProgress[]>([]);
+  const [progressError, setProgressError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!port.listTeamTodoProgress || todo.status === "pending") {
+      setProgress([]);
+      setProgressError(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const next = await port.listTeamTodoProgress!(ownerUserId, teamId, todo.id, 100);
+        if (!cancelled) {
+          setProgress(next);
+          setProgressError(null);
+        }
+      } catch (failure) {
+        if (!cancelled) setProgressError(failure instanceof Error ? failure.message : "执行记录暂时不可用。");
+      }
+    };
+    void load();
+    const timer = todo.status === "in_progress"
+      ? window.setInterval(() => void load(), 2_000)
+      : null;
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearInterval(timer);
+    };
+  }, [ownerUserId, port, teamId, todo.id, todo.status, todo.updatedAtUnixMs]);
+
+  const latest = progress.at(-1) ?? null;
+  return (
+    <article className={`agent-team-todo-card is-${todo.status}`}>
+      <header>
+        <span>优先级 {todo.priority}</span>
+        <em>{todo.agentName}</em>
+      </header>
+      <button onClick={onEdit} type="button">
+        <strong>{todo.title}</strong>
+        <p>{todo.detail || todo.executionContract.objective}</p>
+      </button>
+      {todo.dependencyIds.length > 0 && <small>依赖 {todo.dependencyIds.length} 项</small>}
+      {todo.blockedReason && <div className="agent-team-todo-card__notice">{todo.blockedReason}</div>}
+      {todo.result && <div className="agent-team-todo-card__result">{todo.result}</div>}
+      {latest && (
+        <section className={`agent-team-todo-progress is-${latest.kind}`} aria-label="最新执行记录">
+          <header>
+            <strong>{todoProgressStageLabel(latest)}</strong>
+            <time>{formatTeamMessageTime(latest.createdAtUnixMs)}</time>
+          </header>
+          <p>{latest.detail}</p>
+          {progress.length > 1 && (
+            <button aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} type="button">
+              {expanded ? "收起执行记录" : `查看全部 ${progress.length} 条`}
+            </button>
+          )}
+          {expanded && (
+            <ol>
+              {[...progress].reverse().map((item) => (
+                <li key={item.sequence}>
+                  <div><strong>{todoProgressStageLabel(item)}</strong><time>{formatTeamMessageTime(item.createdAtUnixMs)}</time></div>
+                  <p>{item.detail}</p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
+      {progressError && <div className="agent-team-todo-progress__error">{progressError}</div>}
+      <footer>
+        {todo.status === "pending" && (
+          <>
+            <button disabled={index === 0 || isMutating} onClick={() => onMove(-1)} type="button">上移</button>
+            <button disabled={index === siblingCount - 1 || isMutating} onClick={() => onMove(1)} type="button">下移</button>
+          </>
+        )}
+        {(todo.status === "pending" || todo.status === "in_progress" || todo.status === "blocked") && (
+          <button className="is-danger" disabled={isMutating} onClick={onCancel} type="button">
+            {todo.status === "in_progress" ? "停止" : "取消"}
+          </button>
+        )}
+        {todo.status === "in_progress" && <span>停止会先终止 Host Run，再更新任务状态</span>}
+        <time>{formatTeamMessageTime(todo.updatedAtUnixMs)}</time>
+      </footer>
+    </article>
+  );
+}
+
+function todoProgressStageLabel(progress: AgentTeamTodoProgress) {
+  if (progress.stage.trim()) return progress.stage;
+  return {
+    started: "开始执行",
+    progress: "执行进展",
+    blocked: "执行阻塞",
+    completed: "执行完成",
+    cancelled: "已取消",
+  }[progress.kind];
 }
 
 function AgentTeamTodoEditor({

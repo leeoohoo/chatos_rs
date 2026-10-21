@@ -205,6 +205,35 @@ pub(super) struct TeamRunReconciliation {
 }
 
 impl AgentConversationStore {
+    pub(super) fn list_project_team_todo_progress(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        todo_id: &str,
+        limit: usize,
+    ) -> Result<Vec<Value>, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_todo_input())?;
+        validate_identifier(todo_id).map_err(|_| invalid_team_todo_input())?;
+        if !(1..=500).contains(&limit) {
+            return Err(invalid_team_todo_input());
+        }
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        require_active_project_team(&connection, owner_user_id, team_id)?;
+        let belongs_to_team: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM local_agent_todos \
+                 WHERE owner_user_id = ?1 AND team_room_id = ?2 AND id = ?3)",
+                params![owner_user_id, team_id, todo_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_todo_store_error())?;
+        if !belongs_to_team {
+            return Err("团队任务不存在。".into());
+        }
+        load_todo_progress(&connection, owner_user_id, todo_id, limit)
+    }
+
     pub(crate) fn todo_planning_tool_snapshot(
         &self,
         owner_user_id: &str,
@@ -3387,6 +3416,39 @@ pub(crate) async fn list_agent_team_todos(
         .require_session_generation(&owner_user_id, generation)
         .await?;
     Ok(todos)
+}
+
+#[tauri::command]
+pub(crate) async fn list_agent_team_todo_progress(
+    owner_user_id: String,
+    team_id: String,
+    todo_id: String,
+    limit: usize,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<Vec<Value>, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
+    validate_identifier(&todo_id).map_err(|_| invalid_team_todo_input())?;
+    if !(1..=500).contains(&limit) {
+        return Err(invalid_team_todo_input());
+    }
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = owner_user_id.clone();
+    let team = team_id.clone();
+    let todo = todo_id.clone();
+    let progress = tauri::async_runtime::spawn_blocking(move || {
+        store.list_project_team_todo_progress(&owner, &team, &todo, limit)
+    })
+    .await
+    .map_err(|_| "团队任务进度读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(progress)
 }
 
 #[tauri::command]

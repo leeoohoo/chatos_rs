@@ -204,6 +204,17 @@
 .agent-team-todo-card__notice,.agent-team-todo-card__result { border-radius:7px; padding:6px 7px; font-size:7.5px; line-height:1.4; }
 .agent-team-todo-card__notice { color:#9b5a00; background:rgba(255,159,10,.10); }
 .agent-team-todo-card__result { color:#2467b1; background:rgba(10,132,255,.08); }
+.agent-team-todo-progress { display:grid; gap:5px; border:1px solid rgba(10,132,255,.10); border-radius:8px; padding:7px; background:rgba(10,132,255,.045); }
+.agent-team-todo-progress.is-blocked { border-color:rgba(255,159,10,.16); background:rgba(255,159,10,.055); }
+.agent-team-todo-progress.is-completed { border-color:rgba(48,209,88,.14); background:rgba(48,209,88,.045); }
+.agent-team-todo-progress > header,.agent-team-todo-progress li > div { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.agent-team-todo-progress strong { overflow:hidden; color:var(--primary); font-size:7.8px; text-overflow:ellipsis; white-space:nowrap; }
+.agent-team-todo-progress time { flex:none; color:var(--tertiary); font-size:6.8px; }
+.agent-team-todo-progress p { margin:0; color:var(--secondary); font-size:7.5px; line-height:1.45; white-space:pre-wrap; }
+.agent-team-todo-progress > button { justify-self:start; border:0; padding:0; color:var(--accent); background:transparent; font-size:7.3px; cursor:pointer; }
+.agent-team-todo-progress ol { display:grid; gap:6px; max-height:180px; overflow:auto; margin:1px 0 0; border-top:1px solid rgba(60,60,67,.07); padding:6px 0 0; list-style:none; }
+.agent-team-todo-progress li { display:grid; gap:2px; }
+.agent-team-todo-progress__error { color:#9b5a00; font-size:7.2px; }
 .agent-team-todo-card > footer { display:flex; align-items:center; gap:3px; border-top:1px solid rgba(60,60,67,.06); padding-top:6px; }
 .agent-team-todo-card > footer button { border:0; border-radius:5px; padding:3px 5px; color:var(--accent); background:rgba(10,132,255,.08); font-size:7.5px; cursor:pointer; }
 .agent-team-todo-card > footer button.is-danger { color:#c9342d; background:rgba(255,59,48,.08); }

@@ -36,8 +36,8 @@ mod workspace_index;
 
 use access_control::load_access_control;
 use agent_conversation::team_todo::{
-    cancel_agent_team_todo, create_agent_team_todo, list_agent_team_todos,
-    reorder_agent_team_todos, retry_agent_team_run, update_agent_team_todo,
+    cancel_agent_team_todo, create_agent_team_todo, list_agent_team_todo_progress,
+    list_agent_team_todos, reorder_agent_team_todos, retry_agent_team_run, update_agent_team_todo,
 };
 use agent_conversation::{
     archive_agent_team_asset, create_agent_team, dispatch_next_agent_team_delivery,
@@ -291,6 +291,7 @@ pub fn run() {
             archive_agent_team_asset,
             list_agent_team_asset_revisions,
             list_agent_team_todos,
+            list_agent_team_todo_progress,
             create_agent_team_todo,
             update_agent_team_todo,
             reorder_agent_team_todos,

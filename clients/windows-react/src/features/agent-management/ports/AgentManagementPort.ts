@@ -15,6 +15,7 @@ import type {
   DispatchedAgentTeamDelivery,
   AgentTeamRunHistorySnapshot,
   AgentTeamTodo,
+  AgentTeamTodoProgress,
   AgentTeamAsset,
   AgentTeamAssetRevision,
   SaveAgentTeamAssetInput,
@@ -89,6 +90,12 @@ export interface AgentManagementPort {
     runId: string,
   ): Promise<AgentTeamTodo>;
   listTeamTodos?(ownerUserId: string, teamId: string, includeTerminal: boolean): Promise<AgentTeamTodo[]>;
+  listTeamTodoProgress?(
+    ownerUserId: string,
+    teamId: string,
+    todoId: string,
+    limit?: number,
+  ): Promise<AgentTeamTodoProgress[]>;
   createTeamTodo?(
     ownerUserId: string,
     teamId: string,

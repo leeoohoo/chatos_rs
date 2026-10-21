@@ -670,6 +670,24 @@ export const agentTeamTodoListSchema = z.array(agentTeamTodoSchema).max(1_000)
     });
   });
 
+export const agentTeamTodoProgressSchema = z.object({
+  sequence: z.number().int().positive(),
+  runId: z.string().trim().min(1).max(512).nullable(),
+  kind: z.enum(["started", "progress", "blocked", "completed", "cancelled"]),
+  stage: z.string().max(240),
+  detail: z.string().max(16_000),
+  createdAtUnixMs: z.number().int().nonnegative(),
+}).strict();
+
+export const agentTeamTodoProgressListSchema = z.array(agentTeamTodoProgressSchema).max(500)
+  .superRefine((progress, context) => {
+    for (let index = 1; index < progress.length; index += 1) {
+      if (progress[index]!.sequence <= progress[index - 1]!.sequence) {
+        context.addIssue({ code: "custom", message: "团队任务进度顺序无效。", path: [index, "sequence"] });
+      }
+    }
+  });
+
 export const agentTeamAssetCategorySchema = z.enum([
   "overview", "current_progress", "tech_stack", "architecture",
   "conventions", "decision", "reference",
@@ -821,6 +839,7 @@ export type DispatchedAgentTeamDelivery = z.infer<typeof dispatchedAgentTeamDeli
 export type AgentTeamRunSummary = z.infer<typeof agentTeamRunSummarySchema>;
 export type AgentTeamRunHistorySnapshot = z.infer<typeof agentTeamRunHistorySnapshotSchema>;
 export type AgentTeamTodo = z.infer<typeof agentTeamTodoSchema>;
+export type AgentTeamTodoProgress = z.infer<typeof agentTeamTodoProgressSchema>;
 export type AgentTeamAssetCategory = z.infer<typeof agentTeamAssetCategorySchema>;
 export type AgentTeamAsset = z.infer<typeof agentTeamAssetSchema>;
 export type AgentTeamAssetRevision = z.infer<typeof agentTeamAssetRevisionSchema>;

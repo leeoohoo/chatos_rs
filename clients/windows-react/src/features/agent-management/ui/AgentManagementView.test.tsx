@@ -5,6 +5,7 @@ import { useAgentSkillManagementStore } from "../application/agentSkillManagemen
 import { useAgentTeamConversationStore } from "../application/agentTeamConversationStore";
 import { useAgentTeamRunStore } from "../application/agentTeamRunStore";
 import { useAgentTeamStore } from "../application/agentTeamStore";
+import { useAgentTeamTodoStore } from "../application/agentTeamTodoStore";
 import {
   agentProfessionLabels,
   type AgentProfileEditorCatalog,
@@ -27,6 +28,7 @@ describe("AgentManagementView", () => {
   beforeEach(() => useAgentTeamStore.getState().reset());
   beforeEach(() => useAgentTeamConversationStore.getState().reset());
   beforeEach(() => useAgentTeamRunStore.getState().reset());
+  beforeEach(() => useAgentTeamTodoStore.getState().reset());
   afterEach(cleanup);
 
   it("renders macOS profile card facts and enables profile editing", async () => {
@@ -488,6 +490,59 @@ describe("AgentManagementView", () => {
     await waitFor(() => expect(loadRun).toHaveBeenCalledWith("owner-1", "run-team-1", 0));
     expect(await screen.findByText("Run 已完成")).toBeVisible();
     expect(screen.getByText("已完成团队回复")).toBeVisible();
+  });
+
+  it("shows the newest persisted Todo execution record before older history", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
+      name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
+      projectManagerAgentId: "agent-1", memberCount: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{ agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20 }],
+    };
+    const todo = {
+      id: "todo-1", agentId: "agent-1", agentName: "界面设计师", teamId: team.id,
+      sourceRoomId: team.id, sourceMessageId: "message-1", title: "实现任务面板", detail: "展示真实执行进度",
+      priority: 90, sortOrder: 0, status: "in_progress" as const, blockedReason: "", result: "",
+      executionContract: {
+        objective: "实现任务面板", scope: "Windows React", expectedOutputs: ["任务面板"],
+        acceptanceCriteria: ["展示最新记录"], constraints: [],
+      },
+      executionPlan: {
+        requiresExecution: true, builtinCapabilities: ["project_read" as const], plugins: [],
+        selectionRevision: "windows-v1", selectedAtUnixMs: 20,
+      },
+      dependencyIds: [], createdAtUnixMs: 20, updatedAtUnixMs: 40,
+    };
+    const listTeamTodoProgress = vi.fn(async () => [
+      { sequence: 1, runId: "run-1", kind: "started" as const, stage: "准备", detail: "开始读取代码", createdAtUnixMs: 30 },
+      { sequence: 2, runId: "run-1", kind: "progress" as const, stage: "实现", detail: "最新：已经完成数据接入", createdAtUnixMs: 40 },
+    ]);
+    const port = stubPort({
+      listTeams: vi.fn(async () => [team]),
+      loadTeam: vi.fn(async () => detail),
+      listTeamTodos: vi.fn(async () => [todo]),
+      listTeamTodoProgress,
+      createTeamTodo: vi.fn(), updateTeamTodo: vi.fn(), reorderTeamTodos: vi.fn(),
+      cancelTeamTodo: vi.fn(), dispatchNextTeamDelivery: vi.fn(async () => null),
+      loadTeamRuns: vi.fn(async () => ({
+        teamId: team.id, messageCount: 0, pendingDeliveryCount: 0, runningDeliveryCount: 1,
+        completedDeliveryCount: 0, failedDeliveryCount: 0, cancelledDeliveryCount: 0, runs: [],
+      })),
+    });
+    renderView(port);
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "团队" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "任务" }));
+
+    expect(await screen.findByText("最新：已经完成数据接入")).toBeVisible();
+    expect(listTeamTodoProgress).toHaveBeenCalledWith("owner-1", team.id, "todo-1", 100);
+    expect(screen.queryByText("开始读取代码")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看全部 2 条" }));
+    expect(await screen.findByText("开始读取代码")).toBeVisible();
   });
 
   it("loads and edits revisioned team shared assets", async () => {

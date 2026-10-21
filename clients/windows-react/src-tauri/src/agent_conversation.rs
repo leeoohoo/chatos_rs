@@ -6085,6 +6085,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(progress["kind"], "progress");
+        let visible_progress = store
+            .list_project_team_todo_progress("alice", &team.id, &second.id, 100)
+            .unwrap();
+        assert_eq!(visible_progress.len(), 1);
+        assert_eq!(visible_progress[0]["detail"], "已完成事务写入，准备核对。");
+        assert!(store
+            .list_project_team_todo_progress("bob", &team.id, &second.id, 100)
+            .is_err());
         assert!(store
             .finish_todo_execution(
                 "alice",
