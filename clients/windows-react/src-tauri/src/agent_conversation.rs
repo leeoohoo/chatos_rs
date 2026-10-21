@@ -2,8 +2,9 @@ use chatos_local_agent_protocol::{
     CreateConversationCommand, GetConversationCommand, GetConversationRuntimeSettingsCommand,
     GetLatestCapabilityPolicySnapshotCommand, GuideConversationTurnCommand, HostCommand,
     HostResult, ListLatestModelConfigSnapshotsCommand, LocalConversationAttachmentSpec,
-    LocalConversationDetail, LocalConversationRuntimeSettings, LocalConversationTurnStatus,
-    LocalModelConfigSnapshot, PutConversationRuntimeSettingsCommand, StartConversationTurnCommand,
+    LocalConversationDetail, LocalConversationMessageRole, LocalConversationRuntimeSettings,
+    LocalConversationTurnRecord, LocalConversationTurnStatus, LocalModelConfigSnapshot,
+    PutConversationRuntimeSettingsCommand, StartConversationTurnCommand,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -63,6 +64,85 @@ CREATE TABLE IF NOT EXISTS project_agent_room_members (
     FOREIGN KEY(owner_user_id, agent_id)
         REFERENCES local_agent_profiles(owner_user_id, id)
 );
+CREATE TABLE IF NOT EXISTS project_agent_messages (
+    owner_user_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    sender_kind TEXT NOT NULL CHECK(sender_kind IN ('human', 'agent', 'system')),
+    sender_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    reply_to_message_id TEXT,
+    source_run_id TEXT,
+    causation_id TEXT,
+    root_message_id TEXT NOT NULL,
+    hop_count INTEGER NOT NULL CHECK(hop_count >= 0),
+    created_at_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, room_id)
+        REFERENCES project_agent_rooms(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, reply_to_message_id)
+        REFERENCES project_agent_messages(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, root_message_id)
+        REFERENCES project_agent_messages(owner_user_id, id)
+        DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX IF NOT EXISTS project_agent_messages_room_order
+    ON project_agent_messages(owner_user_id, room_id, created_at_unix_ms, id);
+CREATE TABLE IF NOT EXISTS project_agent_deliveries (
+    owner_user_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    root_message_id TEXT NOT NULL,
+    target_agent_id TEXT NOT NULL,
+    trigger_kind TEXT NOT NULL
+        CHECK(trigger_kind IN ('mention', 'default_agent', 'agent_mention', 'heartbeat', 'todo', 'todo_status')),
+    status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+    attempt INTEGER NOT NULL CHECK(attempt >= 0),
+    hop_count INTEGER NOT NULL CHECK(hop_count >= 0),
+    deduplication_key TEXT NOT NULL,
+    response_message_id TEXT,
+    last_error TEXT,
+    claimed_at_unix_ms INTEGER,
+    completed_at_unix_ms INTEGER,
+    created_at_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY(owner_user_id, id),
+    UNIQUE(owner_user_id, deduplication_key),
+    FOREIGN KEY(owner_user_id, room_id)
+        REFERENCES project_agent_rooms(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, message_id)
+        REFERENCES project_agent_messages(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, root_message_id)
+        REFERENCES project_agent_messages(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, room_id, target_agent_id)
+        REFERENCES project_agent_room_members(owner_user_id, room_id, agent_id),
+    FOREIGN KEY(owner_user_id, response_message_id)
+        REFERENCES project_agent_messages(owner_user_id, id)
+);
+CREATE INDEX IF NOT EXISTS project_agent_deliveries_agent_queue
+    ON project_agent_deliveries(owner_user_id, target_agent_id, status, created_at_unix_ms, id);
+CREATE UNIQUE INDEX IF NOT EXISTS one_running_manager_delivery_per_agent
+    ON project_agent_deliveries(owner_user_id, target_agent_id)
+    WHERE status = 'running' AND trigger_kind != 'todo';
+CREATE UNIQUE INDEX IF NOT EXISTS one_running_executor_delivery_per_agent
+    ON project_agent_deliveries(owner_user_id, target_agent_id)
+    WHERE status = 'running' AND trigger_kind = 'todo';
+CREATE TABLE IF NOT EXISTS windows_agent_delivery_runs (
+    owner_user_id TEXT NOT NULL,
+    delivery_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('ready', 'running', 'succeeded', 'failed', 'cancelled')),
+    created_at_unix_ms INTEGER NOT NULL,
+    updated_at_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY(owner_user_id, delivery_id),
+    UNIQUE(owner_user_id, turn_id),
+    UNIQUE(owner_user_id, run_id),
+    FOREIGN KEY(owner_user_id, delivery_id)
+        REFERENCES project_agent_deliveries(owner_user_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS windows_agent_delivery_runs_recent
+    ON windows_agent_delivery_runs(owner_user_id, updated_at_unix_ms DESC, run_id DESC);
 "#;
 
 #[derive(Clone)]
@@ -126,6 +206,32 @@ pub(crate) struct AgentConversationSendAck {
     delivery_kind: &'static str,
     turn_id: String,
     user_message_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentConversationActivityItem {
+    delivery_id: String,
+    room_id: String,
+    agent_id: String,
+    turn_id: String,
+    run_id: String,
+    delivery_status: String,
+    run_status: String,
+    response_message_id: Option<String>,
+    created_at_unix_ms: i64,
+    updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentConversationActivitySnapshot {
+    room_id: String,
+    agent_id: String,
+    conversation_id: String,
+    conversation_version: u64,
+    has_active_delivery: bool,
+    items: Vec<AgentConversationActivityItem>,
 }
 
 impl AgentConversationStore {
@@ -320,6 +426,268 @@ impl AgentConversationStore {
         })
     }
 
+    fn record_direct_delivery(
+        &self,
+        owner_user_id: &str,
+        binding: &AgentExecutionBinding,
+        delivery_id: &str,
+        message_id: &str,
+        turn_id: &str,
+        run_id: &str,
+        content: &str,
+        now_unix_ms: i64,
+    ) -> Result<(), String> {
+        for value in [delivery_id, message_id, turn_id, run_id] {
+            validate_identifier(value)?;
+        }
+        validate_text(content, 1_000_000, true)?;
+        if now_unix_ms < 0 {
+            return Err(store_error());
+        }
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| store_error())?;
+        transaction
+            .execute(
+                r#"
+                INSERT INTO project_agent_messages (
+                    owner_user_id, id, room_id, sender_kind, sender_id, content,
+                    reply_to_message_id, source_run_id, causation_id, root_message_id,
+                    hop_count, created_at_unix_ms
+                ) VALUES (?1, ?2, ?3, 'human', ?1, ?4, NULL, NULL, NULL, ?2, 0, ?5)
+                "#,
+                params![
+                    owner_user_id,
+                    message_id,
+                    binding.room_id,
+                    content,
+                    now_unix_ms,
+                ],
+            )
+            .map_err(|_| store_error())?;
+        transaction
+            .execute(
+                r#"
+                INSERT INTO project_agent_deliveries (
+                    owner_user_id, id, room_id, message_id, root_message_id,
+                    target_agent_id, trigger_kind, status, attempt, hop_count,
+                    deduplication_key, response_message_id, last_error,
+                    claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
+                ) VALUES (?1, ?2, ?3, ?4, ?4, ?5, 'default_agent', 'pending', 0, 0,
+                          ?6, NULL, NULL, NULL, NULL, ?7)
+                "#,
+                params![
+                    owner_user_id,
+                    delivery_id,
+                    binding.room_id,
+                    message_id,
+                    binding.agent_id,
+                    format!("{message_id}:{}", binding.agent_id),
+                    now_unix_ms,
+                ],
+            )
+            .map_err(|_| store_error())?;
+        transaction
+            .execute(
+                r#"
+                INSERT INTO windows_agent_delivery_runs (
+                    owner_user_id, delivery_id, turn_id, run_id, status,
+                    created_at_unix_ms, updated_at_unix_ms
+                ) VALUES (?1, ?2, ?3, ?4, 'ready', ?5, ?5)
+                "#,
+                params![owner_user_id, delivery_id, turn_id, run_id, now_unix_ms],
+            )
+            .map_err(|_| store_error())?;
+        transaction.commit().map_err(|_| store_error())
+    }
+
+    fn reconcile_direct_activity(
+        &self,
+        owner_user_id: &str,
+        binding: &AgentExecutionBinding,
+        detail: &LocalConversationDetail,
+    ) -> Result<Vec<AgentConversationActivityItem>, String> {
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| store_error())?;
+        let mappings = {
+            let mut statement = transaction
+                .prepare(
+                    r#"
+                    SELECT delivery.id, delivery.message_id, run.turn_id, run.run_id,
+                           delivery.status
+                    FROM project_agent_deliveries delivery
+                    JOIN windows_agent_delivery_runs run
+                      ON run.owner_user_id = delivery.owner_user_id
+                     AND run.delivery_id = delivery.id
+                    WHERE delivery.owner_user_id = ?1 AND delivery.room_id = ?2
+                      AND delivery.target_agent_id = ?3
+                    ORDER BY delivery.created_at_unix_ms, delivery.id
+                    "#,
+                )
+                .map_err(|_| store_error())?;
+            let rows = statement
+                .query_map(
+                    params![owner_user_id, binding.room_id, binding.agent_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                        ))
+                    },
+                )
+                .map_err(|_| store_error())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|_| store_error())?
+        };
+        for (delivery_id, root_message_id, turn_id, run_id, current_status) in mappings {
+            let Some(turn) = detail
+                .turns
+                .iter()
+                .find(|candidate| candidate.turn_id == turn_id && candidate.run_id == run_id)
+            else {
+                continue;
+            };
+            let (delivery_status, completed_at) = delivery_state(turn);
+            let response = if turn.status == LocalConversationTurnStatus::Succeeded {
+                detail
+                    .messages
+                    .iter()
+                    .filter(|message| {
+                        message.turn_id == turn_id
+                            && message.role == LocalConversationMessageRole::Assistant
+                    })
+                    .max_by_key(|message| message.ordinal)
+            } else {
+                None
+            };
+            let response_message_id = if let Some(message) = response {
+                validate_identifier(&message.message_id).map_err(|_| store_error())?;
+                let content = projected_message_text(&message.content);
+                transaction
+                    .execute(
+                        r#"
+                        INSERT OR IGNORE INTO project_agent_messages (
+                            owner_user_id, id, room_id, sender_kind, sender_id, content,
+                            reply_to_message_id, source_run_id, causation_id, root_message_id,
+                            hop_count, created_at_unix_ms
+                        ) VALUES (?1, ?2, ?3, 'agent', ?4, ?5, ?6, ?7, ?6, ?6, 1, ?8)
+                        "#,
+                        params![
+                            owner_user_id,
+                            message.message_id,
+                            binding.room_id,
+                            binding.agent_id,
+                            content,
+                            root_message_id,
+                            run_id,
+                            message.created_at_unix_ms,
+                        ],
+                    )
+                    .map_err(|_| store_error())?;
+                Some(message.message_id.as_str())
+            } else {
+                None
+            };
+            if matches!(current_status.as_str(), "pending" | "running") {
+                transaction
+                    .execute(
+                        r#"
+                        UPDATE project_agent_deliveries
+                        SET status = ?1,
+                            attempt = CASE WHEN attempt = 0 THEN 1 ELSE attempt END,
+                            response_message_id = COALESCE(?2, response_message_id),
+                            claimed_at_unix_ms = COALESCE(claimed_at_unix_ms, ?3),
+                            completed_at_unix_ms = ?4
+                        WHERE owner_user_id = ?5 AND id = ?6
+                          AND status IN ('pending', 'running')
+                        "#,
+                        params![
+                            delivery_status,
+                            response_message_id,
+                            turn.created_at_unix_ms,
+                            completed_at,
+                            owner_user_id,
+                            delivery_id,
+                        ],
+                    )
+                    .map_err(|_| store_error())?;
+            }
+            transaction
+                .execute(
+                    r#"
+                    UPDATE windows_agent_delivery_runs
+                    SET status = ?1, updated_at_unix_ms = ?2
+                    WHERE owner_user_id = ?3 AND delivery_id = ?4
+                    "#,
+                    params![
+                        turn.status.as_str(),
+                        turn.updated_at_unix_ms,
+                        owner_user_id,
+                        delivery_id,
+                    ],
+                )
+                .map_err(|_| store_error())?;
+        }
+        transaction.commit().map_err(|_| store_error())?;
+        self.list_direct_activity(owner_user_id, binding)
+    }
+
+    fn list_direct_activity(
+        &self,
+        owner_user_id: &str,
+        binding: &AgentExecutionBinding,
+    ) -> Result<Vec<AgentConversationActivityItem>, String> {
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT delivery.id, delivery.room_id, delivery.target_agent_id,
+                       run.turn_id, run.run_id, delivery.status, run.status,
+                       delivery.response_message_id, delivery.created_at_unix_ms,
+                       run.updated_at_unix_ms
+                FROM project_agent_deliveries delivery
+                JOIN windows_agent_delivery_runs run
+                  ON run.owner_user_id = delivery.owner_user_id
+                 AND run.delivery_id = delivery.id
+                WHERE delivery.owner_user_id = ?1 AND delivery.room_id = ?2
+                  AND delivery.target_agent_id = ?3
+                ORDER BY run.updated_at_unix_ms DESC, run.run_id DESC
+                LIMIT 100
+                "#,
+            )
+            .map_err(|_| store_error())?;
+        let rows = statement
+            .query_map(
+                params![owner_user_id, binding.room_id, binding.agent_id],
+                |row| {
+                    Ok(AgentConversationActivityItem {
+                        delivery_id: row.get(0)?,
+                        room_id: row.get(1)?,
+                        agent_id: row.get(2)?,
+                        turn_id: row.get(3)?,
+                        run_id: row.get(4)?,
+                        delivery_status: row.get(5)?,
+                        run_status: row.get(6)?,
+                        response_message_id: row.get(7)?,
+                        created_at_unix_ms: row.get(8)?,
+                        updated_at_unix_ms: row.get(9)?,
+                    })
+                },
+            )
+            .map_err(|_| store_error())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| store_error())
+    }
+
     #[cfg(test)]
     fn database(&self) -> &Path {
         &self.database
@@ -418,6 +786,59 @@ pub(crate) async fn prepare_agent_conversation(
 }
 
 #[tauri::command]
+pub(crate) async fn load_agent_conversation_activity(
+    owner_user_id: String,
+    room_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+    manager: State<'_, HostManager>,
+) -> Result<AgentConversationActivitySnapshot, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&room_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let binding_owner = owner_user_id.clone();
+    let binding_room = room_id.clone();
+    let binding = tauri::async_runtime::spawn_blocking(move || {
+        store.load_execution_binding(&binding_owner, &binding_room)
+    })
+    .await
+    .map_err(|_| "Agent 执行身份读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let conversation_id = format!("agent-direct-{}", binding.room_id);
+    let detail = agent_conversation_context(&manager, &owner_user_id, &conversation_id).await?;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let conversation_version = detail.conversation.version;
+    let activity_store = conversations.inner().clone();
+    let activity_owner = owner_user_id.clone();
+    let activity_binding = binding.clone();
+    let items = tauri::async_runtime::spawn_blocking(move || {
+        activity_store.reconcile_direct_activity(&activity_owner, &activity_binding, &detail)
+    })
+    .await
+    .map_err(|_| "Agent 运行动态读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(AgentConversationActivitySnapshot {
+        room_id: binding.room_id,
+        agent_id: binding.agent_id,
+        conversation_id,
+        conversation_version,
+        has_active_delivery: items
+            .iter()
+            .any(|item| matches!(item.delivery_status.as_str(), "pending" | "running")),
+        items,
+    })
+}
+
+#[tauri::command]
 pub(crate) async fn send_agent_conversation_draft(
     input: SendAgentConversationDraftInput,
     authentication: State<'_, AuthenticationManager>,
@@ -510,28 +931,66 @@ pub(crate) async fn send_agent_conversation_draft(
         .await?;
     let turn_id = identifier("turn");
     let message_id = identifier("message");
+    let run_id = identifier("run");
+    let command = StartConversationTurnCommand {
+        owner_user_id: input.owner_user_id.clone(),
+        conversation_id,
+        expected_conversation_version: detail.conversation.version,
+        turn_id: turn_id.clone(),
+        message_id: message_id.clone(),
+        run_id: run_id.clone(),
+        message: content.clone(),
+        message_metadata: agent_execution_metadata(&binding, &profession),
+        attachments,
+        model_config_ref: settings.selected_model_config_ref,
+        model_config_revision: settings.selected_model_config_revision,
+        capability_policy_revision: capability_revision,
+        max_iterations: MAX_ITERATIONS,
+    };
+    command
+        .validate()
+        .map_err(|_| "Agent 私聊消息或执行快照超过安全限制。".to_owned())?;
+    let delivery_store = conversations.inner().clone();
+    let delivery_owner = input.owner_user_id.clone();
+    let delivery_binding = binding.clone();
+    let delivery_content = content.clone();
+    let stored_delivery_id = uuid::Uuid::new_v4().to_string().to_lowercase();
+    let stored_message_id = message_id.clone();
+    let stored_turn_id = turn_id.clone();
+    let stored_run_id = run_id.clone();
+    let now_unix_ms = chrono::Utc::now().timestamp_millis().max(0);
+    tauri::async_runtime::spawn_blocking(move || {
+        delivery_store.record_direct_delivery(
+            &delivery_owner,
+            &delivery_binding,
+            &stored_delivery_id,
+            &stored_message_id,
+            &stored_turn_id,
+            &stored_run_id,
+            &delivery_content,
+            now_unix_ms,
+        )
+    })
+    .await
+    .map_err(|_| "Agent Delivery 写入任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
     let result = manager
-        .execute(HostCommand::StartConversationTurn(
-            StartConversationTurnCommand {
-                owner_user_id: input.owner_user_id.clone(),
-                conversation_id,
-                expected_conversation_version: detail.conversation.version,
-                turn_id: turn_id.clone(),
-                message_id: message_id.clone(),
-                run_id: identifier("run"),
-                message: content,
-                message_metadata: agent_execution_metadata(&binding, &profession),
-                attachments,
-                model_config_ref: settings.selected_model_config_ref,
-                model_config_revision: settings.selected_model_config_revision,
-                capability_policy_revision: capability_revision,
-                max_iterations: MAX_ITERATIONS,
-            },
-        ))
+        .execute(HostCommand::StartConversationTurn(command))
         .await?;
     let HostResult::ConversationTurnStarted { result } = result else {
         return Err("Local Agent Host 返回了错误的 Agent 发送响应。".into());
     };
+    if result.turn.turn_id != turn_id
+        || result.turn.run_id != run_id
+        || result.turn.user_message_id != message_id
+        || result.message.message_id != message_id
+        || result.message.turn_id != turn_id
+        || result.run.run_id != run_id
+    {
+        return Err("Local Agent Host 返回了不匹配的 Agent Delivery。".into());
+    }
     authentication
         .require_session_generation(&input.owner_user_id, generation)
         .await?;
@@ -722,6 +1181,31 @@ fn agent_execution_metadata(
             "default_skill_ids": binding.default_skill_ids,
         }
     })
+}
+
+fn delivery_state(turn: &LocalConversationTurnRecord) -> (&'static str, Option<i64>) {
+    match turn.status {
+        LocalConversationTurnStatus::Running => ("running", None),
+        LocalConversationTurnStatus::Succeeded => ("completed", Some(turn.updated_at_unix_ms)),
+        LocalConversationTurnStatus::Failed => ("failed", Some(turn.updated_at_unix_ms)),
+        LocalConversationTurnStatus::Cancelled => ("cancelled", Some(turn.updated_at_unix_ms)),
+    }
+}
+
+fn projected_message_text(content: &serde_json::Value) -> String {
+    if let Some(value) = content.as_str() {
+        return value.chars().take(1_000_000).collect();
+    }
+    let projected = content.as_object().and_then(|object| {
+        ["text", "content", "report", "answer", "error", "message"]
+            .into_iter()
+            .find_map(|key| object.get(key).and_then(serde_json::Value::as_str))
+    });
+    projected
+        .unwrap_or_default()
+        .chars()
+        .take(1_000_000)
+        .collect()
 }
 
 fn identifier(prefix: &str) -> String {
@@ -961,5 +1445,89 @@ mod tests {
         assert_eq!(binding.profession_key, "software_engineer");
         assert_eq!(binding.default_skill_ids, vec!["local.project.list"]);
         assert!(store.load_execution_binding("bob", &room.id).is_err());
+    }
+
+    #[test]
+    fn direct_delivery_persists_and_reconciles_from_the_bound_host_turn() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "agent-1", "active");
+        let room = store.open_human_agent_direct("alice", "agent-1").unwrap();
+        let binding = store.load_execution_binding("alice", &room.id).unwrap();
+        store
+            .record_direct_delivery(
+                "alice",
+                &binding,
+                "delivery-1",
+                "message-1",
+                "turn-1",
+                "run-1",
+                "请完成任务",
+                100,
+            )
+            .unwrap();
+
+        let pending = store.list_direct_activity("alice", &binding).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].delivery_status, "pending");
+        assert_eq!(pending[0].run_status, "ready");
+
+        let detail = LocalConversationDetail {
+            conversation: chatos_local_agent_protocol::LocalConversationRecord {
+                conversation_id: format!("agent-direct-{}", room.id),
+                owner_user_id: "alice".into(),
+                title: "测试 Agent".into(),
+                resource: None,
+                version: 2,
+                created_at_unix_ms: 100,
+                updated_at_unix_ms: 220,
+            },
+            turns: vec![LocalConversationTurnRecord {
+                turn_id: "turn-1".into(),
+                conversation_id: format!("agent-direct-{}", room.id),
+                user_message_id: "message-1".into(),
+                run_id: "run-1".into(),
+                status: LocalConversationTurnStatus::Succeeded,
+                created_at_unix_ms: 110,
+                updated_at_unix_ms: 220,
+            }],
+            messages: vec![
+                chatos_local_agent_protocol::LocalConversationMessageRecord {
+                    message_id: "answer-1".into(),
+                    conversation_id: format!("agent-direct-{}", room.id),
+                    turn_id: "turn-1".into(),
+                    ordinal: 2,
+                    role: LocalConversationMessageRole::Assistant,
+                    content: json!({"text": "已完成"}),
+                    metadata: json!({}),
+                    created_at_unix_ms: 210,
+                },
+            ],
+            attachments: vec![],
+        };
+        let completed = store
+            .reconcile_direct_activity("alice", &binding, &detail)
+            .unwrap();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].delivery_status, "completed");
+        assert_eq!(completed[0].run_status, "succeeded");
+        assert_eq!(
+            completed[0].response_message_id.as_deref(),
+            Some("answer-1")
+        );
+        assert_eq!(completed[0].updated_at_unix_ms, 220);
+
+        let connection = Connection::open(store.database()).unwrap();
+        let response: (String, String, String) = connection
+            .query_row(
+                "SELECT sender_kind, sender_id, content FROM project_agent_messages \
+                 WHERE owner_user_id = 'alice' AND id = 'answer-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            response,
+            ("agent".into(), "agent-1".into(), "已完成".into())
+        );
     }
 }
