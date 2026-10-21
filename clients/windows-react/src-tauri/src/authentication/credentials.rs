@@ -27,7 +27,7 @@ const MODEL_SERVICE: &str = "com.chatos.windows.model-credentials";
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 impl CredentialStore for PlatformCredentialStore {
     fn load_access_token(&self) -> Result<Option<String>, String> {
-        let entry = keyring::Entry::new(SERVICE, ACCOUNT).map_err(safe_credential_error)?;
+        let entry = credential_entry(SERVICE, ACCOUNT)?;
         match entry.get_password() {
             Ok(token) => Ok(normalized_token(token)),
             Err(keyring::Error::NoEntry) => Ok(None),
@@ -40,14 +40,13 @@ impl CredentialStore for PlatformCredentialStore {
         if token.is_empty() {
             return self.delete_access_token();
         }
-        keyring::Entry::new(SERVICE, ACCOUNT)
-            .map_err(safe_credential_error)?
+        credential_entry(SERVICE, ACCOUNT)?
             .set_password(token)
             .map_err(safe_credential_error)
     }
 
     fn delete_access_token(&self) -> Result<(), String> {
-        let entry = keyring::Entry::new(SERVICE, ACCOUNT).map_err(safe_credential_error)?;
+        let entry = credential_entry(SERVICE, ACCOUNT)?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(safe_credential_error(error)),
@@ -59,11 +58,10 @@ impl CredentialStore for PlatformCredentialStore {
         owner_user_id: &str,
         model_config_ref: &str,
     ) -> Result<Option<String>, String> {
-        let entry = keyring::Entry::new(
+        let entry = credential_entry(
             MODEL_SERVICE,
             &model_credential_account(owner_user_id, model_config_ref),
-        )
-        .map_err(safe_credential_error)?;
+        )?;
         match entry.get_password() {
             Ok(credential) => Ok(normalized_token(credential)),
             Err(keyring::Error::NoEntry) => Ok(None),
@@ -81,14 +79,18 @@ impl CredentialStore for PlatformCredentialStore {
         if credential.is_empty() {
             return Err("模型凭据为空。".into());
         }
-        keyring::Entry::new(
+        credential_entry(
             MODEL_SERVICE,
             &model_credential_account(owner_user_id, model_config_ref),
-        )
-        .map_err(safe_credential_error)?
+        )?
         .set_password(credential)
         .map_err(safe_credential_error)
     }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn credential_entry(service: &str, account: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(service, account).map_err(safe_credential_error)
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -161,6 +163,16 @@ fn safe_credential_error(error: impl Display) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    struct TestCredentialCleanup(keyring::Entry);
+
+    #[cfg(target_os = "windows")]
+    impl Drop for TestCredentialCleanup {
+        fn drop(&mut self) {
+            let _ = self.0.delete_credential();
+        }
+    }
+
     #[test]
     fn model_environment_variable_matches_macos_normalization() {
         assert_eq!(
@@ -176,5 +188,35 @@ mod tests {
         assert_ne!(first, second);
         assert!(!first.contains("owner-1"));
         assert!(!first.contains("model-1"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_credential_manager_round_trips_and_deletes_a_secret() {
+        let account = format!("round-trip-{}", uuid::Uuid::new_v4());
+        let entry = credential_entry("com.chatos.windows.integration-test", &account)
+            .expect("Windows Credential Manager entry");
+        let credential = TestCredentialCleanup(entry);
+        let secret = format!("credential-{}", uuid::Uuid::new_v4());
+
+        credential
+            .0
+            .set_password(&secret)
+            .expect("save Windows credential");
+        assert_eq!(
+            credential
+                .0
+                .get_password()
+                .expect("load Windows credential"),
+            secret
+        );
+        credential
+            .0
+            .delete_credential()
+            .expect("delete Windows credential");
+        assert!(matches!(
+            credential.0.get_password(),
+            Err(keyring::Error::NoEntry)
+        ));
     }
 }
