@@ -46,6 +46,47 @@ describe("StoryStudioView", () => {
     })));
   });
 
+  it("updates project settings through the native typed command", async () => {
+    const canonical = plannedProject();
+    const updated = {
+      ...canonical,
+      title: "雨夜来客 · 第二版",
+      description: "调整后的项目说明",
+      models: { ...canonical.models, textModelId: "text-model-2" },
+      baseFingerprint: "b".repeat(64),
+    };
+    const updateProjectSettings = vi.fn(async () => updated);
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      updateProjectSettings,
+    });
+    render(<StoryStudioView mediaPort={mediaPort(true)} ownerUserId="alice" port={storyPort} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "剧情设置" }));
+    expect(screen.getByRole("heading", { name: "剧情设置" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("项目名称"), {
+      target: { value: "雨夜来客 · 第二版" },
+    });
+    fireEvent.change(screen.getByLabelText("项目说明"), {
+      target: { value: "调整后的项目说明" },
+    });
+    fireEvent.change(screen.getByLabelText("文本规划模型"), {
+      target: { value: "text-model-2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+
+    await waitFor(() => expect(updateProjectSettings).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUserId: "alice",
+      projectId: canonical.id,
+      title: "雨夜来客 · 第二版",
+      description: "调整后的项目说明",
+      textModelId: "text-model-2",
+      imageModelId: canonical.models.imageModelId,
+      videoModelId: canonical.models.videoModelId,
+    })));
+    expect(await screen.findByRole("heading", { name: "雨夜来客 · 第二版" })).toBeVisible();
+  });
+
   it("shows live planning progress without applying the event draft", async () => {
     const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
     let planningListener: ((event: StoryPlanningEvent) => void) | undefined;
@@ -429,6 +470,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     resumeMediaBatch: vi.fn(() => new Promise<never>(() => undefined)),
     abandonMediaBatch: vi.fn(async () => { throw new Error("unused batch abandon"); }),
     createProject: vi.fn(async () => project()),
+    updateProjectSettings: vi.fn(async () => project()),
     updateSource: vi.fn(async () => project()),
     startPlanning: vi.fn(async () => project()),
     generateAssetImage: vi.fn(async () => project()),
@@ -464,10 +506,11 @@ function planningRun() {
   };
 }
 
-function mediaPort(): MediaStudioPort {
+function mediaPort(includeAlternateTextModel = false): MediaStudioPort {
   return {
     listModels: vi.fn(async () => [
       model("text-model", "Text", "gpt-5"),
+      ...(includeAlternateTextModel ? [model("text-model-2", "Text 2", "gpt-6")] : []),
       model("image-model", "Image", "gpt-image-1"),
       model("video-model", "Video", "MiniMax-H3"),
     ]),

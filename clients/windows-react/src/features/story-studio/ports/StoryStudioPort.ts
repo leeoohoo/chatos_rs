@@ -79,6 +79,14 @@ export interface StoryStudioPort {
     imageModelId: string;
     videoModelId: string;
   }): Promise<StoryProject>;
+  updateProjectSettings(request: StoryPresentationScope & {
+    projectId: string;
+    title: string;
+    description: string;
+    textModelId: string;
+    imageModelId: string;
+    videoModelId: string;
+  }): Promise<StoryProject>;
   updateSource(request: StoryPresentationScope & {
     projectId: string;
     baseFingerprint: string;

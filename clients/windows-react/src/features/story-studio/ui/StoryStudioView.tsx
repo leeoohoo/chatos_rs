@@ -19,6 +19,7 @@ const EMPTY_PLANNING_RUNS: StoryPlanningRun[] = [];
 export function StoryStudioView({ ownerUserId, mediaPort, port }: StoryStudioViewProps) {
   const state = useStoryStudioStore();
   const [showCreate, setShowCreate] = useState(false);
+  const [settingsProjectId, setSettingsProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     void state.activate(port, mediaPort, ownerUserId);
@@ -59,7 +60,7 @@ export function StoryStudioView({ ownerUserId, mediaPort, port }: StoryStudioVie
             <button onClick={state.clearError} type="button">关闭</button>
           </div>
         )}
-        {project ? <ProjectWorkspace mediaPort={mediaPort} port={port} projectId={project.id} /> : (
+        {project ? <ProjectWorkspace mediaPort={mediaPort} onOpenSettings={() => setSettingsProjectId(project.id)} port={port} projectId={project.id} /> : (
           <div className="story-studio__welcome">
             <span aria-hidden="true">✦</span>
             <h2>把故事变成可控的镜头</h2>
@@ -68,12 +69,13 @@ export function StoryStudioView({ ownerUserId, mediaPort, port }: StoryStudioVie
           </div>
         )}
       </main>
-      {showCreate && <CreateStorySheet onClose={() => setShowCreate(false)} port={port} />}
+      {showCreate && <StoryProjectSheet onClose={() => setShowCreate(false)} port={port} />}
+      {settingsProjectId && <StoryProjectSheet onClose={() => setSettingsProjectId(null)} port={port} projectId={settingsProjectId} />}
     </section>
   );
 }
 
-function ProjectWorkspace({ mediaPort, port, projectId }: { mediaPort: MediaStudioPort; port: StoryStudioPort; projectId: string }) {
+function ProjectWorkspace({ mediaPort, onOpenSettings, port, projectId }: { mediaPort: MediaStudioPort; onOpenSettings(): void; port: StoryStudioPort; projectId: string }) {
   const state = useStoryStudioStore();
   const project = state.projects.find((value) => value.id === projectId)!;
   const [source, setSource] = useState(project.source);
@@ -109,6 +111,7 @@ function ProjectWorkspace({ mediaPort, port, projectId }: { mediaPort: MediaStud
           <span><strong>{project.characters.length + project.scenes.length + project.props.length}</strong>素材</span>
           <span><strong>{project.segments.length}</strong>分段</span>
           <span><strong>{project.segments.filter((segment) => segment.video).length}</strong>成片</span>
+          <button aria-label="剧情设置" disabled={state.busy} onClick={onOpenSettings} type="button">设置</button>
         </div>
       </header>
       <StoryPlanningHistoryPanel port={port} projectId={project.id} />
@@ -670,26 +673,62 @@ function planningStatusLabel(progress: StoryPlanningProgress) {
   }
 }
 
-function CreateStorySheet({ port, onClose }: { port: StoryStudioPort; onClose(): void }) {
+function StoryProjectSheet({ port, projectId, onClose }: { port: StoryStudioPort; projectId?: string; onClose(): void }) {
   const state = useStoryStudioStore();
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const project = projectId ? state.projects.find((value) => value.id === projectId) ?? null : null;
+  const [title, setTitle] = useState(project?.title ?? "");
+  const [description, setDescription] = useState(project?.description ?? "");
   const choices = useMemo(() => modelChoices(state.models), [state.models]);
-  const [textModelId, setTextModelId] = useState("");
-  const [imageModelId, setImageModelId] = useState("");
-  const [videoModelId, setVideoModelId] = useState("");
+  const [textModelId, setTextModelId] = useState(project?.models.textModelId ?? "");
+  const [imageModelId, setImageModelId] = useState(project?.models.imageModelId ?? "");
+  const [videoModelId, setVideoModelId] = useState(project?.models.videoModelId ?? "");
   const text = textModelId || choices.text[0]?.id || "";
   const image = imageModelId || choices.image[0]?.id || "";
   const video = videoModelId || choices.video[0]?.id || "";
+  const hasUnresolvedImageJobs = project != null && [
+    ...project.characters.map((value) => value.media.generationAttemptId),
+    ...project.scenes.map((value) => value.media.generationAttemptId),
+    ...project.props.map((value) => value.media.generationAttemptId),
+    ...project.segments.flatMap((value) => [
+      value.firstFrames.generationAttemptId,
+      value.lastFrames.generationAttemptId,
+    ]),
+  ].some(Boolean);
+  const hasUnresolvedVideoJobs = project?.segments.some((value) => value.attempt != null) ?? false;
+  const unchanged = project != null
+    && title === project.title
+    && description === project.description
+    && text === project.models.textModelId
+    && image === project.models.imageModelId
+    && video === project.models.videoModelId;
   const submit = async () => {
-    await state.createProject(port, { title, description, textModelId: text, imageModelId: image, videoModelId: video });
+    if (project) {
+      if (await state.updateProjectSettings(port, {
+        title,
+        description,
+        textModelId: text,
+        imageModelId: image,
+        videoModelId: video,
+      })) onClose();
+      return;
+    }
+    await state.createProject(port, {
+      title,
+      description,
+      textModelId: text,
+      imageModelId: image,
+      videoModelId: video,
+    });
     if (!useStoryStudioStore.getState().error) onClose();
   };
-  return <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>✦</span><div><h2>新建剧情项目</h2><p>模型和素材均按当前账号隔离保存在本机。</p></div></div><button aria-label="关闭" onClick={onClose} type="button">×</button></header><div className="story-sheet__body"><label>项目名称<input autoFocus maxLength={120} onChange={(event) => setTitle(event.target.value)} placeholder="例如：雨夜来客" value={title} /></label><label>项目说明<textarea maxLength={4_000} onChange={(event) => setDescription(event.target.value)} placeholder="可选" value={description} /></label><ModelSelect label="文本规划模型" models={choices.text} value={text} onChange={setTextModelId} /><ModelSelect label="图片生成模型" models={choices.image} value={image} onChange={setImageModelId} /><ModelSelect label="视频生成模型" models={choices.video} value={video} onChange={setVideoModelId} /></div><footer><button onClick={onClose} type="button">取消</button><button className="story-primary-button" disabled={!title.trim() || !text || !image || !video || state.busy} onClick={() => void submit()} type="button">{state.busy ? "正在创建…" : "创建项目"}</button></footer></section></div>;
+  const titleId = project ? "story-settings-title" : "story-create-title";
+  const descriptionId = project ? "story-settings-description" : "story-create-description";
+  return <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !state.busy) onClose(); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>{project ? "⌘" : "✦"}</span><div><h2>{project ? "剧情设置" : "新建剧情项目"}</h2><p>{project ? "修改项目信息和模型组合；不会启动 AI 或产生费用。" : "模型和素材均按当前账号隔离保存在本机。"}</p></div></div><button aria-label="关闭" disabled={state.busy} onClick={onClose} type="button">×</button></header><div className="story-sheet__body"><label htmlFor={titleId}>项目名称<input autoFocus id={titleId} maxLength={120} onChange={(event) => setTitle(event.target.value)} placeholder="例如：雨夜来客" value={title} /></label><label htmlFor={descriptionId}>项目说明<textarea id={descriptionId} maxLength={4_000} onChange={(event) => setDescription(event.target.value)} placeholder="可选" value={description} /></label><ModelSelect label="文本规划模型" models={choices.text} value={text} onChange={setTextModelId} /><ModelSelect disabled={hasUnresolvedImageJobs} label="图片生成模型" models={choices.image} value={image} onChange={setImageModelId} /><ModelSelect disabled={hasUnresolvedVideoJobs} label="视频生成模型" models={choices.video} value={video} onChange={setVideoModelId} />{(hasUnresolvedImageJobs || hasUnresolvedVideoJobs) && <p className="story-settings-note">上次提交结果尚未核对，对应模型暂时不能修改。</p>}</div><footer><button disabled={state.busy} onClick={onClose} type="button">取消</button><button className="story-primary-button" disabled={!title.trim() || !text || !image || !video || state.busy || unchanged} onClick={() => void submit()} type="button">{state.busy ? (project ? "正在保存…" : "正在创建…") : (project ? "保存设置" : "创建项目")}</button></footer></section></div>;
 }
 
-function ModelSelect({ label, models, value, onChange }: { label: string; models: ReturnType<typeof modelChoices>["text"]; value: string; onChange(value: string): void }) {
-  return <label>{label}<select onChange={(event) => onChange(event.target.value)} value={value}>{models.length === 0 && <option value="">没有可用模型</option>}{models.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.modelName}</option>)}</select></label>;
+function ModelSelect({ disabled = false, label, models, value, onChange }: { disabled?: boolean; label: string; models: ReturnType<typeof modelChoices>["text"]; value: string; onChange(value: string): void }) {
+  const selectedUnavailable = value && !models.some((model) => model.id === value);
+  return <label>{label}<select disabled={disabled} onChange={(event) => onChange(event.target.value)} value={value}>{models.length === 0 && !selectedUnavailable && <option value="">没有可用模型</option>}{selectedUnavailable && <option value={value}>原模型不可用，请重新选择</option>}{models.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.modelName}</option>)}</select></label>;
 }
 
 function modelChoices(models: ReturnType<typeof useStoryStudioStore.getState>["models"]) {

@@ -50,6 +50,13 @@ interface StoryStudioState {
     imageModelId: string;
     videoModelId: string;
   }): Promise<void>;
+  updateProjectSettings(storyPort: StoryStudioPort, input: {
+    title: string;
+    description: string;
+    textModelId: string;
+    imageModelId: string;
+    videoModelId: string;
+  }): Promise<boolean>;
   saveSource(storyPort: StoryStudioPort, input: {
     source: string;
     style: string;
@@ -233,6 +240,27 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ busy: false, error: errorMessage(error, "剧情项目创建失败。") });
+    }
+  },
+
+  async updateProjectSettings(storyPort, input) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project || get().busy) return false;
+    set({ busy: true, error: null });
+    try {
+      const saved = await storyPort.updateProjectSettings({
+        ...scope,
+        projectId: project.id,
+        ...input,
+      });
+      if (!sameScope(get(), scope)) return false;
+      set((state) => ({ projects: replaceProject(state.projects, saved), busy: false }));
+      return true;
+    } catch (error) {
+      if (!sameScope(get(), scope)) return false;
+      set({ busy: false, error: errorMessage(error, "剧情设置保存失败。") });
+      return false;
     }
   },
 

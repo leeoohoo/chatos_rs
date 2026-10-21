@@ -190,6 +190,27 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
     return storyProjectSchema.parse(await invoke("create_story_project", { input }));
   }
 
+  async updateProjectSettings(
+    request: Parameters<StoryStudioPort["updateProjectSettings"]>[0],
+  ) {
+    const input = {
+      ...scope(request),
+      change: {
+        projectId: uuidSchema.parse(request.projectId),
+        title: safeText(120).trim().min(1).parse(request.title),
+        description: safeText(4_000).parse(request.description),
+        models: {
+          textModelId: identifierSchema.parse(request.textModelId),
+          imageModelId: identifierSchema.parse(request.imageModelId),
+          videoModelId: identifierSchema.parse(request.videoModelId),
+        },
+      },
+    };
+    return storyProjectSchema.parse(
+      await invoke("update_story_project_settings", { input }),
+    );
+  }
+
   async updateSource(request: Parameters<StoryStudioPort["updateSource"]>[0]) {
     const input = {
       ...scope(request),
