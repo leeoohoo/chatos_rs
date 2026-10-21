@@ -151,7 +151,7 @@ function ProjectWorkspace({ mediaPort, onOpenSettings, port, projectId }: { medi
 function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: MediaStudioPort; port: StoryStudioPort; projectId: string }) {
   const state = useStoryStudioStore();
   const project = state.projects.find((value) => value.id === projectId)!;
-  const [selectedSegment, setSelectedSegment] = useState(project.segments[0]?.id ?? null);
+  const [selectedSegment, setSelectedSegment] = useState<string | null>(project.segments[0]?.id ?? null);
   const segment = project.segments.find((value) => value.id === selectedSegment) ?? project.segments[0];
   const resources = [...project.characters, ...project.scenes, ...project.props];
   const planning = state.planningProgress[project.id] ?? null;
@@ -159,6 +159,28 @@ function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: Medi
   const [historyTarget, setHistoryTarget] = useState<StoryImageImportTarget | null>(null);
   const [retryTarget, setRetryTarget] = useState<StoryImageImportTarget | null>(null);
   const [showBatchPreview, setShowBatchPreview] = useState(false);
+  const [deleteSegmentId, setDeleteSegmentId] = useState<string | null>(null);
+  const hasUnresolvedJobs = resources.some((value) => value.media.generationAttemptId != null)
+    || project.segments.some((value) => value.attempt != null
+      || value.firstFrames.generationAttemptId != null
+      || value.lastFrames.generationAttemptId != null);
+  const structureLocked = state.busy
+    || state.activeMediaTarget != null
+    || hasUnresolvedJobs
+    || project.segments.some((value) => value.video != null);
+  const selectedIndex = segment
+    ? project.segments.findIndex((value) => value.id === segment.id)
+    : -1;
+  const mutateStructure = async (
+    operation: "add" | "delete" | "move",
+    segmentId?: string,
+    offset?: -1 | 1,
+  ) => {
+    const saved = await state.updateSegmentStructure(port, { operation, segmentId, offset });
+    if (!saved) return;
+    if (operation === "add") setSelectedSegment(saved.segments.at(-1)?.id ?? null);
+    else if (operation === "delete") setSelectedSegment(saved.segments[0]?.id ?? null);
+  };
 
   return (
     <div className="story-plan-workspace">
@@ -178,13 +200,16 @@ function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: Medi
       </section>
       <div className="story-segment-layout">
         <nav aria-label="剧情分段">
-          {project.segments.map((item, index) => <button className={item.id === segment?.id ? "is-selected" : ""} key={item.id} onClick={() => setSelectedSegment(item.id)} type="button"><span>{String(index + 1).padStart(2, "0")}</span><span><strong>{item.title}</strong><small>{item.seconds} 秒 · {segmentState(item)}</small></span></button>)}
+          <header><span><strong>全剧时间线</strong><small>{project.segments.length} 个分段</small></span><button aria-label="添加剧情分段" disabled={structureLocked || !project.source.trim()} onClick={() => void mutateStructure("add")} type="button">＋</button></header>
+          <div>{project.segments.map((item, index) => <button className={item.id === segment?.id ? "is-selected" : ""} key={item.id} onClick={() => setSelectedSegment(item.id)} type="button"><span>{String(index + 1).padStart(2, "0")}</span><span><strong>{item.title}</strong><small>{item.seconds} 秒 · {segmentState(item)}</small></span></button>)}</div>
+          {segment && <footer><button aria-label="上移分段" disabled={structureLocked || selectedIndex <= 0} onClick={() => void mutateStructure("move", segment.id, -1)} type="button">↑</button><button aria-label="下移分段" disabled={structureLocked || selectedIndex < 0 || selectedIndex + 1 >= project.segments.length} onClick={() => void mutateStructure("move", segment.id, 1)} type="button">↓</button><button aria-label="删除分段" className="is-destructive" disabled={structureLocked} onClick={() => setDeleteSegmentId(segment.id)} type="button">删除</button></footer>}
         </nav>
         {segment && <SegmentInspector onPickHistory={setHistoryTarget} onRetryImage={setRetryTarget} port={port} projectId={project.id} segmentId={segment.id} />}
       </div>
       {historyTarget && <StoryImageHistorySheet mediaPort={mediaPort} onClose={() => setHistoryTarget(null)} port={port} target={historyTarget} />}
       {retryTarget && <StoryImageRetrySheet onClose={() => setRetryTarget(null)} port={port} target={retryTarget} />}
       {showBatchPreview && <StoryMediaBatchPreviewSheet onClose={() => setShowBatchPreview(false)} port={port} project={project} />}
+      {deleteSegmentId && <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteSegmentId(null); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>!</span><div><h2>删除这个分段？</h2><p>删除后会重新检查全剧衔接。</p></div></div><button aria-label="关闭" onClick={() => setDeleteSegmentId(null)} type="button">×</button></header><div className="story-sheet__body"><p className="story-retry-warning">其他分段的详细镜头计划需要重新细化；已有素材文件仍会保留。</p></div><footer><button onClick={() => setDeleteSegmentId(null)} type="button">取消</button><button className="story-retry-confirm" disabled={state.busy} onClick={() => { const id = deleteSegmentId; setDeleteSegmentId(null); void mutateStructure("delete", id); }} type="button">删除分段</button></footer></section></div>}
     </div>
   );
 }

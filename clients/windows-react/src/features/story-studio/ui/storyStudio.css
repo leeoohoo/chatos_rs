@@ -100,14 +100,17 @@
 .story-resource-strip article button:disabled,.story-frame-actions button:disabled { cursor:default; opacity:.42; }
 .story-resource-strip article button.is-warning,.story-frame-actions button.is-warning { color:#9b5100; background:rgba(255,159,10,.1); }
 .story-segment-layout { display:grid; min-height:420px; grid-template-columns:210px minmax(0,1fr); overflow:hidden; border:1px solid var(--separator); border-radius:13px; background:rgba(255,255,255,.58); }
-.story-segment-layout > nav { min-height:0; overflow:auto; border-right:1px solid var(--separator); padding:6px; background:rgba(246,246,248,.68); }
-.story-segment-layout > nav button { display:grid; width:100%; grid-template-columns:25px minmax(0,1fr); align-items:center; gap:5px; border:0; border-radius:8px; padding:7px; color:inherit; background:transparent; text-align:left; cursor:pointer; }
-.story-segment-layout > nav button:hover { background:rgba(120,120,128,.08); }
-.story-segment-layout > nav button.is-selected { color:#0068d6; background:rgba(10,132,255,.13); }
-.story-segment-layout > nav button > span:first-child { color:var(--secondary); font:8px ui-monospace,SFMono-Regular,Menlo,monospace; }
-.story-segment-layout > nav button > span:last-child { display:grid; min-width:0; gap:2px; }
-.story-segment-layout > nav strong,.story-segment-layout > nav small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.story-segment-layout > nav strong { font-size:9.5px; }.story-segment-layout > nav small { color:var(--secondary); font-size:8px; }
+.story-segment-layout > nav { display:grid; min-height:0; grid-template-rows:auto minmax(0,1fr) auto; overflow:hidden; border-right:1px solid var(--separator); background:rgba(246,246,248,.68); }
+.story-segment-layout > nav > header { display:flex; align-items:center; justify-content:space-between; gap:8px; border-bottom:1px solid var(--separator); padding:8px 9px; }.story-segment-layout > nav > header > span { display:grid; gap:1px; }.story-segment-layout > nav > header strong { font-size:9.5px; }.story-segment-layout > nav > header small { color:var(--secondary); font-size:7.5px; }.story-segment-layout > nav > header button { display:grid; width:25px; height:25px; place-items:center; border:0; border-radius:8px; color:var(--accent); background:rgba(10,132,255,.09); font-size:16px; cursor:pointer; }
+.story-segment-layout > nav > div { overflow:auto; padding:6px; }
+.story-segment-layout > nav > div > button { display:grid; width:100%; grid-template-columns:25px minmax(0,1fr); align-items:center; gap:5px; border:0; border-radius:8px; padding:7px; color:inherit; background:transparent; text-align:left; cursor:pointer; }
+.story-segment-layout > nav > div > button:hover { background:rgba(120,120,128,.08); }
+.story-segment-layout > nav > div > button.is-selected { color:#0068d6; background:rgba(10,132,255,.13); }
+.story-segment-layout > nav > div > button > span:first-child { color:var(--secondary); font:8px ui-monospace,SFMono-Regular,Menlo,monospace; }
+.story-segment-layout > nav > div > button > span:last-child { display:grid; min-width:0; gap:2px; }
+.story-segment-layout > nav > div strong,.story-segment-layout > nav > div small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.story-segment-layout > nav > div strong { font-size:9.5px; }.story-segment-layout > nav > div small { color:var(--secondary); font-size:8px; }
+.story-segment-layout > nav > footer { display:flex; justify-content:flex-end; gap:5px; border-top:1px solid var(--separator); padding:7px; }.story-segment-layout > nav > footer button { min-width:27px; border:0; border-radius:7px; padding:5px 7px; color:var(--accent); background:rgba(10,132,255,.08); font-size:8.5px; font-weight:620; cursor:pointer; }.story-segment-layout > nav > footer button.is-destructive { margin-left:auto; color:#b52f27; background:rgba(255,69,58,.08); }.story-segment-layout > nav button:disabled { cursor:default; opacity:.38; }
 .story-segment-inspector { align-self:start; margin:12px; padding:14px; }
 .story-segment-inspector > header { display:flex; justify-content:space-between; gap:15px; }
 .story-segment-inspector > header span { color:var(--accent); font-size:8px; font-weight:680; }

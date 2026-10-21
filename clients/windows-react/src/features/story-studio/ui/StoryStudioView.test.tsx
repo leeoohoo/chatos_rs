@@ -87,6 +87,46 @@ describe("StoryStudioView", () => {
     expect(await screen.findByRole("heading", { name: "雨夜来客 · 第二版" })).toBeVisible();
   });
 
+  it("edits segment structure through the native guarded command", async () => {
+    const canonical = plannedProject();
+    const addedSegment = {
+      ...canonical.segments[0]!,
+      id: "segment-b",
+      title: "新分段",
+      synopsis: "请编辑本段剧情与镜头计划",
+      detail: null,
+    };
+    const updateSegmentStructure = vi.fn(async (request: Parameters<StoryStudioPort["updateSegmentStructure"]>[0]) => ({
+      ...canonical,
+      baseFingerprint: "b".repeat(64),
+      segments: request.operation === "add"
+        ? [...canonical.segments, addedSegment]
+        : canonical.segments,
+    }));
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      updateSegmentStructure,
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "添加剧情分段" }));
+    await waitFor(() => expect(updateSegmentStructure).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: canonical.id,
+      baseFingerprint: canonical.baseFingerprint,
+      operation: "add",
+      segmentId: undefined,
+      offset: undefined,
+    })));
+    expect(await screen.findByRole("heading", { name: "新分段" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "上移分段" }));
+    await waitFor(() => expect(updateSegmentStructure).toHaveBeenLastCalledWith(expect.objectContaining({
+      operation: "move",
+      segmentId: "segment-b",
+      offset: -1,
+    })));
+  });
+
   it("shows live planning progress without applying the event draft", async () => {
     const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
     let planningListener: ((event: StoryPlanningEvent) => void) | undefined;
@@ -456,6 +496,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     importLocalImage: vi.fn(async () => project()),
     importHistoryImage: vi.fn(async () => project()),
     updateSegmentDuration: vi.fn(async () => project()),
+    updateSegmentStructure: vi.fn(async () => project()),
     allowImageRetry: vi.fn(async () => project()),
     allowVideoRetry: vi.fn(async () => project()),
     loadProjects: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),

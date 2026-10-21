@@ -131,6 +131,13 @@ export interface StoryStudioPort {
     segmentId: string;
     seconds: number;
   }): Promise<StoryProject>;
+  updateSegmentStructure(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    operation: "add" | "delete" | "move";
+    segmentId?: string | null;
+    offset?: -1 | 1 | null;
+  }): Promise<StoryProject>;
   allowImageRetry(request: StoryPresentationScope & {
     projectId: string;
     baseFingerprint: string;
