@@ -1,14 +1,16 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use serde::Deserialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owner};
 
 use super::{
     application::{StoryProjectCreationInput, StoryProjectSettingsInput},
     media::StoryStudioManager,
+    planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
     projection::StoryProjectSnapshot,
+    runtime::{abandon_run, StoryPlanningOutcome, StoryPlanningRuntime},
     store::{StoryProjectCursor, StoryProjectPage},
 };
 
@@ -50,6 +52,35 @@ pub(crate) struct StoryProjectSettingsCommandInput {
 pub(crate) struct StoryPresentationInput {
     owner_user_id: String,
     presentation_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryPlanningStartInput {
+    owner_user_id: String,
+    presentation_id: String,
+    project_id: String,
+    stage: StoryPlanningStage,
+    target_ids: Vec<String>,
+    user_ideas: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryPlanningResumeInput {
+    owner_user_id: String,
+    presentation_id: String,
+    project_id: String,
+    run_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryPlanningAbandonInput {
+    owner_user_id: String,
+    presentation_id: String,
+    project_id: String,
+    run_id: String,
 }
 
 #[tauri::command]
@@ -164,6 +195,176 @@ pub(crate) async fn discard_story_studio_presentation(
         .session_generation_for_owner(&input.owner_user_id)
         .await?;
     manager.discard_presentation(&input.owner_user_id, generation, &input.presentation_id)
+}
+
+#[tauri::command]
+pub(crate) async fn start_story_planning(
+    app: AppHandle,
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryPlanningStartInput,
+) -> Result<StoryPlanningOutcome, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    validate_planning_presentation(
+        &manager,
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.project_id,
+    )
+    .await?;
+    let runtime = StoryPlanningRuntime {
+        authentication: &authentication,
+        manager: &manager,
+        app: &app,
+        owner_user_id: &input.owner_user_id,
+        authentication_generation: generation,
+        presentation_id: &input.presentation_id,
+    };
+    let mut outcome = runtime
+        .start(
+            &input.project_id,
+            input.stage,
+            input.target_ids,
+            input.user_ideas,
+        )
+        .await?;
+    require_current_generation(&authentication, &manager, &input.owner_user_id, generation).await?;
+    if outcome.project.is_some() {
+        outcome.project = Some(
+            present_project(
+                &manager,
+                &input.owner_user_id,
+                generation,
+                &input.presentation_id,
+                &input.project_id,
+            )
+            .await?,
+        );
+    }
+    Ok(outcome)
+}
+
+#[tauri::command]
+pub(crate) async fn resume_story_planning(
+    app: AppHandle,
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryPlanningResumeInput,
+) -> Result<StoryPlanningOutcome, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    validate_planning_presentation(
+        &manager,
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.project_id,
+    )
+    .await?;
+    let runtime = StoryPlanningRuntime {
+        authentication: &authentication,
+        manager: &manager,
+        app: &app,
+        owner_user_id: &input.owner_user_id,
+        authentication_generation: generation,
+        presentation_id: &input.presentation_id,
+    };
+    let mut outcome = runtime.resume(&input.project_id, &input.run_id).await?;
+    require_current_generation(&authentication, &manager, &input.owner_user_id, generation).await?;
+    if outcome.project.is_some() {
+        outcome.project = Some(
+            present_project(
+                &manager,
+                &input.owner_user_id,
+                generation,
+                &input.presentation_id,
+                &input.project_id,
+            )
+            .await?,
+        );
+    }
+    Ok(outcome)
+}
+
+#[tauri::command]
+pub(crate) async fn abandon_story_planning(
+    app: AppHandle,
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryPlanningAbandonInput,
+) -> Result<StoryPlanningRunSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    validate_planning_presentation(
+        &manager,
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.project_id,
+    )
+    .await?;
+    let snapshot = abandon_run(
+        &authentication,
+        &manager,
+        &input.owner_user_id,
+        generation,
+        &input.project_id,
+        &input.run_id,
+    )
+    .await?;
+    app.emit(
+        "story-planning-run",
+        serde_json::json!({
+            "presentationId": input.presentation_id,
+            "run": snapshot.clone()
+        }),
+    )
+    .map_err(|_| "剧情规划状态发布失败。".to_owned())?;
+    Ok(snapshot)
+}
+
+async fn validate_planning_presentation(
+    manager: &StoryStudioManager,
+    owner_user_id: &str,
+    generation: u64,
+    presentation_id: &str,
+    project_id: &str,
+) -> Result<(), String> {
+    present_project(
+        manager,
+        owner_user_id,
+        generation,
+        presentation_id,
+        project_id,
+    )
+    .await
+    .map(|_| ())
+}
+
+async fn present_project(
+    manager: &StoryStudioManager,
+    owner_user_id: &str,
+    generation: u64,
+    presentation_id: &str,
+    project_id: &str,
+) -> Result<StoryProjectSnapshot, String> {
+    let work = manager.clone();
+    let owner = owner_user_id.to_owned();
+    let presentation = presentation_id.to_owned();
+    let project = project_id.to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        work.present_project(&owner, generation, &presentation, &project)
+    })
+    .await
+    .map_err(|_| "剧情项目读取任务异常退出。".to_owned())?
 }
 
 async fn load_current_catalog(

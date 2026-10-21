@@ -17,6 +17,7 @@ use super::{
         StoryProjectSettingsInput,
     },
     domain::{StoryImageCollection, StoryProject},
+    execution::StoryPlanningExecutionRegistry,
     projection::{StoryMediaPresentation, StoryProjectSnapshot},
     store::{
         StoryProjectCursor, StoryProjectPage, StoryProjectStore, MAXIMUM_STORY_IMAGE_BYTES,
@@ -178,6 +179,7 @@ pub(crate) struct StoryStudioManager {
     store: StoryProjectStore,
     media: StoryMediaVault,
     preview_session: Arc<Mutex<Option<StoryPreviewSession>>>,
+    pub(super) planning_executions: StoryPlanningExecutionRegistry,
 }
 
 impl StoryStudioManager {
@@ -186,6 +188,7 @@ impl StoryStudioManager {
             store: StoryProjectStore::new(app_data_directory)?,
             media: StoryMediaVault::default(),
             preview_session: Arc::new(Mutex::new(None)),
+            planning_executions: StoryPlanningExecutionRegistry::default(),
         })
     }
 
@@ -301,11 +304,17 @@ impl StoryStudioManager {
         presentation_id: &str,
     ) -> Result<(), String> {
         self.require_active_session(owner_user_id, authentication_generation, None)?;
+        self.planning_executions.cancel_presentation(
+            owner_user_id,
+            authentication_generation,
+            presentation_id,
+        );
         self.media
             .close_presentation(owner_user_id, authentication_generation, presentation_id)
     }
 
     pub(crate) fn reset(&self) {
+        self.planning_executions.reset();
         if let Ok(mut session) = self.preview_session.lock() {
             *session = None;
         }
@@ -326,6 +335,8 @@ impl StoryStudioManager {
                     && active.authentication_generation == authentication_generation
             });
             if matches {
+                self.planning_executions
+                    .cancel_session(owner_user_id, authentication_generation);
                 *session = None;
                 self.media.reset();
             }
@@ -351,6 +362,10 @@ impl StoryStudioManager {
             project,
             |filename| presented.get(filename).cloned(),
         ))
+    }
+
+    pub(super) fn store(&self) -> StoryProjectStore {
+        self.store.clone()
     }
 
     fn activate_session(

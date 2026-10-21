@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::{
     domain::{valid_storage_filename, StoryProject},
-    planning::StoryPlanningRun,
+    planning::{project_fingerprint, StoryPlanningRun, StoryPlanningStatus},
     projection::StoryProjectSnapshot,
 };
 
@@ -272,6 +272,18 @@ impl StoryProjectStore {
         let project_directory = projects.join(&project_id);
         validate_private_directory(&project_directory)?;
         let runs_directory = private_child_directory(&project_directory, "runs")?;
+        let target = runs_directory.join(format!("{run_id}.json"));
+        if target.exists() {
+            let existing_bytes = read_private_file(&target, MAXIMUM_PLANNING_RUN_BYTES)?;
+            let existing: StoryPlanningRun =
+                serde_json::from_slice(&existing_bytes).map_err(|_| planning_store_error())?;
+            existing.validate(&owner_hash, &project_id)?;
+            if (existing.applied && !run.applied)
+                || (existing.abandoned_at_unix_ms.is_some() && run.abandoned_at_unix_ms.is_none())
+            {
+                return Err("剧情规划运行已经结束，不能被迟到结果覆盖。".into());
+            }
+        }
         commit_private_json(
             &runs_directory,
             &format!("{run_id}.json.tmp"),
@@ -308,6 +320,69 @@ impl StoryProjectStore {
         }
         run.validate(&expected_owner_hash, &project_id)?;
         Ok(run)
+    }
+
+    pub(super) fn apply_planning_run(
+        &self,
+        owner_user_id: &str,
+        run: &StoryPlanningRun,
+        now_unix_ms: u64,
+    ) -> Result<(StoryPlanningRun, StoryProject), String> {
+        let owner = validate_owner(owner_user_id)?;
+        let owner_hash = owner_hash(owner);
+        let project_id = canonical_project_id(&run.project_id)?;
+        run.validate(&owner_hash, &project_id)?;
+        if run.applied
+            || run.abandoned_at_unix_ms.is_some()
+            || run.checkpoint.status != StoryPlanningStatus::Completed
+        {
+            return Err(planning_store_error());
+        }
+        let _guard = self.mutation_lock.lock().map_err(|_| store_error())?;
+        let projects = self
+            .existing_projects_directory(owner)?
+            .ok_or_else(planning_store_error)?;
+        let project_directory = projects.join(&project_id);
+        let current = load_project_manifest(&project_directory, &project_id)?;
+        let current_fingerprint = project_fingerprint(&current)?;
+        let draft_fingerprint = project_fingerprint(&run.draft)?;
+        if current_fingerprint != run.base_project_fingerprint
+            && current_fingerprint != draft_fingerprint
+        {
+            return Err("项目已被修改，不能覆盖旧规划；请保留草稿并启动新的规划。".into());
+        }
+        let mut project = if current_fingerprint == draft_fingerprint {
+            current.clone()
+        } else {
+            run.draft.clone()
+        };
+        if current_fingerprint != draft_fingerprint {
+            project.updated_at_unix_ms = now_unix_ms.max(current.updated_at_unix_ms);
+        }
+        project.validate()?;
+        if current_fingerprint != draft_fingerprint {
+            let bytes = serde_json::to_vec(&project).map_err(|_| store_error())?;
+            if bytes.is_empty() || bytes.len() > MAXIMUM_PROJECT_BYTES {
+                return Err(store_error());
+            }
+            commit_project_manifest(&project_directory, &bytes)?;
+        }
+        let mut applied = run.clone();
+        applied.draft = project.clone();
+        applied.applied = true;
+        applied.updated_at_unix_ms = now_unix_ms;
+        let bytes = serde_json::to_vec(&applied).map_err(|_| planning_store_error())?;
+        if bytes.is_empty() || bytes.len() > MAXIMUM_PLANNING_RUN_BYTES {
+            return Err(planning_store_error());
+        }
+        let runs_directory = private_child_directory(&project_directory, "runs")?;
+        commit_private_json(
+            &runs_directory,
+            &format!("{}.json.tmp", applied.id()),
+            &format!("{}.json", applied.id()),
+            &bytes,
+        )?;
+        Ok((applied, project))
     }
 
     fn ensure_projects_directory(&self, owner: &str) -> Result<PathBuf, String> {

@@ -112,8 +112,9 @@ use run_inspector::{
     restart_task_inspector, retry_task_inspector,
 };
 use story_studio::{
-    create_story_project, discard_story_studio_presentation, load_story_project,
-    load_story_projects, story_studio_protocol, update_story_project_settings, StoryStudioManager,
+    abandon_story_planning, create_story_project, discard_story_studio_presentation,
+    load_story_project, load_story_projects, resume_story_planning, start_story_planning,
+    story_studio_protocol, update_story_project_settings, StoryStudioManager,
 };
 use system_permissions::{load_system_permissions, request_system_permission};
 use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent};
@@ -339,6 +340,9 @@ pub fn run() {
             create_story_project,
             update_story_project_settings,
             discard_story_studio_presentation,
+            start_story_planning,
+            resume_story_planning,
+            abandon_story_planning,
             launch_plugin_application,
             discard_plugin_application_presentation,
             handle_plugin_application_bridge_request,

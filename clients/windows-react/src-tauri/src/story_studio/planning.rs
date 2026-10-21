@@ -267,7 +267,9 @@ impl StoryPlanningRun {
             stage,
             target_ids,
             base_project_fingerprint,
-            uses_cloud_memory: true,
+            // Windows does not claim cloud Memory participation until the Local Agent Host
+            // exposes the same owner-scoped Story memory contract used by macOS.
+            uses_cloud_memory: false,
             consent_at_unix_ms: now_unix_ms,
             policy,
             checkpoint: StoryAgentCheckpoint {

@@ -4,13 +4,15 @@ use super::{
         apply_story_project_settings, default_story_style, make_story_project,
         StoryModelSelectionInput, StoryProjectCreationInput, StoryProjectSettingsInput,
     },
+    execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
     planning::{
         project_fingerprint, StoryAgentReceipt, StoryAgentRunPolicy, StoryAgentToolCall,
-        StoryAgentToolOutcome, StoryPlanningRun, StoryPlanningStage,
+        StoryAgentToolOutcome, StoryPlanningRun, StoryPlanningStage, StoryPlanningStatus,
     },
     projection::StoryProjectSnapshot,
     store::StoryProjectStore,
+    tools,
 };
 use crate::authentication::GatewayModelConfig;
 use sha2::{Digest, Sha256};
@@ -670,6 +672,333 @@ fn planning_checkpoint_store_is_atomic_owner_scoped_and_strictly_decoded() {
         .load_planning_run("alice", &canonical.id, run.id())
         .is_err());
     assert!(path.exists(), "an unreadable checkpoint must be preserved");
+}
+
+#[test]
+fn native_story_tool_registry_is_stage_scoped_and_never_exposes_media_generation() {
+    let outline = tools::definitions(StoryPlanningStage::Outline);
+    let refine = tools::definitions(StoryPlanningStage::Refine);
+    let outline_names = outline.iter().map(|value| value.name).collect::<Vec<_>>();
+    let refine_names = refine.iter().map(|value| value.name).collect::<Vec<_>>();
+
+    for required in [
+        "story_read_source",
+        "story_read_text",
+        "story_read_assets",
+        "story_read_asset",
+        "story_read_asset_prompt",
+        "story_read_segments",
+        "story_read_segment",
+        "story_read_graph",
+        "story_save_segment_relations",
+        "story_finish",
+    ] {
+        assert!(outline_names.contains(&required));
+        assert!(refine_names.contains(&required));
+    }
+    assert!(outline_names.contains(&"story_save_character_profile"));
+    assert!(outline_names.contains(&"story_save_scene_profile"));
+    assert!(outline_names.contains(&"story_append_segments"));
+    assert!(!outline_names.contains(&"story_update_segment"));
+    assert!(refine_names.contains(&"story_update_segment"));
+    assert!(!refine_names.contains(&"story_append_segments"));
+    assert!(outline_names
+        .iter()
+        .chain(refine_names.iter())
+        .all(|name| !name.contains("image_generation") && !name.contains("video_generation")));
+    assert!(outline
+        .iter()
+        .chain(refine.iter())
+        .all(
+            |definition| definition.provider_value()["parameters"]["additionalProperties"] == false
+        ));
+}
+
+#[test]
+fn outline_tools_enforce_sequential_source_coverage_and_explicit_relations() {
+    let mut canonical = project();
+    canonical.source = "甲乙丙".into();
+    canonical.segments.clear();
+    canonical.props.clear();
+    let mut run = StoryPlanningRun::new(
+        &canonical,
+        "alice",
+        StoryPlanningStage::Outline,
+        Vec::new(),
+        "",
+        StoryAgentRunPolicy::default(),
+        "system".into(),
+        |_| "goal".into(),
+        1,
+    )
+    .unwrap();
+
+    let skipped = execute_story_tool(
+        &mut run,
+        "skip",
+        "story_read_source",
+        serde_json::json!({"offset": 1, "limit": 2}),
+    );
+    assert!(skipped.is_error);
+    assert_eq!(run.read_through, 0);
+
+    let source_outcome = execute_story_tool(
+        &mut run,
+        "read",
+        "story_read_source",
+        serde_json::json!({"offset": 0, "limit": 3}),
+    );
+    assert!(!source_outcome.is_error, "{}", source_outcome.content);
+    assert_eq!(run.read_through, 3);
+    let summary_outcome = execute_story_tool(
+        &mut run,
+        "summary",
+        "story_save_summary",
+        serde_json::json!({"summary": "完整摘要"}),
+    );
+    assert!(!summary_outcome.is_error, "{}", summary_outcome.content);
+    assert!(
+        !execute_story_tool(
+            &mut run,
+            "scene",
+            "story_save_scene_profile",
+            serde_json::json!({
+                "id": "room", "name": "房间",
+                "profile": {
+                    "roleInStory": "主要场景", "setting": "室内", "spatialLayout": "方形房间",
+                    "lightingAndPalette": "暖光", "keyElements": "木桌", "atmosphere": "安静",
+                    "consistencyNotes": "布局固定"
+                }
+            }),
+        )
+        .is_error
+    );
+    assert!(
+        !execute_story_tool(
+            &mut run,
+            "segments",
+            "story_append_segments",
+            serde_json::json!({"segments": [{
+                "id": "segment-1", "title": "第一段", "synopsis": "覆盖全文",
+                "kind": "story", "seconds": 5, "sourceStart": 0, "sourceEnd": 3
+            }]}),
+        )
+        .is_error
+    );
+    let finish_before_relations = execute_story_tool(
+        &mut run,
+        "finish-before",
+        "story_finish",
+        serde_json::json!({}),
+    );
+    assert!(finish_before_relations.is_error);
+    let relations_outcome = execute_story_tool(
+        &mut run,
+        "relations",
+        "story_save_segment_relations",
+        serde_json::json!({
+            "segmentID": "segment-1", "characterIDs": [], "sceneIDs": ["room"],
+            "propIDs": [], "relations": []
+        }),
+    );
+    assert!(!relations_outcome.is_error, "{}", relations_outcome.content);
+    assert!(
+        !execute_story_tool(&mut run, "finish", "story_finish", serde_json::json!({}),).is_error
+    );
+}
+
+#[test]
+fn refine_tool_requires_a_durable_segment_read_receipt() {
+    let mut canonical = project();
+    canonical.scenes.push(StoryScene {
+        id: "room".into(),
+        name: "Room".into(),
+        profile: StorySceneProfile {
+            role_in_story: "Setting".into(),
+            setting: "Room".into(),
+            spatial_layout: "Square".into(),
+            lighting_and_palette: "Warm".into(),
+            key_elements: "Table".into(),
+            atmosphere: "Quiet".into(),
+            consistency_notes: "Stable".into(),
+        },
+        image_prompt: "Room\nSquare\nWarm\nTable\nQuiet\nStable".into(),
+        media: StoryImageCollection::default(),
+    });
+    canonical.segments[0].scene_ids = vec!["room".into()];
+    let mut run = StoryPlanningRun::new(
+        &canonical,
+        "alice",
+        StoryPlanningStage::Refine,
+        vec!["s1".into()],
+        "",
+        StoryAgentRunPolicy::default(),
+        "system".into(),
+        |_| "goal".into(),
+        1,
+    )
+    .unwrap();
+    let detail = serde_json::json!({
+        "segmentID": "s1",
+        "detail": {
+            "firstFramePrompt": "房间中的静态开场", "lastFramePrompt": "房间中的结束状态",
+            "shots": [{"start": 0, "end": 15, "prompt": "全景连续动作"}],
+            "continuityIn": "开场", "continuityOut": "结束", "audio": "环境声", "constraints": "保持布局"
+        }
+    });
+    assert!(
+        execute_story_tool(
+            &mut run,
+            "update-before",
+            "story_update_segment",
+            detail.clone()
+        )
+        .is_error
+    );
+    let read_outcome = execute_story_tool(
+        &mut run,
+        "read-segment",
+        "story_read_segment",
+        serde_json::json!({"segmentID": "s1"}),
+    );
+    assert!(!read_outcome.is_error, "{}", read_outcome.content);
+    assert!(!execute_story_tool(&mut run, "update", "story_update_segment", detail).is_error);
+    assert!(tools::validate_completion(&run).is_ok());
+}
+
+#[test]
+fn planning_execution_registry_is_single_flight_and_cancels_page_teardown() {
+    let registry = StoryPlanningExecutionRegistry::default();
+    let presentation = Uuid::new_v4().to_string();
+    let project = Uuid::new_v4().to_string();
+    let run = Uuid::new_v4().to_string();
+    let lease = registry
+        .begin("alice", 7, &presentation, &project, &run)
+        .unwrap();
+    assert!(registry
+        .begin("alice", 7, &presentation, &project, &run)
+        .is_err());
+    assert!(registry.accepts(&lease));
+    registry.cancel_presentation("alice", 7, &presentation);
+    assert!(!registry.accepts(&lease));
+    registry.finish(&lease);
+    assert!(registry
+        .begin(
+            "alice",
+            7,
+            &presentation,
+            &project,
+            &Uuid::new_v4().to_string()
+        )
+        .is_ok());
+}
+
+#[test]
+fn completed_planning_run_applies_only_over_its_unchanged_canonical_base() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    canonical.source = "x".into();
+    store.save("alice", &canonical).unwrap();
+    let mut run = StoryPlanningRun::new(
+        &canonical,
+        "alice",
+        StoryPlanningStage::Refine,
+        vec!["s1".into()],
+        "",
+        StoryAgentRunPolicy::default(),
+        "system".into(),
+        |_| "goal".into(),
+        1,
+    )
+    .unwrap();
+    run.draft.title = "Applied Draft".into();
+    run.checkpoint.status = StoryPlanningStatus::Completed;
+    run.checkpoint.result = Some("done".into());
+    store.save_planning_run("alice", &run).unwrap();
+
+    let (applied, saved) = store.apply_planning_run("alice", &run, 9).unwrap();
+    assert!(applied.applied);
+    assert_eq!(saved.title, "Applied Draft");
+    assert_eq!(
+        store.load_native_project("alice", &canonical.id).unwrap(),
+        saved
+    );
+
+    let mut changed = canonical.clone();
+    changed.title = "Concurrent User Edit".into();
+    changed.updated_at_unix_ms = 10;
+    store.save("alice", &changed).unwrap();
+    let mut second = run.clone();
+    second.checkpoint.id = Uuid::new_v4().to_string();
+    second.applied = false;
+    assert!(store.apply_planning_run("alice", &second, 11).is_err());
+    assert_eq!(
+        store
+            .load_native_project("alice", &canonical.id)
+            .unwrap()
+            .title,
+        "Concurrent User Edit"
+    );
+}
+
+#[test]
+fn abandoned_planning_run_rejects_a_late_runtime_checkpoint() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    canonical.source = "x".into();
+    store.save("alice", &canonical).unwrap();
+    let run = StoryPlanningRun::new(
+        &canonical,
+        "alice",
+        StoryPlanningStage::Refine,
+        vec!["s1".into()],
+        "",
+        StoryAgentRunPolicy::default(),
+        "system".into(),
+        |_| "goal".into(),
+        1,
+    )
+    .unwrap();
+    store.save_planning_run("alice", &run).unwrap();
+    let stale = run.clone();
+    let mut abandoned = run;
+    abandoned.abandoned_at_unix_ms = Some(2);
+    abandoned.checkpoint.stop_reason = Some("abandoned".into());
+    store.save_planning_run("alice", &abandoned).unwrap();
+
+    assert!(store.save_planning_run("alice", &stale).is_err());
+    assert_eq!(
+        store
+            .load_planning_run("alice", &canonical.id, abandoned.id())
+            .unwrap()
+            .abandoned_at_unix_ms,
+        Some(2)
+    );
+}
+
+fn execute_story_tool(
+    run: &mut StoryPlanningRun,
+    id: &str,
+    name: &str,
+    arguments: serde_json::Value,
+) -> StoryAgentToolOutcome {
+    let call = StoryAgentToolCall {
+        id: id.into(),
+        name: name.into(),
+        arguments: serde_json::to_string(&arguments).unwrap(),
+    };
+    let outcome = tools::execute(&call, run);
+    run.tool_receipts.insert(
+        id.into(),
+        StoryAgentReceipt {
+            name: name.into(),
+            arguments: call.arguments,
+            outcome: outcome.clone(),
+        },
+    );
+    outcome
 }
 
 fn projects_directory(app_data: &std::path::Path, owner: &str) -> std::path::PathBuf {

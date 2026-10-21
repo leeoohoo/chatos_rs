@@ -91,6 +91,20 @@ pub(super) struct StoryCharacterProfile {
     pub consistency_notes: String,
 }
 
+impl StoryCharacterProfile {
+    fn validate(&self) -> Result<(), String> {
+        validate_profile_fields([
+            &self.role_in_story,
+            &self.appearance,
+            &self.personality,
+            &self.motivation,
+            &self.relationships,
+            &self.costume,
+            &self.consistency_notes,
+        ])
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct StorySceneProfile {
@@ -101,6 +115,20 @@ pub(super) struct StorySceneProfile {
     pub key_elements: String,
     pub atmosphere: String,
     pub consistency_notes: String,
+}
+
+impl StorySceneProfile {
+    fn validate(&self) -> Result<(), String> {
+        validate_profile_fields([
+            &self.role_in_story,
+            &self.setting,
+            &self.spatial_layout,
+            &self.lighting_and_palette,
+            &self.key_elements,
+            &self.atmosphere,
+            &self.consistency_notes,
+        ])
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -174,6 +202,42 @@ pub(super) struct StorySegmentDetail {
     pub continuity_out: String,
     pub audio: String,
     pub constraints: String,
+}
+
+impl StorySegmentDetail {
+    fn validate(&self, duration: u8) -> Result<(), String> {
+        if !(2..=15).contains(&duration)
+            || self.first_frame_prompt.trim().is_empty()
+            || self.first_frame_prompt.chars().count() > 3_000
+            || self
+                .last_frame_prompt
+                .as_ref()
+                .is_some_and(|value| value.trim().is_empty() || value.chars().count() > 3_000)
+            || !(1..=8).contains(&self.shots.len())
+            || self.continuity_in.chars().count() > 1_000
+            || self.continuity_out.chars().count() > 1_000
+            || self.audio.chars().count() > 1_000
+            || self.constraints.chars().count() > 2_000
+        {
+            return Err(invalid_story());
+        }
+        let mut cursor = 0;
+        for shot in &self.shots {
+            if shot.start != cursor
+                || shot.end <= shot.start
+                || shot.end > duration
+                || shot.prompt.trim().is_empty()
+                || shot.prompt.chars().count() > 2_000
+            {
+                return Err(invalid_story());
+            }
+            cursor = shot.end;
+        }
+        if cursor != duration {
+            return Err(invalid_story());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -306,19 +370,67 @@ impl StoryProject {
             return Err(invalid_story());
         }
         let resource_ids = self.resource_id_set()?;
+        let character_ids = self
+            .characters
+            .iter()
+            .map(|value| value.id.as_str())
+            .collect::<HashSet<_>>();
+        let scene_ids = self
+            .scenes
+            .iter()
+            .map(|value| value.id.as_str())
+            .collect::<HashSet<_>>();
+        let prop_ids = self
+            .props
+            .iter()
+            .map(|value| value.id.as_str())
+            .collect::<HashSet<_>>();
         let mut segment_ids = HashSet::new();
-        for segment in &self.segments {
+        for (segment_index, segment) in self.segments.iter().enumerate() {
             if segment.id.is_empty()
                 || segment.id.len() > 128
                 || !segment_ids.insert(segment.id.as_str())
                 || segment.title.trim().is_empty()
                 || segment.title.chars().count() > 120
+                || segment.synopsis.chars().count() > 2_000
                 || !(2..=15).contains(&segment.seconds)
+                || segment.character_ids.len() + segment.scene_ids.len() + segment.prop_ids.len()
+                    > 8
+                || !all_unique(segment.character_ids.iter())
+                || !all_unique(segment.scene_ids.iter())
+                || !all_unique(segment.prop_ids.iter())
+                || segment
+                    .character_ids
+                    .iter()
+                    .any(|id| !character_ids.contains(id.as_str()))
+                || segment
+                    .scene_ids
+                    .iter()
+                    .any(|id| !scene_ids.contains(id.as_str()))
+                || segment
+                    .prop_ids
+                    .iter()
+                    .any(|id| !prop_ids.contains(id.as_str()))
                 || segment
                     .resource_ids()
                     .any(|id| !resource_ids.contains(id.as_str()))
+                || segment.source_range.end > self.source.chars().count()
+                || segment.source_range.end < segment.source_range.start
+                || (segment.kind == StorySegmentKind::Story
+                    && segment.source_range.end == segment.source_range.start)
+                || (segment.kind == StorySegmentKind::Transition
+                    && (segment_index == 0
+                        || segment_index + 1 >= self.segments.len()
+                        || self.segments[segment_index - 1].kind != StorySegmentKind::Story
+                        || self.segments[segment_index + 1].kind != StorySegmentKind::Story
+                        || segment.source_range.start != segment.source_range.end))
+                || segment.archived_videos.len() > 100
+                || !all_unique(segment.archived_videos.iter().map(|value| &value.job_id))
             {
                 return Err(invalid_story());
+            }
+            if let Some(detail) = &segment.detail {
+                detail.validate(segment.seconds)?;
             }
             segment.first_frames.validate()?;
             segment.last_frames.validate()?;
@@ -351,6 +463,43 @@ impl StoryProject {
                             .any(|image| &image.id == id)
                     })
             {
+                return Err(invalid_story());
+            }
+        }
+        let mut relation_ids = HashSet::new();
+        for relation in &self.relations {
+            let Some(segment) = self
+                .segments
+                .iter()
+                .find(|segment| segment.id == relation.segment_id)
+            else {
+                return Err(invalid_story());
+            };
+            if relation.id.is_empty()
+                || relation.id.len() > 128
+                || !relation_ids.insert(relation.id.as_str())
+                || !character_ids.contains(relation.character_id.as_str())
+                || !scene_ids.contains(relation.scene_id.as_str())
+                || !segment.character_ids.contains(&relation.character_id)
+                || !segment.scene_ids.contains(&relation.scene_id)
+                || relation.action.trim().is_empty()
+                || relation.action.chars().count() > 400
+                || relation.position.trim().is_empty()
+                || relation.position.chars().count() > 400
+                || relation.start_second >= relation.end_second
+                || relation.end_second > segment.seconds
+            {
+                return Err(invalid_story());
+            }
+        }
+        for (index, relation) in self.relations.iter().enumerate() {
+            if self.relations.iter().skip(index + 1).any(|other| {
+                other.segment_id == relation.segment_id
+                    && other.character_id == relation.character_id
+                    && other.scene_id != relation.scene_id
+                    && other.start_second.max(relation.start_second)
+                        < other.end_second.min(relation.end_second)
+            }) {
                 return Err(invalid_story());
             }
         }
@@ -430,6 +579,17 @@ impl StoryProject {
                 return Err(invalid_story());
             }
             media.validate()?;
+        }
+        for character in &self.characters {
+            character.profile.validate()?;
+        }
+        for scene in &self.scenes {
+            scene.profile.validate()?;
+        }
+        if self.props.iter().any(|value| {
+            value.description.trim().is_empty() || value.description.chars().count() > 2_000
+        }) {
+            return Err(invalid_story());
         }
         Ok(ids)
     }
@@ -561,6 +721,17 @@ pub(super) fn confirm_image(
 fn all_unique<'a, T: Eq + std::hash::Hash + 'a>(mut values: impl Iterator<Item = &'a T>) -> bool {
     let mut seen = HashSet::new();
     values.all(|value| seen.insert(value))
+}
+
+fn validate_profile_fields<'a>(values: impl IntoIterator<Item = &'a String>) -> Result<(), String> {
+    if values
+        .into_iter()
+        .any(|value| value.trim().is_empty() || value.chars().count() > 600)
+    {
+        Err(invalid_story())
+    } else {
+        Ok(())
+    }
 }
 
 pub(super) fn valid_storage_filename(value: &str) -> bool {
