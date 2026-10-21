@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
 import type { StoryPlanningEvent, StoryProject } from "../domain/storyStudio";
 import type { StoryStudioPort } from "../ports/StoryStudioPort";
+import { useStoryStudioStore } from "../application/storyStudioStore";
 import { StoryStudioView } from "./StoryStudioView";
 
 afterEach(cleanup);
@@ -114,6 +115,30 @@ describe("StoryStudioView", () => {
       runId: interrupted.id,
     })));
   });
+
+  it("keeps the native picker and imported bytes behind the Story adapter", async () => {
+    const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
+    const imported = { ...canonical, updatedAtUnixMs: 3 };
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      importLocalImage: vi.fn(async () => imported),
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+    await screen.findByRole("heading", { name: "雨夜来客" });
+
+    await act(async () => useStoryStudioStore.getState().importLocalImage(storyPort, {
+      kind: "resource",
+      resourceId: "character-a",
+    }));
+
+    expect(storyPort.importLocalImage).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUserId: "alice",
+      projectId: canonical.id,
+      baseFingerprint: canonical.baseFingerprint,
+      target: { kind: "resource", resourceId: "character-a" },
+    }));
+    expect(useStoryStudioStore.getState().projects[0]?.updatedAtUnixMs).toBe(3);
+  });
 });
 
 function usePresentationId(storyPort: StoryStudioPort) {
@@ -127,6 +152,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     loadPlanningHistory: vi.fn(async () => ({ runs: [], nextCursor: null, unreadableCount: 0, recoveredProject: null })),
     resumePlanning: vi.fn(async () => project()),
     abandonPlanning: vi.fn(async () => planningRun()),
+    importLocalImage: vi.fn(async () => project()),
     loadProjects: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadProject: vi.fn(async () => project()),
     createProject: vi.fn(async () => project()),

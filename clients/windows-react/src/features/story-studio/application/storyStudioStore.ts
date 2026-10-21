@@ -2,7 +2,7 @@ import { create, type StoreApi } from "zustand";
 import type { MediaStudioModel } from "../../media-studio/domain/mediaStudio";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
 import type { StoryPlanningEvent, StoryPlanningRun, StoryProject } from "../domain/storyStudio";
-import type { StoryStudioPort } from "../ports/StoryStudioPort";
+import type { StoryImageImportTarget, StoryStudioPort } from "../ports/StoryStudioPort";
 
 interface StoryVideoProgress {
   status: string;
@@ -53,6 +53,7 @@ interface StoryStudioState {
   loadPlanningHistory(storyPort: StoryStudioPort, projectId: string): Promise<void>;
   resumePlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
   abandonPlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
+  importLocalImage(storyPort: StoryStudioPort, target: StoryImageImportTarget): Promise<void>;
   generateAssetImage(storyPort: StoryStudioPort, resourceId: string, userIdeas: string): Promise<void>;
   generateFrameImage(storyPort: StoryStudioPort, segmentId: string, frameRole: "first" | "last", referenceResourceIds: string[], userIdeas: string): Promise<void>;
   confirmLatestResources(storyPort: StoryStudioPort, resourceIds: string[]): Promise<void>;
@@ -314,6 +315,32 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ busy: false, error: errorMessage(error, "剧情规划草稿无法放弃。") });
+    }
+  },
+
+  async importLocalImage(storyPort, target) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().activeMediaTarget) return;
+    const operation = target.kind === "resource"
+      ? `import:resource:${target.resourceId}`
+      : `import:frame:${target.segmentId}:${target.frameRole}`;
+    set({ activeMediaTarget: operation, error: null });
+    try {
+      const saved = await storyPort.importLocalImage({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        target,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        projects: saved ? replaceProject(state.projects, saved) : state.projects,
+        activeMediaTarget: null,
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ activeMediaTarget: null, error: errorMessage(error, "本机剧情图片导入失败。") });
     }
   },
 

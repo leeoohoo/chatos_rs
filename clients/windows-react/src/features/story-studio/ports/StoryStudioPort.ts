@@ -13,6 +13,10 @@ export interface StoryPresentationScope {
   presentationId: string;
 }
 
+export type StoryImageImportTarget =
+  | { kind: "resource"; resourceId: string }
+  | { kind: "frame"; segmentId: string; frameRole: "first" | "last" };
+
 export interface StoryStudioPort {
   watchPlanning(
     request: StoryPresentationScope,
@@ -56,6 +60,11 @@ export interface StoryStudioPort {
     projectId: string;
     runId: string;
   }): Promise<StoryPlanningRun>;
+  importLocalImage(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    target: StoryImageImportTarget;
+  }): Promise<StoryProject | null>;
   generateAssetImage(request: StoryPresentationScope & {
     projectId: string;
     baseFingerprint: string;
