@@ -177,6 +177,16 @@ pub fn run() {
             app.manage(RemoteConnectionManager::new(data_dir.clone()));
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
             app.manage(PluginApplicationManager::new(data_dir));
+            #[cfg(target_os = "windows")]
+            if std::env::var_os("CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP").as_deref()
+                == Some(std::ffi::OsStr::new("1"))
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    app_handle.exit(0);
+                });
+            }
             Ok(())
         })
         .register_uri_scheme_protocol("chatos-attachment", move |_context, request| {

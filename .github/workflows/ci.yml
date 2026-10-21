@@ -271,6 +271,51 @@ jobs:
           }
           $installers | ForEach-Object { Write-Host $_.FullName }
 
+      - name: Smoke-test installed Windows application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Get-ChildItem "target-shared/release/bundle/nsis/*.exe" -File | Select-Object -First 1
+          $installDirectory = Join-Path $env:RUNNER_TEMP "chatos-nsis-smoke"
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDirectory") -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            throw "NSIS installer failed with exit code $($install.ExitCode)"
+          }
+
+          $sidecar = Join-Path $installDirectory "chatos_local_agent_host.exe"
+          if (-not (Test-Path $sidecar -PathType Leaf)) {
+            throw "Installed Local Agent Host resource is missing: $sidecar"
+          }
+          $application = Get-ChildItem $installDirectory -File -Filter "*.exe" |
+            Where-Object { $_.Name -ne "chatos_local_agent_host.exe" -and $_.Name -notmatch "^unins" } |
+            Select-Object -First 1
+          if ($null -eq $application) {
+            throw "Installed ChatOS application executable is missing"
+          }
+
+          $env:CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP = "1"
+          try {
+            $launched = Start-Process -FilePath $application.FullName -PassThru
+            if (-not $launched.WaitForExit(15000)) {
+              Stop-Process -Id $launched.Id -Force -ErrorAction SilentlyContinue
+              throw "Installed ChatOS application did not complete its graceful startup/exit smoke path"
+            }
+            if ($launched.ExitCode -ne 0) {
+              throw "Installed ChatOS application exited with code $($launched.ExitCode)"
+            }
+          } finally {
+            Remove-Item Env:CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP -ErrorAction SilentlyContinue
+          }
+
+          $uninstaller = Get-ChildItem $installDirectory -File -Filter "unins*.exe" | Select-Object -First 1
+          if ($null -eq $uninstaller) {
+            throw "NSIS uninstaller is missing"
+          }
+          $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) {
+            throw "NSIS uninstaller failed with exit code $($uninstall.ExitCode)"
+          }
+
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
