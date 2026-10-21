@@ -1163,11 +1163,12 @@ Windows React 已完成对应独立切片：
 - CSP 仅为受控媒体预览扩展 `img-src` 的 `chatos-media`、Windows 映射 origin 与 HTTPS 图片，不放宽 `connect-src`、脚本或 Tauri IPC。React 全量 78 个测试文件、279 项通过，TypeScript、production build 和架构审计通过；Windows Media Studio 原生定向 15 项通过。第 06 页 AI 图片已完整进入 Windows React。
 - 第 07 页视频生成的 macOS Application 分层已完成：Core 新增窄 `MediaStudioVideoHistoryPersisting`、`MediaStudioVideoGenerationUseCase`、`MediaStudioVideoGenerationOutcome` 与 `MediaStudioVideoGenerationState`。Use Case 统一编排 provider progress、取消复验、`saving` 阶段和历史保存；ViewModel 只冻结 request/owner、持有 Task、消费 progress/outcome，不再直接调用视频 provider 或磁盘 Store。生成成功但保存失败以强类型结果保持 failed canvas 语义，provider 忽略取消并迟到返回时也不得落盘；owner/account session/request token 共同拒绝旧账号和旧请求写回。新增 Core 4 项及既有 ViewModel/History/Video Canvas 16 项通过。
 - Windows 视频原生门禁已完成：Rust 精确实现当前 macOS 仅允许 `MiniMax-H3`、768P/2K、4...15 秒和既定比例的 `/videos` 契约，typed start/poll/cancel job 投影 `queued/in_progress/unknown/downloading/saving/failed/completed`，创建/查询 JSON 各限制 2 MiB，视频内容限制 512 MiB；signed HTTPS CDN 不携带模型凭据，legacy content endpoint 才使用 Rust 内的 bearer token。首帧复用图片 token vault，参考音频使用独立 owner/authentication generation/presentation-scoped 原生 picker vault，校验真实 MP3/WAV/M4A/AAC 内容、20 MiB、SHA-256 与非链接文件。job 绑定 owner/account generation/presentation/request/poll lease，限制单账号 4 个活动任务和 180 次轮询；取消、账号/页面/应用 teardown 使迟到 provider 响应、下载和 1 MiB 分块写盘全部失败关闭。视频历史使用独立 `VideoAccounts` 物理目录以保持已上线图片游标稳定，仍通过同一 owner/session `chatos-media` 协议投影，不向 IPC 暴露路径、媒体字节或 Secret。新增 20 项，Media Studio 定向 35 项、Windows Rust 全量 242 项通过、2 项 sidecar 环境测试忽略，Clippy 零警告；现在允许进入 React 视频切片。
+- Windows React 视频切片已完成：strict Zod Domain/typed Port/Tauri Adapter 只接受 opaque 首帧、音频、job 与 content token，并联合校验 preview URL、job ID 和 client request ID；路径、视频字节、base64 视频、Secret 与未知字段在 Adapter 前后均失败关闭。Store 将图片与视频状态隔离，冻结 MiniMax-H3 模型与全部生成参数，start/poll 绑定 owner/account generation/presentation/request identity 并约 10 秒轮询；取消、换账号和页面 teardown 会停止轮询、清理原生 presentation 并拒绝迟到结果。停止等待恢复旧视频，provider/保存失败保持 failed canvas，completed 结果 newest-first 合并到视频历史。Apple 主题 UI 已映射 macOS 视频画布、进度、停止等待、首帧、参考音频、分辨率、比例、时长及历史播放；剧情模式保持禁用。审查同时补齐原生 reset 对视频 audio vault/job registry 的清理。Media Studio React 31 项及全量 78 个测试文件、289 项通过，Rust Media Studio 36 项、Windows Rust 全量 243 项通过、2 项 sidecar 环境测试忽略，TypeScript、production build、架构审计和 Clippy 均通过。
 - 历史首页/分页、图片生成→本地保存、视频生成→进度→本地保存，以及所有媒体读取任务都先完成 adapter/磁盘工作，再以 weak ViewModel 恢复并联合验收 identity。
 - 图片生成成功但本地保存失败时仍显示生成结果并给出历史错误；视频保存失败继续保留失败画布语义；取消视频必须拒绝服务端迟到完成。这些均为现有 macOS 行为，不得由 Windows 自行修改。
-- Media Studio 25 项相关回归覆盖历史分页/损坏记录隔离、账号切换、图片引用、视频画布取消/重试及延迟生成释放。
+- Media Studio 43 项 macOS 回归覆盖历史分页/损坏记录隔离、账号切换、图片引用、视频画布取消/重试、保存失败及延迟生成释放。
 - Story Studio 已完成项目首屏/分页、Agent history、media batch、图片/首尾帧/视频生成、进度恢复、末帧提取、顺序批次、Agent planning/runtime、编辑/导入/保存与镜头细化的 await ownership 审计；所有请求先冻结 Store/service/project snapshot，I/O 完成后才弱恢复 UI 并验收 identity。
-- Story provider 图片/视频生成悬挂时 ViewModel 可释放；Story Studio 54 项与 Story Agent 相关测试通过。完整 UI/Port 映射与跨平台媒体能力差异仍未完成，因此 AI Studio 页面仍不具备 React 准入资格。
+- Story provider 图片/视频生成悬挂时 ViewModel 可释放；Story Studio 54 项与 Story Agent 相关测试通过。完整 UI/Port 映射与跨平台媒体能力差异仍未完成，因此只有剧情模式继续不具备 React 准入资格。
 
 ### 9.3 Agent Group Chat
 
@@ -1187,10 +1188,10 @@ Windows React 已完成对应独立切片：
 | 03 | 项目设置 | macOS Application/Port 分层完成；Windows analyzer、typed process、Job Object/process group、bounded log/state long-poll、偏好/系统凭据 Secret、Removal、Favorite 与 Apple 主题 React UI 已完成 | 已进入 React |
 | 04 | 联系人聊天 | macOS 直接复用 Conversation session/timeline、空态与插件安装助手隔离提示已映射；Windows 薄组合层已完成 | 已进入 React；不创建第二套会话协议 |
 | 05 | 应用 | macOS Listing/Launch Use Case、Feature ViewModel、项目上下文安全投影及异步 lifecycle 已完成分层；Windows catalog/runtime/bridge、typed Store/Adapter、Apple 主题 UI 与 sandbox iframe 已完成 | 已进入 React；exact origin/source/session/nonce 与 CSP 门禁已进入测试 |
-| 06 | AI 图片 | macOS 生成/保存、模型目录、历史分页及参考图已进入 Core 窄 Port/Use Case 与 typed lifecycle；Windows provider/Secret、原子历史/分页、安全预览、参考图 token vault、strict React Domain/Port/Adapter/Store 与 Apple 主题 UI 已完成 | 已进入 React；视频与剧情模式继续按各自行准入门禁禁用 |
-| 07 | AI 视频 | macOS Core Port/Use Case/typed lifecycle 与 Windows provider/job/progress/history/首帧及音频 token vault 原生门禁已完成 | 允许；下一片实现 strict React Domain/Port/Store 与 Apple 主题视频工作面 |
+| 06 | AI 图片 | macOS 生成/保存、模型目录、历史分页及参考图已进入 Core 窄 Port/Use Case 与 typed lifecycle；Windows provider/Secret、原子历史/分页、安全预览、参考图 token vault、strict React Domain/Port/Adapter/Store 与 Apple 主题 UI 已完成 | 已进入 React；剧情模式继续按独立准入门禁禁用 |
+| 07 | AI 视频 | macOS Core Port/Use Case/typed lifecycle 与 Windows provider/job/progress/history/首帧及音频 token vault、strict React Domain/Port/Adapter/Store、轮询/取消语义及 Apple 主题视频工作面均已完成 | 已进入 React；剧情模式仍保持禁用 |
 | 08 | AI 故事 | 源码映射中（项目/历史/生成/批次/Agent/编辑生命周期已收口） | 禁止；等待完整 Port 与平台差异验收 |
-| 09 | AI 历史 | 源码映射中（本地分页与账号隔离已收口） | 禁止 |
+| 09 | AI 历史 | macOS 图片/视频历史分页与账号隔离已收口并完成 Windows 原生/React 映射；剧情作品历史等待第 08 页 | 图片与视频历史已进入 React；剧情历史继续禁用 |
 | 10 | Agent 管理 | 未映射 | 禁止 |
 | 11 | Agent 文档 | 未映射 | 禁止 |
 | 12 | Agent 团队概览 | 源码映射中（补充快照生命周期已收口） | 禁止 |
@@ -1259,5 +1260,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 37. [已完成] 第 06 页 Windows React 已完成 strict Domain/Port/Tauri Adapter、独立 request identity Store、生成参数冻结、历史分页/去重、迟到参考图清理、保存失败 transient 结果、页面 teardown 和 Apple 主题图片创作/历史 UI；React 全量 78 个测试文件、279 项通过，production build、类型检查和架构审计通过。
 38. [已完成] 第 07 页视频生成已按 macOS 事实源完成第一段 Application 分层：provider、progress、取消复验、`saving` 和历史保存收口到 Core Use Case，磁盘 Store 通过窄 Port 接入；保存失败、provider 自发取消、用户停止等待、迟到 provider 完成及 owner/account/request lifecycle 均保持原语义并进入测试。下一片开始 Windows 视频 provider/job/progress/history/token vault，原生门禁完成前不创建 React 视频页面。
 39. [已完成] 第 07 页 Windows 原生 provider、typed start/poll/cancel job、进度、512 MiB 有界下载、取消感知原子历史、分页、安全预览、首帧图片 token 与参考音频 picker/token vault 已形成闭环；Secret、路径和媒体字节不进入 IPC，账号/页面/应用 teardown 与 poll lease 拒绝迟到写回。Windows 使用独立 `VideoAccounts` 物理目录保持现有图片分页游标稳定，产品语义仍与 macOS 一致。下一片开始 React Domain/Port/Adapter/Store 和 Apple 主题视频工作面。
+40. [已完成] 第 07 页 Windows React 已在既有 `media-studio` feature 内完成视频 strict Domain/Port/Tauri Adapter、独立历史/输入/生成状态、冻结参数、start/poll identity、约 10 秒轮询、取消/迟到/账号切换、failed canvas、旧视频恢复、newest-first 历史和 Apple 主题视频工作面；原生 reset 同步清理 audio vault/job registry。React 全量 78 个测试文件、289 项，Windows Rust 全量 243 项通过、2 项环境测试忽略，production build、类型检查、架构审计与 Clippy 通过。下一片进入第 08 页 AI 故事的完整 macOS UI/Port 与平台差异映射。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
