@@ -43,6 +43,8 @@ interface StoryStudioState {
   confirmLatestFrames(storyPort: StoryStudioPort, segmentId: string, useLastFrame: boolean): Promise<void>;
   startVideo(storyPort: StoryStudioPort, segmentId: string, size: "768P" | "2K", userIdeas: string): Promise<void>;
   resumeVideo(storyPort: StoryStudioPort, segmentId: string): Promise<void>;
+  updateVideoGuidance(storyPort: StoryStudioPort, segmentId: string, mode: "first_frame" | "first_and_last_frames" | "previous_video" | "source_video"): Promise<void>;
+  archiveCompletedVideo(storyPort: StoryStudioPort, segmentId: string, useSourceVideo: boolean): Promise<void>;
   clearError(): void;
 }
 
@@ -337,6 +339,48 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
         error: errorMessage(error, "剧情视频任务无法恢复。"),
         videoProgress: withoutKey(state.videoProgress, segmentId),
       }));
+    }
+  },
+
+  async updateVideoGuidance(storyPort, segmentId, mode) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().busy) return;
+    set({ busy: true, error: null });
+    try {
+      const saved = await storyPort.updateVideoGuidance({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        segmentId,
+        mode,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({ projects: replaceProject(state.projects, saved), busy: false }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ busy: false, error: errorMessage(error, "视频引导方式保存失败。") });
+    }
+  },
+
+  async archiveCompletedVideo(storyPort, segmentId, useSourceVideo) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().busy) return;
+    set({ busy: true, error: null });
+    try {
+      const saved = await storyPort.archiveCompletedVideo({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        segmentId,
+        useSourceVideo,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({ projects: replaceProject(state.projects, saved), busy: false }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ busy: false, error: errorMessage(error, "完成视频归档失败。") });
     }
   },
 

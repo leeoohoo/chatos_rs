@@ -188,6 +188,24 @@ pub(crate) struct StoryVideoGenerationPollInput {
     pub segment_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryVideoGuidanceInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub segment_id: String,
+    pub mode: StoryVideoGuidanceMode,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryCompletedVideoArchiveInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub segment_id: String,
+    pub use_source_video: bool,
+}
+
 pub(super) fn make_story_project(
     input: StoryProjectCreationInput,
     owner_user_id: &str,
@@ -919,6 +937,89 @@ pub(super) fn complete_story_video_generation(
         model_name: completion.model_name,
     });
     segment.error = None;
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
+}
+
+pub(super) fn apply_story_video_guidance(
+    project: &mut StoryProject,
+    input: StoryVideoGuidanceInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    let index = project
+        .segments
+        .iter()
+        .position(|segment| segment.id == input.segment_id)
+        .ok_or_else(|| "剧情分段已不存在，请刷新后重试。".to_owned())?;
+    let segment = &project.segments[index];
+    if segment.attempt.is_some() || segment.video.is_some() {
+        return Err("当前分段存在视频任务或已完成视频，不能切换引导方式。".into());
+    }
+    match input.mode {
+        StoryVideoGuidanceMode::FirstFrame => {}
+        StoryVideoGuidanceMode::FirstAndLastFrames => {
+            if segment.last_frames.confirmed_image_id.is_none() {
+                return Err("请先确认尾帧，再启用首尾帧引导。".into());
+            }
+        }
+        StoryVideoGuidanceMode::PreviousVideo => {
+            if index == 0 || project.segments[index - 1].video.is_none() {
+                return Err("当前分段没有可用的上一段成片。".into());
+            }
+        }
+        StoryVideoGuidanceMode::SourceVideo => {
+            if segment.archived_videos.is_empty() {
+                return Err("当前分段没有可用于重做的原视频。".into());
+            }
+        }
+    }
+    project.segments[index].video_guidance_mode = input.mode;
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
+}
+
+pub(super) fn archive_completed_story_video(
+    project: &mut StoryProject,
+    input: StoryCompletedVideoArchiveInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    let segment = project
+        .segments
+        .iter_mut()
+        .find(|segment| segment.id == input.segment_id)
+        .ok_or_else(|| "剧情分段已不存在，请刷新后重试。".to_owned())?;
+    let video = segment
+        .video
+        .take()
+        .ok_or_else(|| "当前分段没有可归档的完成视频。".to_owned())?;
+    if !segment
+        .archived_videos
+        .iter()
+        .any(|existing| existing.job_id == video.job_id)
+    {
+        segment.archived_videos.push(video);
+    }
+    if let Some(attempt) = segment.attempt.take() {
+        if !segment
+            .previous_attempts
+            .iter()
+            .any(|existing| existing.id == attempt.id)
+        {
+            segment.previous_attempts.push(attempt);
+        }
+    }
+    segment.actual_video_last_frame_id = None;
+    segment.error = None;
+    segment.video_guidance_mode = if input.use_source_video {
+        StoryVideoGuidanceMode::SourceVideo
+    } else if segment.last_frames.confirmed_image_id.is_some() {
+        StoryVideoGuidanceMode::FirstAndLastFrames
+    } else {
+        StoryVideoGuidanceMode::FirstFrame
+    };
+    project.reconcile_inherited_first_frames();
     project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     project.validate()
 }

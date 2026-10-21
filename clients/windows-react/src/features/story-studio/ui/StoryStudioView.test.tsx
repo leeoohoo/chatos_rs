@@ -59,6 +59,8 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     confirmLatestFrames: vi.fn(async () => project()),
     startVideo: vi.fn(async () => ({ project: project(), status: "queued", percent: null, terminal: false })),
     pollVideo: vi.fn(async () => ({ project: project(), status: "completed", percent: 100, terminal: true })),
+    updateVideoGuidance: vi.fn(async () => project()),
+    archiveCompletedVideo: vi.fn(async () => project()),
     discardPresentation: vi.fn(async () => undefined),
     ...overrides,
   };

@@ -72,5 +72,17 @@ export interface StoryStudioPort {
     projectId: string;
     segmentId: string;
   }): Promise<StoryVideoGenerationOutcome>;
+  updateVideoGuidance(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    segmentId: string;
+    mode: "first_frame" | "first_and_last_frames" | "previous_video" | "source_video";
+  }): Promise<StoryProject>;
+  archiveCompletedVideo(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    segmentId: string;
+    useSourceVideo: boolean;
+  }): Promise<StoryProject>;
   discardPresentation(request: StoryPresentationScope): Promise<void>;
 }

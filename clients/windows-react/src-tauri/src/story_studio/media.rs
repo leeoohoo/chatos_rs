@@ -20,18 +20,19 @@ use crate::media_studio::{
 use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, apply_story_resource_prompt,
-        apply_story_segment_edit, begin_story_asset_image_generation,
-        begin_story_frame_image_generation, begin_story_video_generation,
-        complete_story_asset_image_generation, complete_story_frame_image_generation,
-        complete_story_video_generation, fail_story_video_generation, make_story_project,
-        story_asset_image_prompt, update_story_video_generation_progress,
-        StoryAssetImageCompletion, StoryAssetImageGenerationInput, StoryFrameImageCompletion,
+        apply_story_segment_edit, apply_story_video_guidance, archive_completed_story_video,
+        begin_story_asset_image_generation, begin_story_frame_image_generation,
+        begin_story_video_generation, complete_story_asset_image_generation,
+        complete_story_frame_image_generation, complete_story_video_generation,
+        fail_story_video_generation, make_story_project, story_asset_image_prompt,
+        update_story_video_generation_progress, StoryAssetImageCompletion,
+        StoryAssetImageGenerationInput, StoryCompletedVideoArchiveInput, StoryFrameImageCompletion,
         StoryFrameImageGenerationInput, StoryFrameRoleInput, StoryImageConfirmationInput,
         StoryImageImportInput, StoryLastFrameClearInput, StoryLatestFramesInput,
         StoryLatestResourceImagesInput, StoryProjectCreationInput, StoryProjectSettingsInput,
         StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
         StorySegmentStructureInput, StoryVideoCompletion, StoryVideoGenerationPollInput,
-        StoryVideoGenerationStartInput,
+        StoryVideoGenerationStartInput, StoryVideoGuidanceInput,
     },
     domain::{
         StoryImage, StoryImageCollection, StoryProject, StorySegment, StorySegmentKind,
@@ -1198,6 +1199,40 @@ impl StoryStudioManager {
                 )
             },
         )?;
+        self.project_snapshot(owner, generation, presentation, &session, &project)
+    }
+
+    pub(super) fn update_video_guidance(
+        &self,
+        owner: &str,
+        generation: u64,
+        presentation: &str,
+        input: StoryVideoGuidanceInput,
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner, generation)?;
+        self.media
+            .require_open_presentation(owner, generation, presentation)?;
+        let project_id = input.project_id.clone();
+        let project = self.store.mutate_project(owner, &project_id, |project| {
+            apply_story_video_guidance(project, input, current_unix_milliseconds())
+        })?;
+        self.project_snapshot(owner, generation, presentation, &session, &project)
+    }
+
+    pub(super) fn archive_completed_video(
+        &self,
+        owner: &str,
+        generation: u64,
+        presentation: &str,
+        input: StoryCompletedVideoArchiveInput,
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner, generation)?;
+        self.media
+            .require_open_presentation(owner, generation, presentation)?;
+        let project_id = input.project_id.clone();
+        let project = self.store.mutate_project(owner, &project_id, |project| {
+            archive_completed_story_video(project, input, current_unix_milliseconds())
+        })?;
         self.project_snapshot(owner, generation, presentation, &session, &project)
     }
 

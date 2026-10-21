@@ -11,12 +11,12 @@ use crate::{
 
 use super::{
     application::{
-        StoryAssetImageGenerationInput, StoryFrameImageGenerationInput,
-        StoryImageConfirmationInput, StoryImageImportInput, StoryLastFrameClearInput,
-        StoryLatestFramesInput, StoryLatestResourceImagesInput, StoryProjectCreationInput,
-        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
-        StorySegmentEditInput, StorySegmentStructureInput, StoryVideoGenerationPollInput,
-        StoryVideoGenerationStartInput,
+        StoryAssetImageGenerationInput, StoryCompletedVideoArchiveInput,
+        StoryFrameImageGenerationInput, StoryImageConfirmationInput, StoryImageImportInput,
+        StoryLastFrameClearInput, StoryLatestFramesInput, StoryLatestResourceImagesInput,
+        StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput,
+        StoryResourcePromptInput, StorySegmentEditInput, StorySegmentStructureInput,
+        StoryVideoGenerationPollInput, StoryVideoGenerationStartInput, StoryVideoGuidanceInput,
     },
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
@@ -170,6 +170,22 @@ pub(crate) struct StoryVideoGenerationPollCommandInput {
     owner_user_id: String,
     presentation_id: String,
     request: StoryVideoGenerationPollInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryVideoGuidanceCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    change: StoryVideoGuidanceInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryCompletedVideoArchiveCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    change: StoryCompletedVideoArchiveInput,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -1053,6 +1069,52 @@ pub(crate) async fn poll_story_video_generation(
             })
         }
     }
+}
+
+#[tauri::command]
+pub(crate) async fn update_story_video_guidance(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryVideoGuidanceCommandInput,
+) -> Result<StoryProjectSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let work = manager.inner().clone();
+    let owner = input.owner_user_id;
+    let saved_owner = owner.clone();
+    let presentation = input.presentation_id;
+    let saved = tauri::async_runtime::spawn_blocking(move || {
+        work.update_video_guidance(&saved_owner, generation, &presentation, input.change)
+    })
+    .await
+    .map_err(|_| "剧情视频引导设置保存异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    saved
+}
+
+#[tauri::command]
+pub(crate) async fn archive_story_completed_video(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryCompletedVideoArchiveCommandInput,
+) -> Result<StoryProjectSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let work = manager.inner().clone();
+    let owner = input.owner_user_id;
+    let saved_owner = owner.clone();
+    let presentation = input.presentation_id;
+    let saved = tauri::async_runtime::spawn_blocking(move || {
+        work.archive_completed_video(&saved_owner, generation, &presentation, input.change)
+    })
+    .await
+    .map_err(|_| "完成视频归档任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    saved
 }
 
 fn emit_story_video_event(

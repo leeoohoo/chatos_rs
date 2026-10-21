@@ -173,6 +173,8 @@ function SegmentInspector({ port, projectId, segmentId }: { port: StoryStudioPor
   const hasUnconfirmedFirst = latestFirst != null && latestFirst.id !== segment.firstFrames.confirmedImageId;
   const hasUnconfirmedLast = latestLast != null && latestLast.id !== segment.lastFrames.confirmedImageId;
   const progress = state.videoProgress[segment.id];
+  const segmentIndex = project.segments.findIndex((value) => value.id === segment.id);
+  const previousVideoAvailable = segmentIndex > 0 && project.segments[segmentIndex - 1]?.video != null;
   const referenceResourceIds = [
     ...segment.characterIds,
     ...segment.sceneIds,
@@ -199,9 +201,11 @@ function SegmentInspector({ port, projectId, segmentId }: { port: StoryStudioPor
       {(hasUnconfirmedFirst || hasUnconfirmedLast) && <button className="story-confirm-frames" disabled={state.activeMediaTarget != null} onClick={() => void state.confirmLatestFrames(port, segment.id, latestLast != null)} type="button">确认使用最新首尾帧</button>}
       {segment.detail && <section className="story-shot-list"><h4>镜头时间线</h4>{segment.detail.shots.map((shot) => <div key={`${shot.start}-${shot.end}`}><span>{shot.start}–{shot.end}s</span><p>{shot.prompt}</p></div>)}</section>}
       {segment.video?.previewUrl && <video className="story-video-preview" controls preload="metadata" src={segment.video.previewUrl} />}
+      {segment.video && <div className="story-video-redo"><p>重做会先把当前成片保留到创作历史，不会覆盖本机文件。</p><div><button disabled={state.busy} onClick={() => void state.archiveCompletedVideo(port, segment.id, false)} type="button">从首尾帧重做</button><button disabled={state.busy} onClick={() => void state.archiveCompletedVideo(port, segment.id, true)} type="button">按原视频修改</button></div></div>}
       {segment.error && <p className="story-segment-error">{segment.error}</p>}
       <footer>
         <textarea maxLength={1_000} onChange={(event) => setUserIdeas(event.target.value)} placeholder="本次视频生成的补充要求（可选）" value={userIdeas} />
+        <select aria-label="视频引导方式" disabled={segment.attempt != null || segment.video != null || state.busy} onChange={(event) => void state.updateVideoGuidance(port, segment.id, event.target.value as "first_frame" | "first_and_last_frames" | "previous_video" | "source_video")} value={segment.videoGuidanceMode}><option value="first_frame">首帧</option><option disabled={last == null} value="first_and_last_frames">首尾帧</option><option disabled={!previousVideoAvailable} value="previous_video">续写上一段</option><option disabled={segment.archivedVideos.length === 0} value="source_video">修改原视频</option></select>
         <select onChange={(event) => setSize(event.target.value as "768P" | "2K")} value={size}><option>768P</option><option>2K</option></select>
         {segment.attempt && !segment.video ? <button className="story-primary-button" disabled={Boolean(progress)} onClick={() => void state.resumeVideo(port, segment.id)} type="button">{progress ? progressLabel(progress.status, progress.percent) : "恢复任务"}</button> : <button className="story-primary-button" disabled={!isStorySegmentReady(segment) || Boolean(progress)} onClick={() => void state.startVideo(port, segment.id, size, userIdeas)} type="button">{progress ? progressLabel(progress.status, progress.percent) : segment.video ? "已完成" : "生成视频"}</button>}
       </footer>

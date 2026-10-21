@@ -165,6 +165,33 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
     );
   }
 
+  async updateVideoGuidance(request: Parameters<StoryStudioPort["updateVideoGuidance"]>[0]) {
+    const input = {
+      ...scope(request),
+      change: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        segmentId: identifierSchema.parse(request.segmentId),
+        mode: z.enum(["first_frame", "first_and_last_frames", "previous_video", "source_video"])
+          .parse(request.mode),
+      },
+    };
+    return storyProjectSchema.parse(await invoke("update_story_video_guidance", { input }));
+  }
+
+  async archiveCompletedVideo(request: Parameters<StoryStudioPort["archiveCompletedVideo"]>[0]) {
+    const input = {
+      ...scope(request),
+      change: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        segmentId: identifierSchema.parse(request.segmentId),
+        useSourceVideo: z.boolean().parse(request.useSourceVideo),
+      },
+    };
+    return storyProjectSchema.parse(await invoke("archive_story_completed_video", { input }));
+  }
+
   async discardPresentation(request: StoryPresentationScope) {
     await invoke("discard_story_studio_presentation", { input: scope(request) });
   }

@@ -2,13 +2,14 @@ use super::domain::*;
 use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, default_story_style,
-        make_story_project, StoryAssetImageGenerationInput, StoryFrameImageGenerationInput,
-        StoryFrameRoleInput, StoryImageConfirmationInput, StoryImageImportInput,
-        StoryLastFrameClearInput, StoryLatestFramesInput, StoryLatestResourceImagesInput,
-        StoryModelSelectionInput, StoryProjectCreationInput, StoryProjectSettingsInput,
-        StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
-        StorySegmentStructureInput, StorySegmentStructureMutation, StorySegmentStructureOperation,
-        StoryVideoGenerationPollInput, StoryVideoGenerationStartInput,
+        make_story_project, StoryAssetImageGenerationInput, StoryCompletedVideoArchiveInput,
+        StoryFrameImageGenerationInput, StoryFrameRoleInput, StoryImageConfirmationInput,
+        StoryImageImportInput, StoryLastFrameClearInput, StoryLatestFramesInput,
+        StoryLatestResourceImagesInput, StoryModelSelectionInput, StoryProjectCreationInput,
+        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
+        StorySegmentEditInput, StorySegmentStructureInput, StorySegmentStructureMutation,
+        StorySegmentStructureOperation, StoryVideoGenerationPollInput,
+        StoryVideoGenerationStartInput, StoryVideoGuidanceInput,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -1704,6 +1705,81 @@ fn video_failure_only_clears_attempt_when_submission_is_definitely_absent() {
         .segments[0]
         .attempt
         .is_none());
+}
+
+#[test]
+fn completed_video_archive_preserves_history_and_reopens_typed_guidance() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    canonical.segments[0].detail = Some(test_segment_detail(15));
+    canonical.segments[0].attempt = Some(StoryVideoAttempt {
+        id: Uuid::new_v4().to_string(),
+        model_config_id: "video".into(),
+        prompt: "prompt".into(),
+        size: "768P".into(),
+        ratio: "16:9".into(),
+        seconds: 15,
+        job_id: Some("provider-job".into()),
+        status: "completed".into(),
+        created_at_unix_ms: 2,
+    });
+    canonical.segments[0].video = Some(StoryVideo {
+        filename: "finished.mp4".into(),
+        job_id: "provider-job".into(),
+        model_name: "MiniMax-H3".into(),
+    });
+    store.save("alice", &canonical).unwrap();
+    let manager = StoryStudioManager::new(app_data.path().to_path_buf()).unwrap();
+    let presentation = Uuid::new_v4().to_string();
+    manager
+        .present_project("alice", 55, &presentation, &canonical.id)
+        .unwrap();
+
+    let archived = manager
+        .archive_completed_video(
+            "alice",
+            55,
+            &presentation,
+            StoryCompletedVideoArchiveInput {
+                project_id: canonical.id.clone(),
+                base_fingerprint: project_fingerprint(&canonical).unwrap(),
+                segment_id: "s1".into(),
+                use_source_video: true,
+            },
+        )
+        .unwrap();
+    let encoded = serde_json::to_string(&archived).unwrap();
+    assert!(!encoded.contains("finished.mp4"));
+    assert!(!encoded.contains("provider-job"));
+    let archived_native = store.load_native_project("alice", &canonical.id).unwrap();
+    assert!(archived_native.segments[0].video.is_none());
+    assert!(archived_native.segments[0].attempt.is_none());
+    assert_eq!(archived_native.segments[0].archived_videos.len(), 1);
+    assert_eq!(archived_native.segments[0].previous_attempts.len(), 1);
+    assert_eq!(
+        archived_native.segments[0].video_guidance_mode,
+        StoryVideoGuidanceMode::SourceVideo
+    );
+
+    manager
+        .update_video_guidance(
+            "alice",
+            55,
+            &presentation,
+            StoryVideoGuidanceInput {
+                project_id: archived_native.id.clone(),
+                base_fingerprint: project_fingerprint(&archived_native).unwrap(),
+                segment_id: "s1".into(),
+                mode: StoryVideoGuidanceMode::FirstFrame,
+            },
+        )
+        .unwrap();
+    let updated = store.load_native_project("alice", &canonical.id).unwrap();
+    assert_eq!(
+        updated.segments[0].video_guidance_mode,
+        StoryVideoGuidanceMode::FirstFrame
+    );
 }
 
 #[test]
