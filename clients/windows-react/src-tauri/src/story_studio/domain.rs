@@ -641,6 +641,118 @@ pub(super) fn update_resource_prompt(
     Ok(next)
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct StorySegmentRelationEdit {
+    pub id: String,
+    pub character_id: String,
+    pub scene_id: String,
+    pub action: String,
+    pub position: String,
+    pub start_second: u8,
+    pub end_second: u8,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct StorySegmentEdit {
+    pub segment_id: String,
+    pub title: String,
+    pub synopsis: String,
+    pub kind: StorySegmentKind,
+    pub seconds: u8,
+    pub detail: Option<StorySegmentDetail>,
+    pub character_ids: Vec<String>,
+    pub scene_ids: Vec<String>,
+    pub prop_ids: Vec<String>,
+    pub video_guidance_mode: StoryVideoGuidanceMode,
+    pub relations: Vec<StorySegmentRelationEdit>,
+}
+
+pub(super) fn apply_segment_edit(
+    project: &StoryProject,
+    edit: StorySegmentEdit,
+) -> Result<StoryProject, String> {
+    let mut next = project.clone();
+    let index = next
+        .segments
+        .iter()
+        .position(|segment| segment.id == edit.segment_id)
+        .filter(|index| {
+            next.segments[*index].attempt.is_none() && next.segments[*index].video.is_none()
+        })
+        .ok_or_else(invalid_target)?;
+    if let Some(detail) = &edit.detail {
+        detail.validate(edit.seconds)?;
+    }
+    let relations = edit
+        .relations
+        .into_iter()
+        .map(|relation| StorySegmentRelation {
+            id: relation.id,
+            segment_id: edit.segment_id.clone(),
+            character_id: relation.character_id,
+            scene_id: relation.scene_id,
+            action: relation.action,
+            position: relation.position,
+            start_second: relation.start_second,
+            end_second: relation.end_second,
+        })
+        .collect::<Vec<_>>();
+    let original = &next.segments[index];
+    let original_relations = next
+        .relations
+        .iter()
+        .filter(|relation| relation.segment_id == edit.segment_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    let changes_continuity = original.synopsis != edit.synopsis
+        || original.kind != edit.kind
+        || original.seconds != edit.seconds
+        || original.detail.as_ref().map(|detail| &detail.continuity_in)
+            != edit.detail.as_ref().map(|detail| &detail.continuity_in)
+        || original
+            .detail
+            .as_ref()
+            .map(|detail| &detail.continuity_out)
+            != edit.detail.as_ref().map(|detail| &detail.continuity_out)
+        || original.character_ids != edit.character_ids
+        || original.scene_ids != edit.scene_ids
+        || original.prop_ids != edit.prop_ids
+        || original_relations != relations;
+    if changes_continuity {
+        let segment_count = next.segments.len();
+        for adjacent in [index.checked_sub(1), index.checked_add(1)]
+            .into_iter()
+            .flatten()
+            .filter(|adjacent| *adjacent < segment_count)
+        {
+            if next.segments[adjacent].attempt.is_none() {
+                next.segments[adjacent].detail = None;
+                next.segments[adjacent].first_frames.confirmed_image_id = None;
+                next.segments[adjacent].last_frames.confirmed_image_id = None;
+            }
+        }
+    }
+    let segment = &mut next.segments[index];
+    segment.title = edit.title;
+    segment.synopsis = edit.synopsis;
+    segment.kind = edit.kind;
+    segment.seconds = edit.seconds;
+    segment.detail = edit.detail;
+    segment.character_ids = edit.character_ids;
+    segment.scene_ids = edit.scene_ids;
+    segment.prop_ids = edit.prop_ids;
+    segment.video_guidance_mode = edit.video_guidance_mode;
+    segment.first_frames.confirmed_image_id = None;
+    segment.last_frames.confirmed_image_id = None;
+    next.relations
+        .retain(|relation| relation.segment_id != edit.segment_id);
+    next.relations.extend(relations);
+    next.validate()?;
+    Ok(next)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum StoryImageTarget {
     Resource {

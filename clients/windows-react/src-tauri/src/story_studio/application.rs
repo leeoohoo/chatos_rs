@@ -6,7 +6,10 @@ use uuid::Uuid;
 use crate::authentication::GatewayModelConfig;
 
 use super::{
-    domain::{update_resource_prompt, StoryModelSelection, StoryProject, STORY_SCHEMA_VERSION},
+    domain::{
+        apply_segment_edit, update_resource_prompt, StoryModelSelection, StoryProject,
+        StorySegmentEdit, STORY_SCHEMA_VERSION,
+    },
     planning::project_fingerprint,
 };
 
@@ -57,6 +60,14 @@ pub(crate) struct StoryResourcePromptInput {
     pub base_fingerprint: String,
     pub resource_id: String,
     pub prompt: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StorySegmentEditInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub segment: StorySegmentEdit,
 }
 
 pub(super) fn make_story_project(
@@ -145,6 +156,23 @@ pub(super) fn apply_story_resource_prompt(
         return Err("剧情项目已被修改，请重新打开后再保存。".into());
     }
     let mut next = update_resource_prompt(project, &input.resource_id, input.prompt)?;
+    next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    *project = next;
+    Ok(())
+}
+
+pub(super) fn apply_story_segment_edit(
+    project: &mut StoryProject,
+    input: StorySegmentEditInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    if input.project_id != project.id
+        || input.base_fingerprint.is_empty()
+        || project_fingerprint(project)? != input.base_fingerprint
+    {
+        return Err("剧情项目已被修改，请重新打开后再保存。".into());
+    }
+    let mut next = apply_segment_edit(project, input.segment)?;
     next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     *project = next;
     Ok(())

@@ -4,6 +4,7 @@ use super::{
         apply_story_project_settings, apply_story_project_source, default_story_style,
         make_story_project, StoryModelSelectionInput, StoryProjectCreationInput,
         StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
+        StorySegmentEditInput,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -719,6 +720,155 @@ fn resource_prompt_edit_rejects_unresolved_dependent_video_and_unsafe_input_shap
             "resourceId": "key",
             "prompt": "prompt",
             "media": {"confirmedImageId": null}
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn segment_edit_changes_only_macos_authorized_fields_and_preserves_native_state() {
+    let mut canonical = project();
+    let first = StoryImage::test_image("private-first.png");
+    let last = StoryImage::test_image("private-last.png");
+    canonical.segments[0]
+        .first_frames
+        .images
+        .push(first.clone());
+    canonical.segments[0].first_frames.confirmed_image_id = Some(first.id.clone());
+    canonical.segments[0].user_selected_first_frame_id = Some(first.id.clone());
+    canonical.segments[0].last_frames.images.push(last.clone());
+    canonical.segments[0].last_frames.confirmed_image_id = Some(last.id.clone());
+    canonical.segments[0].actual_video_last_frame_id = Some(last.id.clone());
+    canonical.segments[0]
+        .previous_attempts
+        .push(StoryVideoAttempt {
+            id: Uuid::new_v4().to_string(),
+            model_config_id: "video".into(),
+            prompt: "private provider prompt".into(),
+            size: "768P".into(),
+            ratio: "16:9".into(),
+            seconds: 15,
+            job_id: Some("private-provider-job".into()),
+            status: "completed".into(),
+            created_at_unix_ms: 1,
+        });
+    canonical.segments[0].archived_videos.push(StoryVideo {
+        filename: "private-archive.mp4".into(),
+        job_id: "private-archive-job".into(),
+        model_name: "private-model".into(),
+    });
+    canonical.segments[0].error = Some("private historical error".into());
+    let original = canonical.segments[0].clone();
+    let project_id = canonical.id.clone();
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+    super::application::apply_story_segment_edit(
+        &mut canonical,
+        StorySegmentEditInput {
+            project_id,
+            base_fingerprint: fingerprint,
+            segment: StorySegmentEdit {
+                segment_id: "s1".into(),
+                title: "Edited title".into(),
+                synopsis: "Edited synopsis".into(),
+                kind: StorySegmentKind::Story,
+                seconds: 15,
+                detail: Some(test_segment_detail(15)),
+                character_ids: vec![],
+                scene_ids: vec![],
+                prop_ids: vec!["key".into()],
+                video_guidance_mode: StoryVideoGuidanceMode::FirstAndLastFrames,
+                relations: vec![],
+            },
+        },
+        2,
+    )
+    .unwrap();
+
+    let edited = &canonical.segments[0];
+    assert_eq!(edited.title, "Edited title");
+    assert_eq!(edited.synopsis, "Edited synopsis");
+    assert_eq!(edited.source_range, original.source_range);
+    assert_eq!(edited.first_frames.images, original.first_frames.images);
+    assert_eq!(edited.last_frames.images, original.last_frames.images);
+    assert_eq!(
+        edited.user_selected_first_frame_id,
+        original.user_selected_first_frame_id
+    );
+    assert_eq!(
+        edited.actual_video_last_frame_id,
+        original.actual_video_last_frame_id
+    );
+    assert_eq!(edited.previous_attempts, original.previous_attempts);
+    assert_eq!(edited.archived_videos, original.archived_videos);
+    assert_eq!(edited.error, original.error);
+    assert_eq!(edited.first_frames.confirmed_image_id, None);
+    assert_eq!(edited.last_frames.confirmed_image_id, None);
+}
+
+#[test]
+fn segment_continuity_edit_invalidates_only_editable_neighbors_and_rejects_native_fields() {
+    let mut canonical = project();
+    canonical.source = "abc".into();
+    let mut first = canonical.segments[0].clone();
+    first.id = "s0".into();
+    first.source_range = StorySourceRange { start: 0, end: 1 };
+    let mut middle = canonical.segments[0].clone();
+    middle.id = "s1".into();
+    middle.source_range = StorySourceRange { start: 1, end: 2 };
+    let mut last = canonical.segments[0].clone();
+    last.id = "s2".into();
+    last.source_range = StorySourceRange { start: 2, end: 3 };
+    for segment in [&mut first, &mut middle, &mut last] {
+        segment.detail = Some(test_segment_detail(15));
+        let image = StoryImage::test_image(&format!("{}.png", segment.id));
+        segment.first_frames.images.push(image.clone());
+        segment.first_frames.confirmed_image_id = Some(image.id);
+    }
+    last.attempt = Some(StoryVideoAttempt {
+        id: Uuid::new_v4().to_string(),
+        model_config_id: "video".into(),
+        prompt: "prompt".into(),
+        size: "768P".into(),
+        ratio: "16:9".into(),
+        seconds: 15,
+        job_id: None,
+        status: "submitting".into(),
+        created_at_unix_ms: 1,
+    });
+    canonical.segments = vec![first, middle, last.clone()];
+    let result = apply_segment_edit(
+        &canonical,
+        StorySegmentEdit {
+            segment_id: "s1".into(),
+            title: "Middle".into(),
+            synopsis: "continuity changed".into(),
+            kind: StorySegmentKind::Story,
+            seconds: 15,
+            detail: Some(test_segment_detail(15)),
+            character_ids: vec![],
+            scene_ids: vec![],
+            prop_ids: vec!["key".into()],
+            video_guidance_mode: StoryVideoGuidanceMode::FirstFrame,
+            relations: vec![],
+        },
+    )
+    .unwrap();
+    assert!(result.segments[0].detail.is_none());
+    assert!(result.segments[0].first_frames.confirmed_image_id.is_none());
+    assert_eq!(result.segments[2], last);
+    assert!(result.segments[1].first_frames.confirmed_image_id.is_none());
+
+    assert!(
+        serde_json::from_value::<StorySegmentEditInput>(serde_json::json!({
+            "projectId": canonical.id,
+            "baseFingerprint": "fingerprint",
+            "segment": {
+                "segmentId": "s1", "title": "title", "synopsis": "synopsis",
+                "kind": "story", "seconds": 15, "detail": null,
+                "characterIds": [], "sceneIds": [], "propIds": ["key"],
+                "videoGuidanceMode": "first_frame", "relations": [],
+                "video": {"filename": "private.mp4"}
+            }
         }))
         .is_err()
     );
@@ -1496,5 +1646,21 @@ fn project() -> StoryProject {
         relations: vec![],
         created_at_unix_ms: 1,
         updated_at_unix_ms: 1,
+    }
+}
+
+fn test_segment_detail(seconds: u8) -> StorySegmentDetail {
+    StorySegmentDetail {
+        first_frame_prompt: "first frame".into(),
+        last_frame_prompt: Some("last frame".into()),
+        shots: vec![StoryShot {
+            start: 0,
+            end: seconds,
+            prompt: "continuous shot".into(),
+        }],
+        continuity_in: "continuity in".into(),
+        continuity_out: "continuity out".into(),
+        audio: "room tone".into(),
+        constraints: "keep continuity".into(),
     }
 }
