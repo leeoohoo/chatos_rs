@@ -532,6 +532,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事媒体访问边界）：Core 新增 `StoryMediaAccessResolving` 与 `StoryMediaAccessUseCase`，只负责把 owner/project/image-or-video identity 投影为 display-safe `GeneratedMediaAsset` 或本机 file URL，并对非 file URL 失败关闭。`StoryStudioViewModel` 不再解释 owner/project/filename 到磁盘路径的映射；`StoryProjectStore.fileURL` 仅由 macOS `StoryMediaAccessAdapter` 调用。本切片 Core 4 项、Story Studio 66 项、Story Agent 21 项通过，Story Core 累计 58 项。下一片执行最终 Store 直连、敏感字段和 Windows opaque media token 平台差异审计；完成前剧情模式继续禁用。
 
+状态补充（2026-10-21，macOS AI 故事媒体确认规则）：新增纯 Core `StoryMediaConfirmationUseCase`，统一 resource/frame attachment、导入自动确认、手动/批量素材确认、首尾帧确认与取消、用户首帧标记，以及素材变化后的依赖帧失效。`StoryImageImportAdapter` 只保留 security scope、20 MiB 读取、PNG 归一化、文件落盘与持久化，并复用同一 Core 规则；ViewModel 只选择 typed target、消费结果并走既有 mutation Port。Core 新增 5 项、图片导入 Core 5 项与 Story Studio 66 项通过，Story Core 累计 63 项。下一片继续收口普通剧情/分段编辑中的确认失效策略，再执行最终平台差异审计；剧情模式继续禁用。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

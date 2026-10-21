@@ -100,16 +100,17 @@ extension StoryStudioViewModel {
     }
 
     func updateAssetPrompt(_ assetID: String, prompt: String) {
-        guard var next = project, var resource = next.resource(id: assetID),
-              !next.segments.contains(where: { $0.resourceIDs.contains(assetID) && $0.attempt != nil && $0.video == nil }) else { return }
-        resource.prompt = prompt
-        resource.media.confirmedImageID = nil
-        do { try next.replaceResource(resource) } catch { errorMessage = error.localizedDescription; return }
-        for i in next.segments.indices where next.segments[i].resourceIDs.contains(assetID) && next.segments[i].attempt == nil {
-            next.segments[i].confirmedFrameID = nil
-            next.segments[i].confirmedLastFrameID = nil
+        guard let project else { return }
+        do {
+            guard let next = try storyMediaConfirmation.updatingResourcePrompt(
+                resourceID: assetID,
+                prompt: prompt,
+                in: project
+            ) else { return }
+            runCommit("保存素材描述", project: next)
+        } catch {
+            errorMessage = error.localizedDescription
         }
-        runCommit("保存素材描述", project: next)
     }
 
     func importImage(_ image: GeneratedMediaAsset, assetID: String?, segmentID: String?,
@@ -212,101 +213,64 @@ extension StoryStudioViewModel {
     }
 
     func confirmImage(_ image: StoryImage, assetID: String?, segmentID: String?, frameRole: StoryFrameRole = .first) {
-        guard var next = project else { return }
-        if let assetID, var resource = next.resource(id: assetID), resource.images.contains(image) {
-            guard resource.confirmedImageID != image.id else { return }
-            guard !next.segments.contains(where: { $0.resourceIDs.contains(assetID) && $0.attempt != nil && $0.video == nil }) else {
-                errorMessage = StoryError.unresolvedSubmission.localizedDescription; return
-            }
-            resource.media.confirmedImageID = image.id
-            do { try next.replaceResource(resource) } catch { errorMessage = error.localizedDescription; return }
-            for i in next.segments.indices where next.segments[i].resourceIDs.contains(assetID) && next.segments[i].attempt == nil {
-                next.segments[i].confirmedFrameID = nil
-                next.segments[i].confirmedLastFrameID = nil
-            }
-        } else if let segmentID, let index = next.segments.firstIndex(where: { $0.id == segmentID }), next.segments[index].attempt == nil {
-            switch frameRole {
-            case .first:
-                guard next.segments[index].firstFrames.images.contains(image) else { return }
-                next.segments[index].confirmedFrameID = image.id
-                next.segments[index].userSelectedFirstFrameID = image.id
-                next.segments[index].inheritedFirstFrameSourceSegmentID = nil
-            case .last:
-                guard next.segments[index].lastFrames.images.contains(image) else { return }
-                next.segments[index].confirmedLastFrameID = image.id
-            }
-        } else { return }
-        runCommit("确认素材版本", project: next)
+        guard let project,
+              let target = imageImportTarget(
+                assetID: assetID,
+                segmentID: segmentID,
+                frameRole: frameRole
+              ) else { return }
+        do {
+            guard let next = try storyMediaConfirmation.confirmingImage(
+                image.id,
+                target: target,
+                in: project
+            ) else { return }
+            runCommit("确认素材版本", project: next)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func clearConfirmedLastFrame(_ segmentID: String) {
-        guard var next = project,
-              let index = next.segments.firstIndex(where: { $0.id == segmentID }),
-              next.segments[index].attempt == nil, next.segments[index].video == nil,
-              next.segments[index].confirmedLastFrameID != nil
-                || next.segments[index].useLastFrameForVideo else { return }
-        next.segments[index].confirmedLastFrameID = nil
-        next.segments[index].useLastFrameForVideo = false
-        runCommit("取消尾帧", project: next)
+        guard let project else { return }
+        do {
+            guard let next = try storyMediaConfirmation.clearingConfirmedLastFrame(
+                segmentID: segmentID,
+                in: project
+            ) else { return }
+            runCommit("取消尾帧", project: next)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func confirmLatestAssetImages(_ assetIDs: [String]) {
-        guard var next = project else { return }
-        let requested = Set(assetIDs)
-        guard !requested.isEmpty else { return }
-        var changed = false
-        for id in next.resources.map(\.id) where requested.contains(id) {
-            guard var resource = next.resource(id: id), let latest = resource.images.last,
-                  resource.confirmedImageID != latest.id else { continue }
-            guard !next.segments.contains(where: {
-                $0.resourceIDs.contains(id) && $0.attempt != nil && $0.video == nil
-            }) else {
-                errorMessage = StoryError.unresolvedSubmission.localizedDescription
-                return
-            }
-            resource.media.confirmedImageID = latest.id
-            do { try next.replaceResource(resource) } catch {
-                errorMessage = error.localizedDescription
-                return
-            }
-            for index in next.segments.indices
-                where next.segments[index].resourceIDs.contains(id) && next.segments[index].attempt == nil {
-                next.segments[index].confirmedFrameID = nil
-                next.segments[index].confirmedLastFrameID = nil
-            }
-            changed = true
+        guard let project else { return }
+        do {
+            guard let next = try storyMediaConfirmation.confirmingLatestResourceImages(
+                resourceIDs: assetIDs,
+                in: project
+            ) else { return }
+            runCommit("确认已生成素材", project: next)
+        } catch {
+            errorMessage = error.localizedDescription
         }
-        guard changed else { return }
-        runCommit("确认已生成素材", project: next)
     }
 
     /// Promotes already-generated frame versions in one explicit, non-billable action.
     /// Existing confirmations are never replaced; only missing confirmations use the latest image.
     func confirmLatestFrames(_ segmentID: String, useConfirmedLastFrameForVideo: Bool) {
-        guard var next = project,
-              let index = next.segments.firstIndex(where: { $0.id == segmentID }),
-              next.segments[index].attempt == nil, next.segments[index].video == nil else { return }
-        var changed = false
-        if next.segments[index].confirmedFrameID == nil,
-                  let latest = next.segments[index].firstFrames.images.last {
-            next.segments[index].confirmedFrameID = latest.id
-            next.segments[index].userSelectedFirstFrameID = latest.id
-            next.segments[index].inheritedFirstFrameSourceSegmentID = nil
-            changed = true
+        guard let project else { return }
+        do {
+            guard let next = try storyMediaConfirmation.confirmingLatestFrames(
+                segmentID: segmentID,
+                useConfirmedLastFrameForVideo: useConfirmedLastFrameForVideo,
+                in: project
+            ) else { return }
+            runCommit("确认首尾帧", project: next)
+        } catch {
+            errorMessage = error.localizedDescription
         }
-        if next.segments[index].confirmedLastFrameID == nil,
-           let latest = next.segments[index].lastFrames.images.last {
-            next.segments[index].confirmedLastFrameID = latest.id
-            changed = true
-        }
-        if useConfirmedLastFrameForVideo,
-           next.segments[index].confirmedLastFrameID != nil,
-           !next.segments[index].useLastFrameForVideo {
-            next.segments[index].useLastFrameForVideo = true
-            changed = true
-        }
-        guard changed else { return }
-        runCommit("确认首尾帧", project: next)
     }
 
     /// Explicit user recovery after checking that an ambiguous image submission did not produce a usable result.

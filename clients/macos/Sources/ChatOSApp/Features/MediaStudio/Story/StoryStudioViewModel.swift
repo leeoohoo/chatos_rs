@@ -109,6 +109,7 @@ final class StoryStudioViewModel: ObservableObject {
     let storyHistory: StoryHistoryUseCase
     let storyMediaBatch: StoryMediaBatchUseCase
     let storyMediaAccess: StoryMediaAccessUseCase
+    let storyMediaConfirmation = StoryMediaConfirmationUseCase()
     let storyImageImport: StoryImageImportUseCase
     let storyAssetImageGeneration: StoryAssetImageGenerationUseCase
     let storyFrameImageGeneration: StoryFrameImageGenerationUseCase
