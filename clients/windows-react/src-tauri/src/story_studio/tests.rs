@@ -4,11 +4,11 @@ use super::{
         apply_story_project_settings, apply_story_project_source, default_story_style,
         make_story_project, StoryAssetImageGenerationInput, StoryCompletedVideoArchiveInput,
         StoryFrameImageGenerationInput, StoryFrameRoleInput, StoryImageConfirmationInput,
-        StoryImageImportInput, StoryLastFrameClearInput, StoryLatestFramesInput,
-        StoryLatestResourceImagesInput, StoryModelSelectionInput, StoryProjectCreationInput,
-        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
-        StorySegmentDurationInput, StorySegmentEditInput, StorySegmentStructureInput,
-        StorySegmentStructureMutation, StorySegmentStructureOperation,
+        StoryImageImportInput, StoryImageRetryInput, StoryLastFrameClearInput,
+        StoryLatestFramesInput, StoryLatestResourceImagesInput, StoryModelSelectionInput,
+        StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput,
+        StoryResourcePromptInput, StorySegmentDurationInput, StorySegmentEditInput,
+        StorySegmentStructureInput, StorySegmentStructureMutation, StorySegmentStructureOperation,
         StoryVideoGenerationPollInput, StoryVideoGenerationStartInput, StoryVideoGuidanceInput,
     },
     execution::StoryPlanningExecutionRegistry,
@@ -1192,6 +1192,44 @@ fn latest_resource_and_frame_confirmation_matches_macos_batch_rules() {
         canonical.segments[0].video_guidance_mode,
         StoryVideoGuidanceMode::FirstAndLastFrames
     );
+}
+
+#[test]
+fn image_retry_unlock_requires_an_explicit_attempt_and_exact_target() {
+    let mut canonical = project();
+    canonical.props[0].media.generation_attempt_id = Some(Uuid::new_v4().to_string());
+    let project_id = canonical.id.clone();
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+
+    super::application::allow_story_image_retry(
+        &mut canonical,
+        StoryImageRetryInput {
+            project_id,
+            base_fingerprint: fingerprint,
+            resource_id: Some("key".into()),
+            segment_id: None,
+            frame_role: None,
+        },
+        2,
+    )
+    .unwrap();
+    assert!(canonical.props[0].media.generation_attempt_id.is_none());
+
+    let project_id = canonical.id.clone();
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+    let error = super::application::allow_story_image_retry(
+        &mut canonical,
+        StoryImageRetryInput {
+            project_id,
+            base_fingerprint: fingerprint,
+            resource_id: Some("key".into()),
+            segment_id: None,
+            frame_role: None,
+        },
+        3,
+    )
+    .unwrap_err();
+    assert_eq!(error, "当前图片没有需要核对的提交。");
 }
 
 #[test]

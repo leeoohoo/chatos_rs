@@ -59,6 +59,7 @@ interface StoryStudioState {
   loadStoryImageHistory(mediaPort: MediaStudioPort): Promise<void>;
   importHistoryImage(storyPort: StoryStudioPort, target: StoryImageImportTarget, recordId: string, contentToken: string): Promise<void>;
   updateSegmentDuration(storyPort: StoryStudioPort, segmentId: string, seconds: number): Promise<void>;
+  allowImageRetry(storyPort: StoryStudioPort, target: StoryImageImportTarget): Promise<void>;
   generateAssetImage(storyPort: StoryStudioPort, resourceId: string, userIdeas: string): Promise<void>;
   generateFrameImage(storyPort: StoryStudioPort, segmentId: string, frameRole: "first" | "last", referenceResourceIds: string[], userIdeas: string): Promise<void>;
   confirmLatestResources(storyPort: StoryStudioPort, resourceIds: string[]): Promise<void>;
@@ -418,6 +419,29 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ busy: false, error: errorMessage(error, "分段时长保存失败。") });
+    }
+  },
+
+  async allowImageRetry(storyPort, target) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().activeMediaTarget) return;
+    set({ activeMediaTarget: "image-retry", error: null });
+    try {
+      const saved = await storyPort.allowImageRetry({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        target,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        projects: replaceProject(state.projects, saved),
+        activeMediaTarget: null,
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ activeMediaTarget: null, error: errorMessage(error, "图片任务无法解锁重试。") });
     }
   },
 

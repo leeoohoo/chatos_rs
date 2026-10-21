@@ -149,6 +149,7 @@ function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: Medi
   const planning = state.planningProgress[project.id] ?? null;
   const isRefining = state.busy && planning?.stage === "refine" && planningIsActive(planning);
   const [historyTarget, setHistoryTarget] = useState<StoryImageImportTarget | null>(null);
+  const [retryTarget, setRetryTarget] = useState<StoryImageImportTarget | null>(null);
 
   return (
     <div className="story-plan-workspace">
@@ -162,21 +163,22 @@ function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: Medi
           const target = `resource:${resource.id}`;
           const displayed = hasUnconfirmedLatest ? latest : image;
           const importTarget = `import:resource:${resource.id}`;
-          return <article key={resource.id}>{displayed?.previewUrl ? <img alt={resource.name} src={displayed.previewUrl} /> : <span>◇</span>}<strong>{resource.name}{hasUnconfirmedLatest ? " · 待确认" : ""}</strong><small>{resource.imagePrompt || ("description" in resource ? resource.description : "等待素材描述")}</small>{hasUnconfirmedLatest && <button disabled={state.activeMediaTarget != null} onClick={() => void state.confirmLatestResources(port, [resource.id])} type="button">使用最新版本</button>}<button disabled={state.activeMediaTarget != null || resource.media.generationAttemptId != null} onClick={() => void state.importLocalImage(port, { kind: "resource", resourceId: resource.id })} type="button">{state.activeMediaTarget === importTarget ? "正在导入…" : "导入本机图片"}</button><button disabled={state.activeMediaTarget != null || resource.media.generationAttemptId != null} onClick={() => setHistoryTarget({ kind: "resource", resourceId: resource.id })} type="button">从创作历史选择</button><button disabled={state.activeMediaTarget != null} onClick={() => void state.generateAssetImage(port, resource.id, "")} type="button">{state.activeMediaTarget === target ? "生成中…" : image ? "再生成" : "生成素材"}</button></article>;
+          return <article key={resource.id}>{displayed?.previewUrl ? <img alt={resource.name} src={displayed.previewUrl} /> : <span>◇</span>}<strong>{resource.name}{hasUnconfirmedLatest ? " · 待确认" : ""}</strong><small>{resource.media.generationAttemptId ? "上次图片提交状态待核对" : resource.imagePrompt || ("description" in resource ? resource.description : "等待素材描述")}</small>{hasUnconfirmedLatest && <button disabled={state.activeMediaTarget != null} onClick={() => void state.confirmLatestResources(port, [resource.id])} type="button">使用最新版本</button>}<button disabled={state.activeMediaTarget != null || resource.media.generationAttemptId != null} onClick={() => void state.importLocalImage(port, { kind: "resource", resourceId: resource.id })} type="button">{state.activeMediaTarget === importTarget ? "正在导入…" : "导入本机图片"}</button><button disabled={state.activeMediaTarget != null || resource.media.generationAttemptId != null} onClick={() => setHistoryTarget({ kind: "resource", resourceId: resource.id })} type="button">从创作历史选择</button>{resource.media.generationAttemptId && <button className="is-warning" disabled={state.activeMediaTarget != null} onClick={() => setRetryTarget({ kind: "resource", resourceId: resource.id })} type="button">核对后允许重试…</button>}<button disabled={state.activeMediaTarget != null || resource.media.generationAttemptId != null} onClick={() => void state.generateAssetImage(port, resource.id, "")} type="button">{state.activeMediaTarget === target ? "生成中…" : image ? "再生成" : "生成素材"}</button></article>;
         })}</div>
       </section>
       <div className="story-segment-layout">
         <nav aria-label="剧情分段">
           {project.segments.map((item, index) => <button className={item.id === segment?.id ? "is-selected" : ""} key={item.id} onClick={() => setSelectedSegment(item.id)} type="button"><span>{String(index + 1).padStart(2, "0")}</span><span><strong>{item.title}</strong><small>{item.seconds} 秒 · {segmentState(item)}</small></span></button>)}
         </nav>
-        {segment && <SegmentInspector onPickHistory={setHistoryTarget} port={port} projectId={project.id} segmentId={segment.id} />}
+        {segment && <SegmentInspector onPickHistory={setHistoryTarget} onRetryImage={setRetryTarget} port={port} projectId={project.id} segmentId={segment.id} />}
       </div>
       {historyTarget && <StoryImageHistorySheet mediaPort={mediaPort} onClose={() => setHistoryTarget(null)} port={port} target={historyTarget} />}
+      {retryTarget && <StoryImageRetrySheet onClose={() => setRetryTarget(null)} port={port} target={retryTarget} />}
     </div>
   );
 }
 
-function SegmentInspector({ port, projectId, segmentId, onPickHistory }: { port: StoryStudioPort; projectId: string; segmentId: string; onPickHistory(target: StoryImageImportTarget): void }) {
+function SegmentInspector({ port, projectId, segmentId, onPickHistory, onRetryImage }: { port: StoryStudioPort; projectId: string; segmentId: string; onPickHistory(target: StoryImageImportTarget): void; onRetryImage(target: StoryImageImportTarget): void }) {
   const state = useStoryStudioStore();
   const project = state.projects.find((value) => value.id === projectId)!;
   const segment = project.segments.find((value) => value.id === segmentId)!;
@@ -215,6 +217,8 @@ function SegmentInspector({ port, projectId, segmentId, onPickHistory }: { port:
         <button disabled={state.activeMediaTarget != null || segment.attempt != null} onClick={() => void state.importLocalImage(port, { kind: "frame", segmentId: segment.id, frameRole: "last" })} type="button">{state.activeMediaTarget === `import:frame:${segment.id}:last` ? "正在导入尾帧…" : "导入本机尾帧"}</button>
         <button disabled={state.activeMediaTarget != null || segment.attempt != null} onClick={() => onPickHistory({ kind: "frame", segmentId: segment.id, frameRole: "first" })} type="button">从历史选择首帧</button>
         <button disabled={state.activeMediaTarget != null || segment.attempt != null} onClick={() => onPickHistory({ kind: "frame", segmentId: segment.id, frameRole: "last" })} type="button">从历史选择尾帧</button>
+        {segment.firstFrames.generationAttemptId && <button className="is-warning" disabled={state.activeMediaTarget != null} onClick={() => onRetryImage({ kind: "frame", segmentId: segment.id, frameRole: "first" })} type="button">核对首帧任务后重试…</button>}
+        {segment.lastFrames.generationAttemptId && <button className="is-warning" disabled={state.activeMediaTarget != null} onClick={() => onRetryImage({ kind: "frame", segmentId: segment.id, frameRole: "last" })} type="button">核对尾帧任务后重试…</button>}
       </div>
       {(hasUnconfirmedFirst || hasUnconfirmedLast) && <button className="story-confirm-frames" disabled={state.activeMediaTarget != null} onClick={() => void state.confirmLatestFrames(port, segment.id, latestLast != null)} type="button">确认使用最新首尾帧</button>}
       {segment.detail && <section className="story-shot-list"><h4>镜头时间线</h4>{segment.detail.shots.map((shot) => <div key={`${shot.start}-${shot.end}`}><span>{shot.start}–{shot.end}s</span><p>{shot.prompt}</p></div>)}</section>}
@@ -274,6 +278,15 @@ function StoryImageHistorySheet({ mediaPort, port, target, onClose }: { mediaPor
       </section>
     </div>
   );
+}
+
+function StoryImageRetrySheet({ port, target, onClose }: { port: StoryStudioPort; target: StoryImageImportTarget; onClose(): void }) {
+  const state = useStoryStudioStore();
+  const confirm = async () => {
+    await state.allowImageRetry(port, target);
+    if (!useStoryStudioStore.getState().error) onClose();
+  };
+  return <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>!</span><div><h2>确认已核对图片任务？</h2><p>这是防止重复提交和重复计费的安全步骤。</p></div></div><button aria-label="关闭" onClick={onClose} type="button">×</button></header><div className="story-sheet__body"><p className="story-retry-warning">只有确认服务商没有生成可用结果后才应解锁。下一次点击生成会重新提交，并可能再次计费。</p></div><footer><button onClick={onClose} type="button">取消</button><button className="story-retry-confirm" disabled={state.activeMediaTarget != null} onClick={() => void confirm()} type="button">确认未生成，允许重试</button></footer></section></div>;
 }
 
 function PlanningRecoveryBanner({ port, run }: {

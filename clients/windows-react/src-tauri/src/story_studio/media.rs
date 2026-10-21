@@ -19,16 +19,17 @@ use crate::media_studio::{
 
 use super::{
     application::{
-        apply_story_project_settings, apply_story_project_source, apply_story_resource_prompt,
-        apply_story_segment_duration, apply_story_segment_edit, apply_story_video_guidance,
-        archive_completed_story_video, begin_story_asset_image_generation,
-        begin_story_frame_image_generation, begin_story_video_generation,
-        complete_story_asset_image_generation, complete_story_frame_image_generation,
-        complete_story_video_generation, fail_story_video_generation, make_story_project,
-        story_asset_image_prompt, update_story_video_generation_progress,
-        StoryAssetImageCompletion, StoryAssetImageGenerationInput, StoryCompletedVideoArchiveInput,
-        StoryFrameImageCompletion, StoryFrameImageGenerationInput, StoryFrameRoleInput,
-        StoryImageConfirmationInput, StoryImageImportInput, StoryLastFrameClearInput,
+        allow_story_image_retry, apply_story_project_settings, apply_story_project_source,
+        apply_story_resource_prompt, apply_story_segment_duration, apply_story_segment_edit,
+        apply_story_video_guidance, archive_completed_story_video,
+        begin_story_asset_image_generation, begin_story_frame_image_generation,
+        begin_story_video_generation, complete_story_asset_image_generation,
+        complete_story_frame_image_generation, complete_story_video_generation,
+        fail_story_video_generation, make_story_project, story_asset_image_prompt,
+        update_story_video_generation_progress, StoryAssetImageCompletion,
+        StoryAssetImageGenerationInput, StoryCompletedVideoArchiveInput, StoryFrameImageCompletion,
+        StoryFrameImageGenerationInput, StoryFrameRoleInput, StoryImageConfirmationInput,
+        StoryImageImportInput, StoryImageRetryInput, StoryLastFrameClearInput,
         StoryLatestFramesInput, StoryLatestResourceImagesInput, StoryProjectCreationInput,
         StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
         StorySegmentDurationInput, StorySegmentEditInput, StorySegmentStructureInput,
@@ -565,6 +566,23 @@ impl StoryStudioManager {
                 input,
                 current_unix_milliseconds(),
             )
+        })?;
+        self.project_snapshot(owner, generation, presentation, &session, &project)
+    }
+
+    pub(super) fn allow_story_image_retry(
+        &self,
+        owner: &str,
+        generation: u64,
+        presentation: &str,
+        input: StoryImageRetryInput,
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner, generation)?;
+        self.media
+            .require_open_presentation(owner, generation, presentation)?;
+        let project_id = input.project_id.clone();
+        let project = self.store.mutate_project(owner, &project_id, |project| {
+            allow_story_image_retry(project, input, current_unix_milliseconds())
         })?;
         self.project_snapshot(owner, generation, presentation, &session, &project)
     }

@@ -80,6 +80,7 @@
 .story-resource-strip article small { display:-webkit-box; overflow:hidden; color:var(--secondary); font-size:7.5px; line-height:1.35; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
 .story-resource-strip article button,.story-frame-actions button { border:0; border-radius:7px; padding:5px 7px; color:var(--accent); background:rgba(10,132,255,.09); font-size:8px; font-weight:620; cursor:pointer; }
 .story-resource-strip article button:disabled,.story-frame-actions button:disabled { cursor:default; opacity:.42; }
+.story-resource-strip article button.is-warning,.story-frame-actions button.is-warning { color:#9b5100; background:rgba(255,159,10,.1); }
 .story-segment-layout { display:grid; min-height:420px; grid-template-columns:210px minmax(0,1fr); overflow:hidden; border:1px solid var(--separator); border-radius:13px; background:rgba(255,255,255,.58); }
 .story-segment-layout > nav { min-height:0; overflow:auto; border-right:1px solid var(--separator); padding:6px; background:rgba(246,246,248,.68); }
 .story-segment-layout > nav button { display:grid; width:100%; grid-template-columns:25px minmax(0,1fr); align-items:center; gap:5px; border:0; border-radius:8px; padding:7px; color:inherit; background:transparent; text-align:left; cursor:pointer; }
@@ -124,6 +125,8 @@
 .story-sheet__body { display:grid; gap:11px; padding:16px; }.story-sheet textarea { min-height:55px; resize:vertical; }
 .story-sheet > footer { display:flex; justify-content:flex-end; gap:8px; border-top:1px solid var(--separator); padding:11px 16px; background:rgba(246,246,248,.76); }
 .story-sheet > footer > button:not(.story-primary-button) { border:0; border-radius:8px; padding:7px 13px; color:var(--text); background:rgba(118,118,128,.1); font-size:10px; cursor:pointer; }
+.story-retry-warning { margin:0; border-radius:10px; padding:12px; color:#8b4a00; background:rgba(255,159,10,.09); font-size:10px; line-height:1.55; }
+.story-sheet > footer > button.story-retry-confirm { border:0; border-radius:8px; padding:7px 13px; color:white; background:#d77b00; font-size:10px; font-weight:630; cursor:pointer; }
 .story-history-sheet { width:min(720px,100%); }
 .story-history-grid { display:grid; max-height:520px; grid-template-columns:repeat(auto-fill,minmax(125px,1fr)); gap:10px; overflow:auto; padding:14px; }
 .story-history-grid > p { grid-column:1/-1; margin:30px; color:var(--secondary); font-size:10px; text-align:center; }

@@ -162,6 +162,16 @@ pub(crate) struct StoryImageImportInput {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryImageRetryInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub resource_id: Option<String>,
+    pub segment_id: Option<String>,
+    pub frame_role: Option<StoryFrameRoleInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct StoryAssetImageGenerationInput {
     pub project_id: String,
     pub base_fingerprint: String,
@@ -538,6 +548,58 @@ pub(super) fn apply_story_last_frame_clear(
     next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     *project = next;
     Ok(())
+}
+
+pub(super) fn allow_story_image_retry(
+    project: &mut StoryProject,
+    input: StoryImageRetryInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    match (input.resource_id, input.segment_id, input.frame_role) {
+        (Some(resource_id), None, None) => {
+            let media = project
+                .characters
+                .iter_mut()
+                .find(|value| value.id == resource_id)
+                .map(|value| &mut value.media)
+                .or_else(|| {
+                    project
+                        .scenes
+                        .iter_mut()
+                        .find(|value| value.id == resource_id)
+                        .map(|value| &mut value.media)
+                })
+                .or_else(|| {
+                    project
+                        .props
+                        .iter_mut()
+                        .find(|value| value.id == resource_id)
+                        .map(|value| &mut value.media)
+                })
+                .ok_or_else(|| "剧情图片目标已不存在。".to_owned())?;
+            if media.generation_attempt_id.take().is_none() {
+                return Err("当前图片没有需要核对的提交。".into());
+            }
+        }
+        (None, Some(segment_id), Some(role)) => {
+            let segment = project
+                .segments
+                .iter_mut()
+                .find(|value| value.id == segment_id)
+                .ok_or_else(|| "剧情图片目标已不存在。".to_owned())?;
+            let frames = match role {
+                StoryFrameRoleInput::First => &mut segment.first_frames,
+                StoryFrameRoleInput::Last => &mut segment.last_frames,
+            };
+            if frames.generation_attempt_id.take().is_none() {
+                return Err("当前图片没有需要核对的提交。".into());
+            }
+        }
+        _ => return Err("剧情图片目标无效。".into()),
+    }
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
 }
 
 fn require_story_fingerprint(

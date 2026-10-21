@@ -166,6 +166,18 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
     return storyProjectSchema.parse(await invoke("update_story_segment_duration", { input }));
   }
 
+  async allowImageRetry(request: Parameters<StoryStudioPort["allowImageRetry"]>[0]) {
+    const input = {
+      ...scope(request),
+      target: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        ...imageImportTarget(request.target),
+      },
+    };
+    return storyProjectSchema.parse(await invoke("allow_story_image_retry", { input }));
+  }
+
   async generateAssetImage(request: Parameters<StoryStudioPort["generateAssetImage"]>[0]) {
     const input = {
       ...scope(request),

@@ -206,6 +206,28 @@ describe("StoryStudioView", () => {
       seconds: 10,
     }));
   });
+
+  it("only unlocks an ambiguous image attempt after explicit verification", async () => {
+    const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      allowImageRetry: vi.fn(async () => canonical),
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+    await screen.findByRole("heading", { name: "雨夜来客" });
+
+    await act(async () => useStoryStudioStore.getState().allowImageRetry(storyPort, {
+      kind: "frame",
+      segmentId: "segment-a",
+      frameRole: "last",
+    }));
+
+    expect(storyPort.allowImageRetry).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: canonical.id,
+      baseFingerprint: canonical.baseFingerprint,
+      target: { kind: "frame", segmentId: "segment-a", frameRole: "last" },
+    }));
+  });
 });
 
 function usePresentationId(storyPort: StoryStudioPort) {
@@ -222,6 +244,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     importLocalImage: vi.fn(async () => project()),
     importHistoryImage: vi.fn(async () => project()),
     updateSegmentDuration: vi.fn(async () => project()),
+    allowImageRetry: vi.fn(async () => project()),
     loadProjects: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadProject: vi.fn(async () => project()),
     createProject: vi.fn(async () => project()),

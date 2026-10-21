@@ -78,6 +78,11 @@ export interface StoryStudioPort {
     segmentId: string;
     seconds: number;
   }): Promise<StoryProject>;
+  allowImageRetry(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    target: StoryImageImportTarget;
+  }): Promise<StoryProject>;
   generateAssetImage(request: StoryPresentationScope & {
     projectId: string;
     baseFingerprint: string;
