@@ -21,13 +21,16 @@ use crate::{
     terminal_runtime::{ExecuteRequest, TerminalProcessStore, TerminalRuntimeError, TerminalScope},
 };
 
+use super::code_write::{CodeWriteStore, EditScope};
+
 pub(super) async fn execute(
     app: &AppHandle,
     owner_user_id: &str,
     claim: &LocalAgentToolClaim,
     processes: &TerminalProcessStore,
+    edits: &CodeWriteStore,
 ) -> LocalAgentToolOutcome {
-    match execute_checked(app, owner_user_id, claim, processes).await {
+    match execute_checked(app, owner_user_id, claim, processes, edits).await {
         Ok(output) => LocalAgentToolOutcome::Succeeded { output },
         Err(error) if claim.invocation.side_effecting && !error.known_pre_effect => {
             LocalAgentToolOutcome::NeedsReview {
@@ -47,6 +50,7 @@ async fn execute_checked(
     owner_user_id: &str,
     claim: &LocalAgentToolClaim,
     processes: &TerminalProcessStore,
+    edits: &CodeWriteStore,
 ) -> Result<Value, ExecutionError> {
     let invocation = &claim.invocation;
     if invocation.execution_route != LocalAgentToolExecutionRoute::Platform
@@ -65,11 +69,21 @@ async fn execute_checked(
     .await
     .map_err(|_| ExecutionError::pre_effect("The local platform tool Run context is invalid."))?;
     let project_read = is_project_read_tool(&invocation.tool_name);
+    let project_write = is_project_write_tool(&invocation.tool_name);
     if (project_read && !context.authorization.allows_project_read())
-        || (!project_read && !context.authorization.allows_terminal())
+        || (project_write && !context.authorization.allows_project_write())
+        || (!project_read && !project_write && !context.authorization.allows_terminal())
     {
         return Err(ExecutionError::pre_effect(
             "This Task did not select the requested capability.",
+        ));
+    }
+    if matches!(invocation.tool_name.as_str(), "commit_edit_session")
+        && (!invocation.requires_approval
+            || invocation.approval_status != LocalAgentToolApprovalStatus::Approved)
+    {
+        return Err(ExecutionError::pre_effect(
+            "The staged project edit requires approval before commit.",
         ));
     }
     if matches!(
@@ -87,14 +101,45 @@ async fn execute_checked(
         .as_object()
         .ok_or_else(|| ExecutionError::pre_effect("The local platform arguments are invalid."))?;
     if project_read {
+        let scope = EditScope {
+            owner_user_id: owner_user_id.to_owned(),
+            workspace_scope_id: context.workspace_scope_id.clone(),
+            conversation_id: context.conversation_id.clone(),
+            run_id: invocation.run_id.clone(),
+        };
         let root = context.execution_root;
         let tool_name = invocation.tool_name.clone();
         let arguments = arguments.clone();
-        return tauri::async_runtime::spawn_blocking(move || {
+        let output = tauri::async_runtime::spawn_blocking(move || {
             execute_project_read(&root, &tool_name, &arguments)
         })
         .await
-        .map_err(|_| ExecutionError::pre_effect("The project read task exited unexpectedly."))?;
+        .map_err(|_| ExecutionError::pre_effect("The project read task exited unexpectedly."))??;
+        edits.record_project_read(&scope);
+        return Ok(output);
+    }
+    if project_write {
+        let scope = EditScope {
+            owner_user_id: owner_user_id.to_owned(),
+            workspace_scope_id: context.workspace_scope_id,
+            conversation_id: context.conversation_id,
+            run_id: invocation.run_id.clone(),
+        };
+        let root = context.execution_root;
+        let owned_paths = context.authorization.owned_paths().to_vec();
+        let tool_name = invocation.tool_name.clone();
+        let arguments = arguments.clone();
+        let edits = edits.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            edits
+                .call(&tool_name, &arguments, scope, &root, &owned_paths)
+                .map_err(|error| ExecutionError {
+                    message: error.message,
+                    known_pre_effect: error.known_pre_effect,
+                })
+        })
+        .await
+        .map_err(|_| ExecutionError::pre_effect("The project edit task exited unexpectedly."))?;
     }
     let scope = TerminalScope {
         run_id: invocation.run_id.clone(),
@@ -191,6 +236,12 @@ const PROJECT_READ_TOOL_NAMES: [&str; 6] = [
     "read_file",
     "search_files",
 ];
+const PROJECT_WRITE_TOOL_NAMES: [&str; 4] = [
+    "open_edit_session",
+    "stage_edit_batch",
+    "commit_edit_session",
+    "abort_edit_session",
+];
 const MAXIMUM_READ_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAXIMUM_SEARCH_ENTRIES: usize = 100_000;
 const IGNORED_DIRECTORIES: [&str; 13] = [
@@ -211,6 +262,10 @@ const IGNORED_DIRECTORIES: [&str; 13] = [
 
 fn is_project_read_tool(name: &str) -> bool {
     PROJECT_READ_TOOL_NAMES.contains(&name)
+}
+
+fn is_project_write_tool(name: &str) -> bool {
+    PROJECT_WRITE_TOOL_NAMES.contains(&name)
 }
 
 fn execute_project_read(

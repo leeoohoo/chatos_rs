@@ -2,11 +2,22 @@ use super::transport::ManagedHost;
 use std::{collections::BTreeMap, path::Path, process::Stdio};
 use tokio::process::Command;
 
-const READ_ONLY_TOOL_NAMES: [&str; 4] = [
+const READ_ONLY_TOOL_NAMES: [&str; 10] = [
     "local_attachment_read",
+    "read_file_raw",
+    "read_file_range",
+    "list_dir",
+    "search_text",
+    "read_file",
+    "search_files",
     "process_poll",
     "process_log",
     "process_wait",
+];
+const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 3] = [
+    "open_edit_session",
+    "stage_edit_batch",
+    "abort_edit_session",
 ];
 
 pub(super) async fn spawn(
@@ -49,6 +60,9 @@ pub(super) async fn spawn(
 fn configure_tool_policy(command: &mut Command) {
     for tool_name in READ_ONLY_TOOL_NAMES {
         command.arg("--read-only-tool").arg(tool_name);
+    }
+    for tool_name in APPROVAL_EXEMPT_TOOL_NAMES {
+        command.arg("--approval-exempt-tool").arg(tool_name);
     }
 }
 
@@ -192,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn host_policy_matches_the_macos_terminal_side_effect_boundary() {
+    fn host_policy_matches_the_macos_project_and_terminal_side_effect_boundary() {
         let mut command = Command::new("local-agent-host");
         configure_tool_policy(&mut command);
         let arguments = command
@@ -200,23 +214,24 @@ mod tests {
             .get_args()
             .map(|value| value.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        assert_eq!(
-            arguments,
-            [
-                "--read-only-tool",
-                "local_attachment_read",
-                "--read-only-tool",
-                "process_poll",
-                "--read-only-tool",
-                "process_log",
-                "--read-only-tool",
-                "process_wait",
-            ]
-        );
+        for tool in READ_ONLY_TOOL_NAMES {
+            let position = arguments
+                .iter()
+                .position(|argument| argument == tool)
+                .unwrap();
+            assert_eq!(arguments[position - 1], "--read-only-tool");
+        }
+        for tool in APPROVAL_EXEMPT_TOOL_NAMES {
+            let position = arguments
+                .iter()
+                .position(|argument| argument == tool)
+                .unwrap();
+            assert_eq!(arguments[position - 1], "--approval-exempt-tool");
+        }
         assert!(!arguments.iter().any(|argument| {
             matches!(
                 argument.as_str(),
-                "execute_command" | "process_write" | "process_kill"
+                "commit_edit_session" | "execute_command" | "process_write" | "process_kill"
             )
         }));
     }

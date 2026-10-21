@@ -3248,6 +3248,7 @@ pub(crate) async fn load_agent_team_runs(
     authentication: State<'_, AuthenticationManager>,
     conversations: State<'_, AgentConversationStore>,
     manager: State<'_, HostManager>,
+    terminal_worker: State<'_, TerminalToolWorker>,
 ) -> Result<AgentTeamRunHistorySnapshot, String> {
     validate_owner(&owner_user_id)?;
     validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
@@ -3293,6 +3294,8 @@ pub(crate) async fn load_agent_team_runs(
             status: turn.status,
             created_at_unix_ms: turn.created_at_unix_ms,
             updated_at_unix_ms: turn.updated_at_unix_ms,
+            project_write_evidence_verified: terminal_worker
+                .project_write_completion_verified(&owner_user_id, &turn.run_id),
         });
     }
     authentication
@@ -5555,6 +5558,7 @@ mod tests {
                     status: LocalConversationTurnStatus::Cancelled,
                     created_at_unix_ms: 102,
                     updated_at_unix_ms: 104,
+                    project_write_evidence_verified: false,
                 }],
             )
             .unwrap();
@@ -5920,6 +5924,22 @@ mod tests {
                 102,
             )
             .unwrap();
+        let project_write_plan = serde_json::json!({
+            "requiresExecution": true,
+            "builtinCapabilities": ["project_read", "project_write"],
+            "plugins": [],
+            "selectionRevision": "test-project-write-v1",
+            "selectedAtUnixMs": 102
+        })
+        .to_string();
+        Connection::open(store.database())
+            .unwrap()
+            .execute(
+                "UPDATE local_agent_todos SET execution_plan_json = ?1 \
+                 WHERE owner_user_id = 'alice' AND id = ?2",
+                params![project_write_plan, second.id],
+            )
+            .unwrap();
         assert_eq!(
             store
                 .enqueue_ready_project_team_todos("alice", &team.id, 103)
@@ -6034,6 +6054,7 @@ mod tests {
                     status: LocalConversationTurnStatus::Succeeded,
                     created_at_unix_ms: 107,
                     updated_at_unix_ms: 108,
+                    project_write_evidence_verified: false,
                 }],
             )
             .unwrap();
@@ -6043,7 +6064,10 @@ mod tests {
             .into_iter()
             .find(|todo| todo.id == second.id)
             .unwrap();
-        assert_eq!(completed.status, "completed");
+        assert_eq!(completed.status, "blocked");
+        assert!(completed
+            .blocked_reason
+            .contains("缺少事务提交后的项目读取回执"));
     }
 
     #[test]

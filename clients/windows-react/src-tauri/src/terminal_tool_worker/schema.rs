@@ -138,6 +138,66 @@ pub(crate) fn project_read_tool_schemas() -> Vec<Value> {
     ]
 }
 
+pub(crate) fn project_write_tool_schemas() -> Vec<Value> {
+    vec![
+        function(
+            "open_edit_session",
+            "打开项目文件编辑会话。所有修改只暂存在内存中，commit_edit_session 获得审批前不会写入项目。",
+            json!({
+                "purpose": {"type": "string", "maxLength": 8_000},
+                "fresh": {"type": "boolean", "default": false}
+            }),
+            &[],
+        ),
+        function(
+            "stage_edit_batch",
+            "向编辑会话暂存一组有序修改。首次修改目标时必须传入最近一次读取返回的 expected_sha256；新文件传 null。",
+            json!({
+                "session_id": {"type": "string", "minLength": 1},
+                "operations": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 200,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["write", "replace_text", "append", "delete"]},
+                            "path": {"type": "string", "minLength": 1, "maxLength": 4_096},
+                            "content": {"type": "string"},
+                            "old_text": {"type": "string"},
+                            "new_text": {"type": "string"},
+                            "start_line": {"type": "integer", "minimum": 1},
+                            "end_line": {"type": "integer", "minimum": 1},
+                            "before_context": {"type": "string"},
+                            "after_context": {"type": "string"},
+                            "expected_matches": {"type": "integer", "minimum": 1},
+                            "expected_sha256": {
+                                "type": ["string", "null"],
+                                "pattern": "^[0-9a-f]{64}$"
+                            }
+                        },
+                        "required": ["kind", "path"],
+                        "additionalProperties": false
+                    }
+                }
+            }),
+            &["session_id", "operations"],
+        ),
+        function(
+            "commit_edit_session",
+            "重新校验读取基线并在用户审批后提交整批暂存修改。提交冲突不会覆盖外部改动。",
+            json!({"session_id": {"type": "string", "minLength": 1}}),
+            &["session_id"],
+        ),
+        function(
+            "abort_edit_session",
+            "放弃编辑会话中的全部内存暂存修改，不写入项目。",
+            json!({"session_id": {"type": "string", "minLength": 1}}),
+            &["session_id"],
+        ),
+    ]
+}
+
 fn process_read_properties(default_limit: u64) -> Value {
     json!({
         "terminal_id": {"type": "string"},
@@ -240,6 +300,28 @@ mod tests {
                 "read_file_raw".to_owned(),
                 "search_files".to_owned(),
                 "search_text".to_owned(),
+            ])
+        );
+    }
+
+    #[test]
+    fn project_write_catalog_matches_the_macos_transaction_surface() {
+        let names = project_write_tool_schemas()
+            .into_iter()
+            .filter_map(|schema| {
+                schema
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "abort_edit_session".to_owned(),
+                "commit_edit_session".to_owned(),
+                "open_edit_session".to_owned(),
+                "stage_edit_batch".to_owned(),
             ])
         );
     }

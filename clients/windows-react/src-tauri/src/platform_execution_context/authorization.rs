@@ -5,11 +5,12 @@ use std::collections::HashSet;
 pub(crate) struct TaskToolAuthorization {
     requires_execution: bool,
     enabled_builtin_kinds: HashSet<String>,
+    owned_paths: Vec<String>,
 }
 
 impl TaskToolAuthorization {
     pub(crate) fn resolve(input: &Map<String, Value>) -> Result<Self, String> {
-        validate_owned_paths(input.get("owned_paths"))?;
+        let owned_paths = validate_owned_paths(input.get("owned_paths"))?;
         let options = input
             .get("tool_options")
             .and_then(Value::as_object)
@@ -33,6 +34,7 @@ impl TaskToolAuthorization {
         Ok(Self {
             requires_execution,
             enabled_builtin_kinds,
+            owned_paths,
         })
     }
 
@@ -43,15 +45,26 @@ impl TaskToolAuthorization {
     pub(crate) fn allows_project_read(&self) -> bool {
         self.enabled_builtin_kinds.contains("CodeMaintainerRead")
     }
+
+    pub(crate) fn allows_project_write(&self) -> bool {
+        self.requires_execution && self.enabled_builtin_kinds.contains("CodeMaintainerWrite")
+    }
+
+    pub(crate) fn owned_paths(&self) -> &[String] {
+        &self.owned_paths
+    }
 }
 
-fn validate_owned_paths(value: Option<&Value>) -> Result<(), String> {
-    let Some(value) = value else { return Ok(()) };
+fn validate_owned_paths(value: Option<&Value>) -> Result<Vec<String>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
     let paths = value.as_array().ok_or_else(invalid_context)?;
     if paths.len() > 200 {
         return Err(invalid_context());
     }
     let mut unique = HashSet::new();
+    let mut normalized = Vec::with_capacity(paths.len());
     for value in paths {
         let path = value.as_str().ok_or_else(invalid_context)?;
         let first = path.split('/').next().unwrap_or_default().as_bytes();
@@ -70,8 +83,10 @@ fn validate_owned_paths(value: Option<&Value>) -> Result<(), String> {
         {
             return Err(invalid_context());
         }
+        normalized.push(path.to_owned());
     }
-    Ok(())
+    normalized.sort();
+    Ok(normalized)
 }
 
 fn unique_strings(value: Option<&Value>, _field: &str) -> Result<HashSet<String>, String> {

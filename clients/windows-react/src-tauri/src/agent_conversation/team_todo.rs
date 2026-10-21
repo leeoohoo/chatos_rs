@@ -170,6 +170,7 @@ pub(super) struct TeamRunReconciliation {
     pub(super) status: LocalConversationTurnStatus,
     pub(super) created_at_unix_ms: i64,
     pub(super) updated_at_unix_ms: i64,
+    pub(super) project_write_evidence_verified: bool,
 }
 
 impl AgentConversationStore {
@@ -1510,8 +1511,19 @@ fn reconcile_todo_from_delivery(
     owner_user_id: &str,
     update: &TeamRunReconciliation,
 ) -> Result<(), String> {
+    let requires_project_write =
+        delivery_todo_requires_project_write(connection, owner_user_id, &update.delivery_id)?;
     let (status, blocked_reason, result) = match update.status {
         LocalConversationTurnStatus::Running => return Ok(()),
+        LocalConversationTurnStatus::Succeeded
+            if requires_project_write && !update.project_write_evidence_verified =>
+        {
+            (
+                "blocked",
+                "Host 已结束运行，但缺少事务提交后的项目读取回执；任务没有被伪装为已完成。",
+                "",
+            )
+        }
         LocalConversationTurnStatus::Succeeded => (
             "completed",
             "",
@@ -1559,6 +1571,41 @@ fn reconcile_todo_from_delivery(
         )
         .map_err(|_| team_todo_store_error())?;
     Ok(())
+}
+
+fn delivery_todo_requires_project_write(
+    connection: &Connection,
+    owner_user_id: &str,
+    delivery_id: &str,
+) -> Result<bool, String> {
+    let plan = connection
+        .query_row(
+            r#"
+            SELECT todo.execution_plan_json
+            FROM local_agent_todos todo
+            JOIN project_agent_deliveries delivery
+              ON delivery.owner_user_id = todo.owner_user_id
+             AND delivery.target_agent_id = todo.agent_id
+             AND delivery.trigger_kind = 'todo'
+             AND (delivery.deduplication_key = 'todo:' || todo.id
+                  OR delivery.deduplication_key LIKE 'todo:' || todo.id || ':attempt:%')
+            WHERE todo.owner_user_id = ?1 AND delivery.id = ?2
+            LIMIT 1
+            "#,
+            params![owner_user_id, delivery_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|_| team_todo_store_error())?;
+    let Some(plan) = plan else { return Ok(false) };
+    let plan: AgentTodoExecutionPlan =
+        serde_json::from_str(&plan).map_err(|_| team_todo_store_error())?;
+    validate_execution_plan(&plan).map_err(|_| team_todo_store_error())?;
+    Ok(plan.requires_execution
+        && plan
+            .builtin_capabilities
+            .iter()
+            .any(|capability| capability == "project_write"))
 }
 
 fn executor_todo_message(

@@ -5,7 +5,9 @@ use crate::authentication::{
 use crate::host_lifecycle::transport::{request, ManagedHost};
 use crate::{
     attachment_tool_worker::{attachment_read_tool_schema, team_asset_tool_schemas},
-    terminal_tool_worker::{project_read_tool_schemas, terminal_tool_schemas},
+    terminal_tool_worker::{
+        project_read_tool_schemas, project_write_tool_schemas, terminal_tool_schemas,
+    },
 };
 use chatos_local_agent_protocol::{
     GetCapabilityPolicySnapshotCommand, GetLatestCapabilityPolicySnapshotCommand, HostCommand,
@@ -23,7 +25,7 @@ const MAIN_CHAT_PROFILE: &str = "main_chat";
 const TASK_EXECUTION_PROFILE: &str = "task_execution";
 const TASK_POLICY_PROFILE: &str = "task_policy_internal";
 const EXECUTION_AGENT_KEY: &str = "local_agent_execution_agent";
-const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-team-assets-v6";
+const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-project-write-v7";
 const MAX_TASK_ITERATIONS: u32 = 600;
 
 const MAIN_CHAT_INSTRUCTIONS: &str = include_str!(
@@ -217,6 +219,7 @@ fn valid_task_execution_snapshot(
     let mut expected_tools = vec![attachment_read_tool_schema()];
     expected_tools.extend(team_asset_tool_schemas());
     expected_tools.extend(project_read_tool_schemas());
+    expected_tools.extend(project_write_tool_schemas());
     expected_tools.extend(terminal_tool_schemas());
     snapshot.owner_user_id == owner_user_id
         && snapshot.profile_key == TASK_EXECUTION_PROFILE
@@ -597,7 +600,7 @@ async fn publish_capabilities(
     let task_policy = json!({
         "max_iterations": MAX_TASK_ITERATIONS,
         "allowed_model_config_ids": task_enabled_refs,
-        "enabled_builtin_kinds": ["TerminalController"],
+        "enabled_builtin_kinds": ["CodeMaintainerRead", "CodeMaintainerWrite", "TerminalController"],
         "external_mcp_config_ids": [],
         "plugin_components": [],
         "plugin_release_snapshots": []
@@ -626,6 +629,7 @@ async fn publish_capabilities(
                 let mut tools = vec![attachment_read_tool_schema()];
                 tools.extend(team_asset_tool_schemas());
                 tools.extend(project_read_tool_schemas());
+                tools.extend(project_write_tool_schemas());
                 tools.extend(terminal_tool_schemas());
                 tools
             },
@@ -777,6 +781,7 @@ mod tests {
         let mut tools = vec![attachment_read_tool_schema()];
         tools.extend(team_asset_tool_schemas());
         tools.extend(project_read_tool_schemas());
+        tools.extend(project_write_tool_schemas());
         tools.extend(terminal_tool_schemas());
         let execution = LocalCapabilityPolicySnapshot {
             owner_user_id: owner.into(),

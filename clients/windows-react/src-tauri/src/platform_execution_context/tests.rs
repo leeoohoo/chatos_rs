@@ -19,6 +19,7 @@ fn authorization_requires_the_macos_terminal_selection_shape() {
     let authorization = TaskToolAuthorization::resolve(input.as_object().unwrap()).unwrap();
     assert!(authorization.allows_terminal());
     assert!(!authorization.allows_project_read());
+    assert!(!authorization.allows_project_write());
 
     let read = json!({
         "owned_paths": [],
@@ -33,6 +34,20 @@ fn authorization_requires_the_macos_terminal_selection_shape() {
     assert!(TaskToolAuthorization::resolve(read.as_object().unwrap())
         .unwrap()
         .allows_project_read());
+
+    let write = json!({
+        "owned_paths": ["src", "tests/fixtures"],
+        "tool_options": {
+            "requires_execution": true,
+            "enabled_builtin_kinds": ["CodeMaintainerWrite"],
+            "plugin_hints": [],
+            "plugin_release_snapshots": [],
+            "external_mcp_config_ids": []
+        }
+    });
+    let write = TaskToolAuthorization::resolve(write.as_object().unwrap()).unwrap();
+    assert!(write.allows_project_write());
+    assert_eq!(write.owned_paths(), &["src", "tests/fixtures"]);
 
     let mut disabled = input.clone();
     disabled["tool_options"]["requires_execution"] = json!(false);

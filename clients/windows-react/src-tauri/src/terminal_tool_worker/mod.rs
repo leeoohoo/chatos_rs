@@ -1,7 +1,10 @@
+mod code_write;
 mod executor;
 mod schema;
 
-pub(crate) use schema::{project_read_tool_schemas, terminal_tool_schemas};
+pub(crate) use schema::{
+    project_read_tool_schemas, project_write_tool_schemas, terminal_tool_schemas,
+};
 
 use chatos_local_agent_protocol::{
     ClaimNextToolCommand, CommitToolCommand, GetEventCursorCommand, HostCommand, HostResult,
@@ -21,13 +24,17 @@ use tokio::{
 
 use crate::{host_lifecycle::HostManager, terminal_runtime::TerminalProcessStore};
 
-pub(crate) const PLATFORM_TOOL_NAMES: [&str; 12] = [
+pub(crate) const PLATFORM_TOOL_NAMES: [&str; 16] = [
     "read_file_raw",
     "read_file_range",
     "list_dir",
     "search_text",
     "read_file",
     "search_files",
+    "open_edit_session",
+    "stage_edit_batch",
+    "commit_edit_session",
+    "abort_edit_session",
     "execute_command",
     "process_poll",
     "process_log",
@@ -48,6 +55,7 @@ pub struct TerminalToolWorker {
     wake: Arc<Notify>,
     task: Mutex<Option<JoinHandle<()>>>,
     processes: TerminalProcessStore,
+    edits: code_write::CodeWriteStore,
 }
 
 impl Default for TerminalToolWorker {
@@ -57,6 +65,7 @@ impl Default for TerminalToolWorker {
             wake: Arc::new(Notify::new()),
             task: Mutex::new(None),
             processes: TerminalProcessStore::default(),
+            edits: code_write::CodeWriteStore::default(),
         }
     }
 }
@@ -68,6 +77,7 @@ impl TerminalToolWorker {
         let generation = self.generation.clone();
         let wake = self.wake.clone();
         let processes = self.processes.clone();
+        let edits = self.edits.clone();
         *self.task.lock().await = Some(tokio::spawn(async move {
             poll(
                 app,
@@ -76,6 +86,7 @@ impl TerminalToolWorker {
                 expected_generation,
                 wake,
                 processes,
+                edits,
             )
             .await;
         }));
@@ -87,6 +98,15 @@ impl TerminalToolWorker {
 
     pub async fn release_run(&self, run_id: &str) {
         self.processes.release_run(run_id).await;
+        self.edits.release_run(run_id);
+    }
+
+    pub(crate) fn project_write_completion_verified(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+    ) -> bool {
+        self.edits.completion_verified(owner_user_id, run_id)
     }
 
     pub async fn reset(&self) {
@@ -97,6 +117,7 @@ impl TerminalToolWorker {
             let _ = task.await;
         }
         self.processes.reset().await;
+        self.edits.reset();
     }
 }
 
@@ -107,6 +128,7 @@ async fn poll(
     expected_generation: u64,
     wake: Arc<Notify>,
     processes: TerminalProcessStore,
+    edits: code_write::CodeWriteStore,
 ) {
     let mut active = JoinSet::new();
     let mut idle_delay = Duration::from_millis(250);
@@ -114,7 +136,7 @@ async fn poll(
     let mut next_event_poll = Instant::now();
     while generation.load(Ordering::SeqCst) == expected_generation {
         if Instant::now() >= next_event_poll {
-            if release_finished_runs(&app, &owner_user_id, &processes, &mut event_cursor)
+            if release_finished_runs(&app, &owner_user_id, &processes, &edits, &mut event_cursor)
                 .await
                 .is_err()
                 && !app
@@ -123,6 +145,7 @@ async fn poll(
                     .await
             {
                 processes.reset().await;
+                edits.reset();
                 return;
             }
             next_event_poll = Instant::now() + EVENT_POLL_INTERVAL;
@@ -137,6 +160,7 @@ async fn poll(
                         .await =>
                 {
                     processes.reset().await;
+                    edits.reset();
                     return;
                 }
                 Err(_) => None,
@@ -146,6 +170,7 @@ async fn poll(
             let owner = owner_user_id.clone();
             let generation = generation.clone();
             let processes = processes.clone();
+            let edits = edits.clone();
             active.spawn(async move {
                 execute_and_commit(
                     app,
@@ -154,6 +179,7 @@ async fn poll(
                     generation,
                     expected_generation,
                     processes,
+                    edits,
                 )
                 .await
             });
@@ -186,6 +212,7 @@ async fn release_finished_runs(
     app: &AppHandle,
     owner_user_id: &str,
     processes: &TerminalProcessStore,
+    edits: &code_write::CodeWriteStore,
     cursor: &mut Option<i64>,
 ) -> Result<(), String> {
     let host = app.state::<HostManager>();
@@ -224,6 +251,7 @@ async fn release_finished_runs(
         for event in events {
             if should_release_run(&event.event_type) {
                 processes.release_run(&event.run_id).await;
+                edits.release_run(&event.run_id);
             }
         }
         if next_cursor <= after_cursor {
@@ -275,10 +303,11 @@ async fn execute_and_commit(
     generation: Arc<AtomicU64>,
     expected_generation: u64,
     processes: TerminalProcessStore,
+    edits: code_write::CodeWriteStore,
 ) -> bool {
     let outcome = match claim.preflight_outcome.clone() {
         Some(outcome) => Some(outcome),
-        None => execute_while_renewing(&app, &owner_user_id, &claim, &processes).await,
+        None => execute_while_renewing(&app, &owner_user_id, &claim, &processes, &edits).await,
     };
     let Some(outcome) = outcome else { return false };
     if generation.load(Ordering::SeqCst) != expected_generation {
@@ -298,6 +327,7 @@ async fn execute_and_commit(
         Ok(HostResult::ToolCommit { result }) => {
             if result.run.status.is_terminal() {
                 processes.release_run(&result.run.run_id).await;
+                edits.release_run(&result.run.run_id);
             }
             true
         }
@@ -310,8 +340,9 @@ async fn execute_while_renewing(
     owner_user_id: &str,
     claim: &LocalAgentToolClaim,
     processes: &TerminalProcessStore,
+    edits: &code_write::CodeWriteStore,
 ) -> Option<LocalAgentToolOutcome> {
-    let execution = executor::execute(app, owner_user_id, claim, processes);
+    let execution = executor::execute(app, owner_user_id, claim, processes, edits);
     let renewal = renew_until_lost(app, owner_user_id, claim);
     tokio::pin!(execution);
     tokio::pin!(renewal);
