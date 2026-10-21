@@ -298,6 +298,30 @@ describe("StoryStudioView", () => {
     expect(screen.getByText("2 / 2 个已完成分段")).toBeVisible();
   });
 
+  it("keeps canonical narrative, direction, profiles, and relations visible after planning", async () => {
+    const canonical = { ...plannedProject(), summary: "陌生人在雨夜带着钥匙来到门前。" };
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "剧情资料" }));
+    expect(screen.getByRole("heading", { name: "剧情资料" })).toBeVisible();
+    expect(screen.getByText("陌生人在雨夜带着钥匙来到门前。")).toBeVisible();
+    expect(screen.getAllByText(canonical.source).some((value) => value.tagName === "PRE")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "视觉基调" }));
+    expect(screen.getByText(canonical.style)).toBeVisible();
+    expect(screen.getByText("16:9")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "角色画像" }));
+    expect(screen.getByText("道具")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "关系图谱" }));
+    expect(screen.getByText("道具")).toBeVisible();
+    expect(screen.getAllByText("钥匙").some((value) => value.tagName === "DD")).toBe(true);
+  });
+
   it("shows live planning progress without applying the event draft", async () => {
     const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
     let planningListener: ((event: StoryPlanningEvent) => void) | undefined;

@@ -20,6 +20,7 @@ export function StoryStudioView({ ownerUserId, mediaPort, port }: StoryStudioVie
   const state = useStoryStudioStore();
   const [showCreate, setShowCreate] = useState(false);
   const [settingsProjectId, setSettingsProjectId] = useState<string | null>(null);
+  const [factsProjectId, setFactsProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     void state.activate(port, mediaPort, ownerUserId);
@@ -61,7 +62,7 @@ export function StoryStudioView({ ownerUserId, mediaPort, port }: StoryStudioVie
             <button onClick={state.clearError} type="button">关闭</button>
           </div>
         )}
-        {project ? <ProjectWorkspace mediaPort={mediaPort} onOpenSettings={() => setSettingsProjectId(project.id)} port={port} projectId={project.id} /> : (
+        {project ? <ProjectWorkspace mediaPort={mediaPort} onOpenFacts={() => setFactsProjectId(project.id)} onOpenSettings={() => setSettingsProjectId(project.id)} port={port} projectId={project.id} /> : (
           <div className="story-studio__welcome">
             <span aria-hidden="true">✦</span>
             <h2>把故事变成可控的镜头</h2>
@@ -72,11 +73,12 @@ export function StoryStudioView({ ownerUserId, mediaPort, port }: StoryStudioVie
       </main>
       {showCreate && <StoryProjectSheet onClose={() => setShowCreate(false)} port={port} />}
       {settingsProjectId && <StoryProjectSheet onClose={() => setSettingsProjectId(null)} port={port} projectId={settingsProjectId} />}
+      {factsProjectId && <StoryProjectFactsSheet onClose={() => setFactsProjectId(null)} projectId={factsProjectId} />}
     </section>
   );
 }
 
-function ProjectWorkspace({ mediaPort, onOpenSettings, port, projectId }: { mediaPort: MediaStudioPort; onOpenSettings(): void; port: StoryStudioPort; projectId: string }) {
+function ProjectWorkspace({ mediaPort, onOpenFacts, onOpenSettings, port, projectId }: { mediaPort: MediaStudioPort; onOpenFacts(): void; onOpenSettings(): void; port: StoryStudioPort; projectId: string }) {
   const state = useStoryStudioStore();
   const project = state.projects.find((value) => value.id === projectId)!;
   const [source, setSource] = useState(project.source);
@@ -112,6 +114,7 @@ function ProjectWorkspace({ mediaPort, onOpenSettings, port, projectId }: { medi
           <span><strong>{project.characters.length + project.scenes.length + project.props.length}</strong>素材</span>
           <span><strong>{project.segments.length}</strong>分段</span>
           <span><strong>{project.segments.filter((segment) => segment.video).length}</strong>成片</span>
+          <button aria-label="剧情资料" onClick={onOpenFacts} type="button">资料</button>
           <button aria-label="剧情设置" disabled={state.busy} onClick={onOpenSettings} type="button">设置</button>
         </div>
       </header>
@@ -147,6 +150,15 @@ function ProjectWorkspace({ mediaPort, onOpenSettings, port, projectId }: { medi
       ) : <PlannedStoryWorkspace mediaPort={mediaPort} port={port} projectId={project.id} />}
     </div>
   );
+}
+
+function StoryProjectFactsSheet({ projectId, onClose }: { projectId: string; onClose(): void }) {
+  const project = useStoryStudioStore((state) => state.projects.find((value) => value.id === projectId))!;
+  const [section, setSection] = useState<"narrative" | "direction" | "profiles" | "relations">("narrative");
+  const resourceName = (id: string) => [...project.characters, ...project.scenes, ...project.props]
+    .find((value) => value.id === id)?.name ?? id;
+  const segmentName = (id: string) => project.segments.find((value) => value.id === id)?.title ?? id;
+  return <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section aria-modal="true" className="story-sheet story-facts-sheet" role="dialog"><header><div><span>⌘</span><div><h2>剧情资料</h2><p>直接读取当前项目的原文、视觉方向、文字画像和关系事实。</p></div></div><button aria-label="关闭" onClick={onClose} type="button">×</button></header><nav aria-label="剧情资料分类">{([ ["narrative", "剧情原文"], ["direction", "视觉基调"], ["profiles", "角色画像"], ["relations", "关系图谱"] ] as const).map(([id, label]) => <button aria-selected={section === id} className={section === id ? "is-selected" : ""} key={id} onClick={() => setSection(id)} type="button">{label}</button>)}</nav><div className="story-facts-sheet__body">{section === "narrative" && <><section><h3>剧情摘要</h3><p>{project.summary || "尚未生成剧情摘要。"}</p></section><section><h3>完整原文</h3><pre>{project.source || "尚未填写剧情原文。"}</pre></section></>}{section === "direction" && <><section><h3>画面风格</h3><p>{project.style}</p></section><dl><div><dt>画面比例</dt><dd>{project.ratio}</dd></div><div><dt>文本规划模型</dt><dd>{project.models.textModelId}</dd></div><div><dt>图片生成模型</dt><dd>{project.models.imageModelId}</dd></div><div><dt>视频生成模型</dt><dd>{project.models.videoModelId}</dd></div><div><dt>支持时长</dt><dd>{project.models.supportedVideoDurations?.map((value) => `${value}s`).join(" · ") || "按当前模型运行时核对"}</dd></div></dl></>}{section === "profiles" && <div className="story-profile-list">{project.characters.map((character) => <article key={character.id}><header><strong>{character.name}</strong><span>{character.profile.isProtagonist ? "主角" : "人物"}</span></header><PlanningTextRows rows={[["剧情身份", character.profile.roleInStory], ["外貌", character.profile.appearance], ["性格", character.profile.personality], ["动机", character.profile.motivation], ["人物关系", character.profile.relationships], ["服装", character.profile.costume], ["一致性约束", character.profile.consistencyNotes], ["画面提示", character.imagePrompt]]} /></article>)}{project.scenes.map((scene) => <article key={scene.id}><header><strong>{scene.name}</strong><span>场景</span></header><PlanningTextRows rows={[["剧情作用", scene.profile.roleInStory], ["场景设定", scene.profile.setting], ["空间布局", scene.profile.spatialLayout], ["光线与色彩", scene.profile.lightingAndPalette], ["关键元素", scene.profile.keyElements], ["氛围", scene.profile.atmosphere], ["一致性约束", scene.profile.consistencyNotes], ["画面提示", scene.imagePrompt]]} /></article>)}{project.props.map((prop) => <article key={prop.id}><header><strong>{prop.name}</strong><span>道具</span></header><PlanningTextRows rows={[["描述", prop.description], ["画面提示", prop.imagePrompt]]} /></article>)}{project.characters.length + project.scenes.length + project.props.length === 0 && <p>还没有人物、场景或道具画像。</p>}</div>}{section === "relations" && <div className="story-relation-facts">{project.segments.map((segment) => <article key={segment.id}><header><strong>{segment.title}</strong><span>{segment.seconds} 秒</span></header><dl><div><dt>人物</dt><dd>{segment.characterIds.map(resourceName).join("、") || "无"}</dd></div><div><dt>场景</dt><dd>{segment.sceneIds.map(resourceName).join("、") || "无"}</dd></div><div><dt>道具</dt><dd>{segment.propIds.map(resourceName).join("、") || "无"}</dd></div></dl>{project.relations.filter((value) => value.segmentId === segment.id).map((relation) => <p key={relation.id}><strong>{resourceName(relation.characterId)} → {resourceName(relation.sceneId)}</strong><span>{relation.startSecond}–{relation.endSecond}s · {relation.action || "未填写动作"} · {relation.position || "未填写位置"}</span></p>)}</article>)}{project.segments.length === 0 && <p>还没有分段引用关系。</p>}<small>关系共 {project.relations.length} 条，分段标题由 canonical 项目读取：{project.relations.length > 0 ? [...new Set(project.relations.map((value) => segmentName(value.segmentId)))].join("、") : "无"}</small></div>}</div><footer><button onClick={onClose} type="button">完成</button></footer></section></div>;
 }
 
 function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: MediaStudioPort; port: StoryStudioPort; projectId: string }) {
