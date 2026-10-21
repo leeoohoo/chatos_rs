@@ -113,8 +113,8 @@ use run_inspector::{
 };
 use story_studio::{
     abandon_story_planning, create_story_project, discard_story_studio_presentation,
-    load_story_project, load_story_projects, resume_story_planning, start_story_planning,
-    story_studio_protocol, update_story_project_settings, StoryStudioManager,
+    load_story_planning_history, load_story_project, load_story_projects, resume_story_planning,
+    start_story_planning, story_studio_protocol, update_story_project_settings, StoryStudioManager,
 };
 use system_permissions::{load_system_permissions, request_system_permission};
 use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent};
@@ -337,6 +337,7 @@ pub fn run() {
             cancel_media_studio_video_generation,
             load_story_projects,
             load_story_project,
+            load_story_planning_history,
             create_story_project,
             update_story_project_settings,
             discard_story_studio_presentation,

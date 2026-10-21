@@ -11,7 +11,7 @@ use super::{
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
     projection::StoryProjectSnapshot,
     runtime::{abandon_run, StoryPlanningOutcome, StoryPlanningRuntime},
-    store::{StoryProjectCursor, StoryProjectPage},
+    store::{StoryPlanningHistoryPage, StoryProjectCursor, StoryProjectPage},
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -81,6 +81,58 @@ pub(crate) struct StoryPlanningAbandonInput {
     presentation_id: String,
     project_id: String,
     run_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryPlanningHistoryInput {
+    owner_user_id: String,
+    presentation_id: String,
+    project_id: String,
+    after: Option<StoryProjectCursor>,
+    limit: Option<usize>,
+}
+
+#[tauri::command]
+pub(crate) async fn load_story_planning_history(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryPlanningHistoryInput,
+) -> Result<StoryPlanningHistoryPage, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    validate_planning_presentation(
+        &manager,
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.project_id,
+    )
+    .await?;
+    let store = manager.store();
+    let owner = input.owner_user_id;
+    let load_owner = owner.clone();
+    let presentation = input.presentation_id;
+    let project_id = input.project_id;
+    let load_project_id = project_id.clone();
+    let mut page = tauri::async_runtime::spawn_blocking(move || {
+        store.load_planning_history(
+            &load_owner,
+            &load_project_id,
+            input.after,
+            input.limit.unwrap_or(20),
+        )
+    })
+    .await
+    .map_err(|_| "剧情规划历史读取任务异常退出。".to_owned())??;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    if page.recovered_project.is_some() {
+        page.recovered_project =
+            Some(present_project(&manager, &owner, generation, &presentation, &project_id).await?);
+    }
+    Ok(page)
 }
 
 #[tauri::command]

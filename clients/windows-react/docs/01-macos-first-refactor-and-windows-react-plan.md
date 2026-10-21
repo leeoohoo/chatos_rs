@@ -552,6 +552,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 故事 Memory Adapter 第七段）：新增 Windows 原生、owner-scoped Story Memory Adapter，复用共享 `memory_engine_sdk`，通过当前认证 bearer token 访问与 macOS 相同的 gateway `/api/memory`（保留 `CHATOS_MEMORY_BASE_URL` 显式覆盖），不读取 Local Agent Host SQLite。运行开始前绑定 `client-agent:story:<project>:<run>` thread 与 project subject；按 32 条批次在每个工具/模型/完成边界前同步完整审计消息，先持久化 `syncInFlightEnd`，不明确提交在恢复时逐条读取并严格对账，避免重复写回改变 summary 状态。Memory checkpoint 校验 owner hash、run/runtime scope、固定提示消息、同步游标和 SHA-256 digest；compose 严格校验 tenant/source/thread、记录 ID/索引/内容/工具调用/Responses output/usage/timestamp，过滤孤立工具调用，按“固定 system → Memory summary/近期记录 → 当前 user goal”组装一次运行上下文，后续消息只本地追加以保持 Responses continuation 稳定。网络等待可由页面/账号/应用 teardown 立即取消，错误只发布安全状态；绑定成功后 `usesCloudMemory=true`。Story Rust 定向 25 项与 `clippy -D warnings` 通过。React 剧情入口继续关闭；下一片进入 Story 历史与安全编辑 commands，然后再实现媒体导入/生成/恢复门禁。
 
+状态补充（2026-10-21，Windows AI 故事 Planning 历史分页第八段）：新增 `load_story_planning_history` typed command；读取前先用当前 presentation 投影项目并绑定 owner/authentication generation/project，读取后再次复验 generation。原生 Store 按 macOS 默认 20、上限 200，以 run 文件修改时间 + UUID 做稳定 newest-first 游标，64 MiB 严格解码，损坏记录只累计 `unreadableCount`，不删除或替换；输出继续使用不含 prompt、messages、tool payload、Memory checkpoint 和 Secret 的 safe run snapshot。首页按 macOS `StoryHistoryAdapter` 语义尝试恢复“业务已完整但终态应用被中断”的候选，必须通过本地完成校验及 canonical/draft fingerprint，旧页保持只读；恢复后的项目重新经过当前 presentation 媒体 token 投影。Story Rust 定向 26 项与 `clippy -D warnings` 通过。Media batch 历史仍等待其原生持久化模型，React 剧情入口继续关闭；下一片进入 canonical Story 编辑 command。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

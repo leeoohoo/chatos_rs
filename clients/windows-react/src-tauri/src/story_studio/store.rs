@@ -22,6 +22,7 @@ pub(super) const MAXIMUM_STORY_IMAGE_BYTES: usize = 20 * 1_024 * 1_024;
 pub(super) const MAXIMUM_STORY_VIDEO_BYTES: usize = 512 * 1_024 * 1_024;
 const DEFAULT_PROJECT_PAGE_SIZE: usize = 40;
 const MAXIMUM_PROJECT_PAGE_SIZE: usize = 200;
+const DEFAULT_HISTORY_PAGE_SIZE: usize = 20;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -36,6 +37,15 @@ pub(crate) struct StoryProjectPage {
     pub items: Vec<StoryProjectSnapshot>,
     pub next_cursor: Option<StoryProjectCursor>,
     pub unreadable_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoryPlanningHistoryPage {
+    pub runs: Vec<super::planning::StoryPlanningRunSnapshot>,
+    pub next_cursor: Option<StoryProjectCursor>,
+    pub unreadable_count: usize,
+    pub recovered_project: Option<StoryProjectSnapshot>,
 }
 
 pub(super) struct NativeStoryProjectPage {
@@ -320,6 +330,150 @@ impl StoryProjectStore {
         }
         run.validate(&expected_owner_hash, &project_id)?;
         Ok(run)
+    }
+
+    pub(super) fn load_planning_history(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        after: Option<StoryProjectCursor>,
+        requested_limit: usize,
+    ) -> Result<StoryPlanningHistoryPage, String> {
+        let owner = validate_owner(owner_user_id)?;
+        let expected_owner_hash = owner_hash(owner);
+        let project_id = canonical_project_id(project_id)?;
+        if let Some(cursor) = &after {
+            validate_cursor(cursor)?;
+        }
+        let limit = if requested_limit == 0 {
+            DEFAULT_HISTORY_PAGE_SIZE
+        } else {
+            requested_limit.clamp(1, MAXIMUM_PROJECT_PAGE_SIZE)
+        };
+        let projects = self
+            .existing_projects_directory(owner)?
+            .ok_or_else(planning_store_error)?;
+        let project_directory = projects.join(&project_id);
+        validate_private_directory(&project_directory)?;
+        let runs_directory = project_directory.join("runs");
+        if !runs_directory.exists() {
+            return Ok(StoryPlanningHistoryPage {
+                runs: Vec::new(),
+                next_cursor: None,
+                unreadable_count: 0,
+                recovered_project: None,
+            });
+        }
+        validate_private_directory(&runs_directory)?;
+        let mut candidates = Vec::with_capacity(limit.saturating_add(1));
+        for entry in fs::read_dir(&runs_directory).map_err(|_| planning_store_error())? {
+            let Ok(entry) = entry else { continue };
+            let filename = entry.file_name().to_string_lossy().into_owned();
+            let Some(run_id) = filename.strip_suffix(".json") else {
+                continue;
+            };
+            if canonical_project_id(run_id).is_err() {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(metadata) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+                continue;
+            }
+            let cursor = StoryProjectCursor {
+                modified_at_unix_ms: system_time_milliseconds(metadata.modified().ok()),
+                record_id: run_id.to_owned(),
+            };
+            if after
+                .as_ref()
+                .is_some_and(|after| !cursor_is_after(&cursor, after))
+            {
+                continue;
+            }
+            candidates.push((path, cursor));
+        }
+        candidates.sort_by(|left, right| {
+            right
+                .1
+                .modified_at_unix_ms
+                .cmp(&left.1.modified_at_unix_ms)
+                .then_with(|| right.1.record_id.cmp(&left.1.record_id))
+        });
+        candidates.truncate(limit.saturating_add(1));
+        let has_more = candidates.len() > limit;
+        let next_cursor = has_more
+            .then(|| {
+                candidates
+                    .get(limit.saturating_sub(1))
+                    .map(|item| item.1.clone())
+            })
+            .flatten();
+        let mut runs = Vec::with_capacity(limit);
+        let mut unreadable_count = 0usize;
+        for (path, cursor) in candidates.iter().take(limit) {
+            let loaded = read_private_file(path, MAXIMUM_PLANNING_RUN_BYTES)
+                .and_then(|bytes| {
+                    serde_json::from_slice::<StoryPlanningRun>(&bytes)
+                        .map_err(|_| planning_store_error())
+                })
+                .and_then(|run| {
+                    if run.id() != cursor.record_id {
+                        return Err(planning_store_error());
+                    }
+                    run.validate(&expected_owner_hash, &project_id)?;
+                    Ok(run)
+                });
+            match loaded {
+                Ok(run) => runs.push(run),
+                Err(_) => unreadable_count = unreadable_count.saturating_add(1),
+            }
+        }
+        runs.sort_by(|left, right| {
+            right
+                .updated_at_unix_ms
+                .cmp(&left.updated_at_unix_ms)
+                .then_with(|| right.id().cmp(left.id()))
+        });
+
+        let mut recovered_project = None;
+        if after.is_none() {
+            let current = load_project_manifest(&project_directory, &project_id)?;
+            if let Some(index) = runs.iter().position(|run| {
+                !run.applied
+                    && run.abandoned_at_unix_ms.is_none()
+                    && run.checkpoint.pending_calls.is_empty()
+                    && run.checkpoint.in_flight_call_id.is_none()
+                    && super::tools::validate_completion(run).is_ok()
+                    && (project_fingerprint(&current).ok().as_ref()
+                        == Some(&run.base_project_fingerprint)
+                        || project_fingerprint(&current).ok()
+                            == project_fingerprint(&run.draft).ok())
+            }) {
+                let mut candidate = runs[index].clone();
+                candidate.checkpoint.status = StoryPlanningStatus::Completed;
+                candidate
+                    .checkpoint
+                    .completion_result
+                    .get_or_insert_with(|| "本阶段规划完成，已通过客户端恢复校验。".into());
+                candidate.checkpoint.result = candidate.checkpoint.completion_result.clone();
+                if let Ok((applied, project)) = self.apply_planning_run(
+                    owner,
+                    &candidate,
+                    system_time_milliseconds(Some(std::time::SystemTime::now())),
+                ) {
+                    runs[index] = applied;
+                    recovered_project = Some(StoryProjectSnapshot::from_project(&project));
+                }
+            }
+        }
+        Ok(StoryPlanningHistoryPage {
+            runs: runs.iter().map(|run| run.snapshot(owner)).collect(),
+            next_cursor,
+            unreadable_count,
+            recovered_project,
+        })
     }
 
     pub(super) fn apply_planning_run(

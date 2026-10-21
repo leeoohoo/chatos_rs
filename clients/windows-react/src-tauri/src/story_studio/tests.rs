@@ -785,6 +785,63 @@ fn planning_checkpoint_store_is_atomic_owner_scoped_and_strictly_decoded() {
 }
 
 #[test]
+fn planning_history_is_owner_scoped_bounded_and_safe() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    canonical.source = "A complete source story".into();
+    canonical.segments.clear();
+    canonical.relations.clear();
+    store.save("alice", &canonical).unwrap();
+    for index in 0..3 {
+        let mut run = StoryPlanningRun::new(
+            &canonical,
+            "alice",
+            StoryPlanningStage::Outline,
+            Vec::new(),
+            "ideas",
+            StoryAgentRunPolicy::default(),
+            format!("private-system-{index}"),
+            |_| format!("private-goal-{index}"),
+            100 + index,
+        )
+        .unwrap();
+        run.updated_at_unix_ms = 100 + index;
+        store.save_planning_run("alice", &run).unwrap();
+    }
+
+    let first = store
+        .load_planning_history("alice", &canonical.id, None, 2)
+        .unwrap();
+    assert_eq!(first.runs.len(), 2);
+    assert!(first.next_cursor.is_some());
+    let second = store
+        .load_planning_history("alice", &canonical.id, first.next_cursor.clone(), 2)
+        .unwrap();
+    assert_eq!(second.runs.len(), 1);
+    assert!(second.next_cursor.is_none());
+    let ids = [&first, &second]
+        .into_iter()
+        .flat_map(|page| {
+            serde_json::to_value(page).unwrap()["runs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|run| run["id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(ids.len(), 3);
+    let safe = serde_json::to_string(&first).unwrap();
+    assert!(!safe.contains("private-system"));
+    assert!(!safe.contains("private-goal"));
+    assert!(!safe.contains("messages"));
+    assert!(store
+        .load_planning_history("bob", &canonical.id, None, 20)
+        .is_err());
+}
+
+#[test]
 fn native_story_tool_registry_is_stage_scoped_and_never_exposes_media_generation() {
     let outline = tools::definitions(StoryPlanningStage::Outline);
     let refine = tools::definitions(StoryPlanningStage::Refine);
