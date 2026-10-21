@@ -6,6 +6,97 @@ import XCTest
 @testable import ChatOSApp
 
 extension StoryStudioTests {
+    func testGeneratedStoryImageImportNormalizesPersistsAndConfirmsResource() async throws {
+        let (vm, store, _) = try await fixture()
+        var draft = makeProject()
+        draft.props = [
+            .init(id: "key", name: "钥匙", description: "一把旧铜钥匙"),
+        ]
+        let created = await vm.create(draft, availableModels: models)
+        XCTAssertTrue(created)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 16,
+            pixelsHigh: 16,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+
+        vm.importImage(
+            .init(
+                id: "generated-key",
+                mimeType: "image/png",
+                base64Data: png.base64EncodedString()
+            ),
+            assetID: "key",
+            segmentID: nil
+        )
+        try await idle(vm)
+
+        let resource = try XCTUnwrap(vm.project?.resource(id: "key"))
+        let image = try XCTUnwrap(resource.images.last)
+        XCTAssertEqual(resource.confirmedImageID, image.id)
+        let fileURL = try store.fileURL(
+            image.filename,
+            projectID: draft.id,
+            owner: "alice"
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    func testLocalStoryImageImportAttachesAndConfirmsFirstFrame() async throws {
+        let (vm, _, _) = try await fixture()
+        var draft = makeProject()
+        draft.segments = [
+            .init(
+                id: "segment-1",
+                title: "开场",
+                synopsis: "开场",
+                sourceRange: .init(start: 0, end: draft.source.count)
+            ),
+        ]
+        let created = await vm.create(draft, availableModels: models)
+        XCTAssertTrue(created)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 16,
+            pixelsHigh: 16,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryLocalImport-\(UUID().uuidString).png"
+        )
+        try png.write(to: fileURL, options: .atomic)
+        addTeardownBlock { try? FileManager.default.removeItem(at: fileURL) }
+
+        vm.uploadImage(
+            fileURL,
+            assetID: nil,
+            segmentID: "segment-1",
+            frameRole: .first
+        )
+        try await idle(vm)
+
+        let segment = try XCTUnwrap(vm.project?.segments.first)
+        let image = try XCTUnwrap(segment.firstFrames.images.last)
+        XCTAssertEqual(segment.confirmedFrameID, image.id)
+        XCTAssertEqual(segment.userSelectedFirstFrameID, image.id)
+        XCTAssertNil(segment.inheritedFirstFrameSourceSegmentID)
+    }
+
     func testChangingSharedAssetVersionInvalidatesDependentFramesOnly() async throws {
         let (vm, store, _) = try await fixture()
         var draft = try await readyProject(store)

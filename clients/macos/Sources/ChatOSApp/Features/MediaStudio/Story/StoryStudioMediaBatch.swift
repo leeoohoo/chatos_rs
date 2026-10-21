@@ -271,24 +271,6 @@ extension StoryStudioViewModel {
             completion(self, saved)
         }
     }
-    nonisolated static func saveStoryProject(
-        _ project: StoryProject,
-        owner: String,
-        store: StoryProjectStore,
-        preservingVideoSegmentIDs: Set<String>
-    ) async throws -> StoryProject {
-        try Task.checkCancellation()
-        var next = project
-        StoryContinuityContext.reconcileInheritedFirstFrames(&next)
-        next.updatedAt = Date()
-        let saved = try await store.save(
-            next,
-            owner: owner,
-            preservingVideoSegmentIDs: preservingVideoSegmentIDs
-        )
-        try Task.checkCancellation()
-        return saved
-    }
     func clearImageGenerationLockNoticeIfNeeded() {
         guard activeAssetGenerations.isEmpty, activeFrameGenerations.isEmpty,
               errorMessage == Self.imageGenerationLockNotice else { return }

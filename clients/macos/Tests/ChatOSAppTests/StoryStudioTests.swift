@@ -189,6 +189,64 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertNil(vm.errorMessage)
     }
 
+    func testLateStoryImageImportCannotPublishIntoTheCurrentAccount() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryStudioImageImportTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        var alice = makeProject()
+        alice.title = "Alice Story"
+        alice.props = [.init(id: "key", name: "Key", description: "An old key")]
+        var bob = makeProject()
+        bob.title = "Bob Story"
+        try await store.save(alice, owner: "alice")
+        try await store.save(bob, owner: "bob")
+        let importer = DeferredStoryImageImporter()
+        let service = StoryTestService()
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            storyImageImport: importer
+        )
+
+        vm.activate(userID: "alice")
+        for _ in 0..<100 where vm.isLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        vm.open(alice.id)
+        vm.importImage(
+            .init(id: "generated-key", mimeType: "image/png"),
+            assetID: "key",
+            segmentID: nil
+        )
+        for _ in 0..<100 where await !importer.hasRequest(ownerUserID: "alice") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        vm.activate(userID: "bob")
+        var importedAlice = alice
+        importedAlice.props[0].media.images.append(
+            .init(filename: "imported.png", mimeType: "image/png")
+        )
+        await importer.complete(ownerUserID: "alice", project: importedAlice)
+        for _ in 0..<100 where vm.isLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        XCTAssertEqual(vm.owner, "bob")
+        XCTAssertEqual(vm.projects.map(\.title), ["Bob Story"])
+        XCTAssertNil(vm.selectedProjectID)
+        XCTAssertFalse(vm.isBusy)
+        XCTAssertNil(vm.errorMessage)
+    }
+
     func testLateStoryHistoryCannotPublishIntoTheCurrentAccount() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "StoryStudioHistoryTests-\(UUID().uuidString)",
@@ -1024,6 +1082,40 @@ private actor DeferredStoryProjectMutationPersistence: StoryProjectMutationPersi
         requests.insert(ownerUserID)
         return try await withCheckedThrowingContinuation { continuation in
             continuations[ownerUserID] = continuation
+        }
+    }
+
+    func hasRequest(ownerUserID: String) -> Bool {
+        requests.contains(ownerUserID)
+    }
+
+    func complete(ownerUserID: String, project: StoryProject) {
+        continuations.removeValue(forKey: ownerUserID)?.resume(returning: project)
+    }
+}
+
+private actor DeferredStoryImageImporter: StoryImageImporting {
+    private var requests: Set<String> = []
+    private var continuations: [String: CheckedContinuation<StoryProject, Error>] = [:]
+
+    func importGeneratedStoryImage(
+        command: StoryImageImportCommand,
+        asset: GeneratedMediaAsset
+    ) async throws -> StoryProject {
+        try await request(command)
+    }
+
+    func importLocalStoryImage(
+        command: StoryImageImportCommand,
+        fileURL: URL
+    ) async throws -> StoryProject {
+        try await request(command)
+    }
+
+    private func request(_ command: StoryImageImportCommand) async throws -> StoryProject {
+        requests.insert(command.ownerUserID)
+        return try await withCheckedThrowingContinuation { continuation in
+            continuations[command.ownerUserID] = continuation
         }
     }
 

@@ -108,6 +108,7 @@ final class StoryStudioViewModel: ObservableObject {
     let storyPlanning: StoryPlanningUseCase?
     let storyHistory: StoryHistoryUseCase
     let storyMediaBatch: StoryMediaBatchUseCase
+    let storyImageImport: StoryImageImportUseCase
     let storyAssetImageGeneration: StoryAssetImageGenerationUseCase
     let storyFrameImageGeneration: StoryFrameImageGenerationUseCase
     let storyVideoGeneration: StoryVideoGenerationUseCase
@@ -127,6 +128,7 @@ final class StoryStudioViewModel: ObservableObject {
     var storyPlanningExecutionState = StoryPlanningExecutionState()
     var storyHistoryLoadState = StoryHistoryLoadState()
     var storyMediaBatchExecutionState = StoryMediaBatchExecutionState()
+    var storyImageImportState = StoryImageImportState()
     var storyAssetImageGenerationState = StoryAssetImageGenerationState()
     var storyFrameImageGenerationState = StoryFrameImageGenerationState()
     var storyVideoGenerationState = StoryVideoGenerationState()
@@ -148,6 +150,7 @@ final class StoryStudioViewModel: ObservableObject {
          storyPlanning: (any StoryPlanningExecuting)? = nil,
          storyHistory: (any StoryHistoryLoading)? = nil,
          storyMediaBatch: (any StoryMediaBatchExecuting)? = nil,
+         storyImageImport: (any StoryImageImporting)? = nil,
          storyAssetImageGeneration: (any StoryAssetImageGenerating)? = nil,
          storyFrameImageGeneration: (any StoryFrameImageGenerating)? = nil,
          storyVideoGeneration: (any StoryVideoGenerating)? = nil,
@@ -165,6 +168,9 @@ final class StoryStudioViewModel: ObservableObject {
                 store: store,
                 media: media
             )
+        )
+        self.storyImageImport = StoryImageImportUseCase(
+            importer: storyImageImport ?? StoryImageImportAdapter(store: store)
         )
         self.storyAssetImageGeneration = StoryAssetImageGenerationUseCase(
             generator: storyAssetImageGeneration ?? StoryAssetImageGenerationAdapter(
@@ -488,6 +494,7 @@ final class StoryStudioViewModel: ObservableObject {
         storyPlanningExecutionState.reset()
         storyHistoryLoadState.reset()
         storyMediaBatchExecutionState.reset()
+        storyImageImportState.reset()
         storyAssetImageGenerationState.reset()
         storyFrameImageGenerationState.reset()
         storyVideoGenerationState.reset()

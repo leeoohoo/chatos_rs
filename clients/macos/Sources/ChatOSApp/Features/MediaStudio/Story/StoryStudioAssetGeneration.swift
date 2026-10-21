@@ -114,117 +114,101 @@ extension StoryStudioViewModel {
 
     func importImage(_ image: GeneratedMediaAsset, assetID: String?, segmentID: String?,
                      frameRole: StoryFrameRole = .first, confirmImported: Bool = true) {
-        guard let project else { return }
-        let store = store
-        let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
-        run("保存参考图片") { [weak self, store] owner, token in
-            let saved = try await Self.attach(
-                image,
+        guard let project, let owner,
+              let target = imageImportTarget(
                 assetID: assetID,
                 segmentID: segmentID,
-                frameRole: frameRole,
+                frameRole: frameRole
+              ) else { return }
+        let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
+        let command: StoryImageImportCommand
+        do {
+            command = try storyImageImport.prepare(
+                ownerUserID: owner,
                 project: project,
-                owner: owner,
-                store: store,
+                target: target,
                 preservingVideoSegmentIDs: preserving,
                 confirmsImportedImage: confirmImported
             )
-            self?.publishProject(saved, token: token)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        let storyImageImport = storyImageImport
+        run("保存参考图片") { [weak self, storyImageImport] _, token in
+            guard let self,
+                  let request = self.storyImageImportState.begin(
+                    command: command,
+                    accountSessionID: token,
+                    source: .generatedAsset
+                  ) else { throw CancellationError() }
+            defer { _ = self.storyImageImportState.finish(request) }
+            let saved = try await storyImageImport.importGeneratedAsset(
+                image,
+                command: command
+            )
+            guard self.storyImageImportState.accepts(
+                request,
+                ownerUserID: self.owner,
+                accountSessionID: self.session,
+                projectID: self.activeProjectID
+            ) else { return }
+            self.publishProject(saved, token: token)
         }
     }
 
     func uploadImage(_ url: URL, assetID: String?, segmentID: String?, frameRole: StoryFrameRole = .first) {
-        guard let project else { return }
-        let store = store
-        let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
-        run("导入本机图片") { [weak self, store] owner, token in
-            let data = try await AppCancellableDetachedWork.run {
-                let access = url.startAccessingSecurityScopedResource()
-                defer { if access { url.stopAccessingSecurityScopedResource() } }
-                guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 20 * 1024 * 1024 else { throw StoryError.unsafeFile }
-                return try AppBoundedFileReader.read(
-                    url,
-                    maximumBytes: 20 * 1_024 * 1_024
-                )
-            }
-            try Task.checkCancellation()
-            let image = GeneratedMediaAsset(id: UUID().uuidString, mimeType: "image/png", base64Data: data.base64EncodedString())
-            let saved = try await Self.attach(
-                image,
+        guard let project, let owner,
+              let target = imageImportTarget(
                 assetID: assetID,
                 segmentID: segmentID,
-                frameRole: frameRole,
+                frameRole: frameRole
+              ) else { return }
+        let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
+        let command: StoryImageImportCommand
+        do {
+            command = try storyImageImport.prepare(
+                ownerUserID: owner,
                 project: project,
-                owner: owner,
-                store: store,
-                preservingVideoSegmentIDs: preserving
+                target: target,
+                preservingVideoSegmentIDs: preserving,
+                confirmsImportedImage: true
             )
-            self?.publishProject(saved, token: token)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        let storyImageImport = storyImageImport
+        run("导入本机图片") { [weak self, storyImageImport] _, token in
+            guard let self,
+                  let request = self.storyImageImportState.begin(
+                    command: command,
+                    accountSessionID: token,
+                    source: .localFile
+                  ) else { throw CancellationError() }
+            defer { _ = self.storyImageImportState.finish(request) }
+            let saved = try await storyImageImport.importLocalFile(
+                url,
+                command: command
+            )
+            guard self.storyImageImportState.accepts(
+                request,
+                ownerUserID: self.owner,
+                accountSessionID: self.session,
+                projectID: self.activeProjectID
+            ) else { return }
+            self.publishProject(saved, token: token)
         }
     }
 
-    nonisolated static func attach(
-        _ image: GeneratedMediaAsset,
+    private func imageImportTarget(
         assetID: String?,
         segmentID: String?,
-        frameRole: StoryFrameRole = .first,
-        project: StoryProject,
-        owner: String,
-        store: StoryProjectStore,
-        preservingVideoSegmentIDs: Set<String>,
-        clearsGenerationAttempt: Bool = false,
-        confirmsImportedImage: Bool = false
-    ) async throws -> StoryProject {
-        let data = try await MediaStudioImageLoader.data(for: image)
-        try Task.checkCancellation()
-        let png = try await MediaStudioImageLoader.normalizedPNGData(from: data)
-        try Task.checkCancellation()
-        let stored = try await store.saveImage(
-            png,
-            mimeType: "image/png",
-            projectID: project.id,
-            owner: owner
-        )
-        try Task.checkCancellation()
-        var next = project
-        if let assetID, var resource = next.resource(id: assetID) {
-            resource.media.images.append(stored)
-            if clearsGenerationAttempt { resource.media.generationAttemptID = nil }
-            let automaticallyConfirmed = confirmsImportedImage || resource.confirmedImageID == nil
-            if automaticallyConfirmed { resource.media.confirmedImageID = stored.id }
-            try next.replaceResource(resource)
-            if automaticallyConfirmed {
-                for index in next.segments.indices
-                    where next.segments[index].resourceIDs.contains(assetID)
-                        && next.segments[index].attempt == nil {
-                    next.segments[index].confirmedFrameID = nil
-                    next.segments[index].confirmedLastFrameID = nil
-                }
-            }
-        } else if let segmentID, let index = next.segments.firstIndex(where: { $0.id == segmentID }), next.segments[index].attempt == nil {
-            switch frameRole {
-            case .first:
-                next.segments[index].firstFrames.images.append(stored)
-                if clearsGenerationAttempt { next.segments[index].firstFrames.generationAttemptID = nil }
-                if confirmsImportedImage || next.segments[index].confirmedFrameID == nil {
-                    next.segments[index].confirmedFrameID = stored.id
-                    next.segments[index].userSelectedFirstFrameID = stored.id
-                    next.segments[index].inheritedFirstFrameSourceSegmentID = nil
-                }
-            case .last:
-                next.segments[index].lastFrames.images.append(stored)
-                if clearsGenerationAttempt { next.segments[index].lastFrames.generationAttemptID = nil }
-                if confirmsImportedImage || next.segments[index].confirmedLastFrameID == nil {
-                    next.segments[index].confirmedLastFrameID = stored.id
-                }
-            }
-        } else { throw StoryError.invalidPlan }
-        return try await saveStoryProject(
-            next,
-            owner: owner,
-            store: store,
-            preservingVideoSegmentIDs: preservingVideoSegmentIDs
-        )
+        frameRole: StoryFrameRole
+    ) -> StoryImageImportTarget? {
+        if let assetID { return .resource(id: assetID) }
+        if let segmentID { return .frame(segmentID: segmentID, role: frameRole) }
+        return nil
     }
 
     func confirmImage(_ image: StoryImage, assetID: String?, segmentID: String?, frameRole: StoryFrameRole = .first) {
