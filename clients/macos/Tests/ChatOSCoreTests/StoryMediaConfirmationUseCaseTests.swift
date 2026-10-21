@@ -118,6 +118,64 @@ struct StoryMediaConfirmationUseCaseTests {
         #expect(!result.segments[0].useLastFrameForVideo)
     }
 
+    @Test("refined detail invalidates frame choices and tail guidance")
+    func appliesRefinedDetail() throws {
+        var project = Self.project()
+        Self.addConfirmedFrames(to: &project.segments[0])
+        project.segments[0].useLastFrameForVideo = true
+        let detail = Self.detail(continuityIn: "new entrance")
+
+        let result = try useCase.applyingRefinedDetail(
+            detail,
+            segmentID: "s1",
+            in: project
+        )
+
+        #expect(result.segments[0].detail == detail)
+        #expect(result.segments[0].confirmedFrameID == nil)
+        #expect(result.segments[0].confirmedLastFrameID == nil)
+        #expect(!result.segments[0].useLastFrameForVideo)
+    }
+
+    @Test("segment continuity edits invalidate current and adjacent plans")
+    func appliesSegmentEdit() throws {
+        var project = Self.threeSegmentProject()
+        for index in project.segments.indices {
+            project.segments[index].detail = Self.detail(continuityIn: "in-\(index)")
+            Self.addConfirmedFrames(to: &project.segments[index])
+        }
+        var edited = project.segments[1]
+        edited.synopsis = "Changed continuity"
+
+        let mutation = try useCase.applyingSegmentEdit(
+            edited,
+            relations: [],
+            to: project
+        )
+        let result = try #require(mutation)
+
+        #expect(result.segments[1].synopsis == "Changed continuity")
+        #expect(result.segments.allSatisfy { $0.confirmedFrameID == nil })
+        #expect(result.segments.allSatisfy { $0.confirmedLastFrameID == nil })
+        #expect(result.segments[0].detail == nil)
+        #expect(result.segments[2].detail == nil)
+    }
+
+    @Test("structural segment changes invalidate every plan through one policy")
+    func invalidatesAllSegmentPlans() {
+        var project = Self.threeSegmentProject()
+        for index in project.segments.indices {
+            project.segments[index].detail = Self.detail(continuityIn: "in-\(index)")
+            Self.addConfirmedFrames(to: &project.segments[index])
+        }
+
+        let result = useCase.invalidatingAllSegmentPlans(in: project)
+
+        #expect(result.segments.allSatisfy { $0.detail == nil })
+        #expect(result.segments.allSatisfy { $0.confirmedFrameID == nil })
+        #expect(result.segments.allSatisfy { $0.confirmedLastFrameID == nil })
+    }
+
     private static func project() -> StoryProject {
         var project = StoryProject(
             title: "Story",
@@ -147,5 +205,42 @@ struct StoryMediaConfirmationUseCaseTests {
             ),
         ]
         return project
+    }
+
+    private static func threeSegmentProject() -> StoryProject {
+        var project = project()
+        project.source = "abc"
+        project.segments = (0..<3).map { index in
+            .init(
+                id: "s\(index + 1)",
+                title: "Segment \(index + 1)",
+                synopsis: "Segment \(index + 1)",
+                sourceRange: .init(start: index, end: index + 1),
+                propIDs: ["key"]
+            )
+        }
+        return project
+    }
+
+    private static func detail(continuityIn: String) -> StorySegmentDetail {
+        .init(
+            firstFramePrompt: "First frame",
+            shots: [.init(start: 0, end: 15, prompt: "Shot")],
+            continuityIn: continuityIn,
+            continuityOut: "Exit",
+            audio: "Audio",
+            constraints: "Constraints",
+            lastFramePrompt: "Last frame"
+        )
+    }
+
+    private static func addConfirmedFrames(to segment: inout StorySegment) {
+        let first = StoryImage(filename: "\(segment.id)-first.png", mimeType: "image/png")
+        let last = StoryImage(filename: "\(segment.id)-last.png", mimeType: "image/png")
+        segment.firstFrames.images = [first]
+        segment.firstFrames.confirmedImageID = first.id
+        segment.userSelectedFirstFrameID = first.id
+        segment.lastFrames.images = [last]
+        segment.lastFrames.confirmedImageID = last.id
     }
 }

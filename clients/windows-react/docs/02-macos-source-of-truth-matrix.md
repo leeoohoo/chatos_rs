@@ -1184,6 +1184,7 @@ Windows React 已完成对应独立切片：
 - 第 08 页完成视频重新生成前的 archive 已进入第十三段 Application 边界：ViewModel 构造 `StoryProjectEditCommand` 并通过现有 mutation Port 持久化旧视频、attempt 与指导方式；Store 直连已移除。归档结果只有通过 owner/account session/request edit token 后才允许进入单段视频 generation，因此迟到/取消结果不能触发 provider 计费。Story Studio 66 项通过。媒体 URL 投影与最终平台差异审计仍待收口，剧情模式继续禁止。
 - 第 08 页媒体访问已进入第十四段 Application 边界：Core `StoryMediaAccessResolving` 与 `StoryMediaAccessUseCase` 只投影 display-safe `GeneratedMediaAsset` 或本机 file URL，并拒绝 Adapter 返回非 file URL。macOS `StoryMediaAccessAdapter` 独占 owner/project/filename 到 `StoryProjectStore.fileURL` 的映射，ViewModel 不再解释磁盘布局。Core 4 项、Story Studio 66 项与 Story Agent 21 项通过，Story Core 累计 58 项。最终 Store 直连、敏感字段及 Windows opaque media token 平台差异审计仍待收口，剧情模式继续禁止。
 - 第 08 页媒体确认已进入第十五段 Application 边界：纯 Core `StoryMediaConfirmationUseCase` 统一 resource/frame attachment、导入自动确认、手动/批量素材确认、首尾帧确认/取消、用户首帧标记及素材变化后的依赖帧失效。macOS `StoryImageImportAdapter` 只处理 security scope、媒体字节、PNG、Store 文件及持久化，ViewModel 不再实现这些确认规则。Core 新增 5 项、图片导入 Core 5 项、Story Studio 66 项与 Story Agent 21 项通过，Story Core 累计 63 项。普通剧情/分段编辑中的确认失效策略与最终平台差异审计仍待收口，剧情模式继续禁止。
+- 第 08 页编辑连续性规则已进入第十六段 Application 边界：分段重新细化、分段保存，以及新增/删除/排序分段时的当前/相邻确认与计划失效统一由 `StoryMediaConfirmationUseCase` 计算。ViewModel 不再直接写任何确认、用户首帧、继承来源或尾帧指导字段。Core 确认规则 8 项、Story Studio 66 项与 Story Agent 21 项通过，Story Core 累计 66 项。最终 Store/路径/Secret/媒体字节与 Windows opaque token 审计仍待收口，剧情模式继续禁止。
 
 ### 9.3 Agent Group Chat
 
@@ -1205,7 +1206,7 @@ Windows React 已完成对应独立切片：
 | 05 | 应用 | macOS Listing/Launch Use Case、Feature ViewModel、项目上下文安全投影及异步 lifecycle 已完成分层；Windows catalog/runtime/bridge、typed Store/Adapter、Apple 主题 UI 与 sandbox iframe 已完成 | 已进入 React；exact origin/source/session/nonce 与 CSP 门禁已进入测试 |
 | 06 | AI 图片 | macOS 生成/保存、模型目录、历史分页及参考图已进入 Core 窄 Port/Use Case 与 typed lifecycle；Windows provider/Secret、原子历史/分页、安全预览、参考图 token vault、strict React Domain/Port/Adapter/Store 与 Apple 主题 UI 已完成 | 已进入 React；剧情模式继续按独立准入门禁禁用 |
 | 07 | AI 视频 | macOS Core Port/Use Case/typed lifecycle 与 Windows provider/job/progress/history/首帧及音频 token vault、strict React Domain/Port/Adapter/Store、轮询/取消语义及 Apple 主题视频工作面均已完成 | 已进入 React；剧情模式仍保持禁用 |
-| 08 | AI 故事 | 项目目录、创建/设置、规划 Agent runtime、历史分页/安全投影、持久化制作批次执行、仅视频顺序队列、素材/首尾帧图片、单段视频生成恢复、通用编辑保存、图片导入与确认、视频实际末帧重提取、完成视频归档及媒体 URL 投影已完成 Core Port/Use Case/typed lifecycle；普通编辑确认失效与 Windows opaque media token 平台差异审计中 | 禁止；等待最终平台差异验收 |
+| 08 | AI 故事 | 项目目录、创建/设置、规划 Agent runtime、历史分页/安全投影、持久化制作批次执行、仅视频顺序队列、素材/首尾帧图片、单段视频生成恢复、通用编辑保存、图片导入/确认/连续性失效、视频实际末帧重提取、完成视频归档及媒体 URL 投影已完成 Core Port/Use Case/typed lifecycle；Windows opaque media token 平台差异审计中 | 禁止；等待最终平台差异验收 |
 | 09 | AI 历史 | macOS 图片/视频历史分页与账号隔离已收口并完成 Windows 原生/React 映射；剧情作品历史等待第 08 页 | 图片与视频历史已进入 React；剧情历史继续禁用 |
 | 10 | Agent 管理 | 未映射 | 禁止 |
 | 11 | Agent 文档 | 未映射 | 禁止 |
@@ -1291,5 +1292,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 53. [已完成] 第 08 页 macOS Story 完成视频重新生成前的 archive 已改走 `StoryProjectMutationUseCase` 与 typed edit lifecycle；只有归档持久化成功且账号/session/request 仍匹配才会启动后续计费 generation。Story Studio 66 项通过。下一片继续媒体 URL 投影与最终 macOS Story 准入审计。
 54. [已完成] 第 08 页 macOS Story 媒体 URL 投影已提取 Core `StoryMediaAccessResolving`、`StoryMediaAccessUseCase` 与 macOS `StoryMediaAccessAdapter`；ViewModel 不再解释本机路径，非 file URL 失败关闭。Core 4 项、Story Studio 66 项、Story Agent 21 项通过，Story Core 累计 58 项。下一片执行最终 Store/敏感字段及 Windows opaque media token 平台差异审计。
 55. [已完成] 第 08 页 macOS Story resource/frame attachment 与显式媒体确认已统一进入 Core `StoryMediaConfirmationUseCase`；图片导入 Adapter 复用同一规则，ViewModel 不再实现手动/批量素材确认或首尾帧确认/取消。Core 新增 5 项、图片导入 Core 5 项、Story Studio 66 项与 Story Agent 21 项通过，Story Core 累计 63 项。下一片继续收口普通剧情/分段编辑中的确认失效策略。
+56. [已完成] 第 08 页 macOS Story 分段重新细化、保存及结构变化的确认/相邻计划失效已统一进入 `StoryMediaConfirmationUseCase`；ViewModel 对确认与首帧继承字段的直接写入降为 0。Core 确认规则 8 项、Story Studio 66 项与 Story Agent 21 项通过，Story Core 累计 66 项。下一片执行最终 macOS Story 准入与 Windows 平台差异审计。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

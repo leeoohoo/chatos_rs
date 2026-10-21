@@ -731,8 +731,9 @@ final class StoryStudioViewModel: ObservableObject {
         }
         guard let planner else { errorMessage = StoryError.unavailable.localizedDescription; return }
         let projectMutation = projectMutation
+        let storyMediaConfirmation = storyMediaConfirmation
         let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
-        run("逐段细化镜头计划") { [weak self, planner, projectMutation] owner, token in
+        run("逐段细化镜头计划") { [weak self, planner, projectMutation, storyMediaConfirmation] owner, token in
             _ = try await Self.performSegmentPlanning(
                 project: project,
                 targets: targets,
@@ -741,6 +742,7 @@ final class StoryStudioViewModel: ObservableObject {
                 owner: owner,
                 planner: planner,
                 projectMutation: projectMutation,
+                storyMediaConfirmation: storyMediaConfirmation,
                 preservingVideoSegmentIDs: preserving,
                 shouldPause: { [weak self] in
                     guard let self else { return true }
@@ -765,8 +767,9 @@ final class StoryStudioViewModel: ObservableObject {
         }
         guard let planner else { errorMessage = StoryError.unavailable.localizedDescription; return }
         let projectMutation = projectMutation
+        let storyMediaConfirmation = storyMediaConfirmation
         let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
-        run("重新生成分段镜头计划") { [weak self, planner, projectMutation] owner, token in
+        run("重新生成分段镜头计划") { [weak self, planner, projectMutation, storyMediaConfirmation] owner, token in
             _ = try await Self.performSegmentPlanning(
                 project: project,
                 targets: targets,
@@ -775,6 +778,7 @@ final class StoryStudioViewModel: ObservableObject {
                 owner: owner,
                 planner: planner,
                 projectMutation: projectMutation,
+                storyMediaConfirmation: storyMediaConfirmation,
                 preservingVideoSegmentIDs: preserving,
                 shouldPause: { [weak self] in
                     guard let self else { return true }
@@ -794,6 +798,7 @@ final class StoryStudioViewModel: ObservableObject {
         owner: String,
         planner: any StoryPlanningServicing,
         projectMutation: StoryProjectMutationUseCase,
+        storyMediaConfirmation: StoryMediaConfirmationUseCase,
         preservingVideoSegmentIDs: Set<String>,
         shouldPause: @escaping @Sendable () async -> Bool,
         progress: @escaping @Sendable (String) async -> Void,
@@ -831,13 +836,15 @@ final class StoryStudioViewModel: ObservableObject {
             )
             let data = try await planner.plan(request)
             try Task.checkCancellation()
-            next.segments[index].detail = try StoryPlanningTools.decodeDetail(
+            let detail = try StoryPlanningTools.decodeDetail(
                 data,
                 duration: next.segments[index].seconds
             )
-            next.segments[index].confirmedFrameID = nil
-            next.segments[index].confirmedLastFrameID = nil
-            next.segments[index].useLastFrameForVideo = false
+            next = try storyMediaConfirmation.applyingRefinedDetail(
+                detail,
+                segmentID: id,
+                in: next
+            )
             let command = try StoryProjectEditCommand(
                 base: current,
                 project: next,
@@ -858,44 +865,17 @@ final class StoryStudioViewModel: ObservableObject {
     }
 
     func saveSegment(_ edited: StorySegment, relations: [StorySegmentRelation]) {
-        guard var next = project, let index = next.segments.firstIndex(where: { $0.id == edited.id }),
-              next.segments[index].attempt == nil, next.segments[index].video == nil else { return }
+        guard let project else { return }
         do {
-            if let detail = edited.detail { try detail.validate(duration: edited.seconds) }
+            guard let next = try storyMediaConfirmation.applyingSegmentEdit(
+                edited,
+                relations: relations,
+                to: project
+            ) else { return }
+            runCommit("保存分段", project: next)
         } catch {
             errorMessage = error.localizedDescription
-            return
         }
-        let original = next.segments[index]
-        let originalRelations = next.relations(for: edited.id)
-        if original.synopsis != edited.synopsis || original.kind != edited.kind || original.seconds != edited.seconds
-            || original.detail?.continuityIn != edited.detail?.continuityIn
-            || original.detail?.continuityOut != edited.detail?.continuityOut
-            || original.characterIDs != edited.characterIDs || original.sceneIDs != edited.sceneIDs
-            || original.propIDs != edited.propIDs || originalRelations != relations {
-            for adjacent in [index - 1, index + 1]
-                where next.segments.indices.contains(adjacent) && next.segments[adjacent].attempt == nil {
-                next.segments[adjacent].detail = nil
-                next.segments[adjacent].confirmedFrameID = nil
-                next.segments[adjacent].confirmedLastFrameID = nil
-            }
-        }
-        next.segments[index].title = edited.title
-        next.segments[index].synopsis = edited.synopsis
-        next.segments[index].kind = edited.kind
-        next.segments[index].seconds = edited.seconds
-        next.segments[index].detail = edited.detail
-        next.segments[index].characterIDs = edited.characterIDs
-        next.segments[index].sceneIDs = edited.sceneIDs
-        next.segments[index].propIDs = edited.propIDs
-        next.segments[index].videoGuidanceMode = edited.videoGuidanceMode
-        next.relations.removeAll { $0.segmentID == edited.id }
-        next.relations.append(contentsOf: relations)
-        next.segments[index].confirmedFrameID = nil
-        next.segments[index].confirmedLastFrameID = nil
-        do { try next.validate() }
-        catch { errorMessage = error.localizedDescription; return }
-        runCommit("保存分段", project: next)
     }
 
     func setUseLastFrameForVideo(_ enabled: Bool, segmentID: String) {
@@ -957,7 +937,7 @@ final class StoryStudioViewModel: ObservableObject {
         guard end > 0 else { return }
         next.segments.append(.init(id: UUID().uuidString, title: "新分段", synopsis: "请编辑本段剧情与镜头计划",
                                    sourceRange: .init(start: max(0, end - 1), end: end)))
-        invalidatePlans(&next)
+        next = storyMediaConfirmation.invalidatingAllSegmentPlans(in: next)
         runCommit("添加分段", project: next) { viewModel, saved in
             viewModel.selectedSegmentID = saved.segments.last?.id
         }
@@ -967,7 +947,7 @@ final class StoryStudioViewModel: ObservableObject {
         guard var next = project, !next.hasUnresolvedJobs, next.completedCount == 0,
               let index = next.segments.firstIndex(where: { $0.id == id }), next.segments.indices.contains(index + offset) else { return }
         next.segments.swapAt(index, index + offset)
-        invalidatePlans(&next)
+        next = storyMediaConfirmation.invalidatingAllSegmentPlans(in: next)
         runCommit("调整剧情顺序", project: next)
     }
 
@@ -975,18 +955,10 @@ final class StoryStudioViewModel: ObservableObject {
         guard var next = project, !next.hasUnresolvedJobs, next.completedCount == 0 else { return }
         next.segments.removeAll { $0.id == id }
         next.relations.removeAll { $0.segmentID == id }
-        invalidatePlans(&next)
+        next = storyMediaConfirmation.invalidatingAllSegmentPlans(in: next)
         runCommit("删除分段", project: next) { viewModel, saved in
             viewModel.selectedSegments.remove(id)
             viewModel.selectedSegmentID = saved.segments.first?.id
-        }
-    }
-
-    private func invalidatePlans(_ project: inout StoryProject) {
-        for index in project.segments.indices {
-            project.segments[index].detail = nil
-            project.segments[index].confirmedFrameID = nil
-            project.segments[index].confirmedLastFrameID = nil
         }
     }
 

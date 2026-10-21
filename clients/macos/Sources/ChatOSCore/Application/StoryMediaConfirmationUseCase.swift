@@ -175,6 +175,79 @@ public struct StoryMediaConfirmationUseCase: Sendable {
         return next
     }
 
+    public func applyingRefinedDetail(
+        _ detail: StorySegmentDetail,
+        segmentID: String,
+        in project: StoryProject
+    ) throws -> StoryProject {
+        var next = project
+        guard let index = editableSegmentIndex(segmentID, in: next),
+              next.segments[index].video == nil else {
+            throw StoryMediaConfirmationError.invalidTarget
+        }
+        try detail.validate(duration: next.segments[index].seconds)
+        next.segments[index].detail = detail
+        next.segments[index].confirmedFrameID = nil
+        next.segments[index].confirmedLastFrameID = nil
+        next.segments[index].useLastFrameForVideo = false
+        try next.validate()
+        return next
+    }
+
+    public func applyingSegmentEdit(
+        _ edited: StorySegment,
+        relations: [StorySegmentRelation],
+        to project: StoryProject
+    ) throws -> StoryProject? {
+        var next = project
+        guard let index = editableSegmentIndex(edited.id, in: next),
+              next.segments[index].video == nil else { return nil }
+        if let detail = edited.detail {
+            try detail.validate(duration: edited.seconds)
+        }
+        let original = next.segments[index]
+        let originalRelations = next.relations(for: edited.id)
+        if changesContinuity(
+            original: original,
+            edited: edited,
+            originalRelations: originalRelations,
+            relations: relations
+        ) {
+            for adjacent in [index - 1, index + 1]
+                where next.segments.indices.contains(adjacent)
+                    && next.segments[adjacent].attempt == nil {
+                next.segments[adjacent].detail = nil
+                next.segments[adjacent].confirmedFrameID = nil
+                next.segments[adjacent].confirmedLastFrameID = nil
+            }
+        }
+        next.segments[index].title = edited.title
+        next.segments[index].synopsis = edited.synopsis
+        next.segments[index].kind = edited.kind
+        next.segments[index].seconds = edited.seconds
+        next.segments[index].detail = edited.detail
+        next.segments[index].characterIDs = edited.characterIDs
+        next.segments[index].sceneIDs = edited.sceneIDs
+        next.segments[index].propIDs = edited.propIDs
+        next.segments[index].videoGuidanceMode = edited.videoGuidanceMode
+        next.relations.removeAll { $0.segmentID == edited.id }
+        next.relations.append(contentsOf: relations)
+        next.segments[index].confirmedFrameID = nil
+        next.segments[index].confirmedLastFrameID = nil
+        try next.validate()
+        return next
+    }
+
+    public func invalidatingAllSegmentPlans(in project: StoryProject) -> StoryProject {
+        var next = project
+        for index in next.segments.indices {
+            next.segments[index].detail = nil
+            next.segments[index].confirmedFrameID = nil
+            next.segments[index].confirmedLastFrameID = nil
+        }
+        return next
+    }
+
     private func editableSegmentIndex(_ segmentID: String, in project: StoryProject) -> Int? {
         guard let index = project.segments.firstIndex(where: { $0.id == segmentID }),
               project.segments[index].attempt == nil else { return nil }
@@ -188,6 +261,23 @@ public struct StoryMediaConfirmationUseCase: Sendable {
         project.segments.contains {
             $0.resourceIDs.contains(resourceID) && $0.attempt != nil && $0.video == nil
         }
+    }
+
+    private func changesContinuity(
+        original: StorySegment,
+        edited: StorySegment,
+        originalRelations: [StorySegmentRelation],
+        relations: [StorySegmentRelation]
+    ) -> Bool {
+        original.synopsis != edited.synopsis
+            || original.kind != edited.kind
+            || original.seconds != edited.seconds
+            || original.detail?.continuityIn != edited.detail?.continuityIn
+            || original.detail?.continuityOut != edited.detail?.continuityOut
+            || original.characterIDs != edited.characterIDs
+            || original.sceneIDs != edited.sceneIDs
+            || original.propIDs != edited.propIDs
+            || originalRelations != relations
     }
 
     private func invalidateDependentFrames(resourceID: String, in project: inout StoryProject) {
