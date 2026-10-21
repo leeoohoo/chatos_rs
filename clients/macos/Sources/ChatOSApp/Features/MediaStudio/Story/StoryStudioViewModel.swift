@@ -102,7 +102,6 @@ final class StoryStudioViewModel: ObservableObject {
     @Published var activeVideoGenerations: Set<VideoGenerationKey> = []
     @Published var videoGenerationProgress: [VideoGenerationKey: VideoGenerationProgress] = [:]
     @Published var activeVideoFrameExtractions: Set<VideoGenerationKey> = []
-    let store: StoryProjectStore
     let projectCatalog: StoryProjectCatalogUseCase
     let projectMutation: StoryProjectMutationUseCase
     let storyPlanning: StoryPlanningUseCase?
@@ -116,7 +115,6 @@ final class StoryStudioViewModel: ObservableObject {
     let storyVideoGeneration: StoryVideoGenerationUseCase
     let storyVideoTailExtraction: StoryVideoTailExtractionUseCase
     let storyDirectVideoQueue = StoryDirectVideoQueueUseCase()
-    let media: any MediaGenerationServicing
     let planner: (any StoryPlanningServicing)?
     var owner: String?
     var session = UUID()
@@ -146,74 +144,32 @@ final class StoryStudioViewModel: ObservableObject {
     var videoBatchTask: Task<Void, Never>?
     var sourceDrafts: [UUID: SourceDraft] = [:]
 
-    init(media: any MediaGenerationServicing, planner: (any StoryPlanningServicing)? = nil,
-         store: StoryProjectStore = StoryProjectStore(),
-         projectCatalog: (any StoryProjectCatalogLoading)? = nil,
-         projectMutation: (any StoryProjectMutationPersisting)? = nil,
-         agentServices: (any AgentServiceProviding)? = nil,
-         storyPlanning: (any StoryPlanningExecuting)? = nil,
-         storyHistory: (any StoryHistoryLoading)? = nil,
-         storyMediaBatch: (any StoryMediaBatchExecuting)? = nil,
-         storyMediaAccess: (any StoryMediaAccessResolving)? = nil,
-         storyImageImport: (any StoryImageImporting)? = nil,
-         storyAssetImageGeneration: (any StoryAssetImageGenerating)? = nil,
-         storyFrameImageGeneration: (any StoryFrameImageGenerating)? = nil,
-         storyVideoGeneration: (any StoryVideoGenerating)? = nil,
-         storyVideoTailExtraction: (any StoryVideoTailExtracting)? = nil,
-         agentSettings: AgentSettingsStore = .init()) {
-        self.media = media; self.planner = planner; self.store = store
-        self.projectCatalog = StoryProjectCatalogUseCase(catalog: projectCatalog ?? store)
-        self.projectMutation = StoryProjectMutationUseCase(
-            persistence: projectMutation ?? store
-        )
-        self.storyHistory = StoryHistoryUseCase(
-            history: storyHistory ?? StoryHistoryAdapter(store: store)
-        )
-        self.storyMediaBatch = StoryMediaBatchUseCase(
-            executor: storyMediaBatch ?? StoryMediaBatchExecutionAdapter(
-                store: store,
-                media: media
-            )
-        )
-        self.storyMediaAccess = StoryMediaAccessUseCase(
-            resolver: storyMediaAccess ?? StoryMediaAccessAdapter(store: store)
-        )
-        self.storyImageImport = StoryImageImportUseCase(
-            importer: storyImageImport ?? StoryImageImportAdapter(store: store)
-        )
-        self.storyAssetImageGeneration = StoryAssetImageGenerationUseCase(
-            generator: storyAssetImageGeneration ?? StoryAssetImageGenerationAdapter(
-                store: store,
-                media: media
-            )
-        )
-        self.storyFrameImageGeneration = StoryFrameImageGenerationUseCase(
-            generator: storyFrameImageGeneration ?? StoryFrameImageGenerationAdapter(
-                store: store,
-                media: media
-            )
-        )
-        self.storyVideoGeneration = StoryVideoGenerationUseCase(
-            generator: storyVideoGeneration ?? StoryVideoGenerationAdapter(
-                store: store,
-                media: media
-            )
-        )
-        self.storyVideoTailExtraction = StoryVideoTailExtractionUseCase(
-            extractor: storyVideoTailExtraction ?? StoryVideoTailExtractionAdapter(store: store)
-        )
-        let resolvedAgentServices = agentServices ?? (planner as? any AgentServiceProviding)
-        if let storyPlanning {
-            self.storyPlanning = StoryPlanningUseCase(executor: storyPlanning)
-        } else if let resolvedAgentServices {
-            self.storyPlanning = StoryPlanningUseCase(executor: StoryPlanningAgentAdapter(
-                store: store,
-                services: resolvedAgentServices,
-                settings: agentSettings
-            ))
-        } else {
-            self.storyPlanning = nil
-        }
+    init(
+        planner: (any StoryPlanningServicing)?,
+        projectCatalog: StoryProjectCatalogUseCase,
+        projectMutation: StoryProjectMutationUseCase,
+        storyPlanning: StoryPlanningUseCase?,
+        storyHistory: StoryHistoryUseCase,
+        storyMediaBatch: StoryMediaBatchUseCase,
+        storyMediaAccess: StoryMediaAccessUseCase,
+        storyImageImport: StoryImageImportUseCase,
+        storyAssetImageGeneration: StoryAssetImageGenerationUseCase,
+        storyFrameImageGeneration: StoryFrameImageGenerationUseCase,
+        storyVideoGeneration: StoryVideoGenerationUseCase,
+        storyVideoTailExtraction: StoryVideoTailExtractionUseCase
+    ) {
+        self.planner = planner
+        self.projectCatalog = projectCatalog
+        self.projectMutation = projectMutation
+        self.storyPlanning = storyPlanning
+        self.storyHistory = storyHistory
+        self.storyMediaBatch = storyMediaBatch
+        self.storyMediaAccess = storyMediaAccess
+        self.storyImageImport = storyImageImport
+        self.storyAssetImageGeneration = storyAssetImageGeneration
+        self.storyFrameImageGeneration = storyFrameImageGeneration
+        self.storyVideoGeneration = storyVideoGeneration
+        self.storyVideoTailExtraction = storyVideoTailExtraction
     }
 
     var project: StoryProject? { projects.first { $0.id == selectedProjectID } }

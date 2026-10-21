@@ -536,6 +536,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事编辑连续性规则）：分段重新细化、保存分段，以及新增/删除/排序分段时的确认失效和相邻计划失效已并入 `StoryMediaConfirmationUseCase`。ViewModel 不再直接写入 `confirmedImageID`、`confirmedFrameID`、`confirmedLastFrameID`、`userSelectedFirstFrameID`、`inheritedFirstFrameSourceSegmentID` 或 `useLastFrameForVideo`，只提交 Core 变换后的项目。Core 确认规则增至 8 项、Story Studio 66 项通过，Story Core 累计 66 项。下一片执行最终 Store/路径/Secret/媒体字节和 Windows opaque token 审计；剧情模式继续禁用。
 
+状态补充（2026-10-21，macOS AI 故事最终准入）：具体 Store、provider 与 macOS Adapter 组装已移出 `StoryStudioViewModel`，集中到 `StoryStudioAssembly` composition root；ViewModel 不再持有 `StoryProjectStore` 或 `MediaGenerationServicing`。新增源码架构门禁，禁止 Story presentation 重新引入 Store、本机路径、媒体字节/base64、security scope 或确认字段写入。最终定向验收为 Story Core 66 项、Story Studio 66 项、Story Agent 21 项及架构门禁 1 项通过。macOS Story 已允许进入 Windows 原生 Domain/Port/Adapter 实施；React 剧情入口继续关闭，直到 Rust 原生层完成 owner/session、原子持久化、opaque media token、provider Secret/job 和媒体字节门禁。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
