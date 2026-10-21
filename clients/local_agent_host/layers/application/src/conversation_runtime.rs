@@ -247,8 +247,14 @@ fn normalized_agent_execution_context(
     let Some(context) = metadata.get("agent_execution_context") else {
         return Ok(None);
     };
-    if metadata.get("source").and_then(serde_json::Value::as_str) != Some("native_agent_direct") {
-        return Err(invalid_agent_context("source must be native_agent_direct"));
+    let source = metadata
+        .get("source")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| invalid_agent_context("source is required"))?;
+    if !matches!(source, "native_agent_direct" | "native_agent_team") {
+        return Err(invalid_agent_context(
+            "source is not an Agent execution surface",
+        ));
     }
     if !conversation_is_unbound {
         return Err(invalid_agent_context(
@@ -258,7 +264,7 @@ fn normalized_agent_execution_context(
     let values = context
         .as_object()
         .ok_or_else(|| invalid_agent_context("context must be an object"))?;
-    const KEYS: [&str; 12] = [
+    const DIRECT_KEYS: [&str; 12] = [
         "schema_version",
         "room_id",
         "agent_id",
@@ -272,26 +278,60 @@ fn normalized_agent_execution_context(
         "default_plugin_ids",
         "default_skill_ids",
     ];
-    if values.len() != KEYS.len() || values.keys().any(|key| !KEYS.contains(&key.as_str())) {
-        return Err(invalid_agent_context(
-            "context fields do not match schema version 1",
-        ));
-    }
-    if values
+    const TEAM_KEYS: [&str; 18] = [
+        "schema_version",
+        "room_id",
+        "agent_id",
+        "agent_name",
+        "role_prompt",
+        "profession_key",
+        "profession_label",
+        "profession_skill_ref",
+        "profession_skill_sha256",
+        "profession_skill_markdown",
+        "default_plugin_ids",
+        "default_skill_ids",
+        "project_id",
+        "team_name",
+        "team_goal",
+        "team_role",
+        "team_responsibility",
+        "is_project_manager",
+    ];
+    let schema_version = values
         .get("schema_version")
         .and_then(serde_json::Value::as_u64)
-        != Some(1)
+        .ok_or_else(|| invalid_agent_context("schema_version is required"))?;
+    let expected_keys: &[&str] = match (source, schema_version) {
+        ("native_agent_direct", 1) => &DIRECT_KEYS,
+        ("native_agent_team", 2) => &TEAM_KEYS,
+        _ => {
+            return Err(invalid_agent_context(
+                "source and schema_version do not match",
+            ))
+        }
+    };
+    if values.len() != expected_keys.len()
+        || values
+            .keys()
+            .any(|key| !expected_keys.contains(&key.as_str()))
     {
-        return Err(invalid_agent_context("schema_version must be 1"));
+        return Err(invalid_agent_context(
+            "context fields do not match the schema",
+        ));
     }
     let room_id = agent_context_string(values, "room_id", 512, true)?;
-    let expected_conversation_id = format!("agent-direct-{room_id}");
+    let agent_id = agent_context_string(values, "agent_id", 512, true)?;
+    let expected_conversation_id = if source == "native_agent_team" {
+        format!("agent-team-{room_id}-{agent_id}")
+    } else {
+        format!("agent-direct-{room_id}")
+    };
     if conversation_id != expected_conversation_id {
         return Err(invalid_agent_context(
             "room_id does not match the Host conversation identity",
         ));
     }
-    let agent_id = agent_context_string(values, "agent_id", 512, true)?;
     let agent_name = agent_context_string(values, "agent_name", 120, false)?;
     let role_prompt = agent_context_string(values, "role_prompt", 32_000, false)?;
     let profession_key = agent_context_string(values, "profession_key", 512, true)?;
@@ -312,7 +352,7 @@ fn normalized_agent_execution_context(
         agent_context_string(values, "profession_skill_markdown", 500_000, false)?;
     let default_plugin_ids = agent_context_identifiers(values, "default_plugin_ids")?;
     let default_skill_ids = agent_context_identifiers(values, "default_skill_ids")?;
-    Ok(Some(json!({
+    let mut normalized = json!({
         "schema_version": 1,
         "room_id": room_id,
         "agent_id": agent_id,
@@ -325,7 +365,45 @@ fn normalized_agent_execution_context(
         "profession_skill_markdown": profession_skill_markdown,
         "default_plugin_ids": default_plugin_ids,
         "default_skill_ids": default_skill_ids,
-    })))
+    });
+    if source == "native_agent_team" {
+        let project_id = agent_context_string(values, "project_id", 512, true)?;
+        let team_name = agent_context_string(values, "team_name", 160, false)?;
+        let team_goal = agent_context_optional_text(values, "team_goal", 8_000)?;
+        let team_role = agent_context_string(values, "team_role", 160, false)?;
+        let team_responsibility =
+            agent_context_optional_text(values, "team_responsibility", 8_000)?;
+        let is_project_manager = values
+            .get("is_project_manager")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| invalid_agent_context("is_project_manager must be a boolean"))?;
+        let object = normalized
+            .as_object_mut()
+            .expect("normalized Agent context is an object");
+        object.insert("schema_version".into(), json!(2));
+        object.insert("project_id".into(), json!(project_id));
+        object.insert("team_name".into(), json!(team_name));
+        object.insert("team_goal".into(), json!(team_goal));
+        object.insert("team_role".into(), json!(team_role));
+        object.insert("team_responsibility".into(), json!(team_responsibility));
+        object.insert("is_project_manager".into(), json!(is_project_manager));
+    }
+    Ok(Some(normalized))
+}
+
+fn agent_context_optional_text<'a>(
+    values: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    maximum: usize,
+) -> Result<&'a str, LocalAgentRuntimeError> {
+    let value = values
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| invalid_agent_context(&format!("{field} must be a string")))?;
+    if value.trim() != value || value.chars().count() > maximum || value.contains('\0') {
+        return Err(invalid_agent_context(&format!("{field} is invalid")));
+    }
+    Ok(value)
 }
 
 fn agent_context_string<'a>(
@@ -549,6 +627,32 @@ mod tests {
         })
     }
 
+    fn team_agent_context() -> serde_json::Value {
+        json!({
+            "source": "native_agent_team",
+            "agent_execution_context": {
+                "schema_version": 2,
+                "room_id": "team-1",
+                "agent_id": "agent-1",
+                "agent_name": "工程 Agent",
+                "role_prompt": "负责工程实现。",
+                "profession_key": "software_engineer",
+                "profession_label": "软件工程师",
+                "profession_skill_ref": "AS-profession-software_engineer-123456789abc",
+                "profession_skill_sha256": "a".repeat(64),
+                "profession_skill_markdown": "# 工作流\n先核实，再实现。",
+                "default_plugin_ids": [],
+                "default_skill_ids": ["local.project.list"],
+                "project_id": "project-1",
+                "team_name": "Alpha 团队",
+                "team_goal": "交付 Alpha",
+                "team_role": "前端工程师",
+                "team_responsibility": "负责 Windows UI",
+                "is_project_manager": false,
+            }
+        })
+    }
+
     #[test]
     fn agent_context_is_strictly_bound_to_an_unbound_direct_conversation() {
         let normalized =
@@ -579,6 +683,34 @@ mod tests {
         assert!(
             normalized_agent_execution_context(&bad_hash, "agent-direct-room-1", true,).is_err()
         );
+    }
+
+    #[test]
+    fn team_agent_context_is_strictly_bound_to_its_agent_lane() {
+        let normalized = normalized_agent_execution_context(
+            &team_agent_context(),
+            "agent-team-team-1-agent-1",
+            true,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(normalized["schema_version"], 2);
+        assert_eq!(normalized["team_role"], "前端工程师");
+        assert_eq!(normalized["is_project_manager"], false);
+        assert!(normalized_agent_execution_context(
+            &team_agent_context(),
+            "agent-team-team-1-agent-2",
+            true,
+        )
+        .is_err());
+        let mut wrong_source = team_agent_context();
+        wrong_source["source"] = json!("native_agent_direct");
+        assert!(normalized_agent_execution_context(
+            &wrong_source,
+            "agent-team-team-1-agent-1",
+            true,
+        )
+        .is_err());
     }
 
     #[tokio::test]
