@@ -4638,6 +4638,155 @@ mod tests {
     }
 
     #[test]
+    fn project_team_todo_mutations_reject_stale_cycles_and_unsafe_running_cancel() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "agent-1", "active");
+        let team = store
+            .create_project_team("alice", "project-1", "Alpha 团队", "交付 Alpha")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "agent-1")
+            .unwrap();
+        let foundation = store
+            .create_project_team_todo(
+                "alice",
+                &team.id,
+                "agent-1",
+                "实现持久化底座",
+                "先完成任务事实源",
+                80,
+                &[],
+                None,
+                100,
+            )
+            .unwrap();
+        let board = store
+            .create_project_team_todo(
+                "alice",
+                &team.id,
+                "agent-1",
+                "实现任务看板",
+                "再连接 React",
+                70,
+                std::slice::from_ref(&foundation.id),
+                None,
+                101,
+            )
+            .unwrap();
+        assert!(store
+            .update_project_team_todo(
+                "alice",
+                &team.id,
+                &foundation.id,
+                foundation.updated_at_unix_ms,
+                &foundation.title,
+                "循环依赖不应保存",
+                foundation.priority,
+                std::slice::from_ref(&board.id),
+                None,
+                102,
+            )
+            .is_err());
+
+        let revised = store
+            .update_project_team_todo(
+                "alice",
+                &team.id,
+                &board.id,
+                board.updated_at_unix_ms,
+                "实现 Apple 风格任务看板",
+                "连接真实 Todo",
+                75,
+                std::slice::from_ref(&foundation.id),
+                None,
+                103,
+            )
+            .unwrap();
+        assert_eq!(revised.title, "实现 Apple 风格任务看板");
+        assert!(store
+            .update_project_team_todo(
+                "alice",
+                &team.id,
+                &board.id,
+                board.updated_at_unix_ms,
+                "过期更新",
+                "不应保存",
+                20,
+                &[],
+                None,
+                104,
+            )
+            .is_err());
+
+        let reordered = store
+            .reorder_project_team_todos(
+                "alice",
+                &team.id,
+                &[board.id.clone(), foundation.id.clone()],
+                105,
+            )
+            .unwrap();
+        assert_eq!(reordered[0].id, board.id);
+        assert_eq!(reordered[0].priority, 100);
+
+        let foundation_after_reorder = reordered
+            .iter()
+            .find(|todo| todo.id == foundation.id)
+            .unwrap();
+        let cancelled = store
+            .cancel_project_team_todo(
+                "alice",
+                &team.id,
+                &foundation.id,
+                foundation_after_reorder.updated_at_unix_ms,
+                106,
+            )
+            .unwrap();
+        assert_eq!(cancelled.status, "cancelled");
+
+        let running = store
+            .create_project_team_todo(
+                "alice",
+                &team.id,
+                "agent-1",
+                "执行中的任务",
+                "不能伪装成已取消",
+                60,
+                &[],
+                None,
+                107,
+            )
+            .unwrap();
+        let connection = Connection::open(store.database()).unwrap();
+        connection
+            .execute(
+                "UPDATE local_agent_todos SET status = 'in_progress' \
+                 WHERE owner_user_id = 'alice' AND id = ?1",
+                params![running.id],
+            )
+            .unwrap();
+        assert!(store
+            .cancel_project_team_todo(
+                "alice",
+                &team.id,
+                &running.id,
+                running.updated_at_unix_ms,
+                108,
+            )
+            .is_err());
+        assert_eq!(
+            store
+                .list_project_team_todos("alice", &team.id, true)
+                .unwrap()
+                .into_iter()
+                .find(|todo| todo.id == running.id)
+                .unwrap()
+                .status,
+            "in_progress"
+        );
+    }
+
+    #[test]
     fn project_team_messages_route_to_mentions_or_the_default_agent() {
         let (_directory, store) = store();
         insert_agent(&store, "alice", "agent-1", "active");

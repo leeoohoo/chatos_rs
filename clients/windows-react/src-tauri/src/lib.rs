@@ -35,7 +35,10 @@ mod tool_approval;
 mod workspace_index;
 
 use access_control::load_access_control;
-use agent_conversation::team_todo::list_agent_team_todos;
+use agent_conversation::team_todo::{
+    cancel_agent_team_todo, create_agent_team_todo, list_agent_team_todos,
+    reorder_agent_team_todos, update_agent_team_todo,
+};
 use agent_conversation::{
     archive_agent_team_asset, create_agent_team, dispatch_next_agent_team_delivery,
     invite_agent_to_team, list_agent_team_asset_revisions, list_agent_team_assets,
@@ -288,6 +291,10 @@ pub fn run() {
             archive_agent_team_asset,
             list_agent_team_asset_revisions,
             list_agent_team_todos,
+            create_agent_team_todo,
+            update_agent_team_todo,
+            reorder_agent_team_todos,
+            cancel_agent_team_todo,
             invite_agent_to_team,
             update_agent_team_member,
             set_agent_team_default_agent,
