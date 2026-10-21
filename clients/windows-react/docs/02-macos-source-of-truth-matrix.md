@@ -1210,7 +1210,7 @@ Windows React 已完成对应独立切片：
 - Windows 已按这条调用链完成 Agent 档案、头像、Skills、私聊、团队创建/成员、概览、Human 团队消息、需求调研、共享资产、Todo、Run 历史与运行详情的 Domain → Store → Port → Tauri Adapter → React 垂直切片；React 不读取团队 SQLite、Host payload、项目绝对路径或模型 Secret。
 - Todo 使用独立 executor Conversation 和 Run；执行能力由创建时固化的计划决定，团队资产按启动 revision 冻结。`started/progress/completed/blocked` 都是持久化回执；Host 成功但缺少终态工具回执，或 `project_write` 缺少提交后读取证据时，任务必须转为 blocked，禁止用模型文本伪装完成。
 - Windows 不暴露 macOS 的 `todo_schedule_state`、`todo_start_next` 和 `agent_cycle_complete` 给模型：同等调度语义由账号/团队去重的原生 drain 承担，并在 Agent 工具 mutation、Human mutation、Todo 终态和应用恢复时唤醒。原生事务原子选择每个 Agent 的最高优先级 ready Todo，依赖与单 executor lane 由 SQLite 复验；再开放模型调度入口会形成第二写入者和竞态。
-- `chat_list_members`、`chat_read_all_unread` 与 `chat_send_message` 已接入：成员和消息只以当前 Run 的 opaque ref 暴露；项目团队未读查询、引用签发、游标推进和读取回执在同一 SQLite 事务完成，Host 提交丢包后按 invocation 重放原结果，不会吞掉未读。`reply_to_message_ref` 可精确回复当前 Agent 其他项目团队中的已签发消息，事务内复验 Run、成员和目标团队；消息写入继续按 invocation 幂等，并可通过 @ 生成真实 `agent_mention` Delivery，提交 Host ToolCommit 后由原生 drain 唤醒所有存在新 Delivery 的团队。Windows 尚未把 Agent 私聊纳入原生 Delivery drain，也未接入可信 Plugin executor，因此主动跨团队/私聊选择器、Agent 文档附件、成员提案、heartbeat/cycle 工具和 Todo Plugin 计划仍保持关闭，不得标记为完成。
+- `agent_workspace_snapshot`、`chat_list_members`、`chat_read_all_unread` 与 `chat_send_message` 已接入：账户内 Agent、项目团队、成员和消息只以当前 Run 的 opaque ref 暴露；`team_ref` 支持事务内复验当前 Agent 成员关系后主动向另一个项目团队发送，`reply_to_message_ref` 可精确回复其他项目团队中的已签发消息。项目团队未读查询、引用签发、游标推进和读取回执在同一 SQLite 事务完成，Host 提交丢包后按 invocation 重放原结果，不会吞掉未读；消息写入继续按 invocation 幂等，并可通过 @ 生成真实 `agent_mention` Delivery，提交 Host ToolCommit 后由原生 drain 唤醒所有存在新 Delivery 的团队。Windows 尚未把 Agent 私聊纳入原生 Delivery drain，也未接入可信 Plugin executor，因此主动私聊选择器、Agent 文档附件、成员提案、heartbeat/cycle 工具和 Todo Plugin 计划仍保持关闭，不得标记为完成。
 
 ## 10. 31 个页面的准入状态
 
@@ -1228,7 +1228,7 @@ Windows React 已完成对应独立切片：
 | 10 | Agent 管理 | macOS 档案/模型/职业/职责/头像/Skills 与私聊来源已映射；Windows typed 原生层和 Apple 主题 React 管理页已完成 | 已进入 React；Plugin executor 仍保持关闭 |
 | 11 | Agent 文档 | 未映射 | 禁止 |
 | 12 | Agent 团队概览 | macOS 团队/成员/默认 Agent/项目经理语义已映射；Windows 创建、邀请、职责与负责人管理已完成 | 已进入 React |
-| 13 | Agent 团队聊天 | macOS Delivery/Run 主链已映射；Windows Human 消息、@成员、默认 Agent、真实 Host Turn、响应持久化、Run-scoped 成员目录、全部项目团队未读、指定消息回复、同团队 Agent 主动消息与轮询对账已完成 | 基础链路已进入 React；主动跨团队/私聊选择器、文档、提案和 heartbeat 继续实施 |
+| 13 | Agent 团队聊天 | macOS Delivery/Run 主链已映射；Windows Human 消息、@成员、默认 Agent、真实 Host Turn、响应持久化、Run-scoped 账户/团队目录、全部项目团队未读、指定消息回复、跨团队 Agent 主动消息与轮询对账已完成 | 基础链路已进入 React；主动私聊选择器、文档、提案和 heartbeat 继续实施 |
 | 14 | Agent 团队任务 | macOS Todo 工作契约、依赖、独立 executor、资产快照、工具回执与调度约束已映射；Windows 持久任务板、manager/executor 工具、原生 drain、停止/重试与实时进度已完成 | 已进入 React；Plugin 任务在可信 worker 完成前失败关闭 |
 | 15 | Agent 团队调研 | macOS Ask User/Requirement Survey 恢复语义已映射；Windows 真实 Host Survey 查询、回答、取消与 Run 恢复已接入团队页 | 已进入 React |
 | 16 | Agent 团队资产 | macOS 项目经理权限、版本、归档与 executor 冻结读取已映射；Windows manager 工具、Human 编辑、历史与 opaque Run 引用已完成 | 已进入 React |
