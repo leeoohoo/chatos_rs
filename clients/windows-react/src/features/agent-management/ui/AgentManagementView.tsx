@@ -161,9 +161,11 @@ function AgentCard({
   return (
     <article className="agent-card">
       <header>
-        <span className="agent-card__avatar" aria-hidden="true">
-          {profile.hasAvatar ? "◉" : profile.name.slice(0, 1).toUpperCase()}
-        </span>
+        {profile.avatarPreviewUrl ? (
+          <img alt="" aria-hidden="true" className="agent-card__avatar" src={profile.avatarPreviewUrl} />
+        ) : (
+          <span className="agent-card__avatar" aria-hidden="true">{profile.name.slice(0, 1).toUpperCase()}</span>
+        )}
         <div>
           <h3>{profile.name}</h3>
           <p>{profile.canManageStaff ? "可招募和解雇成员" : "无人员管理权限"}</p>
@@ -341,8 +343,8 @@ function AgentProfileEditor({
         <div className="agent-editor__body">
           {(error || avatarError) && <div className="agent-editor__error" role="alert">{error ?? avatarError}</div>}
           <div className="agent-avatar-editor">
-            {(avatarDraft?.previewUrl || avatarHistorySelection?.previewUrl) ? (
-              <img alt="Agent 头像预览" src={avatarDraft?.previewUrl ?? avatarHistorySelection?.previewUrl} />
+            {(avatarDraft?.previewUrl || avatarHistorySelection?.previewUrl || (!avatarRemoved && existing?.avatarPreviewUrl)) ? (
+              <img alt="Agent 头像预览" src={avatarDraft?.previewUrl ?? avatarHistorySelection?.previewUrl ?? existing?.avatarPreviewUrl ?? undefined} />
             ) : (
               <span aria-label={avatarRemoved || !existing?.hasAvatar ? "默认头像" : "当前头像"}>
                 {name.trim().slice(0, 1).toUpperCase() || "A"}

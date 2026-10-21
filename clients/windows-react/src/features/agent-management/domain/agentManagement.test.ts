@@ -21,6 +21,17 @@ describe("agent management domain", () => {
     expect(() => agentProfileListSchema.parse([fixture(), fixture()])).toThrow();
   });
 
+  it("accepts only controlled Agent avatar URLs", () => {
+    const preview = "chatos-agent://localhost/11111111-1111-4111-8111-111111111111/agent-1/20";
+    expect(agentProfileListSchema.parse([{ ...fixture(), hasAvatar: true, avatarPreviewUrl: preview }])[0]?.avatarPreviewUrl)
+      .toBe(preview);
+    expect(() => agentProfileListSchema.parse([{
+      ...fixture(),
+      hasAvatar: true,
+      avatarPreviewUrl: "file:///private/avatar.png",
+    }])).toThrow();
+  });
+
   it("only accepts opaque native avatar previews", () => {
     const draft = {
       id: `reference_${"a".repeat(32)}`,
@@ -50,6 +61,7 @@ function fixture() {
     canManageStaff: false,
     canAccessLocalProjects: true,
     hasAvatar: false,
+    avatarPreviewUrl: null,
     createdAtUnixMs: 10,
     updatedAtUnixMs: 20,
   };

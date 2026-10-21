@@ -24,6 +24,18 @@ describe("AgentManagementView", () => {
     expect(screen.getByRole("button", { name: "私聊" })).toBeDisabled();
   });
 
+  it("renders a custom avatar only through the controlled Agent protocol", async () => {
+    const avatarProfile = {
+      ...profile(),
+      hasAvatar: true,
+      avatarPreviewUrl: "chatos-agent://localhost/11111111-1111-4111-8111-111111111111/agent-1/20",
+    };
+    renderView(stubPort({ listProfiles: vi.fn(async () => [avatarProfile]) }));
+    await screen.findByText("界面设计师");
+    const image = document.querySelector<HTMLImageElement>(".agent-card__avatar");
+    expect(image?.src).toBe(avatarProfile.avatarPreviewUrl);
+  });
+
   it("opens creation with macOS defaults", async () => {
     renderView();
     await screen.findByText("界面设计师");
@@ -194,5 +206,6 @@ function profile(): AgentProfileSummary {
     heartbeatEnabled: true, heartbeatIntervalSeconds: 900, lastHeartbeatAtUnixMs: 100,
     nextHeartbeatAtUnixMs: 200, canManageStaff: false, canAccessLocalProjects: true,
     hasAvatar: false, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    avatarPreviewUrl: null,
   };
 }

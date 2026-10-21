@@ -33,8 +33,8 @@ mod workspace_index;
 
 use access_control::load_access_control;
 use agent_management::{
-    list_agent_profiles, load_agent_profile_editor, load_agent_profile_editor_catalog,
-    save_agent_profile, AgentProfileStore,
+    agent_avatar_protocol, list_agent_profiles, load_agent_profile_editor,
+    load_agent_profile_editor_catalog, save_agent_profile, AgentProfileStore,
 };
 use ask_user::{cancel_ask_user_prompt, load_ask_user_prompts, submit_ask_user_prompt};
 use attachment_tool_worker::AttachmentToolWorker;
@@ -152,15 +152,19 @@ pub fn run() {
         MediaStudioManager::from_runtime().expect("failed to configure media studio");
     let story_studio_manager =
         StoryStudioManager::from_runtime().expect("failed to configure story studio");
+    let agent_profile_store =
+        AgentProfileStore::from_runtime().expect("failed to configure Agent profile store");
     let protocol_attachment_manager = attachment_manager.clone();
     let protocol_media_studio_manager = media_studio_manager.clone();
     let protocol_story_studio_manager = story_studio_manager.clone();
+    let protocol_agent_profile_store = agent_profile_store.clone();
     let drop_attachment_manager = attachment_manager.clone();
     let app = tauri::Builder::default()
         .manage(authentication)
         .manage(attachment_manager)
         .manage(media_studio_manager)
         .manage(story_studio_manager)
+        .manage(agent_profile_store)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
@@ -182,7 +186,6 @@ pub fn run() {
             app.manage(ProjectRunPreferencesStore::new(data_dir.clone()));
             app.manage(RemoteConnectionManager::new(data_dir.clone()));
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
-            app.manage(AgentProfileStore::new(data_dir.clone()).map_err(std::io::Error::other)?);
             app.manage(PluginApplicationManager::new(data_dir));
             #[cfg(target_os = "windows")]
             if std::env::var_os("CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP").as_deref()
@@ -204,6 +207,9 @@ pub fn run() {
         })
         .register_uri_scheme_protocol("chatos-story", move |_context, request| {
             story_studio_protocol(protocol_story_studio_manager.clone(), request)
+        })
+        .register_uri_scheme_protocol("chatos-agent", move |_context, request| {
+            agent_avatar_protocol(protocol_agent_profile_store.clone(), request)
         })
         .on_webview_event(move |webview, event| {
             let emit_drag_state = |targeted| {
@@ -420,6 +426,7 @@ pub fn run() {
         app_handle.state::<LocalTerminalRegistry>().reset().await;
         app_handle.state::<MediaStudioManager>().reset();
         app_handle.state::<StoryStudioManager>().reset();
+        app_handle.state::<AgentProfileStore>().reset();
         app_handle.state::<PluginApplicationManager>().reset().await;
         app_handle.state::<HostManager>().shutdown().await;
     });

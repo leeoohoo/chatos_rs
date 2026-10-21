@@ -61,6 +61,25 @@ export const agentProfileSummarySchema = z.object({
   canManageStaff: z.boolean(),
   canAccessLocalProjects: z.boolean(),
   hasAvatar: z.boolean(),
+  avatarPreviewUrl: z.string().max(2_048).refine((value) => {
+    try {
+      const url = new URL(value);
+      const native = url.protocol === "chatos-agent:" && url.hostname === "localhost";
+      const windows = url.protocol === "http:" && url.hostname === "chatos-agent.localhost" && url.port === "";
+      const parts = url.pathname.split("/").filter(Boolean);
+      return (native || windows)
+        && url.username === ""
+        && url.password === ""
+        && url.search === ""
+        && url.hash === ""
+        && parts.length === 3
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(parts[0] ?? "")
+        && /^[A-Za-z0-9._-]{1,512}$/u.test(parts[1] ?? "")
+        && /^(?:0|[1-9][0-9]*)$/u.test(parts[2] ?? "");
+    } catch {
+      return false;
+    }
+  }).nullable(),
   createdAtUnixMs: z.number().int().nonnegative(),
   updatedAtUnixMs: z.number().int().nonnegative(),
 }).strict().superRefine((profile, context) => {
@@ -69,6 +88,13 @@ export const agentProfileSummarySchema = z.object({
       code: "custom",
       message: "Agent 更新时间不能早于创建时间。",
       path: ["updatedAtUnixMs"],
+    });
+  }
+  if (profile.hasAvatar !== (profile.avatarPreviewUrl != null)) {
+    context.addIssue({
+      code: "custom",
+      message: "Agent 头像状态与安全预览不一致。",
+      path: ["avatarPreviewUrl"],
     });
   }
 });

@@ -21,7 +21,7 @@
 .agent-management__grid { display: grid; flex: 1; min-height: 0; grid-template-columns: repeat(auto-fill,minmax(280px,1fr)); align-content: start; gap: 14px; overflow: auto; padding: 18px; }
 .agent-card { display: flex; min-width: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(60,60,67,.10); border-radius: 12px; padding: 14px; background: rgba(255,255,255,.78); box-shadow: 0 4px 16px rgba(0,0,0,.035); }
 .agent-card > header { display: flex; min-width: 0; align-items: flex-start; gap: 10px; }
-.agent-card__avatar { display: grid; width: 52px; height: 52px; flex: none; place-items: center; border-radius: 26px; color: white; background: linear-gradient(145deg,#71b8ff,#0a84ff); box-shadow: 0 5px 14px rgba(10,132,255,.20); font-size: 19px; font-weight: 700; }
+.agent-card__avatar { display: grid; width: 52px; height: 52px; flex: none; place-items: center; border-radius: 26px; color: white; object-fit: cover; background: linear-gradient(145deg,#71b8ff,#0a84ff); box-shadow: 0 5px 14px rgba(10,132,255,.20); font-size: 19px; font-weight: 700; }
 .agent-card > header > div { min-width: 0; }
 .agent-card h3, .agent-card p { margin: 0; }
 .agent-card h3 { overflow: hidden; font-size: 12.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }

@@ -129,6 +129,7 @@ function profile(): AgentProfileSummary {
     canManageStaff: false,
     canAccessLocalProjects: true,
     hasAvatar: false,
+    avatarPreviewUrl: null,
     createdAtUnixMs: 10,
     updatedAtUnixMs: 20,
   };

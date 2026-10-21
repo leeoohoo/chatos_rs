@@ -13,10 +13,10 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
 use crate::{
-    host_lifecycle::HostManager, local_terminal::LocalTerminalRegistry,
-    media_studio::MediaStudioManager, plugin_application::PluginApplicationManager,
-    project_run::ProjectRunManager, remote_connection::RemoteConnectionManager,
-    story_studio::StoryStudioManager,
+    agent_management::AgentProfileStore, host_lifecycle::HostManager,
+    local_terminal::LocalTerminalRegistry, media_studio::MediaStudioManager,
+    plugin_application::PluginApplicationManager, project_run::ProjectRunManager,
+    remote_connection::RemoteConnectionManager, story_studio::StoryStudioManager,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -321,7 +321,9 @@ pub async fn restore_authentication_session(
     plugin_applications: State<'_, PluginApplicationManager>,
     media_studio: State<'_, MediaStudioManager>,
     story_studio: State<'_, StoryStudioManager>,
+    agent_profiles: State<'_, AgentProfileStore>,
 ) -> Result<Option<AuthSession>, String> {
+    agent_profiles.reset();
     story_studio.reset();
     media_studio.reset();
     plugin_applications.reset().await;
@@ -347,7 +349,9 @@ pub async fn login(
     plugin_applications: State<'_, PluginApplicationManager>,
     media_studio: State<'_, MediaStudioManager>,
     story_studio: State<'_, StoryStudioManager>,
+    agent_profiles: State<'_, AgentProfileStore>,
 ) -> Result<AuthSession, String> {
+    agent_profiles.reset();
     story_studio.reset();
     media_studio.reset();
     plugin_applications.reset().await;
@@ -384,7 +388,9 @@ pub async fn register(
     plugin_applications: State<'_, PluginApplicationManager>,
     media_studio: State<'_, MediaStudioManager>,
     story_studio: State<'_, StoryStudioManager>,
+    agent_profiles: State<'_, AgentProfileStore>,
 ) -> Result<AuthSession, String> {
+    agent_profiles.reset();
     story_studio.reset();
     media_studio.reset();
     plugin_applications.reset().await;
@@ -407,7 +413,9 @@ pub async fn logout(
     plugin_applications: State<'_, PluginApplicationManager>,
     media_studio: State<'_, MediaStudioManager>,
     story_studio: State<'_, StoryStudioManager>,
+    agent_profiles: State<'_, AgentProfileStore>,
 ) -> Result<(), String> {
+    agent_profiles.reset();
     story_studio.reset();
     media_studio.reset();
     plugin_applications.reset().await;

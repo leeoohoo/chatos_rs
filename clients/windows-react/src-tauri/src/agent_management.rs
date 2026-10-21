@@ -4,8 +4,9 @@ use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
-use tauri::State;
+use tauri::{http, State};
 
 use crate::{
     authentication::{AuthenticationManager, GatewayModelConfig},
@@ -66,6 +67,14 @@ length(avatar_data), created_at_unix_ms, updated_at_unix_ms
 #[derive(Clone)]
 pub(crate) struct AgentProfileStore {
     database: PathBuf,
+    preview_session: Arc<Mutex<Option<AgentAvatarPreviewSession>>>,
+}
+
+#[derive(Clone)]
+struct AgentAvatarPreviewSession {
+    owner_user_id: String,
+    authentication_generation: u64,
+    token: String,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -84,6 +93,7 @@ pub(crate) struct AgentProfileSummary {
     can_manage_staff: bool,
     can_access_local_projects: bool,
     has_avatar: bool,
+    avatar_preview_url: Option<String>,
     created_at_unix_ms: i64,
     updated_at_unix_ms: i64,
 }
@@ -193,7 +203,115 @@ impl AgentProfileStore {
         connection
             .execute_batch(SCHEMA)
             .map_err(|_| store_error())?;
-        Ok(Self { database })
+        Ok(Self {
+            database,
+            preview_session: Arc::new(Mutex::new(None)),
+        })
+    }
+
+    pub(crate) fn from_runtime() -> Result<Self, String> {
+        let app_data_directory = dirs::data_local_dir()
+            .ok_or_else(store_error)?
+            .join("com.chatos.windows");
+        Self::new(app_data_directory)
+    }
+
+    fn activate_preview_session(
+        &self,
+        owner_user_id: &str,
+        authentication_generation: u64,
+    ) -> Result<String, String> {
+        let mut session = self.preview_session.lock().map_err(|_| store_error())?;
+        if let Some(active) = session.as_ref() {
+            if active.owner_user_id == owner_user_id
+                && active.authentication_generation == authentication_generation
+            {
+                return Ok(active.token.clone());
+            }
+        }
+        let token = uuid::Uuid::new_v4().to_string().to_lowercase();
+        *session = Some(AgentAvatarPreviewSession {
+            owner_user_id: owner_user_id.to_owned(),
+            authentication_generation,
+            token: token.clone(),
+        });
+        Ok(token)
+    }
+
+    fn present_profile(
+        &self,
+        mut profile: AgentProfileSummary,
+        session_token: &str,
+    ) -> AgentProfileSummary {
+        if profile.has_avatar {
+            profile.avatar_preview_url = Some(agent_avatar_preview_url(
+                session_token,
+                &profile.id,
+                profile.updated_at_unix_ms,
+            ));
+        }
+        profile
+    }
+
+    pub(crate) fn reset(&self) {
+        if let Ok(mut session) = self.preview_session.lock() {
+            *session = None;
+        }
+    }
+
+    fn protocol_response(&self, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
+        match self.protocol_body(request.uri().path()) {
+            Ok(body) => http::Response::builder()
+                .status(http::StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, "image/png")
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Cache-Control", "no-store")
+                .body(body)
+                .expect("valid Agent avatar response"),
+            Err(status) => http::Response::builder()
+                .status(status)
+                .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .header("Cache-Control", "no-store")
+                .body(b"Agent avatar unavailable".to_vec())
+                .expect("valid Agent avatar error response"),
+        }
+    }
+
+    fn protocol_body(&self, path: &str) -> Result<Vec<u8>, http::StatusCode> {
+        let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
+        if parts.len() != 3 || uuid::Uuid::parse_str(parts[0]).is_err() {
+            return Err(http::StatusCode::BAD_REQUEST);
+        }
+        validate_agent_identifier(parts[1]).map_err(|_| http::StatusCode::BAD_REQUEST)?;
+        let expected_revision = parts[2]
+            .parse::<i64>()
+            .ok()
+            .filter(|value| *value >= 0)
+            .ok_or(http::StatusCode::BAD_REQUEST)?;
+        let owner_user_id = {
+            let session = self
+                .preview_session
+                .lock()
+                .map_err(|_| http::StatusCode::SERVICE_UNAVAILABLE)?;
+            let active = session.as_ref().ok_or(http::StatusCode::UNAUTHORIZED)?;
+            if active.token != parts[0] {
+                return Err(http::StatusCode::UNAUTHORIZED);
+            }
+            active.owner_user_id.clone()
+        };
+        reject_link_or_non_file(&self.database)
+            .map_err(|_| http::StatusCode::SERVICE_UNAVAILABLE)?;
+        let connection = open_database(&self.database, true)
+            .map_err(|_| http::StatusCode::SERVICE_UNAVAILABLE)?;
+        let bytes: Vec<u8> = connection
+            .query_row(
+                "SELECT avatar_data FROM local_agent_profiles WHERE owner_user_id = ?1 AND id = ?2 AND status = 'active' AND updated_at_unix_ms = ?3 AND avatar_data IS NOT NULL",
+                params![owner_user_id, parts[1], expected_revision],
+                |row| row.get(0),
+            )
+            .map_err(|_| http::StatusCode::NOT_FOUND)?;
+        validate_avatar_png(&bytes).map_err(|_| http::StatusCode::NOT_FOUND)?;
+        Ok(bytes)
     }
 
     fn list_active(&self, owner_user_id: &str) -> Result<Vec<AgentProfileSummary>, String> {
@@ -235,14 +353,15 @@ impl AgentProfileStore {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| store_error())?;
-        let now = chrono::Utc::now().timestamp_millis().max(0);
+        let wall_clock_now = chrono::Utc::now().timestamp_millis().max(0);
         let profile_id;
         if let Some(agent_id) = input.agent_id.as_deref() {
-            validate_identifier(agent_id).map_err(|_| invalid_input())?;
+            validate_agent_identifier(agent_id).map_err(|_| invalid_input())?;
             let expected = input
                 .expected_updated_at_unix_ms
                 .filter(|value| *value >= 0)
                 .ok_or_else(invalid_input)?;
+            let now = wall_clock_now.max(expected.saturating_add(1));
             let existing: Option<(String, bool, i64, Option<i64>)> = transaction
                 .query_row(
                     "SELECT default_skill_ids_json, heartbeat_enabled, heartbeat_interval_seconds, next_heartbeat_at_unix_ms FROM local_agent_profiles WHERE owner_user_id = ?1 AND id = ?2 AND status = 'active' AND updated_at_unix_ms = ?3",
@@ -313,6 +432,7 @@ impl AgentProfileStore {
                 return Err(invalid_input());
             }
             profile_id = uuid::Uuid::new_v4().to_string().to_lowercase();
+            let now = wall_clock_now;
             let skills = normalized_permissions(
                 Vec::new(),
                 input.can_manage_staff,
@@ -381,7 +501,7 @@ impl AgentProfileStore {
         owner_user_id: &str,
         agent_id: &str,
     ) -> Result<AgentProfileEditorData, String> {
-        validate_identifier(agent_id).map_err(|_| invalid_input())?;
+        validate_agent_identifier(agent_id).map_err(|_| invalid_input())?;
         reject_link_or_non_file(&self.database)?;
         let connection = open_database(&self.database, true)?;
         connection
@@ -420,14 +540,19 @@ pub(crate) async fn list_agent_profiles(
         .session_generation_for_owner(&owner_user_id)
         .await?;
     let store = store.inner().clone();
+    let query_store = store.clone();
     let owner = owner_user_id.clone();
-    let profiles = tauri::async_runtime::spawn_blocking(move || store.list_active(&owner))
+    let profiles = tauri::async_runtime::spawn_blocking(move || query_store.list_active(&owner))
         .await
         .map_err(|_| "Agent 管理读取任务异常退出。".to_owned())??;
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
-    Ok(profiles)
+    let preview_session = store.activate_preview_session(&owner_user_id, generation)?;
+    Ok(profiles
+        .into_iter()
+        .map(|profile| store.present_profile(profile, &preview_session))
+        .collect())
 }
 
 #[tauri::command]
@@ -488,13 +613,17 @@ pub(crate) async fn load_agent_profile_editor(
         .session_generation_for_owner(&owner_user_id)
         .await?;
     let store = store.inner().clone();
+    let query_store = store.clone();
     let owner = owner_user_id.clone();
-    let editor = tauri::async_runtime::spawn_blocking(move || store.load_editor(&owner, &agent_id))
-        .await
-        .map_err(|_| "Agent 编辑资料读取任务异常退出。".to_owned())??;
+    let mut editor =
+        tauri::async_runtime::spawn_blocking(move || query_store.load_editor(&owner, &agent_id))
+            .await
+            .map_err(|_| "Agent 编辑资料读取任务异常退出。".to_owned())??;
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
+    let preview_session = store.activate_preview_session(&owner_user_id, generation)?;
+    editor.profile = store.present_profile(editor.profile, &preview_session);
     Ok(editor)
 }
 
@@ -549,10 +678,12 @@ pub(crate) async fn save_agent_profile(
         .require_session_generation(&owner_user_id, generation)
         .await?;
     let store = store.inner().clone();
+    let save_store = store.clone();
     let owner = owner_user_id.clone();
-    let saved = tauri::async_runtime::spawn_blocking(move || store.save(&owner, input, avatar))
-        .await
-        .map_err(|_| "Agent 保存任务异常退出。".to_owned())??;
+    let saved =
+        tauri::async_runtime::spawn_blocking(move || save_store.save(&owner, input, avatar))
+            .await
+            .map_err(|_| "Agent 保存任务异常退出。".to_owned())??;
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
@@ -563,7 +694,8 @@ pub(crate) async fn save_agent_profile(
             &presentation_id,
         );
     }
-    Ok(saved)
+    let preview_session = store.activate_preview_session(&owner_user_id, generation)?;
+    Ok(store.present_profile(saved, &preview_session))
 }
 
 fn map_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentProfileSummary> {
@@ -585,7 +717,7 @@ fn map_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentProfileSummary>
     let created_at_unix_ms: i64 = row.get(15)?;
     let updated_at_unix_ms: i64 = row.get(16)?;
 
-    validate_identifier(&id)?;
+    validate_agent_identifier(&id)?;
     validate_text(&name, 120, false)?;
     validate_text(&description, 2_000, true)?;
     validate_text(&role_prompt, 32_000, false)?;
@@ -638,6 +770,7 @@ fn map_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentProfileSummary>
         can_manage_staff,
         can_access_local_projects,
         has_avatar: avatar_bytes.is_some(),
+        avatar_preview_url: None,
         created_at_unix_ms,
         updated_at_unix_ms,
     })
@@ -708,6 +841,23 @@ fn normalize_avatar(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     Ok(output)
 }
 
+fn validate_avatar_png(bytes: &[u8]) -> Result<(), String> {
+    if bytes.is_empty() || bytes.len() > MAXIMUM_AVATAR_BYTES as usize {
+        return Err(invalid_avatar());
+    }
+    let format = image::guess_format(bytes).map_err(|_| invalid_avatar())?;
+    if format != image::ImageFormat::Png {
+        return Err(invalid_avatar());
+    }
+    let (width, height) = image::ImageReader::with_format(Cursor::new(bytes), format)
+        .into_dimensions()
+        .map_err(|_| invalid_avatar())?;
+    if width != 256 || height != 256 {
+        return Err(invalid_avatar());
+    }
+    Ok(())
+}
+
 fn resolved_avatar_parameters(avatar: ResolvedAgentAvatar) -> (i64, Option<Vec<u8>>) {
     match avatar {
         ResolvedAgentAvatar::Preserve => (0, None),
@@ -718,6 +868,21 @@ fn resolved_avatar_parameters(avatar: ResolvedAgentAvatar) -> (i64, Option<Vec<u
 
 fn invalid_avatar() -> String {
     "头像不是有效图片或处理后超过 512 KB。".into()
+}
+
+fn agent_avatar_preview_url(session_token: &str, agent_id: &str, revision: i64) -> String {
+    if cfg!(target_os = "windows") {
+        format!("http://chatos-agent.localhost/{session_token}/{agent_id}/{revision}")
+    } else {
+        format!("chatos-agent://localhost/{session_token}/{agent_id}/{revision}")
+    }
+}
+
+pub(crate) fn agent_avatar_protocol(
+    store: AgentProfileStore,
+    request: http::Request<Vec<u8>>,
+) -> http::Response<Vec<u8>> {
+    store.protocol_response(request)
 }
 
 fn parse_identifiers(json: String) -> rusqlite::Result<Vec<String>> {
@@ -749,6 +914,16 @@ fn validate_identifier(value: &str) -> rusqlite::Result<()> {
         || value.trim() != value
         || value.chars().any(char::is_control)
     {
+        return Err(invalid_row());
+    }
+    Ok(())
+}
+
+fn validate_agent_identifier(value: &str) -> rusqlite::Result<()> {
+    validate_identifier(value)?;
+    if value.chars().any(|character| {
+        !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+    }) {
         return Err(invalid_row());
     }
     Ok(())
@@ -1168,6 +1343,7 @@ mod tests {
             .save("alice", preserve, ResolvedAgentAvatar::Preserve)
             .unwrap();
         assert!(preserved.has_avatar);
+        assert!(preserved.updated_at_unix_ms > created.updated_at_unix_ms);
 
         let mut update = mutation();
         update.agent_id = Some(created.id);
@@ -1176,6 +1352,46 @@ mod tests {
             .save("alice", update, ResolvedAgentAvatar::Remove)
             .unwrap();
         assert!(!removed.has_avatar);
+    }
+
+    #[test]
+    fn avatar_preview_is_owner_revision_and_session_scoped() {
+        let (_directory, store) = store();
+        let source = image::RgbImage::from_pixel(12, 18, image::Rgb([70, 80, 90]));
+        let mut encoded = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(source)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        let avatar = normalize_avatar(encoded.into_inner()).unwrap();
+        let alice = store
+            .save(
+                "alice",
+                mutation(),
+                ResolvedAgentAvatar::Replace(avatar.clone()),
+            )
+            .unwrap();
+        let connection = Connection::open(store.database()).unwrap();
+        insert(&connection, "bob", &alice.id, "Foreign", "active");
+
+        let session = store.activate_preview_session("alice", 7).unwrap();
+        let path = format!("/{session}/{}/{}", alice.id, alice.updated_at_unix_ms);
+        assert_eq!(store.protocol_body(&path).unwrap(), avatar);
+        assert_eq!(
+            store
+                .protocol_body(&format!(
+                    "/{session}/{}/{}",
+                    alice.id,
+                    alice.updated_at_unix_ms.saturating_add(1)
+                ))
+                .unwrap_err(),
+            http::StatusCode::NOT_FOUND
+        );
+
+        store.reset();
+        assert_eq!(
+            store.protocol_body(&path).unwrap_err(),
+            http::StatusCode::UNAUTHORIZED
+        );
     }
 
     fn mutation() -> AgentProfileMutationInput {
