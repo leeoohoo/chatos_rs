@@ -54,7 +54,8 @@ final class GlobalHotKeyService: ObservableObject {
     private var observer: AnyCancellable?
     private var pressGate = GlobalHotKeyPressGate()
 
-    init() {
+    init(installEventHandler: Bool = true) {
+        guard installEventHandler else { return }
         installHandler()
         observer = NotificationCenter.default.publisher(for: .chatOSGlobalHotKeyPressed)
             .receive(on: RunLoop.main)
@@ -64,6 +65,12 @@ final class GlobalHotKeyService: ObservableObject {
                       let action = GlobalUtilityAction(hotKeyIdentifier: identifier) else { return }
                 self?.handle(action, isPressed: isPressed)
             }
+    }
+
+    func replaceStatesFromCompanion(
+        _ newStates: [GlobalUtilityAction: GlobalHotKeyRegistrationState]
+    ) {
+        states = newStates
     }
 
     func reconfigure(preferences: GlobalUtilityPreferencesStore) {

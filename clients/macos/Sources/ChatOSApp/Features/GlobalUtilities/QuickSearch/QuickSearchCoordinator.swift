@@ -7,13 +7,13 @@ final class QuickSearchCoordinator {
     var onBuiltInAction: ((QuickSearchBuiltInAction) -> Void)?
     var shortcutLabelProvider: (() -> String)?
 
-    private weak var model: AppModel?
+    private weak var context: (any GlobalUtilityContext)?
     private let viewModel: QuickSearchViewModel
     private let panelController: GlobalCommandPanelController
 
-    init(model: AppModel) {
-        self.model = model
-        self.viewModel = QuickSearchViewModel(model: model)
+    init(context: any GlobalUtilityContext) {
+        self.context = context
+        self.viewModel = QuickSearchViewModel(context: context)
         self.panelController = GlobalCommandPanelController(size: NSSize(width: 760, height: 520))
         viewModel.onExecute = { [weak self] action in
             self?.execute(action)
@@ -31,7 +31,7 @@ final class QuickSearchCoordinator {
         viewModel.prepareForPresentation()
         panelController.setRootView(QuickSearchView(
             viewModel: viewModel,
-            isEnglish: model?.interfaceLanguage == .english,
+            isEnglish: context?.globalUtilityIsEnglish == true,
             shortcutLabel: shortcutLabelProvider?() ?? "⌘ Space"
         ))
         panelController.present(focusingFirstTextInput: true)
@@ -48,10 +48,10 @@ final class QuickSearchCoordinator {
         switch action {
         case let .openProject(projectID):
             panelController.closeWithoutRestoringPreviousApplication()
-            model?.openGlobalSearchProject(projectID)
+            context?.globalUtilityOpenProject(projectID)
         case let .openContact(contactID):
             panelController.closeWithoutRestoringPreviousApplication()
-            model?.openGlobalSearchContact(contactID)
+            context?.globalUtilityOpenContact(contactID)
         case let .openApplication(url):
             panelController.closeWithoutRestoringPreviousApplication()
             let configuration = NSWorkspace.OpenConfiguration()

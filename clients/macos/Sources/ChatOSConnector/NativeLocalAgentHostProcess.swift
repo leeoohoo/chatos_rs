@@ -389,15 +389,25 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     private func readResponses() {
         while !isTransportClosed {
             do {
-                let response = try LocalAgentHostFrameCodec.read(
-                    from: output,
-                    deadline: UInt64.max,
-                    shouldCancel: { [weak self] in
-                        self?.isTransportClosed ?? true
-                    }
-                )
-                let commandID = try Self.commandID(in: response)
-                completePendingResponse(commandID: commandID, response: response)
+                // This queue executes one long-lived work item, so libdispatch's
+                // work-item autorelease pool never drains while the Host remains
+                // connected. JSONSerialization can autorelease the complete
+                // response object graph when extracting the command ID. Large
+                // task/tool responses would therefore accumulate for the whole
+                // app session and eventually starve unrelated UI such as capture.
+                // Give every frame its own pool while allowing the returned Data
+                // to be retained by the resumed continuation.
+                try autoreleasepool {
+                    let response = try LocalAgentHostFrameCodec.read(
+                        from: output,
+                        deadline: UInt64.max,
+                        shouldCancel: { [weak self] in
+                            self?.isTransportClosed ?? true
+                        }
+                    )
+                    let commandID = try Self.commandID(in: response)
+                    completePendingResponse(commandID: commandID, response: response)
+                }
             } catch {
                 failTransport(with: error)
                 return

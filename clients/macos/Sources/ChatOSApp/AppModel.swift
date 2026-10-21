@@ -82,7 +82,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let petOverlayStore = PetOverlayStore()
     let globalUtilityPreferences = GlobalUtilityPreferencesStore()
     let terminalWorkspace: TerminalWorkspaceViewModel
-    private(set) lazy var globalUtilityCoordinator = GlobalUtilityCoordinator(
+    private(set) lazy var globalUtilityCoordinator = GlobalUtilityCompanionClient(
         model: self,
         preferences: globalUtilityPreferences
     )

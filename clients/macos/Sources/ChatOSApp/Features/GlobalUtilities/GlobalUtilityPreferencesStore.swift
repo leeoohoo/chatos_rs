@@ -16,6 +16,7 @@ final class GlobalUtilityPreferencesStore: ObservableObject {
 
     @Published var isEnabled: Bool {
         didSet {
+            guard !isReloading else { return }
             defaults.set(isEnabled, forKey: Key.enabled)
             configurationDidChange()
         }
@@ -32,6 +33,7 @@ final class GlobalUtilityPreferencesStore: ObservableObject {
 
     @Published var screenshotEnabled: Bool {
         didSet {
+            guard !isReloading else { return }
             defaults.set(screenshotEnabled, forKey: Key.screenshotEnabled)
             configurationDidChange()
         }
@@ -39,6 +41,7 @@ final class GlobalUtilityPreferencesStore: ObservableObject {
 
     @Published var recordingEnabled: Bool {
         didSet {
+            guard !isReloading else { return }
             defaults.set(recordingEnabled, forKey: Key.recordingEnabled)
             configurationDidChange()
         }
@@ -46,6 +49,7 @@ final class GlobalUtilityPreferencesStore: ObservableObject {
 
     @Published var clipboardEnabled: Bool {
         didSet {
+            guard !isReloading else { return }
             defaults.set(clipboardEnabled, forKey: Key.clipboardEnabled)
             configurationDidChange()
         }
@@ -53,6 +57,7 @@ final class GlobalUtilityPreferencesStore: ObservableObject {
 
     @Published var quickSearchEnabled: Bool {
         didSet {
+            guard !isReloading else { return }
             defaults.set(quickSearchEnabled, forKey: Key.quickSearchEnabled)
             configurationDidChange()
         }
@@ -62,6 +67,7 @@ final class GlobalUtilityPreferencesStore: ObservableObject {
     @Published private(set) var configurationRevision = UUID()
 
     private let defaults: UserDefaults
+    private var isReloading = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -76,6 +82,26 @@ final class GlobalUtilityPreferencesStore: ObservableObject {
         self.hotKeys = Dictionary(uniqueKeysWithValues: GlobalUtilityAction.allCases.map { action in
             (action, Self.loadHotKey(action, defaults: defaults) ?? action.defaultHotKey)
         })
+    }
+
+    /// Refreshes the in-memory view after the companion process receives a
+    /// configuration notification from the main application.
+    func reloadFromDefaults() {
+        defaults.synchronize()
+        isReloading = true
+        isEnabled = defaults.object(forKey: Key.enabled) as? Bool ?? false
+        hasAcknowledgedShortcutConflicts = defaults.bool(
+            forKey: Key.acknowledgedShortcutConflicts
+        )
+        screenshotEnabled = defaults.object(forKey: Key.screenshotEnabled) as? Bool ?? true
+        recordingEnabled = defaults.object(forKey: Key.recordingEnabled) as? Bool ?? true
+        clipboardEnabled = defaults.object(forKey: Key.clipboardEnabled) as? Bool ?? true
+        quickSearchEnabled = defaults.object(forKey: Key.quickSearchEnabled) as? Bool ?? true
+        hotKeys = Dictionary(uniqueKeysWithValues: GlobalUtilityAction.allCases.map { action in
+            (action, Self.loadHotKey(action, defaults: defaults) ?? action.defaultHotKey)
+        })
+        isReloading = false
+        configurationDidChange()
     }
 
     func hotKey(for action: GlobalUtilityAction) -> GlobalHotKey {
@@ -124,6 +150,7 @@ final class GlobalUtilityPreferencesStore: ObservableObject {
     }
 
     private func configurationDidChange() {
+        defaults.synchronize()
         configurationRevision = UUID()
     }
 

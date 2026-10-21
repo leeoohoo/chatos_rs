@@ -15,7 +15,7 @@ final class ScreenRecordingCoordinator {
         case finishing
     }
 
-    private weak var model: AppModel?
+    private weak var context: (any GlobalUtilityContext)?
     private let service = NativeScreenRecordingService()
     private lazy var pickerViewModel = RecordingTargetPickerViewModel(service: service)
     private let pickerPanel = GlobalCommandPanelController(size: NSSize(width: 620, height: 500))
@@ -24,8 +24,8 @@ final class ScreenRecordingCoordinator {
     private var state: State = .idle
     private var temporaryOutputURL: URL?
 
-    init(model: AppModel) {
-        self.model = model
+    init(context: any GlobalUtilityContext) {
+        self.context = context
         pickerViewModel.onStart = { [weak self] target, capturesAudio in
             self?.beginRecording(target: target, capturesSystemAudio: capturesAudio)
         }
@@ -74,7 +74,7 @@ final class ScreenRecordingCoordinator {
         pickerViewModel.load()
         pickerPanel.setRootView(RecordingTargetPickerView(
             viewModel: pickerViewModel,
-            isEnglish: model?.interfaceLanguage == .english
+            isEnglish: context?.globalUtilityIsEnglish == true
         ))
         pickerPanel.present()
     }
@@ -86,7 +86,7 @@ final class ScreenRecordingCoordinator {
         guard state == .selecting else { return }
         pickerViewModel.cancelLoading()
         state = .preparing
-        let isEnglish = model?.interfaceLanguage == .english
+        let isEnglish = context?.globalUtilityIsEnglish == true
         controlPanel.prepare(isEnglish: isEnglish)
         pickerPanel.closeAndRestorePreviousApplication()
         let temporaryURL = Self.recordingTemporaryDirectory
@@ -130,7 +130,7 @@ final class ScreenRecordingCoordinator {
                 temporaryOutputURL = nil
                 resultToast.present(
                     url: finalURL,
-                    isEnglish: model?.interfaceLanguage == .english
+                    isEnglish: context?.globalUtilityIsEnglish == true
                 )
             } catch {
                 state = .idle
@@ -191,7 +191,7 @@ final class ScreenRecordingCoordinator {
     }
 
     private func localized(_ chinese: String, _ english: String) -> String {
-        model?.interfaceLanguage == .english ? english : chinese
+        context?.globalUtilityIsEnglish == true ? english : chinese
     }
 
     private static var recordingTemporaryDirectory: URL {

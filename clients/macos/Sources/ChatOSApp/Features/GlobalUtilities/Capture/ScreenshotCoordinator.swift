@@ -27,7 +27,7 @@ private enum ScreenshotPersistenceError: LocalizedError {
 final class ScreenshotCoordinator {
     private static let workflowGate = ScreenshotWorkflowGate()
 
-    private weak var model: AppModel?
+    private weak var context: (any GlobalUtilityContext)?
     private let captureService = NativeScreenCaptureService()
     private let toastController = CaptureResultToastController()
 
@@ -43,8 +43,8 @@ final class ScreenshotCoordinator {
     private var selectedScreen: NSScreen?
     private(set) var isRunning = false
 
-    init(model: AppModel) {
-        self.model = model
+    init(context: any GlobalUtilityContext) {
+        self.context = context
     }
 
     deinit {
@@ -116,7 +116,7 @@ final class ScreenshotCoordinator {
 
     private func presentSelection(frozenCaptures: [CGDirectDisplayID: CGImage]) {
         let controller = ScreenSelectionOverlayController(
-            isEnglish: model?.interfaceLanguage == .english,
+            isEnglish: context?.globalUtilityIsEnglish == true,
             frozenCaptures: frozenCaptures
         )
         controller.onComplete = { [weak self] selection in
@@ -164,7 +164,7 @@ final class ScreenshotCoordinator {
         let controller = ScreenshotInlineAnnotationController(
             image: image,
             selection: selection,
-            isEnglish: model?.interfaceLanguage == .english
+            isEnglish: context?.globalUtilityIsEnglish == true
         )
         controller.onComplete = { [weak self] renderedImage in
             guard let self else { return }
@@ -194,7 +194,7 @@ final class ScreenshotCoordinator {
         let controller = LongScreenshotCaptureController(
             initialImage: initialImage,
             selection: selection,
-            isEnglish: model?.interfaceLanguage == .english
+            isEnglish: context?.globalUtilityIsEnglish == true
         )
         controller.onComplete = { [weak self] image in
             guard let self else { return }
@@ -221,7 +221,7 @@ final class ScreenshotCoordinator {
             toastController.show(
                 output: output,
                 on: screen,
-                isEnglish: model?.interfaceLanguage == .english
+                isEnglish: context?.globalUtilityIsEnglish == true
             )
             finishWorkflow()
         }
@@ -285,7 +285,10 @@ final class ScreenshotCoordinator {
                 ))
                 return
             }
-            model?.openPetTranslationImage(data: pngData, suggestedName: suggestedName)
+            context?.globalUtilityOpenTranslationImage(
+                data: pngData,
+                suggestedName: suggestedName
+            )
         }
     }
 
@@ -426,7 +429,7 @@ final class ScreenshotCoordinator {
     }
 
     private func localized(_ chinese: String, _ english: String) -> String {
-        model?.interfaceLanguage == .english ? english : chinese
+        context?.globalUtilityIsEnglish == true ? english : chinese
     }
 
     private static func screenshotFilename() -> String {

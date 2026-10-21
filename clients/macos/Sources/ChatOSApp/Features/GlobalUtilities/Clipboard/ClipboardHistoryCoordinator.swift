@@ -5,15 +5,15 @@ import SwiftUI
 
 @MainActor
 final class ClipboardHistoryCoordinator {
-    private weak var model: AppModel?
+    private weak var context: (any GlobalUtilityContext)?
     private let store: ClipboardHistoryStore
     private let monitor: ClipboardHistoryMonitor
     private let viewModel: ClipboardHistoryViewModel
     private let panelController: GlobalCommandPanelController
     private var cancellables = Set<AnyCancellable>()
 
-    init(model: AppModel) {
-        self.model = model
+    init(context: any GlobalUtilityContext) {
+        self.context = context
         let store = ClipboardHistoryStore()
         self.store = store
         self.monitor = ClipboardHistoryMonitor(store: store)
@@ -57,7 +57,7 @@ final class ClipboardHistoryCoordinator {
         viewModel.prepareForPresentation()
         panelController.setRootView(ClipboardHistoryView(
             viewModel: viewModel,
-            isEnglish: model?.interfaceLanguage == .english
+            isEnglish: context?.globalUtilityIsEnglish == true
         ))
         panelController.present(focusingFirstTextInput: true)
     }

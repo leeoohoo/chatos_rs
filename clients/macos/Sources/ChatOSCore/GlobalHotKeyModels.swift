@@ -76,7 +76,7 @@ public struct GlobalHotKey: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-public enum GlobalHotKeyRegistrationState: Equatable, Sendable {
+public enum GlobalHotKeyRegistrationState: Codable, Equatable, Sendable {
     case registered(activeHotKey: GlobalHotKey, usesFallback: Bool)
     case conflict(requestedHotKey: GlobalHotKey, fallbackHotKey: GlobalHotKey?)
     case unsupported(message: String)

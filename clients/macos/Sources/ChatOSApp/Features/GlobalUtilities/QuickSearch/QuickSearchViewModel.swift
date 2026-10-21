@@ -26,7 +26,7 @@ final class QuickSearchViewModel: ObservableObject {
     var onExecute: ((QuickSearchAction) -> Void)?
     var onCancel: (() -> Void)?
 
-    private weak var model: AppModel?
+    private weak var context: (any GlobalUtilityContext)?
     private let fileProvider = MetadataFileSearchProvider()
     private var applications: [QuickSearchApplicationRecord] = []
     private var searchTask: Task<Void, Never>?
@@ -35,8 +35,8 @@ final class QuickSearchViewModel: ObservableObject {
     private var usage: [String: QuickSearchUsageRecord]
     private let usageDefaultsKey = "ChatOS.quickSearch.usage"
 
-    init(model: AppModel) {
-        self.model = model
+    init(context: any GlobalUtilityContext) {
+        self.context = context
         self.usage = Self.loadUsage(key: usageDefaultsKey)
         applicationLoadTask = Task { [weak self] in
             let scanTask = Task.detached(priority: .utility) {
@@ -126,7 +126,7 @@ final class QuickSearchViewModel: ObservableObject {
     }
 
     private func rebuildMemoryResults() {
-        guard let model else {
+        guard let context else {
             results = []
             return
         }
@@ -136,7 +136,7 @@ final class QuickSearchViewModel: ObservableObject {
         var next: [QuickSearchResult] = []
 
         if scope == .all || scope == .chatOS {
-            next.append(contentsOf: model.projects.compactMap { project in
+            next.append(contentsOf: context.globalUtilityProjects.compactMap { project in
                 makeResult(
                     id: "project:\(project.id)",
                     kind: .chatOS,
@@ -148,7 +148,7 @@ final class QuickSearchViewModel: ObservableObject {
                     action: .openProject(project.id)
                 )
             })
-            next.append(contentsOf: model.contacts.compactMap { contact in
+            next.append(contentsOf: context.globalUtilityContacts.compactMap { contact in
                 makeResult(
                     id: "contact:\(contact.id)",
                     kind: .chatOS,
@@ -281,7 +281,7 @@ final class QuickSearchViewModel: ObservableObject {
     }
 
     private func localized(_ chinese: String, _ english: String) -> String {
-        model?.interfaceLanguage == .english ? english : chinese
+        context?.globalUtilityIsEnglish == true ? english : chinese
     }
 
     private static func loadUsage(key: String) -> [String: QuickSearchUsageRecord] {

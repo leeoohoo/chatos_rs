@@ -14,13 +14,13 @@ final class GlobalUtilityCoordinator {
     private var cancellables = Set<AnyCancellable>()
     private var hasStarted = false
 
-    init(model: AppModel, preferences: GlobalUtilityPreferencesStore) {
+    init(context: any GlobalUtilityContext, preferences: GlobalUtilityPreferencesStore) {
         self.preferences = preferences
         self.hotKeys = GlobalHotKeyService()
-        self.screenshotCoordinator = ScreenshotCoordinator(model: model)
-        self.quickSearchCoordinator = QuickSearchCoordinator(model: model)
-        self.clipboardCoordinator = ClipboardHistoryCoordinator(model: model)
-        self.screenRecordingCoordinator = ScreenRecordingCoordinator(model: model)
+        self.screenshotCoordinator = ScreenshotCoordinator(context: context)
+        self.quickSearchCoordinator = QuickSearchCoordinator(context: context)
+        self.clipboardCoordinator = ClipboardHistoryCoordinator(context: context)
+        self.screenRecordingCoordinator = ScreenRecordingCoordinator(context: context)
         self.quickSearchCoordinator.shortcutLabelProvider = { [weak self] in
             guard let self else { return "⌘ Space" }
             if case let .registered(activeHotKey, _) = self.hotKeys.states[.quickSearch] {
@@ -28,7 +28,7 @@ final class GlobalUtilityCoordinator {
             }
             return self.preferences.hotKey(for: .quickSearch).displayName
         }
-        self.quickSearchCoordinator.onBuiltInAction = { [weak self, weak model] action in
+        self.quickSearchCoordinator.onBuiltInAction = { [weak self, weak context] action in
             guard let self else { return }
             switch action {
             case .screenshot:
@@ -38,9 +38,9 @@ final class GlobalUtilityCoordinator {
             case .clipboardHistory:
                 self.perform(.clipboardHistory)
             case .openSettings:
-                model?.openGlobalSearchSettings()
+                context?.globalUtilityOpenSettings(runtimePermissions: false)
             case .openRuntimePermissions:
-                model?.openGlobalSearchSettings(tab: .runtime)
+                context?.globalUtilityOpenSettings(runtimePermissions: true)
             }
         }
     }

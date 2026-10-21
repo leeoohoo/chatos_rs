@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-@main
 struct ChatOSApp: App {
     @NSApplicationDelegateAdaptor(ChatOSApplicationDelegate.self) private var appDelegate
 
@@ -13,6 +12,18 @@ struct ChatOSApp: App {
         .windowToolbarStyle(.unifiedCompact)
         .commands {
             ChatOSGlobalUtilityCommands(model: appDelegate.model)
+        }
+    }
+}
+
+@main
+private enum ChatOSProcessEntryPoint {
+    @MainActor
+    static func main() {
+        if GlobalUtilitiesCompanionApplication.shouldRun {
+            GlobalUtilitiesCompanionApplication.run()
+        } else {
+            ChatOSApp.main()
         }
     }
 }
