@@ -429,6 +429,12 @@ pub(crate) struct AgentTeamRunSummary {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentTeamRunHistorySnapshot {
     team_id: String,
+    message_count: i64,
+    pending_delivery_count: i64,
+    running_delivery_count: i64,
+    completed_delivery_count: i64,
+    failed_delivery_count: i64,
+    cancelled_delivery_count: i64,
     runs: Vec<AgentTeamRunSummary>,
 }
 
@@ -1436,6 +1442,38 @@ impl AgentConversationStore {
         if !exists {
             return Err("Agent 团队不存在或已停用。".into());
         }
+        let message_count = connection
+            .query_row(
+                "SELECT count(*) FROM project_agent_messages \
+                 WHERE owner_user_id = ?1 AND room_id = ?2",
+                params![owner_user_id, team_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| team_store_error())?;
+        let delivery_counts = connection
+            .query_row(
+                r#"
+                SELECT
+                    COALESCE(sum(CASE status WHEN 'pending' THEN 1 ELSE 0 END), 0),
+                    COALESCE(sum(CASE status WHEN 'running' THEN 1 ELSE 0 END), 0),
+                    COALESCE(sum(CASE status WHEN 'completed' THEN 1 ELSE 0 END), 0),
+                    COALESCE(sum(CASE status WHEN 'failed' THEN 1 ELSE 0 END), 0),
+                    COALESCE(sum(CASE status WHEN 'cancelled' THEN 1 ELSE 0 END), 0)
+                FROM project_agent_deliveries
+                WHERE owner_user_id = ?1 AND room_id = ?2
+                "#,
+                params![owner_user_id, team_id],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .map_err(|_| team_store_error())?;
         let mut statement = connection
             .prepare(
                 r#"
@@ -1478,6 +1516,12 @@ impl AgentConversationStore {
             .map_err(|_| team_store_error())?;
         Ok(AgentTeamRunHistorySnapshot {
             team_id: team_id.to_owned(),
+            message_count,
+            pending_delivery_count: delivery_counts.0,
+            running_delivery_count: delivery_counts.1,
+            completed_delivery_count: delivery_counts.2,
+            failed_delivery_count: delivery_counts.3,
+            cancelled_delivery_count: delivery_counts.4,
             runs,
         })
     }
@@ -3797,6 +3841,10 @@ mod tests {
         drop(connection);
         let history = store.load_project_team_runs("alice", &created.id).unwrap();
         assert_eq!(history.team_id, created.id);
+        assert_eq!(history.message_count, 1);
+        assert_eq!(history.failed_delivery_count, 1);
+        assert_eq!(history.pending_delivery_count, 0);
+        assert_eq!(history.running_delivery_count, 0);
         assert_eq!(history.runs.len(), 1);
         assert_eq!(history.runs[0].delivery_id, pending.delivery_id);
         assert_eq!(history.runs[0].agent_id, "agent-1");

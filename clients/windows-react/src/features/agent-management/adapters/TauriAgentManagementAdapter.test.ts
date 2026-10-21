@@ -269,6 +269,12 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
 
     vi.mocked(invoke).mockResolvedValueOnce({
       teamId: team.id,
+      messageCount: 1,
+      pendingDeliveryCount: 0,
+      runningDeliveryCount: 1,
+      completedDeliveryCount: 0,
+      failedDeliveryCount: 0,
+      cancelledDeliveryCount: 0,
       runs: [{
         deliveryId: "delivery-1", messageId: "message-1", agentId: "agent-1",
         lane: "manager", triggerKind: "default_agent", deliveryStatus: "running", runStatus: "running",

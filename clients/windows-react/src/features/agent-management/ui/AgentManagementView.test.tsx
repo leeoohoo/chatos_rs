@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAgentManagementStore } from "../application/agentManagementStore";
 import { useAgentSkillManagementStore } from "../application/agentSkillManagementStore";
@@ -424,6 +424,12 @@ describe("AgentManagementView", () => {
     };
     const loadTeamRuns = vi.fn(async () => ({
       teamId: team.id,
+      messageCount: 1,
+      pendingDeliveryCount: 0,
+      runningDeliveryCount: 0,
+      completedDeliveryCount: 1,
+      failedDeliveryCount: 0,
+      cancelledDeliveryCount: 0,
       runs: [{
         deliveryId: "delivery-1", messageId: "message-1", agentId: "agent-1",
         lane: "manager" as const, triggerKind: "default_agent" as const,
@@ -463,6 +469,12 @@ describe("AgentManagementView", () => {
     await screen.findByText("界面设计师");
     fireEvent.click(screen.getByRole("button", { name: "团队" }));
     fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "总览" }));
+    const overview = await screen.findByRole("region", { name: "Agent 团队总览" });
+    expect(overview).toBeVisible();
+    expect(within(overview).getByText("团队目标")).toBeVisible();
+    expect(within(overview).getByText("交付 Alpha")).toBeVisible();
+    expect(within(overview).getByRole("button", { name: /1\s*团队消息/ })).toBeVisible();
     fireEvent.click(await screen.findByRole("button", { name: "运行" }));
 
     await waitFor(() => expect(loadTeamRuns).toHaveBeenCalledWith("owner-1", team.id));

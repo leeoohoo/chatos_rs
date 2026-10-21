@@ -94,6 +94,31 @@
 .agent-team-composer__input textarea:focus { border-color: rgba(10,132,255,.55); box-shadow: 0 0 0 3px rgba(10,132,255,.10); }
 .agent-team-composer__input button { min-width: 58px; min-height: 31px; border: 0; border-radius: 8px; padding: 5px 11px; color: white; background: var(--accent); font-size: 10px; font-weight: 650; cursor: pointer; }
 .agent-team-composer__input button:disabled { cursor: default; opacity: .4; }
+.agent-team-overview { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; padding: 12px 18px 18px; }
+.agent-team-overview__metrics { display: grid; flex: none; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 8px; }
+.agent-team-overview__metrics button { display: grid; gap: 2px; border: 1px solid rgba(60,60,67,.08); border-radius: 10px; padding: 9px 10px; color: var(--primary); background: rgba(255,255,255,.76); text-align: left; cursor: pointer; }
+.agent-team-overview__metrics strong { font-size: 16px; font-weight: 680; }
+.agent-team-overview__metrics span { color: var(--secondary); font-size: 8.5px; }
+.agent-team-overview__body { display: grid; min-height: 0; grid-template-columns: minmax(220px,.85fr) minmax(320px,1.15fr); gap: 10px; margin-top: 10px; }
+.agent-team-overview__body > section { display: grid; align-content: start; gap: 8px; border: 1px solid rgba(60,60,67,.08); border-radius: 11px; padding: 11px; background: rgba(255,255,255,.72); }
+.agent-team-overview__body > section > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.agent-team-overview__body h4,.agent-team-overview__body header p { margin: 0; }
+.agent-team-overview__body h4 { font-size: 10.5px; }
+.agent-team-overview__body header p { margin-top: 3px; color: var(--secondary); font-size: 8.5px; line-height: 1.4; }
+.agent-team-overview__body header button { border: 0; padding: 0; color: var(--accent); background: transparent; font-size: 8.5px; font-weight: 620; cursor: pointer; }
+.agent-team-overview__assignments { display: grid; gap: 6px; margin-top: 4px; }
+.agent-team-overview__assignments > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-radius: 8px; padding: 7px 8px; background: rgba(120,120,128,.06); }
+.agent-team-overview__assignments span { color: var(--secondary); font-size: 8.5px; }
+.agent-team-overview__assignments strong { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-team-overview__body article { display: grid; grid-template-columns: 7px minmax(0,1fr) auto; align-items: center; gap: 8px; border-top: 1px solid rgba(60,60,67,.07); padding-top: 7px; }
+.agent-team-overview__body article > span { width: 7px; height: 7px; border-radius: 50%; background: rgba(120,120,128,.28); }
+.agent-team-overview__body article > span.is-running { background: #30d158; box-shadow: 0 0 0 3px rgba(48,209,88,.11); }
+.agent-team-overview__body article > span.is-completed { background: var(--accent); }
+.agent-team-overview__body article > span.is-failed { background: #ff3b30; }
+.agent-team-overview__body article > div { display: grid; min-width: 0; gap: 2px; }
+.agent-team-overview__body article strong { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-team-overview__body article small,.agent-team-overview__body article em { color: var(--secondary); font-size: 8px; font-style: normal; }
+.agent-team-overview__empty { display: flex; min-height: 54px; align-items: center; justify-content: center; gap: 6px; color: var(--secondary); font-size: 9px; }
 .agent-team-runs { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .agent-team-runs__filters { display: flex; flex: none; align-items: center; gap: 5px; overflow-x: auto; border-bottom: 1px solid var(--separator); padding: 8px 18px; background: rgba(255,255,255,.52); }
 .agent-team-runs__filters button { min-height: 23px; flex: none; border: 0; border-radius: 999px; padding: 3px 9px; color: var(--secondary); background: rgba(120,120,128,.09); font-size: 8.5px; font-weight: 620; cursor: pointer; }

@@ -579,6 +579,12 @@ export const agentTeamRunSummarySchema = z.object({
 
 export const agentTeamRunHistorySnapshotSchema = z.object({
   teamId: z.string().uuid(),
+  messageCount: z.number().int().nonnegative(),
+  pendingDeliveryCount: z.number().int().nonnegative(),
+  runningDeliveryCount: z.number().int().nonnegative(),
+  completedDeliveryCount: z.number().int().nonnegative(),
+  failedDeliveryCount: z.number().int().nonnegative(),
+  cancelledDeliveryCount: z.number().int().nonnegative(),
   runs: z.array(agentTeamRunSummarySchema).max(500),
 }).strict().superRefine((snapshot, context) => {
   const identities = new Set<string>();
@@ -590,6 +596,11 @@ export const agentTeamRunHistorySnapshotSchema = z.object({
       identities.add(identity);
     }
   });
+  const deliveryCount = snapshot.pendingDeliveryCount + snapshot.runningDeliveryCount
+    + snapshot.completedDeliveryCount + snapshot.failedDeliveryCount + snapshot.cancelledDeliveryCount;
+  if (deliveryCount < snapshot.runs.length) {
+    context.addIssue({ code: "custom", message: "团队 Delivery 汇总少于已记录 Run。", path: ["runs"] });
+  }
 });
 
 export interface CreateAgentTeamInput {
