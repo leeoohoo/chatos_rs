@@ -5,6 +5,7 @@ import { useAgentSkillManagementStore } from "../application/agentSkillManagemen
 import {
   agentProfessionLabels,
   type AgentProfileEditorCatalog,
+  type AgentProfileActivitySnapshot,
   type AgentProfileSummary,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
@@ -167,6 +168,80 @@ describe("AgentManagementView", () => {
     expect(screen.getByText(/创建一个 Agent/)).toBeVisible();
   });
 
+  it("selects an Agent and loads its existing private-chat activity without opening a conversation", async () => {
+    const loadProfileActivity = vi.fn(async () => ({
+      agentId: "agent-1",
+      hasActiveDelivery: false,
+      items: [],
+    }));
+    const port = stubPort({ loadProfileActivity });
+    renderView(port);
+    await screen.findByText("界面设计师");
+
+    fireEvent.click(screen.getByText("界面设计师").closest("article")!);
+
+    await waitFor(() => expect(loadProfileActivity).toHaveBeenCalledWith("owner-1", "agent-1"));
+    expect(screen.getByRole("region", { name: "界面设计师 运行动态" })).toBeVisible();
+    expect(screen.getByText("最近的私聊消息处理")).toBeVisible();
+    expect(await screen.findByText("还没有私聊运行记录")).toBeVisible();
+    expect(port.prepareConversation).toBeUndefined();
+  });
+
+  it("shows active profile Delivery and Run state", async () => {
+    const port = stubPort({
+      loadProfileActivity: vi.fn(async () => ({
+        agentId: "agent-1",
+        hasActiveDelivery: true,
+        items: [activityItem("agent-1", "run-active", "running")],
+      })),
+    });
+    renderView(port);
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "运行动态" }));
+
+    expect(await screen.findByText("正在运行")).toBeVisible();
+    expect(screen.getByText("Run 正在执行")).toBeVisible();
+    expect(screen.getByText(/Run run-active/)).toBeVisible();
+  });
+
+  it("does not let a late profile response overwrite the newly selected Agent", async () => {
+    const first = deferred<AgentProfileActivitySnapshot>();
+    const second = deferred<AgentProfileActivitySnapshot>();
+    const secondProfile = { ...profile(), id: "agent-2", name: "后端工程师" };
+    const loadProfileActivity = vi.fn((_owner: string, agentId: string) => (
+      agentId === "agent-1" ? first.promise : second.promise
+    ));
+    const port = stubPort({
+      listProfiles: vi.fn(async () => [profile(), secondProfile]),
+      loadProfileActivity,
+    });
+    renderView(port);
+    await screen.findByText("后端工程师");
+
+    const activityButtons = screen.getAllByRole("button", { name: "运行动态" });
+    fireEvent.click(activityButtons[0]!);
+    await waitFor(() => expect(loadProfileActivity).toHaveBeenCalledWith("owner-1", "agent-1"));
+    fireEvent.click(activityButtons[1]!);
+    await waitFor(() => expect(loadProfileActivity).toHaveBeenCalledWith("owner-1", "agent-2"));
+    second.resolve({
+      agentId: "agent-2",
+      hasActiveDelivery: false,
+      items: [activityItem("agent-2", "run-second", "completed")],
+    });
+    expect(await screen.findByText(/Run run-second/)).toBeVisible();
+
+    first.resolve({
+      agentId: "agent-1",
+      hasActiveDelivery: false,
+      items: [activityItem("agent-1", "run-first", "completed")],
+    });
+    await first.promise;
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: "后端工程师 运行动态" })).toBeVisible();
+      expect(screen.queryByText(/Run run-first/)).not.toBeInTheDocument();
+    });
+  });
+
   it("opens the native prepared conversation when all Agent chat dependencies are available", async () => {
     const roomId = "11111111-1111-4111-8111-111111111111";
     const prepareConversation = vi.fn(async () => ({
@@ -272,6 +347,33 @@ describe("AgentManagementView", () => {
 
 function renderView(port = stubPort()) {
   return render(<AgentManagementView ownerUserId="owner-1" port={port} />);
+}
+
+function activityItem(
+  agentId: string,
+  runId: string,
+  deliveryStatus: "running" | "completed",
+): AgentProfileActivitySnapshot["items"][number] {
+  return {
+    deliveryId: `delivery-${runId}`,
+    roomId: agentId === "agent-1"
+      ? "11111111-1111-4111-8111-111111111111"
+      : "22222222-2222-4222-8222-222222222222",
+    agentId,
+    turnId: `turn-${runId}`,
+    runId,
+    deliveryStatus,
+    runStatus: deliveryStatus === "running" ? "running" : "succeeded",
+    responseMessageId: deliveryStatus === "running" ? null : `message-${runId}`,
+    createdAtUnixMs: 10,
+    updatedAtUnixMs: 20,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((accept) => { resolve = accept; });
+  return { promise, resolve };
 }
 
 function skillProjection(kind: "profession" | "projectType", key: string) {

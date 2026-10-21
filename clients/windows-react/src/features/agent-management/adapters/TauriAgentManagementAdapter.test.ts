@@ -157,6 +157,17 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       roomId,
     });
 
+    vi.mocked(invoke).mockResolvedValueOnce({
+      agentId: "agent-1",
+      hasActiveDelivery: false,
+      items: [],
+    });
+    await adapter.loadProfileActivity("owner-1", "agent-1");
+    expect(invoke).toHaveBeenLastCalledWith("load_agent_profile_activity", {
+      ownerUserId: "owner-1",
+      agentId: "agent-1",
+    });
+
     const input = {
       ownerUserId: "owner-1",
       roomId,

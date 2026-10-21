@@ -311,6 +311,45 @@ export const agentConversationActivitySnapshotSchema = z.object({
 
 export type AgentConversationActivitySnapshot = z.infer<typeof agentConversationActivitySnapshotSchema>;
 
+export const agentProfileActivitySnapshotSchema = z.object({
+  agentId: z.string().trim().min(1).max(512),
+  hasActiveDelivery: z.boolean(),
+  items: z.array(agentConversationActivityItemSchema).max(100),
+}).strict().superRefine((snapshot, context) => {
+  const identifiers = new Set<string>();
+  snapshot.items.forEach((item, index) => {
+    if (item.agentId !== snapshot.agentId) {
+      context.addIssue({
+        code: "custom",
+        message: "Agent 运行动态成员身份不一致。",
+        path: ["items", index, "agentId"],
+      });
+    }
+    for (const identity of [item.deliveryId, item.turnId, item.runId]) {
+      if (identifiers.has(identity)) {
+        context.addIssue({
+          code: "custom",
+          message: "Agent 运行动态标识不能重复。",
+          path: ["items", index],
+        });
+      }
+      identifiers.add(identity);
+    }
+  });
+  const hasActiveDelivery = snapshot.items.some(({ deliveryStatus }) => (
+    deliveryStatus === "pending" || deliveryStatus === "running"
+  ));
+  if (snapshot.hasActiveDelivery !== hasActiveDelivery) {
+    context.addIssue({
+      code: "custom",
+      message: "Agent 活跃 Delivery 状态不一致。",
+      path: ["hasActiveDelivery"],
+    });
+  }
+});
+
+export type AgentProfileActivitySnapshot = z.infer<typeof agentProfileActivitySnapshotSchema>;
+
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",
   product_manager: "产品经理",

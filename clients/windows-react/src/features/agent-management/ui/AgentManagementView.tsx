@@ -18,6 +18,7 @@ import {
   type AgentAvatarDraft,
   type AgentAvatarHistoryAsset,
   type AgentConversationActivitySnapshot,
+  type AgentProfileActivitySnapshot,
   type PreparedAgentConversation,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
@@ -63,6 +64,7 @@ export function AgentManagementView({
   const [directConversation, setDirectConversation] = useState<PreparedAgentConversation | null>(null);
   const [directError, setDirectError] = useState<string | null>(null);
   const [activityRefreshSequence, setActivityRefreshSequence] = useState(0);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [showsSkillManagement, setShowsSkillManagement] = useState(false);
   const [editor, setEditor] = useState<{
     catalog: AgentProfileEditorCatalog;
@@ -83,6 +85,10 @@ export function AgentManagementView({
     () => profiles.slice(page * pageSize, page * pageSize + pageSize),
     [page, pageSize, profiles],
   );
+  const selectedProfile = useMemo(
+    () => profiles.find((profile) => profile.id === selectedAgentId) ?? null,
+    [profiles, selectedAgentId],
+  );
 
   useEffect(() => {
     setEditor(null);
@@ -91,6 +97,7 @@ export function AgentManagementView({
     setDirectConversation(null);
     setDirectError(null);
     setActivityRefreshSequence(0);
+    setSelectedAgentId(null);
     void activate(port, ownerUserId).then(() => loadEditorCatalog(port, false));
     return reset;
   }, [activate, loadEditorCatalog, ownerUserId, port, reset]);
@@ -98,6 +105,10 @@ export function AgentManagementView({
   useEffect(() => {
     setPage((current) => Math.min(current, pageCount - 1));
   }, [pageCount]);
+
+  useEffect(() => {
+    if (selectedAgentId && profiles.length > 0 && !selectedProfile) setSelectedAgentId(null);
+  }, [profiles.length, selectedAgentId, selectedProfile]);
 
   const openEditor = async (profile: AgentProfileSummary | null) => {
     const identity = profile?.id ?? "new-agent";
@@ -263,6 +274,7 @@ export function AgentManagementView({
             <div className="agent-management__grid">
               {visibleProfiles.map((profile) => (
                 <AgentCard
+                  isSelected={selectedAgentId === profile.id}
                   key={profile.id}
                   preparing={preparingId === profile.id}
                   profile={profile}
@@ -272,6 +284,7 @@ export function AgentManagementView({
                     : profile.modelConfigId}
                   onEdit={() => void openEditor(profile)}
                   onDirect={() => void openDirect(profile)}
+                  onSelect={() => setSelectedAgentId(profile.id)}
                   preparingDirect={preparingDirectId === profile.id}
                   directAvailable={canOpenDirect}
                 />
@@ -285,6 +298,13 @@ export function AgentManagementView({
               onPageChange={setPage}
               onPageSizeChange={(size) => { setPageSize(size); setPage(0); }}
             />
+            {selectedProfile && port.loadProfileActivity && (
+              <AgentProfileActivity
+                ownerUserId={ownerUserId}
+                port={port}
+                profile={selectedProfile}
+              />
+            )}
           </>
         )}
       </section>
@@ -407,6 +427,102 @@ function AgentConversationActivity({
   );
 }
 
+function AgentProfileActivity({
+  ownerUserId,
+  port,
+  profile,
+}: {
+  ownerUserId: string;
+  port: AgentManagementPort;
+  profile: AgentProfileSummary;
+}) {
+  const [snapshot, setSnapshot] = useState<AgentProfileActivitySnapshot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [retrySequence, setRetrySequence] = useState(0);
+
+  useEffect(() => {
+    const loadActivity = port.loadProfileActivity;
+    if (!loadActivity) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const load = async () => {
+      try {
+        const next = await loadActivity(ownerUserId, profile.id);
+        if (cancelled) return;
+        if (next.agentId !== profile.id) {
+          throw new Error("Agent 运行动态身份不一致，请重新选择 Agent。");
+        }
+        setSnapshot(next);
+        setError(null);
+        setIsLoading(false);
+        if (next.hasActiveDelivery) timer = window.setTimeout(() => void load(), 1_000);
+      } catch (failure) {
+        if (cancelled) return;
+        setError(failure instanceof Error ? failure.message : "Agent 运行动态暂时无法读取。");
+        setIsLoading(false);
+      }
+    };
+    setIsLoading(true);
+    setError(null);
+    void load();
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [ownerUserId, port, profile.id, retrySequence]);
+
+  const current = snapshot?.agentId === profile.id ? snapshot : null;
+  const items = current?.items ?? [];
+  const active = current?.hasActiveDelivery ?? false;
+  return (
+    <section aria-label={`${profile.name} 运行动态`} className="agent-profile-activity" aria-live="polite">
+      <header>
+        <div>
+          <h3>{profile.name} · 运行动态</h3>
+          <p>最近的私聊消息处理</p>
+        </div>
+        <div>
+          {active && <span className="agent-profile-activity__active">正在运行</span>}
+          {isLoading && <span className="mini-spinner" aria-label="正在读取 Agent 运行动态" />}
+          <button
+            disabled={isLoading}
+            onClick={() => { setIsLoading(true); setRetrySequence((value) => value + 1); }}
+            type="button"
+          >刷新</button>
+        </div>
+      </header>
+      {error ? (
+        <div className="agent-profile-activity__state is-error" role="alert">
+          <span>{error}</span>
+          <button onClick={() => setRetrySequence((value) => value + 1)} type="button">重试</button>
+        </div>
+      ) : !isLoading && items.length === 0 ? (
+        <div className="agent-profile-activity__state">
+          <strong>还没有私聊运行记录</strong>
+          <span>与这个 Agent 开始私聊后，最近的 Delivery 与 Run 会显示在这里。</span>
+        </div>
+      ) : (
+        <div className="agent-activity__list" aria-label="Agent 最近私聊运行">
+          {items.slice(0, 20).map((item) => (
+            <article key={item.deliveryId}>
+              <span className={`agent-activity__status agent-activity__status--${item.deliveryStatus}`}>
+                {agentDeliveryStatusLabel(item.deliveryStatus)}
+              </span>
+              <div>
+                <strong>{agentRunStatusLabel(item.runStatus)}</strong>
+                <small>{formatAgentActivityTime(item.updatedAtUnixMs)} · Run {shortIdentity(item.runId)}</small>
+              </div>
+              <code title={item.deliveryId}>Delivery {shortIdentity(item.deliveryId)}</code>
+            </article>
+          ))}
+          {items.length > 20 && <small>仅显示最新 20 条，共 {items.length} 条。</small>}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function agentDeliveryStatusLabel(status: AgentConversationActivitySnapshot["items"][number]["deliveryStatus"]) {
   return { pending: "等待", running: "执行中", completed: "完成", failed: "失败", cancelled: "已取消" }[status];
 }
@@ -431,19 +547,23 @@ function AgentCard({
   preparing,
   preparingDirect,
   directAvailable,
+  isSelected,
   onEdit,
   onDirect,
+  onSelect,
 }: {
   profile: AgentProfileSummary;
   modelLabel: string;
   preparing: boolean;
   preparingDirect: boolean;
   directAvailable: boolean;
+  isSelected: boolean;
   onEdit(): void;
   onDirect(): void;
+  onSelect(): void;
 }) {
   return (
-    <article className="agent-card">
+    <article className={isSelected ? "agent-card is-selected" : "agent-card"} onClick={onSelect}>
       <header>
         {profile.avatarPreviewUrl ? (
           <img alt="" aria-hidden="true" className="agent-card__avatar" src={profile.avatarPreviewUrl} />
@@ -459,13 +579,22 @@ function AgentCard({
       <div className="agent-card__actions">
         <button
           disabled={preparingDirect || !directAvailable}
-          onClick={onDirect}
+          onClick={(event) => { event.stopPropagation(); onDirect(); }}
           title={directAvailable ? undefined : "Agent 原生会话服务尚未就绪"}
           type="button"
         >
           {preparingDirect ? "准备中…" : "私聊"}
         </button>
-        <button disabled={preparing} onClick={onEdit} type="button">{preparing ? "准备中…" : "编辑"}</button>
+        <button
+          aria-pressed={isSelected}
+          onClick={(event) => { event.stopPropagation(); onSelect(); }}
+          type="button"
+        >运行动态</button>
+        <button
+          disabled={preparing}
+          onClick={(event) => { event.stopPropagation(); onEdit(); }}
+          type="button"
+        >{preparing ? "准备中…" : "编辑"}</button>
       </div>
       <dl>
         <Row label="模型" value={modelLabel} />

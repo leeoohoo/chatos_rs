@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentAvatarDraftSchema,
   agentConversationActivitySnapshotSchema,
+  agentProfileActivitySnapshotSchema,
   agentProfileListSchema,
   heartbeatIntervalLabel,
   preparedAgentConversationSchema,
@@ -96,6 +97,35 @@ describe("agent management domain", () => {
       ...snapshot,
       items: [{ ...snapshot.items[0], agentId: "agent-2" }],
     })).toThrow("Agent 运行动态成员身份不一致");
+  });
+
+  it("accepts only agent-bound and internally consistent profile activity", () => {
+    const item = {
+      deliveryId: "delivery-1",
+      roomId: "11111111-1111-4111-8111-111111111111",
+      agentId: "agent-1",
+      turnId: "turn-1",
+      runId: "run-1",
+      deliveryStatus: "running" as const,
+      runStatus: "running" as const,
+      responseMessageId: null,
+      createdAtUnixMs: 10,
+      updatedAtUnixMs: 20,
+    };
+    const snapshot = { agentId: "agent-1", hasActiveDelivery: true, items: [item] };
+    expect(agentProfileActivitySnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect(() => agentProfileActivitySnapshotSchema.parse({
+      ...snapshot,
+      agentId: "agent-2",
+    })).toThrow("Agent 运行动态成员身份不一致");
+    expect(() => agentProfileActivitySnapshotSchema.parse({
+      ...snapshot,
+      hasActiveDelivery: false,
+    })).toThrow("Agent 活跃 Delivery 状态不一致");
+    expect(() => agentProfileActivitySnapshotSchema.parse({
+      ...snapshot,
+      items: [item, { ...item, roomId: "22222222-2222-4222-8222-222222222222" }],
+    })).toThrow("Agent 运行动态标识不能重复");
   });
 });
 
