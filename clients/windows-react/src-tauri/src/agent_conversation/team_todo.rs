@@ -260,6 +260,196 @@ impl AgentConversationStore {
         Ok((binding, Value::Array(members)))
     }
 
+    pub(crate) fn send_team_chat_message(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        request_key: &str,
+        content: &str,
+        mention_references: &[String],
+        now_unix_ms: i64,
+    ) -> Result<(AgentAssetToolBinding, Value), String> {
+        validate_identifier(run_id).map_err(|_| team_todo_store_error())?;
+        validate_text(request_key, 512, false).map_err(|_| invalid_team_todo_input())?;
+        validate_text(content, 2_000, false).map_err(|_| invalid_team_todo_input())?;
+        validate_reference_list(mention_references, 64)?;
+        if now_unix_ms < 0 {
+            return Err(invalid_team_todo_input());
+        }
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_todo_store_error())?;
+        let binding = load_agent_asset_tool_binding(&transaction, owner_user_id, run_id)?;
+        if binding.todo_id.is_some() {
+            return Err("Team communication tools are unavailable in an executor Run.".into());
+        }
+        let mention_agent_ids = resolve_team_agent_references(
+            &transaction,
+            owner_user_id,
+            run_id,
+            &binding.team_id,
+            mention_references,
+        )?
+        .into_iter()
+        .filter(|agent_id| agent_id != &binding.agent_id)
+        .collect::<Vec<_>>();
+        let existing_message_id = transaction
+            .query_row(
+                r#"
+                SELECT id, content FROM project_agent_messages
+                WHERE owner_user_id = ?1 AND room_id = ?2 AND sender_kind = 'agent'
+                  AND sender_id = ?3 AND source_run_id = ?4 AND causation_id = ?5
+                ORDER BY created_at_unix_ms, id LIMIT 1
+                "#,
+                params![
+                    owner_user_id,
+                    binding.team_id,
+                    binding.agent_id,
+                    run_id,
+                    request_key,
+                ],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|_| team_todo_store_error())?;
+        if let Some((message_id, existing_content)) = existing_message_id {
+            let existing_mentions = {
+                let mut statement = transaction
+                    .prepare(
+                        "SELECT agent_id FROM project_agent_message_mentions \
+                         WHERE owner_user_id = ?1 AND message_id = ?2 ORDER BY position",
+                    )
+                    .map_err(|_| team_todo_store_error())?;
+                let rows = statement
+                    .query_map(params![owner_user_id, message_id], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .map_err(|_| team_todo_store_error())?;
+                rows.collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| team_todo_store_error())?
+            };
+            if existing_content != content || existing_mentions != mention_agent_ids {
+                return Err(
+                    "The tool invocation ID was reused with different message input.".into(),
+                );
+            }
+            let spawned_delivery_count: i64 = transaction
+                .query_row(
+                    "SELECT count(*) FROM project_agent_deliveries WHERE owner_user_id = ?1 \
+                     AND message_id = ?2 AND trigger_kind = 'agent_mention'",
+                    params![owner_user_id, message_id],
+                    |row| row.get(0),
+                )
+                .map_err(|_| team_todo_store_error())?;
+            transaction.commit().map_err(|_| team_todo_store_error())?;
+            return Ok((
+                binding,
+                json!({
+                    "message_ref": todo_planning_reference(
+                        owner_user_id,
+                        run_id,
+                        "message",
+                        &message_id,
+                    ),
+                    "completed": false,
+                    "spawned_delivery_count": spawned_delivery_count,
+                }),
+            ));
+        }
+        let (trigger_message_id, root_message_id, hop_count): (String, String, i64) = transaction
+            .query_row(
+                r#"
+                SELECT delivery.message_id, delivery.root_message_id, delivery.hop_count
+                FROM windows_agent_delivery_runs run
+                JOIN project_agent_deliveries delivery
+                  ON delivery.owner_user_id = run.owner_user_id
+                 AND delivery.id = run.delivery_id
+                WHERE run.owner_user_id = ?1 AND run.run_id = ?2
+                  AND run.status IN ('ready', 'running') AND delivery.status = 'running'
+                  AND delivery.room_id = ?3 AND delivery.target_agent_id = ?4
+                  AND delivery.trigger_kind != 'todo'
+                "#,
+                params![owner_user_id, run_id, binding.team_id, binding.agent_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|_| team_todo_store_error())?;
+        let message_id = identifier("message");
+        transaction
+            .execute(
+                r#"
+                INSERT INTO project_agent_messages (
+                    owner_user_id, id, room_id, sender_kind, sender_id, content,
+                    reply_to_message_id, source_run_id, causation_id, root_message_id,
+                    hop_count, created_at_unix_ms
+                ) VALUES (?1, ?2, ?3, 'agent', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                "#,
+                params![
+                    owner_user_id,
+                    message_id,
+                    binding.team_id,
+                    binding.agent_id,
+                    content,
+                    trigger_message_id,
+                    run_id,
+                    request_key,
+                    root_message_id,
+                    hop_count.saturating_add(1).min(64),
+                    now_unix_ms,
+                ],
+            )
+            .map_err(|_| team_todo_store_error())?;
+        for (position, target_agent_id) in mention_agent_ids.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT INTO project_agent_message_mentions (owner_user_id, message_id, \
+                     agent_id, position) VALUES (?1, ?2, ?3, ?4)",
+                    params![owner_user_id, message_id, target_agent_id, position as i64],
+                )
+                .map_err(|_| team_todo_store_error())?;
+            let delivery_id = identifier("delivery");
+            transaction
+                .execute(
+                    r#"
+                    INSERT INTO project_agent_deliveries (
+                        owner_user_id, id, room_id, message_id, root_message_id,
+                        target_agent_id, trigger_kind, status, attempt, hop_count,
+                        deduplication_key, response_message_id, last_error,
+                        claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'agent_mention', 'pending', 0, ?7,
+                              ?8, NULL, NULL, NULL, NULL, ?9)
+                    "#,
+                    params![
+                        owner_user_id,
+                        delivery_id,
+                        binding.team_id,
+                        message_id,
+                        root_message_id,
+                        target_agent_id,
+                        hop_count.saturating_add(1).min(64),
+                        format!("{message_id}:{target_agent_id}"),
+                        now_unix_ms,
+                    ],
+                )
+                .map_err(|_| team_todo_store_error())?;
+        }
+        transaction.commit().map_err(|_| team_todo_store_error())?;
+        Ok((
+            binding,
+            json!({
+                "message_ref": todo_planning_reference(
+                    owner_user_id,
+                    run_id,
+                    "message",
+                    &message_id,
+                ),
+                "completed": false,
+                "spawned_delivery_count": mention_agent_ids.len(),
+            }),
+        ))
+    }
+
     pub(crate) fn teams_requiring_todo_scheduler(
         &self,
         owner_user_id: &str,
@@ -2799,6 +2989,48 @@ fn resolve_assignee_reference(
         }
     }
     Err("The assignee reference is unavailable for this Run.".into())
+}
+
+fn resolve_team_agent_references(
+    connection: &Connection,
+    owner_user_id: &str,
+    run_id: &str,
+    team_id: &str,
+    references: &[String],
+) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT member.agent_id
+            FROM project_agent_room_members member
+            JOIN local_agent_profiles profile
+              ON profile.owner_user_id = member.owner_user_id
+             AND profile.id = member.agent_id
+            WHERE member.owner_user_id = ?1 AND member.room_id = ?2
+              AND member.status = 'active' AND profile.status = 'active'
+            ORDER BY member.agent_id
+            "#,
+        )
+        .map_err(|_| team_todo_store_error())?;
+    let agent_ids = statement
+        .query_map(params![owner_user_id, team_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|_| team_todo_store_error())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| team_todo_store_error())?;
+    references
+        .iter()
+        .map(|reference| {
+            agent_ids
+                .iter()
+                .find(|agent_id| {
+                    todo_planning_reference(owner_user_id, run_id, "agent", agent_id) == *reference
+                })
+                .cloned()
+                .ok_or_else(|| "The Agent reference is unavailable for this Run.".to_owned())
+        })
+        .collect()
 }
 
 fn resolve_todo_references(

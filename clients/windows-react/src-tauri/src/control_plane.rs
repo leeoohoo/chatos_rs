@@ -6,7 +6,7 @@ use crate::host_lifecycle::transport::{request, ManagedHost};
 use crate::{
     attachment_tool_worker::{
         attachment_read_tool_schema, team_asset_tool_schemas, team_chat_read_tool_schemas,
-        todo_execution_tool_schemas, todo_planning_read_tool_schemas,
+        team_chat_write_tool_schemas, todo_execution_tool_schemas, todo_planning_read_tool_schemas,
         todo_planning_write_tool_schemas,
     },
     terminal_tool_worker::{
@@ -29,7 +29,7 @@ const MAIN_CHAT_PROFILE: &str = "main_chat";
 const TASK_EXECUTION_PROFILE: &str = "task_execution";
 const TASK_POLICY_PROFILE: &str = "task_policy_internal";
 const EXECUTION_AGENT_KEY: &str = "local_agent_execution_agent";
-const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-team-chat-v11";
+const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-team-chat-v12";
 const MAX_TASK_ITERATIONS: u32 = 600;
 
 const MAIN_CHAT_INSTRUCTIONS: &str = include_str!(
@@ -212,6 +212,7 @@ fn valid_main_chat_snapshot(snapshot: &LocalCapabilityPolicySnapshot, owner_user
     let mut expected_tools = vec![attachment_read_tool_schema()];
     expected_tools.extend(team_asset_tool_schemas());
     expected_tools.extend(team_chat_read_tool_schemas());
+    expected_tools.extend(team_chat_write_tool_schemas());
     expected_tools.extend(todo_planning_read_tool_schemas());
     expected_tools.extend(todo_planning_write_tool_schemas());
     snapshot.owner_user_id == owner_user_id
@@ -625,6 +626,7 @@ async fn publish_capabilities(
                 let mut tools = vec![attachment_read_tool_schema()];
                 tools.extend(team_asset_tool_schemas());
                 tools.extend(team_chat_read_tool_schemas());
+                tools.extend(team_chat_write_tool_schemas());
                 tools.extend(todo_planning_read_tool_schemas());
                 tools.extend(todo_planning_write_tool_schemas());
                 tools

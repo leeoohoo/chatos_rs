@@ -59,6 +59,7 @@ const TODO_PLANNING_READ_TOOL_NAMES: [&str; 4] = [
     "todo_read_progress",
 ];
 const TEAM_CHAT_READ_TOOL_NAMES: [&str; 1] = ["chat_list_members"];
+const TEAM_CHAT_WRITE_TOOL_NAMES: [&str; 1] = ["chat_send_message"];
 const TODO_PLANNING_WRITE_TOOL_NAMES: [&str; 3] = ["todo_add", "todo_update", "todo_reorder"];
 const WORKER_ID: &str = "windows-attachment-tool-worker";
 const LEASE_DURATION_MILLISECONDS: u64 = 30_000;
@@ -160,6 +161,7 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
                     .chain(TODO_EXECUTION_TOOL_NAMES)
                     .chain(TODO_PLANNING_READ_TOOL_NAMES)
                     .chain(TEAM_CHAT_READ_TOOL_NAMES)
+                    .chain(TEAM_CHAT_WRITE_TOOL_NAMES)
                     .chain(TODO_PLANNING_WRITE_TOOL_NAMES)
                     .map(str::to_owned)
                     .collect(),
@@ -183,6 +185,8 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
                 execute_todo_planning_read_tool(app, owner_user_id, &claim).await
             } else if TEAM_CHAT_READ_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
                 execute_team_chat_read_tool(app, owner_user_id, &claim).await
+            } else if TEAM_CHAT_WRITE_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+                execute_team_chat_write_tool(app, owner_user_id, &claim).await
             } else if TODO_PLANNING_WRITE_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str())
             {
                 execute_todo_planning_write_tool(app, owner_user_id, &claim).await
@@ -200,7 +204,7 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
     };
     let schedule_team_todos = matches!(
         claim.invocation.tool_name.as_str(),
-        "todo_add" | "todo_update" | "todo_complete" | "todo_block"
+        "todo_add" | "todo_update" | "todo_complete" | "todo_block" | "chat_send_message"
     ) && matches!(&outcome, LocalAgentToolOutcome::Succeeded { .. });
     let team_to_schedule = if schedule_team_todos {
         let store = app.state::<AgentConversationStore>().inner().clone();
@@ -270,6 +274,55 @@ async fn execute_team_chat_read_tool(
     })
     .await
     .map_err(|_| "The team member lookup task exited unexpectedly.".to_owned())??;
+    validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
+    Ok(LocalAgentToolOutcome::Succeeded { output })
+}
+
+async fn execute_team_chat_write_tool(
+    app: &AppHandle,
+    owner_user_id: &str,
+    claim: &LocalAgentToolClaim,
+) -> Result<LocalAgentToolOutcome, String> {
+    if claim.invocation.tool_name != "chat_send_message" {
+        return Err("The team communication mutation is unavailable.".into());
+    }
+    let arguments = claim
+        .invocation
+        .arguments
+        .as_object()
+        .ok_or_else(|| "The team communication arguments are invalid.".to_owned())?;
+    let content = required_bounded_string(arguments, "content", 2_000)?;
+    let mention_references =
+        planning_string_array(arguments, "mention_agent_refs", 0, 64, 600)?.unwrap_or_default();
+    let result = app
+        .state::<HostManager>()
+        .execute(HostCommand::GetRun(GetRunCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: claim.invocation.run_id.clone(),
+        }))
+        .await?;
+    let HostResult::Run { run } = result else {
+        return Err("The team communication Run context is invalid.".into());
+    };
+    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
+        return Err("The team communication Run context is invalid.".into());
+    }
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let run_id = run.run_id.clone();
+    let request_key = claim.invocation.invocation_id.clone();
+    let (binding, output) = tauri::async_runtime::spawn_blocking(move || {
+        store.send_team_chat_message(
+            &owner,
+            &run_id,
+            &request_key,
+            &content,
+            &mention_references,
+            now_unix_ms(),
+        )
+    })
+    .await
+    .map_err(|_| "The team message task exited unexpectedly.".to_owned())??;
     validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
     Ok(LocalAgentToolOutcome::Succeeded { output })
 }
@@ -1524,6 +1577,28 @@ pub fn team_chat_read_tool_schemas() -> Vec<Value> {
     })]
 }
 
+pub fn team_chat_write_tool_schemas() -> Vec<Value> {
+    vec![json!({
+        "type": "function",
+        "name": "chat_send_message",
+        "description": "向当前项目团队发送消息。需要 @ 其他成员时，只能使用 chat_list_members 在当前 Run 返回的 agent_ref；发送不会结束当前通讯 Run。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "minLength": 1, "maxLength": 2000},
+                "mention_agent_refs": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "maxItems": 64,
+                    "uniqueItems": true
+                }
+            },
+            "required": ["content"],
+            "additionalProperties": false
+        }
+    })]
+}
+
 pub fn todo_planning_write_tool_schemas() -> Vec<Value> {
     vec![
         json!({
@@ -1720,6 +1795,18 @@ mod tests {
         assert_eq!(schemas.len(), 1);
         assert_eq!(schemas[0]["name"], "chat_list_members");
         assert!(!schemas[0].to_string().contains("agent_id"));
+    }
+
+    #[test]
+    fn team_chat_write_catalog_accepts_only_run_scoped_mentions() {
+        let schemas = team_chat_write_tool_schemas();
+        assert_eq!(schemas.len(), 1);
+        assert_eq!(schemas[0]["name"], "chat_send_message");
+        let encoded = schemas[0].to_string();
+        assert!(encoded.contains("mention_agent_refs"));
+        assert!(!encoded.contains("agent_id"));
+        assert!(!encoded.contains("team_id"));
+        assert!(!encoded.contains("conversation_id"));
     }
 
     #[test]

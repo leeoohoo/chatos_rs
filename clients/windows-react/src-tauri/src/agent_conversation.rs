@@ -6356,6 +6356,126 @@ mod tests {
     }
 
     #[test]
+    fn team_agent_messages_use_run_scoped_mentions_and_idempotent_receipts() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "sender", "active");
+        insert_agent(&store, "alice", "target", "active");
+        let team = store
+            .create_project_team("alice", "project-1", "通讯团队", "交付消息")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "sender")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "target")
+            .unwrap();
+        let trigger = store
+            .queue_project_team_message("alice", &team.id, "请协调目标成员", &["sender".into()])
+            .unwrap();
+        let delivery = store
+            .next_project_team_delivery("alice", &team.id)
+            .unwrap()
+            .unwrap();
+        store
+            .claim_project_team_delivery("alice", &delivery, "turn-chat", "run-chat", 10)
+            .unwrap();
+        let (_, members) = store
+            .team_chat_member_snapshot("alice", "run-chat")
+            .unwrap();
+        let target_reference = members
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|member| member["is_current_agent"] == false)
+            .unwrap()["agent_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (_, first) = store
+            .send_team_chat_message(
+                "alice",
+                "run-chat",
+                "invocation-chat-1",
+                "请处理接口验证。",
+                std::slice::from_ref(&target_reference),
+                11,
+            )
+            .unwrap();
+        assert_eq!(first["completed"], false);
+        assert_eq!(first["spawned_delivery_count"], 1);
+        assert!(!first.to_string().contains("target"));
+        let (_, replayed) = store
+            .send_team_chat_message(
+                "alice",
+                "run-chat",
+                "invocation-chat-1",
+                "请处理接口验证。",
+                std::slice::from_ref(&target_reference),
+                12,
+            )
+            .unwrap();
+        assert_eq!(replayed, first);
+        assert!(store
+            .send_team_chat_message(
+                "alice",
+                "run-chat",
+                "invocation-chat-1",
+                "复用调用 ID 的不同消息。",
+                std::slice::from_ref(&target_reference),
+                13,
+            )
+            .is_err());
+        assert!(store
+            .send_team_chat_message(
+                "alice",
+                "run-chat",
+                "invocation-chat-stale-ref",
+                "错误引用。",
+                &["agent_ref_stale".into()],
+                13,
+            )
+            .is_err());
+        let connection = Connection::open(store.database()).unwrap();
+        let message: (String, String, String, String, i64) = connection
+            .query_row(
+                "SELECT sender_id, reply_to_message_id, source_run_id, causation_id, hop_count \
+                 FROM project_agent_messages WHERE owner_user_id = 'alice' \
+                   AND causation_id = 'invocation-chat-1'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            message,
+            (
+                "sender".into(),
+                trigger.message_id,
+                "run-chat".into(),
+                "invocation-chat-1".into(),
+                1,
+            )
+        );
+        let spawned: (i64, String, String) = connection
+            .query_row(
+                "SELECT count(*), min(target_agent_id), min(trigger_kind) \
+                 FROM project_agent_deliveries WHERE owner_user_id = 'alice' \
+                   AND trigger_kind = 'agent_mention'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(spawned, (1, "target".into(), "agent_mention".into()));
+    }
+
+    #[test]
     fn team_creation_requires_an_active_account_scoped_project() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("Projects.sqlite3");
