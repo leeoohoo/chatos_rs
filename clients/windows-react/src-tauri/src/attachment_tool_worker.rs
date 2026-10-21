@@ -230,7 +230,7 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
     Ok(true)
 }
 
-fn schedule_team_todo_drain(app: AppHandle, owner_user_id: String, team_id: String) {
+pub(crate) fn schedule_team_todo_drain(app: AppHandle, owner_user_id: String, team_id: String) {
     tauri::async_runtime::spawn(async move {
         let key = format!("{owner_user_id}\0{team_id}");
         let active = ACTIVE_TEAM_TODO_DRAINS.get_or_init(|| Mutex::new(HashSet::new()));

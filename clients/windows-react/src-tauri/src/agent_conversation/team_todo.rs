@@ -3551,6 +3551,7 @@ pub(crate) async fn list_agent_team_todo_progress(
 #[tauri::command]
 pub(crate) async fn create_agent_team_todo(
     input: CreateAgentTeamTodoInput,
+    app: AppHandle,
     authentication: State<'_, AuthenticationManager>,
     conversations: State<'_, AgentConversationStore>,
 ) -> Result<AgentTeamTodo, String> {
@@ -3581,12 +3582,18 @@ pub(crate) async fn create_agent_team_todo(
     authentication
         .require_session_generation(&session_owner, generation)
         .await?;
+    crate::attachment_tool_worker::schedule_team_todo_drain(
+        app,
+        session_owner,
+        todo.team_id.clone(),
+    );
     Ok(todo)
 }
 
 #[tauri::command]
 pub(crate) async fn update_agent_team_todo(
     input: UpdateAgentTeamTodoInput,
+    app: AppHandle,
     authentication: State<'_, AuthenticationManager>,
     conversations: State<'_, AgentConversationStore>,
 ) -> Result<AgentTeamTodo, String> {
@@ -3618,12 +3625,18 @@ pub(crate) async fn update_agent_team_todo(
     authentication
         .require_session_generation(&session_owner, generation)
         .await?;
+    crate::attachment_tool_worker::schedule_team_todo_drain(
+        app,
+        session_owner,
+        todo.team_id.clone(),
+    );
     Ok(todo)
 }
 
 #[tauri::command]
 pub(crate) async fn reorder_agent_team_todos(
     input: ReorderAgentTeamTodosInput,
+    app: AppHandle,
     authentication: State<'_, AuthenticationManager>,
     conversations: State<'_, AgentConversationStore>,
 ) -> Result<Vec<AgentTeamTodo>, String> {
@@ -3634,15 +3647,18 @@ pub(crate) async fn reorder_agent_team_todos(
     let store = conversations.inner().clone();
     let session_owner = input.owner_user_id.clone();
     let owner = session_owner.clone();
+    let team_id = input.team_id.clone();
+    let schedule_team_id = team_id.clone();
     let now = chrono::Utc::now().timestamp_millis().max(0);
     let todos = tauri::async_runtime::spawn_blocking(move || {
-        store.reorder_project_team_todos(&owner, &input.team_id, &input.todo_ids, now)
+        store.reorder_project_team_todos(&owner, &team_id, &input.todo_ids, now)
     })
     .await
     .map_err(|_| "团队任务排序任务异常退出。".to_owned())??;
     authentication
         .require_session_generation(&session_owner, generation)
         .await?;
+    crate::attachment_tool_worker::schedule_team_todo_drain(app, session_owner, schedule_team_id);
     Ok(todos)
 }
 
@@ -3983,6 +3999,7 @@ pub(crate) async fn retry_agent_team_run(
 #[tauri::command]
 pub(crate) async fn cancel_agent_team_todo(
     input: CancelAgentTeamTodoInput,
+    app: AppHandle,
     authentication: State<'_, AuthenticationManager>,
     conversations: State<'_, AgentConversationStore>,
     manager: State<'_, HostManager>,
@@ -3995,6 +4012,7 @@ pub(crate) async fn cancel_agent_team_todo(
     let session_owner = input.owner_user_id.clone();
     let owner = session_owner.clone();
     let team_id = input.team_id.clone();
+    let schedule_team_id = team_id.clone();
     let todo_id = input.todo_id.clone();
     let expected_updated_at_unix_ms = input.expected_updated_at_unix_ms;
     let now = chrono::Utc::now().timestamp_millis().max(0);
@@ -4032,5 +4050,6 @@ pub(crate) async fn cancel_agent_team_todo(
     authentication
         .require_session_generation(&session_owner, generation)
         .await?;
+    crate::attachment_tool_worker::schedule_team_todo_drain(app, session_owner, schedule_team_id);
     Ok(todo)
 }
