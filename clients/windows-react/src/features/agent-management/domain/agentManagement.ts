@@ -227,6 +227,90 @@ export const preparedAgentConversationSchema = z.object({
 
 export type PreparedAgentConversation = z.infer<typeof preparedAgentConversationSchema>;
 
+export const agentConversationActivityItemSchema = z.object({
+  deliveryId: z.string().trim().min(1).max(512),
+  roomId: z.string().uuid(),
+  agentId: z.string().trim().min(1).max(512),
+  turnId: z.string().trim().min(1).max(512),
+  runId: z.string().trim().min(1).max(512),
+  deliveryStatus: z.enum(["pending", "running", "completed", "failed", "cancelled"]),
+  runStatus: z.enum(["ready", "running", "succeeded", "failed", "cancelled"]),
+  responseMessageId: z.string().trim().min(1).max(512).nullable(),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  updatedAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((item, context) => {
+  if (item.updatedAtUnixMs < item.createdAtUnixMs) {
+    context.addIssue({
+      code: "custom",
+      message: "Agent Run 更新时间不能早于创建时间。",
+      path: ["updatedAtUnixMs"],
+    });
+  }
+  const expectedRunStatus = {
+    pending: "ready",
+    running: "running",
+    completed: "succeeded",
+    failed: "failed",
+    cancelled: "cancelled",
+  }[item.deliveryStatus];
+  if (item.runStatus !== expectedRunStatus) {
+    context.addIssue({
+      code: "custom",
+      message: "Agent Delivery 与 Run 状态不一致。",
+      path: ["runStatus"],
+    });
+  }
+});
+
+export const agentConversationActivitySnapshotSchema = z.object({
+  roomId: z.string().uuid(),
+  agentId: z.string().trim().min(1).max(512),
+  conversationId: z.string().regex(/^agent-direct-[0-9a-f-]{36}$/u),
+  conversationVersion: z.number().int().positive(),
+  hasActiveDelivery: z.boolean(),
+  items: z.array(agentConversationActivityItemSchema).max(100),
+}).strict().superRefine((snapshot, context) => {
+  if (snapshot.conversationId !== `agent-direct-${snapshot.roomId}`) {
+    context.addIssue({
+      code: "custom",
+      message: "Agent 运行动态会话身份不一致。",
+      path: ["conversationId"],
+    });
+  }
+  const identifiers = new Set<string>();
+  snapshot.items.forEach((item, index) => {
+    if (item.roomId !== snapshot.roomId || item.agentId !== snapshot.agentId) {
+      context.addIssue({
+        code: "custom",
+        message: "Agent 运行动态成员身份不一致。",
+        path: ["items", index],
+      });
+    }
+    for (const identity of [item.deliveryId, item.turnId, item.runId]) {
+      if (identifiers.has(identity)) {
+        context.addIssue({
+          code: "custom",
+          message: "Agent 运行动态标识不能重复。",
+          path: ["items", index],
+        });
+      }
+      identifiers.add(identity);
+    }
+  });
+  const hasActiveDelivery = snapshot.items.some(({ deliveryStatus }) => (
+    deliveryStatus === "pending" || deliveryStatus === "running"
+  ));
+  if (snapshot.hasActiveDelivery !== hasActiveDelivery) {
+    context.addIssue({
+      code: "custom",
+      message: "Agent 活跃 Delivery 状态不一致。",
+      path: ["hasActiveDelivery"],
+    });
+  }
+});
+
+export type AgentConversationActivitySnapshot = z.infer<typeof agentConversationActivitySnapshotSchema>;
+
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",
   product_manager: "产品经理",

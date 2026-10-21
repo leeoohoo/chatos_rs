@@ -5,6 +5,7 @@ import {
   agentProfileListSchema,
   agentProfileSummarySchema,
   agentAvatarDraftSchema,
+  agentConversationActivitySnapshotSchema,
   preparedAgentConversationSchema,
   type AgentProfileMutationInput,
 } from "../domain/agentManagement";
@@ -92,6 +93,12 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async prepareConversation(ownerUserId: string, agentId: string) {
     return preparedAgentConversationSchema.parse(
       await invoke("prepare_agent_conversation", { ownerUserId, agentId }),
+    );
+  }
+
+  async loadConversationActivity(ownerUserId: string, roomId: string) {
+    return agentConversationActivitySnapshotSchema.parse(
+      await invoke("load_agent_conversation_activity", { ownerUserId, roomId }),
     );
   }
 

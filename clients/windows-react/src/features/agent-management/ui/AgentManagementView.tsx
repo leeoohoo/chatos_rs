@@ -17,6 +17,7 @@ import {
   type AgentProfileSummary,
   type AgentAvatarDraft,
   type AgentAvatarHistoryAsset,
+  type AgentConversationActivitySnapshot,
   type PreparedAgentConversation,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
@@ -61,6 +62,7 @@ export function AgentManagementView({
   const [preparingDirectId, setPreparingDirectId] = useState<string | null>(null);
   const [directConversation, setDirectConversation] = useState<PreparedAgentConversation | null>(null);
   const [directError, setDirectError] = useState<string | null>(null);
+  const [activityRefreshSequence, setActivityRefreshSequence] = useState(0);
   const [showsSkillManagement, setShowsSkillManagement] = useState(false);
   const [editor, setEditor] = useState<{
     catalog: AgentProfileEditorCatalog;
@@ -88,6 +90,7 @@ export function AgentManagementView({
     setPreparingDirectId(null);
     setDirectConversation(null);
     setDirectError(null);
+    setActivityRefreshSequence(0);
     void activate(port, ownerUserId).then(() => loadEditorCatalog(port, false));
     return reset;
   }, [activate, loadEditorCatalog, ownerUserId, port, reset]);
@@ -132,15 +135,19 @@ export function AgentManagementView({
         || !port.sendConversationDraft) {
         throw new Error("Agent 私聊发送上下文无效，请重新打开会话。");
       }
-      return port.sendConversationDraft({
-        ownerUserId,
-        roomId: active.roomId,
-        guidanceTurnId: input.guidanceTurnId,
-        submission: {
-          content: input.submission.content,
-          attachmentIds: input.submission.attachmentIds,
-        },
-      });
+      try {
+        return await port.sendConversationDraft({
+          ownerUserId,
+          roomId: active.roomId,
+          guidanceTurnId: input.guidanceTurnId,
+          submission: {
+            content: input.submission.content,
+            attachmentIds: input.submission.attachmentIds,
+          },
+        });
+      } finally {
+        setActivityRefreshSequence((current) => current + 1);
+      }
     },
   }), [directConversation, ownerUserId, port]);
 
@@ -168,6 +175,14 @@ export function AgentManagementView({
               </div>
             </div>
           </header>
+          {port.loadConversationActivity && (
+            <AgentConversationActivity
+              conversation={directConversation}
+              ownerUserId={ownerUserId}
+              port={port}
+              refreshSequence={activityRefreshSequence}
+            />
+          )}
           <ConversationHistoryView
             agentBound
             askUserPort={askUserPort}
@@ -296,6 +311,118 @@ export function AgentManagementView({
       )}
     </div>
   );
+}
+
+function AgentConversationActivity({
+  conversation,
+  ownerUserId,
+  port,
+  refreshSequence,
+}: {
+  conversation: PreparedAgentConversation;
+  ownerUserId: string;
+  port: AgentManagementPort;
+  refreshSequence: number;
+}) {
+  const [snapshot, setSnapshot] = useState<AgentConversationActivitySnapshot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [retrySequence, setRetrySequence] = useState(0);
+
+  useEffect(() => {
+    const loadActivity = port.loadConversationActivity;
+    if (!loadActivity) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const load = async () => {
+      try {
+        const next = await loadActivity(ownerUserId, conversation.roomId);
+        if (cancelled) return;
+        if (next.roomId !== conversation.roomId
+          || next.agentId !== conversation.agentId
+          || next.conversationId !== conversation.conversationId) {
+          throw new Error("Agent 运行动态身份不一致，请重新打开会话。");
+        }
+        setSnapshot((current) => (
+          !current || next.conversationVersion >= current.conversationVersion ? next : current
+        ));
+        setError(null);
+        setIsLoading(false);
+        if (next.hasActiveDelivery) timer = window.setTimeout(() => void load(), 1_000);
+      } catch (failure) {
+        if (cancelled) return;
+        setError(failure instanceof Error ? failure.message : "Agent 运行动态暂时无法读取。");
+        setIsLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [conversation, ownerUserId, port, refreshSequence, retrySequence]);
+
+  const items = snapshot?.items ?? [];
+  const active = snapshot?.hasActiveDelivery ?? false;
+  return (
+    <section aria-label="Agent 运行动态" className="agent-activity" aria-live="polite">
+      <div className="agent-activity__summary">
+        <span className={active ? "agent-activity__pulse is-active" : "agent-activity__pulse"} />
+        <div>
+          <strong>{active ? "Agent 正在运行" : items.length ? `最近 ${items.length} 次运行` : "还没有运行记录"}</strong>
+          <small>{active ? "Delivery 与 Run 状态由本机原生层持续对账" : "仅展示当前 Agent 私聊的安全运行投影"}</small>
+        </div>
+        {isLoading && <span className="mini-spinner" aria-label="正在读取 Agent 运行动态" />}
+        {items.length > 0 && (
+          <button onClick={() => setIsExpanded((value) => !value)} type="button">
+            {isExpanded ? "收起" : "查看动态"}
+          </button>
+        )}
+      </div>
+      {error && (
+        <div className="agent-activity__error" role="alert">
+          <span>{error}</span>
+          <button onClick={() => { setIsLoading(true); setRetrySequence((value) => value + 1); }} type="button">重试</button>
+        </div>
+      )}
+      {isExpanded && items.length > 0 && (
+        <div className="agent-activity__list" aria-label="Agent 最近运行">
+          {items.slice(0, 20).map((item) => (
+            <article key={item.deliveryId}>
+              <span className={`agent-activity__status agent-activity__status--${item.deliveryStatus}`}>
+                {agentDeliveryStatusLabel(item.deliveryStatus)}
+              </span>
+              <div>
+                <strong>{agentRunStatusLabel(item.runStatus)}</strong>
+                <small>{formatAgentActivityTime(item.updatedAtUnixMs)} · Run {shortIdentity(item.runId)}</small>
+              </div>
+              <code title={item.deliveryId}>Delivery {shortIdentity(item.deliveryId)}</code>
+            </article>
+          ))}
+          {items.length > 20 && <small>仅显示最新 20 条，共 {items.length} 条。</small>}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function agentDeliveryStatusLabel(status: AgentConversationActivitySnapshot["items"][number]["deliveryStatus"]) {
+  return { pending: "等待", running: "执行中", completed: "完成", failed: "失败", cancelled: "已取消" }[status];
+}
+
+function agentRunStatusLabel(status: AgentConversationActivitySnapshot["items"][number]["runStatus"]) {
+  return { ready: "Run 已准备", running: "Run 正在执行", succeeded: "Run 已完成", failed: "Run 执行失败", cancelled: "Run 已取消" }[status];
+}
+
+function formatAgentActivityTime(unixMilliseconds: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).format(new Date(unixMilliseconds));
+}
+
+function shortIdentity(value: string) {
+  return value.length <= 12 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
 function AgentCard({

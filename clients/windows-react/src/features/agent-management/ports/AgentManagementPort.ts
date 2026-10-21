@@ -5,6 +5,7 @@ import type {
   AgentProfileSummary,
   AgentAvatarDraft,
   AgentAvatarHistoryAsset,
+  AgentConversationActivitySnapshot,
   PreparedAgentConversation,
 } from "../domain/agentManagement";
 import type { ConversationSendAck } from "../../conversation-composer/domain/conversationComposer";
@@ -27,6 +28,10 @@ export interface AgentManagementPort {
   saveSkillOverride?(ownerUserId: string, input: AgentSkillMutationInput): Promise<AgentSkillDefinition>;
   resetSkillOverride?(ownerUserId: string, kind: AgentSkillKind, key: string): Promise<AgentSkillDefinition>;
   prepareConversation?(ownerUserId: string, agentId: string): Promise<PreparedAgentConversation>;
+  loadConversationActivity?(
+    ownerUserId: string,
+    roomId: string,
+  ): Promise<AgentConversationActivitySnapshot>;
   sendConversationDraft?(input: {
     ownerUserId: string;
     roomId: string;

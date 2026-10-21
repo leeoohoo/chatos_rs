@@ -180,6 +180,25 @@ describe("AgentManagementView", () => {
     const port = stubPort({
       prepareConversation,
       sendConversationDraft: vi.fn(),
+      loadConversationActivity: vi.fn(async () => ({
+        roomId,
+        agentId: "agent-1",
+        conversationId: `agent-direct-${roomId}`,
+        conversationVersion: 2,
+        hasActiveDelivery: false,
+        items: [{
+          deliveryId: "delivery-1",
+          roomId,
+          agentId: "agent-1",
+          turnId: "turn-1",
+          runId: "run-1",
+          deliveryStatus: "completed" as const,
+          runStatus: "succeeded" as const,
+          responseMessageId: "answer-1",
+          createdAtUnixMs: 10,
+          updatedAtUnixMs: 20,
+        }],
+      })),
     });
     render(
       <AgentManagementView
@@ -203,6 +222,10 @@ describe("AgentManagementView", () => {
     expect(await screen.findByLabelText("界面设计师 Agent 私聊")).toBeVisible();
     expect(screen.getByTestId("agent-conversation-history")).toHaveAttribute("data-agent-bound", "true");
     expect(screen.getByRole("button", { name: "返回 Agent 管理" })).toBeEnabled();
+    expect(await screen.findByText("最近 1 次运行")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "查看动态" }));
+    expect(screen.getByText("Run 已完成")).toBeVisible();
+    expect(screen.getByText(/Delivery delivery-1/)).toBeVisible();
   });
 
   it("edits the macOS-compatible bilingual Skill catalog", async () => {
