@@ -138,6 +138,73 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertNil(vm.errorMessage)
     }
 
+    func testLateStoryHistoryCannotPublishIntoTheCurrentAccount() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryStudioHistoryTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        var alice = makeProject()
+        alice.title = "Alice Story"
+        var bob = makeProject()
+        bob.title = "Bob Story"
+        try await store.save(alice, owner: "alice")
+        try await store.save(bob, owner: "bob")
+        let history = DeferredStoryHistory()
+        let service = StoryTestService()
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            storyHistory: history
+        )
+
+        vm.activate(userID: "alice")
+        for _ in 0..<100 where vm.isLoading { try await Task.sleep(for: .milliseconds(5)) }
+        vm.open(alice.id)
+        for _ in 0..<100 where await !history.hasRunRequest(ownerUserID: "alice") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        vm.activate(userID: "bob")
+        for _ in 0..<100 where vm.isLoading { try await Task.sleep(for: .milliseconds(5)) }
+        vm.open(bob.id)
+        for _ in 0..<100 where await !history.hasRunRequest(ownerUserID: "bob") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        await history.completeRuns(
+            ownerUserID: "alice",
+            page: .init(runs: [historyRun(project: alice, owner: "alice")])
+        )
+        await history.completeRuns(
+            ownerUserID: "bob",
+            page: .init(runs: [historyRun(project: bob, owner: "bob")])
+        )
+        for _ in 0..<100 where await !history.hasBatchRequest(ownerUserID: "bob") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await history.completeBatches(
+            ownerUserID: "bob",
+            page: .init(batches: [historyBatch(project: bob, owner: "bob")])
+        )
+        for _ in 0..<100 where vm.isLoadingAgentRuns {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        XCTAssertEqual(vm.owner, "bob")
+        XCTAssertEqual(vm.selectedProjectID, bob.id)
+        XCTAssertEqual(vm.agentRuns.map(\.ownerUserID), ["bob"])
+        XCTAssertEqual(vm.mediaBatches.map(\.ownerUserID), ["bob"])
+        XCTAssertEqual(vm.mediaBatches.map(\.projectID), [bob.id])
+        XCTAssertFalse(vm.isLoadingAgentRuns)
+    }
+
     func testProjectsLoadInBoundedPagesWithoutDroppingOlderProjects() async throws {
         let (_, store, _) = try await fixture()
         var ids: Set<UUID> = []
@@ -691,6 +758,46 @@ final class StoryStudioTests: XCTestCase {
         project.source = "测试剧情正文，覆盖所有测试分段。"
         return project
     }
+    func historyRun(project: StoryProject, owner: String) -> StoryPlanningRunSnapshot {
+        StoryPlanningRunSnapshot(
+            id: UUID(),
+            ownerUserID: owner,
+            projectID: project.id,
+            stage: .outline,
+            targetIDs: [],
+            baseProjectFingerprint: "fingerprint",
+            draft: project,
+            events: [],
+            status: .paused,
+            stopReason: nil,
+            modelCalls: 0,
+            usesCloudMemory: true,
+            applied: false,
+            abandonedAt: nil,
+            updatedAt: .now
+        )
+    }
+    func historyBatch(project: StoryProject, owner: String) -> StoryMediaBatchSnapshot {
+        StoryMediaBatchSnapshot(
+            id: UUID(),
+            ownerUserID: owner,
+            projectID: project.id,
+            kind: .assets,
+            status: .paused,
+            steps: [
+                .init(
+                    id: "assets:character-1",
+                    kind: .assets,
+                    targetID: "character-1",
+                    completed: false
+                ),
+            ],
+            events: [],
+            consentAt: .now,
+            error: nil,
+            updatedAt: .now
+        )
+    }
     func readyProject(_ store: StoryProjectStore) async throws -> StoryProject {
         var draft = makeProject()
         let frame = try await store.saveImage(Data("test-image".utf8), mimeType: "image/png", projectID: draft.id, owner: "alice")
@@ -782,5 +889,53 @@ private actor DeferredStoryProjectMutationPersistence: StoryProjectMutationPersi
 
     func complete(ownerUserID: String, project: StoryProject) {
         continuations.removeValue(forKey: ownerUserID)?.resume(returning: project)
+    }
+}
+
+private actor DeferredStoryHistory: StoryHistoryLoading {
+    private var runRequests: Set<String> = []
+    private var batchRequests: Set<String> = []
+    private var runContinuations: [String: CheckedContinuation<StoryPlanningRunHistoryPage, Error>] = [:]
+    private var batchContinuations: [String: CheckedContinuation<StoryMediaBatchHistoryPage, Error>] = [:]
+
+    func loadStoryPlanningRuns(
+        ownerUserID: String,
+        projectID: UUID,
+        currentProject: StoryProject?,
+        after cursor: StoryHistoryCursor?,
+        limit: Int
+    ) async throws -> StoryPlanningRunHistoryPage {
+        runRequests.insert(ownerUserID)
+        return try await withCheckedThrowingContinuation { continuation in
+            runContinuations[ownerUserID] = continuation
+        }
+    }
+
+    func loadStoryMediaBatches(
+        ownerUserID: String,
+        projectID: UUID,
+        after cursor: StoryHistoryCursor?,
+        limit: Int
+    ) async throws -> StoryMediaBatchHistoryPage {
+        batchRequests.insert(ownerUserID)
+        return try await withCheckedThrowingContinuation { continuation in
+            batchContinuations[ownerUserID] = continuation
+        }
+    }
+
+    func hasRunRequest(ownerUserID: String) -> Bool {
+        runRequests.contains(ownerUserID)
+    }
+
+    func hasBatchRequest(ownerUserID: String) -> Bool {
+        batchRequests.contains(ownerUserID)
+    }
+
+    func completeRuns(ownerUserID: String, page: StoryPlanningRunHistoryPage) {
+        runContinuations.removeValue(forKey: ownerUserID)?.resume(returning: page)
+    }
+
+    func completeBatches(ownerUserID: String, page: StoryMediaBatchHistoryPage) {
+        batchContinuations.removeValue(forKey: ownerUserID)?.resume(returning: page)
     }
 }

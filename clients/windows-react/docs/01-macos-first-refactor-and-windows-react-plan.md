@@ -510,6 +510,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事规划 Agent 边界）：Core 新增 `StoryPlanningExecuting` Port、start/resume/abandon command、`StoryPlanningUseCase`、typed owner/account session/request/operation lifecycle、当前/旧版 project fingerprint 兼容，以及只含草稿、状态、事件摘要和公开计数的 `StoryPlanningRunSnapshot`。模型消息、tool arguments/receipts、memory checkpoint/runtime scope、usage、配置与凭据不会进入 ViewModel/UI。Use Case 对 owner/project/run identity 同时校验中间事件与最终 outcome，补充想法 trim 后限制 2,000 字；macOS `StoryPlanningAgentAdapter` 独占 AgentRuntime、模型/Memory 服务、checkpoint 恢复、工具幂等、暂停、应用和放弃逻辑。UI 只消费安全 run/stream projection，账号切换继续取消并拒绝迟到结果。Core 5 项、Story Agent 21 项及 Story Studio 56 项通过。Agent 历史分页 Port、制作批次、素材/帧/视频生成和 Windows 平台差异仍未完成，剧情模式继续禁用。
 
+状态补充（2026-10-21，macOS AI 故事历史与制作批次投影边界）：Core 新增 `StoryHistoryLoading`、`StoryHistoryUseCase`、强类型 history cursor、planning/media page、initial recovery result 和 initial/planning/media 三条独立 typed load lane。macOS `StoryHistoryAdapter` 独占 Store 文件游标、Agent completed-draft 启动恢复以及旧视频批次完成态 reconcile；首页严格保持“先恢复规划、再读取批次”的既有顺序，较早规划分页保持只读。`StoryMediaBatchSnapshot` 只向 UI 发布 kind/status/步骤完成态/事件/时间与错误，不包含完整模型目录、provider job identity、generation intent、持久化摘要、凭据或本机媒体文件名；ViewModel 不再读取 `StoryProjectStore.PageCursor`、`loadRuns`、`loadMediaBatches` 或完整批次记录。owner/project/session/request identity 会拒绝跨账号、跨项目及同 lane 替换后的迟到结果。Core 4 项、Story Studio 57 项与 Story Agent 21 项通过。下一片继续把制作批次 preview/start/resume/abandon/execution 从 ViewModel/Store 调用中提取为 Application Port；剧情模式继续禁止。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

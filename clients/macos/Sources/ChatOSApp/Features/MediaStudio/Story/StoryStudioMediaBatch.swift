@@ -143,9 +143,7 @@ extension StoryStudioViewModel {
     }
     func publishMediaBatch(_ batch: StoryMediaBatch, token: UUID, updateProject: Bool = true) {
         guard session == token, owner == batch.owner else { return }
-        if let index = mediaBatches.firstIndex(where: { $0.id == batch.id }) { mediaBatches[index] = batch }
-        else { mediaBatches.append(batch) }
-        mediaBatches.sort { $0.updatedAt > $1.updatedAt }
+        publishMediaBatch(batch.historySnapshot, token: token)
         if updateProject, let index = projects.firstIndex(where: { $0.id == batch.draft.id }) { projects[index] = batch.draft }
         if isBusy, activeProjectID == batch.draft.id {
             operation = "\(batch.completedCount) / \(batch.steps.count) · \(batch.events.last?.detail ?? "准备制作")"
@@ -153,6 +151,21 @@ extension StoryStudioViewModel {
                 activeSegmentID = step.targetID; selectedSegmentID = step.targetID
                 progress = .init(status: batch.draft.segments.first { $0.id == step.targetID }?.attempt?.status ?? "submitting", jobID: batch.jobs[step.id]?.jobID)
             }
+        }
+    }
+    func publishMediaBatch(_ batch: StoryMediaBatchSnapshot, token: UUID) {
+        guard session == token, owner == batch.ownerUserID else { return }
+        if let index = mediaBatches.firstIndex(where: { $0.id == batch.id }) {
+            if mediaBatches[index].updatedAt <= batch.updatedAt {
+                mediaBatches[index] = batch
+            }
+        } else {
+            mediaBatches.append(batch)
+        }
+        mediaBatches.sort {
+            $0.updatedAt != $1.updatedAt
+                ? $0.updatedAt > $1.updatedAt
+                : $0.id.uuidString > $1.id.uuidString
         }
     }
     func run(_ label: String, body: @escaping @MainActor (String, UUID) async throws -> Void) {

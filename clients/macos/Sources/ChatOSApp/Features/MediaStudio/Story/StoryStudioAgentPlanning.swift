@@ -2,59 +2,61 @@ import AppKit
 import ChatOSCore
 import Foundation
 
-private struct StoryHistoryLoadOutcome: Sendable {
-    var runs: [StoryPlanningRunSnapshot]
-    var batches: [StoryMediaBatch]
-    var runCursor: StoryProjectStore.PageCursor?
-    var batchCursor: StoryProjectStore.PageCursor?
-    var unreadableRuns: Int
-    var unreadableBatches: Int
-    var recoveredProject: StoryProject?
-}
-
 @MainActor
 extension StoryStudioViewModel {
     func loadAgentHistory(_ projectID: UUID) {
         guard let owner else { return }
         let token = session
-        let store = store
+        let request = storyHistoryLoadState.begin(
+            ownerUserID: owner,
+            accountSessionID: token,
+            kind: .initial(projectID: projectID)
+        )
+        let storyHistory = storyHistory
         let canonical = projects.first(where: { $0.id == projectID })
         historyTask?.cancel(); isLoadingAgentRuns = true
-        historyTask = Task { [weak self, store] in
-            let result: Result<StoryHistoryLoadOutcome, Error>
+        historyTask = Task { [weak self, storyHistory] in
+            let result: Result<StoryHistoryInitialPage, Error>
             do {
-                result = .success(try await Self.loadStoryHistory(
-                    owner: owner,
+                result = .success(try await storyHistory.loadInitial(
+                    ownerUserID: owner,
                     projectID: projectID,
-                    canonical: canonical,
-                    store: store
+                    currentProject: canonical
                 ))
             } catch {
                 result = .failure(error)
             }
-            guard let self, self.session == token,
-                  self.selectedProjectID == projectID, !Task.isCancelled else { return }
+            guard let self,
+                  self.storyHistoryLoadState.accepts(
+                    request,
+                    ownerUserID: self.owner,
+                    accountSessionID: self.session,
+                    projectID: self.selectedProjectID
+                  ), !Task.isCancelled else { return }
+            _ = self.storyHistoryLoadState.finish(request)
             self.isLoadingAgentRuns = false
             self.historyTask = nil
             switch result {
             case .success(let outcome):
-                self.agentRunCursor = outcome.runCursor
-                self.mediaBatchCursor = outcome.batchCursor
-                self.hasMoreAgentRuns = outcome.runCursor != nil
-                self.hasMoreMediaBatches = outcome.batchCursor != nil
-                if let recovered = outcome.recoveredProject,
+                self.agentRunCursor = outcome.planningRuns.nextCursor
+                self.mediaBatchCursor = outcome.mediaBatches.nextCursor
+                self.hasMoreAgentRuns = outcome.planningRuns.nextCursor != nil
+                self.hasMoreMediaBatches = outcome.mediaBatches.nextCursor != nil
+                if let recovered = outcome.planningRuns.recoveredProject,
                    let projectIndex = self.projects.firstIndex(where: { $0.id == projectID }) {
                     self.projects[projectIndex] = recovered
                 }
-                for run in outcome.runs { self.publishAgentRun(run, token: token) }
-                for batch in outcome.batches {
-                    self.publishMediaBatch(batch, token: token, updateProject: false)
+                for run in outcome.planningRuns.runs {
+                    self.publishAgentRun(run, token: token)
                 }
-                if outcome.unreadableRuns > 0 {
-                    self.errorMessage = "有 \(outcome.unreadableRuns) 条规划运行记录无法读取，原文件已保留。"
+                for batch in outcome.mediaBatches.batches {
+                    self.publishMediaBatch(batch, token: token)
                 }
-                if outcome.unreadableBatches > 0 {
-                    self.errorMessage = "有 \(outcome.unreadableBatches) 条制作批次无法读取，原文件已保留。"
+                if outcome.planningRuns.unreadableCount > 0 {
+                    self.errorMessage = "有 \(outcome.planningRuns.unreadableCount) 条规划运行记录无法读取，原文件已保留。"
+                }
+                if outcome.mediaBatches.unreadableCount > 0 {
+                    self.errorMessage = "有 \(outcome.mediaBatches.unreadableCount) 条制作批次无法读取，原文件已保留。"
                 }
             case .failure(let error):
                 self.errorMessage = error.localizedDescription
@@ -62,84 +64,45 @@ extension StoryStudioViewModel {
         }
     }
 
-    nonisolated private static func loadStoryHistory(
-        owner: String,
-        projectID: UUID,
-        canonical: StoryProject?,
-        store: StoryProjectStore
-    ) async throws -> StoryHistoryLoadOutcome {
-        let runPage = try await store.loadRuns(owner: owner, projectID: projectID)
-        let batchPage = try await store.loadMediaBatches(owner: owner, projectID: projectID)
-        try Task.checkCancellation()
-        var runs = runPage.runs
-        var batches = batchPage.batches
-        var recoveredProject: StoryProject?
-        if let canonical {
-            let canonicalDigest = try StoryAgentRun.digest(canonical)
-            if let candidateIndex = runs.firstIndex(where: {
-                !$0.applied && $0.abandonedAt == nil
-                    && ((try? StoryAgentRun.matchesPersistedDigest(
-                        $0.baseDigest,
-                        project: canonical
-                    )) == true || (try? StoryAgentRun.digest($0.draft)) == canonicalDigest)
-            }), let recovered = try await store.applyValidatedRunIfPossible(
-                runs[candidateIndex],
-                owner: owner
-            ) {
-                runs[candidateIndex] = recovered.0
-                recoveredProject = recovered.1
-            }
-            for index in batches.indices {
-                try Task.checkCancellation()
-                if let recovered = try await store.reconcileCompletedVideoBatch(batches[index]) {
-                    batches[index] = recovered
-                }
-            }
-        }
-        return .init(
-            runs: runs.map(\.planningSnapshot),
-            batches: batches,
-            runCursor: runPage.nextCursor,
-            batchCursor: batchPage.nextCursor,
-            unreadableRuns: runPage.unreadable,
-            unreadableBatches: batchPage.unreadable,
-            recoveredProject: recoveredProject
-        )
-    }
-
     func loadMoreAgentRuns() {
         guard let owner, let projectID = selectedProjectID, let cursor = agentRunCursor,
               !isLoadingAgentRuns, !isLoadingMoreAgentRuns else { return }
         let token = session
-        let store = store
+        let request = storyHistoryLoadState.begin(
+            ownerUserID: owner,
+            accountSessionID: token,
+            kind: .planningRuns(projectID: projectID, cursor: cursor)
+        )
+        let storyHistory = storyHistory
         isLoadingMoreAgentRuns = true
-        agentRunPageTask = Task { [weak self, store] in
-            let result: Result<([StoryPlanningRunSnapshot], Int, StoryProjectStore.PageCursor?), Error>
+        agentRunPageTask = Task { [weak self, storyHistory] in
+            let result: Result<StoryPlanningRunHistoryPage, Error>
             do {
-                let page = try await store.loadRuns(
-                    owner: owner,
+                result = .success(try await storyHistory.loadMorePlanningRuns(
+                    ownerUserID: owner,
                     projectID: projectID,
                     after: cursor
-                )
-                result = .success((
-                    page.runs.map(\.planningSnapshot),
-                    page.unreadable,
-                    page.nextCursor
                 ))
             } catch {
                 result = .failure(error)
             }
-            guard let self, self.session == token,
-                  self.selectedProjectID == projectID, !Task.isCancelled else { return }
+            guard let self,
+                  self.storyHistoryLoadState.accepts(
+                    request,
+                    ownerUserID: self.owner,
+                    accountSessionID: self.session,
+                    projectID: self.selectedProjectID
+                  ), !Task.isCancelled else { return }
+            _ = self.storyHistoryLoadState.finish(request)
             self.isLoadingMoreAgentRuns = false
             self.agentRunPageTask = nil
             switch result {
             case .success(let page):
-                for run in page.0 { self.publishAgentRun(run, token: token) }
-                self.agentRunCursor = page.2
-                self.hasMoreAgentRuns = page.2 != nil
-                if page.1 > 0 {
-                    self.errorMessage = "有 \(page.1) 条更早规划运行记录无法读取，原文件已保留。"
+                for run in page.runs { self.publishAgentRun(run, token: token) }
+                self.agentRunCursor = page.nextCursor
+                self.hasMoreAgentRuns = page.nextCursor != nil
+                if page.unreadableCount > 0 {
+                    self.errorMessage = "有 \(page.unreadableCount) 条更早规划运行记录无法读取，原文件已保留。"
                 }
             case .failure(let error):
                 self.errorMessage = error.localizedDescription
@@ -151,40 +114,43 @@ extension StoryStudioViewModel {
         guard let owner, let projectID = selectedProjectID, let cursor = mediaBatchCursor,
               !isLoadingAgentRuns, !isLoadingMoreMediaBatches else { return }
         let token = session
-        let store = store
+        let request = storyHistoryLoadState.begin(
+            ownerUserID: owner,
+            accountSessionID: token,
+            kind: .mediaBatches(projectID: projectID, cursor: cursor)
+        )
+        let storyHistory = storyHistory
         isLoadingMoreMediaBatches = true
-        mediaBatchPageTask = Task { [weak self, store] in
-            let result: Result<([StoryMediaBatch], Int, StoryProjectStore.PageCursor?), Error>
+        mediaBatchPageTask = Task { [weak self, storyHistory] in
+            let result: Result<StoryMediaBatchHistoryPage, Error>
             do {
-                let page = try await store.loadMediaBatches(
-                    owner: owner,
+                result = .success(try await storyHistory.loadMoreMediaBatches(
+                    ownerUserID: owner,
                     projectID: projectID,
                     after: cursor
-                )
-                var batches = page.batches
-                for index in batches.indices {
-                    try Task.checkCancellation()
-                    if let recovered = try await store.reconcileCompletedVideoBatch(batches[index]) {
-                        batches[index] = recovered
-                    }
-                }
-                result = .success((batches, page.unreadable, page.nextCursor))
+                ))
             } catch {
                 result = .failure(error)
             }
-            guard let self, self.session == token,
-                  self.selectedProjectID == projectID, !Task.isCancelled else { return }
+            guard let self,
+                  self.storyHistoryLoadState.accepts(
+                    request,
+                    ownerUserID: self.owner,
+                    accountSessionID: self.session,
+                    projectID: self.selectedProjectID
+                  ), !Task.isCancelled else { return }
+            _ = self.storyHistoryLoadState.finish(request)
             self.isLoadingMoreMediaBatches = false
             self.mediaBatchPageTask = nil
             switch result {
             case .success(let page):
-                for batch in page.0 {
-                    self.publishMediaBatch(batch, token: token, updateProject: false)
+                for batch in page.batches {
+                    self.publishMediaBatch(batch, token: token)
                 }
-                self.mediaBatchCursor = page.2
-                self.hasMoreMediaBatches = page.2 != nil
-                if page.1 > 0 {
-                    self.errorMessage = "有 \(page.1) 条更早制作批次无法读取，原文件已保留。"
+                self.mediaBatchCursor = page.nextCursor
+                self.hasMoreMediaBatches = page.nextCursor != nil
+                if page.unreadableCount > 0 {
+                    self.errorMessage = "有 \(page.unreadableCount) 条更早制作批次无法读取，原文件已保留。"
                 }
             case .failure(let error):
                 self.errorMessage = error.localizedDescription

@@ -88,7 +88,7 @@ final class StoryStudioViewModel: ObservableObject {
     @Published var isLoadingAgentRuns = false
     @Published var isLoadingMoreAgentRuns = false
     @Published var hasMoreAgentRuns = false
-    @Published var mediaBatches: [StoryMediaBatch] = []
+    @Published var mediaBatches: [StoryMediaBatchSnapshot] = []
     @Published var isLoadingMoreMediaBatches = false
     @Published var hasMoreMediaBatches = false
     @Published var optimizationSuggestion: StoryPlanningTools.OptimizationSuggestion?
@@ -106,6 +106,7 @@ final class StoryStudioViewModel: ObservableObject {
     let projectCatalog: StoryProjectCatalogUseCase
     let projectMutation: StoryProjectMutationUseCase
     let storyPlanning: StoryPlanningUseCase?
+    let storyHistory: StoryHistoryUseCase
     let media: any MediaGenerationServicing
     let planner: (any StoryPlanningServicing)?
     var owner: String?
@@ -119,8 +120,9 @@ final class StoryStudioViewModel: ObservableObject {
     var projectCatalogLoadState = StoryProjectCatalogLoadState()
     var projectMutationState = StoryProjectMutationState()
     var storyPlanningExecutionState = StoryPlanningExecutionState()
-    var agentRunCursor: StoryProjectStore.PageCursor?
-    var mediaBatchCursor: StoryProjectStore.PageCursor?
+    var storyHistoryLoadState = StoryHistoryLoadState()
+    var agentRunCursor: StoryHistoryCursor?
+    var mediaBatchCursor: StoryHistoryCursor?
     var assetGenerationTasks: [AssetGenerationKey: Task<Void, Never>] = [:]
     var frameGenerationTasks: [FrameGenerationKey: Task<Void, Never>] = [:]
     var videoGenerationTasks: [VideoGenerationKey: Task<Void, Never>] = [:]
@@ -134,11 +136,15 @@ final class StoryStudioViewModel: ObservableObject {
          projectMutation: (any StoryProjectMutationPersisting)? = nil,
          agentServices: (any AgentServiceProviding)? = nil,
          storyPlanning: (any StoryPlanningExecuting)? = nil,
+         storyHistory: (any StoryHistoryLoading)? = nil,
          agentSettings: AgentSettingsStore = .init()) {
         self.media = media; self.planner = planner; self.store = store
         self.projectCatalog = StoryProjectCatalogUseCase(catalog: projectCatalog ?? store)
         self.projectMutation = StoryProjectMutationUseCase(
             persistence: projectMutation ?? store
+        )
+        self.storyHistory = StoryHistoryUseCase(
+            history: storyHistory ?? StoryHistoryAdapter(store: store)
         )
         let resolvedAgentServices = agentServices ?? (planner as? any AgentServiceProviding)
         if let storyPlanning {
@@ -163,7 +169,9 @@ final class StoryStudioViewModel: ObservableObject {
     var supportsAgentPlanning: Bool { storyPlanning != nil }
     var projectAgentRuns: [StoryPlanningRunSnapshot] { agentRuns.filter { $0.projectID == selectedProjectID } }
     var latestAgentRun: StoryPlanningRunSnapshot? { projectAgentRuns.first }
-    var projectMediaBatches: [StoryMediaBatch] { mediaBatches.filter { $0.draft.id == selectedProjectID } }
+    var projectMediaBatches: [StoryMediaBatchSnapshot] {
+        mediaBatches.filter { $0.projectID == selectedProjectID }
+    }
     var creationHistoryGroups: [CreationHistoryGroup] {
         projects.compactMap { project in
             var images: [CreationHistoryImage] = []
@@ -440,6 +448,7 @@ final class StoryStudioViewModel: ObservableObject {
         projectCatalogLoadState.reset()
         projectMutationState.reset()
         storyPlanningExecutionState.reset()
+        storyHistoryLoadState.reset()
         task?.cancel(); loadTask?.cancel(); task = nil; loadTask = nil
         for generationTask in assetGenerationTasks.values { generationTask.cancel() }
         assetGenerationTasks = [:]; activeAssetGenerations = []; assetGenerationErrors = [:]
@@ -465,6 +474,7 @@ final class StoryStudioViewModel: ObservableObject {
 
     func open(_ id: UUID) {
         guard !isBusy || activeProjectID == id else { return }
+        storyHistoryLoadState.reset()
         agentRunPageTask?.cancel(); agentRunPageTask = nil
         mediaBatchPageTask?.cancel(); mediaBatchPageTask = nil
         isLoadingMoreAgentRuns = false; isLoadingMoreMediaBatches = false
@@ -476,6 +486,7 @@ final class StoryStudioViewModel: ObservableObject {
         loadAgentHistory(id)
     }
     func backToList() {
+        storyHistoryLoadState.reset()
         historyTask?.cancel(); historyTask = nil
         agentRunPageTask?.cancel(); agentRunPageTask = nil
         mediaBatchPageTask?.cancel(); mediaBatchPageTask = nil

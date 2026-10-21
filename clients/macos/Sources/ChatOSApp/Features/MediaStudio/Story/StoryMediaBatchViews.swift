@@ -384,7 +384,7 @@ struct StoryMediaBatchPanel: View {
             } message: { Text(appModel.localized("图片提交结果不明时，请先核实失败或未创建；已生成的图片可手动导入。结束后可重新发起图片生成，可能再次计费。已有图片、视频和视频任务记录不会删除。", english: "For uncertain image submissions, verify failure or non-creation first; import successful results manually. Ending allows new image submissions that may incur another charge. Saved images, videos and video task records are retained.")) }
         }
     }
-    private func status(_ batch: StoryMediaBatch) -> String {
+    private func status(_ batch: StoryMediaBatchSnapshot) -> String {
         switch batch.status {
         case .completed: appModel.localized("完成", english: "Complete")
         case .abandoned: appModel.localized("已结束", english: "Ended")
@@ -392,7 +392,7 @@ struct StoryMediaBatchPanel: View {
         default: viewModel.isBusy ? appModel.localized("执行中", english: "Running") : appModel.localized("已暂停 / 中断", english: "Paused / Interrupted")
         }
     }
-    private func kind(_ kind: StoryMediaBatch.Kind) -> String {
+    private func kind(_ kind: StoryMediaBatchKind) -> String {
         switch kind {
         case .assets: appModel.localized("素材图片", english: "Asset Images")
         case .frames: appModel.localized("分段首帧", english: "First Frames")
@@ -401,7 +401,7 @@ struct StoryMediaBatchPanel: View {
         case .pipeline: appModel.localized("一键全流程", english: "Full Pipeline")
         }
     }
-    private func queueColor(_ batch: StoryMediaBatch) -> Color {
+    private func queueColor(_ batch: StoryMediaBatchSnapshot) -> Color {
         switch batch.status {
         case .completed: .green
         case .needsReview: .orange
@@ -409,7 +409,7 @@ struct StoryMediaBatchPanel: View {
         default: .blue
         }
     }
-    private func queueIcon(_ batch: StoryMediaBatch) -> String {
+    private func queueIcon(_ batch: StoryMediaBatchSnapshot) -> String {
         switch batch.status {
         case .completed: "checkmark.circle.fill"
         case .needsReview: "exclamationmark.triangle.fill"
