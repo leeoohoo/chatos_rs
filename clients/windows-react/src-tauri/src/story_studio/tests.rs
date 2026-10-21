@@ -4,7 +4,8 @@ use super::{
         apply_story_project_settings, apply_story_project_source, default_story_style,
         make_story_project, StoryModelSelectionInput, StoryProjectCreationInput,
         StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
-        StorySegmentEditInput,
+        StorySegmentEditInput, StorySegmentStructureInput, StorySegmentStructureMutation,
+        StorySegmentStructureOperation,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -869,6 +870,105 @@ fn segment_continuity_edit_invalidates_only_editable_neighbors_and_rejects_nativ
                 "videoGuidanceMode": "first_frame", "relations": [],
                 "video": {"filename": "private.mp4"}
             }
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn segment_structure_intents_add_move_delete_and_invalidate_all_plans() {
+    let mut canonical = project();
+    canonical.segments[0].detail = Some(test_segment_detail(15));
+    let original_id = canonical.segments[0].id.clone();
+    let project_id = canonical.id.clone();
+    let add_fingerprint = project_fingerprint(&canonical).unwrap();
+    super::application::apply_story_segment_structure(
+        &mut canonical,
+        StorySegmentStructureInput {
+            project_id: project_id.clone(),
+            base_fingerprint: add_fingerprint,
+            mutation: StorySegmentStructureMutation {
+                operation: StorySegmentStructureOperation::Add,
+                segment_id: None,
+                offset: None,
+            },
+        },
+        2,
+    )
+    .unwrap();
+    assert_eq!(canonical.segments.len(), 2);
+    assert!(canonical
+        .segments
+        .iter()
+        .all(|segment| segment.detail.is_none()));
+    let added_id = canonical.segments[1].id.clone();
+
+    let move_fingerprint = project_fingerprint(&canonical).unwrap();
+    super::application::apply_story_segment_structure(
+        &mut canonical,
+        StorySegmentStructureInput {
+            project_id: project_id.clone(),
+            base_fingerprint: move_fingerprint,
+            mutation: StorySegmentStructureMutation {
+                operation: StorySegmentStructureOperation::Move,
+                segment_id: Some(added_id.clone()),
+                offset: Some(-1),
+            },
+        },
+        3,
+    )
+    .unwrap();
+    assert_eq!(canonical.segments[0].id, added_id);
+
+    let delete_fingerprint = project_fingerprint(&canonical).unwrap();
+    super::application::apply_story_segment_structure(
+        &mut canonical,
+        StorySegmentStructureInput {
+            project_id,
+            base_fingerprint: delete_fingerprint,
+            mutation: StorySegmentStructureMutation {
+                operation: StorySegmentStructureOperation::Delete,
+                segment_id: Some(original_id),
+                offset: None,
+            },
+        },
+        4,
+    )
+    .unwrap();
+    assert_eq!(canonical.segments.len(), 1);
+    assert_eq!(canonical.segments[0].id, added_id);
+}
+
+#[test]
+fn segment_structure_intent_rejects_media_jobs_completed_video_and_extra_fields() {
+    let mut canonical = project();
+    canonical.segments[0].video = Some(StoryVideo {
+        filename: "completed.mp4".into(),
+        job_id: "completed-job".into(),
+        model_name: "video".into(),
+    });
+    let original = canonical.clone();
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+    let result = super::application::apply_story_segment_structure(
+        &mut canonical,
+        StorySegmentStructureInput {
+            project_id: original.id.clone(),
+            base_fingerprint: fingerprint,
+            mutation: StorySegmentStructureMutation {
+                operation: StorySegmentStructureOperation::Delete,
+                segment_id: Some("s1".into()),
+                offset: None,
+            },
+        },
+        2,
+    );
+    assert!(result.is_err());
+    assert_eq!(canonical, original);
+    assert!(
+        serde_json::from_value::<StorySegmentStructureInput>(serde_json::json!({
+            "projectId": original.id,
+            "baseFingerprint": "fingerprint",
+            "mutation": {"operation": "add", "segment": {"id": "forbidden"}}
         }))
         .is_err()
     );

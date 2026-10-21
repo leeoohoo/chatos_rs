@@ -8,7 +8,7 @@ use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owne
 use super::{
     application::{
         StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput,
-        StoryResourcePromptInput, StorySegmentEditInput,
+        StoryResourcePromptInput, StorySegmentEditInput, StorySegmentStructureInput,
     },
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
@@ -72,6 +72,14 @@ pub(crate) struct StorySegmentEditCommandInput {
     owner_user_id: String,
     presentation_id: String,
     edit: StorySegmentEditInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StorySegmentStructureCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    edit: StorySegmentStructureInput,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -331,6 +339,30 @@ pub(crate) async fn update_story_segment(
     })
     .await
     .map_err(|_| "剧情分段保存任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    saved
+}
+
+#[tauri::command]
+pub(crate) async fn update_story_segment_structure(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StorySegmentStructureCommandInput,
+) -> Result<StoryProjectSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let work = manager.inner().clone();
+    let owner = input.owner_user_id;
+    let save_owner = owner.clone();
+    let presentation_id = input.presentation_id;
+    let edit = input.edit;
+    let saved = tauri::async_runtime::spawn_blocking(move || {
+        work.update_segment_structure(&save_owner, generation, &presentation_id, edit)
+    })
+    .await
+    .map_err(|_| "剧情结构保存任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &manager, &owner, generation).await?;
     saved
 }

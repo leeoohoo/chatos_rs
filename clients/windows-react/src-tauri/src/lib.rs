@@ -116,7 +116,7 @@ use story_studio::{
     load_story_planning_history, load_story_project, load_story_projects, resume_story_planning,
     start_story_planning, story_studio_protocol, update_story_project_settings,
     update_story_project_source, update_story_resource_prompt, update_story_segment,
-    StoryStudioManager,
+    update_story_segment_structure, StoryStudioManager,
 };
 use system_permissions::{load_system_permissions, request_system_permission};
 use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent};
@@ -345,6 +345,7 @@ pub fn run() {
             update_story_project_source,
             update_story_resource_prompt,
             update_story_segment,
+            update_story_segment_structure,
             discard_story_studio_presentation,
             start_story_planning,
             resume_story_planning,

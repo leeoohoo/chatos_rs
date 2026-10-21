@@ -7,8 +7,9 @@ use crate::authentication::GatewayModelConfig;
 
 use super::{
     domain::{
-        apply_segment_edit, update_resource_prompt, StoryModelSelection, StoryProject,
-        StorySegmentEdit, STORY_SCHEMA_VERSION,
+        apply_segment_edit, update_resource_prompt, StoryImageCollection, StoryModelSelection,
+        StoryProject, StorySegment, StorySegmentEdit, StorySegmentKind, StorySourceRange,
+        StoryVideoGuidanceMode, STORY_SCHEMA_VERSION,
     },
     planning::project_fingerprint,
 };
@@ -68,6 +69,30 @@ pub(crate) struct StorySegmentEditInput {
     pub project_id: String,
     pub base_fingerprint: String,
     pub segment: StorySegmentEdit,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StorySegmentStructureOperation {
+    Add,
+    Delete,
+    Move,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StorySegmentStructureMutation {
+    pub operation: StorySegmentStructureOperation,
+    pub segment_id: Option<String>,
+    pub offset: Option<i8>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StorySegmentStructureInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub mutation: StorySegmentStructureMutation,
 }
 
 pub(super) fn make_story_project(
@@ -176,6 +201,121 @@ pub(super) fn apply_story_segment_edit(
     next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     *project = next;
     Ok(())
+}
+
+pub(super) fn apply_story_segment_structure(
+    project: &mut StoryProject,
+    input: StorySegmentStructureInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    if input.project_id != project.id
+        || input.base_fingerprint.is_empty()
+        || project_fingerprint(project)? != input.base_fingerprint
+    {
+        return Err("剧情项目已被修改，请重新打开后再保存。".into());
+    }
+    let has_unresolved_jobs = project
+        .characters
+        .iter()
+        .map(|value| &value.media)
+        .chain(project.scenes.iter().map(|value| &value.media))
+        .chain(project.props.iter().map(|value| &value.media))
+        .any(|media| media.generation_attempt_id.is_some())
+        || project.segments.iter().any(|segment| {
+            segment.attempt.is_some()
+                || segment.first_frames.generation_attempt_id.is_some()
+                || segment.last_frames.generation_attempt_id.is_some()
+        });
+    if has_unresolved_jobs
+        || project
+            .segments
+            .iter()
+            .any(|segment| segment.video.is_some())
+    {
+        return Err("存在进行中的媒体任务或已完成视频，不能调整剧情结构。".into());
+    }
+    match input.mutation.operation {
+        StorySegmentStructureOperation::Add => {
+            if input.mutation.segment_id.is_some() || input.mutation.offset.is_some() {
+                return Err("新增剧情分段参数无效。".into());
+            }
+            let end = project.source.chars().count();
+            if end == 0 {
+                return Err("请先填写剧情原文。".into());
+            }
+            project.segments.push(StorySegment {
+                id: Uuid::new_v4().to_string(),
+                title: "新分段".into(),
+                synopsis: "请编辑本段剧情与镜头计划".into(),
+                kind: StorySegmentKind::Story,
+                seconds: 15,
+                source_range: StorySourceRange {
+                    start: end.saturating_sub(1),
+                    end,
+                },
+                character_ids: Vec::new(),
+                scene_ids: Vec::new(),
+                prop_ids: Vec::new(),
+                detail: None,
+                first_frames: StoryImageCollection::default(),
+                user_selected_first_frame_id: None,
+                inherited_first_frame_source_segment_id: None,
+                last_frames: StoryImageCollection::default(),
+                actual_video_last_frame_id: None,
+                video_guidance_mode: StoryVideoGuidanceMode::FirstFrame,
+                attempt: None,
+                previous_attempts: Vec::new(),
+                video: None,
+                archived_videos: Vec::new(),
+                error: None,
+            });
+        }
+        StorySegmentStructureOperation::Delete => {
+            let segment_id = input
+                .mutation
+                .segment_id
+                .filter(|_| input.mutation.offset.is_none())
+                .ok_or_else(|| "删除剧情分段参数无效。".to_owned())?;
+            let count = project.segments.len();
+            project.segments.retain(|segment| segment.id != segment_id);
+            if count == project.segments.len() {
+                return Err("剧情分段已经变化，请重新打开后再试。".into());
+            }
+            project
+                .relations
+                .retain(|relation| relation.segment_id != segment_id);
+        }
+        StorySegmentStructureOperation::Move => {
+            let segment_id = input
+                .mutation
+                .segment_id
+                .ok_or_else(|| "剧情分段移动参数无效。".to_owned())?;
+            let offset = input
+                .mutation
+                .offset
+                .ok_or_else(|| "剧情分段移动参数无效。".to_owned())?;
+            if !matches!(offset, -1 | 1) {
+                return Err("剧情分段移动参数无效。".into());
+            }
+            let index = project
+                .segments
+                .iter()
+                .position(|segment| segment.id == segment_id)
+                .ok_or_else(|| "剧情分段已经变化，请重新打开后再试。".to_owned())?;
+            let target = index as isize + offset as isize;
+            if target < 0 || target >= project.segments.len() as isize {
+                return Err("剧情分段无法继续移动。".into());
+            }
+            project.segments.swap(index, target as usize);
+        }
+    }
+    for segment in &mut project.segments {
+        segment.detail = None;
+        segment.first_frames.confirmed_image_id = None;
+        segment.last_frames.confirmed_image_id = None;
+    }
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
 }
 
 fn validated_model_selection(

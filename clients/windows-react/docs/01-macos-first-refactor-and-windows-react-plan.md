@@ -560,6 +560,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 故事分段编辑第十一段）：新增 `update_story_segment` typed command；React 只提交 segment ID、标题、摘要、类型、时长、detail、资源 ID、视频衔接方式和不含 segment ID 的 relation intent，不能提交 source range、frames、attempt、provider job、video/archive、error 或任何 filename。Rust 在 fingerprint-guarded canonical mutation 内按 macOS `applyingSegmentEdit` 更新授权字段：当前段存在 attempt 或完成视频时拒绝；当前段首尾帧确认总是清除；摘要/类型/时长/连续性文本/资源/关系变化时，仅清除无 attempt 相邻段的 detail 与首尾帧确认。source range、图片集合、用户首帧、实际视频尾帧、历史 attempts、归档视频和错误事实均保留。Story Rust 定向测试增至 32 项，`cargo clippy --lib -- -D warnings` 通过。React 剧情入口继续关闭；下一片实现 add/delete/reorder segment typed commands 与全计划失效规则。
 
+状态补充（2026-10-21，Windows AI 故事结构编辑第十二段）：新增 `update_story_segment_structure`，使用严格 add/delete/move intent，不接受 React 构造的完整分段。规则对齐 macOS `addSegment`/`moveSegment`/`removeSegment`：任何资源/首尾帧 generation attempt、视频 attempt 或已完成视频存在时禁止结构调整；add 由 Rust 生成 UUID、默认标题/摘要/15 秒与末字符 source range，delete 同步删除关系，move 只允许相邻 ±1。结构成功变化后统一清除全部分段 detail 与首尾帧确认，其余媒体和原生 identity 保留。Story Rust 定向测试增至 34 项，`cargo clippy --lib -- -D warnings` 通过。React 剧情入口继续关闭；下一片实现 resource/frame confirmation typed commands。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

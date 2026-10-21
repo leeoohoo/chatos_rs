@@ -16,7 +16,7 @@ use super::{
         apply_story_project_settings, apply_story_project_source, apply_story_resource_prompt,
         apply_story_segment_edit, make_story_project, StoryProjectCreationInput,
         StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
-        StorySegmentEditInput,
+        StorySegmentEditInput, StorySegmentStructureInput,
     },
     domain::{StoryImageCollection, StoryProject},
     execution::StoryPlanningExecutionRegistry,
@@ -397,6 +397,35 @@ impl StoryStudioManager {
             .store
             .mutate_project(owner_user_id, &project_id, |project| {
                 apply_story_segment_edit(project, input, now)
+            })?;
+        self.project_snapshot(
+            owner_user_id,
+            authentication_generation,
+            presentation_id,
+            &session,
+            &project,
+        )
+    }
+
+    pub(super) fn update_segment_structure(
+        &self,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        presentation_id: &str,
+        input: StorySegmentStructureInput,
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner_user_id, authentication_generation)?;
+        self.media.require_open_presentation(
+            owner_user_id,
+            authentication_generation,
+            presentation_id,
+        )?;
+        let project_id = input.project_id.clone();
+        let now = current_unix_milliseconds();
+        let project = self
+            .store
+            .mutate_project(owner_user_id, &project_id, |project| {
+                super::application::apply_story_segment_structure(project, input, now)
             })?;
         self.project_snapshot(
             owner_user_id,
