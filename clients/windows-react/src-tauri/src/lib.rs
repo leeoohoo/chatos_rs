@@ -1,4 +1,5 @@
 mod access_control;
+mod agent_management;
 mod ask_user;
 mod attachment_tool_worker;
 mod authentication;
@@ -31,6 +32,7 @@ mod tool_approval;
 mod workspace_index;
 
 use access_control::load_access_control;
+use agent_management::{list_agent_profiles, AgentProfileStore};
 use ask_user::{cancel_ask_user_prompt, load_ask_user_prompts, submit_ask_user_prompt};
 use attachment_tool_worker::AttachmentToolWorker;
 use authentication::{
@@ -176,6 +178,7 @@ pub fn run() {
             app.manage(ProjectRunPreferencesStore::new(data_dir.clone()));
             app.manage(RemoteConnectionManager::new(data_dir.clone()));
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
+            app.manage(AgentProfileStore::new(data_dir.clone()).map_err(std::io::Error::other)?);
             app.manage(PluginApplicationManager::new(data_dir));
             #[cfg(target_os = "windows")]
             if std::env::var_os("CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP").as_deref()
@@ -239,6 +242,7 @@ pub fn run() {
             register,
             logout,
             list_local_projects,
+            list_agent_profiles,
             list_project_types,
             pick_project_directory,
             discard_project_directory_selection,
