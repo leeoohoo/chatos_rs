@@ -8,6 +8,7 @@ import {
   type AgentProfileMutationInput,
   type AgentProfileSummary,
   type AgentAvatarDraft,
+  type AgentAvatarHistoryAsset,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import "./agentManagement.css";
@@ -226,6 +227,10 @@ function AgentProfileEditor({
   const [heartbeatPrompt, setHeartbeatPrompt] = useState(data?.heartbeatPrompt ?? "");
   const [avatarPresentationId] = useState(() => crypto.randomUUID().toLowerCase());
   const [avatarDraft, setAvatarDraft] = useState<AgentAvatarDraft | null>(null);
+  const [avatarHistorySelection, setAvatarHistorySelection] = useState<AgentAvatarHistoryAsset | null>(null);
+  const [avatarHistory, setAvatarHistory] = useState<AgentAvatarHistoryAsset[] | null>(null);
+  const [showsAvatarHistory, setShowsAvatarHistory] = useState(false);
+  const [isLoadingAvatarHistory, setIsLoadingAvatarHistory] = useState(false);
   const [avatarRemoved, setAvatarRemoved] = useState(false);
   const [isPickingAvatar, setIsPickingAvatar] = useState(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
@@ -251,6 +256,7 @@ function AgentProfileEditor({
         await port.discardAvatarReferences(ownerUserId, avatarPresentationId, [avatarDraft.id]);
       }
       setAvatarDraft(draft);
+      setAvatarHistorySelection(null);
       setAvatarRemoved(false);
     } catch (avatarFailure) {
       setAvatarError(avatarFailure instanceof Error ? avatarFailure.message : "头像暂时无法读取。");
@@ -264,7 +270,38 @@ function AgentProfileEditor({
       void port.discardAvatarReferences(ownerUserId, avatarPresentationId, [avatarDraft.id]);
     }
     setAvatarDraft(null);
+    setAvatarHistorySelection(null);
     setAvatarRemoved(true);
+    setAvatarError(null);
+  };
+
+  const openAvatarHistory = async () => {
+    if (isLoadingAvatarHistory || saving) return;
+    if (avatarHistory) {
+      setShowsAvatarHistory(true);
+      return;
+    }
+    setIsLoadingAvatarHistory(true);
+    setAvatarError(null);
+    try {
+      const assets = await port.loadAvatarHistory(ownerUserId);
+      setAvatarHistory(assets);
+      setShowsAvatarHistory(true);
+    } catch (historyFailure) {
+      setAvatarError(historyFailure instanceof Error ? historyFailure.message : "图片生成记录暂时无法读取。");
+    } finally {
+      setIsLoadingAvatarHistory(false);
+    }
+  };
+
+  const selectHistoryAvatar = (asset: AgentAvatarHistoryAsset) => {
+    if (avatarDraft) {
+      void port.discardAvatarReferences(ownerUserId, avatarPresentationId, [avatarDraft.id]);
+    }
+    setAvatarDraft(null);
+    setAvatarHistorySelection(asset);
+    setAvatarRemoved(false);
+    setShowsAvatarHistory(false);
     setAvatarError(null);
   };
 
@@ -293,6 +330,8 @@ function AgentProfileEditor({
             heartbeatPrompt: heartbeatPrompt.trim(),
             avatar: avatarDraft
               ? { kind: "staged", presentationId: avatarPresentationId, referenceId: avatarDraft.id }
+              : avatarHistorySelection
+                ? { kind: "history", recordId: avatarHistorySelection.recordId, contentToken: avatarHistorySelection.contentToken }
               : avatarRemoved ? { kind: "remove" } : { kind: "preserve" },
           });
         }}
@@ -302,8 +341,8 @@ function AgentProfileEditor({
         <div className="agent-editor__body">
           {(error || avatarError) && <div className="agent-editor__error" role="alert">{error ?? avatarError}</div>}
           <div className="agent-avatar-editor">
-            {avatarDraft?.previewUrl ? (
-              <img alt="Agent 头像预览" src={avatarDraft.previewUrl} />
+            {(avatarDraft?.previewUrl || avatarHistorySelection?.previewUrl) ? (
+              <img alt="Agent 头像预览" src={avatarDraft?.previewUrl ?? avatarHistorySelection?.previewUrl} />
             ) : (
               <span aria-label={avatarRemoved || !existing?.hasAvatar ? "默认头像" : "当前头像"}>
                 {name.trim().slice(0, 1).toUpperCase() || "A"}
@@ -313,12 +352,27 @@ function AgentProfileEditor({
               <button disabled={isPickingAvatar || saving} onClick={() => void pickAvatar()} type="button">
                 {isPickingAvatar ? "正在读取…" : "从本机选择"}
               </button>
-              {(avatarDraft || (existing?.hasAvatar && !avatarRemoved)) && (
+              <button disabled={isLoadingAvatarHistory || saving} onClick={() => void openAvatarHistory()} type="button">
+                {isLoadingAvatarHistory ? "正在读取记录…" : "从生成记录选择"}
+              </button>
+              {(avatarDraft || avatarHistorySelection || (existing?.hasAvatar && !avatarRemoved)) && (
                 <button disabled={saving} onClick={useDefaultAvatar} type="button">使用默认头像</button>
               )}
               <small>图片由原生层裁成 256 × 256 PNG；路径和图片字节不会进入 React。</small>
             </div>
           </div>
+          {showsAvatarHistory && (
+            <section aria-label="头像生成记录" className="agent-avatar-history">
+              <header><strong>选择头像</strong><button aria-label="关闭头像生成记录" onClick={() => setShowsAvatarHistory(false)} type="button">×</button></header>
+              {avatarHistory?.length ? (
+                <div>{avatarHistory.map((asset) => (
+                  <button key={`${asset.recordId}:${asset.contentToken}`} onClick={() => selectHistoryAvatar(asset)} type="button">
+                    <img alt="生成的头像候选" src={asset.previewUrl} />
+                  </button>
+                ))}</div>
+              ) : <p>暂无图片生成记录，仍可从本机选择。</p>}
+            </section>
+          )}
           <label>名称<input maxLength={120} onChange={(event) => setName(event.target.value)} placeholder="Agent 名称" value={name} /></label>
           <label>说明<textarea maxLength={2_000} onChange={(event) => setDescription(event.target.value)} placeholder="Agent 负责什么" rows={3} value={description} /></label>
           <label>模型<select onChange={(event) => { setModelConfigId(event.target.value); setThinkingLevel(""); }} value={modelConfigId}>{catalog.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select></label>

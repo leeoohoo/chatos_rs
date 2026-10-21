@@ -144,7 +144,15 @@ export const agentAvatarDraftSchema = z.object({
 export type AgentAvatarAction =
   | { kind: "preserve" }
   | { kind: "remove" }
-  | { kind: "staged"; presentationId: string; referenceId: string };
+  | { kind: "staged"; presentationId: string; referenceId: string }
+  | { kind: "history"; recordId: string; contentToken: string };
+
+export interface AgentAvatarHistoryAsset {
+  recordId: string;
+  contentToken: string;
+  previewUrl: string;
+  createdAtUnixMs: number;
+}
 
 export interface AgentProfileMutationInput {
   agentId: string | null;

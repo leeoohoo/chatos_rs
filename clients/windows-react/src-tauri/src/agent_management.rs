@@ -153,6 +153,10 @@ enum AgentAvatarMutationInput {
         presentation_id: String,
         reference_id: String,
     },
+    History {
+        record_id: String,
+        content_token: String,
+    },
 }
 
 enum ResolvedAgentAvatar {
@@ -660,6 +664,15 @@ fn resolve_avatar_mutation(
             )?;
             normalize_avatar(bytes).map(ResolvedAgentAvatar::Replace)
         }
+        AgentAvatarMutationInput::History {
+            record_id,
+            content_token,
+        } => normalize_avatar(media_studio.read_story_history_image(
+            owner_user_id,
+            record_id,
+            content_token,
+        )?)
+        .map(ResolvedAgentAvatar::Replace),
     }
 }
 

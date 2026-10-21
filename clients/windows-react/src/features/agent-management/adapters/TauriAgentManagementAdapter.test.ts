@@ -48,4 +48,35 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       input: { ownerUserId: "owner-1", presentationId: "presentation-1" },
     });
   });
+
+  it("flattens only controlled image history previews for the avatar picker", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      items: [{
+        id: "11111111-1111-4111-8111-111111111111",
+        prompt: "portrait",
+        modelName: "image-model",
+        createdAtUnixMs: 100,
+        images: [{
+          id: "asset-1",
+          mimeType: "image/png",
+          contentToken: "b".repeat(32),
+          revisedPrompt: null,
+          previewUrl: "chatos-media://localhost/22222222-2222-4222-8222-222222222222/11111111-1111-4111-8111-111111111111/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        }],
+      }],
+      nextCursor: null,
+      unreadableCount: 0,
+    });
+    await expect(new TauriAgentManagementAdapter().loadAvatarHistory("owner-1")).resolves.toEqual([{
+      recordId: "11111111-1111-4111-8111-111111111111",
+      contentToken: "b".repeat(32),
+      previewUrl: "chatos-media://localhost/22222222-2222-4222-8222-222222222222/11111111-1111-4111-8111-111111111111/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      createdAtUnixMs: 100,
+    }]);
+    expect(invoke).toHaveBeenCalledWith("load_media_studio_image_history", {
+      ownerUserId: "owner-1",
+      after: null,
+      limit: 40,
+    });
+  });
 });

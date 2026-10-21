@@ -95,6 +95,30 @@ describe("AgentManagementView", () => {
     expect(JSON.stringify(payload)).not.toContain("chatos-media");
   });
 
+  it("selects an avatar from the safe generated image history projection", async () => {
+    const historyAsset = {
+      recordId: "11111111-1111-4111-8111-111111111111",
+      contentToken: "b".repeat(32),
+      previewUrl: "chatos-media://localhost/session/11111111-1111-4111-8111-111111111111/token",
+      createdAtUnixMs: 100,
+    };
+    const port = stubPort({ loadAvatarHistory: vi.fn(async () => [historyAsset]) });
+    renderView(port);
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    await screen.findByRole("dialog", { name: "编辑 Agent" });
+    fireEvent.click(screen.getByRole("button", { name: "从生成记录选择" }));
+    fireEvent.click(await screen.findByRole("button", { name: "生成的头像候选" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(port.saveProfile).toHaveBeenCalledWith("owner-1", expect.objectContaining({
+      avatar: {
+        kind: "history",
+        recordId: historyAsset.recordId,
+        contentToken: historyAsset.contentToken,
+      },
+    })));
+  });
+
   it("keeps the editor open when conflict protection rejects save", async () => {
     const port = stubPort({
       saveProfile: vi.fn(async () => { throw new Error("Agent 状态已经变化，请刷新后重试。"); }),
@@ -143,6 +167,7 @@ function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagement
       updatedAtUnixMs: 30,
     })),
     pickAvatar: vi.fn(async () => null),
+    loadAvatarHistory: vi.fn(async () => []),
     discardAvatarReferences: vi.fn(async () => undefined),
     discardAvatarPresentation: vi.fn(async () => undefined),
     ...overrides,

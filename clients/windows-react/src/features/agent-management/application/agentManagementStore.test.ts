@@ -107,6 +107,7 @@ function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagement
     loadProfileEditor: vi.fn(async () => editorData()),
     saveProfile: vi.fn(async () => profile()),
     pickAvatar: vi.fn(async () => null),
+    loadAvatarHistory: vi.fn(async () => []),
     discardAvatarReferences: vi.fn(async () => undefined),
     discardAvatarPresentation: vi.fn(async () => undefined),
     ...overrides,

@@ -8,6 +8,7 @@ import {
   type AgentProfileMutationInput,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
+import { mediaStudioHistoryPageSchema } from "../../media-studio/domain/mediaStudio";
 
 export class TauriAgentManagementAdapter implements AgentManagementPort {
   async listProfiles(ownerUserId: string) {
@@ -38,6 +39,18 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
     return agentAvatarDraftSchema.nullable().parse(
       await invoke("pick_agent_avatar", { input: { ownerUserId, presentationId } }),
     );
+  }
+
+  async loadAvatarHistory(ownerUserId: string) {
+    const page = mediaStudioHistoryPageSchema.parse(
+      await invoke("load_media_studio_image_history", { ownerUserId, after: null, limit: 40 }),
+    );
+    return page.items.flatMap((item) => item.images.flatMap((asset) => asset.previewUrl ? [{
+      recordId: item.id,
+      contentToken: asset.contentToken,
+      previewUrl: asset.previewUrl,
+      createdAtUnixMs: item.createdAtUnixMs,
+    }] : []));
   }
 
   async discardAvatarReferences(ownerUserId: string, presentationId: string, referenceIds: string[]) {
