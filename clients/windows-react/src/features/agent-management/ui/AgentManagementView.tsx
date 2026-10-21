@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AskUserPort } from "../../ask-user/ports/AskUserPort";
 import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
 import type { ConversationComposerPort } from "../../conversation-composer/ports/ConversationComposerPort";
@@ -13,6 +13,7 @@ import { type AgentTeamMemberMutation, useAgentTeamStore } from "../application/
 import { useAgentTeamConversationStore } from "../application/agentTeamConversationStore";
 import { useAgentTeamRunStore } from "../application/agentTeamRunStore";
 import { useAgentTeamAssetStore } from "../application/agentTeamAssetStore";
+import { useAgentTeamTodoStore } from "../application/agentTeamTodoStore";
 import { useProjectRequirementSurveyStore } from "../application/projectRequirementSurveyStore";
 import {
   agentProfessionLabels,
@@ -29,6 +30,7 @@ import {
   type AgentTeamDetail,
   type AgentTeamAsset,
   type AgentTeamAssetCategory,
+  type AgentTeamTodo,
   type ProjectRequirementSurvey,
   type ProjectRequirementSurveyAnswers,
   type CreateAgentTeamInput,
@@ -504,7 +506,7 @@ function AgentTeamCatalog({
   onRetry(): void;
   onSelect(teamId: string): void;
 }) {
-  const [workspaceSection, setWorkspaceSection] = useState<"overview" | "members" | "conversation" | "research" | "assets" | "runs">("members");
+  const [workspaceSection, setWorkspaceSection] = useState<"overview" | "members" | "conversation" | "todos" | "research" | "assets" | "runs">("members");
   useEffect(() => setWorkspaceSection("members"), [selectedTeamId]);
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.title])),
@@ -565,7 +567,7 @@ function AgentTeamCatalog({
             <section
               aria-label={{
                 overview: "Agent 团队总览", members: "Agent 团队成员",
-                conversation: "Agent 团队聊天", research: "Agent 团队需求调研",
+                conversation: "Agent 团队聊天", todos: "Agent 团队任务", research: "Agent 团队需求调研",
                 assets: "Agent 团队共享资产", runs: "Agent 团队运行",
               }[workspaceSection]}
               className={workspaceSection === "members"
@@ -577,13 +579,14 @@ function AgentTeamCatalog({
                   <h3>{detail?.team.id === selectedTeamId
                     ? `${detail.team.name} · ${{
                       overview: "总览", members: "团队成员", conversation: "团队聊天",
-                      research: "需求调研", assets: "共享资产", runs: "运行",
+                      todos: "团队任务", research: "需求调研", assets: "共享资产", runs: "运行",
                     }[workspaceSection]}`
                     : "正在读取团队空间"}</h3>
                   <p>{{
                     overview: "查看团队成员、消息与真实执行状态。",
                     members: "同一个 Agent 可以加入多个团队；角色和职责按当前团队隔离。",
                     conversation: "消息、路由与执行状态均来自本机原生事实。",
+                    todos: "创建、分配并跟踪来自本机 SQLite 与 Host 的真实任务。",
                     research: "填写主聊天或任务为当前项目发起的真实 Host 调研单。",
                     assets: "维护带版本历史的项目背景、进度、技术栈与架构决策。",
                     runs: "按更新时间查看通讯与任务执行 Run。",
@@ -595,6 +598,7 @@ function AgentTeamCatalog({
                     <button aria-pressed={workspaceSection === "overview"} onClick={() => setWorkspaceSection("overview")} type="button">总览</button>
                     <button aria-pressed={workspaceSection === "members"} onClick={() => setWorkspaceSection("members")} type="button">成员</button>
                     <button aria-pressed={workspaceSection === "conversation"} onClick={() => setWorkspaceSection("conversation")} type="button">聊天</button>
+                    <button aria-pressed={workspaceSection === "todos"} onClick={() => setWorkspaceSection("todos")} type="button">任务</button>
                     <button aria-pressed={workspaceSection === "research"} onClick={() => setWorkspaceSection("research")} type="button">需求调研</button>
                     <button aria-pressed={workspaceSection === "assets"} onClick={() => setWorkspaceSection("assets")} type="button">共享资产</button>
                     <button aria-pressed={workspaceSection === "runs"} onClick={() => setWorkspaceSection("runs")} type="button">运行</button>
@@ -621,6 +625,12 @@ function AgentTeamCatalog({
                   ownerUserId={ownerUserId}
                   port={port}
                   profiles={profiles}
+                />
+              ) : workspaceSection === "todos" && detail?.team.id === selectedTeamId ? (
+                <AgentTeamTodosView
+                  detail={detail}
+                  ownerUserId={ownerUserId}
+                  port={port}
                 />
               ) : workspaceSection === "assets" && detail?.team.id === selectedTeamId ? (
                 <AgentTeamAssetsView detail={detail} ownerUserId={ownerUserId} port={port} />
@@ -753,6 +763,261 @@ function AgentTeamOverviewView({
       </div>
     </div>
   );
+}
+
+const teamTodoColumns: Array<{
+  key: "pending" | "in_progress" | "blocked" | "done";
+  label: string;
+  note: string;
+}> = [
+  { key: "pending", label: "待处理", note: "等待 executor lane" },
+  { key: "in_progress", label: "执行中", note: "由 Host 对账" },
+  { key: "blocked", label: "已阻塞", note: "需要明确处理" },
+  { key: "done", label: "已结束", note: "完成或取消" },
+];
+
+function AgentTeamTodosView({
+  detail,
+  ownerUserId,
+  port,
+}: {
+  detail: AgentTeamDetail;
+  ownerUserId: string;
+  port: AgentManagementPort;
+}) {
+  const todos = useAgentTeamTodoStore((state) => state.todos);
+  const isLoading = useAgentTeamTodoStore((state) => state.isLoading);
+  const mutationTodoId = useAgentTeamTodoStore((state) => state.mutationTodoId);
+  const error = useAgentTeamTodoStore((state) => state.error);
+  const activate = useAgentTeamTodoStore((state) => state.activate);
+  const refresh = useAgentTeamTodoStore((state) => state.refresh);
+  const save = useAgentTeamTodoStore((state) => state.save);
+  const move = useAgentTeamTodoStore((state) => state.move);
+  const cancel = useAgentTeamTodoStore((state) => state.cancel);
+  const reset = useAgentTeamTodoStore((state) => state.reset);
+  const [editingTodo, setEditingTodo] = useState<AgentTeamTodo | "new" | null>(null);
+  const cycling = useRef(false);
+  const supportsTodos = Boolean(
+    port.listTeamTodos && port.createTeamTodo && port.updateTeamTodo
+    && port.reorderTeamTodos && port.cancelTeamTodo && port.dispatchNextTeamDelivery,
+  );
+
+  useEffect(() => {
+    setEditingTodo(null);
+    if (supportsTodos) void activate(port, ownerUserId, detail.team.id);
+    else reset();
+    return reset;
+  }, [activate, detail.team.id, ownerUserId, port, reset, supportsTodos]);
+
+  useEffect(() => {
+    if (!supportsTodos) return undefined;
+    let cancelled = false;
+    const cycle = async () => {
+      if (cycling.current || cancelled) return;
+      cycling.current = true;
+      try {
+        await port.loadTeamRuns?.(ownerUserId, detail.team.id);
+        await refresh(port);
+        if (!cancelled) {
+          await port.dispatchNextTeamDelivery?.(ownerUserId, detail.team.id);
+          await refresh(port);
+        }
+      } catch {
+        // The stores retain the last trusted projection and expose their own retry state.
+      } finally {
+        cycling.current = false;
+      }
+    };
+    const timer = window.setInterval(() => void cycle(), 2_000);
+    void cycle();
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [detail.team.id, ownerUserId, port, refresh, supportsTodos]);
+
+  if (!supportsTodos) {
+    return (
+      <div className="agent-team-todos__state is-error" role="alert">
+        <strong>当前版本尚未连接团队任务</strong><span>请更新本机客户端后重试。</span>
+      </div>
+    );
+  }
+
+  const grouped = new Map(teamTodoColumns.map((column) => [column.key, [] as AgentTeamTodo[]]));
+  for (const todo of todos) {
+    const key = todo.status === "completed" || todo.status === "cancelled" ? "done" : todo.status;
+    grouped.get(key)?.push(todo);
+  }
+
+  return (
+    <div className="agent-team-todos">
+      <div className="agent-team-todos__toolbar">
+        <div><strong>团队任务板</strong><span>依赖、优先级、executor Delivery 与 Host Run 均为真实记录。</span></div>
+        <div>
+          <button aria-label="刷新团队任务" disabled={isLoading} onClick={() => void refresh(port)} type="button">↻</button>
+          <button
+            className="primary-button"
+            disabled={detail.members.length === 0 || mutationTodoId != null}
+            onClick={() => setEditingTodo("new")}
+            type="button"
+          >新建任务</button>
+        </div>
+      </div>
+      {error && (
+        <div className="agent-team-conversation__error" role="alert">
+          <span>{error}</span><button onClick={() => void refresh(port)} type="button">刷新</button>
+        </div>
+      )}
+      {isLoading && todos.length === 0 ? (
+        <div className="agent-team-todos__state"><span className="mini-spinner" />正在读取团队任务…</div>
+      ) : (
+        <div className="agent-team-todos__board">
+          {teamTodoColumns.map((column) => {
+            const items = grouped.get(column.key) ?? [];
+            return (
+              <section className={`agent-team-todo-column is-${column.key}`} key={column.key}>
+                <header><div><strong>{column.label}</strong><small>{column.note}</small></div><span>{items.length}</span></header>
+                <div>
+                  {items.map((todo, index) => (
+                    <article className={`agent-team-todo-card is-${todo.status}`} key={todo.id}>
+                      <header>
+                        <span>优先级 {todo.priority}</span>
+                        <em>{todo.agentName}</em>
+                      </header>
+                      <button onClick={() => setEditingTodo(todo)} type="button">
+                        <strong>{todo.title}</strong>
+                        <p>{todo.detail || todo.executionContract.objective}</p>
+                      </button>
+                      {todo.dependencyIds.length > 0 && (
+                        <small>依赖 {todo.dependencyIds.length} 项</small>
+                      )}
+                      {todo.blockedReason && <div className="agent-team-todo-card__notice">{todo.blockedReason}</div>}
+                      {todo.result && <div className="agent-team-todo-card__result">{todo.result}</div>}
+                      <footer>
+                        {todo.status === "pending" && (
+                          <>
+                            <button disabled={index === 0 || mutationTodoId != null} onClick={() => void move(port, todo.id, -1)} type="button">上移</button>
+                            <button disabled={index === items.length - 1 || mutationTodoId != null} onClick={() => void move(port, todo.id, 1)} type="button">下移</button>
+                          </>
+                        )}
+                        {(todo.status === "pending" || todo.status === "blocked") && (
+                          <button
+                            className="is-danger"
+                            disabled={mutationTodoId != null}
+                            onClick={() => void cancel(port, todo)}
+                            type="button"
+                          >取消</button>
+                        )}
+                        {todo.status === "in_progress" && <span>在“运行”中查看最新过程</span>}
+                        <time>{formatTeamMessageTime(todo.updatedAtUnixMs)}</time>
+                      </footer>
+                    </article>
+                  ))}
+                  {items.length === 0 && <div className="agent-team-todo-column__empty">暂无任务</div>}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
+      {editingTodo && (
+        <AgentTeamTodoEditor
+          detail={detail}
+          isSaving={mutationTodoId != null}
+          onClose={() => setEditingTodo(null)}
+          onSave={async (input) => {
+            const succeeded = await save(port, input);
+            if (succeeded) {
+              setEditingTodo(null);
+              if (port.dispatchNextTeamDelivery) {
+                try { await port.dispatchNextTeamDelivery(ownerUserId, detail.team.id); } catch { /* surfaced by refresh */ }
+              }
+              await refresh(port);
+            }
+          }}
+          todo={editingTodo === "new" ? null : editingTodo}
+          todos={todos}
+        />
+      )}
+    </div>
+  );
+}
+
+function AgentTeamTodoEditor({
+  detail,
+  isSaving,
+  onClose,
+  onSave,
+  todo,
+  todos,
+}: {
+  detail: AgentTeamDetail;
+  isSaving: boolean;
+  onClose(): void;
+  onSave(input: {
+    todoId: string | null;
+    agentId: string;
+    title: string;
+    detail: string;
+    priority: number;
+    dependencyIds: string[];
+    expectedUpdatedAtUnixMs: number | null;
+  }): Promise<void>;
+  todo: AgentTeamTodo | null;
+  todos: AgentTeamTodo[];
+}) {
+  const [agentId, setAgentId] = useState(todo?.agentId ?? detail.members[0]?.agentId ?? "");
+  const [title, setTitle] = useState(todo?.title ?? "");
+  const [description, setDescription] = useState(todo?.detail ?? "");
+  const [priority, setPriority] = useState(todo?.priority ?? 50);
+  const [dependencyIds, setDependencyIds] = useState(todo?.dependencyIds ?? []);
+  const editable = todo == null || todo.status === "pending" || todo.status === "blocked";
+  const candidates = todos.filter((candidate) => candidate.id !== todo?.id && candidate.status !== "cancelled");
+  const canSave = editable && agentId && title.trim().length > 0 && title.trim().length <= 500
+    && description.length <= 16_000 && priority >= 0 && priority <= 100;
+  return (
+    <div className="agent-editor-backdrop" onMouseDown={onClose} role="presentation">
+      <section aria-label={todo ? "团队任务详情" : "新建团队任务"} aria-modal="true" className="agent-team-todo-editor" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <header>
+          <div><span>{todo ? teamTodoStatusLabel(todo.status) : "新的工作契约"}</span><h2>{todo ? "团队任务详情" : "新建团队任务"}</h2></div>
+          <button aria-label="关闭团队任务" disabled={isSaving} onClick={onClose} type="button">×</button>
+        </header>
+        <div className="agent-team-todo-editor__body">
+          <label>执行 Agent<select disabled={todo != null || !editable} onChange={(event) => setAgentId(event.target.value)} value={agentId}>
+            {detail.members.map((member) => <option key={member.agentId} value={member.agentId}>{member.role}</option>)}
+          </select></label>
+          <label>任务标题<input disabled={!editable} maxLength={500} onChange={(event) => setTitle(event.target.value)} value={title} /></label>
+          <label>任务说明<textarea disabled={!editable} maxLength={16_000} onChange={(event) => setDescription(event.target.value)} rows={5} value={description} /></label>
+          <label>优先级<div className="agent-team-todo-editor__priority"><input disabled={!editable} max={100} min={0} onChange={(event) => setPriority(Number(event.target.value))} type="range" value={priority} /><strong>{priority}</strong></div></label>
+          <fieldset disabled={!editable}>
+            <legend>前置依赖</legend>
+            {candidates.length ? candidates.map((candidate) => (
+              <label key={candidate.id}><input checked={dependencyIds.includes(candidate.id)} onChange={(event) => setDependencyIds((current) => event.target.checked ? [...current, candidate.id] : current.filter((id) => id !== candidate.id))} type="checkbox" /><span>{candidate.title}</span><em>{teamTodoStatusLabel(candidate.status)}</em></label>
+            )) : <p>当前没有可选择的前置任务。</p>}
+          </fieldset>
+          {todo && (
+            <section className="agent-team-todo-editor__contract"><strong>执行工作契约</strong><dl>
+              <Row label="目标" value={todo.executionContract.objective} />
+              <Row label="验收" value={todo.executionContract.acceptanceCriteria.join("；")} />
+              <Row label="能力" value={todo.executionPlan.builtinCapabilities.join(" · ") || "只读"} />
+            </dl></section>
+          )}
+        </div>
+        <footer>
+          <button disabled={isSaving} onClick={onClose} type="button">{editable ? "取消" : "关闭"}</button>
+          {editable && <button className="primary-button" disabled={isSaving || !canSave} onClick={() => void onSave({
+            todoId: todo?.id ?? null, agentId, title: title.trim(), detail: description,
+            priority, dependencyIds, expectedUpdatedAtUnixMs: todo?.updatedAtUnixMs ?? null,
+          })} type="button">{isSaving ? "正在保存…" : "保存任务"}</button>}
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function teamTodoStatusLabel(status: AgentTeamTodo["status"]) {
+  return {
+    pending: "待处理", in_progress: "执行中", blocked: "已阻塞",
+    completed: "已完成", cancelled: "已取消",
+  }[status];
 }
 
 const teamAssetCategoryLabels: Record<AgentTeamAssetCategory, string> = {

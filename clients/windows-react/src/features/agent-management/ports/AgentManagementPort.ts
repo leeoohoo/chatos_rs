@@ -14,9 +14,11 @@ import type {
   QueuedAgentTeamMessage,
   DispatchedAgentTeamDelivery,
   AgentTeamRunHistorySnapshot,
+  AgentTeamTodo,
   AgentTeamAsset,
   AgentTeamAssetRevision,
   SaveAgentTeamAssetInput,
+  SaveAgentTeamTodoInput,
   ProjectRequirementSurvey,
   ProjectRequirementSurveyAnswers,
   CreateAgentTeamInput,
@@ -81,6 +83,24 @@ export interface AgentManagementPort {
     agentId: string,
   ): Promise<AgentTeamMemberActivitySnapshot>;
   loadTeamRuns?(ownerUserId: string, teamId: string): Promise<AgentTeamRunHistorySnapshot>;
+  listTeamTodos?(ownerUserId: string, teamId: string, includeTerminal: boolean): Promise<AgentTeamTodo[]>;
+  createTeamTodo?(
+    ownerUserId: string,
+    teamId: string,
+    input: SaveAgentTeamTodoInput,
+  ): Promise<AgentTeamTodo>;
+  updateTeamTodo?(
+    ownerUserId: string,
+    teamId: string,
+    input: SaveAgentTeamTodoInput,
+  ): Promise<AgentTeamTodo>;
+  reorderTeamTodos?(ownerUserId: string, teamId: string, todoIds: string[]): Promise<AgentTeamTodo[]>;
+  cancelTeamTodo?(
+    ownerUserId: string,
+    teamId: string,
+    todoId: string,
+    expectedUpdatedAtUnixMs: number,
+  ): Promise<AgentTeamTodo>;
   listTeamAssets?(ownerUserId: string, teamId: string): Promise<AgentTeamAsset[]>;
   saveTeamAsset?(
     ownerUserId: string,

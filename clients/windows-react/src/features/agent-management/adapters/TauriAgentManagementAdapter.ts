@@ -14,6 +14,8 @@ import {
   queuedAgentTeamMessageSchema,
   dispatchedAgentTeamDeliverySchema,
   agentTeamRunHistorySnapshotSchema,
+  agentTeamTodoListSchema,
+  agentTeamTodoSchema,
   agentTeamAssetListSchema,
   agentTeamAssetRevisionListSchema,
   agentTeamAssetSchema,
@@ -25,6 +27,7 @@ import {
   type CreateAgentTeamInput,
   type UpdateAgentTeamMemberInput,
   type SaveAgentTeamAssetInput,
+  type SaveAgentTeamTodoInput,
   type ProjectRequirementSurveyAnswers,
 } from "../domain/agentManagement";
 import { z } from "zod";
@@ -215,6 +218,59 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async loadTeamRuns(ownerUserId: string, teamId: string) {
     return agentTeamRunHistorySnapshotSchema.parse(
       await invoke("load_agent_team_runs", { ownerUserId, teamId }),
+    );
+  }
+
+  async listTeamTodos(ownerUserId: string, teamId: string, includeTerminal: boolean) {
+    return agentTeamTodoListSchema.parse(
+      await invoke("list_agent_team_todos", { ownerUserId, teamId, includeTerminal }),
+    );
+  }
+
+  async createTeamTodo(ownerUserId: string, teamId: string, input: SaveAgentTeamTodoInput) {
+    return agentTeamTodoSchema.parse(
+      await invoke("create_agent_team_todo", {
+        input: {
+          ownerUserId, teamId, agentId: input.agentId, title: input.title,
+          detail: input.detail, priority: input.priority, dependencyIds: input.dependencyIds,
+          executionContract: null,
+        },
+      }),
+    );
+  }
+
+  async updateTeamTodo(ownerUserId: string, teamId: string, input: SaveAgentTeamTodoInput) {
+    if (!input.todoId || input.expectedUpdatedAtUnixMs == null) {
+      throw new Error("团队任务更新缺少版本信息。");
+    }
+    return agentTeamTodoSchema.parse(
+      await invoke("update_agent_team_todo", {
+        input: {
+          ownerUserId, teamId, todoId: input.todoId,
+          expectedUpdatedAtUnixMs: input.expectedUpdatedAtUnixMs,
+          title: input.title, detail: input.detail, priority: input.priority,
+          dependencyIds: input.dependencyIds, executionContract: null,
+        },
+      }),
+    );
+  }
+
+  async reorderTeamTodos(ownerUserId: string, teamId: string, todoIds: string[]) {
+    return agentTeamTodoListSchema.parse(
+      await invoke("reorder_agent_team_todos", { input: { ownerUserId, teamId, todoIds } }),
+    );
+  }
+
+  async cancelTeamTodo(
+    ownerUserId: string,
+    teamId: string,
+    todoId: string,
+    expectedUpdatedAtUnixMs: number,
+  ) {
+    return agentTeamTodoSchema.parse(
+      await invoke("cancel_agent_team_todo", {
+        input: { ownerUserId, teamId, todoId, expectedUpdatedAtUnixMs },
+      }),
     );
   }
 

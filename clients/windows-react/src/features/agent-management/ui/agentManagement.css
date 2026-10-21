@@ -175,6 +175,77 @@
 .agent-team-assets__state { display: flex; min-height: 150px; align-items: center; justify-content: center; flex-direction: column; gap: 5px; color: var(--secondary); font-size: 9px; text-align: center; }
 .agent-team-assets__state strong { color: var(--primary); font-size: 11px; }
 .agent-team-assets__state.is-error strong { color: #ff3b30; }
+.agent-team-todos { display:flex; min-height:0; flex:1; flex-direction:column; }
+.agent-team-todos__toolbar { display:flex; flex:none; align-items:center; justify-content:space-between; gap:16px; border-bottom:1px solid var(--separator); padding:10px 18px; background:rgba(255,255,255,.52); }
+.agent-team-todos__toolbar > div { display:grid; gap:2px; }
+.agent-team-todos__toolbar > div:last-child { display:flex; grid-auto-flow:column; align-items:center; gap:6px; }
+.agent-team-todos__toolbar strong { font-size:10.5px; }
+.agent-team-todos__toolbar span { color:var(--secondary); font-size:8.5px; }
+.agent-team-todos__toolbar button { min-height:27px; border:0; border-radius:7px; padding:5px 9px; color:var(--accent); background:rgba(10,132,255,.09); font-size:9px; cursor:pointer; }
+.agent-team-todos__toolbar button:disabled { opacity:.4; cursor:default; }
+.agent-team-todos__board { display:grid; min-height:0; flex:1; grid-template-columns:repeat(4,minmax(190px,1fr)); gap:8px; overflow:auto; padding:12px 14px 16px; background:rgba(246,246,248,.55); }
+.agent-team-todo-column { display:flex; min-height:150px; flex-direction:column; overflow:hidden; border:1px solid rgba(60,60,67,.08); border-radius:13px; background:rgba(255,255,255,.58); }
+.agent-team-todo-column > header { display:flex; flex:none; align-items:center; justify-content:space-between; gap:8px; border-bottom:1px solid rgba(60,60,67,.07); padding:9px 10px; }
+.agent-team-todo-column > header > div { display:grid; gap:1px; }
+.agent-team-todo-column > header strong { font-size:9.5px; }
+.agent-team-todo-column > header small { color:var(--secondary); font-size:7.5px; }
+.agent-team-todo-column > header > span { min-width:20px; border-radius:999px; padding:2px 6px; color:var(--secondary); background:rgba(120,120,128,.10); font-size:8px; font-weight:650; text-align:center; }
+.agent-team-todo-column > div { display:grid; align-content:start; gap:7px; overflow:auto; padding:8px; }
+.agent-team-todo-card { display:grid; gap:7px; border:1px solid rgba(60,60,67,.08); border-radius:10px; padding:9px; background:rgba(255,255,255,.91); box-shadow:0 2px 8px rgba(0,0,0,.025); }
+.agent-team-todo-card.is-in_progress { border-color:rgba(48,209,88,.25); box-shadow:0 0 0 1px rgba(48,209,88,.05),0 3px 10px rgba(0,0,0,.03); }
+.agent-team-todo-card.is-blocked { border-color:rgba(255,159,10,.27); }
+.agent-team-todo-card > header { display:flex; align-items:center; gap:5px; }
+.agent-team-todo-card > header span,.agent-team-todo-card > header em { border-radius:999px; padding:2px 5px; color:var(--secondary); background:rgba(120,120,128,.09); font-size:7px; font-style:normal; }
+.agent-team-todo-card > header em { overflow:hidden; margin-left:auto; text-overflow:ellipsis; white-space:nowrap; }
+.agent-team-todo-card > button { display:grid; gap:3px; border:0; padding:0; color:var(--primary); background:transparent; text-align:left; cursor:pointer; }
+.agent-team-todo-card > button strong { font-size:9.5px; line-height:1.35; }
+.agent-team-todo-card > button p { display:-webkit-box; overflow:hidden; margin:0; color:var(--secondary); font-size:8px; line-height:1.45; -webkit-box-orient:vertical; -webkit-line-clamp:3; }
+.agent-team-todo-card > small { color:var(--tertiary); font-size:7.5px; }
+.agent-team-todo-card__notice,.agent-team-todo-card__result { border-radius:7px; padding:6px 7px; font-size:7.5px; line-height:1.4; }
+.agent-team-todo-card__notice { color:#9b5a00; background:rgba(255,159,10,.10); }
+.agent-team-todo-card__result { color:#2467b1; background:rgba(10,132,255,.08); }
+.agent-team-todo-card > footer { display:flex; align-items:center; gap:3px; border-top:1px solid rgba(60,60,67,.06); padding-top:6px; }
+.agent-team-todo-card > footer button { border:0; border-radius:5px; padding:3px 5px; color:var(--accent); background:rgba(10,132,255,.08); font-size:7.5px; cursor:pointer; }
+.agent-team-todo-card > footer button.is-danger { color:#c9342d; background:rgba(255,59,48,.08); }
+.agent-team-todo-card > footer button:disabled { opacity:.35; cursor:default; }
+.agent-team-todo-card > footer span { color:#168438; font-size:7.5px; }
+.agent-team-todo-card > footer time { margin-left:auto; color:var(--tertiary); font-size:7px; }
+.agent-team-todo-column__empty,.agent-team-todos__state { display:grid; min-height:100px; place-content:center; justify-items:center; gap:5px; color:var(--secondary); font-size:9px; text-align:center; }
+.agent-team-todos__state { flex:1; }
+.agent-team-todos__state strong { color:var(--primary); font-size:11px; }
+.agent-team-todos__state.is-error strong { color:#ff3b30; }
+.agent-team-todo-editor { display:flex; width:min(620px,calc(100vw - 48px)); max-height:min(760px,calc(100vh - 48px)); flex-direction:column; overflow:hidden; border:1px solid rgba(255,255,255,.72); border-radius:14px; background:rgba(250,250,252,.98); box-shadow:0 24px 70px rgba(0,0,0,.23); }
+.agent-team-todo-editor > header,.agent-team-todo-editor > footer { display:flex; flex:none; align-items:center; justify-content:space-between; gap:12px; padding:12px 15px; }
+.agent-team-todo-editor > header { border-bottom:1px solid var(--separator); }
+.agent-team-todo-editor > header div { display:grid; gap:2px; }
+.agent-team-todo-editor > header span { color:var(--accent); font-size:8px; font-weight:650; }
+.agent-team-todo-editor h2 { margin:0; font-size:13px; }
+.agent-team-todo-editor > header > button { width:25px; height:25px; border:0; border-radius:50%; color:var(--secondary); background:rgba(120,120,128,.12); font-size:16px; cursor:pointer; }
+.agent-team-todo-editor__body { display:grid; gap:12px; overflow:auto; padding:15px; }
+.agent-team-todo-editor__body > label { display:grid; gap:5px; color:var(--secondary); font-size:8.5px; font-weight:620; }
+.agent-team-todo-editor input,.agent-team-todo-editor select,.agent-team-todo-editor textarea { box-sizing:border-box; width:100%; border:1px solid rgba(60,60,67,.15); border-radius:8px; padding:8px 9px; color:var(--primary); background:white; font:inherit; font-weight:450; outline:none; }
+.agent-team-todo-editor input:focus,.agent-team-todo-editor select:focus,.agent-team-todo-editor textarea:focus { border-color:rgba(10,132,255,.55); box-shadow:0 0 0 3px rgba(10,132,255,.10); }
+.agent-team-todo-editor textarea { resize:vertical; line-height:1.45; }
+.agent-team-todo-editor__priority { display:grid; grid-template-columns:minmax(0,1fr) 34px; align-items:center; gap:8px; }
+.agent-team-todo-editor__priority input { border:0; box-shadow:none; padding:0; }
+.agent-team-todo-editor__priority strong { border-radius:7px; padding:5px; color:var(--accent); background:rgba(10,132,255,.09); font-size:9px; text-align:center; }
+.agent-team-todo-editor fieldset { display:grid; gap:5px; border:1px solid rgba(60,60,67,.09); border-radius:10px; margin:0; padding:9px; }
+.agent-team-todo-editor legend { padding:0 4px; color:var(--secondary); font-size:8.5px; font-weight:620; }
+.agent-team-todo-editor fieldset label { display:grid; grid-template-columns:14px minmax(0,1fr) auto; align-items:center; gap:7px; border-radius:7px; padding:6px; background:rgba(120,120,128,.055); font-size:8.5px; }
+.agent-team-todo-editor fieldset input { width:13px; height:13px; padding:0; }
+.agent-team-todo-editor fieldset em { color:var(--secondary); font-size:7.5px; font-style:normal; }
+.agent-team-todo-editor fieldset p { margin:4px; color:var(--secondary); font-size:8px; }
+.agent-team-todo-editor__contract { border-radius:10px; padding:10px; background:rgba(10,132,255,.065); }
+.agent-team-todo-editor__contract > strong { font-size:9px; }
+.agent-team-todo-editor__contract dl { display:grid; gap:6px; margin:8px 0 0; }
+.agent-team-todo-editor__contract dl > div { display:grid; grid-template-columns:42px minmax(0,1fr); gap:8px; }
+.agent-team-todo-editor__contract dt { color:var(--secondary); font-size:8px; }
+.agent-team-todo-editor__contract dd { margin:0; font-size:8px; line-height:1.4; }
+.agent-team-todo-editor > footer { justify-content:flex-end; border-top:1px solid var(--separator); }
+.agent-team-todo-editor > footer button { min-width:62px; min-height:27px; border:0; border-radius:7px; padding:5px 10px; color:var(--primary); background:rgba(120,120,128,.10); font-size:8.5px; cursor:pointer; }
+.agent-team-todo-editor > footer button.primary-button { color:white; background:var(--accent); }
+.agent-team-todo-editor > footer button:disabled { opacity:.4; cursor:default; }
+@media (max-width:980px) { .agent-team-todos__board { grid-template-columns:repeat(2,minmax(220px,1fr)); } }
 .agent-team-asset-editor,.agent-team-asset-history { display: flex; width: min(900px,calc(100vw - 48px)); height: min(620px,calc(100vh - 48px)); overflow: hidden; flex-direction: column; border: 1px solid rgba(60,60,67,.16); border-radius: 16px; background: rgba(248,248,250,.98); box-shadow: 0 24px 70px rgba(0,0,0,.22); }
 .agent-team-asset-editor > header,.agent-team-asset-history > header { display: flex; min-height: 58px; flex: none; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--separator); padding: 0 18px; background: rgba(255,255,255,.74); }
 .agent-team-asset-editor > header h2,.agent-team-asset-editor > header p,.agent-team-asset-history > header h2,.agent-team-asset-history > header p { margin: 0; }

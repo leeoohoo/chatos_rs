@@ -603,6 +603,73 @@ export const agentTeamRunHistorySnapshotSchema = z.object({
   }
 });
 
+export const agentTeamTodoExecutionContractSchema = z.object({
+  objective: z.string().trim().min(1).max(8_000),
+  scope: z.string().max(16_000),
+  expectedOutputs: z.array(z.string().trim().min(1).max(4_000)).min(1).max(64),
+  acceptanceCriteria: z.array(z.string().trim().min(1).max(4_000)).min(1).max(64),
+  constraints: z.array(z.string().trim().min(1).max(4_000)).max(64),
+}).strict();
+
+export const agentTeamTodoExecutionPlanSchema = z.object({
+  requiresExecution: z.boolean(),
+  builtinCapabilities: z.array(z.enum(["project_read", "project_write", "terminal"])).max(3),
+  plugins: z.array(z.object({
+    pluginId: z.string().trim().min(1).max(512),
+    componentKey: z.string().trim().min(1).max(512),
+    displayName: z.string().trim().min(1).max(240),
+    reason: z.string().max(1_000),
+  }).strict()).max(32),
+  selectionRevision: z.string().trim().min(1).max(512),
+  selectedAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((plan, context) => {
+  if (new Set(plan.builtinCapabilities).size !== plan.builtinCapabilities.length) {
+    context.addIssue({ code: "custom", message: "团队任务内建能力不能重复。", path: ["builtinCapabilities"] });
+  }
+  if (!plan.requiresExecution && plan.builtinCapabilities.some((capability) => capability !== "project_read")) {
+    context.addIssue({ code: "custom", message: "非执行任务不能申请写入或终端能力。", path: ["builtinCapabilities"] });
+  }
+});
+
+export const agentTeamTodoSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  agentId: z.string().trim().min(1).max(512),
+  agentName: z.string().trim().min(1).max(120),
+  teamId: z.string().uuid(),
+  sourceRoomId: z.string().trim().min(1).max(512).nullable(),
+  sourceMessageId: z.string().trim().min(1).max(512).nullable(),
+  title: z.string().trim().min(1).max(500),
+  detail: z.string().max(16_000),
+  priority: z.number().int().min(0).max(100),
+  sortOrder: z.number().int().nonnegative(),
+  status: z.enum(["pending", "in_progress", "blocked", "completed", "cancelled"]),
+  blockedReason: z.string().max(8_000),
+  result: z.string().max(16_000),
+  executionContract: agentTeamTodoExecutionContractSchema,
+  executionPlan: agentTeamTodoExecutionPlanSchema,
+  dependencyIds: z.array(z.string().trim().min(1).max(512)).max(64),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  updatedAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((todo, context) => {
+  if (todo.updatedAtUnixMs < todo.createdAtUnixMs) {
+    context.addIssue({ code: "custom", message: "团队任务更新时间不能早于创建时间。", path: ["updatedAtUnixMs"] });
+  }
+  if (todo.dependencyIds.includes(todo.id) || new Set(todo.dependencyIds).size !== todo.dependencyIds.length) {
+    context.addIssue({ code: "custom", message: "团队任务依赖不能重复或指向自身。", path: ["dependencyIds"] });
+  }
+});
+
+export const agentTeamTodoListSchema = z.array(agentTeamTodoSchema).max(1_000)
+  .superRefine((todos, context) => {
+    const ids = new Set<string>();
+    todos.forEach((todo, index) => {
+      if (ids.has(todo.id)) {
+        context.addIssue({ code: "custom", message: "团队任务不能重复。", path: [index, "id"] });
+      }
+      ids.add(todo.id);
+    });
+  });
+
 export const agentTeamAssetCategorySchema = z.enum([
   "overview", "current_progress", "tech_stack", "architecture",
   "conventions", "decision", "reference",
@@ -731,6 +798,16 @@ export interface SaveAgentTeamAssetInput {
   expectedRevision: number | null;
 }
 
+export interface SaveAgentTeamTodoInput {
+  todoId: string | null;
+  agentId: string;
+  title: string;
+  detail: string;
+  priority: number;
+  dependencyIds: string[];
+  expectedUpdatedAtUnixMs: number | null;
+}
+
 export type ProjectRequirementSurveyAnswers = Record<
   string,
   z.infer<typeof projectRequirementSurveyAnswerSchema>
@@ -743,6 +820,7 @@ export type QueuedAgentTeamMessage = z.infer<typeof queuedAgentTeamMessageSchema
 export type DispatchedAgentTeamDelivery = z.infer<typeof dispatchedAgentTeamDeliverySchema>;
 export type AgentTeamRunSummary = z.infer<typeof agentTeamRunSummarySchema>;
 export type AgentTeamRunHistorySnapshot = z.infer<typeof agentTeamRunHistorySnapshotSchema>;
+export type AgentTeamTodo = z.infer<typeof agentTeamTodoSchema>;
 export type AgentTeamAssetCategory = z.infer<typeof agentTeamAssetCategorySchema>;
 export type AgentTeamAsset = z.infer<typeof agentTeamAssetSchema>;
 export type AgentTeamAssetRevision = z.infer<typeof agentTeamAssetRevisionSchema>;
