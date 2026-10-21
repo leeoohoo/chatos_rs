@@ -603,6 +603,66 @@ export const agentTeamRunHistorySnapshotSchema = z.object({
   }
 });
 
+export const agentTeamAssetCategorySchema = z.enum([
+  "overview", "current_progress", "tech_stack", "architecture",
+  "conventions", "decision", "reference",
+]);
+
+export const agentTeamAssetSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  teamId: z.string().uuid(),
+  category: agentTeamAssetCategorySchema,
+  title: z.string().trim().min(1).max(240),
+  markdown: z.string().max(128_000),
+  revision: z.number().int().positive(),
+  status: z.enum(["active", "archived"]),
+  createdByAgentId: z.string().trim().min(1).max(512).nullable(),
+  updatedByAgentId: z.string().trim().min(1).max(512).nullable(),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  updatedAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((asset, context) => {
+  if (asset.updatedAtUnixMs < asset.createdAtUnixMs) {
+    context.addIssue({ code: "custom", message: "团队资产更新时间不能早于创建时间。", path: ["updatedAtUnixMs"] });
+  }
+});
+
+export const agentTeamAssetListSchema = z.array(agentTeamAssetSchema).max(1_000)
+  .superRefine((assets, context) => {
+    const identities = new Set<string>();
+    assets.forEach((asset, index) => {
+      if (asset.status !== "active") {
+        context.addIssue({ code: "custom", message: "活动资产列表不能包含已归档资产。", path: [index, "status"] });
+      }
+      if (identities.has(asset.id)) {
+        context.addIssue({ code: "custom", message: "团队共享资产不能重复。", path: [index, "id"] });
+      }
+      identities.add(asset.id);
+    });
+  });
+
+export const agentTeamAssetRevisionSchema = z.object({
+  assetId: z.string().trim().min(1).max(512),
+  revision: z.number().int().positive(),
+  title: z.string().trim().min(1).max(240),
+  markdown: z.string().max(128_000),
+  editorAgentId: z.string().trim().min(1).max(512).nullable(),
+  createdAtUnixMs: z.number().int().nonnegative(),
+}).strict();
+
+export const agentTeamAssetRevisionListSchema = z.array(agentTeamAssetRevisionSchema).max(500)
+  .superRefine((revisions, context) => {
+    const identities = new Set<number>();
+    revisions.forEach((revision, index) => {
+      if (identities.has(revision.revision)) {
+        context.addIssue({ code: "custom", message: "团队资产版本不能重复。", path: [index, "revision"] });
+      }
+      identities.add(revision.revision);
+      if (index > 0 && revisions[index - 1]!.revision <= revision.revision) {
+        context.addIssue({ code: "custom", message: "团队资产版本必须按新到旧排列。", path: [index, "revision"] });
+      }
+    });
+  });
+
 export interface CreateAgentTeamInput {
   projectId: string;
   name: string;
@@ -614,6 +674,14 @@ export interface UpdateAgentTeamMemberInput {
   responsibility: string;
 }
 
+export interface SaveAgentTeamAssetInput {
+  assetId: string | null;
+  category: z.infer<typeof agentTeamAssetCategorySchema>;
+  title: string;
+  markdown: string;
+  expectedRevision: number | null;
+}
+
 export type AgentTeamSummary = z.infer<typeof agentTeamSummarySchema>;
 export type AgentTeamDetail = z.infer<typeof agentTeamDetailSchema>;
 export type AgentTeamConversationSnapshot = z.infer<typeof agentTeamConversationSnapshotSchema>;
@@ -621,6 +689,9 @@ export type QueuedAgentTeamMessage = z.infer<typeof queuedAgentTeamMessageSchema
 export type DispatchedAgentTeamDelivery = z.infer<typeof dispatchedAgentTeamDeliverySchema>;
 export type AgentTeamRunSummary = z.infer<typeof agentTeamRunSummarySchema>;
 export type AgentTeamRunHistorySnapshot = z.infer<typeof agentTeamRunHistorySnapshotSchema>;
+export type AgentTeamAssetCategory = z.infer<typeof agentTeamAssetCategorySchema>;
+export type AgentTeamAsset = z.infer<typeof agentTeamAssetSchema>;
+export type AgentTeamAssetRevision = z.infer<typeof agentTeamAssetRevisionSchema>;
 
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",

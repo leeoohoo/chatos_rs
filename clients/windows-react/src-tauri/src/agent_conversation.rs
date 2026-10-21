@@ -138,6 +138,48 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_running_manager_delivery_per_agent
 CREATE UNIQUE INDEX IF NOT EXISTS one_running_executor_delivery_per_agent
     ON project_agent_deliveries(owner_user_id, target_agent_id)
     WHERE status = 'running' AND trigger_kind = 'todo';
+CREATE TABLE IF NOT EXISTS local_agent_team_assets (
+    owner_user_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    team_room_id TEXT NOT NULL,
+    category TEXT NOT NULL CHECK(category IN (
+        'overview', 'current_progress', 'tech_stack', 'architecture',
+        'conventions', 'decision', 'reference'
+    )),
+    title TEXT NOT NULL,
+    markdown TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    status TEXT NOT NULL CHECK(status IN ('active', 'archived')),
+    created_by_agent_id TEXT,
+    updated_by_agent_id TEXT,
+    created_at_unix_ms INTEGER NOT NULL,
+    updated_at_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, team_room_id)
+        REFERENCES project_agent_rooms(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, created_by_agent_id)
+        REFERENCES local_agent_profiles(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, updated_by_agent_id)
+        REFERENCES local_agent_profiles(owner_user_id, id)
+);
+CREATE INDEX IF NOT EXISTS local_agent_team_assets_team
+    ON local_agent_team_assets(
+        owner_user_id, team_room_id, status, category, updated_at_unix_ms
+    );
+CREATE TABLE IF NOT EXISTS local_agent_team_asset_revisions (
+    owner_user_id TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    title TEXT NOT NULL,
+    markdown TEXT NOT NULL,
+    editor_agent_id TEXT,
+    created_at_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY(owner_user_id, asset_id, revision),
+    FOREIGN KEY(owner_user_id, asset_id)
+        REFERENCES local_agent_team_assets(owner_user_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(owner_user_id, editor_agent_id)
+        REFERENCES local_agent_profiles(owner_user_id, id)
+);
 CREATE TABLE IF NOT EXISTS windows_agent_delivery_runs (
     owner_user_id TEXT NOT NULL,
     delivery_id TEXT NOT NULL,
@@ -436,6 +478,54 @@ pub(crate) struct AgentTeamRunHistorySnapshot {
     failed_delivery_count: i64,
     cancelled_delivery_count: i64,
     runs: Vec<AgentTeamRunSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamAsset {
+    id: String,
+    team_id: String,
+    category: String,
+    title: String,
+    markdown: String,
+    revision: i64,
+    status: String,
+    created_by_agent_id: Option<String>,
+    updated_by_agent_id: Option<String>,
+    created_at_unix_ms: i64,
+    updated_at_unix_ms: i64,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamAssetRevision {
+    asset_id: String,
+    revision: i64,
+    title: String,
+    markdown: String,
+    editor_agent_id: Option<String>,
+    created_at_unix_ms: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SaveAgentTeamAssetInput {
+    owner_user_id: String,
+    team_id: String,
+    asset_id: Option<String>,
+    category: String,
+    title: String,
+    markdown: String,
+    expected_revision: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ArchiveAgentTeamAssetInput {
+    owner_user_id: String,
+    team_id: String,
+    asset_id: String,
+    expected_revision: i64,
 }
 
 impl AgentConversationStore {
@@ -1526,6 +1616,314 @@ impl AgentConversationStore {
         })
     }
 
+    fn list_project_team_assets(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+    ) -> Result<Vec<AgentTeamAsset>, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        require_active_project_team(&connection, owner_user_id, team_id)?;
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT id, team_room_id, category, title, markdown, revision, status,
+                       created_by_agent_id, updated_by_agent_id,
+                       created_at_unix_ms, updated_at_unix_ms
+                FROM local_agent_team_assets
+                WHERE owner_user_id = ?1 AND team_room_id = ?2 AND status = 'active'
+                ORDER BY category, updated_at_unix_ms DESC, id
+                "#,
+            )
+            .map_err(|_| team_store_error())?;
+        let rows = statement
+            .query_map(params![owner_user_id, team_id], map_team_asset)
+            .map_err(|_| team_store_error())?;
+        let assets = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| team_store_error())?;
+        for asset in &assets {
+            validate_team_asset(asset)?;
+        }
+        Ok(assets)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn save_project_team_asset(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        asset_id: Option<&str>,
+        category: &str,
+        title: &str,
+        markdown: &str,
+        expected_revision: Option<i64>,
+        now_unix_ms: i64,
+    ) -> Result<AgentTeamAsset, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        if let Some(asset_id) = asset_id {
+            validate_identifier(asset_id).map_err(|_| invalid_team_asset_input())?;
+        }
+        validate_team_asset_category(category)?;
+        validate_text(title, 240, false).map_err(|_| invalid_team_asset_input())?;
+        validate_text(markdown, 128_000, true).map_err(|_| invalid_team_asset_input())?;
+        if now_unix_ms < 0 || expected_revision.is_some_and(|revision| revision <= 0) {
+            return Err(invalid_team_asset_input());
+        }
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        require_active_project_team(&transaction, owner_user_id, team_id)?;
+        let resolved_id = asset_id
+            .map(str::to_owned)
+            .unwrap_or_else(|| identifier("asset"));
+        let existing = transaction
+            .query_row(
+                r#"
+                SELECT id, team_room_id, category, title, markdown, revision, status,
+                       created_by_agent_id, updated_by_agent_id,
+                       created_at_unix_ms, updated_at_unix_ms
+                FROM local_agent_team_assets
+                WHERE owner_user_id = ?1 AND team_room_id = ?2 AND id = ?3
+                LIMIT 1
+                "#,
+                params![owner_user_id, team_id, resolved_id],
+                map_team_asset,
+            )
+            .optional()
+            .map_err(|_| team_store_error())?;
+        let saved = if let Some(existing) = existing {
+            if existing.status != "active" || expected_revision != Some(existing.revision) {
+                return Err(team_asset_conflict());
+            }
+            let revision = existing.revision + 1;
+            let updated_at_unix_ms = now_unix_ms.max(existing.created_at_unix_ms);
+            let changed = transaction
+                .execute(
+                    r#"
+                    UPDATE local_agent_team_assets
+                    SET category = ?1, title = ?2, markdown = ?3, revision = ?4,
+                        updated_by_agent_id = NULL, updated_at_unix_ms = ?5
+                    WHERE owner_user_id = ?6 AND team_room_id = ?7 AND id = ?8
+                      AND status = 'active' AND revision = ?9
+                    "#,
+                    params![
+                        category,
+                        title,
+                        markdown,
+                        revision,
+                        updated_at_unix_ms,
+                        owner_user_id,
+                        team_id,
+                        resolved_id,
+                        existing.revision,
+                    ],
+                )
+                .map_err(|_| team_store_error())?;
+            if changed != 1 {
+                return Err(team_asset_conflict());
+            }
+            AgentTeamAsset {
+                id: resolved_id,
+                team_id: team_id.to_owned(),
+                category: category.to_owned(),
+                title: title.to_owned(),
+                markdown: markdown.to_owned(),
+                revision,
+                status: "active".into(),
+                created_by_agent_id: existing.created_by_agent_id,
+                updated_by_agent_id: None,
+                created_at_unix_ms: existing.created_at_unix_ms,
+                updated_at_unix_ms,
+            }
+        } else {
+            if asset_id.is_some() || expected_revision.is_some() {
+                return Err("团队共享资产不存在。".into());
+            }
+            transaction
+                .execute(
+                    r#"
+                    INSERT INTO local_agent_team_assets (
+                        owner_user_id, id, team_room_id, category, title, markdown,
+                        revision, status, created_by_agent_id, updated_by_agent_id,
+                        created_at_unix_ms, updated_at_unix_ms
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 'active', NULL, NULL, ?7, ?7)
+                    "#,
+                    params![
+                        owner_user_id,
+                        resolved_id,
+                        team_id,
+                        category,
+                        title,
+                        markdown,
+                        now_unix_ms,
+                    ],
+                )
+                .map_err(|_| team_store_error())?;
+            AgentTeamAsset {
+                id: resolved_id,
+                team_id: team_id.to_owned(),
+                category: category.to_owned(),
+                title: title.to_owned(),
+                markdown: markdown.to_owned(),
+                revision: 1,
+                status: "active".into(),
+                created_by_agent_id: None,
+                updated_by_agent_id: None,
+                created_at_unix_ms: now_unix_ms,
+                updated_at_unix_ms: now_unix_ms,
+            }
+        };
+        validate_team_asset(&saved)?;
+        transaction
+            .execute(
+                r#"
+                INSERT INTO local_agent_team_asset_revisions (
+                    owner_user_id, asset_id, revision, title, markdown,
+                    editor_agent_id, created_at_unix_ms
+                ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)
+                "#,
+                params![
+                    owner_user_id,
+                    saved.id,
+                    saved.revision,
+                    saved.title,
+                    saved.markdown,
+                    saved.updated_at_unix_ms,
+                ],
+            )
+            .map_err(|_| team_store_error())?;
+        transaction.commit().map_err(|_| team_store_error())?;
+        Ok(saved)
+    }
+
+    fn archive_project_team_asset(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        asset_id: &str,
+        expected_revision: i64,
+        now_unix_ms: i64,
+    ) -> Result<AgentTeamAsset, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        validate_identifier(asset_id).map_err(|_| invalid_team_asset_input())?;
+        if expected_revision <= 0 || now_unix_ms < 0 {
+            return Err(invalid_team_asset_input());
+        }
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        require_active_project_team(&transaction, owner_user_id, team_id)?;
+        let changed = transaction
+            .execute(
+                r#"
+                UPDATE local_agent_team_assets
+                SET status = 'archived', revision = revision + 1,
+                    updated_by_agent_id = NULL, updated_at_unix_ms = ?1
+                WHERE owner_user_id = ?2 AND team_room_id = ?3 AND id = ?4
+                  AND status = 'active' AND revision = ?5
+                "#,
+                params![
+                    now_unix_ms,
+                    owner_user_id,
+                    team_id,
+                    asset_id,
+                    expected_revision
+                ],
+            )
+            .map_err(|_| team_store_error())?;
+        if changed != 1 {
+            return Err(team_asset_conflict());
+        }
+        let archived = transaction
+            .query_row(
+                r#"
+                SELECT id, team_room_id, category, title, markdown, revision, status,
+                       created_by_agent_id, updated_by_agent_id,
+                       created_at_unix_ms, updated_at_unix_ms
+                FROM local_agent_team_assets
+                WHERE owner_user_id = ?1 AND team_room_id = ?2 AND id = ?3
+                "#,
+                params![owner_user_id, team_id, asset_id],
+                map_team_asset,
+            )
+            .map_err(|_| team_store_error())?;
+        validate_team_asset(&archived)?;
+        transaction
+            .execute(
+                r#"
+                INSERT INTO local_agent_team_asset_revisions (
+                    owner_user_id, asset_id, revision, title, markdown,
+                    editor_agent_id, created_at_unix_ms
+                ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)
+                "#,
+                params![
+                    owner_user_id,
+                    asset_id,
+                    archived.revision,
+                    archived.title,
+                    archived.markdown,
+                    now_unix_ms,
+                ],
+            )
+            .map_err(|_| team_store_error())?;
+        transaction.commit().map_err(|_| team_store_error())?;
+        Ok(archived)
+    }
+
+    fn list_project_team_asset_revisions(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        asset_id: &str,
+    ) -> Result<Vec<AgentTeamAssetRevision>, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        validate_identifier(asset_id).map_err(|_| invalid_team_asset_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        require_active_project_team(&connection, owner_user_id, team_id)?;
+        let belongs = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM local_agent_team_assets WHERE owner_user_id = ?1 \
+                 AND team_room_id = ?2 AND id = ?3)",
+                params![owner_user_id, team_id, asset_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|_| team_store_error())?;
+        if !belongs {
+            return Err("团队共享资产不存在。".into());
+        }
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT asset_id, revision, title, markdown, editor_agent_id, created_at_unix_ms
+                FROM local_agent_team_asset_revisions
+                WHERE owner_user_id = ?1 AND asset_id = ?2
+                ORDER BY revision DESC LIMIT 500
+                "#,
+            )
+            .map_err(|_| team_store_error())?;
+        let rows = statement
+            .query_map(params![owner_user_id, asset_id], |row| {
+                Ok(AgentTeamAssetRevision {
+                    asset_id: row.get(0)?,
+                    revision: row.get(1)?,
+                    title: row.get(2)?,
+                    markdown: row.get(3)?,
+                    editor_agent_id: row.get(4)?,
+                    created_at_unix_ms: row.get(5)?,
+                })
+            })
+            .map_err(|_| team_store_error())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| team_store_error())
+    }
+
     fn next_project_team_delivery(
         &self,
         owner_user_id: &str,
@@ -2473,6 +2871,138 @@ pub(crate) async fn load_agent_team_runs(
 }
 
 #[tauri::command]
+pub(crate) async fn list_agent_team_assets(
+    owner_user_id: String,
+    team_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<Vec<AgentTeamAsset>, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = owner_user_id.clone();
+    let team = team_id.clone();
+    let assets =
+        tauri::async_runtime::spawn_blocking(move || store.list_project_team_assets(&owner, &team))
+            .await
+            .map_err(|_| "团队共享资产读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(assets)
+}
+
+#[tauri::command]
+pub(crate) async fn save_agent_team_asset(
+    input: SaveAgentTeamAssetInput,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentTeamAsset, String> {
+    validate_owner(&input.owner_user_id)?;
+    validate_identifier(&input.team_id).map_err(|_| invalid_team_input())?;
+    if let Some(asset_id) = input.asset_id.as_deref() {
+        validate_identifier(asset_id).map_err(|_| invalid_team_asset_input())?;
+    }
+    validate_team_asset_category(&input.category)?;
+    let title = input.title.trim().to_owned();
+    validate_text(&title, 240, false).map_err(|_| invalid_team_asset_input())?;
+    validate_text(&input.markdown, 128_000, true).map_err(|_| invalid_team_asset_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = input.owner_user_id.clone();
+    let team = input.team_id.clone();
+    let asset_id = input.asset_id.clone();
+    let category = input.category.clone();
+    let markdown = input.markdown.clone();
+    let expected_revision = input.expected_revision;
+    let now = chrono::Utc::now().timestamp_millis().max(0);
+    let asset = tauri::async_runtime::spawn_blocking(move || {
+        store.save_project_team_asset(
+            &owner,
+            &team,
+            asset_id.as_deref(),
+            &category,
+            &title,
+            &markdown,
+            expected_revision,
+            now,
+        )
+    })
+    .await
+    .map_err(|_| "团队共享资产保存任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    Ok(asset)
+}
+
+#[tauri::command]
+pub(crate) async fn archive_agent_team_asset(
+    input: ArchiveAgentTeamAssetInput,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentTeamAsset, String> {
+    validate_owner(&input.owner_user_id)?;
+    validate_identifier(&input.team_id).map_err(|_| invalid_team_input())?;
+    validate_identifier(&input.asset_id).map_err(|_| invalid_team_asset_input())?;
+    if input.expected_revision <= 0 {
+        return Err(invalid_team_asset_input());
+    }
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = input.owner_user_id.clone();
+    let team = input.team_id.clone();
+    let asset_id = input.asset_id.clone();
+    let revision = input.expected_revision;
+    let now = chrono::Utc::now().timestamp_millis().max(0);
+    let asset = tauri::async_runtime::spawn_blocking(move || {
+        store.archive_project_team_asset(&owner, &team, &asset_id, revision, now)
+    })
+    .await
+    .map_err(|_| "团队共享资产归档任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    Ok(asset)
+}
+
+#[tauri::command]
+pub(crate) async fn list_agent_team_asset_revisions(
+    owner_user_id: String,
+    team_id: String,
+    asset_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<Vec<AgentTeamAssetRevision>, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
+    validate_identifier(&asset_id).map_err(|_| invalid_team_asset_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = owner_user_id.clone();
+    let team = team_id.clone();
+    let selected_asset = asset_id.clone();
+    let revisions = tauri::async_runtime::spawn_blocking(move || {
+        store.list_project_team_asset_revisions(&owner, &team, &selected_asset)
+    })
+    .await
+    .map_err(|_| "团队共享资产版本读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(revisions)
+}
+
+#[tauri::command]
 pub(crate) async fn invite_agent_to_team(
     input: InviteAgentToTeamInput,
     authentication: State<'_, AuthenticationManager>,
@@ -3404,6 +3934,80 @@ fn validate_team_member(member: &AgentTeamMemberSummary) -> Result<(), String> {
     Ok(())
 }
 
+fn map_team_asset(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentTeamAsset> {
+    Ok(AgentTeamAsset {
+        id: row.get(0)?,
+        team_id: row.get(1)?,
+        category: row.get(2)?,
+        title: row.get(3)?,
+        markdown: row.get(4)?,
+        revision: row.get(5)?,
+        status: row.get(6)?,
+        created_by_agent_id: row.get(7)?,
+        updated_by_agent_id: row.get(8)?,
+        created_at_unix_ms: row.get(9)?,
+        updated_at_unix_ms: row.get(10)?,
+    })
+}
+
+fn require_active_project_team(
+    connection: &Connection,
+    owner_user_id: &str,
+    team_id: &str,
+) -> Result<(), String> {
+    let exists = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM project_agent_rooms WHERE owner_user_id = ?1 \
+             AND id = ?2 AND status = 'active' AND conversation_kind = 'project_team')",
+            params![owner_user_id, team_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|_| team_store_error())?;
+    if !exists {
+        return Err("Agent 团队不存在或已停用。".into());
+    }
+    Ok(())
+}
+
+fn validate_team_asset_category(category: &str) -> Result<(), String> {
+    if matches!(
+        category,
+        "overview"
+            | "current_progress"
+            | "tech_stack"
+            | "architecture"
+            | "conventions"
+            | "decision"
+            | "reference"
+    ) {
+        Ok(())
+    } else {
+        Err(invalid_team_asset_input())
+    }
+}
+
+fn validate_team_asset(asset: &AgentTeamAsset) -> Result<(), String> {
+    validate_identifier(&asset.id).map_err(|_| team_store_error())?;
+    validate_identifier(&asset.team_id).map_err(|_| team_store_error())?;
+    validate_team_asset_category(&asset.category).map_err(|_| team_store_error())?;
+    validate_text(&asset.title, 240, false).map_err(|_| team_store_error())?;
+    validate_text(&asset.markdown, 128_000, true).map_err(|_| team_store_error())?;
+    if !matches!(asset.status.as_str(), "active" | "archived")
+        || asset.revision <= 0
+        || asset.created_at_unix_ms < 0
+        || asset.updated_at_unix_ms < asset.created_at_unix_ms
+    {
+        return Err(team_store_error());
+    }
+    if let Some(agent_id) = asset.created_by_agent_id.as_deref() {
+        validate_agent_identifier(agent_id).map_err(|_| team_store_error())?;
+    }
+    if let Some(agent_id) = asset.updated_by_agent_id.as_deref() {
+        validate_agent_identifier(agent_id).map_err(|_| team_store_error())?;
+    }
+    Ok(())
+}
+
 fn validate_team_execution_binding(binding: &TeamExecutionBinding) -> Result<(), String> {
     let agent = &binding.agent;
     validate_identifier(&agent.room_id).map_err(|_| team_store_error())?;
@@ -3484,6 +4088,14 @@ fn invalid_team_input() -> String {
 
 fn invalid_team_message() -> String {
     "Agent 团队消息无效，请检查内容和 @Agent 后重试。".into()
+}
+
+fn invalid_team_asset_input() -> String {
+    "团队共享资产内容无效。".into()
+}
+
+fn team_asset_conflict() -> String {
+    "团队共享资产已被更新，请刷新后重试。".into()
 }
 
 #[cfg(test)]
@@ -3707,6 +4319,82 @@ mod tests {
             .unwrap();
         assert_eq!(removed.team.default_agent_id.as_deref(), Some("agent-2"));
         assert_eq!(removed.team.member_count, 1);
+    }
+
+    #[test]
+    fn project_team_assets_keep_revision_history_and_reject_stale_writes() {
+        let (_directory, store) = store();
+        let team = store
+            .create_project_team("alice", "project-1", "Alpha 团队", "交付 Alpha")
+            .unwrap();
+
+        let created = store
+            .save_project_team_asset(
+                "alice",
+                &team.id,
+                None,
+                "overview",
+                "项目概览",
+                "# Alpha\n\n第一版",
+                None,
+                100,
+            )
+            .unwrap();
+        assert_eq!(created.revision, 1);
+        assert_eq!(
+            store.list_project_team_assets("alice", &team.id).unwrap(),
+            vec![created.clone()]
+        );
+
+        let updated = store
+            .save_project_team_asset(
+                "alice",
+                &team.id,
+                Some(&created.id),
+                "current_progress",
+                "当前进度",
+                "# Alpha\n\n第二版",
+                Some(1),
+                200,
+            )
+            .unwrap();
+        assert_eq!(updated.revision, 2);
+        assert!(store
+            .save_project_team_asset(
+                "alice",
+                &team.id,
+                Some(&created.id),
+                "overview",
+                "过期写入",
+                "不会保存",
+                Some(1),
+                300,
+            )
+            .is_err());
+        let revisions = store
+            .list_project_team_asset_revisions("alice", &team.id, &created.id)
+            .unwrap();
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(revisions[0].revision, 2);
+        assert_eq!(revisions[1].revision, 1);
+
+        let archived = store
+            .archive_project_team_asset("alice", &team.id, &created.id, 2, 300)
+            .unwrap();
+        assert_eq!(archived.status, "archived");
+        assert_eq!(archived.revision, 3);
+        assert!(store
+            .list_project_team_assets("alice", &team.id)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .list_project_team_asset_revisions("alice", &team.id, &created.id)
+                .unwrap()
+                .len(),
+            3
+        );
+        assert!(store.list_project_team_assets("bob", &team.id).is_err());
     }
 
     #[test]

@@ -14,11 +14,15 @@ import {
   queuedAgentTeamMessageSchema,
   dispatchedAgentTeamDeliverySchema,
   agentTeamRunHistorySnapshotSchema,
+  agentTeamAssetListSchema,
+  agentTeamAssetRevisionListSchema,
+  agentTeamAssetSchema,
   agentTeamSummarySchema,
   preparedAgentConversationSchema,
   type AgentProfileMutationInput,
   type CreateAgentTeamInput,
   type UpdateAgentTeamMemberInput,
+  type SaveAgentTeamAssetInput,
 } from "../domain/agentManagement";
 import { z } from "zod";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
@@ -208,6 +212,37 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async loadTeamRuns(ownerUserId: string, teamId: string) {
     return agentTeamRunHistorySnapshotSchema.parse(
       await invoke("load_agent_team_runs", { ownerUserId, teamId }),
+    );
+  }
+
+  async listTeamAssets(ownerUserId: string, teamId: string) {
+    return agentTeamAssetListSchema.parse(
+      await invoke("list_agent_team_assets", { ownerUserId, teamId }),
+    );
+  }
+
+  async saveTeamAsset(ownerUserId: string, teamId: string, input: SaveAgentTeamAssetInput) {
+    return agentTeamAssetSchema.parse(
+      await invoke("save_agent_team_asset", { input: { ownerUserId, teamId, ...input } }),
+    );
+  }
+
+  async archiveTeamAsset(
+    ownerUserId: string,
+    teamId: string,
+    assetId: string,
+    expectedRevision: number,
+  ) {
+    return agentTeamAssetSchema.parse(
+      await invoke("archive_agent_team_asset", {
+        input: { ownerUserId, teamId, assetId, expectedRevision },
+      }),
+    );
+  }
+
+  async listTeamAssetRevisions(ownerUserId: string, teamId: string, assetId: string) {
+    return agentTeamAssetRevisionListSchema.parse(
+      await invoke("list_agent_team_asset_revisions", { ownerUserId, teamId, assetId }),
     );
   }
 

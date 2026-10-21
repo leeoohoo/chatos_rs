@@ -490,6 +490,60 @@ describe("AgentManagementView", () => {
     expect(screen.getByText("已完成团队回复")).toBeVisible();
   });
 
+  it("loads and edits revisioned team shared assets", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
+      name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
+      projectManagerAgentId: null, memberCount: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{ agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20 }],
+    };
+    const asset = {
+      id: "asset-1", teamId: team.id, category: "overview" as const, title: "项目概览",
+      markdown: "# Alpha\n\n第一版", revision: 1, status: "active" as const,
+      createdByAgentId: null, updatedByAgentId: null, createdAtUnixMs: 30, updatedAtUnixMs: 30,
+    };
+    const saveTeamAsset = vi.fn(async (_owner, _team, input) => ({
+      ...asset, category: input.category, title: input.title,
+      markdown: input.markdown, revision: 2, updatedAtUnixMs: 40,
+    }));
+    const port = stubPort({
+      listTeams: vi.fn(async () => [team]),
+      loadTeam: vi.fn(async () => detail),
+      listTeamAssets: vi.fn(async () => [asset]),
+      saveTeamAsset,
+      archiveTeamAsset: vi.fn(async () => ({ ...asset, revision: 2, status: "archived" as const })),
+      listTeamAssetRevisions: vi.fn(async () => [{
+        assetId: asset.id, revision: 1, title: asset.title, markdown: asset.markdown,
+        editorAgentId: null, createdAtUnixMs: 30,
+      }]),
+    });
+    render(
+      <AgentManagementView
+        ownerUserId="owner-1"
+        port={port}
+        projects={[{ id: "project-1", title: "Alpha" }]}
+      />,
+    );
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "团队" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "共享资产" }));
+    const workspace = await screen.findByRole("region", { name: "Agent 团队共享资产" });
+    expect(within(workspace).getAllByText("项目概览")[0]).toBeVisible();
+    fireEvent.click(within(workspace).getByRole("button", { name: "编辑" }));
+    const editor = await screen.findByRole("dialog", { name: "编辑共享资产" });
+    fireEvent.change(within(editor).getByLabelText("标题"), { target: { value: "Alpha 项目概览" } });
+    fireEvent.click(within(editor).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveTeamAsset).toHaveBeenCalledWith("owner-1", team.id, {
+      assetId: "asset-1", category: "overview", title: "Alpha 项目概览",
+      markdown: "# Alpha\n\n第一版", expectedRevision: 1,
+    }));
+    expect(await within(workspace).findByText("Alpha 项目概览")).toBeVisible();
+  });
+
   it("selects an Agent and loads its existing private-chat activity without opening a conversation", async () => {
     const loadProfileActivity = vi.fn(async () => ({
       agentId: "agent-1",

@@ -287,6 +287,43 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       ownerUserId: "owner-1", teamId: team.id,
     });
 
+    const asset = {
+      id: "asset-1", teamId: team.id, category: "overview", title: "项目概览",
+      markdown: "# Alpha", revision: 1, status: "active",
+      createdByAgentId: null, updatedByAgentId: null,
+      createdAtUnixMs: 40, updatedAtUnixMs: 40,
+    };
+    vi.mocked(invoke).mockResolvedValueOnce([asset]);
+    await adapter.listTeamAssets("owner-1", team.id);
+    expect(invoke).toHaveBeenLastCalledWith("list_agent_team_assets", {
+      ownerUserId: "owner-1", teamId: team.id,
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce({ ...asset, revision: 2 });
+    await adapter.saveTeamAsset("owner-1", team.id, {
+      assetId: "asset-1", category: "overview", title: "项目概览",
+      markdown: "# Alpha v2", expectedRevision: 1,
+    });
+    expect(invoke).toHaveBeenLastCalledWith("save_agent_team_asset", { input: {
+      ownerUserId: "owner-1", teamId: team.id, assetId: "asset-1",
+      category: "overview", title: "项目概览", markdown: "# Alpha v2", expectedRevision: 1,
+    } });
+
+    vi.mocked(invoke).mockResolvedValueOnce({ ...asset, revision: 3, status: "archived" });
+    await adapter.archiveTeamAsset("owner-1", team.id, "asset-1", 2);
+    expect(invoke).toHaveBeenLastCalledWith("archive_agent_team_asset", { input: {
+      ownerUserId: "owner-1", teamId: team.id, assetId: "asset-1", expectedRevision: 2,
+    } });
+
+    vi.mocked(invoke).mockResolvedValueOnce([{
+      assetId: "asset-1", revision: 2, title: "项目概览", markdown: "# Alpha v2",
+      editorAgentId: null, createdAtUnixMs: 50,
+    }]);
+    await adapter.listTeamAssetRevisions("owner-1", team.id, "asset-1");
+    expect(invoke).toHaveBeenLastCalledWith("list_agent_team_asset_revisions", {
+      ownerUserId: "owner-1", teamId: team.id, assetId: "asset-1",
+    });
+
     const input = {
       ownerUserId: "owner-1",
       roomId,

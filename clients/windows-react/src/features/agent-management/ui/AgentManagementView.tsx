@@ -12,6 +12,7 @@ import { useAgentManagementStore } from "../application/agentManagementStore";
 import { type AgentTeamMemberMutation, useAgentTeamStore } from "../application/agentTeamStore";
 import { useAgentTeamConversationStore } from "../application/agentTeamConversationStore";
 import { useAgentTeamRunStore } from "../application/agentTeamRunStore";
+import { useAgentTeamAssetStore } from "../application/agentTeamAssetStore";
 import {
   agentProfessionLabels,
   heartbeatIntervalLabel,
@@ -25,6 +26,8 @@ import {
   type AgentProfileActivitySnapshot,
   type AgentTeamSummary,
   type AgentTeamDetail,
+  type AgentTeamAsset,
+  type AgentTeamAssetCategory,
   type CreateAgentTeamInput,
   type PreparedAgentConversation,
 } from "../domain/agentManagement";
@@ -498,7 +501,7 @@ function AgentTeamCatalog({
   onRetry(): void;
   onSelect(teamId: string): void;
 }) {
-  const [workspaceSection, setWorkspaceSection] = useState<"overview" | "members" | "conversation" | "runs">("members");
+  const [workspaceSection, setWorkspaceSection] = useState<"overview" | "members" | "conversation" | "assets" | "runs">("members");
   useEffect(() => setWorkspaceSection("members"), [selectedTeamId]);
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.title])),
@@ -559,7 +562,7 @@ function AgentTeamCatalog({
             <section
               aria-label={{
                 overview: "Agent 团队总览", members: "Agent 团队成员",
-                conversation: "Agent 团队聊天", runs: "Agent 团队运行",
+                conversation: "Agent 团队聊天", assets: "Agent 团队共享资产", runs: "Agent 团队运行",
               }[workspaceSection]}
               className={workspaceSection === "members"
                 ? "agent-team-members"
@@ -569,13 +572,15 @@ function AgentTeamCatalog({
                 <div>
                   <h3>{detail?.team.id === selectedTeamId
                     ? `${detail.team.name} · ${{
-                      overview: "总览", members: "团队成员", conversation: "团队聊天", runs: "运行",
+                      overview: "总览", members: "团队成员", conversation: "团队聊天",
+                      assets: "共享资产", runs: "运行",
                     }[workspaceSection]}`
                     : "正在读取团队空间"}</h3>
                   <p>{{
                     overview: "查看团队成员、消息与真实执行状态。",
                     members: "同一个 Agent 可以加入多个团队；角色和职责按当前团队隔离。",
                     conversation: "消息、路由与执行状态均来自本机原生事实。",
+                    assets: "维护带版本历史的项目背景、进度、技术栈与架构决策。",
                     runs: "按更新时间查看通讯与任务执行 Run。",
                   }[workspaceSection]}</p>
                 </div>
@@ -585,6 +590,7 @@ function AgentTeamCatalog({
                     <button aria-pressed={workspaceSection === "overview"} onClick={() => setWorkspaceSection("overview")} type="button">总览</button>
                     <button aria-pressed={workspaceSection === "members"} onClick={() => setWorkspaceSection("members")} type="button">成员</button>
                     <button aria-pressed={workspaceSection === "conversation"} onClick={() => setWorkspaceSection("conversation")} type="button">聊天</button>
+                    <button aria-pressed={workspaceSection === "assets"} onClick={() => setWorkspaceSection("assets")} type="button">共享资产</button>
                     <button aria-pressed={workspaceSection === "runs"} onClick={() => setWorkspaceSection("runs")} type="button">运行</button>
                   </div>
                   {workspaceSection === "members" && <button
@@ -610,6 +616,8 @@ function AgentTeamCatalog({
                   port={port}
                   profiles={profiles}
                 />
+              ) : workspaceSection === "assets" && detail?.team.id === selectedTeamId ? (
+                <AgentTeamAssetsView detail={detail} ownerUserId={ownerUserId} port={port} />
               ) : workspaceSection === "runs" && detail?.team.id === selectedTeamId ? (
                 <AgentTeamRunsView
                   detail={detail}
@@ -665,7 +673,7 @@ function AgentTeamOverviewView({
   ownerUserId: string;
   port: AgentManagementPort;
   profiles: AgentProfileSummary[];
-  onOpen(section: "members" | "conversation" | "runs"): void;
+  onOpen(section: "members" | "conversation" | "assets" | "runs"): void;
 }) {
   const snapshot = useAgentTeamRunStore((state) => state.snapshot);
   const isLoading = useAgentTeamRunStore((state) => state.isLoading);
@@ -735,6 +743,231 @@ function AgentTeamOverviewView({
           )) : <div className="agent-team-overview__empty">还没有运行记录</div>}
         </section>
       </div>
+    </div>
+  );
+}
+
+const teamAssetCategoryLabels: Record<AgentTeamAssetCategory, string> = {
+  overview: "项目概览",
+  current_progress: "当前进度",
+  tech_stack: "技术栈",
+  architecture: "架构",
+  conventions: "规范",
+  decision: "决策",
+  reference: "参考资料",
+};
+
+function AgentTeamAssetsView({
+  detail,
+  ownerUserId,
+  port,
+}: {
+  detail: AgentTeamDetail;
+  ownerUserId: string;
+  port: AgentManagementPort;
+}) {
+  const assets = useAgentTeamAssetStore((state) => state.assets);
+  const revisions = useAgentTeamAssetStore((state) => state.revisions);
+  const isLoading = useAgentTeamAssetStore((state) => state.isLoading);
+  const mutationAssetId = useAgentTeamAssetStore((state) => state.mutationAssetId);
+  const loadingRevisionAssetId = useAgentTeamAssetStore((state) => state.loadingRevisionAssetId);
+  const error = useAgentTeamAssetStore((state) => state.error);
+  const activate = useAgentTeamAssetStore((state) => state.activate);
+  const refresh = useAgentTeamAssetStore((state) => state.refresh);
+  const save = useAgentTeamAssetStore((state) => state.save);
+  const archive = useAgentTeamAssetStore((state) => state.archive);
+  const loadRevisions = useAgentTeamAssetStore((state) => state.loadRevisions);
+  const reset = useAgentTeamAssetStore((state) => state.reset);
+  const [expandedIds, setExpandedIds] = useState<string[]>([]);
+  const [editorAsset, setEditorAsset] = useState<AgentTeamAsset | "new" | null>(null);
+  const [historyAsset, setHistoryAsset] = useState<AgentTeamAsset | null>(null);
+  const supportsAssets = Boolean(
+    port.listTeamAssets && port.saveTeamAsset && port.archiveTeamAsset && port.listTeamAssetRevisions,
+  );
+
+  useEffect(() => {
+    if (supportsAssets) void activate(port, ownerUserId, detail.team.id);
+    else reset();
+    return reset;
+  }, [activate, detail.team.id, ownerUserId, port, reset, supportsAssets]);
+
+  if (!supportsAssets) {
+    return (
+      <div className="agent-team-assets__state is-error" role="alert">
+        <strong>当前版本尚未连接团队共享资产</strong>
+        <span>请更新本机客户端后重试。</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="agent-team-assets">
+      <div className="agent-team-assets__toolbar">
+        <div><strong>团队共享资产</strong><span>任务启动时会固定读取当时的 revision。</span></div>
+        <button className="primary-button" onClick={() => setEditorAsset("new")} type="button">＋ 新建资产</button>
+      </div>
+      {error && (
+        <div className="agent-team-conversation__error" role="alert">
+          <span>{error}</span><button onClick={() => void refresh(port)} type="button">刷新</button>
+        </div>
+      )}
+      <div className="agent-team-assets__list">
+        {isLoading && assets.length === 0 ? (
+          <div className="agent-team-assets__state"><span className="mini-spinner" />正在读取共享资产…</div>
+        ) : assets.length === 0 ? (
+          <div className="agent-team-assets__state">
+            <strong>还没有共享资产</strong><span>在这里维护项目背景、进度、技术栈和架构决策。</span>
+          </div>
+        ) : assets.map((asset) => {
+          const expanded = expandedIds.includes(asset.id);
+          return (
+            <article key={asset.id}>
+              <header>
+                <button
+                  aria-expanded={expanded}
+                  onClick={() => setExpandedIds((current) => expanded
+                    ? current.filter((id) => id !== asset.id)
+                    : [...current, asset.id])}
+                  type="button"
+                >
+                  <span aria-hidden="true">{expanded ? "⌄" : "›"}</span>
+                  <strong>{asset.title}</strong>
+                  <em>{teamAssetCategoryLabels[asset.category]}</em>
+                </button>
+                <small>r{asset.revision}</small>
+                <div>
+                  <button onClick={() => setEditorAsset(asset)} type="button">编辑</button>
+                  <button onClick={() => {
+                    setHistoryAsset(asset);
+                    void loadRevisions(port, asset);
+                  }} type="button">版本</button>
+                  <button
+                    disabled={mutationAssetId != null}
+                    onClick={() => void archive(port, asset)}
+                    type="button"
+                  >归档</button>
+                </div>
+              </header>
+              {expanded && <pre>{asset.markdown || "（空文档）"}</pre>}
+            </article>
+          );
+        })}
+      </div>
+      {editorAsset && (
+        <AgentTeamAssetEditor
+          asset={editorAsset === "new" ? null : editorAsset}
+          isSaving={mutationAssetId != null}
+          key={editorAsset === "new" ? "new" : `${editorAsset.id}:${editorAsset.revision}`}
+          onClose={() => setEditorAsset(null)}
+          onSave={async (input) => {
+            if (await save(port, input)) setEditorAsset(null);
+          }}
+        />
+      )}
+      {historyAsset && (
+        <AgentTeamAssetHistory
+          asset={historyAsset}
+          isLoading={loadingRevisionAssetId === historyAsset.id}
+          revisions={revisions[historyAsset.id] ?? []}
+          onClose={() => setHistoryAsset(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AgentTeamAssetEditor({
+  asset,
+  isSaving,
+  onClose,
+  onSave,
+}: {
+  asset: AgentTeamAsset | null;
+  isSaving: boolean;
+  onClose(): void;
+  onSave(input: {
+    assetId: string | null;
+    category: AgentTeamAssetCategory;
+    title: string;
+    markdown: string;
+    expectedRevision: number | null;
+  }): Promise<void>;
+}) {
+  const [category, setCategory] = useState<AgentTeamAssetCategory>(asset?.category ?? "overview");
+  const [title, setTitle] = useState(asset?.title ?? "");
+  const [markdown, setMarkdown] = useState(asset?.markdown ?? "# 项目上下文\n\n");
+  return (
+    <div className="agent-editor-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        aria-label={asset ? "编辑共享资产" : "新建共享资产"}
+        aria-modal="true"
+        className="agent-team-asset-editor"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <header>
+          <div><h2>{asset ? "编辑共享资产" : "新建共享资产"}</h2><p>Markdown 文档 · {asset ? `当前 r${asset.revision}` : "首次保存为 r1"}</p></div>
+          <button aria-label="关闭共享资产编辑器" onClick={onClose} type="button">×</button>
+        </header>
+        <div className="agent-team-asset-editor__body">
+          <label><span>分类</span><select value={category} onChange={(event) => setCategory(event.target.value as AgentTeamAssetCategory)}>
+            {Object.entries(teamAssetCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select></label>
+          <label><span>标题</span><input maxLength={240} onChange={(event) => setTitle(event.target.value)} value={title} /></label>
+          <label><span>Markdown</span><textarea maxLength={128_000} onChange={(event) => setMarkdown(event.target.value)} value={markdown} /></label>
+          <section><strong>预览</strong><pre>{markdown || "（空文档）"}</pre></section>
+        </div>
+        <footer>
+          <button disabled={isSaving} onClick={onClose} type="button">取消</button>
+          <button
+            className="primary-button"
+            disabled={!title.trim() || isSaving}
+            onClick={() => void onSave({
+              assetId: asset?.id ?? null,
+              category,
+              title: title.trim(),
+              markdown,
+              expectedRevision: asset?.revision ?? null,
+            })}
+            type="button"
+          >{isSaving ? "保存中…" : "保存"}</button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function AgentTeamAssetHistory({
+  asset,
+  isLoading,
+  revisions,
+  onClose,
+}: {
+  asset: AgentTeamAsset;
+  isLoading: boolean;
+  revisions: Array<{ revision: number; title: string; markdown: string; createdAtUnixMs: number }>;
+  onClose(): void;
+}) {
+  const [selectedRevision, setSelectedRevision] = useState<number | null>(null);
+  const selected = revisions.find((revision) => revision.revision === selectedRevision) ?? revisions[0];
+  return (
+    <div className="agent-editor-backdrop" role="presentation" onMouseDown={onClose}>
+      <section aria-label="共享资产版本历史" aria-modal="true" className="agent-team-asset-history" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <header><div><h2>版本历史</h2><p>{asset.title}</p></div><button aria-label="关闭共享资产版本历史" onClick={onClose} type="button">×</button></header>
+        <div className="agent-team-asset-history__body">
+          {isLoading && revisions.length === 0 ? <div className="agent-team-assets__state"><span className="mini-spinner" />正在读取版本历史…</div> : revisions.length === 0 ? (
+            <div className="agent-team-assets__state"><strong>没有版本记录</strong><span>保存资产后，历史版本会显示在这里。</span></div>
+          ) : (
+            <>
+              <nav aria-label="共享资产版本">
+                {revisions.map((revision) => <button aria-pressed={selected?.revision === revision.revision} key={revision.revision} onClick={() => setSelectedRevision(revision.revision)} type="button"><strong>r{revision.revision}{revision.revision === asset.revision ? " · 当前" : ""}</strong><span>{revision.title}</span><small>{formatTeamMessageTime(revision.createdAtUnixMs)}</small></button>)}
+              </nav>
+              <section><header><strong>{selected?.title}</strong><span>r{selected?.revision}</span></header><pre>{selected?.markdown}</pre></section>
+            </>
+          )}
+        </div>
+        <footer><button className="primary-button" onClick={onClose} type="button">完成</button></footer>
+      </section>
     </div>
   );
 }

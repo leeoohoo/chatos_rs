@@ -14,6 +14,9 @@ import type {
   QueuedAgentTeamMessage,
   DispatchedAgentTeamDelivery,
   AgentTeamRunHistorySnapshot,
+  AgentTeamAsset,
+  AgentTeamAssetRevision,
+  SaveAgentTeamAssetInput,
   CreateAgentTeamInput,
   UpdateAgentTeamMemberInput,
   PreparedAgentConversation,
@@ -76,6 +79,23 @@ export interface AgentManagementPort {
     agentId: string,
   ): Promise<AgentTeamMemberActivitySnapshot>;
   loadTeamRuns?(ownerUserId: string, teamId: string): Promise<AgentTeamRunHistorySnapshot>;
+  listTeamAssets?(ownerUserId: string, teamId: string): Promise<AgentTeamAsset[]>;
+  saveTeamAsset?(
+    ownerUserId: string,
+    teamId: string,
+    input: SaveAgentTeamAssetInput,
+  ): Promise<AgentTeamAsset>;
+  archiveTeamAsset?(
+    ownerUserId: string,
+    teamId: string,
+    assetId: string,
+    expectedRevision: number,
+  ): Promise<AgentTeamAsset>;
+  listTeamAssetRevisions?(
+    ownerUserId: string,
+    teamId: string,
+    assetId: string,
+  ): Promise<AgentTeamAssetRevision[]>;
   sendConversationDraft?(input: {
     ownerUserId: string;
     roomId: string;
