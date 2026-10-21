@@ -1571,7 +1571,7 @@ fn frozen_plugin_selections(
         .input
         .pointer("/team_executor_context/execution_plan/plugins")
         .and_then(Value::as_array)
-        .filter(|plugins| !plugins.is_empty() && plugins.len() <= 32)
+        .filter(|plugins| plugins.len() <= 32)
         .ok_or_else(plugin_runtime_error)?;
     let mut identities = HashSet::new();
     plugins
@@ -2156,7 +2156,7 @@ pub(crate) fn capability_broker_tool_schemas() -> Vec<Value> {
         json!({
             "type": "function",
             "name": AGENT_SKILL_ACTIVATE_TOOL_NAME,
-            "description": "激活 capability_describe 返回的精确 Plugin skill_ref，并加载核心指令。Skill 不会扩大当前 Todo 的权限。",
+            "description": "激活当前 Run 已披露的精确 Product 或 Plugin skill_ref，并加载核心指令。Skill 不会扩大当前 Todo 的权限。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2169,7 +2169,7 @@ pub(crate) fn capability_broker_tool_schemas() -> Vec<Value> {
         json!({
             "type": "function",
             "name": AGENT_SKILL_READ_RESOURCE_TOOL_NAME,
-            "description": "分页读取一个已激活 Plugin Skill 的参考资料。只能读取激活结果列出的资源。",
+            "description": "分页读取一个已激活 Product 或 Plugin Skill 的参考资料。只能读取激活结果列出的资源。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2244,6 +2244,36 @@ mod tests {
         forged.input["team_executor_context"]["execution_plan"]["plugins"][0]["path"] =
             json!("C:\\private\\plugin.exe");
         assert!(frozen_plugin_selections(&forged).is_err());
+    }
+
+    #[tokio::test]
+    async fn empty_frozen_plugin_plan_returns_an_empty_search_catalog() {
+        let mut context = context();
+        context.input["team_executor_context"]["execution_plan"]["plugins"] = json!([]);
+        assert!(frozen_plugin_selections(&context).unwrap().is_empty());
+
+        let directory = tempfile::tempdir().unwrap();
+        let manager = PluginApplicationManager::new(directory.path().join("app-data"));
+        let host = HostManager::default();
+        let runtime = AgentPluginRuntime::new(
+            directory.path().join("plugins"),
+            directory.path().join("journal"),
+        );
+        let outcome = runtime
+            .execute(
+                &manager,
+                &host,
+                context,
+                "invocation-1",
+                CAPABILITY_SEARCH_TOOL_NAME,
+                &Map::from_iter([("query".into(), json!("document"))]),
+            )
+            .await
+            .unwrap();
+        let LocalAgentToolOutcome::Succeeded { output } = outcome else {
+            panic!("search outcome")
+        };
+        assert_eq!(output["matches"], json!([]));
     }
 
     #[tokio::test]
