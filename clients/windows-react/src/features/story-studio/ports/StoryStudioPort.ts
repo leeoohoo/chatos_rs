@@ -198,11 +198,22 @@ export interface StoryStudioPort {
     baseFingerprint: string;
     resourceIds: string[];
   }): Promise<StoryProject>;
+  confirmImage(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    target: StoryImageImportTarget;
+    imageId: string;
+  }): Promise<StoryProject>;
   confirmLatestFrames(request: StoryPresentationScope & {
     projectId: string;
     baseFingerprint: string;
     segmentId: string;
     useConfirmedLastFrameForVideo: boolean;
+  }): Promise<StoryProject>;
+  clearLastFrame(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    segmentId: string;
   }): Promise<StoryProject>;
   startVideo(request: StoryPresentationScope & {
     projectId: string;

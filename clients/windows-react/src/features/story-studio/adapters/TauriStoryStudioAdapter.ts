@@ -445,6 +445,19 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
     );
   }
 
+  async confirmImage(request: Parameters<StoryStudioPort["confirmImage"]>[0]) {
+    const input = {
+      ...scope(request),
+      confirmation: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        ...imageImportTarget(request.target),
+        imageId: identifierSchema.parse(request.imageId),
+      },
+    };
+    return storyProjectSchema.parse(await invoke("confirm_story_image", { input }));
+  }
+
   async confirmLatestFrames(request: Parameters<StoryStudioPort["confirmLatestFrames"]>[0]) {
     const input = {
       ...scope(request),
@@ -456,6 +469,18 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
       },
     };
     return storyProjectSchema.parse(await invoke("confirm_latest_story_frames", { input }));
+  }
+
+  async clearLastFrame(request: Parameters<StoryStudioPort["clearLastFrame"]>[0]) {
+    const input = {
+      ...scope(request),
+      change: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        segmentId: identifierSchema.parse(request.segmentId),
+      },
+    };
+    return storyProjectSchema.parse(await invoke("clear_story_last_frame", { input }));
   }
 
   async startVideo(request: Parameters<StoryStudioPort["startVideo"]>[0]) {

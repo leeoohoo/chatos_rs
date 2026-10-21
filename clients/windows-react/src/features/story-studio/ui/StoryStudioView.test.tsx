@@ -216,6 +216,49 @@ describe("StoryStudioView", () => {
     expect(screen.getByText("1 个损坏项目已隔离")).toBeVisible();
   });
 
+  it("selects exact image versions and can stop using a tail frame", async () => {
+    const canonical = plannedProject();
+    const images = [
+      { id: "image-a", mimeType: "image/png" as const, contentToken: null, previewUrl: null },
+      { id: "image-b", mimeType: "image/png" as const, contentToken: null, previewUrl: null },
+    ];
+    canonical.props[0]!.media = { images, confirmedImageId: "image-b", generationAttemptId: null };
+    canonical.segments[0]!.lastFrames = { images, confirmedImageId: "image-b", generationAttemptId: null };
+    const confirmImage = vi.fn(async () => ({
+      ...canonical,
+      props: canonical.props.map((value) => ({
+        ...value,
+        media: { ...value.media, confirmedImageId: "image-a" },
+      })),
+    }));
+    const clearLastFrame = vi.fn(async () => ({
+      ...canonical,
+      segments: canonical.segments.map((value) => ({
+        ...value,
+        lastFrames: { ...value.lastFrames, confirmedImageId: null },
+      })),
+    }));
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      confirmImage,
+      clearLastFrame,
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "选择图片版本" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认使用此图" }));
+    await waitFor(() => expect(confirmImage).toHaveBeenCalledWith(expect.objectContaining({
+      target: { kind: "resource", resourceId: "prop-a" },
+      imageId: "image-a",
+    })));
+
+    fireEvent.click(screen.getByRole("button", { name: "取消使用尾帧" }));
+    await waitFor(() => expect(clearLastFrame).toHaveBeenCalledWith(expect.objectContaining({
+      segmentId: "segment-a",
+      baseFingerprint: canonical.baseFingerprint,
+    })));
+  });
+
   it("shows live planning progress without applying the event draft", async () => {
     const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
     let planningListener: ((event: StoryPlanningEvent) => void) | undefined;
@@ -608,7 +651,9 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     generateAssetImage: vi.fn(async () => project()),
     generateFrameImage: vi.fn(async () => project()),
     confirmLatestResourceImages: vi.fn(async () => project()),
+    confirmImage: vi.fn(async () => project()),
     confirmLatestFrames: vi.fn(async () => project()),
+    clearLastFrame: vi.fn(async () => project()),
     startVideo: vi.fn(async () => ({ project: project(), status: "queued", percent: null, terminal: false })),
     pollVideo: vi.fn(async () => ({ project: project(), status: "completed", percent: 100, terminal: true })),
     updateVideoGuidance: vi.fn(async () => project()),

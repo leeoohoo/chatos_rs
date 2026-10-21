@@ -89,7 +89,9 @@ interface StoryStudioState {
   generateAssetImage(storyPort: StoryStudioPort, resourceId: string, userIdeas: string): Promise<void>;
   generateFrameImage(storyPort: StoryStudioPort, segmentId: string, frameRole: "first" | "last", referenceResourceIds: string[], userIdeas: string): Promise<void>;
   confirmLatestResources(storyPort: StoryStudioPort, resourceIds: string[]): Promise<void>;
+  confirmImage(storyPort: StoryStudioPort, target: StoryImageImportTarget, imageId: string): Promise<boolean>;
   confirmLatestFrames(storyPort: StoryStudioPort, segmentId: string, useLastFrame: boolean): Promise<void>;
+  clearLastFrame(storyPort: StoryStudioPort, segmentId: string): Promise<void>;
   startVideo(storyPort: StoryStudioPort, segmentId: string, size: "768P" | "2K", userIdeas: string): Promise<void>;
   resumeVideo(storyPort: StoryStudioPort, segmentId: string): Promise<void>;
   updateVideoGuidance(storyPort: StoryStudioPort, segmentId: string, mode: "first_frame" | "first_and_last_frames" | "previous_video" | "source_video"): Promise<void>;
@@ -864,6 +866,33 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     }
   },
 
+  async confirmImage(storyPort, target, imageId) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().activeMediaTarget) return false;
+    const key = targetKey(target);
+    set({ activeMediaTarget: key, error: null });
+    try {
+      const saved = await storyPort.confirmImage({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        target,
+        imageId,
+      });
+      if (!sameScope(get(), scope)) return false;
+      set((state) => ({
+        projects: replaceProject(state.projects, saved),
+        activeMediaTarget: state.activeMediaTarget === key ? null : state.activeMediaTarget,
+      }));
+      return true;
+    } catch (error) {
+      if (!sameScope(get(), scope)) return false;
+      set({ activeMediaTarget: null, error: errorMessage(error, "图片版本确认失败。") });
+      return false;
+    }
+  },
+
   async confirmLatestFrames(storyPort, segmentId, useLastFrame) {
     const scope = activeScope(get());
     const project = selectedProject(get());
@@ -882,6 +911,30 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ activeMediaTarget: null, error: errorMessage(error, "首尾帧版本确认失败。") });
+    }
+  },
+
+  async clearLastFrame(storyPort, segmentId) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().activeMediaTarget) return;
+    const key = `frame:${segmentId}:last`;
+    set({ activeMediaTarget: key, error: null });
+    try {
+      const saved = await storyPort.clearLastFrame({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        segmentId,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        projects: replaceProject(state.projects, saved),
+        activeMediaTarget: state.activeMediaTarget === key ? null : state.activeMediaTarget,
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ activeMediaTarget: null, error: errorMessage(error, "尾帧取消失败。") });
     }
   },
 
@@ -1192,6 +1245,12 @@ function isActive(
 
 function replaceProject(projects: StoryProject[], project: StoryProject) {
   return projects.map((value) => value.id === project.id ? project : value);
+}
+
+function targetKey(target: StoryImageImportTarget) {
+  return target.kind === "resource"
+    ? `confirm:resource:${target.resourceId}`
+    : `confirm:frame:${target.segmentId}:${target.frameRole}`;
 }
 
 function mergeProjects(current: StoryProject[], incoming: StoryProject[]) {
