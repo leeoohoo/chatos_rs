@@ -536,6 +536,8 @@ struct PetQuickChatTaskInspectorView: View {
     @Environment(\.locale) private var locale
     private let selection: TaskReplySelection
     private let onClose: () -> Void
+    @State private var confirmsRestart = false
+    @State private var confirmsCancellation = false
 
     init(
         selection: TaskReplySelection,
@@ -569,6 +571,36 @@ struct PetQuickChatTaskInspectorView: View {
             viewModel.update(selection: selection)
             viewModel.load()
         }
+        .confirmationDialog(
+            localized("恢复执行这个任务？", english: "Recover this task?"),
+            isPresented: $confirmsRestart,
+            titleVisibility: .visible
+        ) {
+            Button(localized("终止当前运行并重新执行", english: "Stop Current Run and Restart"), role: .destructive) {
+                viewModel.restartActiveTask()
+            }
+            Button(localized("取消", english: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(localized(
+                "之前的点击、导出、授权或文件修改可能已经发生，请确认重复执行是安全的。",
+                english: "Earlier clicks, exports, approvals, or file changes may already have happened. Confirm that repeating them is safe."
+            ))
+        }
+        .confirmationDialog(
+            localized("停止这个任务？", english: "Stop this task?"),
+            isPresented: $confirmsCancellation,
+            titleVisibility: .visible
+        ) {
+            Button(localized("停止任务", english: "Stop Task"), role: .destructive) {
+                viewModel.cancelActiveTask()
+            }
+            Button(localized("取消", english: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(localized(
+                "任务和正在运行的插件进程会被终止；已经发生的外部操作不会自动撤销。",
+                english: "The task and running plugin process will stop. External actions already performed will not be undone."
+            ))
+        }
     }
 
     private var header: some View {
@@ -593,6 +625,36 @@ struct PetQuickChatTaskInspectorView: View {
                 Spacer()
                 if viewModel.isLoading || viewModel.isLoadingModelOutput {
                     ProgressView().controlSize(.small)
+                }
+                if viewModel.canRestartActiveTask || viewModel.canCancelActiveTask {
+                    Menu {
+                        if viewModel.canRestartActiveTask {
+                            Button {
+                                confirmsRestart = true
+                            } label: {
+                                Label(
+                                    localized("恢复执行", english: "Recover Execution"),
+                                    systemImage: "arrow.clockwise.circle"
+                                )
+                            }
+                        }
+                        if viewModel.canCancelActiveTask {
+                            Button(role: .destructive) {
+                                confirmsCancellation = true
+                            } label: {
+                                Label(
+                                    localized("停止任务", english: "Stop Task"),
+                                    systemImage: "stop.circle"
+                                )
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .disabled(viewModel.isRestarting || viewModel.isCancelling)
+                    .help(localized("任务操作", english: "Task Actions"))
                 }
                 Button {
                     viewModel.refresh()

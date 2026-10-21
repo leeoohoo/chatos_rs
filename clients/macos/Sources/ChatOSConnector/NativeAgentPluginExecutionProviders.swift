@@ -529,7 +529,10 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
                 workspaceID: workspaceID,
                 toolName: call.name
             )
-            let normalized = try await NativePluginModelImageNormalizer.normalizeForModel(registered)
+            let imageNormalized = try await NativePluginModelImageNormalizer.normalizeForModel(
+                registered
+            )
+            let normalized = NativePluginModelResultCanonicalizer.canonicalize(imageNormalized)
             let isError = normalized.jsonObject?["isError"]?.jsonBool == true
             return .init(
                 normalized.canonicalJSONString,

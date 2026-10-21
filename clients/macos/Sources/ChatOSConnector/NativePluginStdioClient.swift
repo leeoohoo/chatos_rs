@@ -3,6 +3,12 @@ import Darwin
 import Foundation
 import OSLog
 
+struct NativePluginProgressUpdate: Sendable, Equatable {
+    var progress: Double
+    var total: Double?
+    var message: String?
+}
+
 final class NativePluginOutputBufferBudget: @unchecked Sendable {
     private let lock = NSLock()
     private let maximumBytes: Int
@@ -43,6 +49,8 @@ actor NativePluginStdioClient {
     private struct PendingRequest {
         var continuation: CheckedContinuation<NativeJSONValue, any Error>
         var timeoutBehavior: TimeoutBehavior
+        var progressToken: String?
+        var onProgress: (@Sendable (NativePluginProgressUpdate) async -> Void)?
     }
 
     private let launch: NativePreparedPluginLaunch
@@ -210,13 +218,15 @@ actor NativePluginStdioClient {
     func callTool(
         name: String,
         arguments: NativeJSONValue,
-        timeout: Duration
+        timeout: Duration,
+        onProgress: (@Sendable (NativePluginProgressUpdate) async -> Void)? = nil
     ) async throws -> NativeJSONValue {
         try await request(
             method: "tools/call",
             params: .object(["name": .string(name), "arguments": arguments]),
             timeout: timeout,
-            timeoutBehavior: .terminateProcess
+            timeoutBehavior: .terminateProcess,
+            onProgress: onProgress
         )
     }
 
@@ -229,13 +239,15 @@ actor NativePluginStdioClient {
     func callToolBestEffort(
         name: String,
         arguments: NativeJSONValue,
-        timeout: Duration
+        timeout: Duration,
+        onProgress: (@Sendable (NativePluginProgressUpdate) async -> Void)? = nil
     ) async throws -> NativeJSONValue {
         try await request(
             method: "tools/call",
             params: .object(["name": .string(name), "arguments": arguments]),
             timeout: timeout,
-            timeoutBehavior: .cancelRequest
+            timeoutBehavior: .cancelRequest,
+            onProgress: onProgress
         )
     }
 
@@ -247,23 +259,33 @@ actor NativePluginStdioClient {
         method: String,
         params: NativeJSONValue,
         timeout: Duration,
-        timeoutBehavior: TimeoutBehavior = .terminateProcess
+        timeoutBehavior: TimeoutBehavior = .terminateProcess,
+        onProgress: (@Sendable (NativePluginProgressUpdate) async -> Void)? = nil
     ) async throws -> NativeJSONValue {
         guard !stopped, processID != nil else { throw NativePluginRuntimeError.processUnavailable }
         let requestID = nextRequestID
         nextRequestID += 1
+        let progressToken = onProgress.map { _ in
+            "chatos-plugin-\(requestID)-\(UUID().uuidString.lowercased())"
+        }
+        var requestParams = params.jsonObject ?? [:]
+        if let progressToken {
+            requestParams["_meta"] = .object(["progressToken": .string(progressToken)])
+        }
         let envelope = NativeJSONValue.object([
             "jsonrpc": .string("2.0"),
             "id": .number(Double(requestID)),
             "method": .string(method),
-            "params": params,
+            "params": .object(requestParams),
         ])
         let data = try encodedLine(envelope)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 pending[requestID] = PendingRequest(
                     continuation: continuation,
-                    timeoutBehavior: timeoutBehavior
+                    timeoutBehavior: timeoutBehavior,
+                    progressToken: progressToken,
+                    onProgress: onProgress
                 )
                 do {
                     try input.write(contentsOf: data)
@@ -300,7 +322,7 @@ actor NativePluginStdioClient {
         return data
     }
 
-    private func consume(_ data: Data) {
+    private func consume(_ data: Data) async {
         guard !stopped else { return }
         readBuffer.append(data)
         while let newline = readBuffer.firstIndex(of: 0x0A) {
@@ -326,12 +348,31 @@ actor NativePluginStdioClient {
                 )
                 return
             }
-            guard let object = value.jsonObject,
-                  let idNumber = object["id"]?.jsonNumber else {
-                // Valid server notifications do not have a request id.
+            guard let object = value.jsonObject else { continue }
+            if object["method"]?.jsonString == "notifications/progress",
+               let params = object["params"]?.jsonObject,
+               let token = params["progressToken"]?.jsonString,
+               let request = pending.values.first(where: { $0.progressToken == token }),
+               let onProgress = request.onProgress,
+               let progress = params["progress"]?.jsonNumber {
+                await onProgress(.init(
+                    progress: progress,
+                    total: params["total"]?.jsonNumber,
+                    message: params["message"]?.jsonString
+                ))
                 continue
             }
-            let id = Int(idNumber)
+            guard object["id"] != nil else { continue }
+            guard let idNumber = object["id"]?.jsonNumber,
+                  let id = Int(exactly: idNumber) else {
+                stop(
+                    with: NativePluginRuntimeError.invalidMCPResponse(
+                        "Plugin MCP 返回了无效的响应 ID"
+                    ),
+                    terminateProcess: true
+                )
+                return
+            }
             guard let request = pending.removeValue(forKey: id) else { continue }
             timeoutTasks.removeValue(forKey: id)?.cancel()
             if let error = object["error"]?.jsonObject {
@@ -371,7 +412,7 @@ actor NativePluginStdioClient {
         // call. Merely timing out the continuation leaves the child blocked
         // and every later request queues behind it. Treat a hard timeout as a
         // failed process session and terminate the child so it cannot leave a
-        // local task execution looking active for hours.
+        // task execution looking active for hours.
         logPluginDiagnostics(reason: "request \(requestID) timed out")
         stop(with: NativePluginRuntimeError.timeout, terminateProcess: true)
     }

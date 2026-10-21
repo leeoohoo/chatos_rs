@@ -73,6 +73,28 @@ private struct ConversationTimelineContentView: View {
                 MessageTaskWorkspaceSheet(viewModel: viewModel)
             }
         }
+        .alert(
+            localized("任务操作失败", english: "Task Action Failed"),
+            isPresented: Binding(
+                get: {
+                    conversation.taskCancellationError != nil
+                        || conversation.taskRecoveryError != nil
+                },
+                set: {
+                    if !$0 {
+                        conversation.taskCancellationError = nil
+                        conversation.taskRecoveryError = nil
+                    }
+                }
+            )
+        ) {
+            Button(localized("好", english: "OK")) {
+                conversation.taskCancellationError = nil
+                conversation.taskRecoveryError = nil
+            }
+        } message: {
+            Text(conversation.taskRecoveryError ?? conversation.taskCancellationError ?? "")
+        }
     }
 
     private var timeline: some View {

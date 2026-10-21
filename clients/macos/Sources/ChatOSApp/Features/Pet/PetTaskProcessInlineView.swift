@@ -3,7 +3,11 @@ import SwiftUI
 
 enum PetTaskProcessRefreshPolicy {
     static func fallbackInterval(hasRealtimeIdentity: Bool) -> Duration {
-        hasRealtimeIdentity ? .seconds(60) : .seconds(5)
+        // Pet activity events describe durable task changes, but an in-flight MCP
+        // progress notification does not increment that durable version. Poll the
+        // projection briefly while the task is active so tool progress stays live.
+        _ = hasRealtimeIdentity
+        return .seconds(2)
     }
 }
 
@@ -15,6 +19,10 @@ struct PetTaskProcessInlineView: View {
     @State private var task: MessageTask?
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var isRecovering = false
+    @State private var isCancelling = false
+    @State private var confirmsRecovery = false
+    @State private var confirmsCancellation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -44,13 +52,50 @@ struct PetTaskProcessInlineView: View {
                                 )
                         }
 
-                        if timelineItems.isEmpty {
+                        if timelineItems.isEmpty, task.lastRun?.activity == nil {
                             processFallback(task)
                         } else {
                             TaskProcessTimelineView(
                                 items: timelineItems,
-                                allowsTextSelection: false
+                                allowsTextSelection: false,
+                                liveActivity: task.lastRun?.activity
                             )
+                        }
+
+                        stalledToolNotice(task)
+
+                        if task.isActive
+                            || MessageTaskRecoveryPolicy.canForceRestart(task) {
+                            HStack {
+                                Spacer()
+                                Menu {
+                                    if MessageTaskRecoveryPolicy.canForceRestart(task) {
+                                        Button {
+                                            confirmsRecovery = true
+                                        } label: {
+                                            Label("恢复执行", systemImage: "arrow.clockwise.circle")
+                                        }
+                                    }
+                                    if task.isActive {
+                                        Button(role: .destructive) {
+                                            confirmsCancellation = true
+                                        } label: {
+                                            Label("停止任务", systemImage: "stop.circle")
+                                        }
+                                    }
+                                } label: {
+                                    if isRecovering || isCancelling {
+                                        ProgressView().controlSize(.small)
+                                    } else {
+                                        Image(systemName: "ellipsis.circle")
+                                    }
+                                }
+                                .menuStyle(.borderlessButton)
+                                .fixedSize()
+                                .disabled(isRecovering || isCancelling)
+                                .help(model.localized("任务操作", english: "Task Actions"))
+                            }
+                            .controlSize(.small)
                         }
 
                         if let errorMessage {
@@ -87,6 +132,30 @@ struct PetTaskProcessInlineView: View {
                         || activity.eventSequence != nil
                 ))
             } while !Task.isCancelled
+        }
+        .confirmationDialog(
+            "恢复执行这个任务？",
+            isPresented: $confirmsRecovery,
+            titleVisibility: .visible
+        ) {
+            Button("终止当前运行并重新执行", role: .destructive) {
+                recover()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("之前的浏览器点击、导出、授权或文件修改可能已经发生，请确认重复执行是安全的。")
+        }
+        .confirmationDialog(
+            "停止这个任务？",
+            isPresented: $confirmsCancellation,
+            titleVisibility: .visible
+        ) {
+            Button("停止任务", role: .destructive) {
+                cancel()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("任务和正在运行的插件进程会被终止；已经发生的外部操作不会自动撤销。")
         }
     }
 
@@ -131,6 +200,36 @@ struct PetTaskProcessInlineView: View {
         }
     }
 
+    private func recover() {
+        guard !isRecovering, !isCancelling else { return }
+        isRecovering = true
+        errorMessage = nil
+        Task {
+            do {
+                try await model.recoverPetActivity(activity)
+                await refresh()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isRecovering = false
+        }
+    }
+
+    private func cancel() {
+        guard !isRecovering, !isCancelling else { return }
+        isCancelling = true
+        errorMessage = nil
+        Task {
+            do {
+                try await model.cancelPetActivity(activity)
+                await refresh()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isCancelling = false
+        }
+    }
+
     private var timelineItems: [TaskProcessTimelineItem] {
         guard let task else { return [] }
         return TaskProcessTimelineBuilder.build(
@@ -166,6 +265,34 @@ struct PetTaskProcessInlineView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(Color.indigo.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func stalledToolNotice(_ task: MessageTask) -> some View {
+        if let activity = task.lastRun?.activity,
+           let lastProgressAt = activity.lastProgressAt ?? activity.startedAt,
+           activity.kind == .waitingTool {
+            TimelineView(.periodic(from: .now, by: 5)) { context in
+                if MessageTaskRecoveryPolicy.shouldOfferDiagnosis(task, now: context.date) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label(
+                            model.localized("工具耗时较长", english: "Tool Is Taking Longer Than Expected"),
+                            systemImage: "clock.badge.exclamationmark"
+                        )
+                        .font(.system(size: 11, weight: .semibold))
+                        Text(model.localized(
+                            "最近一次实际进展在 \(lastProgressAt.formatted(date: .omitted, time: .standard))。这不等于任务失败；你可以继续等待，或从右侧菜单停止后检查已经发生的操作。",
+                            english: "The last real progress was at \(lastProgressAt.formatted(date: .omitted, time: .standard)). This does not mean the task failed; you can keep waiting or stop it from the menu and inspect completed side effects."
+                        ))
+                        .font(.system(size: 10))
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+        }
     }
 
     private func fallbackDetail(_ task: MessageTask) -> String {

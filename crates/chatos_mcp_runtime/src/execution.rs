@@ -6,7 +6,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::task::{Id, JoinSet};
 use tracing::{error, warn};
 
@@ -413,6 +413,26 @@ pub fn external_tool_result_from_value(
         result.transient_model_input = None;
     }
     result
+}
+
+/// Returns the complete, deterministic payload addressed by a durable tool-result
+/// reference. Plain-text tools keep their original text; tools with structured
+/// output expose both the display text and structured result so callers can use
+/// JSON Pointer queries without copying the full payload into model context.
+pub fn external_tool_result_reference_content(result: &ToolResult) -> String {
+    if let Ok(model_payload) = serde_json::from_str::<Value>(&result.content) {
+        if crate::text::is_deduplicated_model_payload(&model_payload) {
+            return result.content.clone();
+        }
+    }
+    match result.result.as_ref().filter(|value| !value.is_null()) {
+        Some(structured_result) => json!({
+            "content": result.content,
+            "structured_result": structured_result,
+        })
+        .to_string(),
+        None => result.content.clone(),
+    }
 }
 
 /// A durable failure status is authoritative even if the provider payload has no

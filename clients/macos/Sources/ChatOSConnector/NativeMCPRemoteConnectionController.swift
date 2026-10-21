@@ -7,7 +7,7 @@ struct NativeMCPRemoteConnectionController: Sendable {
 
     static let toolNames: Set<String> = [
         "test_connection", "run_command", "list_directory",
-        "read_file", "download_file", "upload_file",
+        "read_file", "download_file", "upload_file", "upload_project_file",
     ]
 
     static let toolDefinitions: [NativeJSONValue] = [
@@ -51,7 +51,7 @@ struct NativeMCPRemoteConnectionController: Sendable {
         ),
         definition(
             name: "upload_file",
-            description: "通过 SSH 上传内容到远程文件。",
+            description: "通过 SSH 上传少量文本或 Base64 内容到远程文件。项目中的现有文件必须使用 upload_project_file，禁止先把文件编码后复制进参数。",
             properties: [
                 "path": .object(["type": .string("string")]),
                 "content": .object(["type": .string("string")]),
@@ -60,6 +60,22 @@ struct NativeMCPRemoteConnectionController: Sendable {
                 "overwrite": .object(["type": .string("boolean")]),
             ],
             required: ["path", "content"]
+        ),
+        definition(
+            name: "upload_project_file",
+            description: "直接把当前项目工作区中的现有文件通过 SSH 上传到远端，不把文件内容经过模型上下文。适用于构建产物、压缩包和其他项目文件。",
+            properties: [
+                "local_path": .object([
+                    "type": .string("string"),
+                    "description": .string("当前项目根目录内的相对文件路径"),
+                ]),
+                "path": .object([
+                    "type": .string("string"),
+                    "description": .string("远端目标路径"),
+                ]),
+                "overwrite": .object(["type": .string("boolean")]),
+            ],
+            required: ["local_path", "path"]
         ),
     ]
 
@@ -96,8 +112,33 @@ struct NativeMCPRemoteConnectionController: Sendable {
         case "read_file": return try await readFile(arguments, includeEncoding: false)
         case "download_file": return try await readFile(arguments, includeEncoding: true)
         case "upload_file": return try await uploadFile(arguments)
+        case "upload_project_file":
+            throw NativeMCPRemoteConnectionError.projectContextRequired
         default: throw NativeMCPRemoteConnectionError.unsupportedTool(name)
         }
+    }
+
+    func uploadProjectFile(
+        _ arguments: [String: NativeJSONValue],
+        projectRoot: URL
+    ) async throws -> NativeJSONValue {
+        let id = try requiredString(arguments, "connection_id")
+        let localPath = try requiredString(arguments, "local_path")
+        let remotePath = try requiredString(arguments, "path")
+        let localURL = try Self.resolveProjectFile(localPath, root: projectRoot)
+        try await ssh.uploadFile(
+            draft: provider.resolvedDraft(id: id),
+            localURL: localURL,
+            remotePath: remotePath,
+            overwrite: arguments.bool("overwrite") ?? true
+        )
+        let size = try localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        return .object([
+            "local_path": .string(localPath),
+            "path": .string(remotePath),
+            "size_bytes": .number(Double(size)),
+            "uploaded": .bool(true),
+        ])
     }
 
     private func testConnection(_ arguments: [String: NativeJSONValue]) async throws -> NativeJSONValue {
@@ -246,6 +287,43 @@ struct NativeMCPRemoteConnectionController: Sendable {
             || normalized.contains(":(){ :|:& };:")
     }
 
+    private static func resolveProjectFile(_ path: String, root: URL) throws -> URL {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.hasPrefix("/"),
+              !trimmed.contains("\0") else {
+            throw NativeMCPRemoteConnectionError.invalidArguments(
+                "local_path 必须是当前项目内的相对文件路径"
+            )
+        }
+        let components = trimmed.split(separator: "/", omittingEmptySubsequences: true)
+        guard !components.isEmpty,
+              components.allSatisfy({ $0 != "." && $0 != ".." }) else {
+            throw NativeMCPRemoteConnectionError.invalidArguments(
+                "local_path 必须是当前项目内的规范相对路径"
+            )
+        }
+        let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+        let candidate = components.reduce(canonicalRoot) {
+            $0.appendingPathComponent(String($1), isDirectory: false)
+        }
+        let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
+        let prefix = canonicalRoot.path.hasSuffix("/")
+            ? canonicalRoot.path
+            : canonicalRoot.path + "/"
+        let values = try? resolved.resourceValues(forKeys: [
+            .isRegularFileKey, .isReadableKey,
+        ])
+        guard resolved.path.hasPrefix(prefix),
+              values?.isRegularFile == true,
+              values?.isReadable == true else {
+            throw NativeMCPRemoteConnectionError.invalidArguments(
+                "local_path 不存在、不可读或超出当前项目"
+            )
+        }
+        return resolved
+    }
+
     private static func fileReadProperties(includeEncoding: Bool) -> [String: NativeJSONValue] {
         var values: [String: NativeJSONValue] = [
             "path": .object(["type": .string("string")]),
@@ -287,12 +365,13 @@ struct NativeMCPRemoteConnectionController: Sendable {
     }
 }
 
-private enum NativeMCPRemoteConnectionError: LocalizedError {
+enum NativeMCPRemoteConnectionError: LocalizedError {
     case unsupportedTool(String)
     case invalidToolDefinition
     case invalidArguments(String)
     case dangerousCommand
     case binaryRequiresBase64
+    case projectContextRequired
 
     var errorDescription: String? {
         switch self {
@@ -301,8 +380,11 @@ private enum NativeMCPRemoteConnectionError: LocalizedError {
         case let .invalidArguments(message): message
         case .dangerousCommand: "该远程命令风险较高，需要明确设置 allow_dangerous=true"
         case .binaryRequiresBase64: "远程文件不是 UTF-8 文本，请使用 base64 编码下载"
+        case .projectContextRequired: "upload_project_file 只能由任务工作区调用"
         }
     }
+
+    var isKnownPreEffectFailure: Bool { true }
 }
 
 private extension Dictionary where Key == String, Value == NativeJSONValue {

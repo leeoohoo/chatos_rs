@@ -52,11 +52,14 @@ final class PetOverlayStore: ObservableObject {
 
     func replaceApprovals(_ approvals: [LocalConnectorPendingApproval]) {
         let pendingActivities = approvals.map { approval in
-            PetActivity(
+            let automaticHandoff = approval.reason?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .hasPrefix("AI 自动审批已转人工：") == true
+            return PetActivity(
                 id: "local-approval:\(approval.id)",
                 source: .localApproval,
                 kind: .waitingForApproval,
-                title: "有本机操作等待审批",
+                title: automaticHandoff ? "AI 审批需要你确认" : "有本机操作等待审批",
                 detail: approvalDetail(approval),
                 updatedAt: Self.parseDate(approval.createdAt) ?? Date()
             )
@@ -274,9 +277,19 @@ final class PetOverlayStore: ObservableObject {
         }
         let purpose = approval.purpose?.trimmingCharacters(in: .whitespacesAndNewlines)
         let command = approval.command.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reason = approval.reason?.trimmingCharacters(in: .whitespacesAndNewlines)
         let metadata = "\(risk) · \(approval.source)"
-        if let purpose, !purpose.isEmpty { return "\(purpose)\n\(metadata)" }
-        return command.isEmpty ? metadata : "\(command)\n\(metadata)"
+        let primary = if let purpose, !purpose.isEmpty {
+            purpose
+        } else if !command.isEmpty {
+            command
+        } else {
+            metadata
+        }
+        return [primary, metadata, reason].compactMap { value in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }.joined(separator: "\n")
     }
 
     private static func parseDate(_ value: String) -> Date? {

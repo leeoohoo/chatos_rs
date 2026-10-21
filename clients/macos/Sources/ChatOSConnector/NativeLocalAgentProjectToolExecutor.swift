@@ -460,7 +460,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                 let upstreamName = String(invocation.toolName.dropFirst(
                     NativeLocalAgentPlatformToolCatalog.remoteConnectionToolPrefix.count
                 ))
-                if ["run_command", "upload_file"].contains(upstreamName) {
+                if ["run_command", "upload_file", "upload_project_file"].contains(upstreamName) {
                     guard invocation.requiresApproval,
                           invocation.approvalStatus == "approved" else {
                         throw NativeLocalAgentPlatformToolError.approvalRequired
@@ -468,10 +468,17 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                 }
                 var boundArguments = nativeArguments
                 boundArguments["connection_id"] = .string(remoteConnectionID)
-                result = try await remoteConnections.call(
-                    name: upstreamName,
-                    arguments: boundArguments
-                )
+                if upstreamName == "upload_project_file" {
+                    result = try await remoteConnections.uploadProjectFile(
+                        boundArguments,
+                        projectRoot: context.executionRootURL
+                    )
+                } else {
+                    result = try await remoteConnections.call(
+                        name: upstreamName,
+                        arguments: boundArguments
+                    )
+                }
             } else {
                 result = try await Task.detached {
                     try tool.call(name: invocation.toolName, arguments: nativeArguments)
@@ -489,6 +496,15 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
             }
             throw NativeLocalAgentPlatformToolError.projectToolRejected(
                 error.errorDescription ?? "The project edit was rejected before commit."
+            )
+        } catch let error as NativeMCPRemoteConnectionError
+            where error.isKnownPreEffectFailure {
+            // Argument validation and policy rejection happen before SSH is
+            // allowed to mutate the remote host. Preserve an actionable,
+            // bounded diagnostic so the model can correct its call instead of
+            // incorrectly pausing the whole Run for Human side-effect review.
+            throw NativeLocalAgentPlatformToolError.projectToolRejected(
+                error.errorDescription ?? "The remote operation was rejected before execution."
             )
         } catch {
             // Tool and filesystem errors may contain real local paths or staged content.

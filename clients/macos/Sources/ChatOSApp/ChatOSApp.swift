@@ -82,6 +82,12 @@ private struct ChatOSGlobalUtilityCommands: Commands {
     @ObservedObject var model: AppModel
 
     var body: some Commands {
+        CommandGroup(after: .windowList) {
+            Button(model.localized("显示主窗口", english: "Show Main Window")) {
+                model.showMainWindow()
+            }
+            .keyboardShortcut("0", modifiers: .command)
+        }
         CommandMenu(model.localized("全局工具", english: "Global Utilities")) {
             Button(model.localized("区域截图", english: "Region Screenshot")) {
                 model.globalUtilityCoordinator.trigger(.screenshot)

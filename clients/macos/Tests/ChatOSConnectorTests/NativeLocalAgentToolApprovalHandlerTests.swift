@@ -41,6 +41,60 @@ struct NativeLocalAgentToolApprovalHandlerTests {
     }
 
     @Test
+    func remoteCommandApprovalReceivesTheCompleteCommandWithoutPrefixTruncation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let command = String(repeating: "printf x; ", count: 80)
+            + "printf 'tail marker' | sed -n '1p'"
+        let invocation = Self.remoteCommandInvocation(command: command)
+        let durable = DurableApprovalStub(pending: [invocation])
+        let human = HumanApprovalStub(
+            decision: .approve(reason: "完整命令已核对", rememberAllow: false)
+        )
+        let handler = NativeLocalAgentToolApprovalHandler(
+            durableApprovals: durable,
+            contextResolver: ContextResolverStub(root: root),
+            humanApprovals: human
+        )
+
+        _ = try await handler.resolveNextPending(ownerUserID: "owner-1")
+
+        let request = try #require(await human.requests.first)
+        #expect(command.count > 500)
+        #expect(request.command == "remote SSH command")
+        #expect(request.arguments == [command])
+        #expect(request.arguments[0].hasSuffix("printf 'tail marker' | sed -n '1p'"))
+        #expect(request.automaticApprovalEvidenceComplete)
+        #expect(request.evaluationArguments?.first?.contains("tail marker") == true)
+    }
+
+    @Test
+    func remoteUploadWithHiddenContentCannotBeBlindlyAutoApproved() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = "/srv/" + String(repeating: "nested/", count: 90) + "artifact.txt"
+        let invocation = Self.remoteUploadInvocation(path: path)
+        let human = HumanApprovalStub(decision: .deny(reason: "需要人工查看上传内容"))
+        let handler = NativeLocalAgentToolApprovalHandler(
+            durableApprovals: DurableApprovalStub(pending: [invocation]),
+            contextResolver: ContextResolverStub(root: root),
+            humanApprovals: human
+        )
+
+        _ = try await handler.resolveNextPending(ownerUserID: "owner-1")
+
+        let request = try #require(await human.requests.first)
+        #expect(path.count > 500)
+        #expect(request.arguments == [path])
+        #expect(!request.automaticApprovalEvidenceComplete)
+        #expect(request.evaluationArguments?.first?.contains("EVIDENCE_COMPLETE=false") == true)
+    }
+
+    @Test
     func humanDenialIsCommittedAsDurableRejection() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -195,6 +249,54 @@ struct NativeLocalAgentToolApprovalHandlerTests {
         #expect(await journal.snapshot().isEmpty)
     }
 
+    @Test
+    func commitApprovalReceivesStagedEvidenceForAIReview() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let invocation = Self.commitInvocation()
+        let durable = DurableApprovalStub(pending: [invocation])
+        let human = HumanApprovalStub(
+            decision: .approve(reason: "host verified", rememberAllow: false)
+        )
+        let handler = NativeLocalAgentToolApprovalHandler(
+            durableApprovals: durable,
+            contextResolver: ContextResolverStub(root: root),
+            humanApprovals: human,
+            editEvidenceProvider: EditEvidenceStub()
+        )
+
+        _ = try await handler.resolveNextPending(ownerUserID: "owner-1")
+
+        let request = try #require(await human.requests.first)
+        #expect(request.evaluationArguments == ["trusted staged edit summary"])
+        #expect(request.purpose == "修复图标")
+    }
+
+    @Test
+    func commitApprovalWithoutVerifiedStagedEvidenceMustBeMarkedIncomplete() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let human = HumanApprovalStub(
+            decision: .deny(reason: "证据不完整")
+        )
+        let handler = NativeLocalAgentToolApprovalHandler(
+            durableApprovals: DurableApprovalStub(pending: [Self.commitInvocation()]),
+            contextResolver: ContextResolverStub(root: root),
+            humanApprovals: human
+        )
+
+        _ = try await handler.resolveNextPending(ownerUserID: "owner-1")
+
+        let request = try #require(await human.requests.first)
+        let evidence = try #require(request.evaluationArguments?.first)
+        #expect(evidence.contains("EVIDENCE_COMPLETE=false"))
+        #expect(evidence.contains("必须转人工确认"))
+    }
+
     private static func invocation(root: URL) -> LocalAgentToolInvocationRecord {
         LocalAgentToolInvocationRecord(
             invocationID: "invocation-1",
@@ -218,6 +320,89 @@ struct NativeLocalAgentToolApprovalHandlerTests {
             result: nil,
             error: nil,
             version: 7,
+            claimToken: nil,
+            claimUntilUnixMs: nil,
+            createdAtUnixMs: 1,
+            updatedAtUnixMs: 1
+        )
+    }
+
+    private static func commitInvocation() -> LocalAgentToolInvocationRecord {
+        LocalAgentToolInvocationRecord(
+            invocationID: "commit-invocation-1",
+            runID: "run-1",
+            batchID: "batch-1",
+            callID: "call-1",
+            toolName: "commit_edit_session",
+            executionRoute: "platform",
+            arguments: .object(["session_id": .string("edit-session-1")]),
+            sideEffecting: true,
+            requiresApproval: true,
+            approvalStatus: "pending",
+            approvalDecidedBy: nil,
+            approvalReason: nil,
+            approvalDecidedAtUnixMs: nil,
+            status: "pending_approval",
+            result: nil,
+            error: nil,
+            version: 1,
+            claimToken: nil,
+            claimUntilUnixMs: nil,
+            createdAtUnixMs: 1,
+            updatedAtUnixMs: 1
+        )
+    }
+
+    private static func remoteCommandInvocation(
+        command: String
+    ) -> LocalAgentToolInvocationRecord {
+        LocalAgentToolInvocationRecord(
+            invocationID: "remote-command-invocation-1",
+            runID: "run-1",
+            batchID: "batch-1",
+            callID: "call-1",
+            toolName: "remote_connection_controller_run_command",
+            executionRoute: "platform",
+            arguments: .object(["command": .string(command)]),
+            sideEffecting: true,
+            requiresApproval: true,
+            approvalStatus: "pending",
+            approvalDecidedBy: nil,
+            approvalReason: nil,
+            approvalDecidedAtUnixMs: nil,
+            status: "pending_approval",
+            result: nil,
+            error: nil,
+            version: 1,
+            claimToken: nil,
+            claimUntilUnixMs: nil,
+            createdAtUnixMs: 1,
+            updatedAtUnixMs: 1
+        )
+    }
+
+    private static func remoteUploadInvocation(path: String) -> LocalAgentToolInvocationRecord {
+        LocalAgentToolInvocationRecord(
+            invocationID: "remote-upload-invocation-1",
+            runID: "run-1",
+            batchID: "batch-1",
+            callID: "call-1",
+            toolName: "remote_connection_controller_upload_file",
+            executionRoute: "platform",
+            arguments: .object([
+                "path": .string(path),
+                "content": .string("content intentionally hidden from approval model"),
+            ]),
+            sideEffecting: true,
+            requiresApproval: true,
+            approvalStatus: "pending",
+            approvalDecidedBy: nil,
+            approvalReason: nil,
+            approvalDecidedAtUnixMs: nil,
+            status: "pending_approval",
+            result: nil,
+            error: nil,
+            version: 1,
             claimToken: nil,
             claimUntilUnixMs: nil,
             createdAtUnixMs: 1,
@@ -355,5 +540,20 @@ private actor HumanApprovalStub: NativeLocalHumanApprovalServicing {
     ) async -> NativeApprovalDecision {
         requests.append(request)
         return decision
+    }
+}
+
+private struct EditEvidenceStub: NativeMCPCodeWriteApprovalEvidenceProviding {
+    func approvalEvidence(
+        arguments _: [String: NativeJSONValue],
+        scope _: NativeMCPCodeWriteScope,
+        projectRoot _: URL,
+        ownedPaths _: [String]
+    ) async throws -> NativeMCPCodeWriteApprovalEvidence {
+        .init(
+            evaluationSummary: "trusted staged edit summary",
+            purpose: "修复图标",
+            isComplete: true
+        )
     }
 }

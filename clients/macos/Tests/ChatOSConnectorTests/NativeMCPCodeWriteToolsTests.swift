@@ -188,6 +188,182 @@ struct NativeMCPCodeWriteToolsTests {
         #expect(try String(contentsOf: file, encoding: .utf8) == "after")
     }
 
+    @Test
+    func approvalEvidenceDescribesHostVerifiedStagedChangesForAIReview() async throws {
+        let fixture = try WriteFixture()
+        defer { fixture.dispose() }
+        let sourceDirectory = fixture.root.appendingPathComponent("Sources", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        let file = sourceDirectory.appendingPathComponent("Feature.swift")
+        try Data("let value = 1\n".utf8).write(to: file)
+        let store = NativeMCPCodeWriteStore()
+        let ownedPaths = ["Sources"]
+        let opened = try await store.call(
+            name: "open_edit_session",
+            arguments: ["purpose": .string("修复工具栏图标")],
+            scope: fixture.scope,
+            projectRoot: fixture.root,
+            ownedPaths: ownedPaths
+        )
+        let sessionID = try opened.string(at: ["result", "session_id"])
+        _ = try await store.call(
+            name: "stage_edit_batch",
+            arguments: [
+                "session_id": .string(sessionID),
+                "operations": .array([.object([
+                    "kind": .string("write"),
+                    "path": .string("Sources/Feature.swift"),
+                    "content": .string("let value = 2\n"),
+                    "expected_sha256": .string(Self.sha256("let value = 1\n")),
+                ])]),
+            ],
+            scope: fixture.scope,
+            projectRoot: fixture.root,
+            ownedPaths: ownedPaths
+        )
+
+        let evidence = try await store.approvalEvidence(
+            arguments: ["session_id": .string(sessionID)],
+            scope: fixture.scope,
+            projectRoot: fixture.root,
+            ownedPaths: ownedPaths
+        )
+
+        #expect(evidence.purpose == "修复工具栏图标")
+        #expect(evidence.evaluationSummary.contains("Sources/Feature.swift"))
+        #expect(evidence.evaluationSummary.contains("Task owned_paths"))
+        #expect(evidence.evaluationSummary.contains("1 行/14 字节 → 1 行/14 字节"))
+        #expect(evidence.evaluationSummary.contains("EVIDENCE_COMPLETE=true"))
+        #expect(evidence.evaluationSummary.contains("let value = 1"))
+        #expect(evidence.evaluationSummary.contains("let value = 2"))
+        #expect(try String(contentsOf: file, encoding: .utf8) == "let value = 1\n")
+    }
+
+    @Test
+    func approvalEvidenceNeverSilentlyTruncatesOversizedStagedContent() async throws {
+        let fixture = try WriteFixture()
+        defer { fixture.dispose() }
+        let file = fixture.root.appendingPathComponent("Feature.swift")
+        try Data("let value = 1\n".utf8).write(to: file)
+        let store = NativeMCPCodeWriteStore()
+        let opened = try await store.call(
+            name: "open_edit_session",
+            arguments: [:],
+            scope: fixture.scope,
+            projectRoot: fixture.root,
+            ownedPaths: ["Feature.swift"]
+        )
+        let sessionID = try opened.string(at: ["result", "session_id"])
+        let tail = "COMPLETE_TAIL_MARKER"
+        _ = try await store.call(
+            name: "stage_edit_batch",
+            arguments: [
+                "session_id": .string(sessionID),
+                "operations": .array([.object([
+                    "kind": .string("write"),
+                    "path": .string("Feature.swift"),
+                    "content": .string(String(repeating: "x", count: 90_000) + tail),
+                    "expected_sha256": .string(Self.sha256("let value = 1\n")),
+                ])]),
+            ],
+            scope: fixture.scope,
+            projectRoot: fixture.root,
+            ownedPaths: ["Feature.swift"]
+        )
+
+        let evidence = try await store.approvalEvidence(
+            arguments: ["session_id": .string(sessionID)],
+            scope: fixture.scope,
+            projectRoot: fixture.root,
+            ownedPaths: ["Feature.swift"]
+        )
+
+        #expect(evidence.evaluationSummary.contains("EVIDENCE_COMPLETE=false"))
+        #expect(evidence.evaluationSummary.contains("不得在证据不完整时猜测或放行"))
+        #expect(!evidence.evaluationSummary.contains(tail))
+        #expect(evidence.evaluationSummary.count <= 80_000)
+    }
+
+    @Test
+    func approvalEvidenceWithEnvironmentVariantNeverSendsSecretContentToAI() async throws {
+        let fixture = try WriteFixture()
+        defer { fixture.dispose() }
+        let file = fixture.root.appendingPathComponent(".env.staging")
+        try Data("API_KEY=old-secret\n".utf8).write(to: file)
+        let store = NativeMCPCodeWriteStore()
+        let opened = try await store.call(
+            name: "open_edit_session",
+            arguments: [:],
+            scope: fixture.scope,
+            projectRoot: fixture.root,
+            ownedPaths: [".env.staging"]
+        )
+        let sessionID = try opened.string(at: ["result", "session_id"])
+        _ = try await store.call(
+            name: "stage_edit_batch",
+            arguments: [
+                "session_id": .string(sessionID),
+                "operations": .array([.object([
+                    "kind": .string("write"),
+                    "path": .string(".env.staging"),
+                    "content": .string("API_KEY=new-secret\n"),
+                    "expected_sha256": .string(Self.sha256("API_KEY=old-secret\n")),
+                ])]),
+            ],
+            scope: fixture.scope,
+            projectRoot: fixture.root,
+            ownedPaths: [".env.staging"]
+        )
+
+        let evidence = try await store.approvalEvidence(
+            arguments: ["session_id": .string(sessionID)],
+            scope: fixture.scope,
+            projectRoot: fixture.root,
+            ownedPaths: [".env.staging"]
+        )
+
+        #expect(!evidence.isComplete)
+        #expect(evidence.evaluationSummary.contains("EVIDENCE_COMPLETE=false"))
+        #expect(!evidence.evaluationSummary.contains("old-secret"))
+        #expect(!evidence.evaluationSummary.contains("new-secret"))
+    }
+
+    @Test
+    func oversizedNumericEditCoordinatesAreRejectedWithoutIntegerTrap() async throws {
+        let fixture = try WriteFixture()
+        defer { fixture.dispose() }
+        let file = fixture.root.appendingPathComponent("Feature.swift")
+        try Data("let value = 1\n".utf8).write(to: file)
+        let store = NativeMCPCodeWriteStore()
+        let opened = try await store.call(
+            name: "open_edit_session",
+            arguments: [:],
+            scope: fixture.scope,
+            projectRoot: fixture.root,
+            ownedPaths: ["Feature.swift"]
+        )
+        let sessionID = try opened.string(at: ["result", "session_id"])
+
+        await #expect(throws: Error.self) {
+            _ = try await store.call(
+                name: "stage_edit_batch",
+                arguments: [
+                    "session_id": .string(sessionID),
+                    "operations": .array([.object([
+                        "kind": .string("replace_lines"),
+                        "path": .string("Feature.swift"),
+                        "start_line": .number(1e300),
+                        "end_line": .number(1e300),
+                        "content": .string("let value = 2"),
+                    ])]),
+                ],
+                scope: fixture.scope,
+                projectRoot: fixture.root,
+                ownedPaths: ["Feature.swift"]
+            )
+        }
+    }
+
     private static func sha256(_ value: String) -> String {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }

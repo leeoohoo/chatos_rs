@@ -84,6 +84,33 @@ final class NativeLocalAgentRunActivityProjectorTests: XCTestCase {
         XCTAssertEqual(activity.detail, "http://127.0.0.1:18081")
     }
 
+    func testUntrustedLargeNumericArgumentsDoNotTrapActivityProjection() throws {
+        let value = try run(
+            status: "waiting_tool_result",
+            extra: [
+                "pending_tool_batch": [
+                    "batch_id": "batch-large-number",
+                    "calls": [[
+                        "call_id": "call-large-number",
+                        "tool_name": "task_run_process_allocate_service",
+                        "arguments": [
+                            "service_name": "backend",
+                            "preferred_port": 1e300,
+                        ],
+                        "side_effecting": false,
+                        "requires_approval": false,
+                    ]],
+                ],
+            ]
+        )
+
+        let activity = try XCTUnwrap(
+            NativeLocalAgentRunActivityProjector.project(run: value)
+        )
+        XCTAssertEqual(activity.kind, .startingProcess)
+        XCTAssertEqual(activity.detail, "backend")
+    }
+
     private func run(status: String, extra: [String: Any] = [:]) throws -> LocalAgentRunRecord {
         var object: [String: Any] = [
             "run_id": "run-1",

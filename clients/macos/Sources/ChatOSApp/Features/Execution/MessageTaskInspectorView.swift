@@ -46,6 +46,26 @@ struct MessageTaskInspectorView: View {
                 Text("任务检查器").appFont(.headline)
                 Spacer()
                 if viewModel.isLoadingInspector { ProgressView().controlSize(.small) }
+                if let task = viewModel.taskDetail ?? viewModel.selectedTask,
+                   task.isCancellableFromInspector {
+                    Menu {
+                        Button(role: .destructive) {
+                            viewModel.requestCancellation(for: task)
+                        } label: {
+                            Label("停止任务", systemImage: "stop.circle")
+                        }
+                    } label: {
+                        if viewModel.isCancelling {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .disabled(viewModel.isCancelling)
+                    .help("任务操作")
+                }
             }
             Picker("检查内容", selection: $viewModel.inspectorSection) {
                 ForEach(MessageTaskWorkspaceViewModel.InspectorSection.allCases, id: \.self) {
@@ -79,7 +99,8 @@ struct MessageTaskInspectorView: View {
                 processLog: task.processLog,
                 taskStatus: task.status
             ),
-            allowsTextSelection: true
+            allowsTextSelection: true,
+            liveActivity: task.lastRun?.activity
         )
     }
 
@@ -125,6 +146,12 @@ struct MessageTaskInspectorView: View {
                             Text(startedAt, style: .timer).monospacedDigit()
                         }
                     }
+                    if let lastProgressAt = activity.lastProgressAt {
+                        LabeledContent("最近进展") {
+                            Text(lastProgressAt, style: .relative)
+                        }
+                    }
+                    stalledToolWarning(activity)
                 }
                 LabeledContent("运行 ID", value: detail.run.id)
                 if let startedAt = detail.run.startedAt {
@@ -164,11 +191,31 @@ struct MessageTaskInspectorView: View {
             ContentUnavailableView(
                 "暂无运行记录",
                 systemImage: "play.slash",
-                description: Text("该任务节点尚未产生本地执行 Run。")
+                description: Text("该任务节点尚未产生运行记录。")
             )
         } else {
             Button("加载运行详情", systemImage: "arrow.down.circle") {
                 viewModel.ensureInspectorSectionLoaded()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stalledToolWarning(_ activity: MessageTaskRunActivity) -> some View {
+        if activity.kind == .waitingTool,
+           let lastProgressAt = activity.lastProgressAt ?? activity.startedAt {
+            TimelineView(.periodic(from: .now, by: 5)) { context in
+                if context.date.timeIntervalSince(lastProgressAt) >= 60 {
+                    Label(
+                        model.localized(
+                            "工具长时间没有报告新阶段。租约心跳仍可能继续，但不代表工具有实际进展；你可以停止任务并检查已发生的副作用。",
+                            english: "The tool has not reported a new stage for a while. Lease heartbeats may continue without real progress; you can stop the task and inspect possible side effects."
+                        ),
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .appFont(.caption)
+                    .foregroundStyle(.orange)
+                }
             }
         }
     }
@@ -274,5 +321,11 @@ struct MessageTaskInspectorView: View {
         case "cancelled", "canceled", "stopped": model.localized("已取消", english: "Cancelled")
         default: status.isEmpty ? model.localized("未知", english: "Unknown") : status
         }
+    }
+}
+
+private extension MessageTask {
+    var isCancellableFromInspector: Bool {
+        isActive
     }
 }

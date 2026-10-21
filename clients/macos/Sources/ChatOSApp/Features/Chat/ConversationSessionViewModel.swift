@@ -72,6 +72,10 @@ final class ConversationSessionViewModel: ObservableObject {
     @Published var askUserPrompts: [AskUserPrompt] = []
     @Published var submittingAskUserPromptIDs: Set<String> = []
     @Published var askUserPromptErrors: [String: String] = [:]
+    @Published private(set) var cancellingTaskIDs: Set<String> = []
+    @Published private(set) var recoveringTaskIDs: Set<String> = []
+    @Published var taskCancellationError: String?
+    @Published var taskRecoveryError: String?
     @Published private(set) var focusRequest: ConversationFocusRequest?
 
     let composerState = ConversationComposerState()
@@ -146,6 +150,8 @@ final class ConversationSessionViewModel: ObservableObject {
     private var askUserPromptActivationTask: Task<Void, Never>?
     var askUserPromptRefreshTask: Task<[AskUserPrompt], Error>?
     var askUserPromptActionTasks: [String: Task<Void, Never>] = [:]
+    private var taskCancellationTasks: [String: Task<Void, Never>] = [:]
+    private var taskRecoveryTasks: [String: Task<Void, Never>] = [:]
     private var focusAfterPromptRefreshTask: Task<Void, Never>?
     var focusRefreshState = ConversationFocusRefreshState()
     var activationState = ConversationSessionActivationState()
@@ -266,6 +272,8 @@ final class ConversationSessionViewModel: ObservableObject {
         askUserPromptActivationTask?.cancel()
         askUserPromptRefreshTask?.cancel()
         askUserPromptActionTasks.values.forEach { $0.cancel() }
+        taskCancellationTasks.values.forEach { $0.cancel() }
+        taskRecoveryTasks.values.forEach { $0.cancel() }
         focusAfterPromptRefreshTask?.cancel()
         runtimeSettingsMutationTask?.cancel()
         runtimeRecoveryTask?.cancel()
@@ -838,6 +846,83 @@ final class ConversationSessionViewModel: ObservableObject {
                 initialTaskID: initialTaskID,
                 initialRunID: initialRunID
             )
+        }
+    }
+
+    func isCancellingTask(_ taskID: String) -> Bool {
+        cancellingTaskIDs.contains(taskID)
+    }
+
+    func isRecoveringTask(_ taskID: String) -> Bool {
+        recoveringTaskIDs.contains(taskID)
+    }
+
+    func cancelTask(for turn: ConversationTurn, reply: ConversationAssistantReply) {
+        guard let callback = reply.taskCallback,
+              let messageTaskGraphUseCase,
+              !cancellingTaskIDs.contains(callback.taskID) else { return }
+        let fallbackLookup = turn.resolvedMessageTaskLookup
+        let lookup = MessageTaskLookup(
+            sessionID: callback.sourceSessionID ?? fallbackLookup.sessionID,
+            turnID: callback.sourceTurnID ?? fallbackLookup.turnID,
+            sourceUserMessageID: callback.sourceUserMessageID
+                ?? fallbackLookup.sourceUserMessageID
+        )
+        let taskID = callback.taskID
+        cancellingTaskIDs.insert(taskID)
+        taskCancellationError = nil
+        taskCancellationTasks[taskID] = Task { [weak self] in
+            do {
+                try await messageTaskGraphUseCase.cancelTask(
+                    messageID: turn.userMessage.id,
+                    taskID: taskID,
+                    lookup: lookup,
+                    reason: "user requested cancellation from main chat"
+                )
+                guard !Task.isCancelled, let self else { return }
+                self.refreshLatest()
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.taskCancellationError = error.localizedDescription
+            }
+            guard let self else { return }
+            self.cancellingTaskIDs.remove(taskID)
+            self.taskCancellationTasks[taskID] = nil
+        }
+    }
+
+    func recoverTask(for turn: ConversationTurn, reply: ConversationAssistantReply) {
+        guard let callback = reply.taskCallback,
+              let messageTaskGraphUseCase,
+              !recoveringTaskIDs.contains(callback.taskID),
+              !cancellingTaskIDs.contains(callback.taskID) else { return }
+        let fallbackLookup = turn.resolvedMessageTaskLookup
+        let lookup = MessageTaskLookup(
+            sessionID: callback.sourceSessionID ?? fallbackLookup.sessionID,
+            turnID: callback.sourceTurnID ?? fallbackLookup.turnID,
+            sourceUserMessageID: callback.sourceUserMessageID
+                ?? fallbackLookup.sourceUserMessageID
+        )
+        let taskID = callback.taskID
+        recoveringTaskIDs.insert(taskID)
+        taskRecoveryError = nil
+        taskRecoveryTasks[taskID] = Task { [weak self] in
+            do {
+                try await messageTaskGraphUseCase.restartTask(
+                    messageID: turn.userMessage.id,
+                    taskID: taskID,
+                    lookup: lookup,
+                    reason: "user confirmed recovery after checking possible side effects"
+                )
+                guard !Task.isCancelled, let self else { return }
+                self.refreshLatest()
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.taskRecoveryError = error.localizedDescription
+            }
+            guard let self else { return }
+            self.recoveringTaskIDs.remove(taskID)
+            self.taskRecoveryTasks[taskID] = nil
         }
     }
 

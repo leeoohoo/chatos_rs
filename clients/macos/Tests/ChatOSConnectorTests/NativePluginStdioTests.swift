@@ -4,7 +4,99 @@ import Darwin
 import Foundation
 import Testing
 
+private actor PluginProgressCollector {
+    private var updates: [NativePluginProgressUpdate] = []
+
+    func append(_ update: NativePluginProgressUpdate) {
+        updates.append(update)
+    }
+
+    func snapshot() -> [NativePluginProgressUpdate] { updates }
+}
+
 extension NativePluginRuntimeTests {
+    @Test("plugin progress presentation bounds untrusted message text")
+    func pluginProgressPresentationBoundsMessageText() {
+        let detail = NativePluginProgressPresentation.detail(for: .init(
+            progress: 1,
+            total: 2,
+            message: "进" + String(repeating: "x", count: 5_000)
+        ))
+
+        #expect(detail.count == NativePluginProgressPresentation.maximumMessageCharacters + 1)
+        #expect(detail.hasPrefix("进"))
+        #expect(detail.hasSuffix("…"))
+        #expect(NativePluginProgressPresentation.detail(for: .init(
+            progress: 2,
+            total: 5,
+            message: "  \n"
+        )) == "Progress 2/5")
+        #expect(NativePluginProgressPresentation.detail(for: .init(
+            progress: 1e300,
+            total: nil,
+            message: nil
+        )) == "Progress ?")
+    }
+
+    @Test("stdio client negotiates and delivers MCP progress notifications")
+    func stdioProgressNotifications() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let script = root.appendingPathComponent("fixture.zsh")
+        try #"""
+        while IFS= read -r line; do
+          if [[ "$line" == *'tools/list'* ]]; then
+            echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"work","inputSchema":{"type":"object"}}]}}'
+          elif [[ "$line" == *'tools/call'* ]]; then
+            token=$(print -r -- "$line" | /usr/bin/sed -E 's/.*"progressToken":"([^"]+)".*/\1/')
+            echo "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":\"$token\",\"progress\":2,\"total\":5,\"message\":\"action 2/5: click export\"}}"
+            echo '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"ok"}]}}'
+          elif [[ "$line" == *'initialize'* ]]; then
+            echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}}}}'
+          fi
+        done
+        """#.write(to: script, atomically: true, encoding: .utf8)
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {"schemaVersion":3,"name":"fixture","version":"1.0.0","mcpServers":{"fixture":{"type":"stdio","bin":"fixture","args":[]}}}
+            """.utf8)
+        )
+        let launch = NativePreparedPluginLaunch(
+            record: try nativePluginTestRecord(installationURL: root),
+            manifest: manifest,
+            componentKey: "fixture",
+            server: manifest.mcpServers["fixture"]!,
+            executableURL: URL(fileURLWithPath: "/bin/zsh"),
+            arguments: [script.path],
+            environment: [:],
+            installationURL: root,
+            visualSessionURL: root.appendingPathComponent("visual"),
+            artifactURL: root.appendingPathComponent("artifacts"),
+            displayName: "Fixture"
+        )
+        let client = NativePluginStdioClient(launch: launch)
+        let collector = PluginProgressCollector()
+        try await client.start()
+        _ = try await client.initialize()
+        _ = try await client.callTool(
+            name: "work",
+            arguments: .object([:]),
+            timeout: .seconds(2),
+            onProgress: { update in await collector.append(update) }
+        )
+
+        let updates = await collector.snapshot()
+        #expect(updates == [.init(
+            progress: 2,
+            total: 5,
+            message: "action 2/5: click export"
+        )])
+        await client.terminate()
+    }
+
     @Test("stdio output buffer budget is bounded by bytes instead of pipe chunk count")
     func stdioOutputBufferUsesByteBudget() {
         let budget = NativePluginOutputBufferBudget(maximumBytes: 1_024)

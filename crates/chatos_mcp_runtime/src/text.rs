@@ -11,6 +11,9 @@ const TRANSIENT_MODEL_INPUT_FIELD: &str = "__chatos_transient_model_input";
 const MODEL_INPUT_FIELD: &str = "_model_input";
 const MODEL_INPUT_MAX_IMAGES: usize = 2;
 const MODEL_INPUT_MAX_DECODED_BYTES: usize = 2 * 1024 * 1024;
+const DEDUPLICATED_STRUCTURED_TEXT_COPIES_FIELD: &str = "chatos/deduplicatedStructuredTextCopies";
+const DEDUPLICATED_STRUCTURED_TEXT_PLACEHOLDER: &str =
+    "[Duplicate JSON text omitted; use structuredContent as the canonical result.]";
 
 pub fn to_text_and_structured_result(result: &Value) -> (String, Option<Value>) {
     to_text_and_structured_result_inner(result, false, tool_result_text_max_chars())
@@ -100,6 +103,9 @@ fn diagnostic_payload(value: &Value, depth: usize) -> Option<Value> {
 fn diagnostic_text(value: &Value) -> String {
     if let Some(text) = value.as_str() {
         return text.to_owned();
+    }
+    if let Some(payload) = deduplicated_model_payload(value) {
+        return payload.to_string();
     }
     if let Some(content) = value.get("content") {
         if let Some(items) = content.as_array() {
@@ -200,7 +206,9 @@ fn to_text_and_structured_result_inner(
             }
         }
     }
-    let raw = if let Some(text) = result.as_str() {
+    let raw = if let Some(payload) = deduplicated_model_payload(result) {
+        payload.to_string()
+    } else if let Some(text) = result.as_str() {
         text.to_string()
     } else if let Some(content) = result.get("content").and_then(Value::as_array) {
         first_mcp_text(content).unwrap_or_else(|| result.to_string())
@@ -221,6 +229,58 @@ fn to_text_and_structured_result_inner(
         truncate_tool_text(raw.as_str(), max_chars),
         structured_result,
     )
+}
+
+/// The native plugin bridge may remove an MCP text block when it is an exact
+/// JSON copy of `structuredContent`. The model transport, however, consumes the
+/// projected text rather than the sibling structured field. Restore that text
+/// at the shared projection boundary so callers receive either readable JSON or
+/// the Host's durable large-result reference, never a deduplication placeholder.
+fn deduplicated_model_payload(value: &Value) -> Option<Value> {
+    let envelope = value
+        .get("content")
+        .filter(|content| content.is_object())
+        .unwrap_or(value);
+    let removed_count = envelope
+        .get("_meta")?
+        .get(DEDUPLICATED_STRUCTURED_TEXT_COPIES_FIELD)?
+        .as_u64()?;
+    if removed_count == 0 {
+        return None;
+    }
+    let structured = envelope.get("structuredContent")?.clone();
+    let supplemental_text: Vec<Value> = envelope
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("text"))
+        .filter(|item| {
+            item.get("text").and_then(Value::as_str)
+                != Some(DEDUPLICATED_STRUCTURED_TEXT_PLACEHOLDER)
+        })
+        .cloned()
+        .collect();
+    let mut payload = serde_json::Map::from_iter([
+        (
+            "_meta".to_string(),
+            serde_json::json!({DEDUPLICATED_STRUCTURED_TEXT_COPIES_FIELD: removed_count}),
+        ),
+        ("structuredContent".to_string(), structured),
+    ]);
+    if !supplemental_text.is_empty() {
+        payload.insert("content".to_string(), Value::Array(supplemental_text));
+    }
+    Some(Value::Object(payload))
+}
+
+pub(crate) fn is_deduplicated_model_payload(value: &Value) -> bool {
+    value
+        .get("_meta")
+        .and_then(|metadata| metadata.get(DEDUPLICATED_STRUCTURED_TEXT_COPIES_FIELD))
+        .and_then(Value::as_u64)
+        .is_some_and(|count| count > 0)
+        && value.get("structuredContent").is_some()
 }
 
 fn first_mcp_text(content: &[Value]) -> Option<String> {

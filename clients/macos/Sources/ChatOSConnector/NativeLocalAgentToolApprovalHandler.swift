@@ -66,6 +66,8 @@ struct NativeLocalHumanApprovalRequest: Sendable {
     let requestedPermissionsDescription: String
     let approvalScopeKey: String
     let workspaceID: String
+    let evaluationArguments: [String]?
+    let automaticApprovalEvidenceComplete: Bool
 }
 
 protocol NativeLocalHumanApprovalServicing: Sendable {
@@ -89,6 +91,8 @@ extension NativeLocalConnectorService: NativeLocalHumanApprovalServicing {
             purpose: request.purpose,
             requestedPermissionsDescription: request.requestedPermissionsDescription,
             approvalScopeKey: request.approvalScopeKey,
+            evaluationArguments: request.evaluationArguments,
+            automaticApprovalEvidenceComplete: request.automaticApprovalEvidenceComplete,
             workspaceID: request.workspaceID
         )
     }
@@ -98,6 +102,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
     private let durableApprovals: any NativeLocalAgentDurableApprovalServicing
     private let contextResolver: any NativeLocalAgentApprovalContextResolving
     private let humanApprovals: any NativeLocalHumanApprovalServicing
+    private let editEvidenceProvider: (any NativeMCPCodeWriteApprovalEvidenceProviding)?
     private let decisionJournal: NativeLocalAgentApprovalDecisionJournal
     private let reviewerID: String
 
@@ -105,6 +110,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
         host: any LocalAgentHostClientServicing,
         projects: NativeLocalProjectsService,
         connector: NativeLocalConnectorService,
+        editEvidenceProvider: (any NativeMCPCodeWriteApprovalEvidenceProviding)? = nil,
         decisionJournalURL: URL? = nil,
         reviewerID: String = "macos-local-approval"
     ) {
@@ -117,6 +123,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             connector: connector
         )
         humanApprovals = connector
+        self.editEvidenceProvider = editEvidenceProvider
         decisionJournal = .init(fileURL: decisionJournalURL)
         self.reviewerID = reviewerID
     }
@@ -125,12 +132,14 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
         durableApprovals: any NativeLocalAgentDurableApprovalServicing,
         contextResolver: any NativeLocalAgentApprovalContextResolving,
         humanApprovals: any NativeLocalHumanApprovalServicing,
+        editEvidenceProvider: (any NativeMCPCodeWriteApprovalEvidenceProviding)? = nil,
         decisionJournal: NativeLocalAgentApprovalDecisionJournal = .init(),
         reviewerID: String = "macos-local-approval"
     ) {
         self.durableApprovals = durableApprovals
         self.contextResolver = contextResolver
         self.humanApprovals = humanApprovals
+        self.editEvidenceProvider = editEvidenceProvider
         self.decisionJournal = decisionJournal
         self.reviewerID = reviewerID
     }
@@ -145,6 +154,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
                 || [
                     "remote_connection_controller_run_command",
                     "remote_connection_controller_upload_file",
+                    "remote_connection_controller_upload_project_file",
                 ].contains($0.toolName)
         }) else { return false }
         if let recorded = await decisionJournal.decision(
@@ -196,18 +206,49 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             )
             return true
         }
+        let editEvidence: NativeMCPCodeWriteApprovalEvidence?
+        if invocation.toolName == "commit_edit_session" {
+            if let editEvidenceProvider, case let .object(arguments) = invocation.arguments {
+                do {
+                    editEvidence = try await editEvidenceProvider.approvalEvidence(
+                        arguments: arguments.mapValues(NativeJSONValue.init(local:)),
+                        scope: .init(
+                            workspaceID: context.workspaceScopeID,
+                            sessionID: context.conversationID,
+                            runID: invocation.runID
+                        ),
+                        projectRoot: approvalScope.rootURL,
+                        ownedPaths: context.toolAuthorization.ownedPaths
+                    )
+                } catch {
+                    editEvidence = Self.incompleteEditEvidence(
+                        "宿主无法读取或重新校验本次暂存编辑：\(error.localizedDescription)"
+                    )
+                }
+            } else {
+                editEvidence = Self.incompleteEditEvidence(
+                    "宿主未取得可验证的暂存编辑内容"
+                )
+            }
+        } else {
+            editEvidence = nil
+        }
         let decision = await humanApprovals.decideHumanApproval(.init(
             requestID: invocation.invocationID,
             command: presentation.command,
             arguments: presentation.arguments,
             cwd: cwd,
             projectRoot: approvalScope.rootURL,
-            source: "Local Agent Task",
+            source: "Task",
             risk: presentation.risk,
-            purpose: presentation.purpose,
+            purpose: editEvidence?.purpose ?? presentation.purpose,
             requestedPermissionsDescription: presentation.permission,
             approvalScopeKey: presentation.scope + ":\(context.conversationID)",
-            workspaceID: approvalScope.workspaceID
+            workspaceID: approvalScope.workspaceID,
+            evaluationArguments: editEvidence.map { [$0.evaluationSummary] }
+                ?? presentation.evaluationArguments,
+            automaticApprovalEvidenceComplete: editEvidence?.isComplete
+                ?? presentation.automaticApprovalEvidenceComplete
         ))
         let approved: Bool
         let reason: String
@@ -302,7 +343,9 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
         risk: NativeApprovalRisk,
         purpose: String?,
         permission: String,
-        scope: String
+        scope: String,
+        evaluationArguments: [String]?,
+        automaticApprovalEvidenceComplete: Bool
     )? {
         if invocation.toolName == "execute_command" {
             guard case let .object(arguments) = invocation.arguments else { return nil }
@@ -311,6 +354,10 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
                 return nil
             }
             let shellArguments = ["-lc", command]
+            let evaluation = automaticApprovalEvidence(
+                arguments: shellArguments,
+                operation: "shell 命令"
+            )
             return (
                 "/bin/zsh",
                 shellArguments,
@@ -319,28 +366,38 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
                     arguments: shellArguments
                 ),
                 purpose,
-                "在当前本地项目中执行命令",
-                "local-agent-terminal"
+                "在当前项目中执行命令",
+                "local-agent-terminal",
+                evaluation.arguments,
+                evaluation.isComplete
             )
         }
         if invocation.toolName == "process_write" {
             return (
                 "process_write",
                 ["interactive input hidden"],
-                .init(level: "medium", reason: "本地任务请求向运行中的命令写入输入。"),
+                .init(level: "medium", reason: "任务请求向运行中的命令写入输入。"),
                 nil,
-                "向当前任务启动的本地命令写入输入",
-                "local-agent-terminal"
+                "向当前任务启动的命令写入输入",
+                "local-agent-terminal",
+                [incompleteOperationEvidence("标准输入内容被宿主隐藏")],
+                false
             )
         }
         if invocation.toolName == "process_kill" {
+            let evaluation = automaticApprovalEvidence(
+                arguments: [NativeJSONValue(local: invocation.arguments).canonicalJSONString],
+                operation: "进程终止参数"
+            )
             return (
                 "process_kill",
                 ["task-owned process"],
-                .init(level: "medium", reason: "本地任务请求终止运行中的命令。"),
+                .init(level: "medium", reason: "任务请求终止运行中的命令。"),
                 nil,
-                "终止当前任务启动的本地命令",
-                "local-agent-terminal"
+                "终止当前任务启动的命令",
+                "local-agent-terminal",
+                evaluation.arguments,
+                evaluation.isComplete
             )
         }
         if invocation.toolName == "remote_connection_controller_run_command" {
@@ -350,38 +407,104 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             } else {
                 command = ""
             }
+            let evaluation = automaticApprovalEvidence(
+                arguments: [NativeJSONValue(local: invocation.arguments).canonicalJSONString],
+                operation: "远程 SSH 命令"
+            )
             return (
                 "remote SSH command",
-                [String(command.prefix(500))],
-                .init(level: "high", reason: "本地任务请求在已保存的远程连接上执行命令。"),
+                // Approval is a security boundary. Never truncate executable text:
+                // doing so can split a pipeline, quote, redirection, or compound
+                // command and make both the model and user review a different
+                // operation from the one the Host will actually execute.
+                [command],
+                .init(level: "high", reason: "任务请求在已保存的远程连接上执行命令。"),
                 nil,
                 "在选定的远程连接上执行命令",
-                "local-agent-remote-command"
+                "local-agent-remote-command",
+                evaluation.arguments,
+                evaluation.isComplete
             )
         }
-        if invocation.toolName == "remote_connection_controller_upload_file" {
+        if [
+            "remote_connection_controller_upload_file",
+            "remote_connection_controller_upload_project_file",
+        ].contains(invocation.toolName) {
             let path: String
+            let localPath: String?
             if case .object(let arguments) = invocation.arguments {
                 path = string(arguments["path"]) ?? ""
+                localPath = string(arguments["local_path"])
             } else {
                 path = ""
+                localPath = nil
             }
             return (
                 "remote file upload",
-                [String(path.prefix(500))],
-                .init(level: "high", reason: "本地任务请求向已保存的远程连接写入文件。"),
+                [localPath.map { "\($0) -> \(path)" } ?? path],
+                .init(level: "high", reason: "任务请求向已保存的远程连接写入文件。"),
                 nil,
                 "向选定的远程连接上传文件",
-                "local-agent-remote-upload"
+                "local-agent-remote-upload",
+                [incompleteOperationEvidence(
+                    localPath == nil
+                        ? "远程上传内容未提供给审批模型"
+                        : "远程上传的项目文件内容未提供给审批模型"
+                )],
+                false
             )
         }
         return (
             "commit_edit_session",
             ["commit staged project edits"],
-            .init(level: "medium", reason: "本地任务请求提交已暂存的项目文件修改。"),
+            .init(level: "medium", reason: "任务请求提交已暂存的项目文件修改。"),
             nil,
-            "修改当前本地项目中的已暂存文件",
-            "local-agent-project-write"
+            "修改当前项目中的已暂存文件",
+            "local-agent-project-write",
+            [incompleteOperationEvidence("暂存编辑内容尚未由宿主验证")],
+            false
+        )
+    }
+
+    private static let maximumAutomaticApprovalArgumentCharacters = 160_000
+
+    private static func automaticApprovalEvidence(
+        arguments: [String],
+        operation: String
+    ) -> (arguments: [String], isComplete: Bool) {
+        var total = 0
+        for argument in arguments {
+            let (next, overflow) = total.addingReportingOverflow(argument.count)
+            guard !overflow, next <= maximumAutomaticApprovalArgumentCharacters else {
+                return (
+                    [incompleteOperationEvidence(
+                        "完整\(operation)超过审批上下文上限 \(maximumAutomaticApprovalArgumentCharacters) 字符"
+                    )],
+                    false
+                )
+            }
+            total = next
+        }
+        return (arguments, true)
+    }
+
+    private static func incompleteOperationEvidence(_ reason: String) -> String {
+        """
+        EVIDENCE_COMPLETE=false
+        \(reason)。AI 自动审批不得猜测或批准，必须转人工确认。
+        """
+    }
+
+    private static func incompleteEditEvidence(
+        _ reason: String
+    ) -> NativeMCPCodeWriteApprovalEvidence {
+        .init(
+            evaluationSummary: """
+            EVIDENCE_COMPLETE=false
+            \(reason)。AI 自动审批不得猜测或批准，必须转人工确认并明确显示此原因。
+            """,
+            purpose: nil,
+            isComplete: false
         )
     }
 

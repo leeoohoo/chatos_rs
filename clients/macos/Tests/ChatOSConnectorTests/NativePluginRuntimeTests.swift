@@ -6,6 +6,29 @@ import Testing
 
 @Suite("Native Plugin Runtime")
 struct NativePluginRuntimeTests {
+    @Test("canonical JSON numbers never trap on untrusted large finite values")
+    func canonicalJSONLargeNumberIsSafe() {
+        let encoded = NativeJSONValue.number(1e300).canonicalJSONString
+
+        #expect(encoded.lowercased().contains("e"))
+        #expect(NativeJSONValue.number(.infinity).canonicalJSONString == "null")
+    }
+
+    @Test("untrusted plugin timeout metadata cannot overflow host integers")
+    func pluginTimeoutLargeNumberIsSafe() {
+        let policy = NativeLocalConnectorService.toolPolicy(
+            .object([
+                "_meta": .object([
+                    "chatos/timeoutMs": .number(1e300),
+                ]),
+            ]),
+            componentKey: "fixture",
+            toolName: "work"
+        )
+
+        #expect(policy.timeoutMilliseconds == 7_200_000)
+    }
+
     @Test("local HTTP Plugin applications launch from package.json.bin and become reachable")
     func localHTTPPluginApplicationLaunches() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -550,8 +573,95 @@ struct NativePluginRuntimeTests {
                 ]),
             ])
         )
-        #expect(evaluationSummary.contains("已隐藏敏感表达式"))
+        #expect(evaluationSummary.contains("redacted sensitive expression"))
+        #expect(evaluationSummary.contains("EVIDENCE_COMPLETE=false"))
         #expect(!evaluationSummary.contains("getItem"))
+    }
+
+    @Test
+    func genericPluginApprovalEvaluationReceivesCompleteNonSensitiveArguments() {
+        let tail = "tail-marker-after-many-arguments"
+        let evaluationSummary = NativeLocalConnectorService.safeApprovalEvaluationSummary(
+            toolName: "remote_export",
+            arguments: .object([
+                "format": .string("video"),
+                "options": .object([
+                    "description": .string(String(repeating: "x", count: 5_000) + tail),
+                    "max_tokens": .number(1_200),
+                    "quality": .number(90),
+                ]),
+            ])
+        )
+
+        #expect(evaluationSummary.contains("EVIDENCE_COMPLETE=true"))
+        #expect(evaluationSummary.contains(tail))
+        #expect(evaluationSummary.contains("\"quality\":90"))
+    }
+
+    @Test
+    func genericPluginApprovalRedactsCredentialFieldsAndMarksEvidenceIncomplete() {
+        let evaluationSummary = NativeLocalConnectorService.safeApprovalEvaluationSummary(
+            toolName: "publish",
+            arguments: .object([
+                "target": .string("preview"),
+                "credentials": .object([
+                    "api_key": .string("must-not-leak"),
+                    "accessToken": .string("camel-token-must-not-leak"),
+                    "clientSecret": .string("camel-secret-must-not-leak"),
+                ]),
+            ])
+        )
+
+        #expect(evaluationSummary.contains("EVIDENCE_COMPLETE=false"))
+        #expect(evaluationSummary.contains("redacted by host"))
+        #expect(!evaluationSummary.contains("must-not-leak"))
+        #expect(!evaluationSummary.contains("camel-token-must-not-leak"))
+        #expect(!evaluationSummary.contains("camel-secret-must-not-leak"))
+    }
+
+    @Test
+    func redactedPluginApprovalEvidenceRemainsBoundedWhenOtherArgumentsAreHuge() {
+        let tail = "oversized-tail-must-not-be-in-approval-context"
+        let evaluationSummary = NativeLocalConnectorService.safeApprovalEvaluationSummary(
+            toolName: "publish",
+            arguments: .object([
+                "credentials": .object(["api_key": .string("must-not-leak")]),
+                "payload": .string(
+                    String(
+                        repeating: "x",
+                        count: NativeLocalConnectorService.approvalEvaluationMaximumCharacters
+                    ) + tail
+                ),
+            ])
+        )
+
+        #expect(evaluationSummary.contains("EVIDENCE_COMPLETE=false"))
+        #expect(evaluationSummary.contains("净化后的完整参数仍超过审批上下文上限"))
+        #expect(!evaluationSummary.contains("must-not-leak"))
+        #expect(!evaluationSummary.contains(tail))
+        #expect(
+            evaluationSummary.count
+                <= NativeLocalConnectorService.approvalEvaluationMaximumCharacters
+        )
+    }
+
+    @Test
+    func oversizedCDPApprovalEvidenceIsExplicitlyIncomplete() {
+        let expression = String(
+            repeating: "document.body.dataset.value = 'safe';",
+            count: 5_000
+        )
+        let evaluationSummary = NativeLocalConnectorService.safeApprovalEvaluationSummary(
+            toolName: "browser_cdp_send",
+            arguments: .object([
+                "method": .string("Runtime.evaluate"),
+                "params": .object(["expression": .string(expression)]),
+            ])
+        )
+
+        #expect(expression.count > NativeLocalConnectorService.approvalEvaluationMaximumCharacters)
+        #expect(evaluationSummary.contains("EVIDENCE_COMPLETE=false"))
+        #expect(evaluationSummary.contains("必须转人工确认"))
     }
 
 }

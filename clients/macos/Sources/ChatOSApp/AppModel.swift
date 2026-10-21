@@ -329,6 +329,12 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 },
                 afterRetry: {
                     await localAgentPlatformToolWorker?.wake()
+                },
+                afterCancel: { runID in
+                    await localAgentPlatformToolWorker?.releaseRun(runID)
+                },
+                pluginActivity: { runID in
+                    await localConnectorService.agentPluginActivity(runID: runID)
                 }
             )
         }

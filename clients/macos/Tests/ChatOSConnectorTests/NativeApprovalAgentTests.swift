@@ -55,6 +55,7 @@ final class NativeApprovalAgentTests: XCTestCase {
         XCTAssertEqual(messages.map(\.role), [.system, .user, .assistant, .tool, .assistant, .tool])
         XCTAssertTrue(messages.first?.content.contains("managed approval prompt") == true)
         XCTAssertTrue(messages.first?.content.contains("# Command approval") == true)
+        XCTAssertTrue(messages.first?.content.contains("EVIDENCE_COMPLETE") == true)
         XCTAssertTrue(messages[1].content.contains("AI 自动审批"))
         XCTAssertTrue(messages[1].content.contains("检查示例文件内容"))
         XCTAssertTrue(messages[1].content.contains("不要仅为了让用户重复确认") == true)

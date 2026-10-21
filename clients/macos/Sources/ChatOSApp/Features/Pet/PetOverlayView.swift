@@ -121,7 +121,13 @@ struct PetMessageView: View {
             interactionState.selectedActivityID = activity.id
             interactionState.isMessageExpanded = true
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
+            if activity.kind == .working, canLoadTask(activity) {
+                PetTaskLiveActivityBubble(
+                    activity: activity,
+                    onLoadTask: onLoadTask
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: PetActivityPresentation.messageIcon(for: activity.kind))
                         .foregroundStyle(PetActivityPresentation.messageTint(for: activity.kind))
@@ -156,10 +162,11 @@ struct PetMessageView: View {
                 }
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .contentShape(Rectangle())
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .frame(

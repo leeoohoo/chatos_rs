@@ -86,9 +86,18 @@ extension PetMessageView {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)
                     if let reason = PetActivityPresentation.displayText(approval.reason) {
-                        Text(reason)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Label(
+                                reason.hasPrefix("AI 自动审批已转人工：")
+                                    ? "AI 转人工原因"
+                                    : "审批说明",
+                                systemImage: "info.circle"
+                            )
+                            .font(.system(size: 11, weight: .semibold))
+                            Text(reason)
+                                .font(.system(size: 11))
+                        }
+                        .foregroundStyle(.secondary)
                     }
                     if let error = approvalViewModel.approvalError(for: approval.id) {
                         Label(error, systemImage: "exclamationmark.triangle.fill")

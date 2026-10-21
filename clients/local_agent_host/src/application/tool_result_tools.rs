@@ -279,7 +279,7 @@ fn source_model_text(source: &LocalAgentToolInvocationRecord) -> Result<String, 
             return Err("source tool result is not complete".to_string())
         }
     };
-    Ok(result.content)
+    Ok(chatos_mcp_runtime::execution::external_tool_result_reference_content(&result))
 }
 
 fn source_run_model_text(

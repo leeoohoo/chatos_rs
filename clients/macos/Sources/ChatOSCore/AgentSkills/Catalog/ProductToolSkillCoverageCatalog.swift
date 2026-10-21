@@ -79,7 +79,7 @@ public extension ToolSkillCoverageCatalog {
                     providerID: ProductToolProviderID.remoteConnection,
                     toolNames: [
                         "test_connection", "run_command", "list_directory", "read_file",
-                        "download_file", "upload_file",
+                        "download_file", "upload_file", "upload_project_file",
                     ],
                     routerSkillName: "chatos-remote-connection",
                     specialistSkillName: "chatos-remote-connection",

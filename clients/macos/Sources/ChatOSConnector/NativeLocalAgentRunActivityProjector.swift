@@ -206,7 +206,7 @@ enum NativeLocalAgentRunActivityProjector {
     private static func integer(_ key: String, in value: LocalAgentJSONValue) -> Int? {
         guard case let .object(object) = value,
               case let .number(result)? = object[key] else { return nil }
-        return Int(result)
+        return Int(exactly: result)
     }
 
     private static func bool(_ key: String, in value: LocalAgentJSONValue) -> Bool? {

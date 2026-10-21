@@ -540,6 +540,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "remote_connection_controller_read_file",
                 "remote_connection_controller_download_file",
                 "remote_connection_controller_upload_file",
+                "remote_connection_controller_upload_project_file",
                 "local_attachment_read",
                 "capability_search", "capability_describe", "agent_skill_activate",
                 "agent_skill_read_resource", "capability_invoke",

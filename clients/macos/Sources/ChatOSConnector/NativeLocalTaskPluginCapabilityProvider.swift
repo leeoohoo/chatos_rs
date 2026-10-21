@@ -24,6 +24,10 @@ extension NativeLocalConnectorService {
         await pluginRuntimeStore.cancel(runID: runID)
     }
 
+    public func agentPluginActivity(runID: String) async -> MessageTaskRunActivity? {
+        await pluginRuntimeStore.invocationActivity(runID: runID)
+    }
+
     func makeTaskExecutionCapabilityToolProvider(
         ownerUserID: String,
         runID: String,

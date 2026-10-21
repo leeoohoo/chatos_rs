@@ -91,6 +91,7 @@ public actor NativeLocalAgentPlatformToolWorker {
       host: host,
       projects: projects,
       connector: connector,
+      editEvidenceProvider: writeStore,
       decisionJournalURL: attachmentRootURL.deletingLastPathComponent()
         .appendingPathComponent("approval-writebacks.json", isDirectory: false)
     )

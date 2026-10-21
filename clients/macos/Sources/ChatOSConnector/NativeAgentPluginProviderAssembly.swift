@@ -298,7 +298,7 @@ extension NativeLocalConnectorService {
     ) async -> Bool {
         guard policy.approvalMode == "per_call" else { return true }
         let summary = Self.safeArgumentSummary(toolName: toolName, arguments: arguments)
-        let evaluationSummary = Self.safeApprovalEvaluationSummary(
+        let evaluationEvidence = Self.safeApprovalEvaluationEvidence(
             toolName: toolName,
             arguments: arguments
         )
@@ -340,7 +340,8 @@ extension NativeLocalConnectorService {
             ),
             approvalScopeKey: "agent-plugin:\(componentKey):\(toolName):\(requiredPermissions.sorted().joined(separator: ","))",
             approvalSessionReuse: .declaredScope,
-            evaluationArguments: [evaluationSummary],
+            evaluationArguments: [evaluationEvidence.summary],
+            automaticApprovalEvidenceComplete: evaluationEvidence.isComplete,
             workspaceID: workspaceID
         )
         if case .approve = decision { return true }

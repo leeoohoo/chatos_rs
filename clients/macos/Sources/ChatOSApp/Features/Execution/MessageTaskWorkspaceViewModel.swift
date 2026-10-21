@@ -31,6 +31,8 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     @Published var isLoadingRun = false
     @Published var isLoadingMoreRunEvents = false
     @Published private(set) var isRetrying = false
+    @Published private(set) var isCancelling = false
+    @Published var cancellationCandidate: MessageTask?
     @Published var displayMode: MessageTaskGraphDisplayMode = .reduced
     @Published var inspectorSection: InspectorSection = .detail
     @Published var retryInstruction = ""
@@ -45,6 +47,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     var initialLoadTask: Task<Void, Never>?
     var refreshTask: Task<Void, Never>?
     var retryTask: Task<Void, Never>?
+    var cancellationTask: Task<Void, Never>?
     var pollingTask: Task<Void, Never>?
     var realtimeTask: Task<Void, Never>?
     var inspectorLoadTask: Task<Void, Never>?
@@ -99,6 +102,62 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     }
 
     var selectedTaskID: String? { selectedTask?.id }
+
+    var hasCancellableTask: Bool {
+        cancellationTarget != nil
+    }
+
+    var cancellationTarget: MessageTask? {
+        if let selectedTask, selectedTask.canBeCancelled { return selectedTask }
+        return displayGraph?.nodes.lazy.map(\.task).first(where: \.canBeCancelled)
+    }
+
+    func requestCancellation(for task: MessageTask? = nil) {
+        guard !isCancelling,
+              let target = task ?? cancellationTarget,
+              target.canBeCancelled else { return }
+        cancellationCandidate = target
+    }
+
+    func dismissCancellation() {
+        guard !isCancelling, cancellationCandidate != nil else { return }
+        cancellationCandidate = nil
+    }
+
+    func confirmCancellation() {
+        guard let task = cancellationCandidate,
+              task.canBeCancelled,
+              !isCancelling,
+              let session = workspaceLifecycleState.activeSession else { return }
+        let target = target(for: task)
+        let graphUseCase = graphUseCase
+        isCancelling = true
+        errorMessage = nil
+        cancellationTask = Task { [weak self] in
+            do {
+                try await graphUseCase.cancelTask(
+                    messageID: target.messageID,
+                    taskID: task.id,
+                    lookup: target.lookup,
+                    reason: "user requested cancellation from task workspace"
+                )
+                guard !Task.isCancelled,
+                      let self,
+                      self.workspaceLifecycleState.accepts(session) else { return }
+                self.cancellationCandidate = nil
+                self.refresh()
+            } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      self.workspaceLifecycleState.accepts(session) else { return }
+                self.errorMessage = error.localizedDescription
+            }
+            guard let self,
+                  self.workspaceLifecycleState.accepts(session) else { return }
+            self.cancellationTask = nil
+            self.isCancelling = false
+        }
+    }
 
     func load() {
         guard !isLoading, workspaceLifecycleState.activeSession == nil else { return }
@@ -239,6 +298,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         refreshTask = nil
         isLoading = false
         cancelRetry()
+        cancellationCandidate = nil
         stopPolling()
         stopRealtime()
         cancelInspectorRequests()
@@ -358,4 +418,10 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         }
     }
 
+}
+
+private extension MessageTask {
+    var canBeCancelled: Bool {
+        isActive
+    }
 }

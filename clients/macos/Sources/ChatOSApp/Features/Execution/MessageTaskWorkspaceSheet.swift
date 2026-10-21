@@ -29,6 +29,30 @@ struct MessageTaskWorkspaceSheet: View {
         .environment(\.locale, model.interfaceLocale)
         .background(Color(nsColor: .windowBackgroundColor))
         .animation(.easeInOut(duration: 0.2), value: isFullscreen)
+        .confirmationDialog(
+            model.localized("停止这个任务？", english: "Stop this task?"),
+            isPresented: Binding(
+                get: { viewModel.cancellationCandidate != nil },
+                set: { isPresented in
+                    guard !isPresented,
+                          viewModel.cancellationCandidate != nil else { return }
+                    viewModel.dismissCancellation()
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(model.localized("停止任务", english: "Stop Task"), role: .destructive) {
+                viewModel.confirmCancellation()
+            }
+            Button(model.localized("继续执行", english: "Keep Running"), role: .cancel) {
+                viewModel.dismissCancellation()
+            }
+        } message: {
+            Text(model.localized(
+                "将终止当前执行。浏览器点击、导出或文件操作可能已经发生，系统不会自动重试。",
+                english: "This stops the current execution. Browser clicks, exports, or file operations may already have happened and will not be retried automatically."
+            ))
+        }
         .task { viewModel.load() }
         .onDisappear {
             viewModel.stop()
@@ -112,6 +136,16 @@ struct MessageTaskWorkspaceSheet: View {
             .labelsHidden()
             .frame(width: 150)
             Button("刷新", systemImage: "arrow.clockwise", action: viewModel.refresh)
+            if viewModel.hasCancellableTask {
+                Button(
+                    viewModel.isCancelling ? "正在停止…" : "停止任务",
+                    systemImage: "stop.circle"
+                ) {
+                    viewModel.requestCancellation()
+                }
+                .disabled(viewModel.isCancelling)
+                .tint(.red)
+            }
             Button(
                 isFullscreen ? "退出全屏" : "全屏",
                 systemImage: isFullscreen
@@ -188,7 +222,8 @@ struct MessageTaskWorkspaceSheet: View {
                     MessageTaskGraphCanvas(
                         graph: graph,
                         selectedTaskID: viewModel.selectedTaskID,
-                        onSelect: viewModel.select
+                        onSelect: viewModel.select,
+                        onStop: { viewModel.requestCancellation(for: $0) }
                     )
                     .frame(minWidth: 700)
                     MessageTaskInspectorView(viewModel: viewModel)
@@ -197,7 +232,7 @@ struct MessageTaskWorkspaceSheet: View {
                 ContentUnavailableView(
                     "当前消息没有任务图",
                     systemImage: "point.3.connected.trianglepath.dotted",
-                    description: Text("AI 尚未通过本地任务工具为这条消息创建任务节点。")
+                    description: Text("AI 尚未通过任务工具为这条消息创建任务节点。")
                 )
             }
         }

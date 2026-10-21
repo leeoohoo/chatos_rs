@@ -37,7 +37,12 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
 
     func testMapsTurnTaskGraphAndCancelsWithCurrentVersion() async throws {
         let host = LocalTaskHostStub()
-        let service = NativeLocalAgentMessageTaskGraphService(host: host)
+        let service = NativeLocalAgentMessageTaskGraphService(
+            host: host,
+            afterCancel: { runID in
+                await host.recordRelease(runID)
+            }
+        )
         await service.configure(ownerUserID: "user-1")
         let lookup = MessageTaskLookup(
             sessionID: "conversation-1",
@@ -97,6 +102,8 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertEqual(command["type"], .string("cancel_task"))
         XCTAssertEqual(command["task_id"], .string("task-2"))
         XCTAssertEqual(command["expected_version"], .number(2))
+        let lifecycle = await host.recordedLifecycle()
+        XCTAssertEqual(Array(lifecycle.suffix(2)), ["command:cancel_task", "release:run-task-2"])
     }
 
     func testRetryPersistsAdditionalInstructionInLocalCommand() async throws {
@@ -126,6 +133,43 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertEqual(
             Array(lifecycle.suffix(3)),
             ["release:run-task-2", "command:retry_task", "wake"]
+        )
+    }
+
+    func testRestartRunningTaskReleasesOldPluginAfterDurableResetAndWakesScheduler() async throws {
+        let host = LocalTaskHostStub()
+        let service = NativeLocalAgentMessageTaskGraphService(
+            host: host,
+            afterRetry: {
+                await host.recordWake()
+            },
+            afterCancel: { runID in
+                await host.recordRelease(runID)
+            }
+        )
+        await service.configure(ownerUserID: "user-1")
+
+        let restarted = try await service.restartTask(
+            messageID: "message-1",
+            taskID: "task-2",
+            lookup: MessageTaskLookup(
+                sessionID: "conversation-1",
+                turnID: "turn-1",
+                sourceUserMessageID: "message-1"
+            ),
+            reason: "recover after verifying side effects"
+        )
+
+        let command = try await host.lastCommand()
+        XCTAssertEqual(command["type"], .string("restart_task"))
+        XCTAssertEqual(command["task_id"], .string("task-2"))
+        XCTAssertEqual(command["expected_version"], .number(2))
+        XCTAssertEqual(command["reason"], .string("recover after verifying side effects"))
+        XCTAssertEqual(restarted.taskID, "task-2")
+        let lifecycle = await host.recordedLifecycle()
+        XCTAssertEqual(
+            Array(lifecycle.suffix(3)),
+            ["command:restart_task", "release:run-task-2", "wake"]
         )
     }
 
@@ -221,6 +265,69 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         )
     }
 
+    func testRunDetailsFetchAndDisplayRunLevelFailure() async throws {
+        let failure = "storage conflict: Memory record id was reused"
+        let host = LocalTaskHostStub(runError: failure)
+        let service = NativeLocalAgentMessageTaskGraphService(host: host)
+        await service.configure(ownerUserID: "user-1")
+        let detail = try await service.fetchRun(
+            messageID: "message-1", runID: "run-task-2", lookup: .init(turnID: "turn-1"),
+            includeEvents: true, eventLimit: 40, eventOffset: 0
+        )
+        XCTAssertEqual(detail.run.errorMessage, failure)
+        XCTAssertEqual(detail.task.lastRun?.errorMessage, failure)
+        XCTAssertEqual(detail.events.first?.message, failure)
+        let commands = try await host.recordedCommands()
+        XCTAssertTrue(commands.contains {
+            $0["type"] == .string("list_events") && $0["event_type"] == .string("run_needs_review")
+        })
+    }
+
+    func testNeedsReviewErrorSurfacesRunFailureWithNoFailedTools() throws {
+        let events = try JSONDecoder().decode(
+            [LocalAgentEventRecord].self,
+            from: JSONSerialization.data(withJSONObject: [
+                invocationEvent(cursor: 1, status: "succeeded", error: ""),
+                [
+                    "cursor": 2, "event_id": "run-failure", "run_id": "run-task-2",
+                    "event_type": "run_needs_review",
+                    "payload": [
+                        "reason": "Local Agent profile step failed",
+                        "detail": ["error": "storage conflict: Memory record id was reused"],
+                    ],
+                    "created_at_unix_ms": 2,
+                ],
+            ])
+        )
+        XCTAssertEqual(
+            NativeLocalAgentMessageTaskGraphService.needsReviewError(from: events),
+            "storage conflict: Memory record id was reused"
+        )
+    }
+
+    func testNeedsReviewGenericRunReasonDoesNotHideConcreteToolError() throws {
+        let events = try JSONDecoder().decode(
+            [LocalAgentEventRecord].self,
+            from: JSONSerialization.data(withJSONObject: [
+                invocationEvent(cursor: 1, status: "needs_review", error: "specific tool error"),
+                [
+                    "cursor": 2, "event_id": "run-failure", "run_id": "run-task-2",
+                    "event_type": "run_needs_review",
+                    "payload": ["reason": "Tool needs review", "detail": ["error": "  "]],
+                    "created_at_unix_ms": 2,
+                ],
+            ])
+        )
+        XCTAssertEqual(
+            NativeLocalAgentMessageTaskGraphService.needsReviewError(from: events),
+            "specific tool error"
+        )
+        XCTAssertEqual(
+            NativeLocalAgentMessageTaskGraphService.needsReviewError(from: [events[1]]),
+            "Tool needs review"
+        )
+    }
+
     private func processEvent(
         cursor: Int,
         operation: String,
@@ -261,6 +368,11 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
 private actor LocalTaskHostStub: LocalAgentHostClientServicing {
     private var commands: [Data] = []
     private var lifecycle: [String] = []
+    private let runError: String?
+
+    init(runError: String? = nil) {
+        self.runError = runError
+    }
 
     func start(ownerUserID: String) async throws {}
     func stop() async {}
@@ -319,6 +431,15 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
                 "runs": taskID == "task-2" ? [run()] : [],
             ])
         case "list_events":
+            if let runError {
+                let filter = object?["event_type"] as? String
+                let events = filter == nil || filter == "run_needs_review"
+                    ? [event(cursor: 2, type: "run_needs_review", payload: [
+                        "reason": "Local Agent profile step failed",
+                        "detail": ["error": runError],
+                    ])] : []
+                return try json(["type": "events", "events": events, "next_cursor": 2])
+            }
             return try json([
                 "type": "events",
                 "events": [
@@ -476,7 +597,7 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
                 ],
             ],
             "status": id == "task-1" ? "succeeded" : "running",
-            "active_run_id": NSNull(),
+            "active_run_id": id == "task-2" ? "run-task-2" : NSNull(),
             "version": version,
             "created_at_unix_ms": 1,
             "updated_at_unix_ms": 2,
@@ -492,12 +613,12 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
             "profile_key": "task_execution",
             "capability_policy_revision": "policy-1",
             "input": [:],
-            "status": "succeeded",
+            "status": runError == nil ? "succeeded" : "needs_review",
             "version": 3,
-            "terminal_outcome": [
+            "terminal_outcome": runError == nil ? [
                 "content": "Completed locally",
                 "reasoning": "private model output",
-            ],
+            ] : NSNull(),
             "created_at_unix_ms": 1,
             "updated_at_unix_ms": 2,
         ]

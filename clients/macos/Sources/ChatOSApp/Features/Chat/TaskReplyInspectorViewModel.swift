@@ -87,10 +87,13 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var isLoadingModelOutput = false
     @Published private(set) var isRetrying = false
+    @Published private(set) var isCancelling = false
+    @Published private(set) var isRestarting = false
     @Published var retryInstruction = ""
     @Published var errorMessage: String?
     @Published private(set) var modelOutputError: String?
     @Published private(set) var retryErrorMessage: String?
+    @Published private(set) var recoveryErrorMessage: String?
 
     private let graphUseCase: MessageTaskGraphUseCase
     private let inspectorRefreshUseCase: MessageTaskInspectorRefreshUseCase
@@ -98,6 +101,8 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     private let pollingInterval: @Sendable (Bool) -> Duration
     private var loadTask: Task<Void, Never>?
     private var retryTask: Task<Void, Never>?
+    private var cancellationTask: Task<Void, Never>?
+    private var restartTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
     private var realtimeTask: Task<Void, Never>?
     private var realtimeSessionID: String?
@@ -130,6 +135,8 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     deinit {
         loadTask?.cancel()
         retryTask?.cancel()
+        cancellationTask?.cancel()
+        restartTask?.cancel()
         pollingTask?.cancel()
         realtimeTask?.cancel()
     }
@@ -389,6 +396,89 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         }
     }
 
+    var canCancelActiveTask: Bool {
+        task?.isActive == true
+    }
+
+    var canRestartActiveTask: Bool {
+        task.map { MessageTaskRecoveryPolicy.canForceRestart($0) } ?? false
+    }
+
+    func cancelActiveTask() {
+        guard let callback = selection.reply.taskCallback,
+              canCancelActiveTask,
+              !isCancelling,
+              !isRestarting,
+              let inspectorSession = lifecycleState.activeSession else { return }
+        let selection = selection
+        let lookup = lookup(callback, selection: selection)
+        let graphUseCase = graphUseCase
+        isCancelling = true
+        recoveryErrorMessage = nil
+        cancellationTask = Task { [weak self] in
+            do {
+                try await graphUseCase.cancelTask(
+                    messageID: selection.turn.userMessage.id,
+                    taskID: callback.taskID,
+                    lookup: lookup,
+                    reason: "user requested cancellation from task process inspector"
+                )
+                guard !Task.isCancelled,
+                      let self,
+                      self.lifecycleState.accepts(inspectorSession) else { return }
+                self.refresh()
+            } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      self.lifecycleState.accepts(inspectorSession) else { return }
+                self.recoveryErrorMessage = error.localizedDescription
+            }
+            guard let self,
+                  self.lifecycleState.accepts(inspectorSession) else { return }
+            self.cancellationTask = nil
+            self.isCancelling = false
+        }
+    }
+
+    func restartActiveTask() {
+        guard let callback = selection.reply.taskCallback,
+              canRestartActiveTask,
+              !isCancelling,
+              !isRestarting,
+              let inspectorSession = lifecycleState.activeSession else { return }
+        let selection = selection
+        let lookup = lookup(callback, selection: selection)
+        let graphUseCase = graphUseCase
+        isRestarting = true
+        recoveryErrorMessage = nil
+        restartTask = Task { [weak self] in
+            do {
+                try await graphUseCase.restartTask(
+                    messageID: selection.turn.userMessage.id,
+                    taskID: callback.taskID,
+                    lookup: lookup,
+                    reason: "user confirmed recovery after checking possible side effects"
+                )
+                guard !Task.isCancelled,
+                      let self,
+                      self.lifecycleState.accepts(inspectorSession) else { return }
+                self.task = nil
+                self.processTimelineItems = []
+                self.loadedModelOutputRunID = nil
+                self.refresh()
+            } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      self.lifecycleState.accepts(inspectorSession) else { return }
+                self.recoveryErrorMessage = error.localizedDescription
+            }
+            guard let self,
+                  self.lifecycleState.accepts(inspectorSession) else { return }
+            self.restartTask = nil
+            self.isRestarting = false
+        }
+    }
+
     func stop() {
         lifecycleState.stop()
         loadGeneration += 1
@@ -398,6 +488,12 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         pollingTask = nil
         stopRealtime()
         cancelRetry()
+        cancellationTask?.cancel()
+        cancellationTask = nil
+        restartTask?.cancel()
+        restartTask = nil
+        isCancelling = false
+        isRestarting = false
         isLoading = false
         isLoadingModelOutput = false
     }

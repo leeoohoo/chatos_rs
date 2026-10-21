@@ -224,7 +224,7 @@ final class ConversationSessionViewModelTests: XCTestCase {
         }
 
         XCTAssertEqual(viewModel.draft, "需要重新发送的内容")
-        XCTAssertEqual(viewModel.sendError, "本地任务组件连接已中断，请重新发送。")
+        XCTAssertEqual(viewModel.sendError, "任务组件连接已中断，请重新发送。")
         viewModel.draft = "用户后来输入的内容"
 
         await commandService.resumeDelayedNewTurn()
@@ -433,6 +433,92 @@ final class ConversationSessionViewModelTests: XCTestCase {
         }
 
         XCTAssertTrue(viewModel.taskGraphAvailabilityState.activeTokens.isEmpty)
+    }
+
+    func testMainChatTaskCancellationUsesCallbackIdentityAndClearsBusyState() async throws {
+        let service = TaskCancellationMessageTaskGraphServiceStub()
+        var turn = ConversationRemoteServiceStub.turn(revision: 1)
+        let reply = ConversationAssistantReply(
+            message: ChatMessage(
+                id: "task-reply",
+                role: .assistant,
+                text: "任务仍在执行",
+                createdAt: Date(timeIntervalSince1970: 2)
+            ),
+            taskCallback: TaskExecutionCallbackReference(
+                taskID: "task-running",
+                runID: "run-running",
+                status: "running",
+                sourceSessionID: "source-session",
+                sourceTurnID: "source-turn",
+                sourceUserMessageID: "source-message"
+            )
+        )
+        turn.assistantReplies = [reply]
+        let viewModel = ConversationSessionViewModel(
+            sessionID: turn.sessionID,
+            initialTurns: [turn],
+            historyStore: ConversationHistoryStore(),
+            messageTaskGraphService: service
+        )
+
+        viewModel.cancelTask(for: turn, reply: reply)
+        XCTAssertTrue(viewModel.isCancellingTask("task-running"))
+        try await waitUntil { await service.cancelledTaskID() == "task-running" }
+        try await waitUntil { !viewModel.isCancellingTask("task-running") }
+
+        let cancelledMessageID = await service.cancelledMessageID()
+        let cancelledLookup = await service.cancelledLookup()
+        let cancellationReason = await service.cancellationReason()
+        XCTAssertEqual(cancelledMessageID, turn.userMessage.id)
+        XCTAssertEqual(cancelledLookup, MessageTaskLookup(
+            sessionID: "source-session",
+            turnID: "source-turn",
+            sourceUserMessageID: "source-message"
+        ))
+        XCTAssertEqual(cancellationReason, "user requested cancellation from main chat")
+        XCTAssertNil(viewModel.taskCancellationError)
+    }
+
+    func testMainChatTaskRecoveryRestartsCallbackTaskAndClearsBusyState() async throws {
+        let service = TaskCancellationMessageTaskGraphServiceStub()
+        var turn = ConversationRemoteServiceStub.turn(revision: 1)
+        let reply = ConversationAssistantReply(
+            message: ChatMessage(
+                id: "task-reply",
+                role: .assistant,
+                text: "任务长时间没有进展",
+                createdAt: Date(timeIntervalSince1970: 2)
+            ),
+            taskCallback: TaskExecutionCallbackReference(
+                taskID: "task-running",
+                runID: "run-running",
+                status: "running",
+                sourceSessionID: "source-session",
+                sourceTurnID: "source-turn",
+                sourceUserMessageID: "source-message"
+            )
+        )
+        turn.assistantReplies = [reply]
+        let viewModel = ConversationSessionViewModel(
+            sessionID: turn.sessionID,
+            initialTurns: [turn],
+            historyStore: ConversationHistoryStore(),
+            messageTaskGraphService: service
+        )
+
+        viewModel.recoverTask(for: turn, reply: reply)
+        XCTAssertTrue(viewModel.isRecoveringTask("task-running"))
+        try await waitUntil { await service.restartedTaskID() == "task-running" }
+        try await waitUntil { !viewModel.isRecoveringTask("task-running") }
+
+        let lookup = await service.restartedLookup()
+        XCTAssertEqual(lookup, MessageTaskLookup(
+            sessionID: "source-session",
+            turnID: "source-turn",
+            sourceUserMessageID: "source-message"
+        ))
+        XCTAssertNil(viewModel.taskRecoveryError)
     }
 
     func testDeactivateRejectsLateViewportMutationPresentation() async throws {
@@ -1178,6 +1264,80 @@ final class ConversationSessionViewModelTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTFail("Timed out waiting for asynchronous conversation state")
+    }
+}
+
+private actor TaskCancellationMessageTaskGraphServiceStub: MessageTaskGraphServicing {
+    private var messageID: String?
+    private var taskID: String?
+    private var lookup: MessageTaskLookup?
+    private var reason: String?
+    private var restartID: String?
+    private var restartLookup: MessageTaskLookup?
+
+    func cancelledMessageID() -> String? { messageID }
+    func cancelledTaskID() -> String? { taskID }
+    func cancelledLookup() -> MessageTaskLookup? { lookup }
+    func cancellationReason() -> String? { reason }
+    func restartedTaskID() -> String? { restartID }
+    func restartedLookup() -> MessageTaskLookup? { restartLookup }
+
+    func fetchGraph(
+        messageID _: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTaskGraphSnapshot {
+        MessageTaskGraphSnapshot(rootTaskIDs: [], nodes: [], edges: [])
+    }
+
+    func fetchTask(
+        messageID _: String,
+        taskID _: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTask {
+        throw CocoaError(.featureUnsupported)
+    }
+
+    func fetchRun(
+        messageID _: String,
+        runID _: String,
+        lookup _: MessageTaskLookup?,
+        includeEvents _: Bool,
+        eventLimit _: Int,
+        eventOffset _: Int
+    ) async throws -> MessageTaskRunDetail {
+        throw CocoaError(.featureUnsupported)
+    }
+
+    func retryRun(
+        messageID _: String,
+        runID _: String,
+        lookup _: MessageTaskLookup?,
+        instruction _: String?
+    ) async throws -> MessageTaskRun {
+        throw CocoaError(.featureUnsupported)
+    }
+
+    func cancelTask(
+        messageID: String,
+        taskID: String,
+        lookup: MessageTaskLookup?,
+        reason: String?
+    ) async throws {
+        self.messageID = messageID
+        self.taskID = taskID
+        self.lookup = lookup
+        self.reason = reason
+    }
+
+    func restartTask(
+        messageID _: String,
+        taskID: String,
+        lookup: MessageTaskLookup?,
+        reason _: String
+    ) async throws -> MessageTaskRun {
+        restartID = taskID
+        restartLookup = lookup
+        return MessageTaskRun(id: "pending-restart", taskID: taskID, status: "pending")
     }
 }
 

@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256};
 
 use crate::MAIN_CHAT_PROFILE_KEY;
 
-const INLINE_TOOL_RESULT_MAX_CHARS: usize = 160_000;
-const INLINE_TOOL_RESULTS_TOTAL_MAX_CHARS: usize = 800_000;
+const INLINE_TOOL_RESULT_MAX_BYTES: usize = 160_000;
+const INLINE_TOOL_RESULTS_TOTAL_MAX_BYTES: usize = 800_000;
 const TOOL_RESULT_READ_MAX_CHARS: usize = 8_000;
 
 pub(super) struct LocalMemoryPlan {
@@ -160,7 +160,7 @@ pub(super) fn external_tool_results(claim: &LocalAgentRunClaim) -> Result<Vec<To
         .get("invocations")
         .and_then(Value::as_array)
         .ok_or_else(|| "tool continuation requires invocations".to_string())?;
-    let mut inline_chars = 0usize;
+    let mut inline_bytes = 0usize;
     invocations
         .iter()
         .map(|invocation| {
@@ -202,7 +202,7 @@ pub(super) fn external_tool_results(claim: &LocalAgentRunClaim) -> Result<Vec<To
                     projected,
                     &call_id,
                     &tool_name,
-                    &mut inline_chars,
+                    &mut inline_bytes,
                 ));
             }
             let projected = chatos_mcp_runtime::execution::external_tool_failure_from_value(
@@ -217,7 +217,7 @@ pub(super) fn external_tool_results(claim: &LocalAgentRunClaim) -> Result<Vec<To
                 projected,
                 &call_id,
                 &tool_name,
-                &mut inline_chars,
+                &mut inline_bytes,
             ))
         })
         .collect()
@@ -227,22 +227,30 @@ fn progressive_tool_result(
     mut result: ToolResult,
     source_call_id: &str,
     tool_name: &str,
-    inline_chars: &mut usize,
+    inline_bytes: &mut usize,
 ) -> ToolResult {
-    let total_chars = result.content.chars().count();
-    if total_chars <= INLINE_TOOL_RESULT_MAX_CHARS
-        && inline_chars.saturating_add(total_chars) <= INLINE_TOOL_RESULTS_TOTAL_MAX_CHARS
+    let reference_content =
+        chatos_mcp_runtime::execution::external_tool_result_reference_content(&result);
+    let result_bytes = serde_json::to_vec(&result)
+        .map(|encoded| encoded.len())
+        .unwrap_or_else(|_| reference_content.len());
+    if result_bytes <= INLINE_TOOL_RESULT_MAX_BYTES
+        && inline_bytes.saturating_add(result_bytes) <= INLINE_TOOL_RESULTS_TOTAL_MAX_BYTES
     {
-        *inline_chars += total_chars;
+        *inline_bytes += result_bytes;
         return result;
     }
-    let sha256 = format!("{:x}", Sha256::digest(result.content.as_bytes()));
+    let total_chars = reference_content.chars().count();
+    let total_bytes = reference_content.len();
+    let sha256 = format!("{:x}", Sha256::digest(reference_content.as_bytes()));
     let descriptor = json!({
         "type": "tool_result_reference",
         "source_call_id": source_call_id,
         "source_tool_name": tool_name,
         "total_chars": total_chars,
+        "total_bytes": total_bytes,
         "sha256": sha256,
+        "source_format": if result.result.is_some() { "tool_result_envelope_json" } else { "text" },
         "read_tool": "tool_result_read",
         "query_tool": "tool_result_query",
         "max_page_chars": TOOL_RESULT_READ_MAX_CHARS,
@@ -251,7 +259,11 @@ fn progressive_tool_result(
     });
     result.content = descriptor.to_string();
     result.result = Some(descriptor);
-    *inline_chars = inline_chars.saturating_add(result.content.chars().count());
+    *inline_bytes = inline_bytes.saturating_add(
+        serde_json::to_vec(&result)
+            .map(|encoded| encoded.len())
+            .unwrap_or_else(|_| result.content.len()),
+    );
     result
 }
 
@@ -417,8 +429,8 @@ mod tests {
     }
 
     #[test]
-    fn over_one_hundred_sixty_thousand_characters_returns_a_durable_page_reference() {
-        let content = "x".repeat(INLINE_TOOL_RESULT_MAX_CHARS + 1);
+    fn over_one_hundred_sixty_thousand_bytes_returns_a_durable_page_reference() {
+        let content = "x".repeat(INLINE_TOOL_RESULT_MAX_BYTES + 1);
         let mut claim = claim("task_execution", json!({"prompt": "review large result"}));
         claim.run.continuation_input = Some(json!({
             "type": "tool_results",
@@ -435,10 +447,51 @@ mod tests {
 
         assert_eq!(descriptor["type"], "tool_result_reference");
         assert_eq!(descriptor["source_call_id"], "call-large");
-        assert_eq!(descriptor["total_chars"], INLINE_TOOL_RESULT_MAX_CHARS + 1);
+        assert_eq!(descriptor["total_chars"], INLINE_TOOL_RESULT_MAX_BYTES + 1);
+        assert_eq!(descriptor["total_bytes"], INLINE_TOOL_RESULT_MAX_BYTES + 1);
         assert_eq!(descriptor["read_tool"], "tool_result_read");
         assert_eq!(descriptor["sha256"].as_str().unwrap().len(), 64);
         assert!(!result.content.contains("...[truncated"));
+    }
+
+    #[test]
+    fn browser_screenshots_in_structured_result_become_a_durable_reference() {
+        let screenshot = "a".repeat(621_248);
+        let mut claim = claim("task_execution", json!({"prompt": "verify browser"}));
+        claim.run.continuation_input = Some(json!({
+            "type": "tool_results",
+            "invocations": [{
+                "call_id": "call-browser",
+                "tool_name": "capability_invoke",
+                "status": "succeeded",
+                "result": {
+                    "content": {
+                        "content": [{
+                            "type": "text",
+                            "text": "[Duplicate JSON text omitted; use structuredContent as the canonical result.]"
+                        }],
+                        "structuredContent": {
+                            "normalized_result": {
+                                "steps": [
+                                    {"artifacts": {"screenshot": {"value": {"data_base64": screenshot}}}},
+                                    {"artifacts": {"screenshot": {"value": {"data_base64": screenshot}}}}
+                                ]
+                            }
+                        }
+                    }
+                }
+            }]
+        }));
+
+        let result = external_tool_results(&claim).unwrap().remove(0);
+        let descriptor: Value = serde_json::from_str(&result.content).expect("descriptor");
+
+        assert_eq!(descriptor["type"], "tool_result_reference");
+        assert_eq!(descriptor["source_call_id"], "call-browser");
+        assert_eq!(descriptor["source_format"], "tool_result_envelope_json");
+        assert!(descriptor["total_bytes"].as_u64().unwrap() > 1_048_576);
+        assert!(serde_json::to_vec(&result).unwrap().len() < 8_000);
+        assert!(!result.content.contains(&"a".repeat(8_192)));
     }
 
     #[test]

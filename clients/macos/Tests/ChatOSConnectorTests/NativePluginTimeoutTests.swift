@@ -335,6 +335,102 @@ extension NativePluginRuntimeTests {
         }
     }
 
+    @Test("runtime exposes live plugin progress and clears it when the run is cancelled")
+    func runtimeActivityTracksProgressUntilCancellation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let script = root.appendingPathComponent("fixture.zsh")
+        try #"""
+        while IFS= read -r line; do
+          if [[ "$line" == *'tools/list'* ]]; then
+            echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"capture_browser_scenario","inputSchema":{"type":"object"}}]}}'
+          elif [[ "$line" == *'tools/call'* ]]; then
+            token=$(print -r -- "$line" | /usr/bin/sed -E 's/.*"progressToken":"([^"]+)".*/\1/')
+            echo "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":\"$token\",\"progress\":1,\"total\":3,\"message\":\"action 1/3: open export menu\"}}"
+            /bin/sleep 600
+          elif [[ "$line" == *'initialize'* ]]; then
+            echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}}}}'
+          fi
+        done
+        """#.write(to: script, atomically: true, encoding: .utf8)
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {"schemaVersion":3,"name":"fixture","version":"1.0.0","mcpServers":{"fixture":{"type":"stdio","bin":"fixture","args":[]}}}
+            """.utf8)
+        )
+        let launch = NativePreparedPluginLaunch(
+            record: try nativePluginTestRecord(installationURL: root),
+            manifest: manifest,
+            componentKey: "fixture",
+            server: manifest.mcpServers["fixture"]!,
+            executableURL: URL(fileURLWithPath: "/bin/zsh"),
+            arguments: [script.path],
+            environment: [:],
+            installationURL: root,
+            visualSessionURL: root.appendingPathComponent("visual"),
+            artifactURL: root.appendingPathComponent("artifacts"),
+            displayName: "REA"
+        )
+        let client = NativePluginStdioClient(launch: launch)
+        try await client.start()
+        let initialized = try await client.initialize()
+        let store = NativePluginRuntimeStore()
+        let identity = NativePluginRuntimeStore.Identity(
+            runID: "run-progress",
+            pluginID: "plugin-1",
+            releaseID: "release-1",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64),
+            componentKey: "fixture",
+            adapterSessionID: "adapter-progress"
+        )
+        await store.insert(
+            identity: identity,
+            client: client,
+            tools: initialized.tools,
+            permissionSnapshot: [],
+            displayName: "REA",
+            visualSessionURL: launch.visualSessionURL,
+            artifactURL: launch.artifactURL,
+            projectRootURL: nil,
+            workspaceID: nil
+        )
+
+        let call = Task {
+            try await store.call(
+                adapterSessionID: identity.adapterSessionID,
+                invocationID: "invocation-progress",
+                toolName: "capture_browser_scenario",
+                arguments: .object([
+                    "actions": .array([.object(["type": .string("click")])]),
+                ]),
+                timeout: .seconds(30)
+            )
+        }
+
+        var activity: MessageTaskRunActivity?
+        for _ in 0..<50 {
+            activity = await store.invocationActivity(runID: identity.runID)
+            if activity?.detail == "action 1/3: open export menu" { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(activity?.operation == "REA · capture_browser_scenario")
+        #expect(activity?.detail == "action 1/3: open export menu")
+        #expect(activity?.lastProgressAt != nil)
+
+        await store.cancel(runID: identity.runID)
+        #expect(await store.invocationActivity(runID: identity.runID) == nil)
+        do {
+            _ = try await call.value
+            Issue.record("Expected the pending plugin call to fail after run cancellation")
+        } catch {
+            // The important contract is that the pending call ends and the runtime is released.
+        }
+    }
+
     @Test("plugin host deadline keeps the two hour task execution contract")
     func pluginToolTimeoutPolicyUsesTaskExecutionCeiling() {
         #expect(NativeLocalConnectorService.defaultPluginToolTimeoutMilliseconds(

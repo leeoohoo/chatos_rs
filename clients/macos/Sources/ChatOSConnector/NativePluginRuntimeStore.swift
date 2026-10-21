@@ -1,7 +1,55 @@
 import ChatOSCore
 import Foundation
 
+enum NativePluginProgressPresentation {
+    static let maximumMessageCharacters = 1_000
+
+    static func detail(for update: NativePluginProgressUpdate) -> String {
+        let message = update.message?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !message.isEmpty {
+            return bounded(message)
+        }
+        if let total = update.total, total > 0 {
+            return "Progress \(number(update.progress))/\(number(total))"
+        }
+        return "Progress \(number(update.progress))"
+    }
+
+    static func bounded(_ text: String) -> String {
+        guard text.count > maximumMessageCharacters else { return text }
+        return String(text.prefix(maximumMessageCharacters)) + "…"
+    }
+
+    private static func number(_ value: Double) -> String {
+        guard value.isFinite, value.magnitude <= 1_000_000_000_000 else { return "?" }
+        return String(format: "%.0f", value)
+    }
+}
+
 actor NativePluginRuntimeStore {
+    struct InvocationActivity: Sendable, Equatable {
+        var runID: String
+        var invocationID: String
+        var pluginName: String
+        var toolName: String
+        var detail: String
+        var startedAt: Date
+        var lastProgressAt: Date
+
+        var messageTaskActivity: MessageTaskRunActivity {
+            .init(
+                kind: .waitingTool,
+                operation: NativePluginProgressPresentation.bounded(
+                    "\(pluginName) · \(toolName)"
+                ),
+                detail: NativePluginProgressPresentation.bounded(detail),
+                startedAt: startedAt,
+                lastProgressAt: lastProgressAt
+            )
+        }
+    }
+
     struct Identity: Sendable {
         var runID: String
         var pluginID: String
@@ -36,6 +84,7 @@ actor NativePluginRuntimeStore {
         var owner: PluginVisualSessionOwner?
         var ownerBoundAt: Date?
         var activeInvocationIDs: Set<String> = []
+        var invocationActivities: [String: InvocationActivity] = [:]
         var visualFrameSequence: UInt64 = 0
     }
 
@@ -199,8 +248,19 @@ actor NativePluginRuntimeStore {
         let isComputerUseVisual = componentKey.localizedCaseInsensitiveContains("computer")
         let requiresExclusiveExecution = session.identity.requiresExclusiveExecution
         sessions[adapterSessionID]?.activeInvocationIDs.insert(invocationID)
+        let startedAt = Date()
+        sessions[adapterSessionID]?.invocationActivities[invocationID] = .init(
+            runID: session.identity.runID,
+            invocationID: invocationID,
+            pluginName: session.displayName,
+            toolName: toolName,
+            detail: Self.initialActivityDetail(toolName: toolName, arguments: arguments),
+            startedAt: startedAt,
+            lastProgressAt: startedAt
+        )
         defer {
             sessions[adapterSessionID]?.activeInvocationIDs.remove(invocationID)
+            sessions[adapterSessionID]?.invocationActivities.removeValue(forKey: invocationID)
         }
         if requiresExclusiveExecution {
             guard await acquireComputerUseLease(adapterSessionID: adapterSessionID) else {
@@ -208,6 +268,14 @@ actor NativePluginRuntimeStore {
             }
         }
         do {
+            let onProgress: @Sendable (NativePluginProgressUpdate) async -> Void = {
+                [weak self] update in
+                await self?.recordProgress(
+                    adapterSessionID: adapterSessionID,
+                    invocationID: invocationID,
+                    update: update
+                )
+            }
             let result: NativeJSONValue
             if isBrowser {
                 // Browser CDP is a ChatOS-controlled MCP server that handles
@@ -218,13 +286,15 @@ actor NativePluginRuntimeStore {
                 result = try await client.callToolBestEffort(
                     name: toolName,
                     arguments: arguments,
-                    timeout: timeout
+                    timeout: timeout,
+                    onProgress: onProgress
                 )
             } else {
                 result = try await client.callTool(
                     name: toolName,
                     arguments: arguments,
-                    timeout: timeout
+                    timeout: timeout,
+                    onProgress: onProgress
                 )
             }
             if isBrowser {
@@ -249,6 +319,42 @@ actor NativePluginRuntimeStore {
             }
             throw error
         }
+    }
+
+    func invocationActivity(runID: String) -> MessageTaskRunActivity? {
+        sessions.values
+            .flatMap { $0.invocationActivities.values }
+            .filter { $0.runID == runID }
+            .max(by: { $0.lastProgressAt < $1.lastProgressAt })?
+            .messageTaskActivity
+    }
+
+    private func recordProgress(
+        adapterSessionID: String,
+        invocationID: String,
+        update: NativePluginProgressUpdate
+    ) {
+        guard var activity = sessions[adapterSessionID]?
+            .invocationActivities[invocationID] else { return }
+        activity.detail = NativePluginProgressPresentation.detail(for: update)
+        activity.lastProgressAt = Date()
+        sessions[adapterSessionID]?.invocationActivities[invocationID] = activity
+    }
+
+    private static func initialActivityDetail(
+        toolName: String,
+        arguments: NativeJSONValue
+    ) -> String {
+        guard toolName == "capture_browser_scenario",
+              let actions = arguments.jsonObject?["actions"]?.jsonArray else {
+            return "Plugin 已开始执行，正在等待阶段进度"
+        }
+        let captures = arguments.jsonObject?["capture"]?.jsonObject
+        let atEnd = captures?["at_end"]?.jsonArray?.compactMap(\.jsonString) ?? []
+        let suffix = atEnd.isEmpty ? "" : "；结束时采集 \(atEnd.joined(separator: "、"))"
+        return NativePluginProgressPresentation.bounded(
+            "正在执行 \(actions.count) 个浏览器动作\(suffix)"
+        )
     }
 
     func cancel(adapterSessionID: String, invocationID: String?) async -> String {

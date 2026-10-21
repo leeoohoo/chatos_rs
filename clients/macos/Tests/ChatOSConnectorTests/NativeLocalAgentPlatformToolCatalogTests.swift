@@ -131,6 +131,11 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
             .string("none"), .string("auto"), .string("minimal"), .string("low"),
             .string("medium"), .string("high"), .string("xhigh"), .string("max"),
         ])
+        guard case .string(let thinkingDescription)? = thinkingLevel["description"] else {
+            return XCTFail("missing Task thinking-level guidance")
+        }
+        XCTAssertTrue(thinkingDescription.contains("Use medium for implementation from an established diagnosis"))
+        XCTAssertTrue(thinkingDescription.contains("Plugin use, and broad regression coverage alone do not justify high"))
         let titles = choices.compactMap { choice -> String? in
             guard case .object(let object) = choice,
                   case .string(let title)? = object["title"] else { return nil }

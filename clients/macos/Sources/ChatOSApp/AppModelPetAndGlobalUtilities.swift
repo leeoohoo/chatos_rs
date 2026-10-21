@@ -261,6 +261,27 @@ extension AppModel {
         throw PetActivityActionError.cancelUnavailable
     }
 
+    func recoverPetActivity(_ activity: PetActivity) async throws {
+        guard let taskID = activity.route.taskID?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !taskID.isEmpty,
+            let messageTaskGraphService else {
+            throw PetActivityActionError.retryUnavailable
+        }
+        let messageID = activity.route.messageID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .petNonEmpty ?? "local-task:\(taskID)"
+        _ = try await messageTaskGraphService.restartTask(
+            messageID: messageID,
+            taskID: taskID,
+            lookup: MessageTaskLookup(
+                sessionID: activity.route.conversationID,
+                turnID: activity.route.turnID
+            ),
+            reason: "用户从宠物任务面板确认副作用后恢复执行"
+        )
+    }
+
     func loadPetTask(_ activity: PetActivity) async throws -> MessageTask {
         guard let taskID = activity.route.taskID?
                 .trimmingCharacters(in: .whitespacesAndNewlines),

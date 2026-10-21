@@ -5,6 +5,7 @@ struct MessageTaskGraphCanvas: View {
     let graph: MessageTaskGraphSnapshot
     let selectedTaskID: String?
     let onSelect: (MessageTask, MessageTaskWorkspaceViewModel.InspectorSection?) -> Void
+    let onStop: (MessageTask) -> Void
     @State private var zoom = 1.0
     @State private var panOffset: CGSize = .zero
     @State private var previousViewportSize: CGSize = .zero
@@ -32,7 +33,8 @@ struct MessageTaskGraphCanvas: View {
                             onSelect: { onSelect(node.task, nil) },
                             onOpenProcess: { onSelect(node.task, .process) },
                             onOpenDetail: { onSelect(node.task, .detail) },
-                            onOpenRun: { onSelect(node.task, .run) }
+                            onOpenRun: { onSelect(node.task, .run) },
+                            onStop: { onStop(node.task) }
                         )
                         .position(scaled(layout.positions[node.id] ?? .zero))
                     }

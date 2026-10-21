@@ -2,11 +2,13 @@ import ChatOSCore
 import SwiftUI
 
 struct TaskProcessTimelineView: View {
+    @EnvironmentObject private var model: AppModel
     let items: [TaskProcessTimelineItem]
     var allowsTextSelection = true
+    var liveActivity: MessageTaskRunActivity?
 
     var body: some View {
-        if items.isEmpty {
+        if displayedItems.isEmpty {
             ContentUnavailableView(
                 "暂无执行过程",
                 systemImage: "waveform.path.ecg",
@@ -22,15 +24,54 @@ struct TaskProcessTimelineView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    StatusCapsule(title: "\(items.count) 个节点", color: .secondary)
+                    StatusCapsule(title: "\(displayedItems.count) 个节点", color: .secondary)
                 }
                 .padding(.bottom, 14)
 
-                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                    timelineRow(item, isLast: index == items.count - 1)
+                ForEach(Array(displayedItems.enumerated()), id: \.element.id) { index, item in
+                    timelineRow(item, isLast: index == displayedItems.count - 1)
                 }
             }
         }
+    }
+
+    private var displayedItems: [TaskProcessTimelineItem] {
+        guard let live = liveActivityItem else { return items }
+        return items + [live]
+    }
+
+    private var liveActivityItem: TaskProcessTimelineItem? {
+        guard let activity = liveActivity else { return nil }
+        let stage = MessageTaskRunActivityPresentation.title(for: activity.kind) {
+            model.localized($0, english: $1)
+        }
+        let operation = MessageTaskRunActivityPresentation.operationLabel(activity.operation)
+        var details: [String] = []
+        if let operation {
+            details.append(model.localized("当前操作：", english: "Current operation: ") + operation)
+        } else if activity.kind == .runningModel {
+            details.append(model.localized(
+                "AI 正在分析上下文并决定下一步。",
+                english: "AI is analyzing context and deciding the next step."
+            ))
+        }
+        if let detail = activity.detail?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !detail.isEmpty {
+            details.append(model.localized("用途或进展：", english: "Purpose or progress: ") + detail)
+        }
+        if let lastProgressAt = activity.lastProgressAt ?? activity.startedAt {
+            details.append(model.localized("最近真实进展：", english: "Last real progress: ")
+                + lastProgressAt.formatted(date: .omitted, time: .standard))
+        }
+        return .init(
+            id: "task-live-activity-\(activity.kind.rawValue)-\(activity.operation ?? "stage")",
+            title: model.localized("实时 · \(stage)", english: "Live · \(stage)"),
+            detail: details.isEmpty
+                ? model.localized("任务仍在执行，正在等待下一次状态更新。", english: "The task is still running and waiting for the next status update.")
+                : details.joined(separator: "\n"),
+            occurredAt: activity.startedAt.map { ISO8601DateFormatter().string(from: $0) },
+            status: "running"
+        )
     }
 
     private func timelineRow(_ item: TaskProcessTimelineItem, isLast: Bool) -> some View {
@@ -52,9 +93,15 @@ struct TaskProcessTimelineView: View {
                     Text(item.title).appFont(.callout.weight(.semibold))
                     Spacer()
                     if let occurredAt = item.occurredAtDate {
-                        Text(occurredAt.formatted(date: .omitted, time: .standard))
-                            .appFont(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                        if item.id.hasPrefix("task-live-activity-") {
+                            Text(occurredAt, style: .timer)
+                                .appFont(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(occurredAt.formatted(date: .omitted, time: .standard))
+                                .appFont(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
                     } else if let occurredAt = item.occurredAt {
                         Text(occurredAt)
                             .appFont(.caption2.monospacedDigit())

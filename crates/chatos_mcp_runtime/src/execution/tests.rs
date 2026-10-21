@@ -60,6 +60,154 @@ fn provider_error_flag_is_not_overridden_by_success_status_or_false_alias() {
     assert_eq!(success.content, "activated");
 }
 
+#[test]
+fn durable_reference_content_preserves_text_and_structured_result() {
+    let result = super::external_tool_result_from_value(
+        "call".into(),
+        "browser".into(),
+        None,
+        &json!({
+            "content": {
+                "content": [{"type": "text", "text": "result summary"}],
+                "structuredContent": {"steps": [{"status": "failed"}]}
+            }
+        }),
+        None,
+    );
+
+    let reference: serde_json::Value =
+        serde_json::from_str(&super::external_tool_result_reference_content(&result))
+            .expect("reference json");
+
+    assert_eq!(reference["content"], "result summary");
+    assert_eq!(
+        reference["structured_result"]["steps"][0]["status"],
+        "failed"
+    );
+}
+
+#[test]
+fn deduplicated_mcp_text_restores_structured_content_for_the_model() {
+    let structured = json!({
+        "workspace": {"id": "solution-1", "revision": 3},
+        "requirements": [{"id": "requirement-1", "title": "完整需求"}]
+    });
+    let result = super::external_tool_result_from_value(
+        "call".into(),
+        "solution_get_workspace".into(),
+        None,
+        &json!({
+            "content": {
+                "_meta": {"chatos/deduplicatedStructuredTextCopies": 1},
+                "content": [{
+                    "type": "text",
+                    "text": "[Duplicate JSON text omitted; use structuredContent as the canonical result.]"
+                }],
+                "structuredContent": structured
+            }
+        }),
+        None,
+    );
+
+    let model_payload: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(model_payload["structuredContent"], structured);
+    assert_eq!(
+        model_payload["_meta"]["chatos/deduplicatedStructuredTextCopies"],
+        1
+    );
+    assert_eq!(result.result, Some(structured));
+    assert!(!result.content.contains("Duplicate JSON text omitted"));
+}
+
+#[test]
+fn deduplicated_mcp_text_preserves_distinct_supplemental_text() {
+    let result = super::external_tool_result_from_value(
+        "call".into(),
+        "solution_get_workspace".into(),
+        None,
+        &json!({
+            "content": {
+                "_meta": {"chatos/deduplicatedStructuredTextCopies": 1},
+                "content": [
+                    {"type": "text", "text": "important plugin warning"},
+                    {"type": "text", "text": "[Duplicate JSON text omitted; use structuredContent as the canonical result.]"}
+                ],
+                "structuredContent": {"workspace": {"id": "solution-1"}}
+            }
+        }),
+        None,
+    );
+
+    let model_payload: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(
+        model_payload["content"][0]["text"],
+        "important plugin warning"
+    );
+    assert_eq!(
+        model_payload["structuredContent"]["workspace"]["id"],
+        "solution-1"
+    );
+    assert!(!result.content.contains("Duplicate JSON text omitted"));
+}
+
+#[test]
+fn durable_reference_does_not_duplicate_a_canonical_deduplicated_payload() {
+    let sentinel = "unique structured sentinel";
+    let result = super::external_tool_result_from_value(
+        "call".into(),
+        "solution_get_workspace".into(),
+        None,
+        &json!({
+            "content": {
+                "_meta": {"chatos/deduplicatedStructuredTextCopies": 1},
+                "content": [{
+                    "type": "text",
+                    "text": "[Duplicate JSON text omitted; use structuredContent as the canonical result.]"
+                }],
+                "structuredContent": {"value": sentinel}
+            }
+        }),
+        None,
+    );
+
+    let reference = super::external_tool_result_reference_content(&result);
+    assert_eq!(reference.matches(sentinel).count(), 1);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&reference).unwrap()["structuredContent"]
+            ["value"],
+        sentinel
+    );
+}
+
+#[test]
+fn failed_deduplicated_mcp_result_keeps_the_structured_diagnosis() {
+    let result = super::external_tool_failure_from_value(
+        "call".into(),
+        "solution_get_workspace".into(),
+        None,
+        Some(&json!({
+            "content": {
+                "_meta": {"chatos/deduplicatedStructuredTextCopies": 1},
+                "content": [{
+                    "type": "text",
+                    "text": "[Duplicate JSON text omitted; use structuredContent as the canonical result.]"
+                }],
+                "isError": true,
+                "structuredContent": {
+                    "code": "workspace_missing",
+                    "error": "The active project does not have a plan yet."
+                }
+            }
+        })),
+        "",
+        None,
+    );
+
+    assert!(result.content.contains("workspace_missing"));
+    assert!(result.content.contains("does not have a plan"));
+    assert!(!result.content.contains("Duplicate JSON text omitted"));
+}
+
 #[tokio::test]
 async fn sequential_execution_emits_stream_and_final_results() {
     let callback_count = Arc::new(AtomicUsize::new(0));

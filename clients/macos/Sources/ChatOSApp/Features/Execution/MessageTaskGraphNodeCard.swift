@@ -11,6 +11,7 @@ struct MessageTaskGraphNodeCard: View {
     let onOpenProcess: () -> Void
     let onOpenDetail: () -> Void
     let onOpenRun: () -> Void
+    let onStop: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: scaled(9)) {
@@ -56,6 +57,25 @@ struct MessageTaskGraphNodeCard: View {
                 )
                 actionButton("运行", action: onOpenRun)
                     .disabled(node.task.lastRunID == nil)
+                if node.task.isCancellableFromGraph {
+                    Menu {
+                        Button(role: .destructive, action: onStop) {
+                            Label("停止任务", systemImage: "stop.circle")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .appFont(.system(size: scaledFont(10), weight: .semibold))
+                            .padding(.horizontal, scaled(7))
+                            .padding(.vertical, scaled(4))
+                            .background(
+                                Color.secondary.opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: scaled(5))
+                            )
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("任务操作")
+                }
             }
         }
         .padding(scaled(12))
@@ -84,14 +104,18 @@ struct MessageTaskGraphNodeCard: View {
         .onTapGesture(perform: onSelect)
     }
 
-    private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func actionButton(
+        _ title: String,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(role: role, action: action) {
             Text(LocalizedStringKey(title))
                 .appFont(.system(size: scaledFont(10), weight: .medium))
                 .padding(.horizontal, scaled(7))
                 .padding(.vertical, scaled(3))
                 .background(
-                    Color.accentColor.opacity(0.08),
+                    (role == .destructive ? Color.red : Color.accentColor).opacity(0.08),
                     in: RoundedRectangle(cornerRadius: scaled(5))
                 )
         }
@@ -178,6 +202,12 @@ struct MessageTaskGraphNodeCard: View {
         case "failed", "error", "cancelled", "canceled": .red
         default: .secondary
         }
+    }
+}
+
+private extension MessageTask {
+    var isCancellableFromGraph: Bool {
+        isActive
     }
 }
 

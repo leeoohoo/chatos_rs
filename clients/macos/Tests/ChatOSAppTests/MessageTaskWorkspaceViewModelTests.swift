@@ -5,6 +5,47 @@ import XCTest
 
 @MainActor
 final class MessageTaskWorkspaceViewModelTests: XCTestCase {
+    func testCancellingSelectedRunningTaskCallsServiceAndClearsConfirmation() async throws {
+        let service = CancellationMessageTaskGraphServiceStub()
+        let viewModel = makeViewModel(service: service)
+        _ = viewModel.workspaceLifecycleState.start()
+        let task = MessageTask(
+            id: "task-running",
+            title: "正在执行的任务",
+            status: "running",
+            lastRunID: "run-running"
+        )
+        viewModel.select(task)
+        viewModel.requestCancellation(for: task)
+
+        XCTAssertEqual(viewModel.cancellationCandidate?.id, task.id)
+        viewModel.confirmCancellation()
+        try await waitUntil { await service.cancelledTaskID() == task.id }
+        try await waitUntil { !viewModel.isCancelling }
+
+        XCTAssertNil(viewModel.cancellationCandidate)
+        XCTAssertNil(viewModel.errorMessage)
+        let cancellationReason = await service.cancellationReason()
+        XCTAssertEqual(cancellationReason, "user requested cancellation from task workspace")
+    }
+
+    func testBusinessBlockedTaskDoesNotExposeStopAction() {
+        let viewModel = makeViewModel(service: CancellationMessageTaskGraphServiceStub())
+        let task = MessageTask(
+            id: "task-result-blocked",
+            title: "执行已结束但业务结果受阻",
+            status: "blocked",
+            lastRunID: "run-result-blocked",
+            lastRunStatus: "succeeded"
+        )
+
+        viewModel.select(task)
+        viewModel.requestCancellation(for: task)
+
+        XCTAssertNil(viewModel.cancellationCandidate)
+        XCTAssertFalse(viewModel.hasCancellableTask)
+    }
+
     func testEmptyGraphWithMessageLookupStartsAutomaticRetryState() async {
         let service = MessageTaskGraphServiceStub(graphs: [.empty])
         let viewModel = makeViewModel(service: service)
@@ -304,6 +345,60 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
             graphService: service,
             realtimeService: realtimeService
         )
+    }
+}
+
+private actor CancellationMessageTaskGraphServiceStub: MessageTaskGraphServicing {
+    private var cancelledID: String?
+    private var reason: String?
+
+    func cancelledTaskID() -> String? { cancelledID }
+    func cancellationReason() -> String? { reason }
+
+    func fetchGraph(
+        messageID _: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTaskGraphSnapshot {
+        .empty
+    }
+
+    func fetchTask(
+        messageID _: String,
+        taskID: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTask {
+        MessageTask(id: taskID, title: "正在执行的任务", status: "running")
+    }
+
+    func fetchRun(
+        messageID _: String,
+        runID: String,
+        lookup _: MessageTaskLookup?,
+        includeEvents _: Bool,
+        eventLimit _: Int,
+        eventOffset _: Int
+    ) async throws -> MessageTaskRunDetail {
+        let task = MessageTask(id: "task-running", title: "正在执行的任务", status: "running")
+        return .init(task: task, run: .init(id: runID, taskID: task.id), events: [])
+    }
+
+    func retryRun(
+        messageID _: String,
+        runID: String,
+        lookup _: MessageTaskLookup?,
+        instruction _: String?
+    ) async throws -> MessageTaskRun {
+        .init(id: runID, taskID: "task-running")
+    }
+
+    func cancelTask(
+        messageID _: String,
+        taskID: String,
+        lookup _: MessageTaskLookup?,
+        reason: String?
+    ) async throws {
+        cancelledID = taskID
+        self.reason = reason
     }
 }
 

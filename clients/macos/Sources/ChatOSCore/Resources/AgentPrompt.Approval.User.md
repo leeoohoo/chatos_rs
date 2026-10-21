@@ -1,4 +1,4 @@
-请审核下面这次本机操作。它可能是 shell 命令，也可能是 Browser CDP、Computer Use 或其他本机 Plugin 操作。必要时先使用只读工具检查项目，再调用 approval_decision。
+请审核下面这次设备操作。它可能是 shell 命令、暂存文件修改、Browser CDP、Computer Use 或其他 Plugin 操作。必要时先使用只读工具检查项目，再调用 approval_decision。
 
 - source: {{source}}
 - cwd: {{cwd}}

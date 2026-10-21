@@ -99,9 +99,24 @@ public protocol MessageTaskGraphServicing: Sendable {
         lookup: MessageTaskLookup?,
         reason: String?
     ) async throws
+    func restartTask(
+        messageID: String,
+        taskID: String,
+        lookup: MessageTaskLookup?,
+        reason: String
+    ) async throws -> MessageTaskRun
 }
 
 public extension MessageTaskGraphServicing {
+    func restartTask(
+        messageID _: String,
+        taskID _: String,
+        lookup _: MessageTaskLookup?,
+        reason _: String
+    ) async throws -> MessageTaskRun {
+        throw MessageTaskRecoveryError.unavailable
+    }
+
     func fetchRun(
         messageID: String,
         runID: String,
@@ -115,5 +130,16 @@ public extension MessageTaskGraphServicing {
             eventLimit: 40,
             eventOffset: 0
         )
+    }
+}
+
+public enum MessageTaskRecoveryError: LocalizedError, Sendable {
+    case unavailable
+
+    public var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            "当前任务服务不支持从正在执行的节点恢复。"
+        }
     }
 }

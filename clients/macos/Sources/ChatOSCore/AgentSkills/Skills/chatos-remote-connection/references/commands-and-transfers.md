@@ -24,7 +24,9 @@ Set `allow_dangerous=true` only when the Human explicitly authorized the exact r
 
 ## Upload and overwrite
 
-`upload_file` sends model-provided content to the remote path. Confirm the destination and encoding. Use `overwrite=false` when creating a new artifact or when replacement was not explicitly requested. If the destination already exists, inspect or ask rather than silently replacing it.
+`upload_project_file` transfers an existing file directly from the current project workspace. Prefer it for build outputs, archives, binaries, or any content already saved on disk. Pass `local_path` as a project-relative path and `path` as the exact remote destination. Do not run `base64` and copy the output through the model.
+
+`upload_file` sends small, model-provided content to the remote path. Confirm the destination and encoding. Use `overwrite=false` when creating a new artifact or when replacement was not explicitly requested. If the destination already exists, inspect or ask rather than silently replacing it.
 
 For binary bytes, use valid Base64 and declare `encoding=base64`. Do not label plain text as Base64 or paste encoded binary into `read_file` workflows.
 

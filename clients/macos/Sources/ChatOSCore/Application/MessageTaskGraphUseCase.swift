@@ -70,4 +70,33 @@ public struct MessageTaskGraphUseCase: Sendable {
             instruction: instruction
         )
     }
+
+    public func cancelTask(
+        messageID: String,
+        taskID: String,
+        lookup: MessageTaskLookup?,
+        reason: String? = nil
+    ) async throws {
+        try await graphService.cancelTask(
+            messageID: messageID,
+            taskID: taskID,
+            lookup: lookup,
+            reason: reason
+        )
+    }
+
+    @discardableResult
+    public func restartTask(
+        messageID: String,
+        taskID: String,
+        lookup: MessageTaskLookup?,
+        reason: String
+    ) async throws -> MessageTaskRun {
+        try await graphService.restartTask(
+            messageID: messageID,
+            taskID: taskID,
+            lookup: lookup,
+            reason: reason
+        )
+    }
 }

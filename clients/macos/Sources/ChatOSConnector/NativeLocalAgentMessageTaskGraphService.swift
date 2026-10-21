@@ -11,19 +11,25 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     private let controlPlane: NativeLocalAgentControlPlaneClient
     private let beforeRetry: @Sendable (String) async -> Void
     private let afterRetry: @Sendable () async -> Void
+    private let afterCancel: @Sendable (String) async -> Void
+    private let pluginActivity: @Sendable (String) async -> MessageTaskRunActivity?
     private var ownerUserID: String?
     private var terminalRunCache: [String: (Date?, MessageTaskRun)] = [:]
 
     public init(
         host: any LocalAgentHostClientServicing,
         beforeRetry: @escaping @Sendable (String) async -> Void = { _ in },
-        afterRetry: @escaping @Sendable () async -> Void = {}
+        afterRetry: @escaping @Sendable () async -> Void = {},
+        afterCancel: @escaping @Sendable (String) async -> Void = { _ in },
+        pluginActivity: @escaping @Sendable (String) async -> MessageTaskRunActivity? = { _ in nil }
     ) {
         self.client = NativeLocalAgentTaskClient(host: host)
         self.toolClient = NativeLocalAgentToolClient(host: host)
         self.controlPlane = NativeLocalAgentControlPlaneClient(host: host)
         self.beforeRetry = beforeRetry
         self.afterRetry = afterRetry
+        self.afterCancel = afterCancel
+        self.pluginActivity = pluginActivity
     }
 
     public func configure(ownerUserID: String) {
@@ -64,7 +70,10 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             if isTerminal, let cached = terminalRunCache[task.id], cached.0 == task.updatedAt {
                 result.nodes[index].task = task.merging(run: cached.1)
             } else if let run = try? await client.runs(ownerUserID: owner, taskID: task.id).first {
-                let mapped = mapRun(run, pendingApprovals: pendingApprovals)
+                let mapped = await mapRunWithLiveActivity(
+                    run,
+                    pendingApprovals: pendingApprovals
+                )
                 result.nodes[index].task = task.merging(run: mapped)
                 if isTerminal { terminalRunCache[task.id] = (task.updatedAt, mapped) }
             }
@@ -131,7 +140,10 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             ownerUserID: owner,
             limit: 100
         )) ?? []
-        var mappedRun = mapRun(run, pendingApprovals: pendingApprovals)
+        var mappedRun = await mapRunWithLiveActivity(
+            run,
+            pendingApprovals: pendingApprovals
+        )
         if mappedRun.errorMessage == nil, run.status == "needs_review" {
             mappedRun.errorMessage = try? await needsReviewError(
                 ownerUserID: owner,
@@ -216,6 +228,54 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             expectedVersion: task.version,
             reason: reason?.trimmingCharacters(in: .whitespacesAndNewlines)
                 .nilIfEmpty ?? "user requested cancellation"
+        )
+        if let runID = task.activeRunID {
+            // Do not wait for the realtime event loop to observe run_cancelled before
+            // releasing an in-flight MCP process. The event remains the durable fallback,
+            // while this direct path makes the user's Stop action immediate.
+            await afterCancel(runID)
+        }
+    }
+
+    public func restartTask(
+        messageID _: String,
+        taskID: String,
+        lookup: MessageTaskLookup?,
+        reason: String
+    ) async throws -> MessageTaskRun {
+        let owner = try requireOwner()
+        let current: LocalAgentTaskRecord?
+        if let graph = try await messageGraph(lookup: lookup) {
+            current = graph.nodes.lazy.map(\.task).first(where: { $0.taskID == taskID })
+        } else {
+            let graphs = try await matchingGraphs(lookup: lookup, requiredTaskID: taskID)
+            current = graphs.lazy.flatMap(\.tasks).first(where: { $0.taskID == taskID })
+        }
+        guard let current else {
+            throw NativeLocalAgentMessageTaskGraphServiceError.taskNotFound
+        }
+        let previousRunID = current.activeRunID
+        let graph = try await client.restart(
+            ownerUserID: owner,
+            taskID: current.taskID,
+            expectedVersion: current.version,
+            reason: reason.trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfEmpty ?? "user requested recovery"
+        )
+        // restart_task atomically cancels the old durable Run and resets the Task. Release
+        // its live Plugin only after that state transition succeeds, then wake scheduling.
+        if let previousRunID {
+            await afterCancel(previousRunID)
+        }
+        await afterRetry()
+        guard let restarted = graph.tasks.first(where: { $0.taskID == current.taskID }) else {
+            throw NativeLocalAgentMessageTaskGraphServiceError.taskNotFound
+        }
+        return MessageTaskRun(
+            id: restarted.activeRunID ?? "pending-\(restarted.taskID)-\(restarted.version)",
+            taskID: restarted.taskID,
+            status: restarted.status,
+            startedAt: Self.date(restarted.updatedAtUnixMs)
         )
     }
 
@@ -434,7 +494,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             }
         }
         if let run = try await client.runs(ownerUserID: owner, taskID: task.taskID).first {
-            var mappedRun = mapRun(run)
+            var mappedRun = await mapRunWithLiveActivity(run)
             if mappedRun.errorMessage == nil, run.status == "needs_review" {
                 mappedRun.errorMessage = try? await needsReviewError(
                     ownerUserID: owner,
@@ -513,6 +573,18 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
                 pendingApprovals: pendingApprovals
             )
         )
+    }
+
+    private func mapRunWithLiveActivity(
+        _ run: LocalAgentRunRecord,
+        pendingApprovals: [LocalAgentToolInvocationRecord] = []
+    ) async -> MessageTaskRun {
+        var mapped = mapRun(run, pendingApprovals: pendingApprovals)
+        if !Self.isTerminal(run.status),
+           let activity = await pluginActivity(run.runID) {
+            mapped.activity = activity
+        }
+        return mapped
     }
 
     static func executionError(_ outcome: LocalAgentJSONValue) -> String? {
@@ -595,32 +667,56 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     }
 
     static func needsReviewError(from events: [LocalAgentEventRecord]) -> String? {
-        events.sorted(by: { $0.cursor > $1.cursor }).lazy.compactMap { event -> String? in
-            guard event.eventType == "tool_invocation_completed",
-                  case let .object(payload)? = event.payload,
-                  case let .string(status)? = payload["status"],
-                  status == "needs_review",
-                  case let .string(error)? = payload["error"] else { return nil }
-            return error.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        }.first
+        let newest = events.sorted(by: { $0.cursor > $1.cursor })
+        for event in newest {
+            guard let payload = event.payload else { continue }
+            if event.eventType == "run_needs_review" {
+                if case let .object(object) = payload,
+                   let detail = object["detail"],
+                   let error = string("error", in: detail)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty {
+                    return error
+                }
+                if let error = string("error", in: payload)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty {
+                    return error
+                }
+            } else if event.eventType == "tool_invocation_completed",
+                      string("status", in: payload) == "needs_review",
+                      let error = string("error", in: payload)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty {
+                return error
+            }
+        }
+        return newest.lazy.filter { $0.eventType == "run_needs_review" }
+            .compactMap { $0.payload.flatMap { string("reason", in: $0) }?
+                .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty }.first
     }
 
     private func needsReviewError(ownerUserID: String, runID: String) async throws -> String? {
-        let page = try await client.events(
+        async let runEvents = client.events(
+            ownerUserID: ownerUserID,
+            runID: runID,
+            limit: 20,
+            eventType: "run_needs_review",
+            newestFirst: true
+        )
+        async let toolEvents = client.events(
             ownerUserID: ownerUserID,
             runID: runID,
             limit: 20,
             eventType: "tool_invocation_completed",
             newestFirst: true
         )
-        return Self.needsReviewError(from: page.events)
+        let pages = try await (runEvents, toolEvents)
+        return Self.needsReviewError(from: pages.0.events + pages.1.events)
     }
 
     private func mapEvent(_ event: LocalAgentEventRecord) -> MessageTaskRunEvent {
         MessageTaskRunEvent(
             id: event.eventID,
             eventType: event.eventType,
-            message: event.payload.flatMap {
+            message: Self.needsReviewError(from: [event]) ?? event.payload.flatMap {
                 Self.string("message", in: $0) ?? Self.string("reason", in: $0)
             },
             createdAt: Self.date(event.createdAtUnixMs)

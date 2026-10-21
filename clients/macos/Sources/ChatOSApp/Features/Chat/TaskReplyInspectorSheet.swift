@@ -6,6 +6,8 @@ struct TaskReplyInlineInspectorView: View {
     @StateObject private var viewModel: TaskReplyInspectorViewModel
     let selection: TaskReplySelection
     let requestedSection: TaskReplyInspectorSection
+    @State private var confirmsRestart = false
+    @State private var confirmsCancellation = false
 
     init(
         selection: TaskReplySelection,
@@ -27,6 +29,37 @@ struct TaskReplyInlineInspectorView: View {
                 if viewModel.isLoading || viewModel.isLoadingModelOutput {
                     ProgressView().controlSize(.small)
                 }
+                if viewModel.canRestartActiveTask || viewModel.canCancelActiveTask {
+                    Menu {
+                        if viewModel.canRestartActiveTask {
+                            Button {
+                                confirmsRestart = true
+                            } label: {
+                                Label("恢复执行", systemImage: "arrow.clockwise.circle")
+                            }
+                        }
+                        if viewModel.canCancelActiveTask {
+                            Button(role: .destructive) {
+                                confirmsCancellation = true
+                            } label: {
+                                Label("停止任务", systemImage: "stop.circle")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .disabled(viewModel.isRestarting || viewModel.isCancelling)
+                    .help(model.localized("任务操作", english: "Task Actions"))
+                }
+            }
+
+            if let error = viewModel.recoveryErrorMessage {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .appFont(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
             }
 
             Divider()
@@ -51,6 +84,30 @@ struct TaskReplyInlineInspectorView: View {
         }
         .onDisappear {
             viewModel.stop()
+        }
+        .confirmationDialog(
+            "恢复执行这个任务？",
+            isPresented: $confirmsRestart,
+            titleVisibility: .visible
+        ) {
+            Button("终止当前运行并重新执行", role: .destructive) {
+                viewModel.restartActiveTask()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("系统会终止当前 Run 并创建新的执行。之前的浏览器点击、导出、授权或文件修改可能已经发生，请确认重复执行是安全的。")
+        }
+        .confirmationDialog(
+            "停止这个任务？",
+            isPresented: $confirmsCancellation,
+            titleVisibility: .visible
+        ) {
+            Button("停止任务", role: .destructive) {
+                viewModel.cancelActiveTask()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("任务和正在运行的插件进程会被终止；已经发生的外部操作不会自动撤销。")
         }
     }
 
@@ -86,7 +143,8 @@ struct TaskReplyInspectorContent: View {
                 case .process:
                     TaskProcessTimelineView(
                         items: viewModel.processTimelineItems,
-                        allowsTextSelection: true
+                        allowsTextSelection: true,
+                        liveActivity: task.lastRun?.activity
                     )
                 case .detail:
                     taskDetail(task)

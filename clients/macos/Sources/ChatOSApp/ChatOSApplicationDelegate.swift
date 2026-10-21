@@ -12,6 +12,13 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
     private var didReceiveFileOpenRequest = false
 
     override init() {
+        // ChatOS is also the owner of the pet overlay, global utilities, and the
+        // Agent Host. AppKit must not automatically terminate it during the
+        // short launch interval before the manually managed main window appears,
+        // nor when that window is closed while background features remain active.
+        ProcessInfo.processInfo.disableAutomaticTermination(
+            "ChatOS background services remain active without a main window"
+        )
         let model = AppModel()
         self.model = model
         super.init()
@@ -71,7 +78,12 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        scheduleMainWindowPresentation(after: 0.08)
+        // Pet and running-task panels can remain visible after the main window
+        // is closed. In that state AppKit considers the application to have
+        // visible windows, but a Dock click still means “show the app”. Reopen
+        // synchronously so an auxiliary panel cannot absorb the activation and
+        // leave the user with no route back to the main workspace.
+        showMainWindow()
         return false
     }
 
@@ -159,8 +171,17 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         window.setFrameAutosaveName("ChatOSMainWindow")
         if !window.setFrameUsingName("ChatOSMainWindow") {
             window.center()
+        } else if !Self.isMeaningfullyVisible(window.frame) {
+            window.center()
         }
         return NSWindowController(window: window)
+    }
+
+    private static func isMeaningfullyVisible(_ frame: NSRect) -> Bool {
+        NSScreen.screens.contains { screen in
+            let intersection = frame.intersection(screen.visibleFrame)
+            return intersection.width >= 160 && intersection.height >= 120
+        }
     }
 
     private func showSettingsWindow() {

@@ -14,8 +14,8 @@ struct NativeMCPRemoteConnectionControllerTests {
         let report = try NativeMCPRemoteConnectionController.skillCoverageReport()
 
         #expect(definitionNames == NativeMCPRemoteConnectionController.toolNames)
-        #expect(report.totalTools == 6)
-        #expect(report.coveredTools == 6)
+        #expect(report.totalTools == 7)
+        #expect(report.coveredTools == 7)
         #expect(report.isComplete)
         #expect(report.issues.isEmpty)
     }
@@ -114,6 +114,58 @@ struct NativeMCPRemoteConnectionControllerTests {
         #expect(!serialized.contains("connection_id"))
         #expect(await ssh.lastUploadPath() == "/srv/app/output.txt")
     }
+
+    @Test
+    func uploadsExistingProjectFileWithoutRoutingBytesThroughModelArguments() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("remote-project-upload-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let artifact = root.appendingPathComponent("build/app.tar.gz")
+        try FileManager.default.createDirectory(
+            at: artifact.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("artifact-bytes".utf8).write(to: artifact)
+
+        let ssh = RemoteSSHStub()
+        let controller = NativeMCPRemoteConnectionController(
+            provider: RemoteRuntimeStub(),
+            ssh: ssh
+        )
+        let result = try await controller.uploadProjectFile([
+            "connection_id": .string("connection-1"),
+            "local_path": .string("build/app.tar.gz"),
+            "path": .string("/srv/app/app.tar.gz"),
+        ], projectRoot: root)
+
+        #expect(result.jsonObject?["uploaded"] == .bool(true))
+        #expect(result.jsonObject?["size_bytes"] == .number(14))
+        #expect(await ssh.lastProjectUploadPath() == "/srv/app/app.tar.gz")
+        #expect(await ssh.lastProjectUploadSource() == artifact.path)
+    }
+
+    @Test
+    func rejectsProjectUploadPathEscapeBeforeCallingSSH() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("remote-project-upload-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ssh = RemoteSSHStub()
+        let controller = NativeMCPRemoteConnectionController(
+            provider: RemoteRuntimeStub(),
+            ssh: ssh
+        )
+
+        await #expect(throws: NativeMCPRemoteConnectionError.self) {
+            try await controller.uploadProjectFile([
+                "connection_id": .string("connection-1"),
+                "local_path": .string("../outside.tar.gz"),
+                "path": .string("/srv/app/app.tar.gz"),
+            ], projectRoot: root)
+        }
+        #expect(await ssh.lastProjectUploadPath() == nil)
+    }
 }
 
 private actor RemoteRuntimeStub: NativeRemoteConnectionRuntimeProviding {
@@ -175,6 +227,8 @@ private actor RemoteRuntimeStub: NativeRemoteConnectionRuntimeProviding {
 private actor RemoteSSHStub: NativeRemoteSSHExecuting {
     private var command: String?
     private var uploadPath: String?
+    private var projectUploadPath: String?
+    private var projectUploadSource: String?
 
     func hasReusableConnection(draft: RemoteConnectionDraft) async -> Bool { false }
 
@@ -236,7 +290,10 @@ private actor RemoteSSHStub: NativeRemoteSSHExecuting {
         localURL: URL,
         remotePath: String,
         overwrite: Bool
-    ) async throws {}
+    ) async throws {
+        projectUploadSource = localURL.path
+        projectUploadPath = remotePath
+    }
 
     func downloadFile(
         draft: RemoteConnectionDraft,
@@ -262,4 +319,6 @@ private actor RemoteSSHStub: NativeRemoteSSHExecuting {
     func lastCommand() -> String? { command }
 
     func lastUploadPath() -> String? { uploadPath }
+    func lastProjectUploadPath() -> String? { projectUploadPath }
+    func lastProjectUploadSource() -> String? { projectUploadSource }
 }
