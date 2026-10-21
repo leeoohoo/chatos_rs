@@ -87,6 +87,15 @@ export function WorkspaceSidebar({
         需求调研
       </button>
       <button
+        className={`nav-item ${selection.kind === "notepad" ? "nav-item--active" : ""}`}
+        disabled={!hostReady}
+        onClick={() => onSelectionChange({ kind: "notepad" })}
+        type="button"
+      >
+        <span aria-hidden="true" className="nav-symbol">▤</span>
+        记事本
+      </button>
+      <button
         className={`nav-item ${selection.kind === "terminal" ? "nav-item--active" : ""}`}
         disabled={!hostReady}
         onClick={() => onSelectionChange({ kind: "terminal" })}

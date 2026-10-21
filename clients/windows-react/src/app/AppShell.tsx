@@ -68,6 +68,18 @@ const RequirementSurveyWorkspace = lazy(async () => {
   };
 });
 
+const NotepadWorkspace = lazy(async () => {
+  const [adapterModule, viewModule] = await Promise.all([
+    import("../features/notepad/adapters/TauriNotepadAdapter"),
+    import("../features/notepad/ui/NotepadView"),
+  ]);
+  const port = new adapterModule.TauriNotepadAdapter();
+  type Props = Omit<ComponentProps<typeof viewModule.NotepadView>, "port">;
+  return {
+    default: (props: Props) => <viewModule.NotepadView {...props} port={port} />,
+  };
+});
+
 const MediaStudioWorkspace = lazy(async () => {
   const [mediaAdapterModule, storyAdapterModule, viewModule] = await Promise.all([
     import("../features/media-studio/adapters/TauriMediaStudioAdapter"),
@@ -348,6 +360,8 @@ export function AppShell({
         ? "Agent 管理"
       : selection.kind === "requirementSurveys"
         ? "需求调研"
+      : selection.kind === "notepad"
+        ? "记事本"
       : selection.kind === "mediaStudio"
         ? "AI 创作"
       : selection.kind === "applications"
@@ -435,6 +449,8 @@ export function AppShell({
                     ? "AGENT MANAGEMENT"
                   : selection.kind === "requirementSurveys"
                     ? "REQUIREMENT SURVEYS"
+                  : selection.kind === "notepad"
+                    ? "LOCAL NOTEBOOK"
                   : selection.kind === "applications" || selection.kind === "application"
                     ? "PLUGIN APPLICATIONS"
                   : "LOCAL WORKSPACE"
@@ -482,6 +498,11 @@ export function AppShell({
             hostReady={snapshot.ready}
             ownerUserId={session.user.id}
             projects={workspaceSnapshot.projects}
+          />
+        ) : selection.kind === "notepad" ? (
+          <NotepadWorkspace
+            hostReady={snapshot.ready}
+            ownerUserId={session.user.id}
           />
         ) : selection.kind === "mediaStudio" ? (
           <MediaStudioWorkspace ownerUserId={session.user.id} />

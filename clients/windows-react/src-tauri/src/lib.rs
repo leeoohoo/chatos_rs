@@ -16,6 +16,7 @@ mod conversation_runtime_settings;
 mod host_lifecycle;
 mod local_terminal;
 mod media_studio;
+mod notepad;
 mod platform_execution_context;
 mod plugin_application;
 mod product_skill_runtime;
@@ -100,6 +101,10 @@ use media_studio::{
     pick_media_studio_reference_images, pick_media_studio_video_reference_audio,
     poll_media_studio_video_generation, stage_media_studio_history_references,
     start_media_studio_video_generation, MediaStudioManager,
+};
+use notepad::{
+    create_notepad_folder, create_notepad_note, delete_notepad_folder, delete_notepad_note,
+    get_notepad_note, load_notepad, rename_notepad_folder, update_notepad_note,
 };
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
@@ -378,6 +383,14 @@ pub fn run() {
             load_requirement_survey_follow_up,
             confirm_requirement_survey_plan,
             adopt_requirement_survey_plan,
+            load_notepad,
+            create_notepad_folder,
+            rename_notepad_folder,
+            delete_notepad_folder,
+            create_notepad_note,
+            get_notepad_note,
+            update_notepad_note,
+            delete_notepad_note,
             list_tool_approvals,
             decide_tool_approval,
             load_tool_approval_settings,
