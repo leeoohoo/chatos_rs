@@ -530,6 +530,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事完成视频归档边界）：确认付费重新生成前的旧视频归档不再由 ViewModel 直接调用 Store，而是构造冻结 canonical fingerprint、project revision、模型组合和 archive 后项目的 `StoryProjectEditCommand`，通过 `StoryProjectMutationUseCase` 持久化。只有 owner/account session/request edit token 仍匹配且归档成功，才会启动后续单段视频 provider 调用；账号切换、取消或迟到归档不能触发计费任务。Story Studio 66 项通过。下一片只剩 UI 媒体 URL 投影与最终 macOS Story 准入审计；剧情模式继续禁用。
 
+状态补充（2026-10-21，macOS AI 故事媒体访问边界）：Core 新增 `StoryMediaAccessResolving` 与 `StoryMediaAccessUseCase`，只负责把 owner/project/image-or-video identity 投影为 display-safe `GeneratedMediaAsset` 或本机 file URL，并对非 file URL 失败关闭。`StoryStudioViewModel` 不再解释 owner/project/filename 到磁盘路径的映射；`StoryProjectStore.fileURL` 仅由 macOS `StoryMediaAccessAdapter` 调用。本切片 Core 4 项、Story Studio 66 项、Story Agent 21 项通过，Story Core 累计 58 项。下一片执行最终 Store 直连、敏感字段和 Windows opaque media token 平台差异审计；完成前剧情模式继续禁用。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

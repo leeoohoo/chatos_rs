@@ -108,6 +108,7 @@ final class StoryStudioViewModel: ObservableObject {
     let storyPlanning: StoryPlanningUseCase?
     let storyHistory: StoryHistoryUseCase
     let storyMediaBatch: StoryMediaBatchUseCase
+    let storyMediaAccess: StoryMediaAccessUseCase
     let storyImageImport: StoryImageImportUseCase
     let storyAssetImageGeneration: StoryAssetImageGenerationUseCase
     let storyFrameImageGeneration: StoryFrameImageGenerationUseCase
@@ -152,6 +153,7 @@ final class StoryStudioViewModel: ObservableObject {
          storyPlanning: (any StoryPlanningExecuting)? = nil,
          storyHistory: (any StoryHistoryLoading)? = nil,
          storyMediaBatch: (any StoryMediaBatchExecuting)? = nil,
+         storyMediaAccess: (any StoryMediaAccessResolving)? = nil,
          storyImageImport: (any StoryImageImporting)? = nil,
          storyAssetImageGeneration: (any StoryAssetImageGenerating)? = nil,
          storyFrameImageGeneration: (any StoryFrameImageGenerating)? = nil,
@@ -171,6 +173,9 @@ final class StoryStudioViewModel: ObservableObject {
                 store: store,
                 media: media
             )
+        )
+        self.storyMediaAccess = StoryMediaAccessUseCase(
+            resolver: storyMediaAccess ?? StoryMediaAccessAdapter(store: store)
         )
         self.storyImageImport = StoryImageImportUseCase(
             importer: storyImageImport ?? StoryImageImportAdapter(store: store)

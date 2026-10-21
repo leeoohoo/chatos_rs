@@ -387,12 +387,20 @@ extension StoryStudioViewModel {
     }
 
     func mediaAsset(_ image: StoryImage, projectID: UUID) -> GeneratedMediaAsset? {
-        guard let owner, let url = try? store.fileURL(image.filename, projectID: projectID, owner: owner) else { return nil }
-        return .init(id: image.id.uuidString, mimeType: image.mimeType, url: url)
+        guard let owner else { return nil }
+        return try? storyMediaAccess.imageAsset(
+            ownerUserID: owner,
+            projectID: projectID,
+            image: image
+        )
     }
     func videoURL(_ video: StoryVideo, projectID: UUID) -> URL? {
         guard let owner else { return nil }
-        return try? store.fileURL(video.filename, projectID: projectID, owner: owner)
+        return try? storyMediaAccess.videoURL(
+            ownerUserID: owner,
+            projectID: projectID,
+            video: video
+        )
     }
     func reextractVideoLastFrame(_ segmentID: String) {
         guard let owner, let project else { return }
