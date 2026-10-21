@@ -74,6 +74,15 @@ pub(crate) struct StorySegmentEditInput {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StorySegmentDurationInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub segment_id: String,
+    pub seconds: u8,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum StorySegmentStructureOperation {
     Add,
@@ -309,6 +318,71 @@ pub(super) fn apply_story_segment_edit(
         return Err("剧情项目已被修改，请重新打开后再保存。".into());
     }
     let mut next = apply_segment_edit(project, input.segment)?;
+    next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    *project = next;
+    Ok(())
+}
+
+pub(super) fn apply_story_segment_duration(
+    project: &mut StoryProject,
+    input: StorySegmentDurationInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    if !(2..=15).contains(&input.seconds)
+        || project
+            .models
+            .supported_video_durations
+            .as_ref()
+            .is_some_and(|durations| !durations.contains(&input.seconds))
+    {
+        return Err("当前视频模型不支持这个分段时长。".into());
+    }
+    let segment = project
+        .segments
+        .iter()
+        .find(|segment| segment.id == input.segment_id)
+        .filter(|segment| segment.attempt.is_none() && segment.video.is_none())
+        .ok_or_else(|| "当前分段不能修改时长。".to_owned())?;
+    if segment.seconds == input.seconds {
+        return Ok(());
+    }
+    let seconds = input.seconds;
+    let relations = project
+        .relations
+        .iter()
+        .filter(|relation| relation.segment_id == input.segment_id)
+        .map(|relation| {
+            let start_second = relation.start_second.min(seconds.saturating_sub(1));
+            let mut end_second = relation.end_second.min(seconds);
+            if end_second <= start_second {
+                end_second = seconds.min(start_second.saturating_add(1));
+            }
+            super::domain::StorySegmentRelationEdit {
+                id: relation.id.clone(),
+                character_id: relation.character_id.clone(),
+                scene_id: relation.scene_id.clone(),
+                action: relation.action.clone(),
+                position: relation.position.clone(),
+                start_second,
+                end_second,
+            }
+        })
+        .collect();
+    let edit = StorySegmentEdit {
+        segment_id: segment.id.clone(),
+        title: segment.title.clone(),
+        synopsis: segment.synopsis.clone(),
+        kind: segment.kind,
+        seconds,
+        detail: None,
+        character_ids: segment.character_ids.clone(),
+        scene_ids: segment.scene_ids.clone(),
+        prop_ids: segment.prop_ids.clone(),
+        video_guidance_mode: segment.video_guidance_mode,
+        relations,
+    };
+    let mut next = apply_segment_edit(project, edit)?;
     next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     *project = next;
     Ok(())

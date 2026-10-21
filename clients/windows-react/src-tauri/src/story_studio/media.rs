@@ -20,19 +20,20 @@ use crate::media_studio::{
 use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, apply_story_resource_prompt,
-        apply_story_segment_edit, apply_story_video_guidance, archive_completed_story_video,
-        begin_story_asset_image_generation, begin_story_frame_image_generation,
-        begin_story_video_generation, complete_story_asset_image_generation,
-        complete_story_frame_image_generation, complete_story_video_generation,
-        fail_story_video_generation, make_story_project, story_asset_image_prompt,
-        update_story_video_generation_progress, StoryAssetImageCompletion,
-        StoryAssetImageGenerationInput, StoryCompletedVideoArchiveInput, StoryFrameImageCompletion,
-        StoryFrameImageGenerationInput, StoryFrameRoleInput, StoryImageConfirmationInput,
-        StoryImageImportInput, StoryLastFrameClearInput, StoryLatestFramesInput,
-        StoryLatestResourceImagesInput, StoryProjectCreationInput, StoryProjectSettingsInput,
-        StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
-        StorySegmentStructureInput, StoryVideoCompletion, StoryVideoGenerationPollInput,
-        StoryVideoGenerationStartInput, StoryVideoGuidanceInput,
+        apply_story_segment_duration, apply_story_segment_edit, apply_story_video_guidance,
+        archive_completed_story_video, begin_story_asset_image_generation,
+        begin_story_frame_image_generation, begin_story_video_generation,
+        complete_story_asset_image_generation, complete_story_frame_image_generation,
+        complete_story_video_generation, fail_story_video_generation, make_story_project,
+        story_asset_image_prompt, update_story_video_generation_progress,
+        StoryAssetImageCompletion, StoryAssetImageGenerationInput, StoryCompletedVideoArchiveInput,
+        StoryFrameImageCompletion, StoryFrameImageGenerationInput, StoryFrameRoleInput,
+        StoryImageConfirmationInput, StoryImageImportInput, StoryLastFrameClearInput,
+        StoryLatestFramesInput, StoryLatestResourceImagesInput, StoryProjectCreationInput,
+        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
+        StorySegmentDurationInput, StorySegmentEditInput, StorySegmentStructureInput,
+        StoryVideoCompletion, StoryVideoGenerationPollInput, StoryVideoGenerationStartInput,
+        StoryVideoGuidanceInput,
     },
     domain::{
         StoryImage, StoryImageCollection, StoryProject, StorySegment, StorySegmentKind,
@@ -458,6 +459,35 @@ impl StoryStudioManager {
             .store
             .mutate_project(owner_user_id, &project_id, |project| {
                 apply_story_segment_edit(project, input, now)
+            })?;
+        self.project_snapshot(
+            owner_user_id,
+            authentication_generation,
+            presentation_id,
+            &session,
+            &project,
+        )
+    }
+
+    pub(super) fn update_segment_duration(
+        &self,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        presentation_id: &str,
+        input: StorySegmentDurationInput,
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner_user_id, authentication_generation)?;
+        self.media.require_open_presentation(
+            owner_user_id,
+            authentication_generation,
+            presentation_id,
+        )?;
+        let project_id = input.project_id.clone();
+        let now = current_unix_milliseconds();
+        let project = self
+            .store
+            .mutate_project(owner_user_id, &project_id, |project| {
+                apply_story_segment_duration(project, input, now)
             })?;
         self.project_snapshot(
             owner_user_id,

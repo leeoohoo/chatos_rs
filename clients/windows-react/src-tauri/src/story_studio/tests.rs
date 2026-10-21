@@ -7,9 +7,9 @@ use super::{
         StoryImageImportInput, StoryLastFrameClearInput, StoryLatestFramesInput,
         StoryLatestResourceImagesInput, StoryModelSelectionInput, StoryProjectCreationInput,
         StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
-        StorySegmentEditInput, StorySegmentStructureInput, StorySegmentStructureMutation,
-        StorySegmentStructureOperation, StoryVideoGenerationPollInput,
-        StoryVideoGenerationStartInput, StoryVideoGuidanceInput,
+        StorySegmentDurationInput, StorySegmentEditInput, StorySegmentStructureInput,
+        StorySegmentStructureMutation, StorySegmentStructureOperation,
+        StoryVideoGenerationPollInput, StoryVideoGenerationStartInput, StoryVideoGuidanceInput,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -808,6 +808,91 @@ fn segment_edit_changes_only_macos_authorized_fields_and_preserves_native_state(
     assert_eq!(edited.error, original.error);
     assert_eq!(edited.first_frames.confirmed_image_id, None);
     assert_eq!(edited.last_frames.confirmed_image_id, None);
+}
+
+#[test]
+fn segment_duration_intent_clamps_relations_and_invalidates_plans_like_macos_editor() {
+    let mut canonical = project();
+    canonical.segments[0].detail = Some(test_segment_detail(15));
+    canonical.relations.push(StorySegmentRelation {
+        id: "relation-a".into(),
+        segment_id: "s1".into(),
+        character_id: "character-a".into(),
+        scene_id: "scene-a".into(),
+        action: "walk".into(),
+        position: "left".into(),
+        start_second: 12,
+        end_second: 15,
+    });
+    canonical.characters.push(StoryCharacter {
+        id: "character-a".into(),
+        name: "Character".into(),
+        profile: StoryCharacterProfile {
+            is_protagonist: true,
+            role_in_story: "Lead".into(),
+            appearance: "Coat".into(),
+            personality: "Calm".into(),
+            motivation: "Leave".into(),
+            relationships: "Alone".into(),
+            costume: "Blue".into(),
+            consistency_notes: "Stable".into(),
+        },
+        image_prompt: "Character in a blue coat".into(),
+        media: StoryImageCollection::default(),
+    });
+    canonical.scenes.push(StoryScene {
+        id: "scene-a".into(),
+        name: "Scene".into(),
+        profile: StorySceneProfile {
+            role_in_story: "Setting".into(),
+            setting: "Street".into(),
+            spatial_layout: "Long".into(),
+            lighting_and_palette: "Blue".into(),
+            key_elements: "Rain".into(),
+            atmosphere: "Quiet".into(),
+            consistency_notes: "Stable".into(),
+        },
+        image_prompt: "Rainy street".into(),
+        media: StoryImageCollection::default(),
+    });
+    canonical.segments[0]
+        .character_ids
+        .push("character-a".into());
+    canonical.segments[0].scene_ids.push("scene-a".into());
+    let project_id = canonical.id.clone();
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+
+    super::application::apply_story_segment_duration(
+        &mut canonical,
+        StorySegmentDurationInput {
+            project_id,
+            base_fingerprint: fingerprint,
+            segment_id: "s1".into(),
+            seconds: 5,
+        },
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(canonical.segments[0].seconds, 5);
+    assert!(canonical.segments[0].detail.is_none());
+    assert_eq!(canonical.relations[0].start_second, 4);
+    assert_eq!(canonical.relations[0].end_second, 5);
+
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+    let project_id = canonical.id.clone();
+    let error = super::application::apply_story_segment_duration(
+        &mut canonical,
+        StorySegmentDurationInput {
+            project_id,
+            base_fingerprint: fingerprint,
+            segment_id: "s1".into(),
+            seconds: 7,
+        },
+        3,
+    )
+    .unwrap_err();
+    assert_eq!(error, "当前视频模型不支持这个分段时长。");
 }
 
 #[test]

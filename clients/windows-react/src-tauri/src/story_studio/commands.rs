@@ -15,8 +15,9 @@ use super::{
         StoryFrameImageGenerationInput, StoryImageConfirmationInput, StoryImageImportInput,
         StoryLastFrameClearInput, StoryLatestFramesInput, StoryLatestResourceImagesInput,
         StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput,
-        StoryResourcePromptInput, StorySegmentEditInput, StorySegmentStructureInput,
-        StoryVideoGenerationPollInput, StoryVideoGenerationStartInput, StoryVideoGuidanceInput,
+        StoryResourcePromptInput, StorySegmentDurationInput, StorySegmentEditInput,
+        StorySegmentStructureInput, StoryVideoGenerationPollInput, StoryVideoGenerationStartInput,
+        StoryVideoGuidanceInput,
     },
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
@@ -80,6 +81,14 @@ pub(crate) struct StorySegmentEditCommandInput {
     owner_user_id: String,
     presentation_id: String,
     edit: StorySegmentEditInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StorySegmentDurationCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    change: StorySegmentDurationInput,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -454,6 +463,30 @@ pub(crate) async fn update_story_segment(
     })
     .await
     .map_err(|_| "剧情分段保存任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    saved
+}
+
+#[tauri::command]
+pub(crate) async fn update_story_segment_duration(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StorySegmentDurationCommandInput,
+) -> Result<StoryProjectSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let work = manager.inner().clone();
+    let owner = input.owner_user_id;
+    let saved_owner = owner.clone();
+    let presentation_id = input.presentation_id;
+    let change = input.change;
+    let saved = tauri::async_runtime::spawn_blocking(move || {
+        work.update_segment_duration(&saved_owner, generation, &presentation_id, change)
+    })
+    .await
+    .map_err(|_| "剧情分段时长保存任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &manager, &owner, generation).await?;
     saved
 }

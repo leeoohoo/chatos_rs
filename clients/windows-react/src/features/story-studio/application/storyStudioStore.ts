@@ -58,6 +58,7 @@ interface StoryStudioState {
   importLocalImage(storyPort: StoryStudioPort, target: StoryImageImportTarget): Promise<void>;
   loadStoryImageHistory(mediaPort: MediaStudioPort): Promise<void>;
   importHistoryImage(storyPort: StoryStudioPort, target: StoryImageImportTarget, recordId: string, contentToken: string): Promise<void>;
+  updateSegmentDuration(storyPort: StoryStudioPort, segmentId: string, seconds: number): Promise<void>;
   generateAssetImage(storyPort: StoryStudioPort, resourceId: string, userIdeas: string): Promise<void>;
   generateFrameImage(storyPort: StoryStudioPort, segmentId: string, frameRole: "first" | "last", referenceResourceIds: string[], userIdeas: string): Promise<void>;
   confirmLatestResources(storyPort: StoryStudioPort, resourceIds: string[]): Promise<void>;
@@ -396,6 +397,27 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ activeMediaTarget: null, error: errorMessage(error, "创作历史图片导入失败。") });
+    }
+  },
+
+  async updateSegmentDuration(storyPort, segmentId, seconds) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().busy) return;
+    set({ busy: true, error: null });
+    try {
+      const saved = await storyPort.updateSegmentDuration({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        segmentId,
+        seconds,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({ projects: replaceProject(state.projects, saved), busy: false }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ busy: false, error: errorMessage(error, "分段时长保存失败。") });
     }
   },
 

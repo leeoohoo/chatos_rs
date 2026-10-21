@@ -72,6 +72,12 @@ export interface StoryStudioPort {
     recordId: string;
     contentToken: string;
   }): Promise<StoryProject>;
+  updateSegmentDuration(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    segmentId: string;
+    seconds: number;
+  }): Promise<StoryProject>;
   generateAssetImage(request: StoryPresentationScope & {
     projectId: string;
     baseFingerprint: string;

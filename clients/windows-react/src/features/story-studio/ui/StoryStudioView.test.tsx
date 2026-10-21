@@ -183,6 +183,29 @@ describe("StoryStudioView", () => {
       target: { kind: "frame", segmentId: "segment-a", frameRole: "first" },
     }));
   });
+
+  it("sends duration as a narrow native intent", async () => {
+    const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      updateSegmentDuration: vi.fn(async () => canonical),
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+    await screen.findByRole("heading", { name: "雨夜来客" });
+
+    await act(async () => useStoryStudioStore.getState().updateSegmentDuration(
+      storyPort,
+      "segment-a",
+      10,
+    ));
+
+    expect(storyPort.updateSegmentDuration).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: canonical.id,
+      baseFingerprint: canonical.baseFingerprint,
+      segmentId: "segment-a",
+      seconds: 10,
+    }));
+  });
 });
 
 function usePresentationId(storyPort: StoryStudioPort) {
@@ -198,6 +221,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     abandonPlanning: vi.fn(async () => planningRun()),
     importLocalImage: vi.fn(async () => project()),
     importHistoryImage: vi.fn(async () => project()),
+    updateSegmentDuration: vi.fn(async () => project()),
     loadProjects: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadProject: vi.fn(async () => project()),
     createProject: vi.fn(async () => project()),

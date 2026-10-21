@@ -18,8 +18,8 @@ pub(crate) use commands::{
     load_story_planning_history, load_story_project, load_story_projects,
     poll_story_video_generation, resume_story_planning, start_story_planning,
     start_story_video_generation, update_story_project_settings, update_story_project_source,
-    update_story_resource_prompt, update_story_segment, update_story_segment_structure,
-    update_story_video_guidance,
+    update_story_resource_prompt, update_story_segment, update_story_segment_duration,
+    update_story_segment_structure, update_story_video_guidance,
 };
 pub(crate) use media::{story_studio_protocol, StoryStudioManager};
 
