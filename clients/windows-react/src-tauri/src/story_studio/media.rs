@@ -3,7 +3,9 @@
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    fs::{self, OpenOptions},
+    io::{Cursor, Read},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tauri::http;
@@ -15,9 +17,10 @@ use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, apply_story_resource_prompt,
         apply_story_segment_edit, make_story_project, StoryImageConfirmationInput,
-        StoryLastFrameClearInput, StoryLatestFramesInput, StoryLatestResourceImagesInput,
-        StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput,
-        StoryResourcePromptInput, StorySegmentEditInput, StorySegmentStructureInput,
+        StoryImageImportInput, StoryLastFrameClearInput, StoryLatestFramesInput,
+        StoryLatestResourceImagesInput, StoryProjectCreationInput, StoryProjectSettingsInput,
+        StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
+        StorySegmentStructureInput,
     },
     domain::{StoryImageCollection, StoryProject},
     execution::StoryPlanningExecutionRegistry,
@@ -521,6 +524,38 @@ impl StoryStudioManager {
         self.project_snapshot(owner, generation, presentation, &session, &project)
     }
 
+    pub(super) fn import_local_story_image(
+        &self,
+        owner: &str,
+        generation: u64,
+        presentation: &str,
+        input: StoryImageImportInput,
+        path: &Path,
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner, generation)?;
+        self.media
+            .require_open_presentation(owner, generation, presentation)?;
+        let png = normalized_local_png(path)?;
+        let filename = format!("image-{}.png", Uuid::new_v4().simple());
+        let stored_filename = filename.clone();
+        let project_id = input.project_id.clone();
+        let project = self.store.mutate_project_with_image(
+            owner,
+            &project_id,
+            &filename,
+            &png,
+            |project| {
+                super::application::apply_story_image_import(
+                    project,
+                    input,
+                    stored_filename,
+                    current_unix_milliseconds(),
+                )
+            },
+        )?;
+        self.project_snapshot(owner, generation, presentation, &session, &project)
+    }
+
     pub(super) fn discard_presentation(
         &self,
         owner_user_id: &str,
@@ -836,6 +871,74 @@ fn story_preview_url(session_token: &str, presentation_id: &str, token: &str) ->
 
 fn media_error() -> String {
     "剧情媒体凭据无效或已经过期。".into()
+}
+
+fn normalized_local_png(path: &Path) -> Result<Vec<u8>, String> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| "无法读取剧情图片。".to_owned())?;
+    if !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() == 0
+        || metadata.len() > MAXIMUM_STORY_IMAGE_BYTES as u64
+    {
+        return Err("所选文件不是有效图片或超过 20 MB。".into());
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|_| "无法读取剧情图片。".to_owned())?;
+    let before = file
+        .metadata()
+        .map_err(|_| "无法读取剧情图片。".to_owned())?;
+    let mut source = Vec::with_capacity(before.len() as usize);
+    (&mut file)
+        .take((MAXIMUM_STORY_IMAGE_BYTES + 1) as u64)
+        .read_to_end(&mut source)
+        .map_err(|_| "无法读取剧情图片。".to_owned())?;
+    let after = file
+        .metadata()
+        .map_err(|_| "无法读取剧情图片。".to_owned())?;
+    if before.len() != after.len()
+        || before.modified().ok() != after.modified().ok()
+        || source.len() != before.len() as usize
+        || source.is_empty()
+        || source.len() > MAXIMUM_STORY_IMAGE_BYTES
+    {
+        return Err("剧情图片在读取期间发生变化或超过 20 MB。".into());
+    }
+    let format = image::guess_format(&source).map_err(|_| "所选文件不是有效图片。".to_owned())?;
+    if !matches!(
+        format,
+        image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP
+    ) {
+        return Err("剧情图片仅支持 PNG、JPEG 或 WebP。".into());
+    }
+    let decoded = image::load_from_memory_with_format(&source, format)
+        .map_err(|_| "所选图片无法解码。".to_owned())?;
+    let pixels = u64::from(decoded.width()).saturating_mul(u64::from(decoded.height()));
+    if decoded.width() == 0 || decoded.height() == 0 || pixels > 64_000_000 {
+        return Err("所选图片像素尺寸无效或过大。".into());
+    }
+    let mut output = Cursor::new(Vec::new());
+    decoded
+        .write_to(&mut output, image::ImageFormat::Png)
+        .map_err(|_| "剧情图片转换失败。".to_owned())?;
+    let output = output.into_inner();
+    if output.is_empty() || output.len() > MAXIMUM_STORY_IMAGE_BYTES {
+        return Err("转换后的剧情图片超过 20 MB。".into());
+    }
+    Ok(output)
 }
 
 fn current_unix_milliseconds() -> u64 {

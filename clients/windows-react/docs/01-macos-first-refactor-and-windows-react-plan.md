@@ -566,6 +566,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 故事批量确认第十四段）：新增 `confirm_latest_story_resource_images` 与 `confirm_latest_story_frames`。素材批量确认按请求 ID 集合选择各资源最新图片，忽略不存在/无图片/已是最新的目标，遇到未决依赖视频失败关闭，并对实际变化资源逐一失效依赖帧。分段批量确认只作用于无 attempt、无完成视频的目标，分别补齐尚未确认的最新首尾帧；首帧同步记录显式用户选择并清除继承来源，可选把已确认尾帧启用为 first+last guidance。无实际变化不写盘。Story Rust 定向测试增至 36 项，`cargo clippy --lib -- -D warnings` 通过。React 剧情入口继续关闭；下一片进入图片导入 token/文件落盘边界。
 
+状态补充（2026-10-21，Windows AI 故事本机图片导入第十五段）：新增 `import_local_story_image` typed command；系统 picker 直接把选择结果交给 Rust，绝对路径不进入 React。原生读取拒绝非普通文件、symlink/reparse、空文件、超过 20 MiB、读取期间变化及非 PNG/JPEG/WebP，解码后限制 6,400 万像素并统一编码为 20 MiB 内 PNG。Store 在 owner/project mutation lock 内创建随机私有 filename、执行 fingerprint-guarded resource/frame attachment 与 macOS 确认/连续性规则，再原子提交 manifest；mutation 失败清理未引用文件，提交结果不明确时重新读取 canonical manifest 判定是否已提交。页面取消选择不产生写入，账号 generation 与 presentation 在边界前后复验。Story Rust 定向测试增至 37 项，`cargo clippy --lib -- -D warnings` 通过。React 剧情入口继续关闭；下一片补 generated/history 图片导入，再进入媒体生成 Port。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

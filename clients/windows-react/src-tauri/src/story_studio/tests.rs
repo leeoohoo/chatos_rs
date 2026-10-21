@@ -3,10 +3,11 @@ use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, default_story_style,
         make_story_project, StoryFrameRoleInput, StoryImageConfirmationInput,
-        StoryLastFrameClearInput, StoryLatestFramesInput, StoryLatestResourceImagesInput,
-        StoryModelSelectionInput, StoryProjectCreationInput, StoryProjectSettingsInput,
-        StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
-        StorySegmentStructureInput, StorySegmentStructureMutation, StorySegmentStructureOperation,
+        StoryImageImportInput, StoryLastFrameClearInput, StoryLatestFramesInput,
+        StoryLatestResourceImagesInput, StoryModelSelectionInput, StoryProjectCreationInput,
+        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
+        StorySegmentEditInput, StorySegmentStructureInput, StorySegmentStructureMutation,
+        StorySegmentStructureOperation,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -1104,6 +1105,62 @@ fn latest_resource_and_frame_confirmation_matches_macos_batch_rules() {
         canonical.segments[0].video_guidance_mode,
         StoryVideoGuidanceMode::FirstAndLastFrames
     );
+}
+
+#[test]
+fn local_story_image_import_normalizes_png_and_commits_manifest_with_asset() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let canonical = project();
+    store.save("alice", &canonical).unwrap();
+    let source = app_data.path().join("picked.jpg");
+    image::RgbImage::from_pixel(2, 2, image::Rgb([10, 20, 30]))
+        .save_with_format(&source, image::ImageFormat::Jpeg)
+        .unwrap();
+    let manager = StoryStudioManager::new(app_data.path().to_path_buf()).unwrap();
+    let presentation = Uuid::new_v4().to_string();
+    manager
+        .present_project("alice", 12, &presentation, &canonical.id)
+        .unwrap();
+    let snapshot = manager
+        .import_local_story_image(
+            "alice",
+            12,
+            &presentation,
+            StoryImageImportInput {
+                project_id: canonical.id.clone(),
+                base_fingerprint: project_fingerprint(&canonical).unwrap(),
+                resource_id: Some("key".into()),
+                segment_id: None,
+                frame_role: None,
+                confirms_imported_image: true,
+            },
+            &source,
+        )
+        .unwrap();
+    let safe = serde_json::to_value(snapshot).unwrap();
+    assert_eq!(
+        safe["props"][0]["media"]["images"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let persisted = store.load_native_project("alice", &canonical.id).unwrap();
+    let imported = &persisted.props[0].media.images[0];
+    assert_eq!(
+        persisted.props[0].media.confirmed_image_id,
+        Some(imported.id.clone())
+    );
+    assert_eq!(imported.mime_type, "image/png");
+    assert!(imported.filename.starts_with("image-"));
+    let bytes = fs::read(
+        projects_directory(app_data.path(), "alice")
+            .join(&canonical.id)
+            .join(&imported.filename),
+    )
+    .unwrap();
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
 }
 
 #[test]

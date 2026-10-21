@@ -7,11 +7,11 @@ use crate::authentication::GatewayModelConfig;
 
 use super::{
     domain::{
-        apply_segment_edit, clear_confirmed_last_frame, confirm_image, confirm_latest_frames,
-        confirm_latest_resource_images, update_resource_prompt, StoryFrameRole,
-        StoryImageCollection, StoryImageTarget, StoryModelSelection, StoryProject, StorySegment,
-        StorySegmentEdit, StorySegmentKind, StorySourceRange, StoryVideoGuidanceMode,
-        STORY_SCHEMA_VERSION,
+        apply_segment_edit, attach_imported_image, clear_confirmed_last_frame, confirm_image,
+        confirm_latest_frames, confirm_latest_resource_images, update_resource_prompt,
+        StoryFrameRole, StoryImage, StoryImageCollection, StoryImageTarget, StoryModelSelection,
+        StoryProject, StorySegment, StorySegmentEdit, StorySegmentKind, StorySourceRange,
+        StoryVideoGuidanceMode, STORY_SCHEMA_VERSION,
     },
     planning::project_fingerprint,
 };
@@ -138,6 +138,17 @@ pub(crate) struct StoryLatestFramesInput {
     pub base_fingerprint: String,
     pub segment_id: String,
     pub use_confirmed_last_frame_for_video: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryImageImportInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub resource_id: Option<String>,
+    pub segment_id: Option<String>,
+    pub frame_role: Option<StoryFrameRoleInput>,
+    pub confirms_imported_image: bool,
 }
 
 pub(super) fn make_story_project(
@@ -440,6 +451,40 @@ pub(super) fn apply_story_latest_frames(
         input.use_confirmed_last_frame_for_video,
     )?
     .ok_or_else(|| "剧情帧确认状态没有变化。".to_owned())?;
+    next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    *project = next;
+    Ok(())
+}
+
+pub(super) fn apply_story_image_import(
+    project: &mut StoryProject,
+    input: StoryImageImportInput,
+    filename: String,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    let target = match (input.resource_id, input.segment_id, input.frame_role) {
+        (Some(resource_id), None, None) => StoryImageTarget::Resource { resource_id },
+        (None, Some(segment_id), Some(role)) => StoryImageTarget::Frame {
+            segment_id,
+            role: match role {
+                StoryFrameRoleInput::First => StoryFrameRole::First,
+                StoryFrameRoleInput::Last => StoryFrameRole::Last,
+            },
+        },
+        _ => return Err("剧情图片导入目标无效。".into()),
+    };
+    let image = StoryImage {
+        id: Uuid::new_v4().to_string(),
+        filename,
+        mime_type: "image/png".into(),
+        source_resource_id: None,
+        generation_attempt_id: None,
+        provider_result_id: None,
+        provider_asset_id: None,
+        derived_from_video_job_id: None,
+    };
+    let mut next = attach_imported_image(project, &target, image, input.confirms_imported_image)?;
     next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     *project = next;
     Ok(())

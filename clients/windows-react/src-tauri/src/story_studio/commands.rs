@@ -7,10 +7,10 @@ use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owne
 
 use super::{
     application::{
-        StoryImageConfirmationInput, StoryLastFrameClearInput, StoryLatestFramesInput,
-        StoryLatestResourceImagesInput, StoryProjectCreationInput, StoryProjectSettingsInput,
-        StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
-        StorySegmentStructureInput,
+        StoryImageConfirmationInput, StoryImageImportInput, StoryLastFrameClearInput,
+        StoryLatestFramesInput, StoryLatestResourceImagesInput, StoryProjectCreationInput,
+        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
+        StorySegmentEditInput, StorySegmentStructureInput,
     },
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
@@ -114,6 +114,14 @@ pub(crate) struct StoryLatestFramesCommandInput {
     owner_user_id: String,
     presentation_id: String,
     confirmation: StoryLatestFramesInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryLocalImageImportCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    import: StoryImageImportInput,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -507,6 +515,46 @@ pub(crate) async fn confirm_latest_story_frames(
     .map_err(|_| "剧情帧批量确认任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &manager, &owner, generation).await?;
     result
+}
+
+#[tauri::command]
+pub(crate) async fn import_local_story_image(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryLocalImageImportCommandInput,
+) -> Result<Option<StoryProjectSnapshot>, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let Some(handle) = rfd::AsyncFileDialog::new()
+        .set_title("选择剧情图片")
+        .add_filter("图片", &["png", "jpg", "jpeg", "webp"])
+        .pick_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    let path = handle.path().to_path_buf();
+    let work = manager.inner().clone();
+    let owner = input.owner_user_id;
+    let saved_owner = owner.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        work.import_local_story_image(
+            &saved_owner,
+            generation,
+            &input.presentation_id,
+            input.import,
+            &path,
+        )
+    })
+    .await
+    .map_err(|_| "剧情图片导入任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    result.map(Some)
 }
 
 #[tauri::command]
