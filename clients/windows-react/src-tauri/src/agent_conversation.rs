@@ -590,12 +590,12 @@ pub(crate) struct AgentTeamRunHistorySnapshot {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentTeamAsset {
-    id: String,
+    pub(crate) id: String,
     team_id: String,
-    category: String,
-    title: String,
-    markdown: String,
-    revision: i64,
+    pub(crate) category: String,
+    pub(crate) title: String,
+    pub(crate) markdown: String,
+    pub(crate) revision: i64,
     status: String,
     created_by_agent_id: Option<String>,
     updated_by_agent_id: Option<String>,
@@ -1846,6 +1846,58 @@ impl AgentConversationStore {
         expected_revision: Option<i64>,
         now_unix_ms: i64,
     ) -> Result<AgentTeamAsset, String> {
+        self.save_project_team_asset_with_editor(
+            owner_user_id,
+            team_id,
+            asset_id,
+            category,
+            title,
+            markdown,
+            expected_revision,
+            None,
+            now_unix_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn save_project_team_asset_as_manager(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        agent_id: &str,
+        asset_id: Option<&str>,
+        category: &str,
+        title: &str,
+        markdown: &str,
+        expected_revision: Option<i64>,
+        now_unix_ms: i64,
+    ) -> Result<AgentTeamAsset, String> {
+        self.save_project_team_asset_with_editor(
+            owner_user_id,
+            team_id,
+            asset_id,
+            category,
+            title,
+            markdown,
+            expected_revision,
+            Some(agent_id),
+            now_unix_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn save_project_team_asset_with_editor(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        asset_id: Option<&str>,
+        category: &str,
+        title: &str,
+        markdown: &str,
+        expected_revision: Option<i64>,
+        editor_agent_id: Option<&str>,
+        now_unix_ms: i64,
+    ) -> Result<AgentTeamAsset, String> {
         validate_identifier(team_id).map_err(|_| invalid_team_input())?;
         if let Some(asset_id) = asset_id {
             validate_identifier(asset_id).map_err(|_| invalid_team_asset_input())?;
@@ -1862,6 +1914,9 @@ impl AgentConversationStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| team_store_error())?;
         require_active_project_team(&transaction, owner_user_id, team_id)?;
+        if let Some(agent_id) = editor_agent_id {
+            require_project_team_manager(&transaction, owner_user_id, team_id, agent_id)?;
+        }
         let resolved_id = asset_id
             .map(str::to_owned)
             .unwrap_or_else(|| identifier("asset"));
@@ -1891,15 +1946,16 @@ impl AgentConversationStore {
                     r#"
                     UPDATE local_agent_team_assets
                     SET category = ?1, title = ?2, markdown = ?3, revision = ?4,
-                        updated_by_agent_id = NULL, updated_at_unix_ms = ?5
-                    WHERE owner_user_id = ?6 AND team_room_id = ?7 AND id = ?8
-                      AND status = 'active' AND revision = ?9
+                        updated_by_agent_id = ?5, updated_at_unix_ms = ?6
+                    WHERE owner_user_id = ?7 AND team_room_id = ?8 AND id = ?9
+                      AND status = 'active' AND revision = ?10
                     "#,
                     params![
                         category,
                         title,
                         markdown,
                         revision,
+                        editor_agent_id,
                         updated_at_unix_ms,
                         owner_user_id,
                         team_id,
@@ -1920,7 +1976,7 @@ impl AgentConversationStore {
                 revision,
                 status: "active".into(),
                 created_by_agent_id: existing.created_by_agent_id,
-                updated_by_agent_id: None,
+                updated_by_agent_id: editor_agent_id.map(str::to_owned),
                 created_at_unix_ms: existing.created_at_unix_ms,
                 updated_at_unix_ms,
             }
@@ -1935,7 +1991,7 @@ impl AgentConversationStore {
                         owner_user_id, id, team_room_id, category, title, markdown,
                         revision, status, created_by_agent_id, updated_by_agent_id,
                         created_at_unix_ms, updated_at_unix_ms
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 'active', NULL, NULL, ?7, ?7)
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 'active', ?7, ?7, ?8, ?8)
                     "#,
                     params![
                         owner_user_id,
@@ -1944,6 +2000,7 @@ impl AgentConversationStore {
                         category,
                         title,
                         markdown,
+                        editor_agent_id,
                         now_unix_ms,
                     ],
                 )
@@ -1956,8 +2013,8 @@ impl AgentConversationStore {
                 markdown: markdown.to_owned(),
                 revision: 1,
                 status: "active".into(),
-                created_by_agent_id: None,
-                updated_by_agent_id: None,
+                created_by_agent_id: editor_agent_id.map(str::to_owned),
+                updated_by_agent_id: editor_agent_id.map(str::to_owned),
                 created_at_unix_ms: now_unix_ms,
                 updated_at_unix_ms: now_unix_ms,
             }
@@ -1969,7 +2026,7 @@ impl AgentConversationStore {
                 INSERT INTO local_agent_team_asset_revisions (
                     owner_user_id, asset_id, revision, title, markdown,
                     editor_agent_id, created_at_unix_ms
-                ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 "#,
                 params![
                     owner_user_id,
@@ -1977,6 +2034,7 @@ impl AgentConversationStore {
                     saved.revision,
                     saved.title,
                     saved.markdown,
+                    editor_agent_id,
                     saved.updated_at_unix_ms,
                 ],
             )
@@ -1993,6 +2051,44 @@ impl AgentConversationStore {
         expected_revision: i64,
         now_unix_ms: i64,
     ) -> Result<AgentTeamAsset, String> {
+        self.archive_project_team_asset_with_editor(
+            owner_user_id,
+            team_id,
+            asset_id,
+            expected_revision,
+            None,
+            now_unix_ms,
+        )
+    }
+
+    pub(crate) fn archive_project_team_asset_as_manager(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        agent_id: &str,
+        asset_id: &str,
+        expected_revision: i64,
+        now_unix_ms: i64,
+    ) -> Result<AgentTeamAsset, String> {
+        self.archive_project_team_asset_with_editor(
+            owner_user_id,
+            team_id,
+            asset_id,
+            expected_revision,
+            Some(agent_id),
+            now_unix_ms,
+        )
+    }
+
+    fn archive_project_team_asset_with_editor(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        asset_id: &str,
+        expected_revision: i64,
+        editor_agent_id: Option<&str>,
+        now_unix_ms: i64,
+    ) -> Result<AgentTeamAsset, String> {
         validate_identifier(team_id).map_err(|_| invalid_team_input())?;
         validate_identifier(asset_id).map_err(|_| invalid_team_asset_input())?;
         if expected_revision <= 0 || now_unix_ms < 0 {
@@ -2004,16 +2100,20 @@ impl AgentConversationStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| team_store_error())?;
         require_active_project_team(&transaction, owner_user_id, team_id)?;
+        if let Some(agent_id) = editor_agent_id {
+            require_project_team_manager(&transaction, owner_user_id, team_id, agent_id)?;
+        }
         let changed = transaction
             .execute(
                 r#"
                 UPDATE local_agent_team_assets
                 SET status = 'archived', revision = revision + 1,
-                    updated_by_agent_id = NULL, updated_at_unix_ms = ?1
-                WHERE owner_user_id = ?2 AND team_room_id = ?3 AND id = ?4
-                  AND status = 'active' AND revision = ?5
+                    updated_by_agent_id = ?1, updated_at_unix_ms = ?2
+                WHERE owner_user_id = ?3 AND team_room_id = ?4 AND id = ?5
+                  AND status = 'active' AND revision = ?6
                 "#,
                 params![
+                    editor_agent_id,
                     now_unix_ms,
                     owner_user_id,
                     team_id,
@@ -2045,7 +2145,7 @@ impl AgentConversationStore {
                 INSERT INTO local_agent_team_asset_revisions (
                     owner_user_id, asset_id, revision, title, markdown,
                     editor_agent_id, created_at_unix_ms
-                ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 "#,
                 params![
                     owner_user_id,
@@ -2053,6 +2153,7 @@ impl AgentConversationStore {
                     archived.revision,
                     archived.title,
                     archived.markdown,
+                    editor_agent_id,
                     now_unix_ms,
                 ],
             )
@@ -4505,6 +4606,38 @@ fn require_active_project_team(
     Ok(())
 }
 
+fn require_project_team_manager(
+    connection: &Connection,
+    owner_user_id: &str,
+    team_id: &str,
+    agent_id: &str,
+) -> Result<(), String> {
+    validate_agent_identifier(agent_id).map_err(|_| team_store_error())?;
+    let allowed = connection
+        .query_row(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM project_agent_rooms room
+                JOIN project_agent_room_members member
+                  ON member.owner_user_id = room.owner_user_id
+                 AND member.room_id = room.id
+                 AND member.agent_id = room.project_manager_agent_id
+                WHERE room.owner_user_id = ?1 AND room.id = ?2
+                  AND room.project_manager_agent_id = ?3
+                  AND room.status = 'active' AND room.conversation_kind = 'project_team'
+                  AND member.status = 'active'
+            )
+            "#,
+            params![owner_user_id, team_id, agent_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|_| team_store_error())?;
+    if !allowed {
+        return Err("Only the active project manager Agent may change team assets.".into());
+    }
+    Ok(())
+}
+
 fn validate_team_asset_category(category: &str) -> Result<(), String> {
     if matches!(
         category,
@@ -4931,6 +5064,93 @@ mod tests {
             3
         );
         assert!(store.list_project_team_assets("bob", &team.id).is_err());
+    }
+
+    #[test]
+    fn only_the_active_project_manager_agent_can_mutate_team_assets() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "manager", "active");
+        insert_agent(&store, "alice", "member", "active");
+        let connection = Connection::open(store.database()).unwrap();
+        connection
+            .execute(
+                "UPDATE local_agent_profiles SET profession_key = 'project_manager' \
+                 WHERE owner_user_id = 'alice' AND id = 'manager'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        let team = store
+            .create_project_team("alice", "project-1", "Alpha 团队", "交付 Alpha")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "manager")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "member")
+            .unwrap();
+        store
+            .set_project_team_manager("alice", &team.id, "manager")
+            .unwrap();
+
+        assert!(store
+            .save_project_team_asset_as_manager(
+                "alice",
+                &team.id,
+                "member",
+                None,
+                "overview",
+                "越权",
+                "不能保存",
+                None,
+                100,
+            )
+            .is_err());
+        let created = store
+            .save_project_team_asset_as_manager(
+                "alice",
+                &team.id,
+                "manager",
+                None,
+                "overview",
+                "项目概览",
+                "经理创建",
+                None,
+                100,
+            )
+            .unwrap();
+        assert_eq!(created.created_by_agent_id.as_deref(), Some("manager"));
+        let updated = store
+            .save_project_team_asset_as_manager(
+                "alice",
+                &team.id,
+                "manager",
+                Some(&created.id),
+                "current_progress",
+                "当前进度",
+                "经理更新",
+                Some(1),
+                200,
+            )
+            .unwrap();
+        assert_eq!(updated.updated_by_agent_id.as_deref(), Some("manager"));
+        let archived = store
+            .archive_project_team_asset_as_manager(
+                "alice",
+                &team.id,
+                "manager",
+                &created.id,
+                2,
+                300,
+            )
+            .unwrap();
+        assert_eq!(archived.updated_by_agent_id.as_deref(), Some("manager"));
+        let revisions = store
+            .list_project_team_asset_revisions("alice", &team.id, &created.id)
+            .unwrap();
+        assert!(revisions
+            .iter()
+            .all(|revision| revision.editor_agent_id.as_deref() == Some("manager")));
     }
 
     #[test]

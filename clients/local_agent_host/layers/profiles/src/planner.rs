@@ -664,4 +664,29 @@ mod agent_direct_tests {
         assert!(instructions.contains("Do not claim project-manager authority"));
         assert!(!instructions.contains("private conversation"));
     }
+
+    #[test]
+    fn team_asset_tools_are_visible_only_to_the_bound_team_authority() {
+        let tools = vec![
+            json!({"name": "team_asset_list"}),
+            json!({"name": "team_asset_get"}),
+            json!({"name": "team_asset_create"}),
+            json!({"name": "team_asset_update"}),
+            json!({"name": "team_asset_archive"}),
+        ];
+        assert!(scope_agent_direct_tools(tools.clone(), &json!({})).is_empty());
+
+        let mut member = input(&[]);
+        member["agent_execution_context"]["schema_version"] = json!(2);
+        member["agent_execution_context"]["is_project_manager"] = json!(false);
+        let member_tools = scope_agent_direct_tools(tools.clone(), &member);
+        assert_eq!(member_tools.len(), 2);
+        assert!(member_tools.iter().all(|tool| matches!(
+            tool["name"].as_str(),
+            Some("team_asset_list" | "team_asset_get")
+        )));
+
+        member["agent_execution_context"]["is_project_manager"] = json!(true);
+        assert_eq!(scope_agent_direct_tools(tools, &member).len(), 5);
+    }
 }

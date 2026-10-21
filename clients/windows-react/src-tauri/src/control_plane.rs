@@ -4,7 +4,7 @@ use crate::authentication::{
 };
 use crate::host_lifecycle::transport::{request, ManagedHost};
 use crate::{
-    attachment_tool_worker::{attachment_read_tool_schema, team_asset_read_tool_schemas},
+    attachment_tool_worker::{attachment_read_tool_schema, team_asset_tool_schemas},
     terminal_tool_worker::{project_read_tool_schemas, terminal_tool_schemas},
 };
 use chatos_local_agent_protocol::{
@@ -23,7 +23,7 @@ const MAIN_CHAT_PROFILE: &str = "main_chat";
 const TASK_EXECUTION_PROFILE: &str = "task_execution";
 const TASK_POLICY_PROFILE: &str = "task_policy_internal";
 const EXECUTION_AGENT_KEY: &str = "local_agent_execution_agent";
-const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-team-assets-v5";
+const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-team-assets-v6";
 const MAX_TASK_ITERATIONS: u32 = 600;
 
 const MAIN_CHAT_INSTRUCTIONS: &str = include_str!(
@@ -204,7 +204,7 @@ async fn persisted_capabilities_are_complete(host: &mut ManagedHost, owner_user_
 
 fn valid_main_chat_snapshot(snapshot: &LocalCapabilityPolicySnapshot, owner_user_id: &str) -> bool {
     let mut expected_tools = vec![attachment_read_tool_schema()];
-    expected_tools.extend(team_asset_read_tool_schemas());
+    expected_tools.extend(team_asset_tool_schemas());
     snapshot.owner_user_id == owner_user_id
         && snapshot.profile_key == MAIN_CHAT_PROFILE
         && snapshot.tools == expected_tools
@@ -215,7 +215,7 @@ fn valid_task_execution_snapshot(
     owner_user_id: &str,
 ) -> bool {
     let mut expected_tools = vec![attachment_read_tool_schema()];
-    expected_tools.extend(team_asset_read_tool_schemas());
+    expected_tools.extend(team_asset_tool_schemas());
     expected_tools.extend(project_read_tool_schemas());
     expected_tools.extend(terminal_tool_schemas());
     snapshot.owner_user_id == owner_user_id
@@ -612,7 +612,7 @@ async fn publish_capabilities(
             prefixed_input_items: Vec::new(),
             tools: {
                 let mut tools = vec![attachment_read_tool_schema()];
-                tools.extend(team_asset_read_tool_schemas());
+                tools.extend(team_asset_tool_schemas());
                 tools
             },
         },
@@ -624,7 +624,7 @@ async fn publish_capabilities(
             prefixed_input_items: Vec::new(),
             tools: {
                 let mut tools = vec![attachment_read_tool_schema()];
-                tools.extend(team_asset_read_tool_schemas());
+                tools.extend(team_asset_tool_schemas());
                 tools.extend(project_read_tool_schemas());
                 tools.extend(terminal_tool_schemas());
                 tools
@@ -775,7 +775,7 @@ mod tests {
     fn current_project_and_terminal_snapshots_pass_offline_completeness_checks() {
         let owner = "owner-1";
         let mut tools = vec![attachment_read_tool_schema()];
-        tools.extend(team_asset_read_tool_schemas());
+        tools.extend(team_asset_tool_schemas());
         tools.extend(project_read_tool_schemas());
         tools.extend(terminal_tool_schemas());
         let execution = LocalCapabilityPolicySnapshot {
