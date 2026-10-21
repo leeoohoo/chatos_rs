@@ -516,6 +516,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事仅视频顺序队列）：Core 新增 `StoryDirectVideoQueueUseCase`、冻结 queue plan/step 和 owner/account session/project/queue/request lifecycle。用例统一验证已确认 preview、project fingerprint、故事顺序、模型启用/API Key、时长、参考视频可用性和 2,000 字补充想法上限；执行时只在当前段 Task 结束后读取最新 canonical project 并启动下一段，因此继续保留“上一段实际尾帧可进入下一段请求”的既有语义。账号切换、登出、页面实例释放或项目替换会在下一次可计费提交前失败关闭；离开当前项目页面不会错误终止已确认队列。ViewModel 不再解释队列顺序和 preflight 规则，只把冻结步骤交给仍待后续提取的单段视频执行入口。Core 5 项与 Story Studio 60 项通过。下一片开始素材图片生成 Port，随后推进首尾帧及单段视频生成/恢复 Port；剧情模式继续禁用。
 
+状态补充（2026-10-21，macOS AI 故事素材图片生成边界）：Core 新增 `StoryAssetImageGenerating` Port、`StoryAssetImageGenerationUseCase`、安全 command/event/outcome 与按 project/resource 隔离的 typed lifecycle。Use Case 冻结 attempt identity、限制补充想法为 2,000 字，并过滤不属于当前项目/素材/attempt 的 intent 与最终图片；不同素材继续并发，同一素材保持 single-flight，旧 token 不能清除替换后的新任务。macOS `StoryAssetImageGenerationAdapter` 独占 Store durable intent、session-bound provider、prompt 组装、provider request/result identity、媒体字节读取/PNG 归一化及完成持久化，ViewModel 只发布通过 owner/account session/request 验收的安全项目结果。provider 提交后结果不明确时仍保留 durable attempt，必须由用户核对后解锁，不改变既有计费与恢复语义。Core 5 项、Story Studio 61 项与 Story Agent 21 项通过，包含 Alice 的迟到素材结果不能进入 Bob 当前账号；下一片继续首帧/尾帧生成 Port，剧情模式继续禁用。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

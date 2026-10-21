@@ -297,6 +297,50 @@ extension StoryStudioTests {
         await service.finish(resourceID: "key")
     }
 
+    func testLateAssetGenerationCannotPublishIntoAnotherAccount() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryAssetAccountIsolationTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        var project = makeProject()
+        project.props = [.init(id: "key", name: "钥匙", description: "一把旧铜钥匙")]
+        let generator = DeferredStoryAssetImageGenerator(project: project)
+        let service = StoryTestService()
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            storyAssetImageGeneration: generator
+        )
+        vm.activate(userID: "alice")
+        try await idle(vm)
+        let created = await vm.create(project, availableModels: models)
+        XCTAssertTrue(created)
+
+        vm.generateAsset("key")
+        for _ in 0..<100 where await !generator.hasRequest {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let hasRequest = await generator.hasRequest
+        XCTAssertTrue(hasRequest)
+
+        vm.activate(userID: "bob")
+        try await idle(vm)
+        await generator.complete()
+        for _ in 0..<20 { await Task.yield() }
+
+        XCTAssertEqual(vm.owner, "bob")
+        XCTAssertTrue(vm.projects.isEmpty)
+        XCTAssertTrue(vm.activeAssetGenerations.isEmpty)
+        XCTAssertTrue(vm.assetGenerationErrors.isEmpty)
+    }
+
     func testStoreRejectsCompletionForAnotherAttemptID() async throws {
         let (_, store, _) = try await fixture()
         var project = makeProject()
@@ -340,4 +384,44 @@ extension StoryStudioTests {
         XCTAssertThrowsError(try StoryPlanningTools.detailRequest(project, segmentID: "another-project-id"))
     }
 
+}
+
+private actor DeferredStoryAssetImageGenerator: StoryAssetImageGenerating {
+    private let project: StoryProject
+    private var command: StoryAssetImageGenerationCommand?
+    private var continuation: CheckedContinuation<StoryAssetImageGenerationOutcome, Error>?
+
+    init(project: StoryProject) {
+        self.project = project
+    }
+
+    var hasRequest: Bool { command != nil }
+
+    func generateStoryAssetImage(
+        ownerUserID: String,
+        command: StoryAssetImageGenerationCommand,
+        continuationCheck: @escaping @Sendable () async throws -> Void,
+        onEvent: @escaping @Sendable (StoryAssetImageGenerationEvent) async -> Void
+    ) async throws -> StoryAssetImageGenerationOutcome {
+        self.command = command
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func complete() {
+        guard let command, let continuation else { return }
+        var completed = project
+        completed.props[0].media.images = [
+            StoryImage(
+                filename: "key.png",
+                mimeType: "image/png",
+                sourceResourceID: command.resourceID,
+                generationAttemptID: command.attemptID
+            ),
+        ]
+        completed.props[0].media.generationAttemptID = nil
+        self.continuation = nil
+        continuation.resume(returning: .init(project: completed))
+    }
 }
