@@ -139,7 +139,11 @@ use remote_connection::{
     test_saved_remote_connection, update_remote_connection, upload_remote_file,
     RemoteConnectionManager,
 };
-use requirement_survey::{list_project_requirement_surveys, resolve_project_requirement_survey};
+use requirement_survey::{
+    adopt_requirement_survey_plan, confirm_requirement_survey_plan,
+    list_project_requirement_surveys, load_requirement_survey_follow_up,
+    resolve_project_requirement_survey,
+};
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
     restart_task_inspector, retry_task_inspector,
@@ -371,6 +375,9 @@ pub fn run() {
             cancel_ask_user_prompt,
             list_project_requirement_surveys,
             resolve_project_requirement_survey,
+            load_requirement_survey_follow_up,
+            confirm_requirement_survey_plan,
+            adopt_requirement_survey_plan,
             list_tool_approvals,
             decide_tool_approval,
             load_tool_approval_settings,

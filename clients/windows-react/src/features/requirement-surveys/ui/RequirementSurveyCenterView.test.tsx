@@ -80,16 +80,53 @@ describe("RequirementSurveyCenterView", () => {
     expect(screen.getByText("正在连接本机服务")).toBeVisible();
     expect(port.listProjectRequirementSurveys).not.toHaveBeenCalled();
   });
+
+  it("shows the exact plan status and confirms without starting work", async () => {
+    const resolved = survey({
+      status: "resolved", version: 2, answers: { goal: "Alpha" },
+      updatedAtUnixMs: 30, resolvedAtUnixMs: 30,
+    });
+    const currentPlan = plan({ markdown: "# 实施方案" });
+    const confirmPlan = vi.fn(async () => ({ ...currentPlan, confirmedAtUnixMs: 50 }));
+    const port = stubPort({
+      listProjectRequirementSurveys: vi.fn(async () => [resolved]),
+      loadFollowUp: vi.fn(async () => ({
+        surveyId: "survey-1", surveyVersion: 2,
+        followUp: { status: "completed_without_reply" as const, markdown: null },
+        plan: currentPlan,
+        planFollowUp: { status: "completed_without_reply" as const, markdown: null },
+      })),
+      confirmPlan,
+    });
+    render(<RequirementSurveyCenterView hostReady ownerUserId="owner-1" projects={[
+      { id: "project-1", title: "Alpha" },
+    ]} port={port} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Alpha/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /项目目标/ }));
+    expect(await screen.findByRole("heading", { name: "实施方案" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "确认当前方案" }));
+    await waitFor(() => expect(confirmPlan).toHaveBeenCalledWith(
+      "owner-1", "project-1", "survey-1", 1,
+    ));
+    expect(await screen.findByText("方案已确认，本次不会自动执行任何任务")).toBeVisible();
+  });
 });
 
 function stubPort(overrides: Partial<RequirementSurveyPort> = {}): RequirementSurveyPort {
-  return {
+  const defaults: RequirementSurveyPort = {
     listProjectRequirementSurveys: vi.fn(async () => [survey()]),
     resolveProjectRequirementSurvey: vi.fn(async (_owner, _project, _survey, version, answers) => survey({
       status: "resolved", version: version + 1, answers, updatedAtUnixMs: 30, resolvedAtUnixMs: 30,
     })),
-    ...overrides,
+    loadFollowUp: vi.fn(async (_owner, _project, surveyId) => ({
+      surveyId, surveyVersion: 2,
+      followUp: { status: "processing" as const, markdown: null },
+      plan: null, planFollowUp: null,
+    })),
+    confirmPlan: vi.fn(async () => plan({ confirmedAtUnixMs: 50 })),
+    adoptPlan: vi.fn(async () => plan({ confirmedAtUnixMs: 50 })),
   };
+  return { ...defaults, ...overrides } as RequirementSurveyPort;
 }
 
 function survey(overrides: Partial<RequirementSurvey> = {}): RequirementSurvey {
@@ -99,5 +136,14 @@ function survey(overrides: Partial<RequirementSurvey> = {}): RequirementSurvey {
     questions: [{ questionId: "goal", prompt: "需要交付什么？", responseKind: "text", required: true, options: [] }],
     answers: null, status: "open", version: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
     resolvedAtUnixMs: null, ...overrides,
+  };
+}
+
+function plan(overrides: Record<string, unknown> = {}) {
+  return {
+    planId: "requirement-plan:survey-1", revision: 1, projectId: "project-1",
+    sourceConversationId: "conversation-1", sourceSurveyId: "survey-1", sourceRunId: "run-1",
+    title: "方案", markdown: "# 方案", createdAtUnixMs: 40, confirmedAtUnixMs: null,
+    ...overrides,
   };
 }

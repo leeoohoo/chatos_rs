@@ -34,6 +34,9 @@ export const requirementSurveySchema = z.object({
   if ((survey.status === "resolved") !== (survey.resolvedAtUnixMs != null)) {
     context.addIssue({ code: "custom", message: "需求调研状态与完成时间不一致。", path: ["resolvedAtUnixMs"] });
   }
+  if (survey.status === "resolved" && survey.answers == null) {
+    context.addIssue({ code: "custom", message: "已提交调研必须包含回答。", path: ["answers"] });
+  }
   const questionIds = new Set<string>();
   survey.questions.forEach((question, index) => {
     if (questionIds.has(question.questionId)) {
@@ -78,9 +81,62 @@ export const requirementSurveySchema = z.object({
 
 export const requirementSurveyListSchema = z.array(requirementSurveySchema).max(200);
 
+export const requirementSurveyFollowUpSchema = z.object({
+  status: z.enum([
+    "awaiting_answers",
+    "processing",
+    "completed",
+    "completed_without_reply",
+    "waiting_for_input",
+    "needs_review",
+    "failed",
+    "cancelled",
+  ]),
+  markdown: z.string().trim().min(1).max(128_000).nullable(),
+}).strict().superRefine((followUp, context) => {
+  if ((followUp.status === "completed") !== (followUp.markdown != null)) {
+    context.addIssue({ code: "custom", message: "需求调研后续状态与正文不一致。", path: ["markdown"] });
+  }
+});
+
+export const requirementSurveyPlanSchema = z.object({
+  planId: z.string().trim().min(1).max(1_024),
+  revision: z.number().int().positive(),
+  projectId: z.string().trim().min(1).max(1_024),
+  sourceConversationId: z.string().trim().min(1).max(512),
+  sourceSurveyId: z.string().trim().min(1).max(512),
+  sourceRunId: z.string().trim().min(1).max(512),
+  title: z.string().trim().min(1).max(1_000),
+  markdown: z.string().trim().min(1).max(128_000),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  confirmedAtUnixMs: z.number().int().nonnegative().nullable(),
+}).strict().superRefine((plan, context) => {
+  if (plan.confirmedAtUnixMs != null && plan.confirmedAtUnixMs < plan.createdAtUnixMs) {
+    context.addIssue({ code: "custom", message: "需求方案确认时间不能早于创建时间。", path: ["confirmedAtUnixMs"] });
+  }
+});
+
+export const requirementSurveyFollowUpSnapshotSchema = z.object({
+  surveyId: z.string().trim().min(1).max(512),
+  surveyVersion: z.number().int().positive(),
+  followUp: requirementSurveyFollowUpSchema,
+  plan: requirementSurveyPlanSchema.nullable(),
+  planFollowUp: requirementSurveyFollowUpSchema.nullable(),
+}).strict().superRefine((snapshot, context) => {
+  if ((snapshot.plan == null) !== (snapshot.planFollowUp == null)) {
+    context.addIssue({ code: "custom", message: "需求方案与来源状态不一致。", path: ["planFollowUp"] });
+  }
+  if (snapshot.plan && snapshot.plan.sourceSurveyId !== snapshot.surveyId) {
+    context.addIssue({ code: "custom", message: "需求方案调研身份不一致。", path: ["plan", "sourceSurveyId"] });
+  }
+});
+
 export type RequirementSurveyAnswer = z.infer<typeof requirementSurveyAnswerSchema>;
 export type RequirementSurveyAnswers = Record<string, RequirementSurveyAnswer>;
 export type RequirementSurvey = z.infer<typeof requirementSurveySchema>;
+export type RequirementSurveyFollowUp = z.infer<typeof requirementSurveyFollowUpSchema>;
+export type RequirementSurveyPlan = z.infer<typeof requirementSurveyPlanSchema>;
+export type RequirementSurveyFollowUpSnapshot = z.infer<typeof requirementSurveyFollowUpSnapshotSchema>;
 
 export function isRequirementSurveySubmissionValid(
   survey: RequirementSurvey,

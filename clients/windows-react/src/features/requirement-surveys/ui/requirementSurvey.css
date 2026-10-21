@@ -81,6 +81,33 @@
 .requirement-survey-detail footer > span { flex: 1; color: var(--secondary); font-size: 10px; }
 .requirement-survey-detail footer .primary-button { min-height: 36px; }
 .requirement-survey-detail__resolved { border-radius: 10px; padding: 13px; color: #248a3d; background: rgba(48,209,88,.09); font-size: 11.5px; font-weight: 590; }
+.requirement-survey-follow-up { display: grid; gap: 13px; border: 1px solid rgba(60,60,67,.11); border-radius: 13px; padding: 16px; background: rgba(248,248,250,.66); }
+.requirement-survey-follow-up > header { display: flex; grid-template-columns: none; align-items: center; justify-content: space-between; gap: 10px; }
+.requirement-survey-follow-up > header > div { display: flex; align-items: center; gap: 8px; }
+.requirement-survey-follow-up > header > div > span { color: #5856d6; font-size: 16px; }
+.requirement-survey-follow-up > header strong { font-size: 13px; }
+.requirement-survey-follow-up > header button { display: grid; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 7px; color: #5856d6; background: rgba(88,86,214,.08); cursor: pointer; }
+.requirement-survey-follow-up > header button:disabled { opacity: .42; }
+.requirement-survey-follow-up .requirement-survey-error { margin-top: 0; }
+.requirement-survey-follow-up__body { display: grid; justify-items: start; gap: 10px; }
+.requirement-survey-follow-up__body > p,.requirement-survey-plan__action p,.requirement-survey-plan__confirmed p { margin: 0; color: var(--secondary); font-size: 10.5px; line-height: 1.55; }
+.requirement-survey-follow-up__status { display: flex; align-items: center; gap: 8px; border-radius: 9px; padding: 10px 11px; color: var(--secondary); background: rgba(118,118,128,.07); font-size: 10.5px; line-height: 1.5; }
+.requirement-survey-follow-up__status.is-failed,.requirement-survey-follow-up__status.is-needs_review { color: #9b5100; background: rgba(255,159,10,.08); }
+.requirement-survey-follow-up__status.is-cancelled { color: #b3261e; background: rgba(255,59,48,.07); }
+.requirement-survey-markdown { display: grid; max-width: 100%; gap: 9px; border: 1px solid rgba(60,60,67,.09); border-radius: 9px; padding: 13px 14px; color: inherit; background: rgba(255,255,255,.62); overflow-wrap: anywhere; }
+.requirement-survey-markdown h4,.requirement-survey-markdown p,.requirement-survey-markdown ul,.requirement-survey-markdown ol { margin: 0; }
+.requirement-survey-markdown h4 { font-size: 13px; }
+.requirement-survey-markdown p,.requirement-survey-markdown li { font-size: 10.5px; line-height: 1.65; }
+.requirement-survey-markdown ul,.requirement-survey-markdown ol { display: grid; gap: 4px; padding-left: 20px; }
+.requirement-survey-plan { display: grid; gap: 11px; }
+.requirement-survey-plan__meta { display: flex; align-items: center; justify-content: space-between; color: var(--secondary); font-size: 9.5px; }
+.requirement-survey-plan__meta em { border-radius: 999px; padding: 4px 7px; color: #9b5100; background: rgba(255,159,10,.09); font-style: normal; }
+.requirement-survey-plan__meta em.is-confirmed { color: #248a3d; background: rgba(48,209,88,.09); }
+.requirement-survey-plan h3 { margin: 0; font-size: 14px; }
+.requirement-survey-plan__action { display: grid; justify-items: end; gap: 9px; }
+.requirement-survey-plan__action > p { justify-self: stretch; }
+.requirement-survey-plan__confirmed { display: grid; gap: 5px; border-radius: 10px; padding: 12px; color: #248a3d; background: rgba(48,209,88,.08); }
+.requirement-survey-plan__confirmed strong { font-size: 11px; }
 .requirement-survey-error { display: flex; align-items: center; gap: 9px; margin-top: 14px; border: 1px solid rgba(255,159,10,.16); border-radius: 11px; padding: 10px 12px; color: #9b5100; background: rgba(255,159,10,.09); font-size: 10.5px; }
 .requirement-survey-error > span { display: grid; width: 19px; height: 19px; place-items: center; border-radius: 50%; color: #fff; background: #ff9f0a; font-weight: 700; }
 .requirement-survey-error p { min-width: 0; flex: 1; margin: 0; }
@@ -95,6 +122,8 @@
   .requirement-survey-hero,.requirement-survey-project-grid > button,.requirement-survey-project-header,.requirement-survey-card-grid > button,.requirement-survey-detail,.requirement-survey-state { background: rgba(39,39,43,.72); }
   .requirement-survey-detail__back { background: rgba(30,30,33,.86); }
   .requirement-survey-detail textarea,.requirement-survey-detail__choices label { background: rgba(22,22,25,.62); }
+  .requirement-survey-follow-up { background: rgba(22,22,25,.42); }
+  .requirement-survey-markdown { background: rgba(15,15,17,.48); }
 }
 
 @media (max-width: 980px) {

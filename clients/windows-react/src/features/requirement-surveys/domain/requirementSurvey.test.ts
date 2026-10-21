@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isRequirementSurveySubmissionValid,
+  requirementSurveyFollowUpSnapshotSchema,
   requirementSurveySchema,
   toggleRequirementSurveyChoice,
   type RequirementSurvey,
@@ -42,6 +43,29 @@ describe("requirement survey domain", () => {
     expect(added).toEqual({ areas: ["UI", "Host"] });
     expect(answers).toEqual({ areas: ["UI"] });
     expect(toggleRequirementSurveyChoice(added, "areas", "UI")).toEqual({ areas: ["Host"] });
+  });
+
+  it("binds plans and completed markdown to the exact survey", () => {
+    const valid = {
+      surveyId: "survey-1", surveyVersion: 2,
+      followUp: { status: "processing", markdown: null },
+      plan: {
+        planId: "requirement-plan:survey-1", revision: 1, projectId: "project-1",
+        sourceConversationId: "conversation-1", sourceSurveyId: "survey-1", sourceRunId: "run-1",
+        title: "方案", markdown: "# 方案", createdAtUnixMs: 30, confirmedAtUnixMs: null,
+      },
+      planFollowUp: { status: "completed_without_reply", markdown: null },
+    };
+    expect(requirementSurveyFollowUpSnapshotSchema.parse(valid).plan?.revision).toBe(1);
+    expect(() => requirementSurveyFollowUpSnapshotSchema.parse({
+      ...valid, plan: { ...valid.plan, sourceSurveyId: "survey-forged" },
+    })).toThrow();
+    expect(() => requirementSurveyFollowUpSnapshotSchema.parse({
+      ...valid, followUp: { status: "completed", markdown: null },
+    })).toThrow();
+    expect(() => requirementSurveyFollowUpSnapshotSchema.parse({
+      ...valid, planFollowUp: null,
+    })).toThrow();
   });
 });
 

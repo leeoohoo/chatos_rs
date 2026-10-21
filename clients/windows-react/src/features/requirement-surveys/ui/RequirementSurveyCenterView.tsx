@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRequirementSurveyCenterStore } from "../application/requirementSurveyCenterStore";
+import { useRequirementSurveyFollowUpStore } from "../application/requirementSurveyFollowUpStore";
 import {
   isRequirementSurveySubmissionValid,
   toggleRequirementSurveyChoice,
@@ -76,6 +77,8 @@ export function RequirementSurveyCenterView({
     return (
       <RequirementSurveyDetail
         isSubmitting={submittingSurveyIds.includes(selectedSurvey.surveyId)}
+        ownerUserId={ownerUserId}
+        port={port}
         survey={selectedSurvey}
         onBack={() => setSelectedSurveyId(null)}
         onSubmit={(answers) => submit(port, selectedSurvey, answers)}
@@ -213,11 +216,15 @@ function SurveySection({ title, surveys, onOpen }: { title: string; surveys: Req
 function RequirementSurveyDetail({
   survey,
   isSubmitting,
+  ownerUserId,
+  port,
   onBack,
   onSubmit,
 }: {
   survey: RequirementSurvey;
   isSubmitting: boolean;
+  ownerUserId: string;
+  port: RequirementSurveyPort;
   onBack(): void;
   onSubmit(answers: RequirementSurveyAnswers): Promise<boolean>;
 }) {
@@ -268,10 +275,118 @@ function RequirementSurveyDetail({
         {survey.status === "open" ? (
           <footer><span>{!canSubmit && "请完成所有必填题"}</span><button className="primary-button" disabled={!canSubmit || isSubmitting} onClick={() => void onSubmit(answers)} type="button">{isSubmitting ? "提交中…" : "提交并继续"}</button></footer>
         ) : (
-          <div className="requirement-survey-detail__resolved">✓ 你的回答已提交，原 Run 已恢复。</div>
+          <>
+            <div className="requirement-survey-detail__resolved">✓ 你的回答已提交，原 Run 已恢复。</div>
+            <RequirementSurveyFollowUpPanel ownerUserId={ownerUserId} port={port} survey={survey} />
+          </>
         )}
       </div>
     </section>
+  );
+}
+
+function RequirementSurveyFollowUpPanel({
+  ownerUserId,
+  port,
+  survey,
+}: {
+  ownerUserId: string;
+  port: RequirementSurveyPort;
+  survey: RequirementSurvey;
+}) {
+  const snapshot = useRequirementSurveyFollowUpStore((state) => state.snapshot);
+  const isLoading = useRequirementSurveyFollowUpStore((state) => state.isLoading);
+  const action = useRequirementSurveyFollowUpStore((state) => state.action);
+  const error = useRequirementSurveyFollowUpStore((state) => state.error);
+  const activate = useRequirementSurveyFollowUpStore((state) => state.activate);
+  const refresh = useRequirementSurveyFollowUpStore((state) => state.refresh);
+  const confirm = useRequirementSurveyFollowUpStore((state) => state.confirm);
+  const adopt = useRequirementSurveyFollowUpStore((state) => state.adopt);
+  const reset = useRequirementSurveyFollowUpStore((state) => state.reset);
+
+  useEffect(() => {
+    void activate(port, ownerUserId, survey);
+    return reset;
+  }, [activate, ownerUserId, port, reset, survey.projectId, survey.surveyId, survey.version]);
+
+  useEffect(() => {
+    if (!snapshot || (snapshot.followUp.status !== "processing"
+      && snapshot.planFollowUp?.status !== "processing")) return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh(port);
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [port, refresh, snapshot]);
+
+  const planReady = snapshot?.planFollowUp?.status === "completed"
+    || snapshot?.planFollowUp?.status === "completed_without_reply";
+  return (
+    <section aria-label="方案与后续回复" className="requirement-survey-follow-up">
+      <header><div><span aria-hidden="true">▤</span><strong>方案与后续回复</strong></div><button aria-label="刷新方案与后续回复" disabled={isLoading || action != null} onClick={() => void refresh(port)} type="button">↻</button></header>
+      {error && <SurveyError message={error} onRetry={() => void refresh(port)} />}
+      {isLoading && !snapshot ? (
+        <div className="requirement-survey-follow-up__status"><span className="mini-spinner" />正在读取后续结果…</div>
+      ) : snapshot?.plan ? (
+        <div className="requirement-survey-plan">
+          <div className="requirement-survey-plan__meta"><span>方案版本 r{snapshot.plan.revision}</span>{snapshot.plan.confirmedAtUnixMs != null ? <em className="is-confirmed">✓ 方案已确认</em> : <em>等待确认</em>}</div>
+          <h3>{snapshot.plan.title}</h3>
+          <SafeMarkdownDocument markdown={snapshot.plan.markdown} />
+          {snapshot.plan.confirmedAtUnixMs == null ? (
+            <div className="requirement-survey-plan__action">
+              <p>确认只表示认可当前方案版本，不会自动开始任务；后续任务会固定引用这个版本。</p>
+              {!planReady && <FollowUpStatus followUp={snapshot.planFollowUp} />}
+              <button className="primary-button" disabled={!planReady || action != null} onClick={() => void confirm(port)} type="button">{action === "confirm" ? "确认中…" : "确认当前方案"}</button>
+            </div>
+          ) : (
+            <div className="requirement-survey-plan__confirmed"><strong>方案已确认，本次不会自动执行任何任务</strong><p>需要评审、生成文档或开始实施时，请回到原对话说明下一步。</p></div>
+          )}
+        </div>
+      ) : (
+        <div className="requirement-survey-follow-up__body">
+          <FollowUpStatus followUp={snapshot?.followUp ?? null} />
+          {snapshot?.followUp.status === "completed" && (
+            <><p>这份历史回复尚未保存为方案版本。保存并确认不会自动开始任务。</p><button className="primary-button" disabled={action != null} onClick={() => void adopt(port)} type="button">{action === "adopt" ? "保存并确认中…" : "保存并确认此方案"}</button></>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FollowUpStatus({ followUp }: { followUp: import("../domain/requirementSurvey").RequirementSurveyFollowUp | null }) {
+  if (!followUp) return <div className="requirement-survey-follow-up__status"><span className="mini-spinner" />正在读取后续结果…</div>;
+  if (followUp.status === "completed" && followUp.markdown) return <SafeMarkdownDocument markdown={followUp.markdown} />;
+  const messages: Record<typeof followUp.status, string> = {
+    awaiting_answers: "请先填写并提交调研。",
+    processing: "正在根据你的回答整理需求与后续方案…",
+    completed: "后续回复已完成。",
+    completed_without_reply: "后续处理已结束，暂无方案回复。请在原对话中查看详情。",
+    waiting_for_input: "还需要补充信息，请查看待填写调研或原对话。",
+    needs_review: "后续处理已暂停，请在原对话中查看需要处理的事项。",
+    failed: "后续处理未完成，请在原对话中查看原因并重试。",
+    cancelled: "后续处理已取消，你提交的回答仍已保留。",
+  };
+  return <div className={`requirement-survey-follow-up__status is-${followUp.status}`}>{followUp.status === "processing" && <span className="mini-spinner" />}{messages[followUp.status]}</div>;
+}
+
+function SafeMarkdownDocument({ markdown }: { markdown: string }) {
+  return (
+    <article aria-label="方案正文" className="requirement-survey-markdown">
+      {markdown.split(/\n{2,}/u).map((block, index) => {
+        const value = block.trim();
+        if (!value) return null;
+        const heading = /^(#{1,4})\s+(.+)$/u.exec(value);
+        if (heading) return <h4 key={index}>{heading[2]}</h4>;
+        const lines = value.split("\n");
+        if (lines.every((line) => /^[-*]\s+/u.test(line))) {
+          return <ul key={index}>{lines.map((line, lineIndex) => <li key={lineIndex}>{line.replace(/^[-*]\s+/u, "")}</li>)}</ul>;
+        }
+        if (lines.every((line) => /^\d+\.\s+/u.test(line))) {
+          return <ol key={index}>{lines.map((line, lineIndex) => <li key={lineIndex}>{line.replace(/^\d+\.\s+/u, "")}</li>)}</ol>;
+        }
+        return <p key={index}>{lines.map((line, lineIndex) => <span key={lineIndex}>{line}{lineIndex < lines.length - 1 && <br />}</span>)}</p>;
+      })}
+    </article>
   );
 }
 

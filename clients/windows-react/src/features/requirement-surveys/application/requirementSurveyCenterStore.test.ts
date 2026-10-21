@@ -92,13 +92,16 @@ describe("requirement survey center store", () => {
 });
 
 function stubPort(overrides: Partial<RequirementSurveyPort> = {}): RequirementSurveyPort {
-  return {
+  const defaults: RequirementSurveyPort = {
     listProjectRequirementSurveys: vi.fn(async () => [survey()]),
     resolveProjectRequirementSurvey: vi.fn(async (_owner, _project, _survey, version, answers) => survey({
       status: "resolved", version: version + 1, answers, updatedAtUnixMs: 30, resolvedAtUnixMs: 30,
     })),
-    ...overrides,
+    loadFollowUp: vi.fn(async () => followUp()),
+    confirmPlan: vi.fn(async () => plan({ confirmedAtUnixMs: 40 })),
+    adoptPlan: vi.fn(async () => plan({ confirmedAtUnixMs: 40 })),
   };
+  return { ...defaults, ...overrides } as RequirementSurveyPort;
 }
 
 function survey(overrides: Partial<RequirementSurvey> = {}): RequirementSurvey {
@@ -108,5 +111,22 @@ function survey(overrides: Partial<RequirementSurvey> = {}): RequirementSurvey {
     questions: [{ questionId: "goal", prompt: "需要交付什么？", responseKind: "text", required: true, options: [] }],
     answers: null, status: "open", version: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
     resolvedAtUnixMs: null, ...overrides,
+  };
+}
+
+function followUp() {
+  return {
+    surveyId: "survey-1", surveyVersion: 1,
+    followUp: { status: "processing" as const, markdown: null },
+    plan: null, planFollowUp: null,
+  };
+}
+
+function plan(overrides: Record<string, unknown> = {}) {
+  return {
+    planId: "requirement-plan:survey-1", revision: 1, projectId: "project-1",
+    sourceConversationId: "conversation-1", sourceSurveyId: "survey-1", sourceRunId: "run-1",
+    title: "方案", markdown: "# 方案", createdAtUnixMs: 30, confirmedAtUnixMs: null,
+    ...overrides,
   };
 }
