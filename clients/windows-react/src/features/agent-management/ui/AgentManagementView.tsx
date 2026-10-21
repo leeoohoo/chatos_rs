@@ -1505,13 +1505,16 @@ function AgentTeamRunsView({
       </div>
       {selectedRunId && runInspectorPort && (
         <AgentTeamRunDetailSheet
+          agentPort={port}
           agentName={profileNames.get(
             visibleSnapshot?.runs.find((run) => run.runId === selectedRunId)?.agentId ?? "",
           ) ?? "Agent"}
           ownerUserId={ownerUserId}
           port={runInspectorPort}
           runId={selectedRunId}
+          teamId={detail.team.id}
           onClose={() => setSelectedRunId(null)}
+          onRetried={() => refresh(port)}
         />
       )}
     </div>
@@ -1519,21 +1522,28 @@ function AgentTeamRunsView({
 }
 
 function AgentTeamRunDetailSheet({
+  agentPort,
   agentName,
   ownerUserId,
   port,
   runId,
+  teamId,
   onClose,
+  onRetried,
 }: {
+  agentPort: AgentManagementPort;
   agentName: string;
   ownerUserId: string;
   port: RunInspectorPort;
   runId: string;
+  teamId: string;
   onClose(): void;
+  onRetried(): Promise<void>;
 }) {
   const [detail, setDetail] = useState<RunInspectorDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1554,7 +1564,10 @@ function AgentTeamRunDetailSheet({
   }, [ownerUserId, port, runId]);
 
   useEffect(() => {
-    if (!detail || !["ready", "running"].includes(detail.run.status.toLowerCase())) return undefined;
+    if (!detail || ![
+      "ready", "running", "queued", "model_ready", "model_running",
+      "waiting_tool_result", "continuation_ready", "retry_scheduled",
+    ].includes(detail.run.status.toLowerCase())) return undefined;
     let active = true;
     const timer = window.setInterval(() => {
       void port.loadRun(ownerUserId, runId, 0).then((snapshot) => {
@@ -1631,7 +1644,27 @@ function AgentTeamRunDetailSheet({
             </>
           ) : null}
         </div>
-        <footer><button className="primary-button" onClick={onClose} type="button">完成</button></footer>
+        <footer>
+          {detail?.run.status.toLowerCase() === "needs_review" && agentPort.retryTeamRun && (
+            <button
+              className="is-danger"
+              disabled={isRetrying}
+              onClick={() => {
+                setIsRetrying(true);
+                setError(null);
+                void agentPort.retryTeamRun!(ownerUserId, teamId, runId).then(async () => {
+                  const snapshot = await port.loadRun(ownerUserId, runId, 0);
+                  setDetail(snapshot);
+                  await onRetried();
+                }).catch((failure: unknown) => {
+                  setError(failure instanceof Error ? failure.message : "中断步骤重试失败。");
+                }).finally(() => setIsRetrying(false));
+              }}
+              type="button"
+            >{isRetrying ? "正在重试…" : "重试中断步骤"}</button>
+          )}
+          <button className="primary-button" onClick={onClose} type="button">完成</button>
+        </footer>
       </section>
     </div>
   );

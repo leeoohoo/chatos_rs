@@ -221,6 +221,12 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
     );
   }
 
+  async retryTeamRun(ownerUserId: string, teamId: string, runId: string) {
+    return agentTeamTodoSchema.parse(
+      await invoke("retry_agent_team_run", { input: { ownerUserId, teamId, runId } }),
+    );
+  }
+
   async listTeamTodos(ownerUserId: string, teamId: string, includeTerminal: boolean) {
     return agentTeamTodoListSchema.parse(
       await invoke("list_agent_team_todos", { ownerUserId, teamId, includeTerminal }),

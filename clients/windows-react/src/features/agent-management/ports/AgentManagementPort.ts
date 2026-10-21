@@ -83,6 +83,11 @@ export interface AgentManagementPort {
     agentId: string,
   ): Promise<AgentTeamMemberActivitySnapshot>;
   loadTeamRuns?(ownerUserId: string, teamId: string): Promise<AgentTeamRunHistorySnapshot>;
+  retryTeamRun?(
+    ownerUserId: string,
+    teamId: string,
+    runId: string,
+  ): Promise<AgentTeamTodo>;
   listTeamTodos?(ownerUserId: string, teamId: string, includeTerminal: boolean): Promise<AgentTeamTodo[]>;
   createTeamTodo?(
     ownerUserId: string,

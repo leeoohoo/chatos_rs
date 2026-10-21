@@ -106,6 +106,14 @@ pub(crate) struct CancelAgentTeamTodoInput {
     expected_updated_at_unix_ms: i64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RetryAgentTeamRunInput {
+    owner_user_id: String,
+    team_id: String,
+    run_id: String,
+}
+
 struct StoredTeamTodo {
     id: String,
     agent_id: String,
@@ -146,6 +154,7 @@ pub(super) struct ActiveTeamRunBinding {
 pub(crate) struct TeamRunControlIntent {
     pub(crate) id: String,
     pub(crate) owner_user_id: String,
+    pub(crate) action: String,
     pub(crate) team_id: String,
     pub(crate) todo_id: String,
     pub(crate) delivery_id: String,
@@ -714,9 +723,10 @@ impl AgentConversationStore {
         let mut statement = connection
             .prepare(
                 r#"
-                SELECT id, team_room_id, todo_id, delivery_id, conversation_id, turn_id, run_id
+                SELECT id, action, team_room_id, todo_id, delivery_id,
+                       conversation_id, turn_id, run_id
                 FROM windows_agent_run_control_journal
-                WHERE owner_user_id = ?1 AND action = 'cancel' AND status = 'pending'
+                WHERE owner_user_id = ?1 AND status = 'pending'
                 ORDER BY created_at_unix_ms, id
                 LIMIT 500
                 "#,
@@ -727,12 +737,13 @@ impl AgentConversationStore {
                 Ok(TeamRunControlIntent {
                     id: row.get(0)?,
                     owner_user_id: owner_user_id.to_owned(),
-                    team_id: row.get(1)?,
-                    todo_id: row.get(2)?,
-                    delivery_id: row.get(3)?,
-                    conversation_id: row.get(4)?,
-                    turn_id: row.get(5)?,
-                    run_id: row.get(6)?,
+                    action: row.get(1)?,
+                    team_id: row.get(2)?,
+                    todo_id: row.get(3)?,
+                    delivery_id: row.get(4)?,
+                    conversation_id: row.get(5)?,
+                    turn_id: row.get(6)?,
+                    run_id: row.get(7)?,
                 })
             })
             .map_err(|_| team_todo_store_error())?;
@@ -740,12 +751,106 @@ impl AgentConversationStore {
             .map_err(|_| team_todo_store_error())
     }
 
+    pub(super) fn record_project_team_run_retry_intent(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        run_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<TeamRunControlIntent, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_todo_input())?;
+        validate_identifier(run_id).map_err(|_| invalid_team_todo_input())?;
+        if now_unix_ms < 0 {
+            return Err(invalid_team_todo_input());
+        }
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_todo_store_error())?;
+        require_active_project_team(&transaction, owner_user_id, team_id)?;
+        let binding = transaction
+            .query_row(
+                r#"
+                SELECT todo.id, delivery.id, run.turn_id
+                FROM windows_agent_delivery_runs run
+                JOIN project_agent_deliveries delivery
+                  ON delivery.owner_user_id = run.owner_user_id
+                 AND delivery.id = run.delivery_id
+                JOIN local_agent_todos todo
+                  ON todo.owner_user_id = delivery.owner_user_id
+                 AND todo.team_room_id = delivery.room_id
+                 AND todo.agent_id = delivery.target_agent_id
+                 AND (delivery.deduplication_key = 'todo:' || todo.id
+                      OR delivery.deduplication_key LIKE
+                         'todo:' || todo.id || ':attempt:%')
+                WHERE run.owner_user_id = ?1 AND delivery.room_id = ?2 AND run.run_id = ?3
+                  AND delivery.trigger_kind = 'todo' AND delivery.status = 'running'
+                  AND run.status IN ('ready', 'running')
+                  AND todo.status IN ('in_progress', 'blocked')
+                "#,
+                params![owner_user_id, team_id, run_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|_| team_todo_store_error())?
+            .ok_or_else(|| "只有等待 Human 处理的团队 Todo Run 可以重试。".to_owned())?;
+        let (todo_id, delivery_id, turn_id) = binding;
+        let has_cancel_intent: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM windows_agent_run_control_journal \
+                 WHERE owner_user_id = ?1 AND todo_id = ?2 AND action = 'cancel' \
+                   AND status = 'pending')",
+                params![owner_user_id, todo_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_todo_store_error())?;
+        if has_cancel_intent {
+            return Err("这个团队 Todo 正在停止，不能同时重试。".into());
+        }
+        let conversation_id = format!("agent-team-executor-{delivery_id}");
+        transaction
+            .execute(
+                r#"
+                INSERT OR IGNORE INTO windows_agent_run_control_journal (
+                    owner_user_id, id, action, team_room_id, todo_id, delivery_id,
+                    conversation_id, turn_id, run_id, status, host_status,
+                    created_at_unix_ms, completed_at_unix_ms
+                ) VALUES (?1, ?2, 'retry', ?3, ?4, ?5, ?6, ?7, ?8,
+                          'pending', NULL, ?9, NULL)
+                "#,
+                params![
+                    owner_user_id,
+                    identifier("run_control"),
+                    team_id,
+                    todo_id,
+                    delivery_id,
+                    conversation_id,
+                    turn_id,
+                    run_id,
+                    now_unix_ms,
+                ],
+            )
+            .map_err(|_| team_todo_store_error())?;
+        let intent =
+            load_pending_run_control_intent(&transaction, owner_user_id, &todo_id, "retry")?;
+        transaction.commit().map_err(|_| team_todo_store_error())?;
+        Ok(intent)
+    }
+
     pub(crate) fn complete_team_run_cancel_intent(
         &self,
         intent: &TeamRunControlIntent,
         turn: &LocalConversationTurnRecord,
     ) -> Result<AgentTeamTodo, String> {
-        if turn.turn_id != intent.turn_id
+        if intent.action != "cancel"
+            || turn.turn_id != intent.turn_id
             || turn.run_id != intent.run_id
             || turn.status == LocalConversationTurnStatus::Running
         {
@@ -893,6 +998,178 @@ impl AgentConversationStore {
                 params![
                     turn.status.as_str(),
                     turn.updated_at_unix_ms,
+                    intent.owner_user_id,
+                    intent.id,
+                ],
+            )
+            .map_err(|_| team_todo_store_error())?;
+        if journal_changed != 1 {
+            return Err(team_todo_conflict());
+        }
+        transaction.commit().map_err(|_| team_todo_store_error())?;
+        self.load_project_team_todo(&intent.owner_user_id, &intent.team_id, &intent.todo_id)
+    }
+
+    pub(crate) fn complete_team_run_retry_intent(
+        &self,
+        intent: &TeamRunControlIntent,
+        turn: &LocalConversationTurnRecord,
+        run_status: LocalAgentRunStatus,
+        now_unix_ms: i64,
+    ) -> Result<AgentTeamTodo, String> {
+        if intent.action != "retry"
+            || turn.turn_id != intent.turn_id
+            || turn.run_id != intent.run_id
+            || now_unix_ms < 0
+            || (turn.status == LocalConversationTurnStatus::Running
+                && matches!(
+                    run_status,
+                    LocalAgentRunStatus::WaitingUser
+                        | LocalAgentRunStatus::Paused
+                        | LocalAgentRunStatus::NeedsReview
+                ))
+        {
+            return Err(team_todo_conflict());
+        }
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_todo_store_error())?;
+        let journal_matches: bool = transaction
+            .query_row(
+                r#"
+                SELECT EXISTS(
+                    SELECT 1 FROM windows_agent_run_control_journal
+                    WHERE owner_user_id = ?1 AND id = ?2 AND action = 'retry'
+                      AND team_room_id = ?3 AND todo_id = ?4 AND delivery_id = ?5
+                      AND conversation_id = ?6 AND turn_id = ?7 AND run_id = ?8
+                      AND status = 'pending'
+                )
+                "#,
+                params![
+                    intent.owner_user_id,
+                    intent.id,
+                    intent.team_id,
+                    intent.todo_id,
+                    intent.delivery_id,
+                    intent.conversation_id,
+                    intent.turn_id,
+                    intent.run_id,
+                ],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_todo_store_error())?;
+        if !journal_matches {
+            return Err(team_todo_conflict());
+        }
+        let (delivery_status, local_run_status, todo_status, blocked_reason, result) = match turn
+            .status
+        {
+            LocalConversationTurnStatus::Running => ("running", "running", "in_progress", "", ""),
+            LocalConversationTurnStatus::Succeeded => (
+                "completed",
+                "succeeded",
+                "completed",
+                "",
+                "Todo 已由 Local Agent Host 完成；详细过程保留在运行详情中。",
+            ),
+            LocalConversationTurnStatus::Failed => (
+                "failed",
+                "failed",
+                "blocked",
+                "Local Agent Host 在重试前已执行失败，请检查运行详情。",
+                "",
+            ),
+            LocalConversationTurnStatus::Cancelled => (
+                "cancelled",
+                "cancelled",
+                "blocked",
+                "Local Agent Host Run 已取消，不能继续重试。",
+                "",
+            ),
+        };
+        let current_todo_status: String = transaction
+            .query_row(
+                "SELECT status FROM local_agent_todos WHERE owner_user_id = ?1 \
+                 AND team_room_id = ?2 AND id = ?3",
+                params![intent.owner_user_id, intent.team_id, intent.todo_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_todo_store_error())?;
+        if !matches!(current_todo_status.as_str(), "in_progress" | "blocked")
+            && current_todo_status != todo_status
+        {
+            return Err(team_todo_conflict());
+        }
+        transaction
+            .execute(
+                r#"
+                UPDATE project_agent_deliveries
+                SET status = ?1,
+                    last_error = CASE WHEN ?1 IN ('failed', 'cancelled') THEN ?2 ELSE NULL END,
+                    completed_at_unix_ms = CASE WHEN ?1 = 'running' THEN NULL ELSE ?3 END
+                WHERE owner_user_id = ?4 AND id = ?5 AND room_id = ?6
+                "#,
+                params![
+                    delivery_status,
+                    blocked_reason,
+                    now_unix_ms,
+                    intent.owner_user_id,
+                    intent.delivery_id,
+                    intent.team_id,
+                ],
+            )
+            .map_err(|_| team_todo_store_error())?;
+        transaction
+            .execute(
+                "UPDATE windows_agent_delivery_runs SET status = ?1, updated_at_unix_ms = ?2 \
+                 WHERE owner_user_id = ?3 AND delivery_id = ?4 AND turn_id = ?5 AND run_id = ?6",
+                params![
+                    local_run_status,
+                    now_unix_ms,
+                    intent.owner_user_id,
+                    intent.delivery_id,
+                    intent.turn_id,
+                    intent.run_id,
+                ],
+            )
+            .map_err(|_| team_todo_store_error())?;
+        let todo_changed = transaction
+            .execute(
+                r#"
+                UPDATE local_agent_todos
+                SET status = ?1, blocked_reason = ?2, result = ?3,
+                    updated_at_unix_ms = CASE
+                      WHEN updated_at_unix_ms >= ?4 THEN updated_at_unix_ms + 1
+                      ELSE ?4
+                    END
+                WHERE owner_user_id = ?5 AND team_room_id = ?6 AND id = ?7
+                "#,
+                params![
+                    todo_status,
+                    blocked_reason,
+                    result,
+                    now_unix_ms,
+                    intent.owner_user_id,
+                    intent.team_id,
+                    intent.todo_id,
+                ],
+            )
+            .map_err(|_| team_todo_store_error())?;
+        if todo_changed != 1 {
+            return Err(team_todo_conflict());
+        }
+        let journal_changed = transaction
+            .execute(
+                r#"
+                UPDATE windows_agent_run_control_journal
+                SET status = 'completed', host_status = ?1, completed_at_unix_ms = ?2
+                WHERE owner_user_id = ?3 AND id = ?4 AND status = 'pending'
+                "#,
+                params![
+                    run_status.as_str(),
+                    now_unix_ms,
                     intent.owner_user_id,
                     intent.id,
                 ],
@@ -1695,6 +1972,7 @@ fn load_pending_run_control_intent(
                 Ok(TeamRunControlIntent {
                     id: row.get(0)?,
                     owner_user_id: owner_user_id.to_owned(),
+                    action: action.to_owned(),
                     team_id: row.get(1)?,
                     todo_id: todo_id.to_owned(),
                     delivery_id: row.get(2)?,
@@ -1708,6 +1986,7 @@ fn load_pending_run_control_intent(
     for value in [
         &intent.id,
         &intent.owner_user_id,
+        &intent.action,
         &intent.team_id,
         &intent.todo_id,
         &intent.delivery_id,
@@ -1959,6 +2238,166 @@ async fn finish_team_run_cancel_intent(
     .map_err(|_| "团队任务停止对账任务异常退出。".to_owned())?
 }
 
+struct TeamRunRetryOutcome {
+    turn: LocalConversationTurnRecord,
+    run_status: LocalAgentRunStatus,
+}
+
+async fn execute_team_run_retry_intent(
+    manager: &HostManager,
+    intent: &TeamRunControlIntent,
+    allow_already_resumed: bool,
+) -> Result<TeamRunRetryOutcome, String> {
+    let load_state = || async {
+        let conversation_result = manager
+            .execute(HostCommand::GetConversationContext(
+                GetConversationCommand {
+                    owner_user_id: intent.owner_user_id.clone(),
+                    conversation_id: intent.conversation_id.clone(),
+                },
+            ))
+            .await?;
+        let HostResult::Conversation { conversation } = conversation_result else {
+            return Err("Local Agent Host 返回了错误的团队运行响应。".to_owned());
+        };
+        if conversation.conversation.owner_user_id != intent.owner_user_id
+            || conversation.conversation.conversation_id != intent.conversation_id
+        {
+            return Err("Local Agent Host 返回了不匹配的团队运行。".to_owned());
+        }
+        let turn = conversation
+            .turns
+            .iter()
+            .find(|turn| turn.turn_id == intent.turn_id && turn.run_id == intent.run_id)
+            .cloned()
+            .ok_or_else(|| "Local Agent Host 中找不到待重试的团队运行。".to_owned())?;
+        let run_result = manager
+            .execute(HostCommand::GetRun(GetRunCommand {
+                owner_user_id: intent.owner_user_id.clone(),
+                run_id: intent.run_id.clone(),
+            }))
+            .await?;
+        let HostResult::Run { run } = run_result else {
+            return Err("Local Agent Host 返回了错误的 Run 响应。".to_owned());
+        };
+        if run.owner_user_id != intent.owner_user_id || run.run_id != intent.run_id {
+            return Err("Local Agent Host 返回了不匹配的 Run。".to_owned());
+        }
+        Ok((conversation.conversation.version, turn, run))
+    };
+    let (conversation_version, turn, run) = load_state().await?;
+    if run.status.is_terminal() {
+        let mut terminal_turn = turn;
+        terminal_turn.status = match run.status {
+            LocalAgentRunStatus::Succeeded => LocalConversationTurnStatus::Succeeded,
+            LocalAgentRunStatus::Failed => LocalConversationTurnStatus::Failed,
+            LocalAgentRunStatus::Cancelled => LocalConversationTurnStatus::Cancelled,
+            _ => unreachable!(),
+        };
+        terminal_turn.updated_at_unix_ms =
+            terminal_turn.updated_at_unix_ms.max(run.updated_at_unix_ms);
+        return Ok(TeamRunRetryOutcome {
+            turn: terminal_turn,
+            run_status: run.status,
+        });
+    }
+    if turn.status != LocalConversationTurnStatus::Running {
+        return Ok(TeamRunRetryOutcome {
+            turn,
+            run_status: run.status,
+        });
+    }
+    let retryable = matches!(
+        run.status,
+        LocalAgentRunStatus::WaitingUser
+            | LocalAgentRunStatus::Paused
+            | LocalAgentRunStatus::NeedsReview
+    );
+    if !retryable {
+        return if allow_already_resumed {
+            Ok(TeamRunRetryOutcome {
+                turn,
+                run_status: run.status,
+            })
+        } else {
+            Err("这个 Host Run 当前不需要 Human 重试。".into())
+        };
+    }
+    let resumed = manager
+        .execute_detailed(HostCommand::ResumeConversationTurn(
+            ResumeConversationTurnCommand {
+                owner_user_id: intent.owner_user_id.clone(),
+                conversation_id: intent.conversation_id.clone(),
+                expected_conversation_version: conversation_version,
+                turn_id: intent.turn_id.clone(),
+                expected_run_version: run.version,
+                expected_run_status: run.status,
+                message_id: intent.id.clone(),
+                message: "继续执行这个团队 Todo，并先核验中断步骤是否已经产生副作用。".into(),
+                message_metadata: json!({
+                    "type": "human_retry_authorization",
+                    "team_id": intent.team_id,
+                    "todo_id": intent.todo_id,
+                    "delivery_id": intent.delivery_id,
+                }),
+                attachments: Vec::new(),
+                reason: "Human 已在运行详情中明确授权重试中断步骤。".into(),
+            },
+        ))
+        .await;
+    match resumed {
+        Ok(HostResult::ConversationTurnUpdated { result }) => {
+            if result.conversation.owner_user_id != intent.owner_user_id
+                || result.conversation.conversation_id != intent.conversation_id
+                || result.turn.turn_id != intent.turn_id
+                || result.turn.run_id != intent.run_id
+                || result.run.run_id != intent.run_id
+            {
+                return Err("Local Agent Host 返回了不匹配的重试结果。".into());
+            }
+            Ok(TeamRunRetryOutcome {
+                turn: result.turn,
+                run_status: result.run.status,
+            })
+        }
+        Ok(_) => Err("Local Agent Host 返回了错误的重试响应。".into()),
+        Err(original) => {
+            // A response can be lost after Host committed the resume transaction. Re-read the
+            // authoritative Run; leaving the review state proves that the stable journaled
+            // message id was accepted, so local reconciliation may safely complete.
+            let (_, turn, run) = load_state().await.map_err(|_| original.message.clone())?;
+            if turn.status != LocalConversationTurnStatus::Running
+                || !matches!(
+                    run.status,
+                    LocalAgentRunStatus::WaitingUser
+                        | LocalAgentRunStatus::Paused
+                        | LocalAgentRunStatus::NeedsReview
+                )
+            {
+                Ok(TeamRunRetryOutcome {
+                    turn,
+                    run_status: run.status,
+                })
+            } else {
+                Err(original.message)
+            }
+        }
+    }
+}
+
+async fn finish_team_run_retry_intent(
+    store: AgentConversationStore,
+    intent: TeamRunControlIntent,
+    outcome: TeamRunRetryOutcome,
+) -> Result<AgentTeamTodo, String> {
+    let now = chrono::Utc::now().timestamp_millis().max(0);
+    tauri::async_runtime::spawn_blocking(move || {
+        store.complete_team_run_retry_intent(&intent, &outcome.turn, outcome.run_status, now)
+    })
+    .await
+    .map_err(|_| "团队任务重试对账任务异常退出。".to_owned())?
+}
+
 pub(crate) async fn recover_agent_team_run_control_journal(
     manager: &HostManager,
     conversations: &AgentConversationStore,
@@ -1975,8 +2414,17 @@ pub(crate) async fn recover_agent_team_run_control_journal(
     let mut first_error = None;
     for intent in intents {
         let result = async {
-            let turn = execute_team_run_cancel_intent(manager, &intent).await?;
-            finish_team_run_cancel_intent(conversations.clone(), intent, turn).await?;
+            match intent.action.as_str() {
+                "cancel" => {
+                    let turn = execute_team_run_cancel_intent(manager, &intent).await?;
+                    finish_team_run_cancel_intent(conversations.clone(), intent, turn).await?;
+                }
+                "retry" => {
+                    let outcome = execute_team_run_retry_intent(manager, &intent, true).await?;
+                    finish_team_run_retry_intent(conversations.clone(), intent, outcome).await?;
+                }
+                _ => return Err(team_todo_store_error()),
+            }
             Ok::<(), String>(())
         }
         .await;
@@ -1990,6 +2438,36 @@ pub(crate) async fn recover_agent_team_run_control_journal(
         return Err(error);
     }
     Ok(completed)
+}
+
+#[tauri::command]
+pub(crate) async fn retry_agent_team_run(
+    input: RetryAgentTeamRunInput,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+    manager: State<'_, HostManager>,
+) -> Result<AgentTeamTodo, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = input.owner_user_id.clone();
+    let team_id = input.team_id.clone();
+    let run_id = input.run_id.clone();
+    let now = chrono::Utc::now().timestamp_millis().max(0);
+    let intent_store = store.clone();
+    let intent = tauri::async_runtime::spawn_blocking(move || {
+        intent_store.record_project_team_run_retry_intent(&owner, &team_id, &run_id, now)
+    })
+    .await
+    .map_err(|_| "团队任务重试日志写入任务异常退出。".to_owned())??;
+    let outcome = execute_team_run_retry_intent(manager.inner(), &intent, false).await?;
+    let todo = finish_team_run_retry_intent(store, intent, outcome).await?;
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    Ok(todo)
 }
 
 #[tauri::command]
