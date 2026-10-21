@@ -6432,6 +6432,7 @@ mod tests {
                 "invocation-chat-1",
                 "请处理接口验证。",
                 None,
+                None,
                 std::slice::from_ref(&target_reference),
                 11,
             )
@@ -6446,6 +6447,7 @@ mod tests {
                 "invocation-chat-1",
                 "请处理接口验证。",
                 None,
+                None,
                 std::slice::from_ref(&target_reference),
                 12,
             )
@@ -6458,6 +6460,7 @@ mod tests {
                 "invocation-chat-1",
                 "复用调用 ID 的不同消息。",
                 None,
+                None,
                 std::slice::from_ref(&target_reference),
                 13,
             )
@@ -6468,6 +6471,7 @@ mod tests {
                 "run-chat",
                 "invocation-chat-stale-ref",
                 "错误引用。",
+                None,
                 None,
                 &["agent_ref_stale".into()],
                 13,
@@ -6550,15 +6554,28 @@ mod tests {
                 &["sender".into()],
             )
             .unwrap();
-        let (_, members) = store
-            .team_chat_member_snapshot("alice", "run-unread")
+        let (_, workspace) = store
+            .agent_workspace_snapshot("alice", "run-unread")
             .unwrap();
-        let target_reference = members
+        assert!(!workspace.to_string().contains(&first_team.id));
+        assert!(!workspace.to_string().contains(&second_team.id));
+        assert!(!workspace.to_string().contains("\"sender\""));
+        assert!(!workspace.to_string().contains("\"target\""));
+        let target_reference = workspace["agents"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|member| member["is_current_agent"] == false)
+            .find(|agent| agent["is_current_agent"] == false)
             .unwrap()["agent_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let second_team_reference = workspace["teams"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|team| team["name"] == "第二团队")
+            .unwrap()["team_ref"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -6590,6 +6607,7 @@ mod tests {
                 "invocation-reply-other-team",
                 "第二团队已收到。",
                 Some(&other_reference),
+                None,
                 std::slice::from_ref(&target_reference),
                 12,
             )
@@ -6602,6 +6620,32 @@ mod tests {
                 "invocation-forged-reply",
                 "不得写入。",
                 Some("message_ref_forged"),
+                None,
+                &[],
+                13,
+            )
+            .is_err());
+        let (_, proactive) = store
+            .send_team_chat_message(
+                "alice",
+                "run-unread",
+                "invocation-proactive-team",
+                "主动同步第二团队。",
+                None,
+                Some(&second_team_reference),
+                std::slice::from_ref(&target_reference),
+                13,
+            )
+            .unwrap();
+        assert_eq!(proactive["spawned_delivery_count"], 1);
+        assert!(store
+            .send_team_chat_message(
+                "alice",
+                "run-unread",
+                "invocation-forged-team",
+                "不得写入。",
+                None,
+                Some("team_ref_forged"),
                 &[],
                 13,
             )
@@ -6624,6 +6668,18 @@ mod tests {
                 other.message_id.clone(),
             )
         );
+        let proactive_routing: (String, Option<String>, String, String) = connection
+            .query_row(
+                "SELECT room_id, reply_to_message_id, root_message_id, id \
+                 FROM project_agent_messages WHERE owner_user_id = 'alice' \
+                   AND causation_id = 'invocation-proactive-team'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(proactive_routing.0, second_team.id);
+        assert_eq!(proactive_routing.1, None);
+        assert_eq!(proactive_routing.2, proactive_routing.3);
         let cursor_count: i64 = connection
             .query_row(
                 "SELECT count(*) FROM project_agent_read_cursors \

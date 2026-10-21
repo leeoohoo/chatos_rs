@@ -58,7 +58,11 @@ const TODO_PLANNING_READ_TOOL_NAMES: [&str; 4] = [
     "todo_list",
     "todo_read_progress",
 ];
-const TEAM_CHAT_READ_TOOL_NAMES: [&str; 2] = ["chat_list_members", "chat_read_all_unread"];
+const TEAM_CHAT_READ_TOOL_NAMES: [&str; 3] = [
+    "agent_workspace_snapshot",
+    "chat_list_members",
+    "chat_read_all_unread",
+];
 const TEAM_CHAT_WRITE_TOOL_NAMES: [&str; 1] = ["chat_send_message"];
 const TODO_PLANNING_WRITE_TOOL_NAMES: [&str; 3] = ["todo_add", "todo_update", "todo_reorder"];
 const WORKER_ID: &str = "windows-attachment-tool-worker";
@@ -272,24 +276,27 @@ async fn execute_team_chat_read_tool(
     let request_key = claim.invocation.invocation_id.clone();
     let tool_name = claim.invocation.tool_name.clone();
     let limit = match tool_name.as_str() {
-        "chat_list_members" if arguments.is_empty() => None,
+        "agent_workspace_snapshot" | "chat_list_members" if arguments.is_empty() => None,
         "chat_read_all_unread" => {
             Some(optional_planning_integer(arguments, "limit", 1, 500)?.unwrap_or(200))
         }
         _ => return Err("The team communication arguments are invalid.".into()),
     };
-    let (binding, output) = tauri::async_runtime::spawn_blocking(move || match limit {
-        Some(limit) => store.read_all_unread_team_chat(
-            &owner,
-            &run_id,
-            &request_key,
-            limit as usize,
-            now_unix_ms(),
-        ),
-        None => store.team_chat_member_snapshot(&owner, &run_id),
-    })
-    .await
-    .map_err(|_| "The team member lookup task exited unexpectedly.".to_owned())??;
+    let (binding, output) =
+        tauri::async_runtime::spawn_blocking(move || match tool_name.as_str() {
+            "agent_workspace_snapshot" => store.agent_workspace_snapshot(&owner, &run_id),
+            "chat_list_members" => store.team_chat_member_snapshot(&owner, &run_id),
+            "chat_read_all_unread" => store.read_all_unread_team_chat(
+                &owner,
+                &run_id,
+                &request_key,
+                limit.ok_or_else(|| "The unread limit is unavailable.".to_owned())? as usize,
+                now_unix_ms(),
+            ),
+            _ => Err("The team communication tool is unavailable.".into()),
+        })
+        .await
+        .map_err(|_| "The team member lookup task exited unexpectedly.".to_owned())??;
     validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
     Ok(LocalAgentToolOutcome::Succeeded { output })
 }
@@ -309,6 +316,10 @@ async fn execute_team_chat_write_tool(
         .ok_or_else(|| "The team communication arguments are invalid.".to_owned())?;
     let content = required_bounded_string(arguments, "content", 2_000)?;
     let reply_reference = optional_bounded_string(arguments, "reply_to_message_ref", 600)?;
+    let team_reference = optional_bounded_string(arguments, "team_ref", 600)?;
+    if reply_reference.is_some() && team_reference.is_some() {
+        return Err("The team communication target is ambiguous.".into());
+    }
     let mention_references =
         planning_string_array(arguments, "mention_agent_refs", 0, 64, 600)?.unwrap_or_default();
     let result = app
@@ -335,6 +346,7 @@ async fn execute_team_chat_write_tool(
             &request_key,
             &content,
             reply_reference.as_deref(),
+            team_reference.as_deref(),
             &mention_references,
             now_unix_ms(),
         )
@@ -1585,6 +1597,17 @@ pub fn team_chat_read_tool_schemas() -> Vec<Value> {
     vec![
         json!({
             "type": "function",
+            "name": "agent_workspace_snapshot",
+            "description": "读取当前账户的活动 Agent 与项目团队，并返回只对当前 Run 有效的 agent_ref、team_ref 和 project_ref。主动向另一个项目团队发送消息时，把 team_ref 交给 chat_send_message；真实 ID 不会暴露。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
             "name": "chat_list_members",
             "description": "列出当前项目团队的活动成员，并返回仅对当前 Run 有效的 agent_ref。真实 Agent ID 不会暴露。",
             "parameters": {
@@ -1614,12 +1637,13 @@ pub fn team_chat_write_tool_schemas() -> Vec<Value> {
     vec![json!({
         "type": "function",
         "name": "chat_send_message",
-        "description": "向当前项目团队发送消息，或使用 chat_read_all_unread 返回的 message_ref 回复另一个项目团队中的消息。需要 @ 其他成员时，只能使用当前 Run 返回且属于目标团队的 agent_ref；发送不会结束当前通讯 Run。",
+        "description": "向当前项目团队发送消息，使用 chat_read_all_unread 返回的 message_ref 回复指定消息，或使用 agent_workspace_snapshot 返回的 team_ref 主动发送到另一个项目团队。reply_to_message_ref 和 team_ref 最多提供一个；需要 @ 其他成员时，只能使用当前 Run 返回且属于目标团队的 agent_ref。",
         "parameters": {
             "type": "object",
             "properties": {
                 "content": {"type": "string", "minLength": 1, "maxLength": 2000},
                 "reply_to_message_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                "team_ref": {"type": "string", "minLength": 1, "maxLength": 600},
                 "mention_agent_refs": {
                     "type": "array",
                     "items": {"type": "string", "minLength": 1, "maxLength": 600},
@@ -1826,9 +1850,10 @@ mod tests {
     #[test]
     fn team_chat_read_catalog_exposes_only_the_member_directory() {
         let schemas = team_chat_read_tool_schemas();
-        assert_eq!(schemas.len(), 2);
-        assert_eq!(schemas[0]["name"], "chat_list_members");
-        assert_eq!(schemas[1]["name"], "chat_read_all_unread");
+        assert_eq!(schemas.len(), 3);
+        assert_eq!(schemas[0]["name"], "agent_workspace_snapshot");
+        assert_eq!(schemas[1]["name"], "chat_list_members");
+        assert_eq!(schemas[2]["name"], "chat_read_all_unread");
         assert!(schemas
             .iter()
             .all(|schema| !schema.to_string().contains("agent_id")));
@@ -1842,6 +1867,7 @@ mod tests {
         let encoded = schemas[0].to_string();
         assert!(encoded.contains("mention_agent_refs"));
         assert!(encoded.contains("reply_to_message_ref"));
+        assert!(encoded.contains("team_ref"));
         assert!(!encoded.contains("agent_id"));
         assert!(!encoded.contains("team_id"));
         assert!(!encoded.contains("conversation_id"));

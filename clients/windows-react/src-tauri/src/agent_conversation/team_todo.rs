@@ -165,6 +165,15 @@ struct StoredTeamTodo {
     updated_at_unix_ms: i64,
 }
 
+struct WorkspaceTeamSnapshot {
+    id: String,
+    project_id: String,
+    name: String,
+    goal: String,
+    project_manager_id: Option<String>,
+    members: Vec<Value>,
+}
+
 struct ReadyTeamTodo {
     id: String,
     agent_id: String,
@@ -205,6 +214,188 @@ pub(super) struct TeamRunReconciliation {
 }
 
 impl AgentConversationStore {
+    pub(crate) fn agent_workspace_snapshot(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+    ) -> Result<(AgentAssetToolBinding, Value), String> {
+        validate_identifier(run_id).map_err(|_| team_todo_store_error())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let binding = load_agent_asset_tool_binding(&connection, owner_user_id, run_id)?;
+        if binding.todo_id.is_some() {
+            return Err("Team communication tools are unavailable in an executor Run.".into());
+        }
+        let profiles = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, name, profession_key FROM local_agent_profiles \
+                     WHERE owner_user_id = ?1 AND status = 'active' ORDER BY name, id",
+                )
+                .map_err(|_| team_todo_store_error())?;
+            let rows = statement
+                .query_map(params![owner_user_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|_| team_todo_store_error())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| team_todo_store_error())?;
+            rows
+        };
+        let team_rows = {
+            let mut statement = connection
+                .prepare(
+                    r#"
+                    SELECT room.id, room.project_id, room.name, room.goal,
+                           room.project_manager_agent_id, member.agent_id,
+                           profile.name, profile.profession_key, member.role
+                    FROM project_agent_rooms room
+                    LEFT JOIN project_agent_room_members member
+                      ON member.owner_user_id = room.owner_user_id
+                     AND member.room_id = room.id AND member.status = 'active'
+                    LEFT JOIN local_agent_profiles profile
+                      ON profile.owner_user_id = member.owner_user_id
+                     AND profile.id = member.agent_id AND profile.status = 'active'
+                    WHERE room.owner_user_id = ?1 AND room.status = 'active'
+                      AND room.conversation_kind = 'project_team'
+                    ORDER BY room.created_at_unix_ms, room.id,
+                             member.joined_at_unix_ms, member.agent_id
+                    "#,
+                )
+                .map_err(|_| team_todo_store_error())?;
+            let rows = statement
+                .query_map(params![owner_user_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                    ))
+                })
+                .map_err(|_| team_todo_store_error())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| team_todo_store_error())?;
+            rows
+        };
+        let mut teams: Vec<WorkspaceTeamSnapshot> = Vec::new();
+        let mut team_names_by_agent: Vec<(String, Vec<String>)> = Vec::new();
+        for (
+            team_id,
+            project_id,
+            team_name,
+            team_goal,
+            project_manager_id,
+            agent_id,
+            agent_name,
+            profession,
+            role,
+        ) in team_rows
+        {
+            let member = match (agent_id, agent_name, profession, role) {
+                (Some(agent_id), Some(agent_name), Some(profession), Some(role)) => {
+                    if let Some((_, names)) = team_names_by_agent
+                        .iter_mut()
+                        .find(|entry| entry.0 == agent_id)
+                    {
+                        names.push(team_name.clone());
+                    } else {
+                        team_names_by_agent.push((agent_id.clone(), vec![team_name.clone()]));
+                    }
+                    Some(json!({
+                    "agent_ref": todo_planning_reference(
+                        owner_user_id,
+                        run_id,
+                        "agent",
+                            &agent_id,
+                    ),
+                        "name": agent_name,
+                        "profession": profession,
+                        "role": role,
+                        "is_project_manager": project_manager_id.as_deref() == Some(&agent_id),
+                    }))
+                }
+                _ => None,
+            };
+            if let Some(team) = teams.iter_mut().find(|team| team.id == team_id) {
+                if let Some(member) = member {
+                    team.members.push(member);
+                }
+            } else {
+                teams.push(WorkspaceTeamSnapshot {
+                    id: team_id,
+                    project_id,
+                    name: team_name,
+                    goal: team_goal,
+                    project_manager_id,
+                    members: member.into_iter().collect(),
+                });
+            }
+        }
+        let team_values = teams
+            .into_iter()
+            .map(|team| {
+                let project_manager = team.project_manager_id.as_ref().and_then(|manager_id| {
+                    profiles
+                        .iter()
+                        .find(|profile| profile.0 == *manager_id)
+                        .map(|profile| profile.1.clone())
+                });
+                json!({
+                    "team_ref": todo_planning_reference(
+                        owner_user_id,
+                        run_id,
+                        "team",
+                    &team.id,
+                    ),
+                    "project_ref": todo_planning_reference(
+                        owner_user_id,
+                        run_id,
+                        "project",
+                    &team.project_id,
+                    ),
+                "name": team.name,
+                "goal": team.goal,
+                "has_project_manager": team.project_manager_id.is_some(),
+                    "project_manager": project_manager,
+                "members": team.members,
+                })
+            })
+            .collect::<Vec<_>>();
+        let agents = profiles
+            .into_iter()
+            .map(|(agent_id, name, profession)| {
+                let mut team_names = team_names_by_agent
+                    .iter()
+                    .find(|entry| entry.0 == agent_id)
+                    .map(|entry| entry.1.clone())
+                    .unwrap_or_default();
+                team_names.sort();
+                json!({
+                    "agent_ref": todo_planning_reference(
+                        owner_user_id,
+                        run_id,
+                        "agent",
+                        &agent_id,
+                    ),
+                    "name": name,
+                    "profession": profession,
+                    "is_current_agent": agent_id == binding.agent_id,
+                    "teams": team_names,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok((binding, json!({"agents": agents, "teams": team_values})))
+    }
+
     pub(crate) fn team_chat_member_snapshot(
         &self,
         owner_user_id: &str,
@@ -484,6 +675,7 @@ impl AgentConversationStore {
         request_key: &str,
         content: &str,
         reply_reference: Option<&str>,
+        team_reference: Option<&str>,
         mention_references: &[String],
         now_unix_ms: i64,
     ) -> Result<(AgentAssetToolBinding, Value), String> {
@@ -492,6 +684,12 @@ impl AgentConversationStore {
         validate_text(content, 2_000, false).map_err(|_| invalid_team_todo_input())?;
         if let Some(reference) = reply_reference {
             validate_text(reference, 600, false).map_err(|_| invalid_team_todo_input())?;
+        }
+        if let Some(reference) = team_reference {
+            validate_text(reference, 600, false).map_err(|_| invalid_team_todo_input())?;
+        }
+        if reply_reference.is_some() && team_reference.is_some() {
+            return Err("reply_to_message_ref and team_ref cannot both be provided.".into());
         }
         validate_reference_list(mention_references, 64)?;
         if now_unix_ms < 0 {
@@ -506,35 +704,61 @@ impl AgentConversationStore {
         if binding.todo_id.is_some() {
             return Err("Team communication tools are unavailable in an executor Run.".into());
         }
-        let (target_room_id, reply_message_id, root_message_id, hop_count) =
+        let trigger_context: (String, String, String, i64) = transaction
+            .query_row(
+                r#"
+                SELECT delivery.room_id, delivery.message_id,
+                       delivery.root_message_id, delivery.hop_count
+                FROM windows_agent_delivery_runs run
+                JOIN project_agent_deliveries delivery
+                  ON delivery.owner_user_id = run.owner_user_id
+                 AND delivery.id = run.delivery_id
+                WHERE run.owner_user_id = ?1 AND run.run_id = ?2
+                  AND run.status IN ('ready', 'running')
+                  AND delivery.status = 'running'
+                  AND delivery.room_id = ?3 AND delivery.target_agent_id = ?4
+                  AND delivery.trigger_kind != 'todo'
+                "#,
+                params![owner_user_id, run_id, binding.team_id, binding.agent_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .map_err(|_| team_todo_store_error())?;
+        let (target_room_id, reply_message_id, inherited_root_message_id, hop_count) =
             if let Some(reference) = reply_reference {
-                resolve_team_message_reference(
-                    &transaction,
-                    owner_user_id,
-                    run_id,
-                    &binding.agent_id,
-                    reference,
-                )?
+                let (room_id, message_id, root_message_id, message_hop_count) =
+                    resolve_team_message_reference(
+                        &transaction,
+                        owner_user_id,
+                        run_id,
+                        &binding.agent_id,
+                        reference,
+                    )?;
+                (
+                    room_id,
+                    Some(message_id),
+                    Some(root_message_id),
+                    message_hop_count,
+                )
+            } else if let Some(reference) = team_reference {
+                (
+                    resolve_team_reference(
+                        &transaction,
+                        owner_user_id,
+                        run_id,
+                        &binding.agent_id,
+                        reference,
+                    )?,
+                    None,
+                    None,
+                    trigger_context.3,
+                )
             } else {
-                transaction
-                    .query_row(
-                        r#"
-                        SELECT delivery.room_id, delivery.message_id,
-                               delivery.root_message_id, delivery.hop_count
-                        FROM windows_agent_delivery_runs run
-                        JOIN project_agent_deliveries delivery
-                          ON delivery.owner_user_id = run.owner_user_id
-                         AND delivery.id = run.delivery_id
-                        WHERE run.owner_user_id = ?1 AND run.run_id = ?2
-                          AND run.status IN ('ready', 'running')
-                          AND delivery.status = 'running'
-                          AND delivery.room_id = ?3 AND delivery.target_agent_id = ?4
-                          AND delivery.trigger_kind != 'todo'
-                        "#,
-                        params![owner_user_id, run_id, binding.team_id, binding.agent_id],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                    )
-                    .map_err(|_| team_todo_store_error())?
+                (
+                    trigger_context.0,
+                    Some(trigger_context.1),
+                    Some(trigger_context.2),
+                    trigger_context.3,
+                )
             };
         let mention_agent_ids = resolve_team_agent_references(
             &transaction,
@@ -587,7 +811,7 @@ impl AgentConversationStore {
             };
             if existing_room_id != target_room_id
                 || existing_content != content
-                || existing_reply_id.as_deref() != Some(reply_message_id.as_str())
+                || existing_reply_id != reply_message_id
                 || existing_mentions != mention_agent_ids
             {
                 return Err(
@@ -621,6 +845,7 @@ impl AgentConversationStore {
             ));
         }
         let message_id = identifier("message");
+        let root_message_id = inherited_root_message_id.unwrap_or_else(|| message_id.clone());
         transaction
             .execute(
                 r#"
@@ -3207,6 +3432,45 @@ fn resolve_team_message_reference(
         .optional()
         .map_err(|_| team_todo_store_error())?
         .ok_or_else(|| "The message reference is unavailable for this Run.".to_owned())
+}
+
+fn resolve_team_reference(
+    connection: &Connection,
+    owner_user_id: &str,
+    run_id: &str,
+    current_agent_id: &str,
+    reference: &str,
+) -> Result<String, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT room.id
+            FROM project_agent_rooms room
+            JOIN project_agent_room_members member
+              ON member.owner_user_id = room.owner_user_id
+             AND member.room_id = room.id AND member.agent_id = ?2
+            JOIN local_agent_profiles profile
+              ON profile.owner_user_id = member.owner_user_id
+             AND profile.id = member.agent_id
+            WHERE room.owner_user_id = ?1 AND room.status = 'active'
+              AND room.conversation_kind = 'project_team'
+              AND member.status = 'active' AND profile.status = 'active'
+            ORDER BY room.id
+            "#,
+        )
+        .map_err(|_| team_todo_store_error())?;
+    let rows = statement
+        .query_map(params![owner_user_id, current_agent_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|_| team_todo_store_error())?;
+    for row in rows {
+        let team_id = row.map_err(|_| team_todo_store_error())?;
+        if todo_planning_reference(owner_user_id, run_id, "team", &team_id) == reference {
+            return Ok(team_id);
+        }
+    }
+    Err("The team reference is unavailable for this Run.".into())
 }
 
 fn validate_reference_list(values: &[String], maximum: usize) -> Result<(), String> {
