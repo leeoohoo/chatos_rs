@@ -11,7 +11,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::auth::{
-    encode_user_token, hash_password, normalize_display_name, normalize_username, verify_password,
+    decode_user_service_token_for_refresh, encode_user_token, hash_password,
+    normalize_display_name, normalize_username, renew_user_service_token, verify_password,
     CurrentPrincipal,
 };
 use crate::email::send_registration_code;
@@ -20,19 +21,23 @@ use crate::integrations::{
 };
 use crate::models::{
     CurrentUserResponse, ExchangeLocalConnectorTicketRequest, IssueLocalConnectorTicketResponse,
-    LocalConnectorAuthTicketRecord, LoginRequest, LoginResponse, RegisterRequest,
-    SendRegisterEmailCodeRequest, SendRegisterEmailCodeResponse, TokenVerifyResponse, UserRecord,
-    VerifiedPrincipal, USER_ROLE_USER,
+    LocalConnectorAuthTicketRecord, LoginRequest, LoginResponse, RefreshTokenResponse,
+    RegisterRequest, SendRegisterEmailCodeRequest, SendRegisterEmailCodeResponse,
+    TokenVerifyResponse, UserRecord, VerifiedPrincipal, USER_ROLE_USER,
 };
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 use crate::store::{RegistrationEmailCodeReservationError, RegistrationTransactionError};
 
-use super::{bad_request, internal_error, not_found, ApiResult, ApiStatusResult};
+use super::{
+    bad_request, internal_error, not_found, refresh_principal_identity, unauthorized, ApiResult,
+    ApiStatusResult,
+};
 
 const LOCAL_CONNECTOR_TICKET_AUDIENCE: &str = "local_connector_client";
 const LOCAL_CONNECTOR_TICKET_SCOPE: &str = "local_connector_pair";
 const LOCAL_CONNECTOR_TICKET_TTL_SECONDS: i64 = 60;
+const ACCESS_TOKEN_REFRESH_GRACE_SECONDS: i64 = 30 * 24 * 60 * 60;
 
 pub async fn login(
     State(state): State<AppState>,
@@ -69,6 +74,53 @@ pub async fn login(
             0,
         ),
     }))
+}
+
+/// Renews a desktop login session after its short-lived access token expires. The old token is
+/// accepted only during a bounded grace period and still has to pass signature, revocation,
+/// session, account-enabled, and credential-version checks.
+pub async fn refresh(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<RefreshTokenResponse> {
+    let token = crate::auth::bearer_token_from_headers(&headers).map_err(|err| unauthorized(&err))?;
+    let claims = decode_user_service_token_for_refresh(token.as_str(), &state.config)
+        .map_err(|_| unauthorized("invalid refresh credential"))?;
+    let now = Utc::now().timestamp();
+    let expires_at = i64::try_from(claims.exp).unwrap_or(i64::MAX);
+    if expires_at.saturating_add(ACCESS_TOKEN_REFRESH_GRACE_SECONDS) < now {
+        return Err(unauthorized("login session refresh window has expired"));
+    }
+    if state
+        .store
+        .is_token_revoked(claims.jti.as_str())
+        .await
+        .map_err(internal_error)?
+    {
+        return Err(unauthorized("token has been revoked"));
+    }
+    let is_wechat_companion = claims
+        .scopes
+        .iter()
+        .any(|scope| scope == "wechat_companion");
+    if is_wechat_companion {
+        return Err(unauthorized(
+            "device-bound client sessions must use the device proof refresh flow",
+        ));
+    }
+    if state
+        .store
+        .is_client_session_invalid(claims.jti.as_str(), false)
+        .await
+        .map_err(internal_error)?
+    {
+        return Err(unauthorized("client session has been revoked or expired"));
+    }
+
+    let mut principal = CurrentPrincipal::from(claims);
+    refresh_principal_identity(&state, &mut principal).await?;
+    let token = renew_user_service_token(&state.config, &principal).map_err(internal_error)?;
+    Ok(Json(RefreshTokenResponse { token }))
 }
 
 pub(super) async fn authenticate_password_user(

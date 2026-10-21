@@ -260,6 +260,61 @@ pub fn decode_user_service_token(token: &str, config: &AppConfig) -> Result<Auth
     decode_token(token, config, config.user_service_audience.as_str())
 }
 
+/// Decodes a signed User Service token without enforcing `exp`.
+///
+/// This is intentionally only exposed to the refresh endpoint. The endpoint still verifies the
+/// issuer, audience, signature, revocation state, credential version, and a bounded refresh grace
+/// period before issuing a replacement access token.
+pub fn decode_user_service_token_for_refresh(
+    token: &str,
+    config: &AppConfig,
+) -> Result<AuthClaims, String> {
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.set_audience(&[config.user_service_audience.as_str()]);
+    validation.set_issuer(&[config.jwt_issuer.as_str()]);
+    validation.validate_exp = false;
+    decode::<AuthClaims>(
+        token,
+        &DecodingKey::from_secret(config.jwt_secret.as_bytes()),
+        &validation,
+    )
+    .map(|data| data.claims)
+    .map_err(|err| err.to_string())
+}
+
+/// Renews the access token without changing its login-session identity (`jti`). Keeping the same
+/// identity means logout and server-side revocation continue to invalidate every renewed token in
+/// the session.
+pub fn renew_user_service_token(
+    config: &AppConfig,
+    principal: &CurrentPrincipal,
+) -> Result<String, String> {
+    let issued_at = now_timestamp();
+    let expires_at = (issued_at as i64 + config.user_access_ttl_seconds.max(60)).max(0);
+    encode_token(
+        config,
+        AuthClaims {
+            iss: config.jwt_issuer.clone(),
+            aud: config.user_service_audience.clone(),
+            sub: principal.sub.clone(),
+            exp: expires_at as usize,
+            iat: issued_at,
+            jti: principal.jti.clone(),
+            principal_type: principal.principal_type.clone(),
+            user_id: principal.user_id.clone(),
+            username: principal.username.clone(),
+            display_name: principal.display_name.clone(),
+            role: principal.role.clone(),
+            credential_version: principal.credential_version,
+            agent_account_id: principal.agent_account_id.clone(),
+            owner_user_id: principal.owner_user_id.clone(),
+            owner_username: principal.owner_username.clone(),
+            owner_display_name: principal.owner_display_name.clone(),
+            scopes: principal.scopes.clone(),
+        },
+    )
+}
+
 pub fn bearer_token_from_headers(headers: &HeaderMap) -> Result<String, String> {
     match parse_bearer_token_from_headers(headers) {
         Ok(token) => Ok(token.to_string()),

@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::extract::{Request, State};
-use axum::http::{Method, StatusCode};
+use axum::http::{HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::{delete, get, patch, post};
@@ -13,8 +13,8 @@ use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 use crate::auth::{
-    bearer_token_from_headers, credential_version_matches, decode_user_service_token, unauthorized,
-    CurrentPrincipal,
+    bearer_token_from_headers, credential_version_matches, decode_user_service_token,
+    renew_user_service_token, unauthorized, CurrentPrincipal,
 };
 use crate::models::{PRINCIPAL_TYPE_AGENT_ACCOUNT, PRINCIPAL_TYPE_HUMAN_USER};
 use crate::state::AppState;
@@ -146,6 +146,7 @@ pub fn build_public_router(state: AppState) -> Router {
         .route("/api/health", get(system::health))
         .route("/metrics", get(system::metrics))
         .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/refresh", post(auth::refresh))
         .route("/api/auth/admin/login", post(admin_session::login))
         .route("/api/auth/admin/session", post(admin_session::restore))
         .route("/api/auth/admin/logout", post(admin_session::logout))
@@ -294,8 +295,28 @@ pub async fn require_auth(
     let mut principal = CurrentPrincipal::from(claims);
     refresh_principal_identity(&state, &mut principal).await?;
 
+    // Keep an actively used login alive. Access tokens remain short-lived, while the stable jti
+    // preserves logout/revocation semantics across renewals.
+    let now = chrono::Utc::now().timestamp();
+    let renewal_threshold = (state.config.user_access_ttl_seconds / 2).clamp(60, 3_600);
+    let renewed_token = if i64::try_from(principal.exp)
+        .unwrap_or(i64::MAX)
+        .saturating_sub(now)
+        <= renewal_threshold
+    {
+        Some(renew_user_service_token(&state.config, &principal).map_err(internal_error)?)
+    } else {
+        None
+    };
+
     request.extensions_mut().insert(principal);
-    Ok(next.run(request).await)
+    let mut response = next.run(request).await;
+    if let Some(token) = renewed_token {
+        let value = HeaderValue::from_str(token.as_str())
+            .map_err(|_| internal_error("generated access token is not a valid response header"))?;
+        response.headers_mut().insert("x-access-token", value);
+    }
+    Ok(response)
 }
 
 fn wechat_companion_request_allowed(method: &Method, path: &str) -> bool {
@@ -311,7 +332,7 @@ fn wechat_companion_request_allowed(method: &Method, path: &str) -> bool {
                 .is_some_and(|id| !id.is_empty() && !id.contains('/')))
 }
 
-async fn refresh_principal_identity(
+pub(super) async fn refresh_principal_identity(
     state: &AppState,
     principal: &mut CurrentPrincipal,
 ) -> Result<(), (StatusCode, Json<Value>)> {

@@ -137,20 +137,28 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
 
     func testMemoryUnauthorizedRequestPreservesLoginCredentialAndDoesNotPublishExpiration() async throws {
         let store = APIErrorCredentialStore(token: "valid-user-token")
+        let transport = APIErrorSequenceTransport(responses: [
+            HTTPResponse(
+                statusCode: 401,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"error":"memory scope is unavailable"}"#.utf8)
+            ),
+            HTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"token":"refreshed-user-token"}"#.utf8)
+            ),
+            HTTPResponse(
+                statusCode: 401,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"error":"memory scope is unavailable"}"#.utf8)
+            ),
+        ])
         let client = ChatOSAPIClient(
             configuration: .init(baseURL: URL(string: "https://example.com")!),
             accessToken: "valid-user-token",
             credentialStore: store,
-            transport: APIErrorTransport(
-                response: HTTPResponse(
-                    statusCode: 401,
-                    headers: [
-                        "content-type": "application/json",
-                        "x-access-token": "invalid-memory-refresh-token",
-                    ],
-                    body: Data(#"{"error":"memory scope is unavailable"}"#.utf8)
-                )
-            )
+            transport: transport
         )
         let expiration = expectation(description: "authentication expiration is not published")
         expiration.isInverted = true
@@ -178,9 +186,53 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
         let currentToken = await client.currentAccessToken()
         let storedToken = await store.storedToken()
         let credentialWasDeleted = await store.wasDeleted()
-        XCTAssertEqual(currentToken, "valid-user-token")
-        XCTAssertEqual(storedToken, "valid-user-token")
+        XCTAssertEqual(currentToken, "refreshed-user-token")
+        XCTAssertEqual(storedToken, "refreshed-user-token")
         XCTAssertFalse(credentialWasDeleted)
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.map(\.url.path), [
+            "/api/memory/context/compose",
+            "/api/user/auth/refresh",
+            "/api/memory/context/compose",
+        ])
+        XCTAssertEqual(requests.last?.headers["Authorization"], "Bearer refreshed-user-token")
+    }
+
+    func testMemoryUnauthorizedRefreshesThroughUserServiceAndRetriesSuccessfully() async throws {
+        let store = APIErrorCredentialStore(token: "expired-user-token")
+        let transport = APIErrorSequenceTransport(responses: [
+            HTTPResponse(statusCode: 401, headers: [:], body: Data()),
+            HTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"token":"renewed-user-token"}"#.utf8)
+            ),
+            HTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"ok":true}"#.utf8)
+            ),
+        ])
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
+            accessToken: "expired-user-token",
+            credentialStore: store,
+            transport: transport
+        )
+
+        let response: RefreshRecoveryResponse = try await client.request(
+            "/context/compose",
+            method: "POST",
+            service: .memoryEngine
+        )
+
+        XCTAssertTrue(response.ok)
+        let currentToken = await client.currentAccessToken()
+        let storedToken = await store.storedToken()
+        let requests = await transport.requests()
+        XCTAssertEqual(currentToken, "renewed-user-token")
+        XCTAssertEqual(storedToken, "renewed-user-token")
+        XCTAssertEqual(requests.count, 3)
     }
 
     func testUnauthorizedResponseFromPreviousSessionCannotExpireReauthenticatedSession() async throws {
@@ -236,6 +288,7 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
 }
 
 private struct ErrorResponseDTO: Decodable, Sendable {}
+private struct RefreshRecoveryResponse: Decodable, Sendable { let ok: Bool }
 
 private struct APIErrorTransport: HTTPTransport {
     var response: HTTPResponse
@@ -243,6 +296,23 @@ private struct APIErrorTransport: HTTPTransport {
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         response
     }
+}
+
+private actor APIErrorSequenceTransport: HTTPTransport {
+    private var responses: [HTTPResponse]
+    private var capturedRequests: [HTTPRequest] = []
+
+    init(responses: [HTTPResponse]) {
+        self.responses = responses
+    }
+
+    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        capturedRequests.append(request)
+        guard !responses.isEmpty else { throw ChatOSAPIError.invalidResponse }
+        return responses.removeFirst()
+    }
+
+    func requests() -> [HTTPRequest] { capturedRequests }
 }
 
 private actor APIErrorBlockingTransport: HTTPTransport {

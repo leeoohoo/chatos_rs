@@ -21,6 +21,18 @@ public actor ChatOSAPIClient {
     private let decoder: JSONDecoder
     private var accessToken: String?
     private var authenticationSessionID = UUID()
+    private var authenticationRefresh: AuthenticationRefresh?
+
+    private struct AuthenticationRefresh: Sendable {
+        let id: UUID
+        let rejectedAccessToken: String
+        let authenticationSessionID: UUID
+        let task: Task<HTTPResponse, Error>
+    }
+
+    private struct RefreshAccessTokenResponse: Decodable, Sendable {
+        let token: String
+    }
 
     public init(
         configuration: Configuration,
@@ -37,6 +49,7 @@ public actor ChatOSAPIClient {
 
     public func setAccessToken(_ token: String?) async throws {
         authenticationSessionID = UUID()
+        authenticationRefresh = nil
         accessToken = token?.trimmedNonEmpty
         if let accessToken {
             try await credentialStore?.saveAccessToken(accessToken)
@@ -63,7 +76,8 @@ public actor ChatOSAPIClient {
         additionalHeaders: [String: String] = [:],
         timeoutInterval: TimeInterval? = nil,
         service: Service,
-        expectedAuthenticationSessionID: UUID? = nil
+        expectedAuthenticationSessionID: UUID? = nil,
+        allowAuthenticationRecovery: Bool = true
     ) async throws -> Response {
         if let expectedAuthenticationSessionID {
             guard accessToken != nil, expectedAuthenticationSessionID == authenticationSessionID else { throw ChatOSAPIError.unauthorized }
@@ -98,6 +112,23 @@ public actor ChatOSAPIClient {
             throw ChatOSAPIError.unauthorized
         }
         if response.statusCode == 401 {
+            if allowAuthenticationRecovery,
+               let requestAccessToken,
+               try await refreshAuthenticationIfPossible(
+                   rejectedAccessToken: requestAccessToken,
+                   requestAuthenticationSessionID: requestAuthenticationSessionID
+               ) {
+                return try await request(
+                    endpoint,
+                    method: method,
+                    body: body,
+                    additionalHeaders: additionalHeaders,
+                    timeoutInterval: timeoutInterval,
+                    service: service,
+                    expectedAuthenticationSessionID: expectedAuthenticationSessionID,
+                    allowAuthenticationRecovery: false
+                )
+            }
             // Only the user service is authoritative for the desktop login session. Memory is an
             // optional downstream service and can reject a request because of its own rollout,
             // scope, or transient authentication state. Treating that response as a global
@@ -152,6 +183,90 @@ public actor ChatOSAPIClient {
         } catch {
             throw ChatOSAPIError.decoding(error.localizedDescription)
         }
+    }
+
+    /// A Memory 401 may mean that the short-lived User Service JWT expired while the desktop app
+    /// remained open. Refresh through the authoritative User Service once, share that operation
+    /// across concurrent failures, and then retry the original request exactly once.
+    private func refreshAuthenticationIfPossible(
+        rejectedAccessToken: String,
+        requestAuthenticationSessionID: UUID
+    ) async throws -> Bool {
+        guard authenticationSessionID == requestAuthenticationSessionID else { return false }
+        guard accessToken == rejectedAccessToken else {
+            return accessToken != nil
+        }
+        guard let url = makeURL(endpoint: "/auth/refresh", service: .userService) else {
+            throw ChatOSAPIError.invalidEndpoint
+        }
+
+        let operation: AuthenticationRefresh
+        if let active = authenticationRefresh,
+           active.rejectedAccessToken == rejectedAccessToken,
+           active.authenticationSessionID == requestAuthenticationSessionID {
+            operation = active
+        } else {
+            let transport = self.transport
+            let refreshRequest = HTTPRequest(
+                url: url,
+                method: "POST",
+                headers: [
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "X-Chatos-Client-Surface": configuration.clientSurface,
+                    "Authorization": "Bearer \(rejectedAccessToken)",
+                ],
+                timeoutInterval: 30,
+                maximumResponseBytes: 64 * 1_024
+            )
+            operation = AuthenticationRefresh(
+                id: UUID(),
+                rejectedAccessToken: rejectedAccessToken,
+                authenticationSessionID: requestAuthenticationSessionID,
+                task: Task { try await transport.send(refreshRequest) }
+            )
+            authenticationRefresh = operation
+        }
+
+        let response: HTTPResponse
+        do {
+            response = try await operation.task.value
+        } catch {
+            if authenticationRefresh?.id == operation.id { authenticationRefresh = nil }
+            throw error
+        }
+        if authenticationRefresh?.id == operation.id { authenticationRefresh = nil }
+
+        // Login/logout may have happened while the refresh request was in flight. Never let an old
+        // response overwrite or expire the newer authentication session.
+        guard authenticationSessionID == requestAuthenticationSessionID else { return false }
+        guard accessToken == rejectedAccessToken else { return accessToken != nil }
+        if response.statusCode == 401 {
+            accessToken = nil
+            authenticationSessionID = UUID()
+            try? await credentialStore?.deleteAccessToken()
+            NotificationCenter.default.post(name: .chatOSAuthenticationDidExpire, object: nil)
+            throw ChatOSAPIError.unauthorized
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            let payload = APIErrorPayload.decode(response.body, statusCode: response.statusCode)
+            throw ChatOSAPIError.server(
+                statusCode: response.statusCode,
+                message: payload.resolvedMessage
+            )
+        }
+        let refreshed: RefreshAccessTokenResponse
+        do {
+            refreshed = try decoder.decode(RefreshAccessTokenResponse.self, from: response.body)
+        } catch {
+            throw ChatOSAPIError.decoding(error.localizedDescription)
+        }
+        guard let token = refreshed.token.trimmedNonEmpty else {
+            throw ChatOSAPIError.invalidResponse
+        }
+        accessToken = token
+        try await credentialStore?.saveAccessToken(token)
+        return true
     }
 
     func requestVoid(

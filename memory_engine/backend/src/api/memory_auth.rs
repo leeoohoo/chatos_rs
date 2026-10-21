@@ -6,7 +6,7 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::{FromRequestParts, State},
-    http::{request::Parts, Request, StatusCode},
+    http::{request::Parts, HeaderValue, Request, StatusCode},
     middleware::Next,
     response::Response,
 };
@@ -227,11 +227,13 @@ pub async fn require_memory_auth(
         match verify_user_service_principal(token.as_str(), &state.config, &state.user_service_http)
             .await
         {
-            Ok(principal) => {
+            Ok((principal, refreshed_access_token)) => {
                 request
                     .extensions_mut()
                     .insert(MemoryAuthContext::User(principal));
-                return Ok(next.run(request).await);
+                let mut response = next.run(request).await;
+                attach_refreshed_access_token(&mut response, refreshed_access_token)?;
+                return Ok(response);
             }
             Err(err) => return Err(err),
         }
@@ -253,13 +255,30 @@ pub async fn require_user_memory_auth(
             "user Bearer authorization is required on the public Memory Engine API".to_string(),
         )
     })?;
-    let principal =
+    let (principal, refreshed_access_token) =
         verify_user_service_principal(token.as_str(), &state.config, &state.user_service_http)
             .await?;
     request
         .extensions_mut()
         .insert(MemoryAuthContext::User(principal));
-    Ok(next.run(request).await)
+    let mut response = next.run(request).await;
+    attach_refreshed_access_token(&mut response, refreshed_access_token)?;
+    Ok(response)
+}
+
+fn attach_refreshed_access_token(
+    response: &mut Response,
+    token: Option<String>,
+) -> Result<(), (StatusCode, String)> {
+    let Some(token) = token else { return Ok(()) };
+    let value = HeaderValue::from_str(token.as_str()).map_err(|_| {
+        (
+            StatusCode::BAD_GATEWAY,
+            "user_service returned an invalid refreshed access token header".to_string(),
+        )
+    })?;
+    response.headers_mut().insert("x-access-token", value);
+    Ok(())
 }
 
 fn bearer_token_from_request(
@@ -281,7 +300,7 @@ async fn verify_user_service_principal(
     token: &str,
     config: &AppConfig,
     client: &reqwest::Client,
-) -> Result<MemoryPrincipal, (StatusCode, String)> {
+) -> Result<(MemoryPrincipal, Option<String>), (StatusCode, String)> {
     let endpoint = format!(
         "{}/api/auth/verify",
         config.user_service_base_url.trim().trim_end_matches('/')
@@ -312,6 +331,13 @@ async fn verify_user_service_principal(
             format!("invalid user token: {} {}", status.as_u16(), body),
         ));
     }
+    let refreshed_access_token = response
+        .headers()
+        .get("x-access-token")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
     let payload =
         read_response_json_limited::<UserServiceVerifyResponse>(response, JSON_BODY_LIMIT_BYTES)
             .await
@@ -330,7 +356,10 @@ async fn verify_user_service_principal(
             ));
         }
     }
-    Ok(MemoryPrincipal::from(payload.principal))
+    Ok((
+        MemoryPrincipal::from(payload.principal),
+        refreshed_access_token,
+    ))
 }
 
 #[cfg(test)]
