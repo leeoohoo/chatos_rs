@@ -1,5 +1,9 @@
 use super::domain::*;
-use super::{projection::StoryProjectSnapshot, store::StoryProjectStore};
+use super::{
+    media::{story_studio_protocol, StoryStudioManager},
+    projection::StoryProjectSnapshot,
+    store::StoryProjectStore,
+};
 use sha2::{Digest, Sha256};
 use std::fs;
 use tempfile::tempdir;
@@ -7,13 +11,21 @@ use uuid::Uuid;
 
 #[test]
 fn schema_v2_rejects_unsafe_native_filenames() {
-    let mut project = project();
-    project.props[0]
+    let mut unsafe_image_project = project();
+    unsafe_image_project.props[0]
         .media
         .images
         .push(StoryImage::test_image("../escape.png"));
 
-    assert!(project.validate().is_err());
+    assert!(unsafe_image_project.validate().is_err());
+
+    let mut unsafe_video_project = project();
+    unsafe_video_project.segments[0].video = Some(StoryVideo {
+        filename: "../escape.mp4".into(),
+        job_id: "provider-job".into(),
+        model_name: "video".into(),
+    });
+    assert!(unsafe_video_project.validate().is_err());
 }
 
 #[test]
@@ -266,6 +278,97 @@ fn native_store_rejects_symlinked_account_hierarchy() {
 
     assert!(store.save("alice", &project()).is_err());
     assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
+}
+
+#[test]
+fn story_media_tokens_are_owner_generation_and_presentation_scoped() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut saved = project();
+    let image = StoryImage::test_image("private-image.png");
+    saved.props[0].media.images.push(image.clone());
+    store.save("alice", &saved).unwrap();
+    let asset = projects_directory(app_data.path(), "alice")
+        .join(&saved.id)
+        .join(&image.filename);
+    fs::write(&asset, b"private-image-bytes").unwrap();
+
+    let manager = StoryStudioManager::new(app_data.path().to_path_buf()).unwrap();
+    let presentation = Uuid::new_v4().to_string();
+    let snapshot = manager
+        .present_project("alice", 7, &presentation, &saved.id)
+        .unwrap();
+    let value = serde_json::to_value(snapshot).unwrap();
+    let media = &value["props"][0]["media"]["images"][0];
+    let token = media["contentToken"].as_str().unwrap();
+    let preview_url = media["previewUrl"].as_str().unwrap();
+    assert_eq!(token.len(), 32);
+    assert!(!preview_url.contains(&image.filename));
+    assert!(!preview_url.contains("alice"));
+
+    let response = story_studio_protocol(
+        manager.clone(),
+        tauri::http::Request::builder()
+            .uri(preview_url)
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(response.status(), tauri::http::StatusCode::OK);
+    assert_eq!(response.body(), b"private-image-bytes");
+    assert_eq!(response.headers()["Cache-Control"], "no-store");
+    assert_eq!(response.headers()["X-Content-Type-Options"], "nosniff");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let outside = app_data.path().join("outside-image");
+        fs::write(&outside, b"must-not-cross-story-protocol").unwrap();
+        fs::remove_file(&asset).unwrap();
+        symlink(&outside, &asset).unwrap();
+        let response = story_studio_protocol(
+            manager.clone(),
+            tauri::http::Request::builder()
+                .uri(preview_url)
+                .body(Vec::new())
+                .unwrap(),
+        );
+        assert_eq!(response.status(), tauri::http::StatusCode::NOT_FOUND);
+    }
+
+    let wrong_presentation = preview_url.replace(&presentation, &Uuid::new_v4().to_string());
+    let response = story_studio_protocol(
+        manager.clone(),
+        tauri::http::Request::builder()
+            .uri(wrong_presentation)
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(response.status(), tauri::http::StatusCode::NOT_FOUND);
+
+    manager
+        .discard_presentation("alice", 7, &presentation)
+        .unwrap();
+    let response = story_studio_protocol(
+        manager.clone(),
+        tauri::http::Request::builder()
+            .uri(preview_url)
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(response.status(), tauri::http::StatusCode::NOT_FOUND);
+
+    let replacement_presentation = Uuid::new_v4().to_string();
+    manager
+        .present_page("alice", 8, &replacement_presentation, None, 40)
+        .unwrap();
+    let response = story_studio_protocol(
+        manager,
+        tauri::http::Request::builder()
+            .uri(preview_url)
+            .body(Vec::new())
+            .unwrap(),
+    );
+    assert_eq!(response.status(), tauri::http::StatusCode::UNAUTHORIZED);
 }
 
 fn projects_directory(app_data: &std::path::Path, owner: &str) -> std::path::PathBuf {

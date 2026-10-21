@@ -31,8 +31,21 @@ pub(crate) struct StoryProjectSnapshot {
     updated_at_unix_ms: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct StoryMediaPresentation {
+    pub content_token: String,
+    pub preview_url: String,
+}
+
 impl StoryProjectSnapshot {
     pub(super) fn from_project(project: &StoryProject) -> Self {
+        Self::from_project_with_media(project, |_| None)
+    }
+
+    pub(super) fn from_project_with_media(
+        project: &StoryProject,
+        media: impl Fn(&str) -> Option<StoryMediaPresentation>,
+    ) -> Self {
         Self {
             id: project.id.clone(),
             version: project.version,
@@ -46,18 +59,22 @@ impl StoryProjectSnapshot {
             characters: project
                 .characters
                 .iter()
-                .map(StoryCharacterSnapshot::from)
+                .map(|value| StoryCharacterSnapshot::from_character(value, &media))
                 .collect(),
             scenes: project
                 .scenes
                 .iter()
-                .map(StorySceneSnapshot::from)
+                .map(|value| StorySceneSnapshot::from_scene(value, &media))
                 .collect(),
-            props: project.props.iter().map(StoryPropSnapshot::from).collect(),
+            props: project
+                .props
+                .iter()
+                .map(|value| StoryPropSnapshot::from_prop(value, &media))
+                .collect(),
             segments: project
                 .segments
                 .iter()
-                .map(StorySegmentSnapshot::from)
+                .map(|value| StorySegmentSnapshot::from_segment(value, &media))
                 .collect(),
             relations: project
                 .relations
@@ -111,17 +128,28 @@ struct StoryImageCollectionSnapshot {
 
 impl From<&StoryImageCollection> for StoryImageCollectionSnapshot {
     fn from(value: &StoryImageCollection) -> Self {
+        Self::from_collection(value, &|_| None)
+    }
+}
+
+impl StoryImageCollectionSnapshot {
+    fn from_collection(
+        value: &StoryImageCollection,
+        media: &impl Fn(&str) -> Option<StoryMediaPresentation>,
+    ) -> Self {
+        let image_snapshot = |image: &super::domain::StoryImage| {
+            let presentation = media(&image.filename);
+            StoryImageSnapshot {
+                id: image.id.clone(),
+                mime_type: image.mime_type.clone(),
+                content_token: presentation
+                    .as_ref()
+                    .map(|value| value.content_token.clone()),
+                preview_url: presentation.map(|value| value.preview_url),
+            }
+        };
         Self {
-            images: value
-                .images
-                .iter()
-                .map(|image| StoryImageSnapshot {
-                    id: image.id.clone(),
-                    mime_type: image.mime_type.clone(),
-                    content_token: None,
-                    preview_url: None,
-                })
-                .collect(),
+            images: value.images.iter().map(image_snapshot).collect(),
             confirmed_image_id: value.confirmed_image_id.clone(),
             generation_attempt_id: value.generation_attempt_id.clone(),
         }
@@ -192,14 +220,17 @@ struct StoryCharacterSnapshot {
     media: StoryImageCollectionSnapshot,
 }
 
-impl From<&StoryCharacter> for StoryCharacterSnapshot {
-    fn from(value: &StoryCharacter) -> Self {
+impl StoryCharacterSnapshot {
+    fn from_character(
+        value: &StoryCharacter,
+        media: &impl Fn(&str) -> Option<StoryMediaPresentation>,
+    ) -> Self {
         Self {
             id: value.id.clone(),
             name: value.name.clone(),
             profile: StoryCharacterProfileSnapshot::from(&value.profile),
             image_prompt: value.image_prompt.clone(),
-            media: StoryImageCollectionSnapshot::from(&value.media),
+            media: StoryImageCollectionSnapshot::from_collection(&value.media, media),
         }
     }
 }
@@ -214,14 +245,17 @@ struct StorySceneSnapshot {
     media: StoryImageCollectionSnapshot,
 }
 
-impl From<&StoryScene> for StorySceneSnapshot {
-    fn from(value: &StoryScene) -> Self {
+impl StorySceneSnapshot {
+    fn from_scene(
+        value: &StoryScene,
+        media: &impl Fn(&str) -> Option<StoryMediaPresentation>,
+    ) -> Self {
         Self {
             id: value.id.clone(),
             name: value.name.clone(),
             profile: StorySceneProfileSnapshot::from(&value.profile),
             image_prompt: value.image_prompt.clone(),
-            media: StoryImageCollectionSnapshot::from(&value.media),
+            media: StoryImageCollectionSnapshot::from_collection(&value.media, media),
         }
     }
 }
@@ -236,14 +270,17 @@ struct StoryPropSnapshot {
     media: StoryImageCollectionSnapshot,
 }
 
-impl From<&StoryProp> for StoryPropSnapshot {
-    fn from(value: &StoryProp) -> Self {
+impl StoryPropSnapshot {
+    fn from_prop(
+        value: &StoryProp,
+        media: &impl Fn(&str) -> Option<StoryMediaPresentation>,
+    ) -> Self {
         Self {
             id: value.id.clone(),
             name: value.name.clone(),
             description: value.description.clone(),
             image_prompt: value.image_prompt.clone(),
-            media: StoryImageCollectionSnapshot::from(&value.media),
+            media: StoryImageCollectionSnapshot::from_collection(&value.media, media),
         }
     }
 }
@@ -342,12 +379,18 @@ struct StoryVideoSnapshot {
     preview_url: Option<String>,
 }
 
-impl From<&StoryVideo> for StoryVideoSnapshot {
-    fn from(value: &StoryVideo) -> Self {
+impl StoryVideoSnapshot {
+    fn from_video(
+        value: &StoryVideo,
+        media: &impl Fn(&str) -> Option<StoryMediaPresentation>,
+    ) -> Self {
+        let presentation = media(&value.filename);
         Self {
             model_name: value.model_name.clone(),
-            content_token: None,
-            preview_url: None,
+            content_token: presentation
+                .as_ref()
+                .map(|value| value.content_token.clone()),
+            preview_url: presentation.map(|value| value.preview_url),
         }
     }
 }
@@ -378,8 +421,11 @@ struct StorySegmentSnapshot {
     error: Option<String>,
 }
 
-impl From<&StorySegment> for StorySegmentSnapshot {
-    fn from(value: &StorySegment) -> Self {
+impl StorySegmentSnapshot {
+    fn from_segment(
+        value: &StorySegment,
+        media: &impl Fn(&str) -> Option<StoryMediaPresentation>,
+    ) -> Self {
         Self {
             id: value.id.clone(),
             title: value.title.clone(),
@@ -395,12 +441,12 @@ impl From<&StorySegment> for StorySegmentSnapshot {
             scene_ids: value.scene_ids.clone(),
             prop_ids: value.prop_ids.clone(),
             detail: value.detail.as_ref().map(StorySegmentDetailSnapshot::from),
-            first_frames: StoryImageCollectionSnapshot::from(&value.first_frames),
+            first_frames: StoryImageCollectionSnapshot::from_collection(&value.first_frames, media),
             user_selected_first_frame_id: value.user_selected_first_frame_id.clone(),
             inherited_first_frame_source_segment_id: value
                 .inherited_first_frame_source_segment_id
                 .clone(),
-            last_frames: StoryImageCollectionSnapshot::from(&value.last_frames),
+            last_frames: StoryImageCollectionSnapshot::from_collection(&value.last_frames, media),
             actual_video_last_frame_id: value.actual_video_last_frame_id.clone(),
             video_guidance_mode: match value.video_guidance_mode {
                 StoryVideoGuidanceMode::FirstFrame => "first_frame",
@@ -415,11 +461,14 @@ impl From<&StorySegment> for StorySegmentSnapshot {
                 .iter()
                 .map(StoryVideoAttemptSnapshot::from)
                 .collect(),
-            video: value.video.as_ref().map(StoryVideoSnapshot::from),
+            video: value
+                .video
+                .as_ref()
+                .map(|value| StoryVideoSnapshot::from_video(value, media)),
             archived_videos: value
                 .archived_videos
                 .iter()
-                .map(StoryVideoSnapshot::from)
+                .map(|value| StoryVideoSnapshot::from_video(value, media))
                 .collect(),
             error: value.error.clone(),
         }

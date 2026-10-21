@@ -16,6 +16,7 @@ use crate::{
     host_lifecycle::HostManager, local_terminal::LocalTerminalRegistry,
     media_studio::MediaStudioManager, plugin_application::PluginApplicationManager,
     project_run::ProjectRunManager, remote_connection::RemoteConnectionManager,
+    story_studio::StoryStudioManager,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -319,7 +320,9 @@ pub async fn restore_authentication_session(
     local_terminals: State<'_, LocalTerminalRegistry>,
     plugin_applications: State<'_, PluginApplicationManager>,
     media_studio: State<'_, MediaStudioManager>,
+    story_studio: State<'_, StoryStudioManager>,
 ) -> Result<Option<AuthSession>, String> {
+    story_studio.reset();
     media_studio.reset();
     plugin_applications.reset().await;
     local_terminals.reset().await;
@@ -343,7 +346,9 @@ pub async fn login(
     local_terminals: State<'_, LocalTerminalRegistry>,
     plugin_applications: State<'_, PluginApplicationManager>,
     media_studio: State<'_, MediaStudioManager>,
+    story_studio: State<'_, StoryStudioManager>,
 ) -> Result<AuthSession, String> {
+    story_studio.reset();
     media_studio.reset();
     plugin_applications.reset().await;
     local_terminals.reset().await;
@@ -378,7 +383,9 @@ pub async fn register(
     local_terminals: State<'_, LocalTerminalRegistry>,
     plugin_applications: State<'_, PluginApplicationManager>,
     media_studio: State<'_, MediaStudioManager>,
+    story_studio: State<'_, StoryStudioManager>,
 ) -> Result<AuthSession, String> {
+    story_studio.reset();
     media_studio.reset();
     plugin_applications.reset().await;
     local_terminals.reset().await;
@@ -399,7 +406,9 @@ pub async fn logout(
     local_terminals: State<'_, LocalTerminalRegistry>,
     plugin_applications: State<'_, PluginApplicationManager>,
     media_studio: State<'_, MediaStudioManager>,
+    story_studio: State<'_, StoryStudioManager>,
 ) -> Result<(), String> {
+    story_studio.reset();
     media_studio.reset();
     plugin_applications.reset().await;
     local_terminals.reset().await;

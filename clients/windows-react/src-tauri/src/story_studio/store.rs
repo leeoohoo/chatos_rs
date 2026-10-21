@@ -10,9 +10,14 @@ use std::{
 };
 use uuid::Uuid;
 
-use super::{domain::StoryProject, projection::StoryProjectSnapshot};
+use super::{
+    domain::{valid_storage_filename, StoryProject},
+    projection::StoryProjectSnapshot,
+};
 
 const MAXIMUM_PROJECT_BYTES: usize = 8 * 1_024 * 1_024;
+pub(super) const MAXIMUM_STORY_IMAGE_BYTES: usize = 20 * 1_024 * 1_024;
+pub(super) const MAXIMUM_STORY_VIDEO_BYTES: usize = 512 * 1_024 * 1_024;
 const DEFAULT_PROJECT_PAGE_SIZE: usize = 40;
 const MAXIMUM_PROJECT_PAGE_SIZE: usize = 200;
 
@@ -31,6 +36,12 @@ pub(crate) struct StoryProjectPage {
     pub unreadable_count: usize,
 }
 
+pub(super) struct NativeStoryProjectPage {
+    pub items: Vec<StoryProject>,
+    pub next_cursor: Option<StoryProjectCursor>,
+    pub unreadable_count: usize,
+}
+
 #[derive(Clone)]
 pub(super) struct StoryProjectStore {
     root: PathBuf,
@@ -39,6 +50,9 @@ pub(super) struct StoryProjectStore {
 
 impl StoryProjectStore {
     pub(super) fn new(app_data_directory: PathBuf) -> Result<Self, String> {
+        if !app_data_directory.exists() {
+            fs::create_dir_all(&app_data_directory).map_err(|_| store_error())?;
+        }
         validate_private_directory(&app_data_directory)?;
         let root = private_child_directory(&app_data_directory, "StoryStudio")?;
         Ok(Self {
@@ -75,13 +89,21 @@ impl StoryProjectStore {
         owner_user_id: &str,
         project_id: &str,
     ) -> Result<StoryProjectSnapshot, String> {
+        let project = self.load_native_project(owner_user_id, project_id)?;
+        Ok(StoryProjectSnapshot::from_project(&project))
+    }
+
+    pub(super) fn load_native_project(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+    ) -> Result<StoryProject, String> {
         let owner = validate_owner(owner_user_id)?;
         let project_id = canonical_project_id(project_id)?;
         let projects = self
             .existing_projects_directory(owner)?
             .ok_or_else(store_error)?;
-        let project = load_project_manifest(&projects.join(&project_id), &project_id)?;
-        Ok(StoryProjectSnapshot::from_project(&project))
+        load_project_manifest(&projects.join(&project_id), &project_id)
     }
 
     pub(super) fn load_page(
@@ -90,6 +112,24 @@ impl StoryProjectStore {
         after: Option<StoryProjectCursor>,
         requested_limit: usize,
     ) -> Result<StoryProjectPage, String> {
+        let page = self.load_native_page(owner_user_id, after, requested_limit)?;
+        Ok(StoryProjectPage {
+            items: page
+                .items
+                .iter()
+                .map(StoryProjectSnapshot::from_project)
+                .collect(),
+            next_cursor: page.next_cursor,
+            unreadable_count: page.unreadable_count,
+        })
+    }
+
+    pub(super) fn load_native_page(
+        &self,
+        owner_user_id: &str,
+        after: Option<StoryProjectCursor>,
+        requested_limit: usize,
+    ) -> Result<NativeStoryProjectPage, String> {
         let owner = validate_owner(owner_user_id)?;
         if let Some(cursor) = &after {
             validate_cursor(cursor)?;
@@ -100,7 +140,7 @@ impl StoryProjectStore {
             requested_limit.clamp(1, MAXIMUM_PROJECT_PAGE_SIZE)
         };
         let Some(projects_directory) = self.existing_projects_directory(owner)? else {
-            return Ok(StoryProjectPage {
+            return Ok(NativeStoryProjectPage {
                 items: Vec::new(),
                 next_cursor: None,
                 unreadable_count: 0,
@@ -167,14 +207,40 @@ impl StoryProjectStore {
                     .map(|value| value.cursor.clone())
             })
             .flatten();
-        Ok(StoryProjectPage {
-            items: projects
-                .iter()
-                .map(StoryProjectSnapshot::from_project)
-                .collect(),
+        Ok(NativeStoryProjectPage {
+            items: projects,
             next_cursor,
             unreadable_count,
         })
+    }
+
+    pub(super) fn read_media_asset(
+        &self,
+        owner_hash: &str,
+        project_id: &str,
+        filename: &str,
+        expected_mime_type: &str,
+        maximum_bytes: usize,
+    ) -> Result<Vec<u8>, String> {
+        if !valid_owner_hash(owner_hash)
+            || !valid_storage_filename(filename)
+            || !matches!(
+                maximum_bytes,
+                MAXIMUM_STORY_IMAGE_BYTES | MAXIMUM_STORY_VIDEO_BYTES
+            )
+        {
+            return Err(store_error());
+        }
+        let project_id = canonical_project_id(project_id)?;
+        let projects = self
+            .existing_projects_directory_for_hash(owner_hash)?
+            .ok_or_else(store_error)?;
+        let directory = projects.join(&project_id);
+        let project = load_project_manifest(&directory, &project_id)?;
+        if !project_references_media(&project, filename, expected_mime_type, maximum_bytes) {
+            return Err(store_error());
+        }
+        read_private_file(&directory.join(filename), maximum_bytes)
     }
 
     fn ensure_projects_directory(&self, owner: &str) -> Result<PathBuf, String> {
@@ -185,12 +251,22 @@ impl StoryProjectStore {
     }
 
     fn existing_projects_directory(&self, owner: &str) -> Result<Option<PathBuf>, String> {
+        self.existing_projects_directory_for_hash(&owner_hash(owner))
+    }
+
+    fn existing_projects_directory_for_hash(
+        &self,
+        owner_hash: &str,
+    ) -> Result<Option<PathBuf>, String> {
+        if !valid_owner_hash(owner_hash) {
+            return Err(store_error());
+        }
         validate_private_directory(&self.root)?;
         let accounts = self.root.join("Accounts");
         if !validate_optional_private_directory(&accounts)? {
             return Ok(None);
         }
-        let account = accounts.join(owner_hash(owner));
+        let account = accounts.join(owner_hash);
         if !validate_optional_private_directory(&account)? {
             return Ok(None);
         }
@@ -200,6 +276,41 @@ impl StoryProjectStore {
         }
         Ok(Some(projects))
     }
+}
+
+fn project_references_media(
+    project: &StoryProject,
+    filename: &str,
+    expected_mime_type: &str,
+    maximum_bytes: usize,
+) -> bool {
+    if maximum_bytes == MAXIMUM_STORY_IMAGE_BYTES {
+        return project
+            .characters
+            .iter()
+            .flat_map(|value| &value.media.images)
+            .chain(project.scenes.iter().flat_map(|value| &value.media.images))
+            .chain(project.props.iter().flat_map(|value| &value.media.images))
+            .chain(
+                project
+                    .segments
+                    .iter()
+                    .flat_map(|value| value.first_frames.images.iter()),
+            )
+            .chain(
+                project
+                    .segments
+                    .iter()
+                    .flat_map(|value| value.last_frames.images.iter()),
+            )
+            .any(|image| image.filename == filename && image.mime_type == expected_mime_type);
+    }
+    expected_mime_type == "video/mp4"
+        && project
+            .segments
+            .iter()
+            .flat_map(|segment| segment.video.iter().chain(segment.archived_videos.iter()))
+            .any(|video| video.filename == filename)
 }
 
 #[derive(Clone)]
@@ -469,6 +580,13 @@ fn validate_owner(value: &str) -> Result<&str, String> {
 
 fn owner_hash(owner_user_id: &str) -> String {
     format!("{:x}", Sha256::digest(owner_user_id.as_bytes()))
+}
+
+fn valid_owner_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn system_time_milliseconds(value: Option<std::time::SystemTime>) -> u64 {

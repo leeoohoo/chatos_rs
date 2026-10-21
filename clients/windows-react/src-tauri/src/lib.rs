@@ -111,6 +111,7 @@ use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
     restart_task_inspector, retry_task_inspector,
 };
+use story_studio::{story_studio_protocol, StoryStudioManager};
 use system_permissions::{load_system_permissions, request_system_permission};
 use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent};
 use terminal_tool_worker::TerminalToolWorker;
@@ -130,13 +131,17 @@ pub fn run() {
         AttachmentManager::from_runtime().expect("failed to configure attachment vault");
     let media_studio_manager =
         MediaStudioManager::from_runtime().expect("failed to configure media studio");
+    let story_studio_manager =
+        StoryStudioManager::from_runtime().expect("failed to configure story studio");
     let protocol_attachment_manager = attachment_manager.clone();
     let protocol_media_studio_manager = media_studio_manager.clone();
+    let protocol_story_studio_manager = story_studio_manager.clone();
     let drop_attachment_manager = attachment_manager.clone();
     let app = tauri::Builder::default()
         .manage(authentication)
         .manage(attachment_manager)
         .manage(media_studio_manager)
+        .manage(story_studio_manager)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
@@ -166,6 +171,9 @@ pub fn run() {
         })
         .register_uri_scheme_protocol("chatos-media", move |_context, request| {
             media_studio_protocol(protocol_media_studio_manager.clone(), request)
+        })
+        .register_uri_scheme_protocol("chatos-story", move |_context, request| {
+            story_studio_protocol(protocol_story_studio_manager.clone(), request)
         })
         .on_webview_event(move |webview, event| {
             let emit_drag_state = |targeted| {
@@ -342,6 +350,7 @@ pub fn run() {
         app_handle.state::<RemoteConnectionManager>().reset().await;
         app_handle.state::<LocalTerminalRegistry>().reset().await;
         app_handle.state::<MediaStudioManager>().reset();
+        app_handle.state::<StoryStudioManager>().reset();
         app_handle.state::<PluginApplicationManager>().reset().await;
         app_handle.state::<HostManager>().shutdown().await;
     });

@@ -542,6 +542,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 故事原生 Store 第二段）：新增 owner-scoped `StoryProjectStore`，固定使用 `<AppData>/StoryStudio/Accounts/<SHA-256 owner>/Projects/<project UUID>/project.json`，逐级拒绝 symlink/Windows reparse，目录与临时文件使用私有权限。schema v2 manifest 以 8 MiB 为上限，写入 `project.json.tmp` 后执行 file sync、原子替换与目录 sync；读取严格解码并再次执行 Domain 校验，损坏记录只累计 `unreadableCount`，不替换或删除。目录分页保持 macOS 默认 40、上限 200、manifest 修改时间 + project ID 游标及 newest-first 语义。独立 `StoryProjectSnapshot` 只可序列化、不可从 React 反序列化；图片/视频仅预留空的 `contentToken`/`previewUrl`，不发布文件名、本机路径、provider result/asset/job identity 或媒体字节。Story Rust 定向测试增至 10 项，`cargo clippy --lib -- -D warnings` 通过；仍未注册 Tauri command，也没有 React 剧情入口。下一片建立 owner/authentication generation/presentation-scoped Story 媒体 token vault 与受控预览，再进入 mutation/provider commands。
 
+状态补充（2026-10-21，Windows AI 故事原生媒体门禁第三段）：新增 Story 专用内存 token vault 与 `chatos-story` 受控预览协议。项目投影时才为当前 owner、authentication generation、presentation、project 和 native filename 建立随机 opaque token；DTO 只得到 token 与受控 URL，协议请求会重新读取并严格校验最新 manifest、媒体仍被项目引用、20 MiB 图片/512 MiB 视频上限、普通文件及非 symlink/reparse。换账号或登录代次、页面 discard、登录/注册/恢复/登出和应用退出都会清空 token；旧 URL 分别失败为 unauthorized/not found，响应固定 `nosniff + no-store`。同时收紧图片 MIME 白名单及视频文件名 traversal 校验，CSP 仅放行精确 `chatos-story` scheme/host。Story Rust 定向测试增至 11 项，`cargo clippy --lib -- -D warnings` 通过；仍没有 Story Tauri 业务 command 或 React 入口。下一片建立绑定当前认证 generation 的目录/项目读取以及安全创建/设置 typed commands，React 仍继续关闭。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

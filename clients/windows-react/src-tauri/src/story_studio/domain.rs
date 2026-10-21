@@ -60,7 +60,10 @@ impl StoryImageCollection {
             Uuid::parse_str(&image.id).is_err()
                 || !ids.insert(image.id.as_str())
                 || !valid_storage_filename(&image.filename)
-                || !image.mime_type.to_ascii_lowercase().starts_with("image/")
+                || !matches!(
+                    image.mime_type.as_str(),
+                    "image/png" | "image/jpeg" | "image/webp"
+                )
         }) {
             return Err(invalid_story());
         }
@@ -320,6 +323,14 @@ impl StoryProject {
             segment.first_frames.validate()?;
             segment.last_frames.validate()?;
             if segment
+                .video
+                .iter()
+                .chain(segment.archived_videos.iter())
+                .any(|video| !valid_storage_filename(&video.filename))
+            {
+                return Err(invalid_story());
+            }
+            if segment
                 .user_selected_first_frame_id
                 .as_ref()
                 .is_some_and(|id| {
@@ -552,7 +563,7 @@ fn all_unique<'a, T: Eq + std::hash::Hash + 'a>(mut values: impl Iterator<Item =
     values.all(|value| seen.insert(value))
 }
 
-fn valid_storage_filename(value: &str) -> bool {
+pub(super) fn valid_storage_filename(value: &str) -> bool {
     !value.is_empty()
         && !value.starts_with('.')
         && !value.contains('/')
