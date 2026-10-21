@@ -932,7 +932,10 @@ pub(crate) async fn start_media_studio_video_generation(
         seconds: request.seconds,
         ratio: request.ratio.clone(),
         input_image,
+        last_frame_image: None,
+        reference_video: None,
         reference_audio,
+        reference_purpose: video_provider::VideoReferencePurpose::Reference,
         client_request_id: request.client_request_id.clone(),
     };
     let mut models = authentication
@@ -1667,7 +1670,10 @@ mod tests {
                     seconds: 4,
                     ratio: "16:9".into(),
                     input_image: None,
+                    last_frame_image: None,
+                    reference_video: None,
                     reference_audio: None,
+                    reference_purpose: video_provider::VideoReferencePurpose::Reference,
                     client_request_id: "request-1".into(),
                 },
                 video_provider::ResolvedVideoModel {

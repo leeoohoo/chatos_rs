@@ -428,7 +428,10 @@ mod tests {
             seconds: 4,
             ratio: "16:9".into(),
             input_image: None,
+            last_frame_image: None,
+            reference_video: None,
             reference_audio: None,
+            reference_purpose: super::super::video_provider::VideoReferencePurpose::Reference,
             client_request_id: id.into(),
         }
     }

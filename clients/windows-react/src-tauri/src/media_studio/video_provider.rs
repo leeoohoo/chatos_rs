@@ -10,6 +10,7 @@ pub(super) const MAXIMUM_VIDEO_BYTES: usize = 512 * 1_024 * 1_024;
 pub(super) const MAXIMUM_VIDEO_JOB_RESPONSE_BYTES: usize = 2 * 1_024 * 1_024;
 const MAXIMUM_IMAGE_BYTES: usize = 20 * 1_024 * 1_024;
 const MAXIMUM_AUDIO_BYTES: usize = 20 * 1_024 * 1_024;
+const MAXIMUM_REFERENCE_VIDEO_BYTES: usize = 47 * 1_024 * 1_024;
 const MINI_MAX_RATIOS: [&str; 6] = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,8 +27,20 @@ pub(super) struct VideoGenerationRequest {
     pub seconds: u8,
     pub ratio: String,
     pub input_image: Option<VideoInput>,
+    pub last_frame_image: Option<VideoInput>,
+    pub reference_video: Option<VideoInput>,
     pub reference_audio: Option<VideoInput>,
+    pub reference_purpose: VideoReferencePurpose,
     pub client_request_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) enum VideoReferencePurpose {
+    #[default]
+    Reference,
+    Edit,
+    Extend,
 }
 
 #[derive(Clone)]
@@ -118,13 +131,25 @@ pub(super) fn make_video_create_request(
 ) -> Result<ProviderVideoRequest, String> {
     validate_request(runtime, request)?;
     let mut metadata = json!({
-        "ratio": if request.input_image.is_some() { "adaptive" } else { request.ratio.as_str() },
+        "ratio": if request.reference_purpose != VideoReferencePurpose::Reference
+            || request.input_image.is_some()
+        {
+            "adaptive"
+        } else {
+            request.ratio.as_str()
+        },
     });
     if let Some(image) = &request.input_image {
         metadata["first_frame_image"] = Value::String(data_url(image));
     }
     if let Some(audio) = &request.reference_audio {
         metadata["audio_url"] = Value::String(data_url(audio));
+    }
+    if let Some(image) = &request.last_frame_image {
+        metadata["last_frame_image"] = Value::String(data_url(image));
+    }
+    if let Some(video) = &request.reference_video {
+        metadata["video_url"] = Value::String(data_url(video));
     }
     let payload = json!({
         "model": runtime.model_name,
@@ -256,18 +281,36 @@ fn validate_request(
     }
     if !matches!(request.size.as_str(), "768P" | "2K")
         || !(4..=15).contains(&request.seconds)
-        || !MINI_MAX_RATIOS.contains(&request.ratio.as_str())
+        || (request.input_image.is_none()
+            && request.reference_purpose == VideoReferencePurpose::Reference
+            && !MINI_MAX_RATIOS.contains(&request.ratio.as_str()))
     {
         return Err("视频尺寸或时长不受当前协议支持。".into());
     }
-    if request.input_image.is_some() && request.reference_audio.is_some() {
-        return Err("参考音频不能与首帧同时发送，请重新选择生成方式。".into());
+    if (request.reference_video.is_some() || request.reference_audio.is_some())
+        && (request.input_image.is_some() || request.last_frame_image.is_some())
+    {
+        return Err("参考视频或音频不能与首尾帧同时发送，请重新选择生成方式。".into());
+    }
+    if request.reference_purpose != VideoReferencePurpose::Reference
+        && request.reference_video.is_none()
+    {
+        return Err("视频编辑或续写缺少参考视频。".into());
     }
     if let Some(image) = &request.input_image {
         validate_input_image(image)?;
     }
     if let Some(audio) = &request.reference_audio {
         validate_reference_audio(audio)?;
+    }
+    if let Some(image) = &request.last_frame_image {
+        if request.input_image.is_none() {
+            return Err("尾帧必须与首帧一起发送。".into());
+        }
+        validate_input_image(image)?;
+    }
+    if let Some(video) = &request.reference_video {
+        validate_reference_video(video)?;
     }
     Ok(())
 }
@@ -310,6 +353,16 @@ fn validate_reference_audio(input: &VideoInput) -> Result<(), String> {
         || input.bytes.len() > MAXIMUM_AUDIO_BYTES
     {
         return Err("参考音频必须是有效的 MP3、WAV、M4A 或 AAC，且文件不能超过 20 MB。".into());
+    }
+    Ok(())
+}
+
+fn validate_reference_video(input: &VideoInput) -> Result<(), String> {
+    if !matches!(input.mime_type.as_str(), "video/mp4" | "video/quicktime")
+        || input.bytes.is_empty()
+        || input.bytes.len() > MAXIMUM_REFERENCE_VIDEO_BYTES
+    {
+        return Err("参考视频必须是有效的 MP4 或 MOV，且文件不能超过 47 MB。".into());
     }
     Ok(())
 }
@@ -479,7 +532,10 @@ mod tests {
             seconds: 4,
             ratio: "16:9".into(),
             input_image: None,
+            last_frame_image: None,
+            reference_video: None,
             reference_audio: None,
+            reference_purpose: VideoReferencePurpose::Reference,
             client_request_id: "request-1".into(),
         }
     }
@@ -543,6 +599,99 @@ mod tests {
         value.reference_audio = Some(VideoInput {
             mime_type: "audio/mpeg".into(),
             bytes: b"ID3audio".to_vec(),
+        });
+        assert!(make_video_create_request(&runtime, &value).is_err());
+    }
+
+    #[test]
+    fn first_and_last_frames_match_the_macos_payload_contract() {
+        let runtime = resolve_video_model("alice", "video-model", model("MiniMax-H3")).unwrap();
+        let mut value = request();
+        value.input_image = Some(VideoInput {
+            mime_type: "image/png".into(),
+            bytes: png(256, 256),
+        });
+        value.last_frame_image = Some(VideoInput {
+            mime_type: "image/jpeg".into(),
+            bytes: png(256, 256),
+        });
+
+        let payload: Value =
+            serde_json::from_slice(&make_video_create_request(&runtime, &value).unwrap().body)
+                .unwrap();
+        assert_eq!(payload["metadata"]["ratio"], "adaptive");
+        assert!(payload["metadata"]["first_frame_image"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        assert!(payload["metadata"]["last_frame_image"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/jpeg;base64,"));
+    }
+
+    #[test]
+    fn edit_and_extend_reference_videos_use_adaptive_ratio() {
+        let runtime = resolve_video_model("alice", "video-model", model("MiniMax-H3")).unwrap();
+        for purpose in [VideoReferencePurpose::Edit, VideoReferencePurpose::Extend] {
+            let mut value = request();
+            value.reference_video = Some(VideoInput {
+                mime_type: "video/mp4".into(),
+                bytes: b"reference-video".to_vec(),
+            });
+            value.reference_purpose = purpose;
+
+            let payload: Value =
+                serde_json::from_slice(&make_video_create_request(&runtime, &value).unwrap().body)
+                    .unwrap();
+            assert_eq!(payload["metadata"]["ratio"], "adaptive");
+            assert!(payload["metadata"]["video_url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:video/mp4;base64,"));
+        }
+    }
+
+    #[test]
+    fn frame_and_reference_video_contract_rejects_invalid_combinations() {
+        let runtime = resolve_video_model("alice", "video-model", model("MiniMax-H3")).unwrap();
+
+        let mut last_without_first = request();
+        last_without_first.last_frame_image = Some(VideoInput {
+            mime_type: "image/png".into(),
+            bytes: png(256, 256),
+        });
+        assert!(make_video_create_request(&runtime, &last_without_first).is_err());
+
+        let mut missing_reference = request();
+        missing_reference.reference_purpose = VideoReferencePurpose::Edit;
+        assert!(make_video_create_request(&runtime, &missing_reference).is_err());
+
+        let mut mixed = request();
+        mixed.input_image = Some(VideoInput {
+            mime_type: "image/png".into(),
+            bytes: png(256, 256),
+        });
+        mixed.reference_video = Some(VideoInput {
+            mime_type: "video/quicktime".into(),
+            bytes: b"reference-video".to_vec(),
+        });
+        assert!(make_video_create_request(&runtime, &mixed).is_err());
+    }
+
+    #[test]
+    fn reference_video_is_mime_and_size_bounded() {
+        let runtime = resolve_video_model("alice", "video-model", model("MiniMax-H3")).unwrap();
+        let mut value = request();
+        value.reference_video = Some(VideoInput {
+            mime_type: "video/webm".into(),
+            bytes: b"reference-video".to_vec(),
+        });
+        assert!(make_video_create_request(&runtime, &value).is_err());
+
+        value.reference_video = Some(VideoInput {
+            mime_type: "video/mp4".into(),
+            bytes: vec![0; MAXIMUM_REFERENCE_VIDEO_BYTES + 1],
         });
         assert!(make_video_create_request(&runtime, &value).is_err());
     }
