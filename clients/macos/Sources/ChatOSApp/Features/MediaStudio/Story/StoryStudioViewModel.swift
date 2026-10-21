@@ -104,6 +104,7 @@ final class StoryStudioViewModel: ObservableObject {
     @Published var activeVideoFrameExtractions: Set<VideoGenerationKey> = []
     let store: StoryProjectStore
     let projectCatalog: StoryProjectCatalogUseCase
+    let projectMutation: StoryProjectMutationUseCase
     let media: any MediaGenerationServicing
     let planner: (any StoryPlanningServicing)?
     let agentServices: (any AgentServiceProviding)?
@@ -117,6 +118,7 @@ final class StoryStudioViewModel: ObservableObject {
     var mediaBatchPageTask: Task<Void, Never>?
     var projectCursor: StoryProjectCatalogCursor?
     var projectCatalogLoadState = StoryProjectCatalogLoadState()
+    var projectMutationState = StoryProjectMutationState()
     var agentRunCursor: StoryProjectStore.PageCursor?
     var mediaBatchCursor: StoryProjectStore.PageCursor?
     var assetGenerationTasks: [AssetGenerationKey: Task<Void, Never>] = [:]
@@ -129,10 +131,14 @@ final class StoryStudioViewModel: ObservableObject {
     init(media: any MediaGenerationServicing, planner: (any StoryPlanningServicing)? = nil,
          store: StoryProjectStore = StoryProjectStore(),
          projectCatalog: (any StoryProjectCatalogLoading)? = nil,
+         projectMutation: (any StoryProjectMutationPersisting)? = nil,
          agentServices: (any AgentServiceProviding)? = nil,
          agentSettings: AgentSettingsStore = .init()) {
         self.media = media; self.planner = planner; self.store = store
         self.projectCatalog = StoryProjectCatalogUseCase(catalog: projectCatalog ?? store)
+        self.projectMutation = StoryProjectMutationUseCase(
+            persistence: projectMutation ?? store
+        )
         self.agentServices = agentServices ?? (planner as? any AgentServiceProviding)
         self.agentSettings = agentSettings
     }
@@ -412,6 +418,7 @@ final class StoryStudioViewModel: ObservableObject {
     func reset() {
         session = UUID(); owner = nil
         projectCatalogLoadState.reset()
+        projectMutationState.reset()
         task?.cancel(); loadTask?.cancel(); task = nil; loadTask = nil
         for generationTask in assetGenerationTasks.values { generationTask.cancel() }
         assetGenerationTasks = [:]; activeAssetGenerations = []; assetGenerationErrors = [:]
@@ -487,19 +494,46 @@ final class StoryStudioViewModel: ObservableObject {
 
     func create(_ draft: StoryProject, availableModels: [MediaGenerationModel]) async -> Bool {
         guard canCreate, let owner else { return false }
-        let token = session
+        let accountSessionID = session
+        guard let request = projectMutationState.begin(
+            ownerUserID: owner,
+            accountSessionID: accountSessionID,
+            kind: .create(projectID: draft.id)
+        ) else { return false }
+        let projectMutation = projectMutation
         isBusy = true; errorMessage = nil
-        defer { if session == token { isBusy = false } }
+        defer {
+            if projectMutationState.accepts(
+                request,
+                ownerUserID: self.owner,
+                accountSessionID: session
+            ) {
+                _ = projectMutationState.finish(request)
+                isBusy = false
+            }
+        }
         do {
-            try validateModels(draft.models, available: availableModels)
-            var next = draft
-            next.models = modelSelectionWithCapabilities(draft.models, available: availableModels)
-            try await commit(next, owner: owner, token: token)
-            guard session == token else { return false }
-            selectedProjectID = next.id; selectedSegmentID = nil; selectedSegments = []
+            let saved = try await projectMutation.create(
+                draft,
+                ownerUserID: owner,
+                availableModels: availableModels
+            )
+            guard projectMutationState.accepts(
+                request,
+                ownerUserID: self.owner,
+                accountSessionID: session
+            ) else { return false }
+            publishProject(saved, token: accountSessionID)
+            selectedProjectID = saved.id; selectedSegmentID = nil; selectedSegments = []
             return true
         } catch {
-            if session == token { errorMessage = error.localizedDescription }
+            if projectMutationState.accepts(
+                request,
+                ownerUserID: self.owner,
+                accountSessionID: session
+            ) {
+                errorMessage = error.localizedDescription
+            }
             return false
         }
     }
@@ -507,22 +541,55 @@ final class StoryStudioViewModel: ObservableObject {
     func updateSettings(_ draft: StoryProject, availableModels: [MediaGenerationModel]) async -> Bool {
         guard !isBusy, activeAssetGenerations.isEmpty, activeFrameGenerations.isEmpty,
               let current = project, let owner, draft.id == current.id else { return false }
-        let token = session
+        let accountSessionID = session
+        guard let request = projectMutationState.begin(
+            ownerUserID: owner,
+            accountSessionID: accountSessionID,
+            kind: .updateSettings(projectID: current.id)
+        ) else { return false }
+        let projectMutation = projectMutation
+        let preservingVideoSegmentIDs = Set(activeVideoGenerations.lazy
+            .filter { $0.projectID == current.id }
+            .map(\.segmentID))
         isBusy = true; errorMessage = nil
-        defer { if session == token { isBusy = false } }
+        defer {
+            if projectMutationState.accepts(
+                request,
+                ownerUserID: self.owner,
+                accountSessionID: session
+            ) {
+                _ = projectMutationState.finish(request)
+                isBusy = false
+            }
+        }
         do {
-            try validateModels(draft.models, available: availableModels)
-            // A remote job must remain attached to the model configuration that submitted it.
-            guard !current.hasUnresolvedVideoJobs || draft.models.videoModelID == current.models.videoModelID else { throw StoryError.unresolvedSubmission }
-            guard !current.hasUnresolvedImageJobs || draft.models.imageModelID == current.models.imageModelID else { throw StoryError.unresolvedSubmission }
-            var next = current
-            next.title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            next.description = draft.description
-            next.models = modelSelectionWithCapabilities(draft.models, available: availableModels)
-            try await commit(next, owner: owner, token: token)
-            return session == token
+            let saved = try await projectMutation.updateSettings(
+                current: current,
+                change: .init(
+                    projectID: draft.id,
+                    title: draft.title,
+                    description: draft.description,
+                    models: draft.models
+                ),
+                ownerUserID: owner,
+                availableModels: availableModels,
+                preservingVideoSegmentIDs: preservingVideoSegmentIDs
+            )
+            guard projectMutationState.accepts(
+                request,
+                ownerUserID: self.owner,
+                accountSessionID: session
+            ) else { return false }
+            publishProject(saved, token: accountSessionID)
+            return true
         } catch {
-            if session == token { errorMessage = error.localizedDescription }
+            if projectMutationState.accepts(
+                request,
+                ownerUserID: self.owner,
+                accountSessionID: session
+            ) {
+                errorMessage = error.localizedDescription
+            }
             return false
         }
     }

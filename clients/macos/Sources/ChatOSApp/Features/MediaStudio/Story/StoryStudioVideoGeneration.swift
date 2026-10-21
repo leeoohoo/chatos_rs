@@ -525,18 +525,4 @@ extension StoryStudioViewModel {
             }
         }
     }
-    func validateModels(_ selection: StoryModelSelection, available: [MediaGenerationModel]) throws {
-        let ids = Set(available.filter { $0.enabled && $0.hasAPIKey }.map(\.id))
-        guard [selection.textModelID, selection.imageModelID, selection.videoModelID].allSatisfy(ids.contains) else { throw StoryError.missingModel }
-    }
-    func modelSelectionWithCapabilities(
-        _ selection: StoryModelSelection, available: [MediaGenerationModel]
-    ) -> StoryModelSelection {
-        var result = selection
-        if let model = available.first(where: { $0.id == selection.videoModelID }) {
-            result.supportedVideoDurations = VideoGenerationProfile(modelName: model.modelName).durations
-        }
-        return result
-    }
-
 }

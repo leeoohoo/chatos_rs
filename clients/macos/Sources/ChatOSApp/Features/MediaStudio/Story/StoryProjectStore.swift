@@ -611,3 +611,20 @@ extension StoryProjectStore: StoryProjectCatalogLoading {
         )
     }
 }
+
+extension StoryProjectStore: StoryProjectMutationPersisting {
+    func persistStoryProject(
+        _ project: StoryProject,
+        ownerUserID: String,
+        preservingVideoSegmentIDs: Set<String>
+    ) async throws -> StoryProject {
+        var next = project
+        StoryContinuityContext.reconcileInheritedFirstFrames(&next)
+        next.updatedAt = Date()
+        return try save(
+            next,
+            owner: ownerUserID,
+            preservingVideoSegmentIDs: preservingVideoSegmentIDs
+        )
+    }
+}

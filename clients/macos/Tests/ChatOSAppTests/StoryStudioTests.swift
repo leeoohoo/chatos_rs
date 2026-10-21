@@ -94,6 +94,50 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertFalse(vm.isLoading)
     }
 
+    func testLateProjectCreationCannotPublishIntoTheCurrentAccount() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryStudioMutationTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        let persistence = DeferredStoryProjectMutationPersistence()
+        let service = StoryTestService()
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            projectMutation: persistence
+        )
+        vm.activate(userID: "alice")
+        for _ in 0..<100 where vm.isLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let draft = makeProject()
+        let creation = Task { await vm.create(draft, availableModels: models) }
+        for _ in 0..<100 where await !persistence.hasRequest(ownerUserID: "alice") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        vm.activate(userID: "bob")
+        await persistence.complete(ownerUserID: "alice", project: draft)
+        let created = await creation.value
+        for _ in 0..<100 where vm.isLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        XCTAssertFalse(created)
+        XCTAssertEqual(vm.owner, "bob")
+        XCTAssertTrue(vm.projects.isEmpty)
+        XCTAssertNil(vm.selectedProjectID)
+        XCTAssertFalse(vm.isBusy)
+        XCTAssertNil(vm.errorMessage)
+    }
+
     func testProjectsLoadInBoundedPagesWithoutDroppingOlderProjects() async throws {
         let (_, store, _) = try await fixture()
         var ids: Set<UUID> = []
@@ -714,5 +758,29 @@ private actor DeferredStoryProjectCatalog: StoryProjectCatalogLoading {
         continuations.removeValue(forKey: ownerUserID)?.resume(
             returning: .init(projects: projects)
         )
+    }
+}
+
+private actor DeferredStoryProjectMutationPersistence: StoryProjectMutationPersisting {
+    private var requests: Set<String> = []
+    private var continuations: [String: CheckedContinuation<StoryProject, Error>] = [:]
+
+    func persistStoryProject(
+        _ project: StoryProject,
+        ownerUserID: String,
+        preservingVideoSegmentIDs: Set<String>
+    ) async throws -> StoryProject {
+        requests.insert(ownerUserID)
+        return try await withCheckedThrowingContinuation { continuation in
+            continuations[ownerUserID] = continuation
+        }
+    }
+
+    func hasRequest(ownerUserID: String) -> Bool {
+        requests.contains(ownerUserID)
+    }
+
+    func complete(ownerUserID: String, project: StoryProject) {
+        continuations.removeValue(forKey: ownerUserID)?.resume(returning: project)
     }
 }
