@@ -5121,6 +5121,10 @@ mod tests {
         store
             .set_project_team_manager("alice", &team.id, "manager")
             .unwrap();
+        assert!(store
+            .teams_requiring_todo_scheduler("alice")
+            .unwrap()
+            .is_empty());
 
         assert!(store
             .save_project_team_asset_as_manager(
@@ -6284,6 +6288,40 @@ mod tests {
             )
             .unwrap();
         assert_eq!(source_count, 3);
+        assert!(store
+            .team_todo_scheduler_has_work("alice", &team.id)
+            .unwrap());
+        store
+            .reconcile_project_team_runs(
+                "alice",
+                &team.id,
+                &[team_todo::TeamRunReconciliation {
+                    delivery_id: delivery.delivery_id,
+                    turn_id: "turn-manager".into(),
+                    run_id: "run-manager".into(),
+                    status: LocalConversationTurnStatus::Succeeded,
+                    created_at_unix_ms: 10,
+                    updated_at_unix_ms: 15,
+                    project_write_evidence_verified: false,
+                }],
+            )
+            .unwrap();
+        assert!(!store
+            .team_todo_scheduler_has_work("alice", &team.id)
+            .unwrap());
+        assert_eq!(
+            store
+                .enqueue_ready_project_team_todos("alice", &team.id, 16)
+                .unwrap(),
+            1
+        );
+        assert!(store
+            .team_todo_scheduler_has_work("alice", &team.id)
+            .unwrap());
+        assert_eq!(
+            store.teams_requiring_todo_scheduler("alice").unwrap(),
+            vec![team.id]
+        );
     }
 
     #[test]

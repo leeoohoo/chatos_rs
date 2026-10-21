@@ -11,10 +11,11 @@ use image::{
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     io::Cursor,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
 };
 use tauri::{AppHandle, Manager};
@@ -26,9 +27,12 @@ use tokio::{
 
 use crate::{
     agent_conversation::{
+        dispatch_next_agent_team_delivery, load_agent_team_runs,
         team_todo::{AgentTodoExecutionContract, TodoPlanningCreateInput, TodoPlanningUpdateInput},
         AgentAssetToolBinding, AgentAssetToolRecord, AgentConversationStore,
     },
+    agent_skill_management::AgentSkillStore,
+    authentication::AuthenticationManager,
     conversation_attachments::AttachmentManager,
     host_lifecycle::HostManager,
     terminal_tool_worker::TerminalToolWorker,
@@ -60,6 +64,7 @@ const LEASE_DURATION_MILLISECONDS: u64 = 30_000;
 const MAXIMUM_CONTENT_READ_BYTES: usize = 2 * 1_024;
 const MAXIMUM_MODEL_IMAGE_BYTES: usize = 2 * 1_024 * 1_024;
 const MAXIMUM_SOURCE_PIXELS: u64 = 40_000_000;
+static ACTIVE_TEAM_TODO_DRAINS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 pub struct AttachmentToolWorker {
     generation: Arc<AtomicU64>,
@@ -108,6 +113,7 @@ async fn poll(
     expected_generation: u64,
     wake: Arc<Notify>,
 ) {
+    recover_team_todo_drains(&app, &owner_user_id).await;
     let mut idle_delay = Duration::from_millis(250);
     while generation.load(Ordering::SeqCst) == expected_generation {
         let claimed = claim_and_execute(&app, &owner_user_id)
@@ -123,6 +129,20 @@ async fn poll(
                 idle_delay = (idle_delay * 2).min(Duration::from_secs(2));
             }
         }
+    }
+}
+
+async fn recover_team_todo_drains(app: &AppHandle, owner_user_id: &str) {
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let teams =
+        tauri::async_runtime::spawn_blocking(move || store.teams_requiring_todo_scheduler(&owner))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
+    for team_id in teams {
+        schedule_team_todo_drain(app.clone(), owner_user_id.to_owned(), team_id);
     }
 }
 
@@ -174,6 +194,24 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
             })
         }
     };
+    let schedule_team_todos = matches!(
+        claim.invocation.tool_name.as_str(),
+        "todo_add" | "todo_update" | "todo_complete" | "todo_block"
+    ) && matches!(&outcome, LocalAgentToolOutcome::Succeeded { .. });
+    let team_to_schedule = if schedule_team_todos {
+        let store = app.state::<AgentConversationStore>().inner().clone();
+        let owner = owner_user_id.to_owned();
+        let run_id = claim.invocation.run_id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            store.load_agent_asset_tool_records(&owner, &run_id)
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .map(|(binding, _)| binding.team_id)
+    } else {
+        None
+    };
     let result = host
         .execute(HostCommand::CommitTool(CommitToolCommand {
             owner_user_id: owner_user_id.to_owned(),
@@ -183,11 +221,69 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
             outcome,
         }))
         .await?;
-    if matches!(result, HostResult::ToolCommit { .. }) {
-        Ok(true)
-    } else {
-        Err("Local Agent Host returned an unexpected tool commit result".into())
+    if !matches!(result, HostResult::ToolCommit { .. }) {
+        return Err("Local Agent Host returned an unexpected tool commit result".into());
     }
+    if let Some(team_id) = team_to_schedule {
+        schedule_team_todo_drain(app.clone(), owner_user_id.to_owned(), team_id);
+    }
+    Ok(true)
+}
+
+fn schedule_team_todo_drain(app: AppHandle, owner_user_id: String, team_id: String) {
+    tauri::async_runtime::spawn(async move {
+        let key = format!("{owner_user_id}\0{team_id}");
+        let active = ACTIVE_TEAM_TODO_DRAINS.get_or_init(|| Mutex::new(HashSet::new()));
+        if !active.lock().await.insert(key.clone()) {
+            return;
+        }
+        let mut consecutive_failures = 0_u8;
+        loop {
+            let reconciled = load_agent_team_runs(
+                owner_user_id.clone(),
+                team_id.clone(),
+                app.state::<AuthenticationManager>(),
+                app.state::<AgentConversationStore>(),
+                app.state::<HostManager>(),
+                app.state::<TerminalToolWorker>(),
+            )
+            .await
+            .is_ok();
+            let dispatched = dispatch_next_agent_team_delivery(
+                owner_user_id.clone(),
+                team_id.clone(),
+                app.state::<AuthenticationManager>(),
+                app.state::<AgentConversationStore>(),
+                app.state::<AgentSkillStore>(),
+                app.state::<HostManager>(),
+                app.state::<AttachmentToolWorker>(),
+                app.state::<TerminalToolWorker>(),
+            )
+            .await;
+            let store = app.state::<AgentConversationStore>().inner().clone();
+            let owner = owner_user_id.clone();
+            let team = team_id.clone();
+            let has_work = tauri::async_runtime::spawn_blocking(move || {
+                store.team_todo_scheduler_has_work(&owner, &team)
+            })
+            .await
+            .ok()
+            .and_then(Result::ok);
+            if has_work == Some(false) {
+                break;
+            }
+            if reconciled && dispatched.is_ok() && has_work.is_some() {
+                consecutive_failures = 0;
+            } else {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= 10 {
+                    break;
+                }
+            }
+            sleep(Duration::from_secs(2)).await;
+        }
+        active.lock().await.remove(&key);
+    });
 }
 
 async fn execute_todo_planning_read_tool(
