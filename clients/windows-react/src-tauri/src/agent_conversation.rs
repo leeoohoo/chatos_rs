@@ -24,6 +24,8 @@ use crate::{
     terminal_tool_worker::TerminalToolWorker,
 };
 
+pub(crate) mod team_todo;
+
 const DATABASE_FILENAME: &str = "AgentGroupChat.sqlite3";
 const MAIN_CHAT_PROFILE: &str = "main_chat";
 const MAX_ITERATIONS: u32 = 32;
@@ -179,6 +181,107 @@ CREATE TABLE IF NOT EXISTS local_agent_team_asset_revisions (
         REFERENCES local_agent_team_assets(owner_user_id, id) ON DELETE CASCADE,
     FOREIGN KEY(owner_user_id, editor_agent_id)
         REFERENCES local_agent_profiles(owner_user_id, id)
+);
+CREATE TABLE IF NOT EXISTS local_agent_todos (
+    owner_user_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    team_room_id TEXT NOT NULL,
+    source_room_id TEXT,
+    source_message_id TEXT,
+    request_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    priority INTEGER NOT NULL CHECK(priority BETWEEN 0 AND 100),
+    sort_order INTEGER NOT NULL CHECK(sort_order >= 0),
+    status TEXT NOT NULL CHECK(status IN (
+        'pending', 'in_progress', 'blocked', 'completed', 'cancelled'
+    )),
+    blocked_reason TEXT NOT NULL,
+    result TEXT NOT NULL,
+    created_at_unix_ms INTEGER NOT NULL,
+    updated_at_unix_ms INTEGER NOT NULL,
+    execution_plan_json TEXT NOT NULL,
+    execution_contract_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY(owner_user_id, id),
+    UNIQUE(owner_user_id, agent_id, request_key),
+    FOREIGN KEY(owner_user_id, agent_id)
+        REFERENCES local_agent_profiles(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, team_room_id)
+        REFERENCES project_agent_rooms(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, source_room_id)
+        REFERENCES project_agent_rooms(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, source_message_id)
+        REFERENCES project_agent_messages(owner_user_id, id)
+);
+CREATE INDEX IF NOT EXISTS local_agent_todos_agent_queue
+    ON local_agent_todos(owner_user_id, agent_id, status, priority DESC, sort_order);
+CREATE INDEX IF NOT EXISTS local_agent_todos_team_queue
+    ON local_agent_todos(owner_user_id, team_room_id, status, priority DESC, sort_order);
+CREATE TABLE IF NOT EXISTS local_agent_todo_sources (
+    owner_user_id TEXT NOT NULL,
+    todo_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    relation TEXT NOT NULL CHECK(relation IN (
+        'created', 'updated', 'reprioritized', 'blocked_context'
+    )),
+    created_at_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY(owner_user_id, todo_id, conversation_id, message_id, relation),
+    FOREIGN KEY(owner_user_id, todo_id)
+        REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(owner_user_id, conversation_id)
+        REFERENCES project_agent_rooms(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, message_id)
+        REFERENCES project_agent_messages(owner_user_id, id)
+);
+CREATE TABLE IF NOT EXISTS local_agent_todo_dependencies (
+    owner_user_id TEXT NOT NULL,
+    todo_id TEXT NOT NULL,
+    prerequisite_todo_id TEXT NOT NULL,
+    created_at_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY(owner_user_id, todo_id, prerequisite_todo_id),
+    CHECK(todo_id != prerequisite_todo_id),
+    FOREIGN KEY(owner_user_id, todo_id)
+        REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(owner_user_id, prerequisite_todo_id)
+        REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS local_agent_todo_dependencies_prerequisite
+    ON local_agent_todo_dependencies(owner_user_id, prerequisite_todo_id, todo_id);
+CREATE TABLE IF NOT EXISTS local_agent_todo_events (
+    owner_user_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    todo_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK(sequence > 0),
+    run_id TEXT,
+    kind TEXT NOT NULL CHECK(kind IN (
+        'started', 'progress', 'blocked', 'completed', 'cancelled'
+    )),
+    stage TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    asset_update_suggestions_json TEXT NOT NULL DEFAULT '[]',
+    created_at_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY(owner_user_id, id),
+    UNIQUE(owner_user_id, todo_id, sequence),
+    FOREIGN KEY(owner_user_id, todo_id)
+        REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS local_agent_todo_asset_snapshots (
+    owner_user_id TEXT NOT NULL,
+    todo_id TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    team_room_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    markdown TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    captured_at_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY(owner_user_id, todo_id, asset_id),
+    FOREIGN KEY(owner_user_id, todo_id)
+        REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(owner_user_id, asset_id)
+        REFERENCES local_agent_team_assets(owner_user_id, id)
 );
 CREATE TABLE IF NOT EXISTS windows_agent_delivery_runs (
     owner_user_id TEXT NOT NULL,
@@ -4395,6 +4498,143 @@ mod tests {
             3
         );
         assert!(store.list_project_team_assets("bob", &team.id).is_err());
+    }
+
+    #[test]
+    fn project_team_todos_are_transactional_account_scoped_and_mac_compatible() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "agent-1", "active");
+        let team = store
+            .create_project_team("alice", "project-1", "Alpha 团队", "交付 Alpha")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "agent-1")
+            .unwrap();
+        let execution_plan = serde_json::json!({
+            "requiresExecution": true,
+            "builtinCapabilities": ["project_read", "project_write"],
+            "plugins": [],
+            "selectionRevision": "local-v1",
+            "selectedAtUnixMs": 100
+        })
+        .to_string();
+        let execution_contract = serde_json::json!({
+            "objective": "实现任务看板",
+            "scope": "Windows React 团队页",
+            "expectedOutputs": ["可核验的任务列表"],
+            "acceptanceCriteria": ["严格隔离团队与账号"],
+            "constraints": ["参考 macOS 语义"]
+        })
+        .to_string();
+
+        let mut connection = Connection::open(store.database()).unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON")
+            .unwrap();
+        {
+            let transaction = connection.transaction().unwrap();
+            transaction
+                .execute(
+                    r#"
+                    INSERT INTO local_agent_todos (
+                        owner_user_id, id, agent_id, team_room_id, request_key,
+                        title, detail, priority, sort_order, status, blocked_reason, result,
+                        created_at_unix_ms, updated_at_unix_ms,
+                        execution_plan_json, execution_contract_json
+                    ) VALUES ('alice', 'rolled-back', 'agent-1', ?1, 'request-rollback',
+                              '不应保留', '', 50, 0, 'pending', '', '', 100, 100, ?2, ?3)
+                    "#,
+                    params![team.id, execution_plan, execution_contract],
+                )
+                .unwrap();
+            assert!(transaction
+                .execute(
+                    "INSERT INTO local_agent_todo_dependencies (owner_user_id, todo_id, \
+                     prerequisite_todo_id, created_at_unix_ms) \
+                     VALUES ('alice', 'rolled-back', 'rolled-back', 100)",
+                    [],
+                )
+                .is_err());
+        }
+        let rolled_back: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM local_agent_todos WHERE id = 'rolled-back'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rolled_back, 0);
+
+        let transaction = connection.transaction().unwrap();
+        for (id, request_key, title, priority, sort_order, status) in [
+            (
+                "todo-prerequisite",
+                "request-1",
+                "先完成底座",
+                80,
+                0,
+                "completed",
+            ),
+            ("todo-active", "request-2", "再实现看板", 70, 1, "pending"),
+        ] {
+            transaction
+                .execute(
+                    r#"
+                    INSERT INTO local_agent_todos (
+                        owner_user_id, id, agent_id, team_room_id, request_key,
+                        title, detail, priority, sort_order, status, blocked_reason, result,
+                        created_at_unix_ms, updated_at_unix_ms,
+                        execution_plan_json, execution_contract_json
+                    ) VALUES ('alice', ?1, 'agent-1', ?2, ?3, ?4, '', ?5, ?6, ?7,
+                              '', '', 100, 100, ?8, ?9)
+                    "#,
+                    params![
+                        id,
+                        team.id,
+                        request_key,
+                        title,
+                        priority,
+                        sort_order,
+                        status,
+                        execution_plan,
+                        execution_contract,
+                    ],
+                )
+                .unwrap();
+        }
+        transaction
+            .execute(
+                "INSERT INTO local_agent_todo_dependencies (owner_user_id, todo_id, \
+                 prerequisite_todo_id, created_at_unix_ms) \
+                 VALUES ('alice', 'todo-active', 'todo-prerequisite', 100)",
+                [],
+            )
+            .unwrap();
+        transaction.commit().unwrap();
+        drop(connection);
+
+        let active = store
+            .list_project_team_todos("alice", &team.id, false)
+            .unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, "todo-active");
+        assert_eq!(active[0].agent_name, "测试 Agent");
+        assert_eq!(active[0].dependency_ids, vec!["todo-prerequisite"]);
+        assert_eq!(active[0].execution_contract.objective, "实现任务看板");
+        assert_eq!(
+            active[0].execution_plan.builtin_capabilities,
+            vec!["project_read", "project_write"]
+        );
+        assert_eq!(
+            store
+                .list_project_team_todos("alice", &team.id, true)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(store
+            .list_project_team_todos("bob", &team.id, true)
+            .is_err());
     }
 
     #[test]
