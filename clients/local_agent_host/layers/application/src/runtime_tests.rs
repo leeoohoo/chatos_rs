@@ -210,8 +210,8 @@ async fn task_execution_cannot_finish_before_reporting_its_outcome() {
 }
 
 #[tokio::test]
-async fn commit_preserves_checked_delivery_and_failed_blocked_task_status() {
-    for status in ["succeeded", "failed", "blocked"] {
+async fn a_normally_completed_run_owns_success_independently_of_internal_result() {
+    for result_status in ["succeeded", "failed", "blocked"] {
         let storage = Arc::new(SqliteClientStorage::connect_memory().await.unwrap());
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
         runtime.initialize("user-1").await.unwrap();
@@ -251,7 +251,7 @@ async fn commit_preserves_checked_delivery_and_failed_blocked_task_status() {
                         tool_calls: vec![LocalAgentToolCall {
                             call_id: "call".into(),
                             tool_name: "task_run_process_report_outcome".into(),
-                            arguments: json!({"status":status,"reason":"Review result"}),
+                            arguments: json!({"result_status":result_status,"reason":"Review result"}),
                             side_effecting: false,
                             requires_approval: false,
                         }],
@@ -278,7 +278,7 @@ async fn commit_preserves_checked_delivery_and_failed_blocked_task_status() {
         else {
             panic!("tool claim")
         };
-        let report = json!({"reported":true,"status":status,"reason":"Review result","final_response":"Review complete: the reviewed artifact has defects.","acceptance_checks":[{"criterion_index":0,"status":if status=="succeeded" {"passed"} else {"not_verified"},"evidence":"Compared the requested review criteria"}]});
+        let report = json!({"reported":true,"result_status":result_status,"status":result_status,"reason":"Review result","final_response":"Review complete: the reviewed artifact has defects.","acceptance_checks":[{"criterion_index":0,"status":if result_status=="succeeded" {"failed"} else {"not_verified"},"evidence":"Compared the requested review criteria"}]});
         runtime
             .try_handle(envelope(
                 "report",
@@ -340,13 +340,6 @@ async fn commit_preserves_checked_delivery_and_failed_blocked_task_status() {
         else {
             panic!("graph")
         };
-        assert_eq!(
-            graph.tasks[0].status,
-            match status {
-                "succeeded" => LocalTaskStatus::Succeeded,
-                "failed" => LocalTaskStatus::Failed,
-                _ => LocalTaskStatus::Blocked,
-            }
-        );
+        assert_eq!(graph.tasks[0].status, LocalTaskStatus::Succeeded);
     }
 }

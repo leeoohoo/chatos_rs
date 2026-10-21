@@ -14,32 +14,43 @@ public struct MessageTaskAcceptanceReport: Decodable, Sendable, Equatable {
             case criterionIndex = "criterion_index", status, evidence
         }
     }
-    public let status: String
+    public let resultStatus: String
     public let reason: String
     public let checks: [Check]
     enum CodingKeys: String, CodingKey {
-        case status, reason, checks = "acceptance_checks"
+        case resultStatus = "result_status", status, reason, checks = "acceptance_checks"
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        resultStatus = try container.decodeIfPresent(String.self, forKey: .resultStatus)
+            ?? container.decode(String.self, forKey: .status)
+        reason = try container.decode(String.self, forKey: .reason)
+        checks = try container.decode([Check].self, forKey: .checks)
+    }
+
+    /// Compatibility name for older call sites and persisted payloads. This is
+    /// the internal result/dependency gate, never execution status.
+    public var status: String { resultStatus }
 
     public static func decode(json: String?) -> Self? {
         guard let data = json?.data(using: .utf8),
               let report = try? JSONDecoder().decode(Self.self, from: data),
-              ["succeeded", "failed", "blocked"].contains(report.status),
+              ["succeeded", "failed", "blocked"].contains(report.resultStatus),
               !report.checks.isEmpty,
               Set(report.checks.map(\.criterionIndex)) == Set(0..<report.checks.count),
               report.checks.allSatisfy({ ["passed", "failed", "not_verified"].contains($0.status)
-                  && !$0.evidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
-              report.status != "succeeded" || report.checks.allSatisfy({ $0.status == "passed" })
+                  && !$0.evidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
         else { return nil }
         return report
     }
 
     public var disposition: MessageTaskResultDisposition {
-        if status == "blocked" { return .blocked }
-        if status == "succeeded" { return .acceptancePassed }
+        if resultStatus == "blocked" { return .blocked }
         if checks.contains(where: { $0.status == "failed" }) { return .acceptanceFailed }
         if checks.contains(where: { $0.status == "not_verified" }) { return .evidenceIncomplete }
-        return .acceptanceFailed
+        if resultStatus == "failed" { return .acceptanceFailed }
+        return .acceptancePassed
     }
 }
 

@@ -324,7 +324,7 @@ fn task_outcome_report_required_message() -> Value {
     message_item(
         "system",
         Value::String(
-            "[Task Outcome Required]\nThe previous response cannot finish this run because no explicit task outcome was reported. Check the bound Task criteria before calling `task_run_process_report_outcome`. For acceptance_report_version=1 include one acceptance_checks entry per criterion (zero-based index, passed/failed/not_verified, concrete evidence) and the exact final_response. Report succeeded only when all Task criteria pass; otherwise fix within scope or report failed/blocked. Obey final_response_max_chars including Markdown and whitespace. After an accepted report, use no more tools; the Host delivers its checked final_response unchanged."
+            "[Task Outcome Required]\nThe previous response cannot finish this run because no explicit task outcome was reported. Check the bound Task criteria before calling `task_run_process_report_outcome`. For acceptance_report_version=1 include one acceptance_checks entry per criterion (zero-based index, passed/failed/not_verified, concrete evidence) and the exact final_response. `result_status` is only the internal result and dependency gate: succeeded unlocks dependent Tasks, while failed or blocked prevents them from running. It does not set execution status; the Host owns execution status from the Run lifecycle. Obey final_response_max_chars including Markdown and whitespace. After an accepted report, use no more tools; the Host delivers its checked final_response unchanged."
                 .to_string(),
         ),
     )

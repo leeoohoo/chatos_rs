@@ -110,7 +110,7 @@ struct MessageTaskGraphNodeCard: View {
         if let disposition = node.task.resultDisposition {
             return switch disposition {
             case .executionFailed: model.localized("执行失败", english: "Execution Failed")
-            case .blocked: model.localized("被阻塞", english: "Blocked")
+            case .blocked: model.localized("执行完成，结果受阻", english: "Execution Complete, Result Blocked")
             case .evidenceIncomplete: model.localized("核验不完整", english: "Verification Incomplete")
             case .acceptanceFailed: model.localized("未通过验收", english: "Acceptance Not Met")
             case .acceptancePassed: model.localized("验收通过", english: "Acceptance Passed")
@@ -125,6 +125,7 @@ struct MessageTaskGraphNodeCard: View {
         case "completed", "succeeded", "success", "done": model.localized("已完成", english: "Completed")
         case "running", "processing", "in_progress", "doing": model.localized("运行中", english: "Running")
         case "blocked": model.localized("被阻塞", english: "Blocked")
+        case "result_blocked": model.localized("执行完成，结果受阻", english: "Execution Complete, Result Blocked")
         case "reviewing_followup": model.localized("审查追加要求", english: "Reviewing Follow-up")
         case "waiting_confirmation": model.localized("等待确认", english: "Awaiting Confirmation")
         case "failed", "error": model.localized("任务未完成", english: "Task Incomplete")

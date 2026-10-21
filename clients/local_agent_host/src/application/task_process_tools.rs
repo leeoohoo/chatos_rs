@@ -67,13 +67,14 @@ pub fn task_process_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": TASK_OUTCOME_REPORT_TOOL,
-            "description": "Report the Task outcome after checking its own bound acceptance criteria. Version 1 Tasks require acceptance_checks and final_response. Rejected reports may be corrected; exactly one accepted report is allowed. This must be the final tool call. The Host delivers the checked final_response unchanged.",
+            "description": "Report the Task's internal result and acceptance evidence. result_status controls whether dependent Tasks may run: succeeded unlocks dependencies; failed or blocked prevents them. It never controls the worker/Task execution status, which is owned by the Host and comes only from the Run lifecycle. Version 1 Tasks require acceptance_checks and final_response. Rejected reports may be corrected; exactly one accepted report is allowed. This must be the final tool call. The Host delivers the checked final_response unchanged.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "status": {
+                    "result_status": {
                         "type": "string",
-                        "enum": ["succeeded", "failed", "blocked"]
+                        "enum": ["succeeded", "failed", "blocked"],
+                        "description": "Internal result only. succeeded means downstream prerequisites are satisfied; failed means the requested result did not meet its contract; blocked means an external prerequisite or decision is still missing."
                     },
                     "final_response": {"type": "string", "minLength": 1, "maxLength": 32000, "description": "Exact user-facing final delivery, including all Markdown and whitespace; obey the frozen final_response_max_chars if present."},
                     "acceptance_checks": {
@@ -95,7 +96,7 @@ pub fn task_process_model_tools() -> Vec<Value> {
                         "maxLength": OUTCOME_REASON_MAX_CHARS
                     }
                 },
-                "required": ["status", "reason"],
+                "required": ["result_status", "reason"],
                 "additionalProperties": false
             }
         }),
@@ -109,7 +110,7 @@ pub fn task_process_prompt_item() -> Value {
         "content": [{
             "type": "input_text",
             "text": format!(
-                "[Task Execution Process]\nThe local run-scoped tools `{}`, `{}`, and `{}` are available for this Task. Before starting a local HTTP service, allocate its address with `{}`; pass the returned port to the server and service_url to every dependent process, and release the registration after the service stops. Keep the user-visible execution process updated at meaningful milestones: task start, approach or root cause, completion of a major phase or artifact, important verification results, changed path after failure, blockers, and next step. Do not record every tool call, file read, search, or edit. Keep entries concise and never record hidden reasoning, credentials, secrets, raw dumps, or unrelated drafts. After all implementation and verification work is finished, call `{}` exactly once with succeeded, failed, or blocked and a concrete reason. That outcome report must be the final tool call immediately before the user-facing final response.",
+                "[Task Execution Process]\nThe local run-scoped tools `{}`, `{}`, and `{}` are available for this Task. Before starting a local HTTP service, allocate its address with `{}`; pass the returned port to the server and service_url to every dependent process, and release the registration after the service stops. Keep the user-visible execution process updated at meaningful milestones: task start, approach or root cause, completion of a major phase or artifact, important verification results, changed path after failure, blockers, and next step. Do not record every tool call, file read, search, or edit. Keep entries concise and never record hidden reasoning, credentials, secrets, raw dumps, or unrelated drafts. After all implementation and verification work is finished, call `{}` exactly once with a concrete reason. `result_status` describes only the internal result and dependency gate: succeeded allows dependent Tasks to run; failed or blocked keeps them from running. It never sets the execution status; the Host derives that from whether this Run finishes normally, fails abnormally, or is cancelled. That outcome report must be the final tool call immediately before the user-facing final response.",
                 TASK_PROCESS_RECORD_TOOL,
                 TASK_PROCESS_ALLOCATE_SERVICE_TOOL,
                 TASK_OUTCOME_REPORT_TOOL,
@@ -280,7 +281,7 @@ fn allocate_unreserved_loopback_port(reserved: &BTreeSet<u16>) -> Result<u16, St
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum ReportedOutcomeStatus {
+enum ReportedResultStatus {
     Succeeded,
     Failed,
     Blocked,
@@ -289,7 +290,8 @@ enum ReportedOutcomeStatus {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReportOutcomeArgs {
-    status: ReportedOutcomeStatus,
+    #[serde(alias = "status")]
+    result_status: ReportedResultStatus,
     reason: String,
     #[serde(default)]
     final_response: Option<String>,
@@ -409,23 +411,10 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
                 }
                 let args: ReportOutcomeArgs = serde_json::from_value(invocation.arguments.clone())
                     .map_err(|error| format!("invalid Task outcome input: {error}"))?;
-                if matches!(args.status, ReportedOutcomeStatus::Succeeded)
-                    && task_has_selected_plugins(&run.input)
-                    && self
-                        .runtime
-                        .successful_tool_invocation_count_for_host_worker(
-                            &invocation.run_id,
-                            "capability_invoke",
-                        )
-                        .await
-                        .map_err(|error| error.to_string())?
-                        == 0
-                {
-                    return Err(
-                        "selected_plugin_delivery_required: this Task has a frozen selected Plugin but the current Run has no successful Plugin invocation. Discover, describe, activate, and invoke the selected Plugin, persist and verify the requested deliverable there, then report the outcome. Notepad or a model response is not a substitute for the selected Plugin delivery."
-                            .to_string(),
-                    );
-                }
+                // A successful Plugin call is neither necessary (an authorized fallback
+                // may satisfy research) nor sufficient (opening a session is not delivery).
+                // Validate the frozen acceptance contract instead of inventing a global
+                // Plugin artifact requirement. This checks report structure, not evidence truth.
                 validate_task_acceptance_report(&run.input, &invocation.arguments)?;
                 let reason = args.reason.trim();
                 if reason.is_empty() || reason.chars().count() > OUTCOME_REASON_MAX_CHARS {
@@ -433,17 +422,20 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
                         "Task outcome reason must be 1..={OUTCOME_REASON_MAX_CHARS} characters"
                     ));
                 }
-                let status = match args.status {
-                    ReportedOutcomeStatus::Succeeded => "succeeded",
-                    ReportedOutcomeStatus::Failed => "failed",
-                    ReportedOutcomeStatus::Blocked => "blocked",
+                let result_status = match args.result_status {
+                    ReportedResultStatus::Succeeded => "succeeded",
+                    ReportedResultStatus::Failed => "failed",
+                    ReportedResultStatus::Blocked => "blocked",
                 };
                 let checks = args.acceptance_checks.map(|checks| checks.into_iter().map(|check| json!({
                     "criterion_index": check.criterion_index, "status": check.status, "evidence": check.evidence
                 })).collect::<Vec<_>>());
                 json!({
                     "reported": true,
-                    "status": status,
+                    "result_status": result_status,
+                    // Compatibility alias for already-installed clients. This is an
+                    // internal result, never the Host-owned execution status.
+                    "status": result_status,
                     "reason": reason,
                     "acceptance_checks": checks,
                     "final_response_chars": args.final_response.as_ref().map(|text| text.chars().count()),
@@ -455,13 +447,6 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
         };
         Ok(LocalAgentToolOutcome::Succeeded { output })
     }
-}
-
-fn task_has_selected_plugins(input: &Value) -> bool {
-    input
-        .pointer("/tool_options/plugin_hints")
-        .and_then(Value::as_array)
-        .is_some_and(|plugins| !plugins.is_empty())
 }
 
 fn normalized(
@@ -635,7 +620,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn outcome_executor_rejects_unverified_and_over_limit_then_accepts_corrected_report() {
+    async fn outcome_executor_separates_unverified_acceptance_from_execution_and_enforces_limit() {
         let executor = LocalTaskProcessToolExecutor::new(runtime_with_input("task_execution","task",json!({"acceptance_report_version":1,"acceptance_criteria":["Short response"],"final_response_max_chars":4})).await,"user-1").unwrap();
         let mut report = json!({"status":"succeeded","reason":"done","final_response":"中文\n!!","acceptance_checks":[{"criterion_index":0,"status":"passed","evidence":"Checked actual final response"}]});
         let error = executor
@@ -645,10 +630,15 @@ mod tests {
         assert!(error.contains("5 characters"));
         report["final_response"] = json!("中文");
         report["acceptance_checks"][0]["status"] = json!("not_verified");
-        assert!(executor
+        let LocalAgentToolOutcome::Succeeded { output } = executor
             .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, report.clone()))
             .await
-            .is_err());
+            .expect("completed evaluation may have an unverified finding")
+        else {
+            panic!("accepted incomplete acceptance report")
+        };
+        assert_eq!(output["status"], "succeeded");
+        assert_eq!(output["acceptance_checks"][0]["status"], "not_verified");
         report["status"] = json!("blocked");
         let LocalAgentToolOutcome::Succeeded { output } = executor
             .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, report.clone()))
@@ -669,16 +659,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successful_outcome_requires_the_frozen_selected_plugin_to_be_invoked() {
+    async fn selected_research_plugin_does_not_require_successful_plugin_delivery() {
         let executor = LocalTaskProcessToolExecutor::new(
             runtime_with_input(
                 "task_execution",
                 "task",
                 json!({
+                    "acceptance_report_version": 1,
+                    "acceptance_criteria": ["Attempt browser research; HTTP fallback may supply the sourced text report"],
                     "tool_options": {
                         "requires_execution": true,
-                        "enabled_builtin_kinds": ["Notepad"],
-                        "plugin_hints": [{"plugin_key":"solution-studio","component_key":"solution-authoring-mcp","reason":"planning"}]
+                        "enabled_builtin_kinds": ["TerminalController"],
+                        "plugin_hints": [{"plugin_key":"browser-cdp","component_key":"browser-cdp-mcp","reason":"research; fall back to HTTP when unavailable"}]
                     }
                 }),
             )
@@ -686,14 +678,102 @@ mod tests {
             "user-1",
         )
         .unwrap();
-        let error = executor
+        // No successful capability_invoke exists in this Run. The report still must
+        // cover the actual criterion and disclose the fallback, not invent an artifact.
+        let outcome = executor
             .execute_tool(&invocation(
                 TASK_OUTCOME_REPORT_TOOL,
-                json!({"status":"succeeded","reason":"saved the plan to Notepad"}),
+                json!({
+                    "status":"succeeded",
+                    "reason":"Research delivered using the allowed fallback; screenshot unavailable",
+                    "final_response":"HTTP sources and research findings; no visual layout claims.",
+                    "acceptance_checks":[{"criterion_index":0,"status":"passed","evidence":"Browser unavailable; HTTP GET returned 200 and report cites the retrieved content"}]
+                }),
             ))
             .await
-            .expect_err("Notepad must not satisfy a selected Plugin Task");
-        assert!(error.contains("selected_plugin_delivery_required"));
-        assert!(error.contains("Notepad"));
+            .expect("allowed fallback must not require a successful Plugin invocation");
+        let LocalAgentToolOutcome::Succeeded { output } = outcome else {
+            panic!("expected accepted research report")
+        };
+        assert_eq!(output["status"], "succeeded");
+    }
+
+    #[tokio::test]
+    async fn completed_plugin_attempt_can_report_an_unverified_deliverable() {
+        let executor = LocalTaskProcessToolExecutor::new(
+            runtime_with_input(
+                "task_execution",
+                "task",
+                json!({
+                    "acceptance_report_version":1,
+                    "acceptance_criteria":["Persist and verify the requested plan in Solution Studio"],
+                    "tool_options":{"plugin_hints":[{"plugin_key":"solution-studio","component_key":"solution-authoring-mcp","reason":"persist the plan"}]}
+                }),
+            ).await,
+            "user-1",
+        ).unwrap();
+        let mut report = json!({
+            "status":"succeeded",
+            "reason":"Only a text draft exists; Plugin persistence unavailable",
+            "final_response":"Draft plan; no verified Plugin deliverable.",
+            "acceptance_checks":[{"criterion_index":0,"status":"not_verified","evidence":"No persisted plan could be verified in Solution Studio"}]
+        });
+        let outcome = executor
+            .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, report.clone()))
+            .await
+            .expect("execution completion and acceptance findings are separate");
+        let LocalAgentToolOutcome::Succeeded { output } = outcome else {
+            panic!("expected accepted report with incomplete acceptance")
+        };
+        assert_eq!(output["status"], "succeeded");
+        assert_eq!(output["acceptance_checks"][0]["status"], "not_verified");
+        report["status"] = json!("blocked");
+        let outcome = executor
+            .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, report))
+            .await
+            .unwrap();
+        let LocalAgentToolOutcome::Succeeded { output } = outcome else {
+            panic!("expected accepted blocked report")
+        };
+        assert_eq!(output["status"], "blocked");
+    }
+
+    #[tokio::test]
+    async fn result_status_is_preserved_only_as_the_internal_dependency_gate() {
+        let executor = LocalTaskProcessToolExecutor::new(
+            runtime_with_input(
+                "task_execution",
+                "task",
+                json!({
+                    "acceptance_report_version":1,
+                    "acceptance_criteria":["Inspect the host"]
+                }),
+            )
+            .await,
+            "user-1",
+        )
+        .unwrap();
+        let LocalAgentToolOutcome::Succeeded { output } = executor
+            .execute_tool(&invocation(
+                TASK_OUTCOME_REPORT_TOOL,
+                json!({
+                    "result_status":"blocked",
+                    "reason":"The required host connection is unavailable",
+                    "final_response":"No inspection could be performed because the required connection is unavailable.",
+                    "acceptance_checks":[
+                        {"criterion_index":0,"status":"not_verified","evidence":"No authorized connection was available, so no host evidence could be collected"}
+                    ]
+                }),
+            ))
+            .await
+            .expect("the internal result may block downstream work")
+        else {
+            panic!("expected accepted blocked report")
+        };
+        assert_eq!(output["result_status"], "blocked");
+        assert_eq!(
+            output["status"], "blocked",
+            "legacy alias remains internal only"
+        );
     }
 }

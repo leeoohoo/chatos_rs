@@ -17,7 +17,41 @@ pub(super) fn task_display_status(
     terminal_outcome: Option<&Value>,
 ) -> &'static str {
     match task_status {
-        "succeeded" => "completed",
+        "succeeded" => {
+            let report = terminal_outcome.and_then(|outcome| outcome.get("task_acceptance"));
+            let result_status = report.and_then(|report| {
+                report
+                    .get("result_status")
+                    .or_else(|| report.get("status"))
+                    .and_then(Value::as_str)
+            });
+            if result_status == Some("blocked") {
+                return "result_blocked";
+            }
+            if result_status == Some("failed") {
+                return "acceptance_failed";
+            }
+            let checks = report
+                .and_then(|report| report.get("acceptance_checks"))
+                .and_then(Value::as_array);
+            match checks {
+                Some(checks)
+                    if checks.iter().any(|check| {
+                        check.get("status").and_then(Value::as_str) == Some("failed")
+                    }) =>
+                {
+                    "acceptance_failed"
+                }
+                Some(checks)
+                    if checks.iter().any(|check| {
+                        check.get("status").and_then(Value::as_str) == Some("not_verified")
+                    }) =>
+                {
+                    "evidence_incomplete"
+                }
+                _ => "completed",
+            }
+        }
         "blocked" => "blocked",
         "cancelled" => "cancelled",
         "failed" if run_status == Some("failed") => "execution_failed",
@@ -103,7 +137,8 @@ pub(super) async fn graph_task_summaries(
         };
         let reported_detail = reported_outcome.as_ref().map(|outcome| {
             json!({
-                "status": outcome.status,
+                "result_status": outcome.result_status,
+                "status": outcome.result_status,
                 "reason": outcome.reason,
             })
         });
@@ -143,15 +178,11 @@ pub(super) async fn graph_task_summaries(
         };
         let summary = user_visible_callback_detail(objective, event, terminal_outcome, english)
             .map(|(_, detail)| truncate_chars(&detail, 420));
-        let display_status = if status == LocalTaskStatus::Failed {
-            task_display_status(
-                status.as_str(),
-                run.as_ref().map(|run| run.status.as_str()),
-                run.as_ref().and_then(|run| run.terminal_outcome.as_ref()),
-            )
-        } else {
-            status.as_str()
-        };
+        let display_status = task_display_status(
+            status.as_str(),
+            run.as_ref().map(|run| run.status.as_str()),
+            run.as_ref().and_then(|run| run.terminal_outcome.as_ref()),
+        );
         tasks.push(json!({
             "task_id": task_id,
             "title": title,
@@ -213,10 +244,22 @@ pub(super) fn graph_summary_text(
     let blocked = count("blocked");
     let cancelled = count("cancelled");
     let evidence_incomplete = tasks.iter().any(|task| {
-        task.get("display_status").and_then(Value::as_str) == Some("evidence_incomplete")
+        matches!(
+            task.get("display_status").and_then(Value::as_str),
+            Some("evidence_incomplete" | "result_blocked")
+        )
+    });
+    let acceptance_failed = tasks.iter().any(|task| {
+        task.get("display_status").and_then(Value::as_str) == Some("acceptance_failed")
     });
     let headline = if english {
         match status {
+            LocalTaskGraphStatus::Succeeded if acceptance_failed => {
+                "All tasks finished; acceptance found unmet requirements.".to_string()
+            }
+            LocalTaskGraphStatus::Succeeded if evidence_incomplete => {
+                "All tasks finished; some acceptance evidence is still incomplete.".to_string()
+            }
             LocalTaskGraphStatus::Succeeded => {
                 format!("All {succeeded} tasks completed successfully.")
             }
@@ -238,6 +281,12 @@ pub(super) fn graph_summary_text(
         }
     } else {
         match status {
+            LocalTaskGraphStatus::Succeeded if acceptance_failed => {
+                "全部任务均已执行完成，但验收发现了未满足的要求。".to_string()
+            }
+            LocalTaskGraphStatus::Succeeded if evidence_incomplete => {
+                "全部任务均已执行完成，但仍有验收证据不完整。".to_string()
+            }
             LocalTaskGraphStatus::Succeeded => format!("全部 {succeeded} 个任务均已完成。"),
             LocalTaskGraphStatus::Failed if evidence_incomplete => {
                 "这组工作已有部分结果，但还有内容未核验。".to_string()

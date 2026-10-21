@@ -314,6 +314,7 @@ struct MessageTaskDetailSections: View {
         case "failed", "error", "execution_failed": model.localized("失败", english: "Failed")
         case "acceptance_failed": model.localized("未通过验收", english: "Acceptance Not Met")
         case "evidence_incomplete": model.localized("部分完成，待核验", english: "Partially Complete")
+        case "result_blocked": model.localized("执行完成，内部结果受阻", english: "Execution Complete, Result Blocked")
         case "cancelled", "canceled", "stopped": model.localized("已取消", english: "Cancelled")
         case "reviewing_followup": model.localized("审查追加要求", english: "Reviewing Follow-up")
         case "waiting_confirmation": model.localized("等待确认", english: "Awaiting Confirmation")

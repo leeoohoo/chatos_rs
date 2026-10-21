@@ -241,7 +241,7 @@ struct MessageTaskInspectorView: View {
         if let disposition = task.merging(run: run).resultDisposition {
             return switch disposition {
             case .executionFailed: model.localized("执行失败", english: "Execution Failed")
-            case .blocked: model.localized("已阻塞", english: "Blocked")
+            case .blocked: model.localized("执行完成，内部结果受阻", english: "Execution Complete, Result Blocked")
             case .evidenceIncomplete: model.localized("核验不完整", english: "Verification Incomplete")
             case .acceptanceFailed: model.localized("未通过验收", english: "Acceptance Not Met")
             case .acceptancePassed: model.localized("验收通过", english: "Acceptance Passed")
@@ -256,7 +256,7 @@ struct MessageTaskInspectorView: View {
         let terminalTaskStatuses = [
             "completed", "done", "succeeded", "success",
             "blocked", "failed", "error", "cancelled", "canceled", "stopped",
-            "reviewing_followup", "waiting_confirmation",
+            "reviewing_followup", "waiting_confirmation", "result_blocked",
         ]
         let status = terminalTaskStatuses.contains(taskStatus)
             ? taskStatus
@@ -266,6 +266,7 @@ struct MessageTaskInspectorView: View {
         case "running", "processing", "in_progress", "executing": model.localized("执行中", english: "Running")
         case "queued", "queueing": model.localized("排队中", english: "Queued")
         case "blocked": model.localized("已阻塞", english: "Blocked")
+        case "result_blocked": model.localized("执行完成，内部结果受阻", english: "Execution Complete, Result Blocked")
         case "reviewing_followup": model.localized("审查追加要求", english: "Reviewing Follow-up")
         case "waiting_confirmation": model.localized("等待确认", english: "Awaiting Confirmation")
         case "failed", "error": model.localized("任务未完成", english: "Task Incomplete")

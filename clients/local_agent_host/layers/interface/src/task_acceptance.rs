@@ -26,11 +26,12 @@ pub fn validate_task_acceptance_report(input: &Value, report: &Value) -> Result<
         return Ok(()); // Already-created Tasks and their retries retain their old contract.
     }
     validate_task_final_response_limit(input)?;
-    let status = report
-        .get("status")
+    let _result_status = report
+        .get("result_status")
+        .or_else(|| report.get("status"))
         .and_then(Value::as_str)
         .filter(|s| matches!(*s, "succeeded" | "failed" | "blocked"))
-        .ok_or("Task acceptance report has an invalid status")?;
+        .ok_or("Task acceptance report has an invalid result_status")?;
     let final_response = report
         .get("final_response")
         .and_then(Value::as_str)
@@ -69,7 +70,7 @@ pub fn validate_task_acceptance_report(input: &Value, report: &Value) -> Result<
         if std::mem::replace(&mut seen[index], true) {
             return Err("duplicate criterion_index in acceptance_checks".into());
         }
-        let verdict = check
+        let _verdict = check
             .get("status")
             .and_then(Value::as_str)
             .filter(|s| matches!(*s, "passed" | "failed" | "not_verified"))
@@ -77,9 +78,10 @@ pub fn validate_task_acceptance_report(input: &Value, report: &Value) -> Result<
         check.get("evidence").and_then(Value::as_str)
             .filter(|s| !s.trim().is_empty() && s.chars().count() <= 2_000)
             .ok_or("each acceptance check needs 1..=2000 characters of concrete evidence or an explanation of the gap")?;
-        if status == "succeeded" && verdict != "passed" {
-            return Err("succeeded requires every Task criterion to be passed; repair the gap or report failed/blocked".into());
-        }
+        // `result_status` is the internal dependency gate, not execution state.
+        // Per-criterion verdicts remain independent findings: a verification
+        // Task may finish normally and prove that the inspected artifact does
+        // not meet acceptance without turning the Run into an execution error.
     }
     Ok(())
 }
@@ -121,7 +123,7 @@ mod tests {
             .contains("5 characters"));
         report["final_response"] = json!("短文");
         report["acceptance_checks"][0]["status"] = json!("not_verified");
-        assert!(validate_task_acceptance_report(&input, &report).is_err());
+        assert!(validate_task_acceptance_report(&input, &report).is_ok());
         report["status"] = json!("blocked");
         assert!(validate_task_acceptance_report(&input, &report).is_ok());
         report["acceptance_checks"] = json!([]);

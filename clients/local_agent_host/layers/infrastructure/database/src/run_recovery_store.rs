@@ -204,6 +204,66 @@ pub(super) async fn recover_expired_claims(
             .await?;
         }
     }
+    // Hosts before the execution/result split copied the model-authored outcome
+    // directly into local_tasks.status. Repair only rows with a normally completed
+    // latest Run and an explicit internal failed/blocked report. The Task execution
+    // becomes succeeded, while propagate_blocked keeps downstream Tasks gated by
+    // that internal result and the callback is rewritten with the two axes separated.
+    let legacy_model_status_rows = sqlx::query(
+        "SELECT task.task_id, task.graph_id, run.run_id FROM local_tasks task \
+         JOIN local_task_graphs graph ON graph.graph_id = task.graph_id \
+         JOIN local_agent_runs run ON run.run_id = (\
+           SELECT candidate.run_id FROM local_agent_runs candidate \
+           WHERE candidate.owner_user_id = graph.owner_user_id \
+             AND candidate.owner_entity_type = 'task' \
+             AND candidate.owner_entity_id = task.task_id \
+           ORDER BY candidate.updated_at_unix_ms DESC, candidate.created_at_unix_ms DESC, \
+             candidate.rowid DESC LIMIT 1) \
+         JOIN local_agent_tool_invocations invocation ON invocation.run_id = run.run_id \
+           AND invocation.tool_name = 'task_run_process_report_outcome' \
+           AND invocation.status = 'succeeded' \
+         WHERE graph.owner_user_id = ? AND task.status IN ('failed','blocked') \
+           AND task.active_run_id IS NULL AND run.status = 'succeeded' \
+           AND COALESCE(\
+             json_extract(invocation.result_json, '$.result_status'), \
+             json_extract(invocation.result_json, '$.status'), \
+             json_extract(invocation.arguments_json, '$.result_status'), \
+             json_extract(invocation.arguments_json, '$.status')) IN ('failed','blocked') \
+         ORDER BY task.task_id",
+    )
+    .bind(owner_user_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    for row in &legacy_model_status_rows {
+        let task_id: String = row.try_get("task_id").db()?;
+        let graph_id: String = row.try_get("graph_id").db()?;
+        let run_id: String = row.try_get("run_id").db()?;
+        let updated = sqlx::query(
+            "UPDATE local_tasks SET status = 'succeeded', version = version + 1, \
+             updated_at_unix_ms = ? WHERE task_id = ? AND status IN ('failed','blocked') \
+             AND active_run_id IS NULL",
+        )
+        .bind(now_unix_ms)
+        .bind(&task_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        if updated.rows_affected() == 0 {
+            continue;
+        }
+        task_lifecycle::propagate_blocked(connection, &graph_id, now_unix_ms).await?;
+        task_lifecycle::unlock_satisfied(connection, &graph_id, now_unix_ms).await?;
+        let run = SqliteClientStorage::fetch_run_on(connection, &run_id)
+            .await?
+            .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
+        task_conversation_writeback::write_back_terminal_task_run(
+            connection,
+            &run,
+            now_unix_ms,
+        )
+        .await?;
+    }
     // Repair databases where a previous Host already marked a Main Chat Run as
     // needs_review but left the visible Turn running forever. Run this after historical
     // diagnostic backfill so the assistant failure message never loses its reason.
@@ -229,5 +289,6 @@ pub(super) async fn recover_expired_claims(
         + rows.len()
         + stranded_task_runs.len()
         + stranded_conversation_runs.len()
-        + missing_reasons.len()) as u64)
+        + missing_reasons.len()
+        + legacy_model_status_rows.len()) as u64)
 }

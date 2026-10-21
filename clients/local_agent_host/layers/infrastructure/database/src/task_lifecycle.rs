@@ -14,7 +14,7 @@ const TASK_OUTCOME_REPORT_TOOL: &str = "task_run_process_report_outcome";
 const INLINE_PREREQUISITE_RESULT_MAX_CHARS: usize = 160_000;
 
 pub(super) struct ReportedTaskOutcome {
-    pub status: String,
+    pub result_status: String,
     pub reason: String,
 }
 
@@ -440,7 +440,7 @@ fn prerequisite_acceptance_summary(input: &Value, outcome: &Value) -> Option<Val
         .and_then(Value::as_u64);
     Some(json!({
         "acceptance_report_version":1,
-        "worker_reported_status":report.get("status"),
+        "result_status":report.get("result_status").or_else(|| report.get("status")),
         "final_response_chars":chars,
         "final_response_max_chars":limit,
         "explicit_length_limit_passed":limit.map(|max| chars as u64 <= max),
@@ -516,12 +516,11 @@ pub(super) async fn reconcile_task_after_run(
     {
         return Ok(());
     }
-    let reported_outcome = reported_task_outcome(connection, &run.run_id).await?;
     let task_status = match run.status {
-        LocalAgentRunStatus::Succeeded => reported_outcome
-            .as_ref()
-            .map(|outcome| outcome.status.as_str())
-            .unwrap_or("succeeded"),
+        // Execution state belongs exclusively to the Host. A normally completed
+        // Run always means the Task execution succeeded; its internal result is
+        // stored in the outcome report and gates dependencies separately.
+        LocalAgentRunStatus::Succeeded => "succeeded",
         LocalAgentRunStatus::Failed => "failed",
         LocalAgentRunStatus::Cancelled => "cancelled",
         // A model claim can expire after its Host disappears. The Run keeps the more
@@ -567,7 +566,9 @@ pub(super) async fn reconcile_task_after_run(
         &serde_json::json!({
             "graph_id": graph_id,
             "task_id": run.owner_entity_id,
-            "status": task_status
+            "status": task_status,
+            "result_status": reported_task_outcome(connection, &run.run_id).await?
+                .map(|outcome| outcome.result_status)
         }),
         now_unix_ms,
     )
@@ -580,8 +581,8 @@ pub(super) async fn reported_task_outcome(
     connection: &mut SqliteConnection,
     run_id: &str,
 ) -> Result<Option<ReportedTaskOutcome>, ClientStorageError> {
-    let arguments: Option<String> = sqlx::query_scalar(
-        "SELECT arguments_json FROM local_agent_tool_invocations \
+    let row = sqlx::query(
+        "SELECT result_json, arguments_json FROM local_agent_tool_invocations \
          WHERE run_id = ? AND tool_name = ? AND status = 'succeeded' \
          ORDER BY updated_at_unix_ms DESC, invocation_id DESC LIMIT 1",
     )
@@ -590,17 +591,29 @@ pub(super) async fn reported_task_outcome(
     .fetch_optional(&mut *connection)
     .await
     .db()?;
-    let Some(arguments) = arguments else {
+    let Some(row) = row else {
         return Ok(None);
     };
-    let value: Value = serde_json::from_str(&arguments)?;
-    let status = value
-        .get("status")
+    let result_json: Option<String> = row.try_get("result_json").db()?;
+    let arguments_json: String = row.try_get("arguments_json").db()?;
+    let result = result_json
+        .as_deref()
+        .map(serde_json::from_str::<Value>)
+        .transpose()?;
+    // The tool executor is the policy boundary for the internal result. Consume
+    // its accepted result instead of replaying raw model arguments. Legacy rows
+    // that predate a structured result retain the former arguments fallback.
+    let value = result
+        .filter(|value| value.get("reported").and_then(Value::as_bool) == Some(true))
+        .unwrap_or(serde_json::from_str(&arguments_json)?);
+    let result_status = value
+        .get("result_status")
+        .or_else(|| value.get("status"))
         .and_then(Value::as_str)
         .filter(|status| matches!(*status, "succeeded" | "failed" | "blocked"))
         .ok_or_else(|| {
             ClientStorageError::InvalidState(
-                "stored Task outcome report has an invalid status".to_string(),
+                "stored Task outcome report has an invalid result_status".to_string(),
             )
         })?;
     let reason = value
@@ -614,7 +627,7 @@ pub(super) async fn reported_task_outcome(
             )
         })?;
     Ok(Some(ReportedTaskOutcome {
-        status: status.to_string(),
+        result_status: result_status.to_string(),
         reason: reason.to_string(),
     }))
 }
@@ -626,19 +639,41 @@ pub(super) async fn propagate_blocked(
 ) -> Result<(), ClientStorageError> {
     loop {
         let updated = sqlx::query(
-            "UPDATE local_tasks SET status = 'blocked', version = version + 1, \
+            "WITH prerequisite_results AS (\
+               SELECT task.task_id, task.status, COALESCE((\
+                 SELECT COALESCE(\
+                   json_extract(invocation.result_json, '$.result_status'),\
+                   json_extract(invocation.result_json, '$.status'),\
+                   json_extract(invocation.arguments_json, '$.result_status'),\
+                   json_extract(invocation.arguments_json, '$.status'))\
+                 FROM local_agent_runs run\
+                 JOIN local_agent_tool_invocations invocation ON invocation.run_id = run.run_id\
+                 WHERE run.owner_entity_type = 'task' AND run.owner_entity_id = task.task_id\
+                   AND run.status = 'succeeded'\
+                   AND invocation.tool_name = 'task_run_process_report_outcome'\
+                   AND invocation.status = 'succeeded'\
+                 ORDER BY run.updated_at_unix_ms DESC, run.created_at_unix_ms DESC,\
+                   run.rowid DESC, invocation.updated_at_unix_ms DESC, invocation.rowid DESC LIMIT 1\
+               ), CASE WHEN json_extract(task.input_json, '$.acceptance_report_version') = 1\
+                       THEN 'missing' ELSE 'succeeded' END) AS result_status FROM local_tasks task\
+             )\
+             UPDATE local_tasks SET status = 'blocked', version = version + 1, \
              updated_at_unix_ms = ? WHERE status IN ('pending', 'ready') \
              AND graph_id IN (SELECT graph_id FROM local_task_graphs WHERE owner_user_id = \
                (SELECT owner_user_id FROM local_task_graphs WHERE graph_id = ?)) \
              AND (EXISTS (SELECT 1 FROM local_task_dependencies d \
                JOIN local_tasks prerequisite ON prerequisite.task_id = d.prerequisite_task_id \
                AND prerequisite.graph_id = d.graph_id \
+               JOIN prerequisite_results result ON result.task_id = prerequisite.task_id \
                WHERE d.graph_id = local_tasks.graph_id AND d.task_id = local_tasks.task_id \
-               AND prerequisite.status IN ('failed', 'cancelled', 'blocked')) \
+               AND (prerequisite.status IN ('failed', 'cancelled', 'blocked') \
+                 OR result.result_status IN ('failed', 'blocked'))) \
              OR EXISTS (SELECT 1 FROM local_task_external_dependencies d \
                JOIN local_tasks prerequisite ON prerequisite.task_id = d.prerequisite_task_id \
+               JOIN prerequisite_results result ON result.task_id = prerequisite.task_id \
                WHERE d.task_id = local_tasks.task_id \
-               AND prerequisite.status IN ('failed', 'cancelled', 'blocked')))",
+               AND (prerequisite.status IN ('failed', 'cancelled', 'blocked') \
+                 OR result.result_status IN ('failed', 'blocked'))))",
         )
         .bind(now_unix_ms)
         .bind(graph_id)
@@ -657,19 +692,39 @@ pub(super) async fn unlock_satisfied(
     now_unix_ms: i64,
 ) -> Result<(), ClientStorageError> {
     sqlx::query(
-        "UPDATE local_tasks SET status = 'ready', version = version + 1, \
+        "WITH prerequisite_results AS (\
+           SELECT task.task_id, task.status, COALESCE((\
+             SELECT COALESCE(\
+               json_extract(invocation.result_json, '$.result_status'),\
+               json_extract(invocation.result_json, '$.status'),\
+               json_extract(invocation.arguments_json, '$.result_status'),\
+               json_extract(invocation.arguments_json, '$.status'))\
+             FROM local_agent_runs run\
+             JOIN local_agent_tool_invocations invocation ON invocation.run_id = run.run_id\
+             WHERE run.owner_entity_type = 'task' AND run.owner_entity_id = task.task_id\
+               AND run.status = 'succeeded'\
+               AND invocation.tool_name = 'task_run_process_report_outcome'\
+               AND invocation.status = 'succeeded'\
+             ORDER BY run.updated_at_unix_ms DESC, run.created_at_unix_ms DESC,\
+               run.rowid DESC, invocation.updated_at_unix_ms DESC, invocation.rowid DESC LIMIT 1\
+           ), CASE WHEN json_extract(task.input_json, '$.acceptance_report_version') = 1\
+                   THEN 'missing' ELSE 'succeeded' END) AS result_status FROM local_tasks task\
+         )\
+         UPDATE local_tasks SET status = 'ready', version = version + 1, \
          updated_at_unix_ms = ? WHERE status = 'pending' \
          AND graph_id IN (SELECT graph_id FROM local_task_graphs WHERE owner_user_id = \
            (SELECT owner_user_id FROM local_task_graphs WHERE graph_id = ?)) \
          AND NOT EXISTS (SELECT 1 FROM local_task_dependencies d \
            JOIN local_tasks prerequisite ON prerequisite.task_id = d.prerequisite_task_id \
            AND prerequisite.graph_id = d.graph_id \
+           JOIN prerequisite_results result ON result.task_id = prerequisite.task_id \
            WHERE d.graph_id = local_tasks.graph_id AND d.task_id = local_tasks.task_id \
-           AND prerequisite.status <> 'succeeded') \
+           AND (prerequisite.status <> 'succeeded' OR result.result_status <> 'succeeded')) \
          AND NOT EXISTS (SELECT 1 FROM local_task_external_dependencies d \
            JOIN local_tasks prerequisite ON prerequisite.task_id = d.prerequisite_task_id \
+           JOIN prerequisite_results result ON result.task_id = prerequisite.task_id \
            WHERE d.task_id = local_tasks.task_id \
-           AND prerequisite.status <> 'succeeded')",
+           AND (prerequisite.status <> 'succeeded' OR result.result_status <> 'succeeded'))",
     )
     .bind(now_unix_ms)
     .bind(graph_id)

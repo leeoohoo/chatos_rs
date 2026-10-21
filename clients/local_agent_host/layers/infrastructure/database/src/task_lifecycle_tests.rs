@@ -1351,7 +1351,7 @@ async fn future_contact_async_task_waits_until_its_run_at_deadline() {
 }
 
 #[tokio::test]
-async fn ai_reported_blocked_outcome_overrides_a_successful_model_run() {
+async fn blocked_internal_result_keeps_execution_successful_but_blocks_dependents() {
     let storage = SqliteClientStorage::connect_memory()
         .await
         .expect("storage");
@@ -1392,7 +1392,7 @@ async fn ai_reported_blocked_outcome_overrides_a_successful_model_run() {
     )
     .bind(&claim.run.run_id)
     .bind(TASK_OUTCOME_REPORT_TOOL)
-    .bind(r#"{"status":"blocked","reason":"Waiting for a required credential."}"#)
+    .bind(r#"{"result_status":"blocked","reason":"Waiting for a required credential."}"#)
     .execute(&storage.pool)
     .await
     .expect("store reported outcome");
@@ -1426,26 +1426,44 @@ async fn ai_reported_blocked_outcome_overrides_a_successful_model_run() {
         .await
         .expect("get graph")
         .expect("graph");
-    assert_eq!(graph.tasks[0].status, LocalTaskStatus::Blocked);
+    assert_eq!(graph.tasks[0].status, LocalTaskStatus::Succeeded);
     assert!(graph.tasks[1..]
         .iter()
         .all(|task| task.status == LocalTaskStatus::Blocked));
+}
 
-    let retried = storage
-        .retry_task(
-            &command("retry-reported-block"),
-            "user-1",
-            &graph.tasks[0].task_id,
-            graph.tasks[0].version,
-            Some("Use the corrected date range."),
-            3_000,
-        )
+#[tokio::test]
+async fn missing_internal_result_never_unlocks_a_versioned_dependent_task() {
+    let storage = SqliteClientStorage::connect_memory()
         .await
-        .expect("retry explicitly blocked task");
-    assert_eq!(retried.tasks[0].status, LocalTaskStatus::Ready);
-    assert!(retried.tasks[1..]
-        .iter()
-        .all(|task| task.status == LocalTaskStatus::Pending));
+        .expect("storage");
+    let mut graph = graph();
+    graph.tasks[0].input["acceptance_report_version"] = json!(1);
+    storage
+        .create_task_graph(&command("create-missing-result-graph"), &graph, 1_000)
+        .await
+        .expect("create graph");
+
+    // Simulate a persisted/corrupt legacy Run that reached a normal terminal state
+    // without the mandatory internal result report. The execution itself remains
+    // succeeded, but its dependent must not be released without an explicit
+    // result_status=succeeded gate.
+    finish_next_with_outcome(
+        &storage,
+        "run-missing-result",
+        LocalAgentRunStatus::Succeeded,
+        json!({"content": "Run completed without its required result report"}),
+        2_000,
+    )
+    .await;
+
+    let graph = storage
+        .get_task_graph("user-1", "graph-lifecycle")
+        .await
+        .expect("get graph")
+        .expect("graph");
+    assert_eq!(graph.tasks[0].status, LocalTaskStatus::Succeeded);
+    assert_eq!(graph.tasks[1].status, LocalTaskStatus::Pending);
 }
 
 #[tokio::test]
