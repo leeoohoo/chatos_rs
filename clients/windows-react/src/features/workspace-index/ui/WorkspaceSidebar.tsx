@@ -70,6 +70,14 @@ export function WorkspaceSidebar({
         工作台
       </button>
       <button
+        className={`nav-item ${selection.kind === "agentManagement" ? "nav-item--active" : ""}`}
+        onClick={() => onSelectionChange({ kind: "agentManagement" })}
+        type="button"
+      >
+        <span aria-hidden="true" className="nav-symbol">◎</span>
+        Agent 管理
+      </button>
+      <button
         className={`nav-item ${selection.kind === "terminal" ? "nav-item--active" : ""}`}
         disabled={!hostReady}
         onClick={() => onSelectionChange({ kind: "terminal" })}

@@ -40,6 +40,19 @@ const LocalTerminalWorkspace = lazy(async () => {
   };
 });
 
+const AgentManagementWorkspace = lazy(async () => {
+  const [adapterModule, viewModule] = await Promise.all([
+    import("../features/agent-management/adapters/TauriAgentManagementAdapter"),
+    import("../features/agent-management/ui/AgentManagementView"),
+  ]);
+  const port = new adapterModule.TauriAgentManagementAdapter();
+  return {
+    default: ({ ownerUserId }: { ownerUserId: string }) => (
+      <viewModule.AgentManagementView ownerUserId={ownerUserId} port={port} />
+    ),
+  };
+});
+
 const MediaStudioWorkspace = lazy(async () => {
   const [mediaAdapterModule, storyAdapterModule, viewModule] = await Promise.all([
     import("../features/media-studio/adapters/TauriMediaStudioAdapter"),
@@ -316,6 +329,8 @@ export function AppShell({
         ? "访问控制"
       : selection.kind === "terminal"
         ? "本机终端"
+      : selection.kind === "agentManagement"
+        ? "Agent 管理"
       : selection.kind === "mediaStudio"
         ? "AI 创作"
       : selection.kind === "applications"
@@ -399,6 +414,8 @@ export function AppShell({
                     ? "ACCESS CONTROL"
                   : selection.kind === "mediaStudio"
                     ? "MEDIA STUDIO"
+                  : selection.kind === "agentManagement"
+                    ? "AGENT MANAGEMENT"
                   : selection.kind === "applications" || selection.kind === "application"
                     ? "PLUGIN APPLICATIONS"
                   : "LOCAL WORKSPACE"
@@ -430,6 +447,8 @@ export function AppShell({
             hostReady={snapshot.ready}
             ownerUserId={session.user.id}
           />
+        ) : selection.kind === "agentManagement" ? (
+          <AgentManagementWorkspace ownerUserId={session.user.id} />
         ) : selection.kind === "mediaStudio" ? (
           <MediaStudioWorkspace ownerUserId={session.user.id} />
         ) : selection.kind === "applications" || (selection.kind === "application" && !selectedPluginApplication) ? (
