@@ -374,6 +374,39 @@ pub(crate) struct DispatchedAgentTeamDelivery {
     run_id: String,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamMessageSummary {
+    id: String,
+    sender_kind: String,
+    sender_id: String,
+    content: String,
+    mentioned_agent_ids: Vec<String>,
+    created_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamDeliverySummary {
+    id: String,
+    message_id: String,
+    target_agent_id: String,
+    trigger_kind: String,
+    status: String,
+    response_message_id: Option<String>,
+    last_error: Option<String>,
+    created_at_unix_ms: i64,
+    completed_at_unix_ms: Option<i64>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamConversationSnapshot {
+    team_id: String,
+    messages: Vec<AgentTeamMessageSummary>,
+    deliveries: Vec<AgentTeamDeliverySummary>,
+}
+
 impl AgentConversationStore {
     pub(crate) fn new(app_data_directory: PathBuf) -> Result<Self, String> {
         let connector = confined_connector_directory(&app_data_directory)?;
@@ -1210,6 +1243,151 @@ impl AgentConversationStore {
             message_id,
             team_id: team_id.to_owned(),
             created_at_unix_ms: now,
+            deliveries,
+        })
+    }
+
+    fn load_project_team_conversation(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+    ) -> Result<AgentTeamConversationSnapshot, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM project_agent_rooms WHERE owner_user_id = ?1 \
+                 AND id = ?2 AND status = 'active' AND conversation_kind = 'project_team')",
+                params![owner_user_id, team_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_store_error())?;
+        if !exists {
+            return Err("Agent 团队不存在或已停用。".into());
+        }
+        let message_rows = {
+            let mut statement = connection
+                .prepare(
+                    r#"
+                    SELECT id, sender_kind, sender_id, content, created_at_unix_ms
+                    FROM (
+                        SELECT id, sender_kind, sender_id, content, created_at_unix_ms
+                        FROM project_agent_messages
+                        WHERE owner_user_id = ?1 AND room_id = ?2
+                        ORDER BY created_at_unix_ms DESC, id DESC LIMIT 200
+                    ) recent
+                    ORDER BY created_at_unix_ms, id
+                    "#,
+                )
+                .map_err(|_| team_store_error())?;
+            let rows = statement
+                .query_map(params![owner_user_id, team_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                })
+                .map_err(|_| team_store_error())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|_| team_store_error())?
+        };
+        let message_ids = message_rows
+            .iter()
+            .map(|row| row.0.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let mut mentions_by_message: std::collections::HashMap<String, Vec<(i64, String)>> =
+            std::collections::HashMap::new();
+        {
+            let mut statement = connection
+                .prepare(
+                    r#"
+                    SELECT mention.message_id, mention.position, mention.agent_id
+                    FROM project_agent_message_mentions mention
+                    JOIN project_agent_messages message
+                      ON message.owner_user_id = mention.owner_user_id
+                     AND message.id = mention.message_id
+                    WHERE mention.owner_user_id = ?1 AND message.room_id = ?2
+                    ORDER BY mention.message_id, mention.position, mention.agent_id
+                    LIMIT 20000
+                    "#,
+                )
+                .map_err(|_| team_store_error())?;
+            let rows = statement
+                .query_map(params![owner_user_id, team_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|_| team_store_error())?;
+            for row in rows {
+                let (message_id, position, agent_id) = row.map_err(|_| team_store_error())?;
+                if message_ids.contains(message_id.as_str()) {
+                    mentions_by_message
+                        .entry(message_id)
+                        .or_default()
+                        .push((position, agent_id));
+                }
+            }
+        }
+        let mut messages = Vec::with_capacity(message_rows.len());
+        for (id, sender_kind, sender_id, content, created_at_unix_ms) in message_rows {
+            validate_identifier(&id).map_err(|_| team_store_error())?;
+            validate_text(&content, 1_000_000, true).map_err(|_| team_store_error())?;
+            let mentioned_agent_ids = mentions_by_message
+                .remove(&id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(_, agent_id)| agent_id)
+                .collect();
+            messages.push(AgentTeamMessageSummary {
+                id,
+                sender_kind,
+                sender_id,
+                content,
+                mentioned_agent_ids,
+                created_at_unix_ms,
+            });
+        }
+        let deliveries = {
+            let mut statement = connection
+                .prepare(
+                    r#"
+                    SELECT id, message_id, target_agent_id, trigger_kind, status,
+                           response_message_id, last_error, created_at_unix_ms,
+                           completed_at_unix_ms
+                    FROM project_agent_deliveries
+                    WHERE owner_user_id = ?1 AND room_id = ?2
+                    ORDER BY created_at_unix_ms DESC, id DESC LIMIT 500
+                    "#,
+                )
+                .map_err(|_| team_store_error())?;
+            let rows = statement
+                .query_map(params![owner_user_id, team_id], |row| {
+                    Ok(AgentTeamDeliverySummary {
+                        id: row.get(0)?,
+                        message_id: row.get(1)?,
+                        target_agent_id: row.get(2)?,
+                        trigger_kind: row.get(3)?,
+                        status: row.get(4)?,
+                        response_message_id: row.get(5)?,
+                        last_error: row.get(6)?,
+                        created_at_unix_ms: row.get(7)?,
+                        completed_at_unix_ms: row.get(8)?,
+                    })
+                })
+                .map_err(|_| team_store_error())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|_| team_store_error())?
+        };
+        Ok(AgentTeamConversationSnapshot {
+            team_id: team_id.to_owned(),
+            messages,
             deliveries,
         })
     }
@@ -2107,6 +2285,32 @@ pub(crate) async fn load_agent_team(
         .require_session_generation(&owner_user_id, generation)
         .await?;
     Ok(detail)
+}
+
+#[tauri::command]
+pub(crate) async fn load_agent_team_conversation(
+    owner_user_id: String,
+    team_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentTeamConversationSnapshot, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = owner_user_id.clone();
+    let team = team_id.clone();
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        store.load_project_team_conversation(&owner, &team)
+    })
+    .await
+    .map_err(|_| "Agent 团队消息读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -3393,6 +3597,17 @@ mod tests {
             .unwrap();
         assert_eq!(mention_count, 2);
         drop(connection);
+
+        let snapshot = store
+            .load_project_team_conversation("alice", &created.id)
+            .unwrap();
+        assert_eq!(snapshot.team_id, created.id);
+        assert_eq!(snapshot.messages.len(), 2);
+        assert_eq!(
+            snapshot.messages[1].mentioned_agent_ids,
+            vec!["agent-2", "agent-1"]
+        );
+        assert_eq!(snapshot.deliveries.len(), 3);
 
         assert!(store
             .queue_project_team_message("alice", &created.id, "错误 @", &["missing".into()])
