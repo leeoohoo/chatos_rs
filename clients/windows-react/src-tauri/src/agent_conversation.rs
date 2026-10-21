@@ -88,6 +88,17 @@ CREATE TABLE IF NOT EXISTS project_agent_messages (
 );
 CREATE INDEX IF NOT EXISTS project_agent_messages_room_order
     ON project_agent_messages(owner_user_id, room_id, created_at_unix_ms, id);
+CREATE TABLE IF NOT EXISTS project_agent_message_mentions (
+    owner_user_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    position INTEGER NOT NULL CHECK(position >= 0),
+    PRIMARY KEY(owner_user_id, message_id, agent_id),
+    FOREIGN KEY(owner_user_id, message_id)
+        REFERENCES project_agent_messages(owner_user_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(owner_user_id, agent_id)
+        REFERENCES local_agent_profiles(owner_user_id, id)
+);
 CREATE TABLE IF NOT EXISTS project_agent_deliveries (
     owner_user_id TEXT NOT NULL,
     id TEXT NOT NULL,
@@ -305,6 +316,33 @@ pub(crate) struct ManageAgentTeamMemberInput {
     owner_user_id: String,
     team_id: String,
     agent_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct QueueAgentTeamMessageInput {
+    owner_user_id: String,
+    team_id: String,
+    content: String,
+    #[serde(default)]
+    mentioned_agent_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QueuedAgentTeamDelivery {
+    delivery_id: String,
+    target_agent_id: String,
+    trigger_kind: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QueueAgentTeamMessageResult {
+    message_id: String,
+    team_id: String,
+    created_at_unix_ms: i64,
+    deliveries: Vec<QueuedAgentTeamDelivery>,
 }
 
 impl AgentConversationStore {
@@ -1015,6 +1053,136 @@ impl AgentConversationStore {
         }
         transaction.commit().map_err(|_| team_store_error())?;
         self.load_project_team(owner_user_id, team_id)
+    }
+
+    fn queue_project_team_message(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        content: &str,
+        mentioned_agent_ids: &[String],
+    ) -> Result<QueueAgentTeamMessageResult, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        validate_text(content, 1_000_000, false).map_err(|_| invalid_team_message())?;
+        if mentioned_agent_ids.len() > 100 {
+            return Err(invalid_team_message());
+        }
+        let mut unique_mentions = std::collections::HashSet::new();
+        for agent_id in mentioned_agent_ids {
+            validate_agent_identifier(agent_id).map_err(|_| invalid_team_message())?;
+            if !unique_mentions.insert(agent_id.as_str()) {
+                return Err(invalid_team_message());
+            }
+        }
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        let default_agent_id = transaction
+            .query_row(
+                "SELECT default_agent_id FROM project_agent_rooms \
+                 WHERE owner_user_id = ?1 AND id = ?2 AND status = 'active' \
+                   AND conversation_kind = 'project_team'",
+                params![owner_user_id, team_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|_| team_store_error())?
+            .ok_or_else(|| "Agent 团队不存在或已停用。".to_owned())?;
+        let active_member_ids = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT agent_id FROM project_agent_room_members \
+                     WHERE owner_user_id = ?1 AND room_id = ?2 AND status = 'active'",
+                )
+                .map_err(|_| team_store_error())?;
+            let rows = statement
+                .query_map(params![owner_user_id, team_id], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(|_| team_store_error())?;
+            rows.collect::<Result<std::collections::HashSet<_>, _>>()
+                .map_err(|_| team_store_error())?
+        };
+        if mentioned_agent_ids
+            .iter()
+            .any(|agent_id| !active_member_ids.contains(agent_id))
+        {
+            return Err("@Agent 必须是当前团队的活动成员。".into());
+        }
+        let targets = if mentioned_agent_ids.is_empty() {
+            default_agent_id.into_iter().collect::<Vec<_>>()
+        } else {
+            mentioned_agent_ids.to_vec()
+        };
+        let message_id = uuid::Uuid::new_v4().to_string().to_lowercase();
+        let now = chrono::Utc::now().timestamp_millis().max(0);
+        transaction
+            .execute(
+                r#"
+                INSERT INTO project_agent_messages (
+                    owner_user_id, id, room_id, sender_kind, sender_id, content,
+                    reply_to_message_id, source_run_id, causation_id, root_message_id,
+                    hop_count, created_at_unix_ms
+                ) VALUES (?1, ?2, ?3, 'human', ?1, ?4, NULL, NULL, NULL, ?2, 0, ?5)
+                "#,
+                params![owner_user_id, message_id, team_id, content, now],
+            )
+            .map_err(|_| team_store_error())?;
+        for (position, agent_id) in mentioned_agent_ids.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT INTO project_agent_message_mentions (\
+                     owner_user_id, message_id, agent_id, position) VALUES (?1, ?2, ?3, ?4)",
+                    params![owner_user_id, message_id, agent_id, position as i64],
+                )
+                .map_err(|_| team_store_error())?;
+        }
+        let trigger_kind = if mentioned_agent_ids.is_empty() {
+            "default_agent"
+        } else {
+            "mention"
+        };
+        let mut deliveries = Vec::with_capacity(targets.len());
+        for target_agent_id in targets {
+            let delivery_id = uuid::Uuid::new_v4().to_string().to_lowercase();
+            transaction
+                .execute(
+                    r#"
+                    INSERT INTO project_agent_deliveries (
+                        owner_user_id, id, room_id, message_id, root_message_id,
+                        target_agent_id, trigger_kind, status, attempt, hop_count,
+                        deduplication_key, response_message_id, last_error,
+                        claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
+                    ) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, 'pending', 0, 0,
+                              ?7, NULL, NULL, NULL, NULL, ?8)
+                    "#,
+                    params![
+                        owner_user_id,
+                        delivery_id,
+                        team_id,
+                        message_id,
+                        target_agent_id,
+                        trigger_kind,
+                        format!("{message_id}:{target_agent_id}"),
+                        now,
+                    ],
+                )
+                .map_err(|_| team_store_error())?;
+            deliveries.push(QueuedAgentTeamDelivery {
+                delivery_id,
+                target_agent_id,
+                trigger_kind: trigger_kind.to_owned(),
+            });
+        }
+        transaction.commit().map_err(|_| team_store_error())?;
+        Ok(QueueAgentTeamMessageResult {
+            message_id,
+            team_id: team_id.to_owned(),
+            created_at_unix_ms: now,
+            deliveries,
+        })
     }
 
     fn record_direct_delivery(
@@ -1733,6 +1901,34 @@ pub(crate) async fn remove_agent_from_team(
 }
 
 #[tauri::command]
+pub(crate) async fn queue_agent_team_message(
+    input: QueueAgentTeamMessageInput,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<QueueAgentTeamMessageResult, String> {
+    validate_owner(&input.owner_user_id)?;
+    validate_identifier(&input.team_id).map_err(|_| invalid_team_input())?;
+    let content = input.content.trim().to_owned();
+    validate_text(&content, 1_000_000, false).map_err(|_| invalid_team_message())?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = input.owner_user_id.clone();
+    let team = input.team_id.clone();
+    let mentions = input.mentioned_agent_ids.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        store.queue_project_team_message(&owner, &team, &content, &mentions)
+    })
+    .await
+    .map_err(|_| "Agent 团队消息入队任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    Ok(result)
+}
+
+#[tauri::command]
 pub(crate) async fn send_agent_conversation_draft(
     input: SendAgentConversationDraftInput,
     authentication: State<'_, AuthenticationManager>,
@@ -2312,6 +2508,10 @@ fn invalid_team_input() -> String {
     "Agent 团队信息无效，请检查后重试。".into()
 }
 
+fn invalid_team_message() -> String {
+    "Agent 团队消息无效，请检查内容和 @Agent 后重试。".into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2533,6 +2733,62 @@ mod tests {
             .unwrap();
         assert_eq!(removed.team.default_agent_id.as_deref(), Some("agent-2"));
         assert_eq!(removed.team.member_count, 1);
+    }
+
+    #[test]
+    fn project_team_messages_route_to_mentions_or_the_default_agent() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "agent-1", "active");
+        insert_agent(&store, "alice", "agent-2", "active");
+        let created = store
+            .create_project_team("alice", "project-1", "Alpha 团队", "")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &created.id, "agent-1")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &created.id, "agent-2")
+            .unwrap();
+
+        let default_routed = store
+            .queue_project_team_message("alice", &created.id, "请开始处理", &[])
+            .unwrap();
+        assert_eq!(default_routed.deliveries.len(), 1);
+        assert_eq!(default_routed.deliveries[0].target_agent_id, "agent-1");
+        assert_eq!(default_routed.deliveries[0].trigger_kind, "default_agent");
+
+        let mentioned = store
+            .queue_project_team_message(
+                "alice",
+                &created.id,
+                "请分别评估",
+                &["agent-2".into(), "agent-1".into()],
+            )
+            .unwrap();
+        assert_eq!(mentioned.deliveries.len(), 2);
+        assert_eq!(mentioned.deliveries[0].target_agent_id, "agent-2");
+        assert!(mentioned
+            .deliveries
+            .iter()
+            .all(|delivery| delivery.trigger_kind == "mention"));
+        let connection = Connection::open(store.database()).unwrap();
+        let mention_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM project_agent_message_mentions \
+                 WHERE owner_user_id = 'alice' AND message_id = ?1",
+                params![mentioned.message_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(mention_count, 2);
+        drop(connection);
+
+        assert!(store
+            .queue_project_team_message("alice", &created.id, "错误 @", &["missing".into()])
+            .is_err());
+        assert!(store
+            .queue_project_team_message("bob", &created.id, "越权消息", &["agent-1".into()],)
+            .is_err());
     }
 
     #[test]
