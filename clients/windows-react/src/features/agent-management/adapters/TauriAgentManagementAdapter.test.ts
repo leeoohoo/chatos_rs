@@ -190,6 +190,24 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       input: { ownerUserId: "owner-1", ...createInput },
     });
 
+    const detail = { team, members: [] };
+    vi.mocked(invoke).mockResolvedValueOnce(detail);
+    await adapter.loadTeam("owner-1", team.id);
+    expect(invoke).toHaveBeenLastCalledWith("load_agent_team", {
+      ownerUserId: "owner-1",
+      teamId: team.id,
+    });
+
+    const invitedDetail = {
+      team: { ...team, memberCount: 1, defaultAgentId: "agent-1" },
+      members: [{ agentId: "agent-1", role: "界面设计师", responsibility: "负责界面", joinedAtUnixMs: 20 }],
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(invitedDetail);
+    await adapter.inviteAgentToTeam("owner-1", team.id, "agent-1");
+    expect(invoke).toHaveBeenLastCalledWith("invite_agent_to_team", {
+      input: { ownerUserId: "owner-1", teamId: team.id, agentId: "agent-1" },
+    });
+
     const input = {
       ownerUserId: "owner-1",
       roomId,

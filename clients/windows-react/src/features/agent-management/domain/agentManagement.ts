@@ -387,6 +387,49 @@ export const agentTeamListSchema = z.array(agentTeamSummarySchema).max(1_000)
     });
   });
 
+export const agentTeamMemberSummarySchema = z.object({
+  agentId: z.string().trim().min(1).max(512),
+  role: z.string().trim().min(1).max(160),
+  responsibility: z.string().trim().max(8_000),
+  joinedAtUnixMs: z.number().int().nonnegative(),
+}).strict();
+
+export const agentTeamDetailSchema = z.object({
+  team: agentTeamSummarySchema,
+  members: z.array(agentTeamMemberSummarySchema).max(1_000),
+}).strict().superRefine((detail, context) => {
+  const agentIds = new Set<string>();
+  detail.members.forEach((member, index) => {
+    if (agentIds.has(member.agentId)) {
+      context.addIssue({
+        code: "custom",
+        message: "Agent 团队成员不能重复。",
+        path: ["members", index, "agentId"],
+      });
+    }
+    agentIds.add(member.agentId);
+  });
+  if (detail.team.memberCount !== detail.members.length) {
+    context.addIssue({
+      code: "custom",
+      message: "Agent 团队成员数量不一致。",
+      path: ["team", "memberCount"],
+    });
+  }
+  for (const [field, agentId] of [
+    ["defaultAgentId", detail.team.defaultAgentId],
+    ["projectManagerAgentId", detail.team.projectManagerAgentId],
+  ] as const) {
+    if (agentId != null && !agentIds.has(agentId)) {
+      context.addIssue({
+        code: "custom",
+        message: "Agent 团队负责人必须是活动成员。",
+        path: ["team", field],
+      });
+    }
+  }
+});
+
 export interface CreateAgentTeamInput {
   projectId: string;
   name: string;
@@ -394,6 +437,7 @@ export interface CreateAgentTeamInput {
 }
 
 export type AgentTeamSummary = z.infer<typeof agentTeamSummarySchema>;
+export type AgentTeamDetail = z.infer<typeof agentTeamDetailSchema>;
 
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",

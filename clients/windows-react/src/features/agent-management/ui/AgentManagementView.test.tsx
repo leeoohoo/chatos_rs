@@ -210,6 +210,62 @@ describe("AgentManagementView", () => {
     expect(screen.getByText("0 位 Agent")).toBeVisible();
   });
 
+  it("loads team members and invites an existing account Agent", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111",
+      projectId: "project-1",
+      name: "Alpha Agent 团队",
+      goal: "交付 Alpha",
+      defaultAgentId: "agent-1",
+      projectManagerAgentId: null,
+      memberCount: 1,
+      createdAtUnixMs: 10,
+      updatedAtUnixMs: 20,
+    };
+    const secondProfile = { ...profile(), id: "agent-2", name: "后端工程师", professionKey: "backend_engineer" as const };
+    const initialDetail = {
+      team,
+      members: [{
+        agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20,
+      }],
+    };
+    const invitedDetail = {
+      team: { ...team, memberCount: 2, updatedAtUnixMs: 30 },
+      members: [...initialDetail.members, {
+        agentId: "agent-2", role: "后端工程师", responsibility: "负责后端服务", joinedAtUnixMs: 30,
+      }],
+    };
+    const port = stubPort({
+      listProfiles: vi.fn(async () => [profile(), secondProfile]),
+      listTeams: vi.fn(async () => [team]),
+      loadTeam: vi.fn(async () => initialDetail),
+      inviteAgentToTeam: vi.fn(async () => invitedDetail),
+    });
+    render(
+      <AgentManagementView
+        ownerUserId="owner-1"
+        port={port}
+        projects={[{ id: "project-1", title: "Alpha" }]}
+      />,
+    );
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "团队" }));
+    await screen.findByText("Alpha Agent 团队");
+    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    await waitFor(() => expect(port.loadTeam).toHaveBeenCalledWith("owner-1", team.id));
+    expect(await screen.findByRole("region", { name: "Agent 团队成员" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "邀请 Agent" }));
+    expect(await screen.findByRole("dialog", { name: "邀请 Agent" })).toBeVisible();
+    expect(screen.getByRole("option", { name: /后端工程师/ })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: "邀请" }));
+
+    await waitFor(() => expect(port.inviteAgentToTeam).toHaveBeenCalledWith(
+      "owner-1", team.id, "agent-2",
+    ));
+    expect(await screen.findByText(/负责后端服务/)).toBeVisible();
+    expect(screen.getByText("2 位 Agent")).toBeVisible();
+  });
+
   it("selects an Agent and loads its existing private-chat activity without opening a conversation", async () => {
     const loadProfileActivity = vi.fn(async () => ({
       agentId: "agent-1",

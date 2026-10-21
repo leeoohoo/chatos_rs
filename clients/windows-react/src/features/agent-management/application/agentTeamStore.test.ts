@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentTeamSummary } from "../domain/agentManagement";
+import type { AgentTeamDetail, AgentTeamSummary } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import { useAgentTeamStore } from "./agentTeamStore";
 
@@ -49,6 +49,34 @@ describe("agent team store", () => {
     expect(created).toEqual(team());
     expect(useAgentTeamStore.getState().teams).toEqual([team()]);
   });
+
+  it("loads the selected team members and rejects a late previous selection", async () => {
+    const other = { ...team(), id: "22222222-2222-4222-8222-222222222222", projectId: "project-2" };
+    const late = deferred<AgentTeamDetail>();
+    const port = stubPort({
+      listTeams: vi.fn(async () => [team(), other]),
+      loadTeam: vi.fn(async (_owner, teamId) => teamId === team().id ? late.promise : detail(other)),
+    });
+    await useAgentTeamStore.getState().activate(port, "owner-1");
+    const stale = useAgentTeamStore.getState().selectTeam(port, team().id);
+    await useAgentTeamStore.getState().selectTeam(port, other.id);
+    late.resolve(detail(team()));
+    await stale;
+    expect(useAgentTeamStore.getState().selectedTeamId).toBe(other.id);
+    expect(useAgentTeamStore.getState().detail?.team.id).toBe(other.id);
+  });
+
+  it("invites an Agent and updates both detail and team summary", async () => {
+    const invited = detail({ ...team(), memberCount: 1, defaultAgentId: "agent-1" }, [{
+      agentId: "agent-1", role: "设计师", responsibility: "负责界面", joinedAtUnixMs: 30,
+    }]);
+    const port = stubPort({ inviteAgentToTeam: vi.fn(async () => invited) });
+    await useAgentTeamStore.getState().activate(port, "owner-1");
+    await useAgentTeamStore.getState().selectTeam(port, team().id);
+    expect(await useAgentTeamStore.getState().inviteAgent(port, team().id, "agent-1")).toBe(true);
+    expect(useAgentTeamStore.getState().detail).toEqual(invited);
+    expect(useAgentTeamStore.getState().teams[0]?.memberCount).toBe(1);
+  });
 });
 
 function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagementPort {
@@ -63,8 +91,17 @@ function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagement
     discardAvatarPresentation: vi.fn(async () => undefined),
     listTeams: vi.fn(async () => [team()]),
     createTeam: vi.fn(async () => team()),
+    loadTeam: vi.fn(async () => detail(team())),
+    inviteAgentToTeam: vi.fn(async () => detail(team())),
     ...overrides,
   };
+}
+
+function detail(
+  summary: AgentTeamSummary,
+  members: AgentTeamDetail["members"] = [],
+): AgentTeamDetail {
+  return { team: summary, members };
 }
 
 function team(): AgentTeamSummary {

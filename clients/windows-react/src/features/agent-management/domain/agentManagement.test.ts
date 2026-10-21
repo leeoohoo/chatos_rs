@@ -5,6 +5,7 @@ import {
   agentProfileActivitySnapshotSchema,
   agentProfileListSchema,
   agentTeamListSchema,
+  agentTeamDetailSchema,
   heartbeatIntervalLabel,
   preparedAgentConversationSchema,
 } from "./agentManagement";
@@ -147,6 +148,25 @@ describe("agent management domain", () => {
       id: "22222222-2222-4222-8222-222222222222",
     }])).toThrow("同一项目只能有一个活动 Agent 团队");
     expect(() => agentTeamListSchema.parse([{ ...team, rolePrompt: "private" }])).toThrow();
+
+    const detail = {
+      team: { ...team, memberCount: 1, defaultAgentId: "agent-1" },
+      members: [{
+        agentId: "agent-1",
+        role: "设计师",
+        responsibility: "负责界面",
+        joinedAtUnixMs: 20,
+      }],
+    };
+    expect(agentTeamDetailSchema.parse(detail)).toEqual(detail);
+    expect(() => agentTeamDetailSchema.parse({
+      ...detail,
+      team: { ...detail.team, memberCount: 2 },
+    })).toThrow("Agent 团队成员数量不一致");
+    expect(() => agentTeamDetailSchema.parse({
+      ...detail,
+      team: { ...detail.team, projectManagerAgentId: "agent-2" },
+    })).toThrow("Agent 团队负责人必须是活动成员");
   });
 });
 

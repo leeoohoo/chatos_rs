@@ -21,6 +21,7 @@ import {
   type AgentConversationActivitySnapshot,
   type AgentProfileActivitySnapshot,
   type AgentTeamSummary,
+  type AgentTeamDetail,
   type CreateAgentTeamInput,
   type PreparedAgentConversation,
 } from "../domain/agentManagement";
@@ -63,12 +64,18 @@ export function AgentManagementView({
   const saveProfile = useAgentManagementStore((state) => state.saveProfile);
   const reset = useAgentManagementStore((state) => state.reset);
   const teams = useAgentTeamStore((state) => state.teams);
+  const selectedTeamId = useAgentTeamStore((state) => state.selectedTeamId);
+  const teamDetail = useAgentTeamStore((state) => state.detail);
   const isLoadingTeams = useAgentTeamStore((state) => state.isLoading);
   const isCreatingTeam = useAgentTeamStore((state) => state.isCreating);
+  const isTeamDetailLoading = useAgentTeamStore((state) => state.isDetailLoading);
+  const isInvitingAgent = useAgentTeamStore((state) => state.isInviting);
   const teamError = useAgentTeamStore((state) => state.error);
   const activateTeams = useAgentTeamStore((state) => state.activate);
   const refreshTeams = useAgentTeamStore((state) => state.refresh);
   const createTeam = useAgentTeamStore((state) => state.createTeam);
+  const selectTeam = useAgentTeamStore((state) => state.selectTeam);
+  const inviteAgent = useAgentTeamStore((state) => state.inviteAgent);
   const resetTeams = useAgentTeamStore((state) => state.reset);
   const [surface, setSurface] = useState<"agents" | "teams">("agents");
   const [page, setPage] = useState(0);
@@ -81,6 +88,7 @@ export function AgentManagementView({
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [showsSkillManagement, setShowsSkillManagement] = useState(false);
   const [showsTeamCreator, setShowsTeamCreator] = useState(false);
+  const [showsAgentInvite, setShowsAgentInvite] = useState(false);
   const [editor, setEditor] = useState<{
     catalog: AgentProfileEditorCatalog;
     data: AgentProfileEditorData | null;
@@ -115,8 +123,9 @@ export function AgentManagementView({
     setSelectedAgentId(null);
     setShowsSkillManagement(false);
     setShowsTeamCreator(false);
+    setShowsAgentInvite(false);
     void activate(port, ownerUserId).then(() => loadEditorCatalog(port, false));
-    if (port.listTeams && port.createTeam) void activateTeams(port, ownerUserId);
+    if (port.listTeams) void activateTeams(port, ownerUserId);
     return () => {
       reset();
       resetTeams();
@@ -297,12 +306,19 @@ export function AgentManagementView({
 
         {surface === "teams" ? (
           <AgentTeamCatalog
+            detail={teamDetail}
             error={teamError}
+            isDetailLoading={isTeamDetailLoading}
+            isInviting={isInvitingAgent}
             isLoading={isLoadingTeams}
+            profiles={profiles}
             projects={projects}
+            selectedTeamId={selectedTeamId}
             teams={teams}
             onCreate={() => setShowsTeamCreator(true)}
+            onInvite={() => setShowsAgentInvite(true)}
             onRetry={() => void refreshTeams(port)}
+            onSelect={(teamId) => void selectTeam(port, teamId)}
           />
         ) : isLoading && profiles.length === 0 ? (
           <div className="agent-management__state"><span className="mini-spinner" />正在读取 Agent…</div>
@@ -390,24 +406,50 @@ export function AgentManagementView({
           }}
         />
       )}
+      {showsAgentInvite && teamDetail && selectedTeamId === teamDetail.team.id && (
+        <InviteAgentToTeamSheet
+          detail={teamDetail}
+          error={teamError}
+          isInviting={isInvitingAgent}
+          profiles={profiles}
+          onCancel={() => setShowsAgentInvite(false)}
+          onInvite={async (agentId) => {
+            if (await inviteAgent(port, teamDetail.team.id, agentId)) setShowsAgentInvite(false);
+          }}
+        />
+      )}
     </div>
   );
 }
 
 function AgentTeamCatalog({
+  detail,
   error,
+  isDetailLoading,
+  isInviting,
   isLoading,
+  profiles,
   projects,
+  selectedTeamId,
   teams,
   onCreate,
+  onInvite,
   onRetry,
+  onSelect,
 }: {
+  detail: AgentTeamDetail | null;
   error: string | null;
+  isDetailLoading: boolean;
+  isInviting: boolean;
   isLoading: boolean;
+  profiles: AgentProfileSummary[];
   projects: Array<{ id: string; title: string }>;
+  selectedTeamId: string | null;
   teams: AgentTeamSummary[];
   onCreate(): void;
+  onInvite(): void;
   onRetry(): void;
+  onSelect(teamId: string): void;
 }) {
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.title])),
@@ -435,9 +477,14 @@ function AgentTeamCatalog({
           </button>
         </div>
       ) : (
-        <div className="agent-team-grid" aria-label="项目 Agent 团队">
-          {teams.map((team) => (
-            <article className="agent-team-card" key={team.id}>
+        <>
+          <div className="agent-team-grid" aria-label="项目 Agent 团队">
+            {teams.map((team) => (
+            <article
+              className={selectedTeamId === team.id ? "agent-team-card is-selected" : "agent-team-card"}
+              key={team.id}
+              onClick={() => onSelect(team.id)}
+            >
               <header>
                 <span aria-hidden="true">◉</span>
                 <div>
@@ -451,11 +498,127 @@ function AgentTeamCatalog({
                 <Row label="项目经理" value={team.projectManagerAgentId ? "已指定" : "未指定"} />
                 <Row label="默认 Agent" value={team.defaultAgentId ? "已指定" : "未指定"} />
               </dl>
-              <footer>团队成员、聊天和任务板将继续按 macOS 契约接入。</footer>
+              <button
+                aria-pressed={selectedTeamId === team.id}
+                onClick={(event) => { event.stopPropagation(); onSelect(team.id); }}
+                type="button"
+              >查看成员</button>
             </article>
-          ))}
-        </div>
+            ))}
+          </div>
+          {selectedTeamId && (
+            <section aria-label="Agent 团队成员" className="agent-team-members">
+              <header>
+                <div>
+                  <h3>{detail?.team.id === selectedTeamId ? `${detail.team.name} · 团队成员` : "正在读取团队成员"}</h3>
+                  <p>同一个 Agent 可以加入多个团队；角色和职责按当前团队隔离。</p>
+                </div>
+                <div>
+                  {isDetailLoading && <span aria-label="正在读取团队成员" className="mini-spinner" />}
+                  <button
+                    disabled={!detail || detail.team.id !== selectedTeamId || isInviting
+                      || detail.members.length >= profiles.length}
+                    onClick={onInvite}
+                    type="button"
+                  >邀请 Agent</button>
+                </div>
+              </header>
+              {detail?.team.id === selectedTeamId && detail.members.length > 0 ? (
+                <div className="agent-team-members__list">
+                  {detail.members.map((member) => {
+                    const profile = profiles.find((candidate) => candidate.id === member.agentId);
+                    return (
+                      <article key={member.agentId}>
+                        <span aria-hidden="true">{(profile?.name ?? member.role).slice(0, 1).toUpperCase()}</span>
+                        <div>
+                          <strong>{profile?.name ?? member.role}</strong>
+                          <small>{member.role}{member.responsibility ? ` · ${member.responsibility}` : ""}</small>
+                        </div>
+                        <em>{detail.team.projectManagerAgentId === member.agentId
+                          ? "项目经理"
+                          : detail.team.defaultAgentId === member.agentId ? "默认 Agent" : "成员"}</em>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : !isDetailLoading && detail?.team.id === selectedTeamId ? (
+                <div className="agent-team-members__empty">团队还没有成员，请邀请一个已有 Agent。</div>
+              ) : null}
+            </section>
+          )}
+        </>
       )}
+    </div>
+  );
+}
+
+function InviteAgentToTeamSheet({
+  detail,
+  error,
+  isInviting,
+  profiles,
+  onCancel,
+  onInvite,
+}: {
+  detail: AgentTeamDetail;
+  error: string | null;
+  isInviting: boolean;
+  profiles: AgentProfileSummary[];
+  onCancel(): void;
+  onInvite(agentId: string): Promise<void>;
+}) {
+  const availableProfiles = useMemo(() => {
+    const memberIds = new Set(detail.members.map((member) => member.agentId));
+    return profiles.filter((profile) => !memberIds.has(profile.id));
+  }, [detail.members, profiles]);
+  const [agentId, setAgentId] = useState(availableProfiles[0]?.id ?? "");
+
+  useEffect(() => {
+    if (!availableProfiles.some((profile) => profile.id === agentId)) {
+      setAgentId(availableProfiles[0]?.id ?? "");
+    }
+  }, [agentId, availableProfiles]);
+
+  return (
+    <div className="agent-editor-backdrop" role="presentation">
+      <section aria-label="邀请 Agent" aria-modal="true" className="agent-editor agent-team-invite" role="dialog">
+        <header>
+          <h2>邀请 Agent</h2>
+          <button aria-label="关闭邀请 Agent" disabled={isInviting} onClick={onCancel} type="button">×</button>
+        </header>
+        <div className="agent-editor__body">
+          <p className="agent-team-creator__intro">选择一个已有 Agent 加入“{detail.team.name}”。</p>
+          {error && <div className="agent-editor__error" role="alert">{error}</div>}
+          {availableProfiles.length === 0 ? (
+            <div className="agent-team-creator__empty">所有已有 Agent 都已加入当前团队，或尚未创建 Agent。</div>
+          ) : (
+            <div aria-label="可邀请 Agent" className="agent-team-invite__list" role="listbox">
+              {availableProfiles.map((profile) => (
+                <button
+                  aria-selected={profile.id === agentId}
+                  key={profile.id}
+                  onClick={() => setAgentId(profile.id)}
+                  role="option"
+                  type="button"
+                >
+                  <span aria-hidden="true">{profile.name.slice(0, 1).toUpperCase()}</span>
+                  <div><strong>{profile.name}</strong><small>{agentProfessionLabels[profile.professionKey]}</small></div>
+                  {profile.id === agentId && <em aria-hidden="true">✓</em>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <footer>
+          <button disabled={isInviting} onClick={onCancel} type="button">取消</button>
+          <button
+            className="primary-button"
+            disabled={isInviting || !agentId}
+            onClick={() => void onInvite(agentId)}
+            type="button"
+          >{isInviting ? "正在邀请…" : "邀请"}</button>
+        </footer>
+      </section>
     </div>
   );
 }

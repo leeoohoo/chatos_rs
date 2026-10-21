@@ -8,6 +8,7 @@ import type {
   AgentConversationActivitySnapshot,
   AgentProfileActivitySnapshot,
   AgentTeamSummary,
+  AgentTeamDetail,
   CreateAgentTeamInput,
   PreparedAgentConversation,
 } from "../domain/agentManagement";
@@ -41,6 +42,8 @@ export interface AgentManagementPort {
   ): Promise<AgentProfileActivitySnapshot>;
   listTeams?(ownerUserId: string): Promise<AgentTeamSummary[]>;
   createTeam?(ownerUserId: string, input: CreateAgentTeamInput): Promise<AgentTeamSummary>;
+  loadTeam?(ownerUserId: string, teamId: string): Promise<AgentTeamDetail>;
+  inviteAgentToTeam?(ownerUserId: string, teamId: string, agentId: string): Promise<AgentTeamDetail>;
   sendConversationDraft?(input: {
     ownerUserId: string;
     roomId: string;

@@ -8,6 +8,7 @@ import {
   agentConversationActivitySnapshotSchema,
   agentProfileActivitySnapshotSchema,
   agentTeamListSchema,
+  agentTeamDetailSchema,
   agentTeamSummarySchema,
   preparedAgentConversationSchema,
   type AgentProfileMutationInput,
@@ -121,6 +122,18 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async createTeam(ownerUserId: string, input: CreateAgentTeamInput) {
     return agentTeamSummarySchema.parse(
       await invoke("create_agent_team", { input: { ownerUserId, ...input } }),
+    );
+  }
+
+  async loadTeam(ownerUserId: string, teamId: string) {
+    return agentTeamDetailSchema.parse(
+      await invoke("load_agent_team", { ownerUserId, teamId }),
+    );
+  }
+
+  async inviteAgentToTeam(ownerUserId: string, teamId: string, agentId: string) {
+    return agentTeamDetailSchema.parse(
+      await invoke("invite_agent_to_team", { input: { ownerUserId, teamId, agentId } }),
     );
   }
 
