@@ -3011,12 +3011,71 @@ pub(crate) async fn load_agent_team_runs(
     team_id: String,
     authentication: State<'_, AuthenticationManager>,
     conversations: State<'_, AgentConversationStore>,
+    manager: State<'_, HostManager>,
 ) -> Result<AgentTeamRunHistorySnapshot, String> {
     validate_owner(&owner_user_id)?;
     validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
     let generation = authentication
         .session_generation_for_owner(&owner_user_id)
         .await?;
+    let binding_store = conversations.inner().clone();
+    let binding_owner = owner_user_id.clone();
+    let binding_team = team_id.clone();
+    let bindings = tauri::async_runtime::spawn_blocking(move || {
+        binding_store.active_project_team_run_bindings(&binding_owner, &binding_team)
+    })
+    .await
+    .map_err(|_| "Agent 团队运行绑定读取任务异常退出。".to_owned())??;
+    let mut reconciliations = Vec::with_capacity(bindings.len());
+    for binding in bindings {
+        let result = manager
+            .execute_detailed(HostCommand::GetConversationContext(
+                GetConversationCommand {
+                    owner_user_id: owner_user_id.clone(),
+                    conversation_id: binding.conversation_id.clone(),
+                },
+            ))
+            .await;
+        let detail = match result {
+            Ok(HostResult::Conversation { conversation }) => conversation,
+            Ok(_) => return Err("Local Agent Host 返回了错误的团队运行响应。".into()),
+            Err(error) if error.code.as_deref() == Some("not_found") => continue,
+            Err(error) => return Err(error.message),
+        };
+        validate_host_conversation(&detail, &owner_user_id, &binding.conversation_id)?;
+        let Some(turn) = detail
+            .turns
+            .iter()
+            .find(|turn| turn.turn_id == binding.turn_id && turn.run_id == binding.run_id)
+        else {
+            continue;
+        };
+        reconciliations.push(team_todo::TeamRunReconciliation {
+            delivery_id: binding.delivery_id,
+            turn_id: turn.turn_id.clone(),
+            run_id: turn.run_id.clone(),
+            status: turn.status,
+            created_at_unix_ms: turn.created_at_unix_ms,
+            updated_at_unix_ms: turn.updated_at_unix_ms,
+        });
+    }
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    if !reconciliations.is_empty() {
+        let reconcile_store = conversations.inner().clone();
+        let reconcile_owner = owner_user_id.clone();
+        let reconcile_team = team_id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            reconcile_store.reconcile_project_team_runs(
+                &reconcile_owner,
+                &reconcile_team,
+                &reconciliations,
+            )
+        })
+        .await
+        .map_err(|_| "Agent 团队运行对账任务异常退出。".to_owned())??;
+    }
     let store = conversations.inner().clone();
     let owner = owner_user_id.clone();
     let team = team_id.clone();
@@ -5056,7 +5115,7 @@ mod tests {
                 101,
             )
             .unwrap();
-        store
+        let second = store
             .create_project_team_todo(
                 "alice",
                 &team.id,
@@ -5116,6 +5175,48 @@ mod tests {
             .unwrap();
         assert_eq!(failed_todo.status, "blocked");
         assert_eq!(failed_todo.blocked_reason, "host unavailable");
+
+        assert_eq!(
+            store
+                .enqueue_ready_project_team_todos("alice", &team.id, 106)
+                .unwrap(),
+            1
+        );
+        let second_executor = store
+            .next_project_team_delivery("alice", &team.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(second_executor.todo_id.as_deref(), Some(second.id.as_str()));
+        store
+            .claim_project_team_delivery(
+                "alice",
+                &second_executor,
+                "turn-executor-2",
+                "run-executor-2",
+                107,
+            )
+            .unwrap();
+        store
+            .reconcile_project_team_runs(
+                "alice",
+                &team.id,
+                &[team_todo::TeamRunReconciliation {
+                    delivery_id: second_executor.delivery_id,
+                    turn_id: "turn-executor-2".into(),
+                    run_id: "run-executor-2".into(),
+                    status: LocalConversationTurnStatus::Succeeded,
+                    created_at_unix_ms: 107,
+                    updated_at_unix_ms: 108,
+                }],
+            )
+            .unwrap();
+        let completed = store
+            .list_project_team_todos("alice", &team.id, true)
+            .unwrap()
+            .into_iter()
+            .find(|todo| todo.id == second.id)
+            .unwrap();
+        assert_eq!(completed.status, "completed");
     }
 
     #[test]
