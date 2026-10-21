@@ -289,7 +289,7 @@ pub(super) struct StorySegment {
 }
 
 impl StorySegment {
-    fn resource_ids(&self) -> impl Iterator<Item = &String> {
+    pub(super) fn resource_ids(&self) -> impl Iterator<Item = &String> {
         self.character_ids
             .iter()
             .chain(self.scene_ids.iter())

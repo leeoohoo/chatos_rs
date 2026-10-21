@@ -9,6 +9,8 @@ import {
   storyPlanningHistoryPageSchema,
   storyPlanningOutcomeSchema,
   storyPlanningRunSchema,
+  storyMediaBatchKindSchema,
+  storyMediaBatchPreviewResultSchema,
   storyVideoGenerationOutcomeSchema,
 } from "../domain/storyStudio";
 import type { StoryPresentationScope, StoryStudioPort } from "../ports/StoryStudioPort";
@@ -48,6 +50,24 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
   async loadProject(request: Parameters<StoryStudioPort["loadProject"]>[0]) {
     const input = { ...scope(request), projectId: uuidSchema.parse(request.projectId) };
     return storyProjectSchema.parse(await invoke("load_story_project", { input }));
+  }
+
+  async previewMediaBatch(request: Parameters<StoryStudioPort["previewMediaBatch"]>[0]) {
+    const input = {
+      ...scope(request),
+      preview: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        kind: storyMediaBatchKindSchema.parse(request.kind),
+        targetIds: request.targetIds == null
+          ? null
+          : z.array(identifierSchema).min(1).max(500).parse(request.targetIds),
+        userIdeas: safeText(2_000).parse(request.userIdeas),
+      },
+    };
+    return storyMediaBatchPreviewResultSchema.parse(
+      await invoke("preview_story_media_batch", { input }),
+    );
   }
 
   async createProject(request: Parameters<StoryStudioPort["createProject"]>[0]) {

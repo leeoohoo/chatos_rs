@@ -19,12 +19,21 @@ use super::{
         StorySegmentEditInput, StorySegmentStructureInput, StoryVideoGenerationPollInput,
         StoryVideoGenerationStartInput, StoryVideoGuidanceInput, StoryVideoRetryInput,
     },
+    batch::{preview_media_batch, StoryMediaBatchPreviewInput, StoryMediaBatchPreviewResult},
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
     projection::StoryProjectSnapshot,
     runtime::{abandon_run, StoryPlanningOutcome, StoryPlanningRuntime},
     store::{StoryPlanningHistoryPage, StoryProjectCursor, StoryProjectPage},
 };
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryMediaBatchPreviewCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    preview: StoryMediaBatchPreviewInput,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -357,6 +366,46 @@ pub(crate) async fn load_story_project(
     .map_err(|_| "剧情项目读取任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &manager, &owner, generation).await?;
     loaded
+}
+
+#[tauri::command]
+pub(crate) async fn preview_story_media_batch(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryMediaBatchPreviewCommandInput,
+) -> Result<StoryMediaBatchPreviewResult, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    validate_planning_presentation(
+        &manager,
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.preview.project_id,
+    )
+    .await?;
+    let catalog =
+        load_current_catalog(&authentication, &manager, &input.owner_user_id, generation).await?;
+    let store = manager.store();
+    let owner = input.owner_user_id;
+    let load_owner = owner.clone();
+    let preview = input.preview;
+    let project_id = preview.project_id.clone();
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        let project = store.load_native_project(&load_owner, &project_id)?;
+        Ok(preview_media_batch(
+            &project,
+            &load_owner,
+            &catalog,
+            preview,
+        ))
+    })
+    .await
+    .map_err(|_| "批量制作预览任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    prepared
 }
 
 #[tauri::command]

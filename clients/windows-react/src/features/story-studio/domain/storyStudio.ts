@@ -194,6 +194,55 @@ export const storyVideoGenerationOutcomeSchema = z.object({
   terminal: z.boolean(),
 }).strict();
 
+export const storyMediaBatchKindSchema = z.enum([
+  "assets",
+  "frames",
+  "lastFrames",
+  "videos",
+  "pipeline",
+]);
+
+export const storyMediaBatchPreparationSchema = z.object({
+  previewId: uuid,
+  projectId: uuid,
+  projectFingerprint: fingerprint,
+  kind: storyMediaBatchKindSchema,
+  eligibleTargetIds: z.array(identifier).max(500),
+  requestedTargetIds: z.array(identifier).min(1).max(500),
+  steps: z.array(z.object({
+    id: identifier,
+    kind: storyMediaBatchKindSchema.exclude(["pipeline"]),
+    targetId: identifier,
+  }).strict()).min(1).max(500),
+  executionMode: z.enum(["persistentBatch", "directVideos"]),
+}).strict().superRefine((preview, context) => {
+  if (new Set(preview.eligibleTargetIds).size !== preview.eligibleTargetIds.length
+    || new Set(preview.requestedTargetIds).size !== preview.requestedTargetIds.length
+    || new Set(preview.steps.map((step) => step.id)).size !== preview.steps.length
+    || preview.requestedTargetIds.some((id) => !preview.eligibleTargetIds.includes(id))
+    || (preview.kind === "videos") !== (preview.executionMode === "directVideos")) {
+    context.addIssue({ code: "custom", message: "批量制作预览身份不一致。" });
+  }
+});
+
+export const storyMediaBatchPreviewResultSchema = z.object({
+  eligibleTargetIds: z.array(identifier).max(500),
+  preparation: storyMediaBatchPreparationSchema.nullable(),
+  validationError: safeText(2_000).nullable(),
+}).strict().superRefine((result, context) => {
+  if (new Set(result.eligibleTargetIds).size !== result.eligibleTargetIds.length
+    || (result.preparation != null && result.validationError != null)
+    || (result.preparation == null
+      && result.eligibleTargetIds.length > 0
+      && result.validationError == null)) {
+    context.addIssue({ code: "custom", message: "批量制作预览结果不一致。" });
+  }
+  if (result.preparation
+    && result.preparation.eligibleTargetIds.some((id, index) => id !== result.eligibleTargetIds[index])) {
+    context.addIssue({ code: "custom", message: "批量制作候选目标不一致。" });
+  }
+});
+
 export const storyPlanningRunSchema = z.object({
   id: uuid,
   ownerUserId: safeText(1_024).min(1),
@@ -241,6 +290,9 @@ export type StoryProjectCursor = z.infer<typeof storyProjectCursorSchema>;
 export type StoryProjectPage = z.infer<typeof storyProjectPageSchema>;
 export type StorySegment = z.infer<typeof storySegmentSchema>;
 export type StoryVideoGenerationOutcome = z.infer<typeof storyVideoGenerationOutcomeSchema>;
+export type StoryMediaBatchKind = z.infer<typeof storyMediaBatchKindSchema>;
+export type StoryMediaBatchPreparation = z.infer<typeof storyMediaBatchPreparationSchema>;
+export type StoryMediaBatchPreviewResult = z.infer<typeof storyMediaBatchPreviewResultSchema>;
 export type StoryPlanningRun = z.infer<typeof storyPlanningRunSchema>;
 export type StoryPlanningHistoryPage = z.infer<typeof storyPlanningHistoryPageSchema>;
 export type StoryPlanningEvent = z.infer<typeof storyPlanningEventSchema>;

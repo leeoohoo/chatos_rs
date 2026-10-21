@@ -60,7 +60,7 @@ describe("StoryStudioView", () => {
     });
     const view = render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
 
-    await screen.findByRole("heading", { name: "雨夜来客" });
+    await screen.findByRole("heading", { name: "雨夜来客", level: 2 });
     fireEvent.click(screen.getByRole("button", { name: "生成剧情规划" }));
     expect(await screen.findByText("正在准备规划")).toBeVisible();
     expect(planningListener).toBeDefined();
@@ -246,6 +246,44 @@ describe("StoryStudioView", () => {
       segmentId: "segment-a",
     }));
   });
+
+  it("renders the native macOS-aligned media batch preview without starting work", async () => {
+    const canonical = plannedProject();
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      previewMediaBatch: vi.fn(async () => ({
+        eligibleTargetIds: ["segment-a"],
+        preparation: {
+          previewId: "44444444-4444-4444-8444-444444444444",
+          projectId: canonical.id,
+          projectFingerprint: canonical.baseFingerprint!,
+          kind: "pipeline" as const,
+          eligibleTargetIds: ["segment-a"],
+          requestedTargetIds: ["segment-a"],
+          steps: [
+            { id: "assets:prop-a", kind: "assets" as const, targetId: "prop-a" },
+            { id: "frames:segment-a", kind: "frames" as const, targetId: "segment-a" },
+            { id: "videos:segment-a", kind: "videos" as const, targetId: "segment-a" },
+          ],
+          executionMode: "persistentBatch" as const,
+        },
+        validationError: null,
+      })),
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+    await screen.findByRole("heading", { name: "雨夜来客", level: 2 });
+
+    fireEvent.click(screen.getByRole("button", { name: "批量制作" }));
+
+    expect(await screen.findByText("原生执行计划已验证")).toBeVisible();
+    expect(screen.getByText("可恢复持久化批次")).toBeVisible();
+    expect(screen.getByText("素材图片 · 钥匙")).toBeVisible();
+    expect(storyPort.previewMediaBatch).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: canonical.id,
+      kind: "pipeline",
+      targetIds: undefined,
+    }));
+  });
 });
 
 function usePresentationId(storyPort: StoryStudioPort) {
@@ -266,6 +304,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     allowVideoRetry: vi.fn(async () => project()),
     loadProjects: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadProject: vi.fn(async () => project()),
+    previewMediaBatch: vi.fn(async () => { throw new Error("unused batch preview"); }),
     createProject: vi.fn(async () => project()),
     updateSource: vi.fn(async () => project()),
     startPlanning: vi.fn(async () => project()),
@@ -348,5 +387,50 @@ function project(): StoryProject {
     relations: [],
     createdAtUnixMs: 1,
     updatedAtUnixMs: 1,
+  };
+}
+
+function plannedProject(): StoryProject {
+  return {
+    ...project(),
+    source: "陌生人拿着钥匙走进雨夜。",
+    props: [{
+      id: "prop-a",
+      name: "钥匙",
+      description: "旧钥匙",
+      imagePrompt: "一把黄铜旧钥匙",
+      media: { images: [], confirmedImageId: null, generationAttemptId: null },
+    }],
+    segments: [{
+      id: "segment-a",
+      title: "雨夜来客",
+      synopsis: "陌生人拿着钥匙走进雨夜。",
+      kind: "story",
+      seconds: 5,
+      sourceRange: { start: 0, end: 12 },
+      characterIds: [],
+      sceneIds: [],
+      propIds: ["prop-a"],
+      detail: {
+        firstFramePrompt: "雨夜中的陌生人",
+        lastFramePrompt: null,
+        shots: [{ start: 0, end: 5, prompt: "陌生人走近门口" }],
+        continuityIn: "",
+        continuityOut: "",
+        audio: "雨声",
+        constraints: "",
+      },
+      firstFrames: { images: [], confirmedImageId: null, generationAttemptId: null },
+      userSelectedFirstFrameId: null,
+      inheritedFirstFrameSourceSegmentId: null,
+      lastFrames: { images: [], confirmedImageId: null, generationAttemptId: null },
+      actualVideoLastFrameId: null,
+      videoGuidanceMode: "first_frame",
+      attempt: null,
+      previousAttempts: [],
+      video: null,
+      archivedVideos: [],
+      error: null,
+    }],
   };
 }

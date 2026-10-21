@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
 import { isStorySegmentReady, storyConfirmedImage } from "../domain/storyStudio";
+import type { StoryMediaBatchKind, StoryMediaBatchPreparation, StoryProject } from "../domain/storyStudio";
 import { useStoryStudioStore } from "../application/storyStudioStore";
 import type { StoryPlanningProgress } from "../application/storyStudioStore";
 import type { StoryImageImportTarget, StoryStudioPort } from "../ports/StoryStudioPort";
@@ -150,12 +151,13 @@ function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: Medi
   const isRefining = state.busy && planning?.stage === "refine" && planningIsActive(planning);
   const [historyTarget, setHistoryTarget] = useState<StoryImageImportTarget | null>(null);
   const [retryTarget, setRetryTarget] = useState<StoryImageImportTarget | null>(null);
+  const [showBatchPreview, setShowBatchPreview] = useState(false);
 
   return (
     <div className="story-plan-workspace">
       {planning && <PlanningStatus progress={planning} />}
       <section className="story-resource-strip">
-        <header><div><h3>角色与场景</h3><p>规划生成的素材事实源</p></div><button disabled={state.busy || project.segments.length === 0} onClick={() => void state.startPlanning(port, "refine", project.segments.map((value) => value.id), "")} type="button">{isRefining ? planningActionLabel(planning) : "细化全部镜头"}</button></header>
+        <header><div><h3>角色与场景</h3><p>规划生成的素材事实源</p></div><div className="story-resource-strip__actions"><button disabled={state.busy} onClick={() => setShowBatchPreview(true)} type="button">批量制作</button><button disabled={state.busy || project.segments.length === 0} onClick={() => void state.startPlanning(port, "refine", project.segments.map((value) => value.id), "")} type="button">{isRefining ? planningActionLabel(planning) : "细化全部镜头"}</button></div></header>
         <div>{resources.map((resource) => {
           const image = storyConfirmedImage(resource.media);
           const latest = resource.media.images.at(-1) ?? null;
@@ -174,8 +176,156 @@ function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: Medi
       </div>
       {historyTarget && <StoryImageHistorySheet mediaPort={mediaPort} onClose={() => setHistoryTarget(null)} port={port} target={historyTarget} />}
       {retryTarget && <StoryImageRetrySheet onClose={() => setRetryTarget(null)} port={port} target={retryTarget} />}
+      {showBatchPreview && <StoryMediaBatchPreviewSheet onClose={() => setShowBatchPreview(false)} port={port} project={project} />}
     </div>
   );
+}
+
+function StoryMediaBatchPreviewSheet({ port, project, onClose }: {
+  port: StoryStudioPort;
+  project: StoryProject;
+  onClose(): void;
+}) {
+  const ownerUserId = useStoryStudioStore((state) => state.ownerUserId);
+  const presentationId = useStoryStudioStore((state) => state.presentationId);
+  const [kind, setKind] = useState<StoryMediaBatchKind>("pipeline");
+  const [eligible, setEligible] = useState<string[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [preview, setPreview] = useState<StoryMediaBatchPreparation | null>(null);
+  const [userIdeas, setUserIdeas] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestSequence = useRef(0);
+
+  const requestPreview = useCallback(async (
+    nextKind: StoryMediaBatchKind,
+    targetIds?: string[],
+  ) => {
+    if (!ownerUserId || !presentationId || !project.baseFingerprint) return;
+    if (targetIds?.length === 0) {
+      requestSequence.current += 1;
+      setSelected(new Set());
+      setPreview(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    const sequence = ++requestSequence.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const value = await port.previewMediaBatch({
+        ownerUserId,
+        presentationId,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        kind: nextKind,
+        targetIds,
+        userIdeas,
+      });
+      if (requestSequence.current !== sequence) return;
+      setEligible(value.eligibleTargetIds);
+      setSelected(new Set(value.preparation?.requestedTargetIds ?? targetIds ?? value.eligibleTargetIds));
+      setPreview(value.preparation);
+      setLoading(false);
+      setError(value.validationError);
+    } catch (reason) {
+      if (requestSequence.current !== sequence) return;
+      setPreview(null);
+      setLoading(false);
+      setError(storyViewErrorMessage(reason, "批量制作计划暂时无法预览。"));
+    }
+  }, [ownerUserId, port, presentationId, project.baseFingerprint, project.id, userIdeas]);
+
+  useEffect(() => {
+    setEligible([]);
+    setSelected(new Set());
+    setPreview(null);
+    void requestPreview(kind);
+  }, [kind, requestPreview]);
+
+  const choose = (targetId: string, checked: boolean) => {
+    const next = new Set(selected);
+    if (checked) next.add(targetId);
+    else next.delete(targetId);
+    setSelected(next);
+    void requestPreview(kind, eligible.filter((id) => next.has(id)));
+  };
+  const resources = [...project.characters, ...project.scenes, ...project.props];
+  const counts = preview?.steps.reduce<Record<string, number>>((result, step) => {
+    result[step.kind] = (result[step.kind] ?? 0) + 1;
+    return result;
+  }, {}) ?? {};
+  const videoSeconds = preview?.steps
+    .filter((step) => step.kind === "videos")
+    .reduce((total, step) => total + (project.segments.find((item) => item.id === step.targetId)?.seconds ?? 0), 0) ?? 0;
+
+  return (
+    <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section aria-modal="true" className="story-sheet story-batch-sheet" role="dialog">
+        <header><div><span>▦</span><div><h2>按已保存描述批量制作</h2><p>预览由原生层按 macOS 的同一套规则生成；此步骤不会提交 AI 任务。</p></div></div><button aria-label="关闭" onClick={onClose} type="button">×</button></header>
+        <div className="story-batch-sheet__body">
+          <div className="story-batch-kinds" role="tablist" aria-label="批量制作环节">
+            {BATCH_KINDS.map((item) => <button aria-selected={kind === item.id} className={kind === item.id ? "is-selected" : ""} key={item.id} onClick={() => setKind(item.id)} role="tab" type="button">{item.label}</button>)}
+          </div>
+          <label>统一补充要求<textarea maxLength={2_000} onChange={(event) => setUserIdeas(event.target.value)} placeholder="例如：整体更温暖、减少快速运镜，或突出某个角色" value={userIdeas} /></label>
+          <div className="story-batch-target-heading"><span>只列出当前可执行、尚未完成的目标</span><div><button disabled={eligible.length === 0} onClick={() => void requestPreview(kind, eligible)} type="button">全选</button><button disabled={selected.size === 0} onClick={() => void requestPreview(kind, [])} type="button">清空</button></div></div>
+          <div className="story-batch-targets">
+            {loading && eligible.length === 0 ? <div className="story-studio__loading"><span className="mini-spinner" />正在核对可执行目标…</div> : eligible.length === 0 ? <p>没有就绪目标，请先完成文字计划或确认参考图片。</p> : eligible.map((targetId) => {
+              const target = batchCandidate(project, kind, targetId);
+              return <label key={targetId}><input checked={selected.has(targetId)} disabled={loading} onChange={(event) => choose(targetId, event.target.checked)} type="checkbox" /><span><strong>{target.name}</strong><small>{target.detail}</small></span></label>;
+            })}
+          </div>
+          {kind === "pipeline" && <p className="story-batch-note">执行顺序：缺少的关联素材 → 每段首帧 → 需要的尾帧 → 所选视频。已有确认版本保持不变；已有未确认图片必须先由你选定。</p>}
+          {preview && <section className="story-batch-summary"><header><strong>原生执行计划已验证</strong><span>{preview.executionMode === "directVideos" ? "独立顺序视频队列" : "可恢复持久化批次"}</span></header><div><span><strong>{preview.requestedTargetIds.length}</strong>目标</span><span><strong>{counts.assets ?? 0}</strong>素材图</span><span><strong>{(counts.frames ?? 0) + (counts.lastFrames ?? 0)}</strong>首尾帧</span><span><strong>{counts.videos ?? 0}</strong>视频</span><span><strong>{videoSeconds}</strong>视频秒数</span></div><ol>{preview.steps.map((step, index) => <li key={step.id}><span>{index + 1}</span>{batchStepLabel(step.kind)} · {batchTargetName(project, step.targetId)}</li>)}</ol></section>}
+          {error && <p className="story-batch-error" role="alert">{error}</p>}
+        </div>
+        <footer><small>下一阶段会基于这份原生计划接入启动、恢复、放弃和历史，不会在 React 内伪造队列。</small><button onClick={onClose} type="button">关闭</button></footer>
+      </section>
+    </div>
+  );
+}
+
+const BATCH_KINDS: { id: StoryMediaBatchKind; label: string }[] = [
+  { id: "pipeline", label: "一键全流程" },
+  { id: "assets", label: "素材图片" },
+  { id: "frames", label: "分段首帧" },
+  { id: "lastFrames", label: "分段尾帧" },
+  { id: "videos", label: "分段视频" },
+];
+
+function batchStepLabel(kind: Exclude<StoryMediaBatchKind, "pipeline">) {
+  if (kind === "assets") return "素材图片";
+  if (kind === "frames") return "分段首帧";
+  if (kind === "lastFrames") return "分段尾帧";
+  return "分段视频";
+}
+
+function batchTargetName(project: StoryProject, targetId: string) {
+  return [...project.characters, ...project.scenes, ...project.props]
+    .find((item) => item.id === targetId)?.name
+    ?? project.segments.find((item) => item.id === targetId)?.title
+    ?? targetId;
+}
+
+function batchCandidate(project: StoryProject, kind: StoryMediaBatchKind, targetId: string) {
+  if (kind === "assets") {
+    const resource = [...project.characters, ...project.scenes, ...project.props]
+      .find((item) => item.id === targetId);
+    return {
+      name: resource?.name ?? targetId,
+      detail: resource?.imagePrompt || "已保存的素材描述",
+    };
+  }
+  const segment = project.segments.find((item) => item.id === targetId);
+  return {
+    name: segment?.title ?? targetId,
+    detail: segment?.synopsis || "已保存的分段描述",
+  };
+}
+
+function storyViewErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 
 function SegmentInspector({ port, projectId, segmentId, onPickHistory, onRetryImage }: { port: StoryStudioPort; projectId: string; segmentId: string; onPickHistory(target: StoryImageImportTarget): void; onRetryImage(target: StoryImageImportTarget): void }) {
