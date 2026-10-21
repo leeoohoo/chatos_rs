@@ -679,14 +679,20 @@ final class StoryStudioViewModel: ObservableObject {
         guard let project, project.segments.isEmpty, !project.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if supportsAgentPlanning { startAgent(stage: .outline, targets: [], userIdeas: userIdeas); return }
         guard let planner else { errorMessage = StoryError.unavailable.localizedDescription; return }
-        let store = store
+        let projectMutation = projectMutation
         let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
-        run("正在分析完整剧情并规划分段") { [weak self, planner, store] owner, token in
+        run("正在分析完整剧情并规划分段") { [weak self, planner, projectMutation] owner, token in
             let request = try StoryPlanningTools.outlineRequest(project, userIdeas: userIdeas)
             let data = try await planner.plan(request)
             let next = try StoryPlanningTools.applyOutline(data, to: project)
-            let saved = try await Self.saveStoryProject(
-                next, owner: owner, store: store, preservingVideoSegmentIDs: preserving
+            let command = try StoryProjectEditCommand(
+                base: project,
+                project: next,
+                preservingVideoSegmentIDs: preserving
+            )
+            let saved = try await projectMutation.persistEdit(
+                command,
+                ownerUserID: owner
             )
             guard let self, self.session == token else { return }
             self.publishProject(saved, token: token)
@@ -704,9 +710,9 @@ final class StoryStudioViewModel: ObservableObject {
             startAgent(stage: .refine, targets: targets, userIdeas: userIdeas); return
         }
         guard let planner else { errorMessage = StoryError.unavailable.localizedDescription; return }
-        let store = store
+        let projectMutation = projectMutation
         let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
-        run("逐段细化镜头计划") { [weak self, planner, store] owner, token in
+        run("逐段细化镜头计划") { [weak self, planner, projectMutation] owner, token in
             _ = try await Self.performSegmentPlanning(
                 project: project,
                 targets: targets,
@@ -714,7 +720,7 @@ final class StoryStudioViewModel: ObservableObject {
                 userIdeas: userIdeas,
                 owner: owner,
                 planner: planner,
-                store: store,
+                projectMutation: projectMutation,
                 preservingVideoSegmentIDs: preserving,
                 shouldPause: { [weak self] in
                     guard let self else { return true }
@@ -738,9 +744,9 @@ final class StoryStudioViewModel: ObservableObject {
             return
         }
         guard let planner else { errorMessage = StoryError.unavailable.localizedDescription; return }
-        let store = store
+        let projectMutation = projectMutation
         let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
-        run("重新生成分段镜头计划") { [weak self, planner, store] owner, token in
+        run("重新生成分段镜头计划") { [weak self, planner, projectMutation] owner, token in
             _ = try await Self.performSegmentPlanning(
                 project: project,
                 targets: targets,
@@ -748,7 +754,7 @@ final class StoryStudioViewModel: ObservableObject {
                 userIdeas: userIdeas,
                 owner: owner,
                 planner: planner,
-                store: store,
+                projectMutation: projectMutation,
                 preservingVideoSegmentIDs: preserving,
                 shouldPause: { [weak self] in
                     guard let self else { return true }
@@ -767,7 +773,7 @@ final class StoryStudioViewModel: ObservableObject {
         userIdeas: String,
         owner: String,
         planner: any StoryPlanningServicing,
-        store: StoryProjectStore,
+        projectMutation: StoryProjectMutationUseCase,
         preservingVideoSegmentIDs: Set<String>,
         shouldPause: @escaping @Sendable () async -> Bool,
         progress: @escaping @Sendable (String) async -> Void,
@@ -812,11 +818,14 @@ final class StoryStudioViewModel: ObservableObject {
             next.segments[index].confirmedFrameID = nil
             next.segments[index].confirmedLastFrameID = nil
             next.segments[index].useLastFrameForVideo = false
-            current = try await saveStoryProject(
-                next,
-                owner: owner,
-                store: store,
+            let command = try StoryProjectEditCommand(
+                base: current,
+                project: next,
                 preservingVideoSegmentIDs: preservingVideoSegmentIDs
+            )
+            current = try await projectMutation.persistEdit(
+                command,
+                ownerUserID: owner
             )
             await publish(current)
         }

@@ -170,6 +170,73 @@ struct StoryProjectMutationUseCaseTests {
         #expect(await persistence.requests.isEmpty)
     }
 
+    @Test("ordinary edits freeze the canonical identity and preserve active video ownership")
+    func persistsOrdinaryEdit() async throws {
+        let persistence = RecordingStoryProjectMutationPersistence()
+        let useCase = StoryProjectMutationUseCase(persistence: persistence)
+        var base = Self.project()
+        base.source = "Original source"
+        var edited = base
+        edited.source = "Edited source"
+        edited.style = "Edited style"
+        let preserving: Set<String> = ["segment-1"]
+        let command = try StoryProjectEditCommand(
+            base: base,
+            project: edited,
+            preservingVideoSegmentIDs: preserving
+        )
+
+        let saved = try await useCase.persistEdit(command, ownerUserID: "  alice  ")
+
+        #expect(saved.source == "Edited source")
+        #expect(command.projectID == base.id)
+        #expect(!command.baseFingerprint.isEmpty)
+        let request = await persistence.requests.first
+        #expect(request?.ownerUserID == "alice")
+        #expect(request?.preservingVideoSegmentIDs == preserving)
+        #expect(request?.project.models == base.models)
+    }
+
+    @Test("ordinary edits reject stale identity and settings changes before persistence")
+    func rejectsInvalidOrdinaryEdit() async throws {
+        let persistence = RecordingStoryProjectMutationPersistence()
+        let useCase = StoryProjectMutationUseCase(persistence: persistence)
+        let base = Self.project()
+        var changedIdentity = base
+        changedIdentity.id = UUID()
+        let identityCommand = try StoryProjectEditCommand(
+            base: base,
+            project: changedIdentity,
+            preservingVideoSegmentIDs: []
+        )
+        await #expect(throws: StoryProjectMutationError.projectMismatch) {
+            _ = try await useCase.persistEdit(identityCommand, ownerUserID: "alice")
+        }
+
+        var changedSettings = base
+        changedSettings.models.textModelID = "video"
+        let settingsCommand = try StoryProjectEditCommand(
+            base: base,
+            project: changedSettings,
+            preservingVideoSegmentIDs: []
+        )
+        await #expect(throws: StoryProjectMutationError.projectMismatch) {
+            _ = try await useCase.persistEdit(settingsCommand, ownerUserID: "alice")
+        }
+
+        var changedRevision = base
+        changedRevision.updatedAt = Date(timeIntervalSince1970: 1)
+        let revisionCommand = try StoryProjectEditCommand(
+            base: base,
+            project: changedRevision,
+            preservingVideoSegmentIDs: []
+        )
+        await #expect(throws: StoryProjectMutationError.projectMismatch) {
+            _ = try await useCase.persistEdit(revisionCommand, ownerUserID: "alice")
+        }
+        #expect(await persistence.requests.isEmpty)
+    }
+
     @Test("project identity and account lifecycle reject stale mutations")
     func validatesIdentityAndLifecycle() async {
         let persistence = RecordingStoryProjectMutationPersistence()

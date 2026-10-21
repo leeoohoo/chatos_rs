@@ -522,6 +522,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事单段视频生成与恢复边界）：Core 新增 `StoryVideoGenerating` Port、`StoryVideoGenerationUseCase`、冻结 project/segment/model/size/prompt/attempt/start-or-resume 的安全 command、安全进度 event、三态 outcome 及按 segment 隔离的 typed lifecycle。macOS Adapter 独占 prompt 组装、Store intent、首尾帧/上一段视频/原视频媒体字节、session-bound provider、job identity、进度持久化、完成视频保存和实际末帧提取。确定发生在 provider POST 前的失败仍清除本地 attempt；可能已经提交的失败仍保留 attempt 和错误，必须恢复或人工核对，恢复只使用原 attempt/job，不重新提交。不同分段仍可并发，仅视频队列仍逐段等待完成并读取最新 canonical project，计费与连续性语义不变。Core 5 项、Story Studio 61 项与 Story Agent 21 项通过；下一片继续 Story 编辑、导入与保存边界，剧情模式继续禁用。
 
+状态补充（2026-10-21，macOS AI 故事通用编辑保存边界）：Core `StoryProjectMutationUseCase` 新增冻结 canonical project fingerprint、schema/version、创建时间、基线 revision、模型组合、编辑结果和活动视频 segment 集合的 `StoryProjectEditCommand`。普通剧情原文/风格、分段、顺序、素材提示、确认与核对操作，以及非 Agent outline/refine 落盘统一通过 typed Port；普通编辑不能越权改变模型或项目身份。Store Adapter 继续独占连续性 reconcile、更新时间和活动 provider 视频状态合并；`runCommit` 不再直接持有 Store，并使用 owner/account session/request/edit token 拒绝换账号后的迟到结果。Core mutation 7 项、Story Studio 62 项、Story Agent 21 项通过。下一片继续图片导入与 attachment 持久化边界，再提取视频实际末帧重新提取；剧情模式继续禁用。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

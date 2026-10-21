@@ -228,18 +228,45 @@ extension StoryStudioViewModel {
         project: StoryProject,
         completion: @escaping @MainActor (StoryStudioViewModel, StoryProject) -> Void = { _, _ in }
     ) {
-        let store = store
+        guard let base = projects.first(where: { $0.id == project.id }) else {
+            errorMessage = StoryProjectMutationError.projectMismatch.localizedDescription
+            return
+        }
         let preservingVideoSegmentIDs = Set(activeVideoGenerations.lazy
             .filter { $0.projectID == project.id }
             .map(\.segmentID))
-        run(label) { [weak self, store] owner, token in
-            let saved = try await Self.saveStoryProject(
-                project,
-                owner: owner,
-                store: store,
+        let command: StoryProjectEditCommand
+        do {
+            command = try .init(
+                base: base,
+                project: project,
                 preservingVideoSegmentIDs: preservingVideoSegmentIDs
             )
-            guard let self, self.session == token else { return }
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        let projectMutation = projectMutation
+        run(label) { [weak self, projectMutation] owner, token in
+            guard let self,
+                  let request = self.projectMutationState.begin(
+                    ownerUserID: owner,
+                    accountSessionID: token,
+                    kind: .edit(
+                        projectID: command.projectID,
+                        baseFingerprint: command.baseFingerprint
+                    )
+                  ) else { throw CancellationError() }
+            defer { _ = self.projectMutationState.finish(request) }
+            let saved = try await projectMutation.persistEdit(
+                command,
+                ownerUserID: owner
+            )
+            guard self.projectMutationState.accepts(
+                request,
+                ownerUserID: self.owner,
+                accountSessionID: self.session
+            ) else { return }
             self.publishProject(saved, token: token)
             completion(self, saved)
         }
@@ -270,22 +297,6 @@ extension StoryStudioViewModel {
     func check(_ token: UUID) throws {
         try Task.checkCancellation()
         guard session == token else { throw CancellationError() }
-    }
-    func commit(_ project: StoryProject, owner: String, token: UUID) async throws {
-        try check(token)
-        var next = project
-        StoryContinuityContext.reconcileInheritedFirstFrames(&next)
-        next.updatedAt = Date()
-        let activeSegmentIDs = Set(activeVideoGenerations.lazy
-            .filter { $0.projectID == next.id }
-            .map(\.segmentID))
-        next = try await store.save(
-            next, owner: owner, preservingVideoSegmentIDs: activeSegmentIDs
-        )
-        try check(token)
-        if let index = projects.firstIndex(where: { $0.id == next.id }) { projects[index] = next }
-        else { projects.append(next) }
-        projects.sort { $0.updatedAt > $1.updatedAt }
     }
     func publishProject(_ project: StoryProject, token: UUID) {
         guard session == token else { return }

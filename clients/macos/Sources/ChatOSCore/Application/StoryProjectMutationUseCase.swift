@@ -27,6 +27,34 @@ public struct StoryProjectSettingsChange: Equatable, Sendable {
     }
 }
 
+/// A frozen ordinary edit. The baseline fields identify the canonical project the UI
+/// edited without allowing the edit path to mutate schema metadata or model selection.
+public struct StoryProjectEditCommand: Equatable, Sendable {
+    public let projectID: UUID
+    public let baseFingerprint: String
+    public let baseVersion: Int
+    public let baseCreatedAt: Date
+    public let baseUpdatedAt: Date
+    public let baseModels: StoryModelSelection
+    public let project: StoryProject
+    public let preservingVideoSegmentIDs: Set<String>
+
+    public init(
+        base: StoryProject,
+        project: StoryProject,
+        preservingVideoSegmentIDs: Set<String>
+    ) throws {
+        self.projectID = base.id
+        self.baseFingerprint = try StoryProjectFingerprint.current(base)
+        self.baseVersion = base.version
+        self.baseCreatedAt = base.createdAt
+        self.baseUpdatedAt = base.updatedAt
+        self.baseModels = base.models
+        self.project = project
+        self.preservingVideoSegmentIDs = preservingVideoSegmentIDs
+    }
+}
+
 /// Application boundary for creating a Story project and changing its settings.
 ///
 /// These mutations only validate and persist the project manifest. They never call a
@@ -91,6 +119,33 @@ public struct StoryProjectMutationUseCase: Sendable {
         return saved
     }
 
+    /// Persists a source, plan, resource, frame, or segment edit through the narrow
+    /// application boundary. Provider-owned video state is merged by the adapter for
+    /// the explicitly frozen segment IDs.
+    public func persistEdit(
+        _ command: StoryProjectEditCommand,
+        ownerUserID ownerInput: String
+    ) async throws -> StoryProject {
+        let owner = try validatedOwner(ownerInput)
+        let project = command.project
+        guard project.id == command.projectID,
+              project.version == command.baseVersion,
+              project.createdAt == command.baseCreatedAt,
+              project.updatedAt == command.baseUpdatedAt,
+              project.models == command.baseModels,
+              !command.baseFingerprint.isEmpty else {
+            throw StoryProjectMutationError.projectMismatch
+        }
+        try project.validate()
+        let saved = try await persistence.persistStoryProject(
+            project,
+            ownerUserID: owner,
+            preservingVideoSegmentIDs: command.preservingVideoSegmentIDs
+        )
+        try Task.checkCancellation()
+        return saved
+    }
+
     private func validatedOwner(_ ownerInput: String) throws -> String {
         let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !owner.isEmpty else { throw StoryProjectMutationError.invalidOwner }
@@ -133,6 +188,7 @@ public enum StoryProjectMutationError: LocalizedError, Equatable, Sendable {
 public enum StoryProjectMutationKind: Equatable, Sendable {
     case create(projectID: UUID)
     case updateSettings(projectID: UUID)
+    case edit(projectID: UUID, baseFingerprint: String)
 }
 
 public struct StoryProjectMutationToken: Equatable, Sendable {

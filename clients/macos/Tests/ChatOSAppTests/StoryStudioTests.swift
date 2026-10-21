@@ -138,6 +138,57 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertNil(vm.errorMessage)
     }
 
+    func testLateStoryEditCannotPublishIntoTheCurrentAccount() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryStudioEditMutationTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        var alice = makeProject()
+        alice.title = "Alice Story"
+        var bob = makeProject()
+        bob.title = "Bob Story"
+        try await store.save(alice, owner: "alice")
+        try await store.save(bob, owner: "bob")
+        let persistence = DeferredStoryProjectMutationPersistence()
+        let service = StoryTestService()
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            projectMutation: persistence
+        )
+
+        vm.activate(userID: "alice")
+        for _ in 0..<100 where vm.isLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        vm.open(alice.id)
+        vm.saveSource("Edited Alice source", style: alice.style, ratio: alice.ratio)
+        for _ in 0..<100 where await !persistence.hasRequest(ownerUserID: "alice") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        vm.activate(userID: "bob")
+        var editedAlice = alice
+        editedAlice.source = "Edited Alice source"
+        await persistence.complete(ownerUserID: "alice", project: editedAlice)
+        for _ in 0..<100 where vm.isLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        XCTAssertEqual(vm.owner, "bob")
+        XCTAssertEqual(vm.projects.map(\.title), ["Bob Story"])
+        XCTAssertNil(vm.selectedProjectID)
+        XCTAssertFalse(vm.isBusy)
+        XCTAssertNil(vm.errorMessage)
+    }
+
     func testLateStoryHistoryCannotPublishIntoTheCurrentAccount() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "StoryStudioHistoryTests-\(UUID().uuidString)",
