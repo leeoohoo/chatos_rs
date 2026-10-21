@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
-import type { StoryProject } from "../domain/storyStudio";
+import type { StoryPlanningEvent, StoryProject } from "../domain/storyStudio";
 import type { StoryStudioPort } from "../ports/StoryStudioPort";
 import { StoryStudioView } from "./StoryStudioView";
 
@@ -44,10 +44,59 @@ describe("StoryStudioView", () => {
       source: "雨夜里，陌生人敲响了门。",
     })));
   });
+
+  it("shows live planning progress without applying the event draft", async () => {
+    const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
+    let planningListener: ((event: StoryPlanningEvent) => void) | undefined;
+    const unlisten = vi.fn();
+    const storyPort = port({
+      watchPlanning: vi.fn(async (_request, listener) => {
+        planningListener = listener;
+        return unlisten;
+      }),
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      startPlanning: vi.fn(() => new Promise<StoryProject | null>(() => undefined)),
+    });
+    const view = render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+
+    await screen.findByRole("heading", { name: "雨夜来客" });
+    fireEvent.click(screen.getByRole("button", { name: "生成剧情规划" }));
+    expect(await screen.findByText("正在准备规划")).toBeVisible();
+    expect(planningListener).toBeDefined();
+
+    act(() => planningListener?.({
+      presentationId: usePresentationId(storyPort),
+      run: {
+        id: "22222222-2222-4222-8222-222222222222",
+        ownerUserId: "alice",
+        projectId: canonical.id,
+        stage: "outline",
+        draft: { ...canonical, title: "不应提前应用的草稿" },
+        status: "running",
+        stopReason: null,
+        modelCalls: 3,
+        updatedAtUnixMs: Date.now() + 1,
+      },
+    }));
+
+    expect(screen.getByText("规划 Agent 正在工作")).toBeVisible();
+    expect(screen.getByText("剧情拆解 · 已调用模型 3 次")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "雨夜来客" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "不应提前应用的草稿" })).not.toBeInTheDocument();
+
+    view.unmount();
+    expect(unlisten).toHaveBeenCalledOnce();
+  });
 });
+
+function usePresentationId(storyPort: StoryStudioPort) {
+  const watchPlanning = storyPort.watchPlanning as ReturnType<typeof vi.fn>;
+  return watchPlanning.mock.calls[0]?.[0].presentationId as string;
+}
 
 function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
   return {
+    watchPlanning: vi.fn(async () => () => undefined),
     loadProjects: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadProject: vi.fn(async () => project()),
     createProject: vi.fn(async () => project()),

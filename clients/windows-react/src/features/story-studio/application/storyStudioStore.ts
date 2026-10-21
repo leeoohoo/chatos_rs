@@ -1,12 +1,22 @@
 import { create, type StoreApi } from "zustand";
 import type { MediaStudioModel } from "../../media-studio/domain/mediaStudio";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
-import type { StoryProject } from "../domain/storyStudio";
+import type { StoryPlanningEvent, StoryProject } from "../domain/storyStudio";
 import type { StoryStudioPort } from "../ports/StoryStudioPort";
 
 interface StoryVideoProgress {
   status: string;
   percent: number | null;
+}
+
+export interface StoryPlanningProgress {
+  runId: string | null;
+  projectId: string;
+  stage: StoryPlanningEvent["run"]["stage"];
+  status: StoryPlanningEvent["run"]["status"];
+  stopReason: string | null;
+  modelCalls: number;
+  updatedAtUnixMs: number;
 }
 
 interface StoryStudioState {
@@ -19,6 +29,7 @@ interface StoryStudioState {
   busy: boolean;
   error: string | null;
   unreadableCount: number;
+  planningProgress: Record<string, StoryPlanningProgress>;
   videoProgress: Record<string, StoryVideoProgress>;
   activeMediaTarget: string | null;
   activate(storyPort: StoryStudioPort, mediaPort: MediaStudioPort, ownerUserId: string): Promise<void>;
@@ -49,6 +60,8 @@ interface StoryStudioState {
 }
 
 let activationSequence = 0;
+let planningWatchSequence = 0;
+let planningUnlisten: (() => void) | null = null;
 const pollTimers = new Map<string, number>();
 
 export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
@@ -61,11 +74,13 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
   busy: false,
   error: null,
   unreadableCount: 0,
+  planningProgress: {},
   videoProgress: {},
   activeMediaTarget: null,
 
   async activate(storyPort, mediaPort, ownerUserId) {
     const sequence = ++activationSequence;
+    stopPlanningWatch();
     clearPollTimers();
     const presentationId = crypto.randomUUID();
     set({
@@ -78,9 +93,11 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       busy: false,
       error: null,
       unreadableCount: 0,
+      planningProgress: {},
       videoProgress: {},
       activeMediaTarget: null,
     });
+    installPlanningWatch(storyPort, { ownerUserId, presentationId }, sequence, set, get);
     try {
       const [page, models] = await Promise.all([
         storyPort.loadProjects({ ownerUserId, presentationId, limit: 80 }),
@@ -102,6 +119,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
 
   deactivate(storyPort) {
     activationSequence += 1;
+    stopPlanningWatch();
     clearPollTimers();
     const { ownerUserId, presentationId } = get();
     set({
@@ -114,6 +132,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       busy: false,
       error: null,
       unreadableCount: 0,
+      planningProgress: {},
       videoProgress: {},
       activeMediaTarget: null,
     });
@@ -178,7 +197,22 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     const scope = activeScope(get());
     const project = selectedProject(get());
     if (!scope || !project || get().busy) return;
-    set({ busy: true, error: null });
+    set((state) => ({
+      busy: true,
+      error: null,
+      planningProgress: {
+        ...state.planningProgress,
+        [project.id]: {
+          runId: null,
+          projectId: project.id,
+          stage,
+          status: "ready",
+          stopReason: null,
+          modelCalls: 0,
+          updatedAtUnixMs: Date.now(),
+        },
+      },
+    }));
     try {
       const planned = await storyPort.startPlanning({
         ...scope,
@@ -421,6 +455,57 @@ function acceptVideoOutcome(
     }
   }, 10_000);
   pollTimers.set(key, timer);
+}
+
+function installPlanningWatch(
+  port: StoryStudioPort,
+  scope: { ownerUserId: string; presentationId: string },
+  activation: number,
+  set: StoreApi<StoryStudioState>["setState"],
+  get: StoreApi<StoryStudioState>["getState"],
+) {
+  const watch = ++planningWatchSequence;
+  void port.watchPlanning(scope, (event) => {
+    if (watch !== planningWatchSequence
+      || !isActive(get(), activation, scope.ownerUserId, scope.presentationId)) return;
+    const progress = planningProgress(event);
+    set((state) => {
+      const current = state.planningProgress[progress.projectId];
+      if (current?.runId && current.updatedAtUnixMs > progress.updatedAtUnixMs) return state;
+      return {
+        planningProgress: { ...state.planningProgress, [progress.projectId]: progress },
+      };
+    });
+  }).then((unlisten) => {
+    if (watch !== planningWatchSequence
+      || !isActive(get(), activation, scope.ownerUserId, scope.presentationId)) {
+      unlisten();
+      return;
+    }
+    planningUnlisten = unlisten;
+  }).catch((error: unknown) => {
+    if (watch !== planningWatchSequence
+      || !isActive(get(), activation, scope.ownerUserId, scope.presentationId)) return;
+    set({ error: errorMessage(error, "剧情规划进度暂时无法接收。") });
+  });
+}
+
+function planningProgress(event: StoryPlanningEvent): StoryPlanningProgress {
+  return {
+    runId: event.run.id,
+    projectId: event.run.projectId,
+    stage: event.run.stage,
+    status: event.run.status,
+    stopReason: event.run.stopReason,
+    modelCalls: event.run.modelCalls,
+    updatedAtUnixMs: event.run.updatedAtUnixMs,
+  };
+}
+
+function stopPlanningWatch() {
+  planningWatchSequence += 1;
+  planningUnlisten?.();
+  planningUnlisten = null;
 }
 
 function selectedProject(state: StoryStudioState) {

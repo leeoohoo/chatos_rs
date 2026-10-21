@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { z } from "zod";
 import {
   storyProjectCursorSchema,
   storyProjectPageSchema,
   storyProjectSchema,
+  storyPlanningEventSchema,
   storyVideoGenerationOutcomeSchema,
 } from "../domain/storyStudio";
 import type { StoryPresentationScope, StoryStudioPort } from "../ports/StoryStudioPort";
@@ -17,6 +19,20 @@ const safeText = (maximum: number) => z.string().max(maximum).refine(
 );
 
 export class TauriStoryStudioAdapter implements StoryStudioPort {
+  async watchPlanning(
+    request: Parameters<StoryStudioPort["watchPlanning"]>[0],
+    listener: Parameters<StoryStudioPort["watchPlanning"]>[1],
+  ) {
+    const expected = scope(request);
+    return listen<unknown>("story-planning-run", (event) => {
+      const parsed = storyPlanningEventSchema.safeParse(event.payload);
+      if (!parsed.success
+        || parsed.data.presentationId !== expected.presentationId
+        || parsed.data.run.ownerUserId !== expected.ownerUserId) return;
+      listener(parsed.data);
+    });
+  }
+
   async loadProjects(request: Parameters<StoryStudioPort["loadProjects"]>[0]) {
     const input = {
       ...scope(request),

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
 import { isStorySegmentReady, storyConfirmedImage } from "../domain/storyStudio";
 import { useStoryStudioStore } from "../application/storyStudioStore";
+import type { StoryPlanningProgress } from "../application/storyStudioStore";
 import type { StoryStudioPort } from "../ports/StoryStudioPort";
 import "./storyStudio.css";
 
@@ -84,6 +85,8 @@ function ProjectWorkspace({ port, projectId }: { port: StoryStudioPort; projectI
 
   const sourceLocked = project.segments.length > 0;
   const dirty = source !== project.source || style !== project.style || ratio !== project.ratio;
+  const planning = state.planningProgress[project.id] ?? null;
+  const isPlanning = state.busy && planningIsActive(planning);
   const save = () => state.saveSource(port, { source, style, ratio });
   const planOutline = async () => {
     if (dirty) await useStoryStudioStore.getState().saveSource(port, { source, style, ratio });
@@ -122,8 +125,9 @@ function ProjectWorkspace({ port, projectId }: { port: StoryStudioPort; projectI
             </select></label>
             <label>本次补充要求<textarea disabled={state.busy} maxLength={2_000} onChange={(event) => setIdeas(event.target.value)} placeholder="例如：保持克制的悬疑节奏" value={ideas} /></label>
             <button className="story-secondary-button" disabled={!dirty || state.busy} onClick={() => void save()} type="button">保存原文</button>
+            {planning && <PlanningStatus progress={planning} />}
             <button className="story-primary-button" disabled={!source.trim() || state.busy} onClick={() => void planOutline()} type="button">
-              {state.busy ? <><span className="mini-spinner" />正在规划…</> : "生成剧情规划"}
+              {isPlanning ? <><span className="mini-spinner" />{planningActionLabel(planning)}</> : "生成剧情规划"}
             </button>
           </aside>
         </div>
@@ -138,11 +142,14 @@ function PlannedStoryWorkspace({ port, projectId }: { port: StoryStudioPort; pro
   const [selectedSegment, setSelectedSegment] = useState(project.segments[0]?.id ?? null);
   const segment = project.segments.find((value) => value.id === selectedSegment) ?? project.segments[0];
   const resources = [...project.characters, ...project.scenes, ...project.props];
+  const planning = state.planningProgress[project.id] ?? null;
+  const isRefining = state.busy && planning?.stage === "refine" && planningIsActive(planning);
 
   return (
     <div className="story-plan-workspace">
+      {planning && <PlanningStatus progress={planning} />}
       <section className="story-resource-strip">
-        <header><div><h3>角色与场景</h3><p>规划生成的素材事实源</p></div><button disabled={state.busy || project.segments.length === 0} onClick={() => void state.startPlanning(port, "refine", project.segments.map((value) => value.id), "")} type="button">细化全部镜头</button></header>
+        <header><div><h3>角色与场景</h3><p>规划生成的素材事实源</p></div><button disabled={state.busy || project.segments.length === 0} onClick={() => void state.startPlanning(port, "refine", project.segments.map((value) => value.id), "")} type="button">{isRefining ? planningActionLabel(planning) : "细化全部镜头"}</button></header>
         <div>{resources.map((resource) => {
           const image = storyConfirmedImage(resource.media);
           const latest = resource.media.images.at(-1) ?? null;
@@ -215,6 +222,42 @@ function SegmentInspector({ port, projectId, segmentId }: { port: StoryStudioPor
 
 function FrameCard({ title, image, empty }: { title: string; image: string | null; empty: string }) {
   return <figure><figcaption>{title}</figcaption>{image ? <img alt={title} src={image} /> : <div><span>▧</span><small>{empty}</small></div>}</figure>;
+}
+
+function PlanningStatus({ progress }: { progress: StoryPlanningProgress }) {
+  const terminal = ["paused", "completed", "failed", "needs_review", "limit_reached"].includes(progress.status);
+  return (
+    <section className={`story-planning-status story-planning-status--${progress.status}`} aria-live="polite">
+      <span aria-hidden="true">{terminal ? "●" : <span className="mini-spinner" />}</span>
+      <div>
+        <strong>{planningStatusLabel(progress)}</strong>
+        <small>{progress.stage === "outline" ? "剧情拆解" : "镜头细化"} · 已调用模型 {progress.modelCalls} 次</small>
+        {progress.stopReason && <p>{progress.stopReason}</p>}
+      </div>
+    </section>
+  );
+}
+
+function planningActionLabel(progress: StoryPlanningProgress | null) {
+  if (!progress) return "正在启动规划…";
+  if (progress.status === "ready") return "正在准备规划…";
+  return progress.stage === "outline" ? "正在拆解剧情…" : "正在细化镜头…";
+}
+
+function planningIsActive(progress: StoryPlanningProgress | null) {
+  return progress?.status === "ready" || progress?.status === "running";
+}
+
+function planningStatusLabel(progress: StoryPlanningProgress) {
+  switch (progress.status) {
+    case "ready": return "正在准备规划";
+    case "running": return "规划 Agent 正在工作";
+    case "paused": return "规划已暂停";
+    case "completed": return "规划已经完成";
+    case "failed": return "规划执行失败";
+    case "needs_review": return "规划需要检查";
+    case "limit_reached": return "规划已达到运行上限";
+  }
 }
 
 function CreateStorySheet({ port, onClose }: { port: StoryStudioPort; onClose(): void }) {

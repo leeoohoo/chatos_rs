@@ -52,6 +52,16 @@
 .story-source-settings textarea { min-height:66px; resize:vertical; }
 .story-secondary-button { min-height:31px; border:0; border-radius:9px; color:var(--accent); background:rgba(10,132,255,.09); font-size:10px; font-weight:620; cursor:pointer; }
 .story-source-settings .story-primary-button { margin-top:auto; }
+.story-planning-status { display:grid; grid-template-columns:16px minmax(0,1fr); align-items:start; gap:8px; border:1px solid rgba(10,132,255,.13); border-radius:10px; padding:9px; color:#075da8; background:rgba(10,132,255,.07); }
+.story-planning-status > span { display:grid; height:16px; place-items:center; font-size:7px; }
+.story-planning-status .mini-spinner { width:10px; height:10px; }
+.story-planning-status > div { display:grid; gap:2px; min-width:0; }
+.story-planning-status strong { font-size:9.5px; }
+.story-planning-status small { color:var(--secondary); font-size:8px; }
+.story-planning-status p { margin:3px 0 0; color:inherit; font-size:8px; line-height:1.45; }
+.story-planning-status--completed { border-color:rgba(48,209,88,.18); color:#20753a; background:rgba(48,209,88,.08); }
+.story-planning-status--paused,.story-planning-status--needs_review,.story-planning-status--limit_reached { border-color:rgba(255,159,10,.2); color:#8b4a00; background:rgba(255,159,10,.08); }
+.story-planning-status--failed { border-color:rgba(255,69,58,.18); color:#b52f27; background:rgba(255,69,58,.07); }
 .story-plan-workspace { display:grid; gap:14px; padding:16px; }
 .story-resource-strip { overflow:hidden; }
 .story-resource-strip header button { border:0; border-radius:8px; padding:6px 10px; color:var(--accent); background:rgba(10,132,255,.09); font-size:9px; font-weight:620; cursor:pointer; }

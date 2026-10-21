@@ -2,6 +2,7 @@ import type {
   StoryProject,
   StoryProjectCursor,
   StoryProjectPage,
+  StoryPlanningEvent,
   StoryVideoGenerationOutcome,
 } from "../domain/storyStudio";
 
@@ -11,6 +12,10 @@ export interface StoryPresentationScope {
 }
 
 export interface StoryStudioPort {
+  watchPlanning(
+    request: StoryPresentationScope,
+    listener: (event: StoryPlanningEvent) => void,
+  ): Promise<() => void>;
   loadProjects(request: StoryPresentationScope & {
     after?: StoryProjectCursor | null;
     limit?: number | null;
