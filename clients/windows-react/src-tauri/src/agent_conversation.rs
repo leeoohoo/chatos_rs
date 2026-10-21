@@ -683,6 +683,14 @@ pub(crate) struct AgentAssetToolBinding {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentCommunicationToolBinding {
+    pub(crate) room_id: String,
+    pub(crate) agent_id: String,
+    pub(crate) conversation_kind: String,
+    pub(crate) is_project_manager: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentAssetToolRecord {
     pub(crate) asset_id: String,
     pub(crate) category: String,
@@ -4663,6 +4671,52 @@ fn load_agent_asset_tool_binding(
     Ok(binding.0)
 }
 
+fn load_agent_communication_tool_binding(
+    connection: &Connection,
+    owner_user_id: &str,
+    run_id: &str,
+) -> Result<AgentCommunicationToolBinding, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT delivery.room_id, delivery.target_agent_id,
+                   room.conversation_kind,
+                   CASE WHEN room.project_manager_agent_id = delivery.target_agent_id
+                        THEN 1 ELSE 0 END
+            FROM windows_agent_delivery_runs run
+            JOIN project_agent_deliveries delivery
+              ON delivery.owner_user_id = run.owner_user_id
+             AND delivery.id = run.delivery_id
+            JOIN project_agent_rooms room
+              ON room.owner_user_id = delivery.owner_user_id
+             AND room.id = delivery.room_id
+            JOIN project_agent_room_members member
+              ON member.owner_user_id = delivery.owner_user_id
+             AND member.room_id = delivery.room_id
+             AND member.agent_id = delivery.target_agent_id
+            WHERE run.owner_user_id = ?1 AND run.run_id = ?2
+              AND run.status IN ('ready', 'running')
+              AND delivery.status = 'running' AND delivery.trigger_kind != 'todo'
+              AND room.status = 'active'
+              AND room.conversation_kind IN ('project_team', 'agent_agent_direct')
+              AND member.status = 'active'
+            LIMIT 1
+            "#,
+            params![owner_user_id, run_id],
+            |row| {
+                Ok(AgentCommunicationToolBinding {
+                    room_id: row.get(0)?,
+                    agent_id: row.get(1)?,
+                    conversation_kind: row.get(2)?,
+                    is_project_manager: row.get::<_, i64>(3)? == 1,
+                })
+            },
+        )
+        .optional()
+        .map_err(|_| team_store_error())?
+        .ok_or_else(|| "The Agent communication Run binding is unavailable.".to_owned())
+}
+
 fn require_active_project_team(
     connection: &Connection,
     owner_user_id: &str,
@@ -6227,7 +6281,7 @@ mod tests {
         let (member_binding, members) = store
             .team_chat_member_snapshot("alice", "run-manager")
             .unwrap();
-        assert_eq!(member_binding.team_id, team.id);
+        assert_eq!(member_binding.room_id, team.id);
         assert_eq!(members.as_array().unwrap().len(), 2);
         assert!(members
             .as_array()

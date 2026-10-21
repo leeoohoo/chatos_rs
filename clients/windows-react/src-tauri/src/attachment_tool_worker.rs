@@ -29,7 +29,8 @@ use crate::{
     agent_conversation::{
         dispatch_next_agent_team_delivery, load_agent_team_runs,
         team_todo::{AgentTodoExecutionContract, TodoPlanningCreateInput, TodoPlanningUpdateInput},
-        AgentAssetToolBinding, AgentAssetToolRecord, AgentConversationStore,
+        AgentAssetToolBinding, AgentAssetToolRecord, AgentCommunicationToolBinding,
+        AgentConversationStore,
     },
     agent_skill_management::AgentSkillStore,
     authentication::AuthenticationManager,
@@ -297,7 +298,7 @@ async fn execute_team_chat_read_tool(
         })
         .await
         .map_err(|_| "The team member lookup task exited unexpectedly.".to_owned())??;
-    validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
+    validate_communication_run_context(&run.profile_key, &run.input, &binding)?;
     Ok(LocalAgentToolOutcome::Succeeded { output })
 }
 
@@ -353,7 +354,7 @@ async fn execute_team_chat_write_tool(
     })
     .await
     .map_err(|_| "The team message task exited unexpectedly.".to_owned())??;
-    validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
+    validate_communication_run_context(&run.profile_key, &run.input, &binding)?;
     Ok(LocalAgentToolOutcome::Succeeded { output })
 }
 
@@ -1164,6 +1165,31 @@ fn validate_asset_run_context(
     Ok(())
 }
 
+fn validate_communication_run_context(
+    profile_key: &str,
+    input: &Value,
+    binding: &AgentCommunicationToolBinding,
+) -> Result<(), String> {
+    if binding.conversation_kind != "project_team" {
+        return Err("The Agent communication conversation kind is unsupported.".into());
+    }
+    let identity = input
+        .get("agent_execution_context")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "The Agent communication Run context is invalid.".to_owned())?;
+    if profile_key != "main_chat"
+        || input.get("team_executor_context").is_some()
+        || identity.get("schema_version").and_then(Value::as_u64) != Some(2)
+        || identity.get("room_id").and_then(Value::as_str) != Some(&binding.room_id)
+        || identity.get("agent_id").and_then(Value::as_str) != Some(&binding.agent_id)
+        || identity.get("is_project_manager").and_then(Value::as_bool)
+            != Some(binding.is_project_manager)
+    {
+        return Err("The Agent communication Run context is invalid.".into());
+    }
+    Ok(())
+}
+
 fn asset_summary(owner_user_id: &str, run_id: &str, record: &AgentAssetToolRecord) -> Value {
     json!({
         "asset_ref": asset_reference(owner_user_id, run_id, record),
@@ -1943,6 +1969,45 @@ mod tests {
             }
         });
         assert!(validate_asset_run_context("task_execution", &executor_input, &executor).is_ok());
+    }
+
+    #[test]
+    fn communication_context_is_separate_from_asset_and_executor_permissions() {
+        let binding = AgentCommunicationToolBinding {
+            room_id: "team-1".into(),
+            agent_id: "agent-1".into(),
+            conversation_kind: "project_team".into(),
+            is_project_manager: true,
+        };
+        let input = json!({
+            "agent_execution_context": {
+                "schema_version": 2,
+                "room_id": "team-1",
+                "agent_id": "agent-1",
+                "is_project_manager": true
+            }
+        });
+        assert!(validate_communication_run_context("main_chat", &input, &binding).is_ok());
+
+        let executor_input = json!({
+            "agent_execution_context": input["agent_execution_context"].clone(),
+            "team_executor_context": {
+                "delivery_lane": "executor",
+                "todo_id": "todo-1",
+                "team_id": "team-1",
+                "agent_id": "agent-1"
+            }
+        });
+        assert!(
+            validate_communication_run_context("task_execution", &executor_input, &binding)
+                .is_err()
+        );
+
+        let direct_binding = AgentCommunicationToolBinding {
+            conversation_kind: "agent_agent_direct".into(),
+            ..binding
+        };
+        assert!(validate_communication_run_context("main_chat", &input, &direct_binding).is_err());
     }
 
     #[test]

@@ -220,14 +220,11 @@ impl AgentConversationStore {
         &self,
         owner_user_id: &str,
         run_id: &str,
-    ) -> Result<(AgentAssetToolBinding, Value), String> {
+    ) -> Result<(AgentCommunicationToolBinding, Value), String> {
         validate_identifier(run_id).map_err(|_| team_todo_store_error())?;
         reject_link_or_non_file(&self.database)?;
         let connection = open_database(&self.database, true)?;
-        let binding = load_agent_asset_tool_binding(&connection, owner_user_id, run_id)?;
-        if binding.todo_id.is_some() {
-            return Err("Team communication tools are unavailable in an executor Run.".into());
-        }
+        let binding = load_agent_communication_tool_binding(&connection, owner_user_id, run_id)?;
         let profiles = {
             let mut statement = connection
                 .prepare(
@@ -402,14 +399,11 @@ impl AgentConversationStore {
         &self,
         owner_user_id: &str,
         run_id: &str,
-    ) -> Result<(AgentAssetToolBinding, Value), String> {
+    ) -> Result<(AgentCommunicationToolBinding, Value), String> {
         validate_identifier(run_id).map_err(|_| team_todo_store_error())?;
         reject_link_or_non_file(&self.database)?;
         let connection = open_database(&self.database, true)?;
-        let binding = load_agent_asset_tool_binding(&connection, owner_user_id, run_id)?;
-        if binding.todo_id.is_some() {
-            return Err("Team communication tools are unavailable in an executor Run.".into());
-        }
+        let binding = load_agent_communication_tool_binding(&connection, owner_user_id, run_id)?;
         let mut statement = connection
             .prepare(
                 r#"
@@ -431,7 +425,7 @@ impl AgentConversationStore {
             )
             .map_err(|_| team_todo_store_error())?;
         let members = statement
-            .query_map(params![owner_user_id, binding.team_id], |row| {
+            .query_map(params![owner_user_id, binding.room_id], |row| {
                 let agent_id = row.get::<_, String>(0)?;
                 Ok(json!({
                     "agent_ref": todo_planning_reference(
@@ -460,7 +454,7 @@ impl AgentConversationStore {
         request_key: &str,
         limit: usize,
         now_unix_ms: i64,
-    ) -> Result<(AgentAssetToolBinding, Value), String> {
+    ) -> Result<(AgentCommunicationToolBinding, Value), String> {
         validate_identifier(run_id).map_err(|_| team_todo_store_error())?;
         validate_text(request_key, 512, false).map_err(|_| invalid_team_todo_input())?;
         if !(1..=500).contains(&limit) || now_unix_ms < 0 {
@@ -471,10 +465,7 @@ impl AgentConversationStore {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| team_todo_store_error())?;
-        let binding = load_agent_asset_tool_binding(&transaction, owner_user_id, run_id)?;
-        if binding.todo_id.is_some() {
-            return Err("Team communication tools are unavailable in an executor Run.".into());
-        }
+        let binding = load_agent_communication_tool_binding(&transaction, owner_user_id, run_id)?;
         let existing_receipt = transaction
             .query_row(
                 "SELECT requested_limit, output_json FROM windows_agent_chat_read_receipts \
@@ -680,7 +671,7 @@ impl AgentConversationStore {
         team_reference: Option<&str>,
         mention_references: &[String],
         now_unix_ms: i64,
-    ) -> Result<(AgentAssetToolBinding, Value), String> {
+    ) -> Result<(AgentCommunicationToolBinding, Value), String> {
         validate_identifier(run_id).map_err(|_| team_todo_store_error())?;
         validate_text(request_key, 512, false).map_err(|_| invalid_team_todo_input())?;
         validate_text(content, 2_000, false).map_err(|_| invalid_team_todo_input())?;
@@ -702,10 +693,7 @@ impl AgentConversationStore {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| team_todo_store_error())?;
-        let binding = load_agent_asset_tool_binding(&transaction, owner_user_id, run_id)?;
-        if binding.todo_id.is_some() {
-            return Err("Team communication tools are unavailable in an executor Run.".into());
-        }
+        let binding = load_agent_communication_tool_binding(&transaction, owner_user_id, run_id)?;
         let trigger_context: (String, String, String, i64) = transaction
             .query_row(
                 r#"
@@ -721,7 +709,7 @@ impl AgentConversationStore {
                   AND delivery.room_id = ?3 AND delivery.target_agent_id = ?4
                   AND delivery.trigger_kind != 'todo'
                 "#,
-                params![owner_user_id, run_id, binding.team_id, binding.agent_id],
+                params![owner_user_id, run_id, binding.room_id, binding.agent_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .map_err(|_| team_todo_store_error())?;
