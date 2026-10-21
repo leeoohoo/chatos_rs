@@ -538,6 +538,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事最终准入）：具体 Store、provider 与 macOS Adapter 组装已移出 `StoryStudioViewModel`，集中到 `StoryStudioAssembly` composition root；ViewModel 不再持有 `StoryProjectStore` 或 `MediaGenerationServicing`。新增源码架构门禁，禁止 Story presentation 重新引入 Store、本机路径、媒体字节/base64、security scope 或确认字段写入。最终定向验收为 Story Core 66 项、Story Studio 66 项、Story Agent 21 项及架构门禁 1 项通过。macOS Story 已允许进入 Windows 原生 Domain/Port/Adapter 实施；React 剧情入口继续关闭，直到 Rust 原生层完成 owner/session、原子持久化、opaque media token、provider Secret/job 和媒体字节门禁。
 
+状态补充（2026-10-21，Windows AI 故事原生 Domain 第一段）：Rust 新建私有 `story_studio` Domain，按 macOS schema v2 建立模型选择、人物/场景/道具、分段/关系、首尾帧、attempt/video 与 provider identity 的原生持久化模型；所有反序列化拒绝未知字段，媒体文件名拒绝目录、反斜杠、隐藏名和 traversal。resource/frame attachment、自动/手动确认、用户首帧标记、依赖帧失效和未决视频提交门禁已先按 macOS Core 语义落地，6 项定向测试及 `cargo clippy --lib -- -D warnings` 通过。该模块仍为私有 dormant Domain，没有注册 Tauri command，也没有创建 React 页面；下一片接入 owner-scoped 原子 Store、目录分页与不含文件名/job 的安全快照。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

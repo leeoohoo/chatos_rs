@@ -1219,7 +1219,7 @@ Windows React 已完成对应独立切片：
 | 05 | 应用 | macOS Listing/Launch Use Case、Feature ViewModel、项目上下文安全投影及异步 lifecycle 已完成分层；Windows catalog/runtime/bridge、typed Store/Adapter、Apple 主题 UI 与 sandbox iframe 已完成 | 已进入 React；exact origin/source/session/nonce 与 CSP 门禁已进入测试 |
 | 06 | AI 图片 | macOS 生成/保存、模型目录、历史分页及参考图已进入 Core 窄 Port/Use Case 与 typed lifecycle；Windows provider/Secret、原子历史/分页、安全预览、参考图 token vault、strict React Domain/Port/Adapter/Store 与 Apple 主题 UI 已完成 | 已进入 React；剧情模式继续按独立准入门禁禁用 |
 | 07 | AI 视频 | macOS Core Port/Use Case/typed lifecycle 与 Windows provider/job/progress/history/首帧及音频 token vault、strict React Domain/Port/Adapter/Store、轮询/取消语义及 Apple 主题视频工作面均已完成 | 已进入 React；剧情模式仍保持禁用 |
-| 08 | AI 故事 | macOS 全部 Story 页面、Core Port/Use Case/typed lifecycle、Adapter composition、确认规则与平台差异审计完成；Windows 原生 Domain/Port/Adapter 待实施 | 允许进入 Windows 原生层；React 入口仍禁止，等待原生门禁 |
+| 08 | AI 故事 | macOS 全部 Story 页面准入完成；Windows 私有 schema v2 Domain、严格反序列化、原生文件名安全及首批 attachment/确认规则已实现 | Windows 原生实施中；React 入口仍禁止，等待 Store/media/provider 门禁 |
 | 09 | AI 历史 | macOS 图片/视频历史分页与账号隔离已收口并完成 Windows 原生/React 映射；剧情作品历史等待第 08 页 | 图片与视频历史已进入 React；剧情历史继续禁用 |
 | 10 | Agent 管理 | 未映射 | 禁止 |
 | 11 | Agent 文档 | 未映射 | 禁止 |
@@ -1307,5 +1307,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 55. [已完成] 第 08 页 macOS Story resource/frame attachment 与显式媒体确认已统一进入 Core `StoryMediaConfirmationUseCase`；图片导入 Adapter 复用同一规则，ViewModel 不再实现手动/批量素材确认或首尾帧确认/取消。Core 新增 5 项、图片导入 Core 5 项、Story Studio 66 项与 Story Agent 21 项通过，Story Core 累计 63 项。下一片继续收口普通剧情/分段编辑中的确认失效策略。
 56. [已完成] 第 08 页 macOS Story 分段重新细化、保存及结构变化的确认/相邻计划失效已统一进入 `StoryMediaConfirmationUseCase`；ViewModel 对确认与首帧继承字段的直接写入降为 0。Core 确认规则 8 项、Story Studio 66 项与 Story Agent 21 项通过，Story Core 累计 66 项。下一片执行最终 macOS Story 准入与 Windows 平台差异审计。
 57. [已完成] 第 08 页 macOS Story 最终准入审计通过：具体 Store/provider/Adapter 组装集中到 `StoryStudioAssembly`，presentation 源码架构门禁禁止 Store、路径、媒体字节/base64、security scope 与确认写入回流。Story Core 66 项、Story Studio 66 项、Story Agent 21 项及架构门禁 1 项通过。下一片开始 Windows Rust 原生 Story Domain/Port/Adapter；原生门禁完成前不创建 React 剧情入口。
+58. [已完成] 第 08 页 Windows Rust 私有 Story Domain 已按 macOS schema v2 建立模型、资源、分段、关系、媒体、attempt/video identity 与严格验证；未知字段和不安全原生文件名失败关闭，resource/frame attachment 与首批确认规则保持同源。Rust 定向 6 项及 Clippy `-D warnings` 通过；没有注册 IPC 或 React 入口。下一片建立 owner-scoped 原子 Store、目录分页与安全 DTO。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

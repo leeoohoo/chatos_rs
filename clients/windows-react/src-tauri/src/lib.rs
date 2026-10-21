@@ -23,6 +23,7 @@ mod project_removal;
 mod project_run;
 mod remote_connection;
 mod run_inspector;
+mod story_studio;
 mod system_permissions;
 mod terminal_runtime;
 mod terminal_tool_worker;
