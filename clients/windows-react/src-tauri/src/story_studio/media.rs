@@ -14,9 +14,10 @@ use crate::authentication::GatewayModelConfig;
 use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, apply_story_resource_prompt,
-        apply_story_segment_edit, make_story_project, StoryProjectCreationInput,
-        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
-        StorySegmentEditInput, StorySegmentStructureInput,
+        apply_story_segment_edit, make_story_project, StoryImageConfirmationInput,
+        StoryLastFrameClearInput, StoryProjectCreationInput, StoryProjectSettingsInput,
+        StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
+        StorySegmentStructureInput,
     },
     domain::{StoryImageCollection, StoryProject},
     execution::StoryPlanningExecutionRegistry,
@@ -434,6 +435,48 @@ impl StoryStudioManager {
             &session,
             &project,
         )
+    }
+
+    pub(super) fn confirm_story_image(
+        &self,
+        owner: &str,
+        generation: u64,
+        presentation: &str,
+        input: StoryImageConfirmationInput,
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner, generation)?;
+        self.media
+            .require_open_presentation(owner, generation, presentation)?;
+        let project_id = input.project_id.clone();
+        let project = self.store.mutate_project(owner, &project_id, |project| {
+            super::application::apply_story_image_confirmation(
+                project,
+                input,
+                current_unix_milliseconds(),
+            )
+        })?;
+        self.project_snapshot(owner, generation, presentation, &session, &project)
+    }
+
+    pub(super) fn clear_story_last_frame(
+        &self,
+        owner: &str,
+        generation: u64,
+        presentation: &str,
+        input: StoryLastFrameClearInput,
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner, generation)?;
+        self.media
+            .require_open_presentation(owner, generation, presentation)?;
+        let project_id = input.project_id.clone();
+        let project = self.store.mutate_project(owner, &project_id, |project| {
+            super::application::apply_story_last_frame_clear(
+                project,
+                input,
+                current_unix_milliseconds(),
+            )
+        })?;
+        self.project_snapshot(owner, generation, presentation, &session, &project)
     }
 
     pub(super) fn discard_presentation(

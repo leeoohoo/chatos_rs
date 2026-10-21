@@ -2,7 +2,8 @@ use super::domain::*;
 use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, default_story_style,
-        make_story_project, StoryModelSelectionInput, StoryProjectCreationInput,
+        make_story_project, StoryFrameRoleInput, StoryImageConfirmationInput,
+        StoryLastFrameClearInput, StoryModelSelectionInput, StoryProjectCreationInput,
         StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
         StorySegmentEditInput, StorySegmentStructureInput, StorySegmentStructureMutation,
         StorySegmentStructureOperation,
@@ -971,6 +972,80 @@ fn segment_structure_intent_rejects_media_jobs_completed_video_and_extra_fields(
             "mutation": {"operation": "add", "segment": {"id": "forbidden"}}
         }))
         .is_err()
+    );
+}
+
+#[test]
+fn typed_image_confirmation_and_last_frame_clear_match_macos_rules() {
+    let mut canonical = project();
+    let first_resource = StoryImage::test_image("resource-first.png");
+    let second_resource = StoryImage::test_image("resource-second.png");
+    canonical.props[0].media.images = vec![first_resource.clone(), second_resource.clone()];
+    canonical.props[0].media.confirmed_image_id = Some(first_resource.id);
+    let frame = StoryImage::test_image("frame.png");
+    canonical.segments[0]
+        .first_frames
+        .images
+        .push(frame.clone());
+    canonical.segments[0].first_frames.confirmed_image_id = Some(frame.id);
+    let project_id = canonical.id.clone();
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+    super::application::apply_story_image_confirmation(
+        &mut canonical,
+        StoryImageConfirmationInput {
+            project_id: project_id.clone(),
+            base_fingerprint: fingerprint,
+            resource_id: Some("key".into()),
+            segment_id: None,
+            frame_role: None,
+            image_id: second_resource.id.clone(),
+        },
+        2,
+    )
+    .unwrap();
+    assert_eq!(
+        canonical.props[0].media.confirmed_image_id,
+        Some(second_resource.id.clone())
+    );
+    assert!(canonical.segments[0]
+        .first_frames
+        .confirmed_image_id
+        .is_none());
+
+    let last = StoryImage::test_image("last.png");
+    canonical.segments[0].last_frames.images.push(last.clone());
+    canonical.segments[0].last_frames.confirmed_image_id = Some(last.id);
+    canonical.segments[0].video_guidance_mode = StoryVideoGuidanceMode::FirstAndLastFrames;
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+    super::application::apply_story_last_frame_clear(
+        &mut canonical,
+        StoryLastFrameClearInput {
+            project_id,
+            base_fingerprint: fingerprint,
+            segment_id: "s1".into(),
+        },
+        3,
+    )
+    .unwrap();
+    assert!(canonical.segments[0]
+        .last_frames
+        .confirmed_image_id
+        .is_none());
+    assert_eq!(
+        canonical.segments[0].video_guidance_mode,
+        StoryVideoGuidanceMode::FirstFrame
+    );
+
+    let invalid = StoryImageConfirmationInput {
+        project_id: canonical.id.clone(),
+        base_fingerprint: project_fingerprint(&canonical).unwrap(),
+        resource_id: Some("key".into()),
+        segment_id: Some("s1".into()),
+        frame_role: Some(StoryFrameRoleInput::First),
+        image_id: second_resource.id,
+    };
+    assert!(
+        super::application::apply_story_image_confirmation(&mut canonical, invalid, 4).is_err()
     );
 }
 

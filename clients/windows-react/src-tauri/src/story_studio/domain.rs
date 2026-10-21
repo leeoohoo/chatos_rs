@@ -876,6 +876,31 @@ pub(super) fn confirm_image(
     Ok(Some(next))
 }
 
+pub(super) fn clear_confirmed_last_frame(
+    project: &StoryProject,
+    segment_id: &str,
+) -> Result<Option<StoryProject>, String> {
+    let mut next = project.clone();
+    let segment = next
+        .segments
+        .iter_mut()
+        .find(|segment| {
+            segment.id == segment_id && segment.attempt.is_none() && segment.video.is_none()
+        })
+        .ok_or_else(invalid_target)?;
+    if segment.last_frames.confirmed_image_id.is_none()
+        && segment.video_guidance_mode != StoryVideoGuidanceMode::FirstAndLastFrames
+    {
+        return Ok(None);
+    }
+    segment.last_frames.confirmed_image_id = None;
+    if segment.video_guidance_mode == StoryVideoGuidanceMode::FirstAndLastFrames {
+        segment.video_guidance_mode = StoryVideoGuidanceMode::FirstFrame;
+    }
+    next.validate()?;
+    Ok(Some(next))
+}
+
 fn all_unique<'a, T: Eq + std::hash::Hash + 'a>(mut values: impl Iterator<Item = &'a T>) -> bool {
     let mut seen = HashSet::new();
     values.all(|value| seen.insert(value))

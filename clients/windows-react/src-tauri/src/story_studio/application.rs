@@ -7,9 +7,10 @@ use crate::authentication::GatewayModelConfig;
 
 use super::{
     domain::{
-        apply_segment_edit, update_resource_prompt, StoryImageCollection, StoryModelSelection,
-        StoryProject, StorySegment, StorySegmentEdit, StorySegmentKind, StorySourceRange,
-        StoryVideoGuidanceMode, STORY_SCHEMA_VERSION,
+        apply_segment_edit, clear_confirmed_last_frame, confirm_image, update_resource_prompt,
+        StoryFrameRole, StoryImageCollection, StoryImageTarget, StoryModelSelection, StoryProject,
+        StorySegment, StorySegmentEdit, StorySegmentKind, StorySourceRange, StoryVideoGuidanceMode,
+        STORY_SCHEMA_VERSION,
     },
     planning::project_fingerprint,
 };
@@ -93,6 +94,32 @@ pub(crate) struct StorySegmentStructureInput {
     pub project_id: String,
     pub base_fingerprint: String,
     pub mutation: StorySegmentStructureMutation,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StoryFrameRoleInput {
+    First,
+    Last,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryImageConfirmationInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub resource_id: Option<String>,
+    pub segment_id: Option<String>,
+    pub frame_role: Option<StoryFrameRoleInput>,
+    pub image_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryLastFrameClearInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub segment_id: String,
 }
 
 pub(super) fn make_story_project(
@@ -316,6 +343,58 @@ pub(super) fn apply_story_segment_structure(
     }
     project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     project.validate()
+}
+
+pub(super) fn apply_story_image_confirmation(
+    project: &mut StoryProject,
+    input: StoryImageConfirmationInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    let target = match (input.resource_id, input.segment_id, input.frame_role) {
+        (Some(resource_id), None, None) => StoryImageTarget::Resource { resource_id },
+        (None, Some(segment_id), Some(role)) => StoryImageTarget::Frame {
+            segment_id,
+            role: match role {
+                StoryFrameRoleInput::First => StoryFrameRole::First,
+                StoryFrameRoleInput::Last => StoryFrameRole::Last,
+            },
+        },
+        _ => return Err("剧情图片确认目标无效。".into()),
+    };
+    let mut next = confirm_image(project, &target, &input.image_id)?
+        .ok_or_else(|| "剧情图片确认状态没有变化。".to_owned())?;
+    next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    *project = next;
+    Ok(())
+}
+
+pub(super) fn apply_story_last_frame_clear(
+    project: &mut StoryProject,
+    input: StoryLastFrameClearInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    let mut next = clear_confirmed_last_frame(project, &input.segment_id)?
+        .ok_or_else(|| "剧情尾帧确认状态没有变化。".to_owned())?;
+    next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    *project = next;
+    Ok(())
+}
+
+fn require_story_fingerprint(
+    project: &StoryProject,
+    project_id: &str,
+    base_fingerprint: &str,
+) -> Result<(), String> {
+    if project_id != project.id
+        || base_fingerprint.is_empty()
+        || project_fingerprint(project)? != base_fingerprint
+    {
+        Err("剧情项目已被修改，请重新打开后再保存。".into())
+    } else {
+        Ok(())
+    }
 }
 
 fn validated_model_selection(

@@ -1219,7 +1219,7 @@ Windows React 已完成对应独立切片：
 | 05 | 应用 | macOS Listing/Launch Use Case、Feature ViewModel、项目上下文安全投影及异步 lifecycle 已完成分层；Windows catalog/runtime/bridge、typed Store/Adapter、Apple 主题 UI 与 sandbox iframe 已完成 | 已进入 React；exact origin/source/session/nonce 与 CSP 门禁已进入测试 |
 | 06 | AI 图片 | macOS 生成/保存、模型目录、历史分页及参考图已进入 Core 窄 Port/Use Case 与 typed lifecycle；Windows provider/Secret、原子历史/分页、安全预览、参考图 token vault、strict React Domain/Port/Adapter/Store 与 Apple 主题 UI 已完成 | 已进入 React；剧情模式继续按独立准入门禁禁用 |
 | 07 | AI 视频 | macOS Core Port/Use Case/typed lifecycle 与 Windows provider/job/progress/history/首帧及音频 token vault、strict React Domain/Port/Adapter/Store、轮询/取消语义及 Apple 主题视频工作面均已完成 | 已进入 React；剧情模式仍保持禁用 |
-| 08 | AI 故事 | macOS 全部 Story 页面准入完成；Windows 已完成 schema v2 Domain、owner-scoped 原子 Store、opaque 媒体预览、目录/创建/设置、Planning checkpoint/runtime/Memory/历史分页，以及 fingerprint-guarded 原文、素材描述、分段与结构编辑 | Windows 原生实施中；React 入口仍禁止，等待媒体确认、media batch 历史及 media provider 门禁 |
+| 08 | AI 故事 | macOS 全部 Story 页面准入完成；Windows 已完成 schema v2 Domain、owner-scoped 原子 Store、opaque 媒体预览、目录/创建/设置、Planning checkpoint/runtime/Memory/历史分页，以及 fingerprint-guarded 编辑与单项 resource/frame 确认 | Windows 原生实施中；React 入口仍禁止，等待批量确认/导入、media batch 历史及 media provider 门禁 |
 | 09 | AI 历史 | macOS 图片/视频历史分页与账号隔离已收口并完成 Windows 原生/React 映射；剧情作品历史等待第 08 页 | 图片与视频历史已进入 React；剧情历史继续禁用 |
 | 10 | Agent 管理 | 未映射 | 禁止 |
 | 11 | Agent 文档 | 未映射 | 禁止 |
@@ -1319,5 +1319,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 67. [已完成] 第 08 页 Windows Story canonical 编辑第二片已开放 `update_story_resource_prompt`：typed intent 在锁内按 fingerprint 定位人物/场景/道具，未知字段/目标失败关闭；未决依赖视频禁止修改。成功后按 macOS 确认规则保留媒体与 provider/generation identity，只取消素材确认并清除依赖分段首尾帧确认；素材 name/prompt 上限同步收紧为 120/4,000 字符。Story Rust 定向 30 项及 Clippy `-D warnings` 通过。React 入口继续关闭；下一片实现分段文本/detail/relations typed edit与相邻连续性失效。
 68. [已完成] 第 08 页 Windows Story canonical 编辑第三片已开放 `update_story_segment`：typed intent 不包含 source range、frame/media、attempt/job、video/archive、error 或 filename；Rust 从最新 canonical 项目重建授权字段。当前段 attempt/video 门禁、当前确认清除和仅对无 attempt 相邻段执行连续性失效均与 macOS `applyingSegmentEdit` 一致，原生媒体/provider 历史状态完整保留。Story Rust 定向 32 项及 Clippy `-D warnings` 通过。React 入口继续关闭；下一片实现 add/delete/reorder segment 与全计划失效规则。
 69. [已完成] 第 08 页 Windows Story canonical 编辑第四片已开放 `update_story_segment_structure`：add/delete/move 使用严格窄 intent，Rust 生成新增分段 identity；未决资源/帧/视频任务或已完成视频存在时全部失败关闭。删除同步清理关系、移动只允许相邻位置，所有成功结构变化按 macOS 规则失效全量 detail 与首尾帧确认。Story Rust 定向 34 项及 Clippy `-D warnings` 通过。React 入口继续关闭；下一片实现 resource/frame confirmation typed commands。
+70. [已完成] 第 08 页 Windows Story 已开放 fingerprint/presentation/generation-scoped 单项 resource/frame 图片确认及尾帧取消；资源确认的未决视频门禁、依赖帧失效、显式首帧选择/继承清除，以及 first+last guidance 降级规则均与 macOS Core 一致。目标 DTO 严格拒绝歧义组合，不接受媒体对象或 filename。Story Rust 定向 35 项及 Clippy `-D warnings` 通过。React 入口继续关闭；下一片补批量 latest 确认与图片导入边界。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
