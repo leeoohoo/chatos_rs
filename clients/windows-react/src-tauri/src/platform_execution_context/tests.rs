@@ -1,4 +1,4 @@
-use super::{authorization::TaskToolAuthorization, filesystem::*};
+use super::{authorization::TaskToolAuthorization, filesystem::*, resolve_team_executor_binding};
 use crate::workspace_index::PROJECT_REGISTRY_SCHEMA;
 use rusqlite::Connection;
 use serde_json::json;
@@ -52,6 +52,60 @@ fn authorization_requires_the_macos_terminal_selection_shape() {
         });
         assert!(TaskToolAuthorization::resolve(invalid.as_object().unwrap()).is_err());
     }
+}
+
+#[test]
+fn conversation_turn_tools_require_an_exact_team_executor_binding() {
+    let input = json!({
+        "team_executor_context": {
+            "schema_version": 1,
+            "delivery_lane": "executor",
+            "delivery_id": "delivery-1",
+            "team_id": "team-1",
+            "agent_id": "agent-1",
+            "project_id": "project-1"
+        },
+        "agent_execution_context": {
+            "schema_version": 2,
+            "room_id": "team-1",
+            "agent_id": "agent-1",
+            "project_id": "project-1"
+        }
+    });
+    let binding = resolve_team_executor_binding(
+        input.as_object().unwrap(),
+        "conversation_turn",
+        "agent-team-executor-delivery-1",
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(binding.team_id, "team-1");
+
+    assert!(resolve_team_executor_binding(
+        input.as_object().unwrap(),
+        "conversation_turn",
+        "agent-team-team-1-agent-1",
+    )
+    .is_err());
+    assert!(resolve_team_executor_binding(
+        input.as_object().unwrap(),
+        "task",
+        "agent-team-executor-delivery-1",
+    )
+    .is_err());
+    assert!(resolve_team_executor_binding(
+        json!({}).as_object().unwrap(),
+        "conversation_turn",
+        "conversation-1",
+    )
+    .is_err());
+    assert!(resolve_team_executor_binding(
+        json!({}).as_object().unwrap(),
+        "task",
+        "conversation-1",
+    )
+    .unwrap()
+    .is_none());
 }
 
 #[test]

@@ -17,6 +17,7 @@ pub(crate) use terminal::{
     resolve_terminal_command, resolve_terminal_path, resolve_terminal_purpose,
 };
 
+use crate::agent_conversation::AgentConversationStore;
 use crate::host_lifecycle::HostManager;
 
 pub(crate) struct PlatformExecutionContext {
@@ -51,6 +52,11 @@ pub(crate) async fn resolve_platform_execution_context(
     if run.owner_user_id != owner_user_id || run.run_id != run_id {
         return Err(invalid_context());
     }
+    if run.profile_key != "task_execution" {
+        return Err(invalid_context());
+    }
+    let team_executor =
+        resolve_team_executor_binding(input, &run.owner_entity_type, conversation_id)?;
     let authorization = TaskToolAuthorization::resolve(input)?;
     let result = manager
         .execute(HostCommand::GetConversationContext(
@@ -72,6 +78,25 @@ pub(crate) async fn resolve_platform_execution_context(
         .conversation
         .resource
         .ok_or_else(invalid_context)?;
+    if let Some(binding) = team_executor {
+        if resource.kind != LocalConversationResourceKind::Project
+            || resource.resource_id != binding.project_id
+        {
+            return Err(invalid_context());
+        }
+        let store = app.state::<AgentConversationStore>().inner().clone();
+        let owner = owner_user_id.to_owned();
+        tauri::async_runtime::spawn_blocking(move || {
+            store.validate_team_executor_binding(
+                &owner,
+                &binding.team_id,
+                &binding.agent_id,
+                &binding.project_id,
+            )
+        })
+        .await
+        .map_err(|_| invalid_context())??;
+    }
     let data_dir = app.path().app_data_dir().map_err(|_| invalid_context())?;
     let connector_directory = data_dir.join("NativeConnector");
     let owner = owner_user_id.to_owned();
@@ -93,6 +118,70 @@ pub(crate) async fn resolve_platform_execution_context(
         conversation_id: conversation_id.to_owned(),
         authorization,
     })
+}
+
+struct TeamExecutorBinding {
+    team_id: String,
+    agent_id: String,
+    project_id: String,
+}
+
+fn resolve_team_executor_binding(
+    input: &serde_json::Map<String, Value>,
+    owner_entity_type: &str,
+    conversation_id: &str,
+) -> Result<Option<TeamExecutorBinding>, String> {
+    let executor = input
+        .get("team_executor_context")
+        .and_then(Value::as_object);
+    match owner_entity_type {
+        "task" if executor.is_none() => return Ok(None),
+        "conversation_turn" if executor.is_some() => {}
+        _ => return Err(invalid_context()),
+    }
+    let executor = executor.ok_or_else(invalid_context)?;
+    let identity = input
+        .get("agent_execution_context")
+        .and_then(Value::as_object)
+        .ok_or_else(invalid_context)?;
+    if executor.get("schema_version").and_then(Value::as_u64) != Some(1)
+        || executor.get("delivery_lane").and_then(Value::as_str) != Some("executor")
+        || identity.get("schema_version").and_then(Value::as_u64) != Some(2)
+    {
+        return Err(invalid_context());
+    }
+    let delivery_id = required_executor_identifier(executor, "delivery_id")?;
+    let team_id = required_executor_identifier(executor, "team_id")?;
+    let agent_id = required_executor_identifier(executor, "agent_id")?;
+    let project_id = required_executor_identifier(executor, "project_id")?;
+    if conversation_id != format!("agent-team-executor-{delivery_id}")
+        || identity.get("room_id").and_then(Value::as_str) != Some(team_id)
+        || identity.get("agent_id").and_then(Value::as_str) != Some(agent_id)
+        || identity.get("project_id").and_then(Value::as_str) != Some(project_id)
+    {
+        return Err(invalid_context());
+    }
+    Ok(Some(TeamExecutorBinding {
+        team_id: team_id.to_owned(),
+        agent_id: agent_id.to_owned(),
+        project_id: project_id.to_owned(),
+    }))
+}
+
+fn required_executor_identifier<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<&'a str, String> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty()
+                && value.trim() == *value
+                && value.len() <= 512
+                && !value.chars().any(char::is_control)
+        })
+        .ok_or_else(invalid_context)
 }
 
 fn invalid_context() -> String {

@@ -15,9 +15,9 @@ pub(crate) struct AgentTodoPluginSelection {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AgentTodoExecutionPlan {
-    requires_execution: bool,
+    pub(super) requires_execution: bool,
     pub(super) builtin_capabilities: Vec<String>,
-    plugins: Vec<AgentTodoPluginSelection>,
+    pub(super) plugins: Vec<AgentTodoPluginSelection>,
     selection_revision: String,
     selected_at_unix_ms: i64,
 }

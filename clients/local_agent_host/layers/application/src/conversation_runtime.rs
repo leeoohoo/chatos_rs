@@ -5,8 +5,8 @@ use super::{new_event_id, LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand};
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, HostCommand, HostResult,
-    LocalAgentRunRecord, LocalAgentRunStatus, ResumeConversationTurnCommand,
-    StartConversationTurnCommand,
+    LocalAgentRunRecord, LocalAgentRunStatus, LocalConversationResourceBinding,
+    LocalConversationResourceKind, ResumeConversationTurnCommand, StartConversationTurnCommand,
 };
 use serde_json::json;
 
@@ -139,11 +139,22 @@ impl LocalAgentRuntime {
         let now = self.now()?;
         let explicit_capability_selection =
             normalized_explicit_capability_selection(&command.message_metadata)?;
+        let team_executor_context = normalized_team_executor_context(
+            &command.message_metadata,
+            &command.conversation_id,
+            conversation.conversation.resource.as_ref(),
+        )?;
         let agent_execution_context = normalized_agent_execution_context(
             &command.message_metadata,
             &command.conversation_id,
-            conversation.conversation.resource.is_none(),
+            conversation.conversation.resource.as_ref(),
+            team_executor_context.as_ref(),
         )?;
+        if team_executor_context.is_some() && explicit_capability_selection.is_some() {
+            return Err(invalid_agent_context(
+                "executor turns must not contain a Main Chat capability selection",
+            ));
+        }
         let mut input = json!({
             "conversation_id": &command.conversation_id,
             "turn_id": &command.turn_id,
@@ -169,12 +180,30 @@ impl LocalAgentRuntime {
                 .expect("conversation Run input is an object")
                 .insert("agent_execution_context".to_string(), context);
         }
+        let profile_key = if let Some(context) = team_executor_context {
+            let object = input
+                .as_object_mut()
+                .expect("conversation Run input is an object");
+            object.insert("prompt".to_string(), json!(&command.message));
+            object.insert("owned_paths".to_string(), json!([]));
+            object.insert(
+                "tool_options".to_string(),
+                context
+                    .get("tool_options")
+                    .cloned()
+                    .expect("normalized executor context has tool_options"),
+            );
+            object.insert("team_executor_context".to_string(), context);
+            "task_execution"
+        } else {
+            "main_chat"
+        };
         let run = LocalAgentRunRecord {
             run_id: command.run_id.clone(),
             owner_user_id: conversation.conversation.owner_user_id,
             owner_entity_type: "conversation_turn".to_string(),
             owner_entity_id: command.turn_id.clone(),
-            profile_key: "main_chat".to_string(),
+            profile_key: profile_key.to_string(),
             model_config_ref: command.model_config_ref.clone(),
             model_config_revision: command.model_config_revision.clone(),
             capability_policy_revision: command.capability_policy_revision.clone(),
@@ -242,7 +271,8 @@ impl LocalAgentRuntime {
 fn normalized_agent_execution_context(
     metadata: &serde_json::Value,
     conversation_id: &str,
-    conversation_is_unbound: bool,
+    conversation_resource: Option<&LocalConversationResourceBinding>,
+    team_executor_context: Option<&serde_json::Value>,
 ) -> Result<Option<serde_json::Value>, LocalAgentRuntimeError> {
     let Some(context) = metadata.get("agent_execution_context") else {
         return Ok(None);
@@ -256,7 +286,7 @@ fn normalized_agent_execution_context(
             "source is not an Agent execution surface",
         ));
     }
-    if !conversation_is_unbound {
+    if conversation_resource.is_some() && team_executor_context.is_none() {
         return Err(invalid_agent_context(
             "Agent direct conversations must not use Contact or Project resource bindings",
         ));
@@ -322,7 +352,16 @@ fn normalized_agent_execution_context(
     }
     let room_id = agent_context_string(values, "room_id", 512, true)?;
     let agent_id = agent_context_string(values, "agent_id", 512, true)?;
-    let expected_conversation_id = if source == "native_agent_team" {
+    let expected_conversation_id = if let Some(executor) = team_executor_context {
+        for (field, expected) in [("team_id", room_id), ("agent_id", agent_id)] {
+            if executor.get(field).and_then(serde_json::Value::as_str) != Some(expected) {
+                return Err(invalid_agent_context(&format!(
+                    "executor {field} does not match the Agent identity"
+                )));
+            }
+        }
+        conversation_id.to_string()
+    } else if source == "native_agent_team" {
         format!("agent-team-{room_id}-{agent_id}")
     } else {
         format!("agent-direct-{room_id}")
@@ -368,6 +407,17 @@ fn normalized_agent_execution_context(
     });
     if source == "native_agent_team" {
         let project_id = agent_context_string(values, "project_id", 512, true)?;
+        if let Some(executor) = team_executor_context {
+            if executor
+                .get("project_id")
+                .and_then(serde_json::Value::as_str)
+                != Some(project_id)
+            {
+                return Err(invalid_agent_context(
+                    "executor project_id does not match the Agent identity",
+                ));
+            }
+        }
         let team_name = agent_context_string(values, "team_name", 160, false)?;
         let team_goal = agent_context_optional_text(values, "team_goal", 8_000)?;
         let team_role = agent_context_string(values, "team_role", 160, false)?;
@@ -389,6 +439,135 @@ fn normalized_agent_execution_context(
         object.insert("is_project_manager".into(), json!(is_project_manager));
     }
     Ok(Some(normalized))
+}
+
+fn normalized_team_executor_context(
+    metadata: &serde_json::Value,
+    conversation_id: &str,
+    conversation_resource: Option<&LocalConversationResourceBinding>,
+) -> Result<Option<serde_json::Value>, LocalAgentRuntimeError> {
+    let Some(context) = metadata.get("agent_team_execution") else {
+        return Ok(None);
+    };
+    if metadata.get("source").and_then(serde_json::Value::as_str) != Some("native_agent_team") {
+        return Err(invalid_agent_context(
+            "executor context requires the native_agent_team source",
+        ));
+    }
+    let values = context
+        .as_object()
+        .ok_or_else(|| invalid_agent_context("agent_team_execution must be an object"))?;
+    const KEYS: [&str; 9] = [
+        "schema_version",
+        "delivery_lane",
+        "trigger_kind",
+        "delivery_id",
+        "todo_id",
+        "team_id",
+        "agent_id",
+        "project_id",
+        "execution_plan",
+    ];
+    if values.len() != KEYS.len()
+        || values.keys().any(|key| !KEYS.contains(&key.as_str()))
+        || values
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64)
+            != Some(1)
+        || values
+            .get("delivery_lane")
+            .and_then(serde_json::Value::as_str)
+            != Some("executor")
+        || values
+            .get("trigger_kind")
+            .and_then(serde_json::Value::as_str)
+            != Some("todo")
+    {
+        return Err(invalid_agent_context(
+            "executor context fields do not match the schema",
+        ));
+    }
+    let delivery_id = agent_context_string(values, "delivery_id", 512, true)?;
+    let todo_id = agent_context_string(values, "todo_id", 512, true)?;
+    let team_id = agent_context_string(values, "team_id", 512, true)?;
+    let agent_id = agent_context_string(values, "agent_id", 512, true)?;
+    let project_id = agent_context_string(values, "project_id", 512, true)?;
+    if conversation_id != format!("agent-team-executor-{delivery_id}") {
+        return Err(invalid_agent_context(
+            "delivery_id does not match the executor conversation identity",
+        ));
+    }
+    if !matches!(
+        conversation_resource,
+        Some(LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Project,
+            resource_id,
+        }) if resource_id == project_id
+    ) {
+        return Err(invalid_agent_context(
+            "executor conversation must be bound to its exact Project",
+        ));
+    }
+    let plan = values
+        .get("execution_plan")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| invalid_agent_context("execution_plan must be an object"))?;
+    const PLAN_KEYS: [&str; 2] = ["requires_execution", "builtin_capabilities"];
+    if plan.len() != PLAN_KEYS.len() || plan.keys().any(|key| !PLAN_KEYS.contains(&key.as_str())) {
+        return Err(invalid_agent_context(
+            "execution_plan fields do not match the schema",
+        ));
+    }
+    let requires_execution = plan
+        .get("requires_execution")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| invalid_agent_context("requires_execution must be a boolean"))?;
+    let capabilities = plan
+        .get("builtin_capabilities")
+        .and_then(serde_json::Value::as_array)
+        .filter(|values| values.len() <= 3)
+        .ok_or_else(|| invalid_agent_context("builtin_capabilities must be an array"))?;
+    let mut unique = std::collections::HashSet::new();
+    let mut enabled_builtin_kinds = Vec::with_capacity(capabilities.len());
+    for capability in capabilities {
+        let capability = capability
+            .as_str()
+            .ok_or_else(|| invalid_agent_context("builtin_capabilities must contain strings"))?;
+        let builtin_kind = match capability {
+            "project_read" => "CodeMaintainerRead",
+            "project_write" if requires_execution => "CodeMaintainerWrite",
+            "terminal" if requires_execution => "TerminalController",
+            _ => {
+                return Err(invalid_agent_context(
+                    "execution_plan contains an unauthorized capability",
+                ))
+            }
+        };
+        if !unique.insert(capability) {
+            return Err(invalid_agent_context("builtin_capabilities must be unique"));
+        }
+        enabled_builtin_kinds.push(builtin_kind);
+    }
+    Ok(Some(json!({
+        "schema_version": 1,
+        "delivery_lane": "executor",
+        "delivery_id": delivery_id,
+        "todo_id": todo_id,
+        "team_id": team_id,
+        "agent_id": agent_id,
+        "project_id": project_id,
+        "execution_plan": {
+            "requires_execution": requires_execution,
+            "builtin_capabilities": capabilities,
+        },
+        "tool_options": {
+            "requires_execution": requires_execution,
+            "enabled_builtin_kinds": enabled_builtin_kinds,
+            "plugin_hints": [],
+            "plugin_release_snapshots": [],
+            "external_mcp_config_ids": [],
+        },
+    })))
 }
 
 fn agent_context_optional_text<'a>(
@@ -653,21 +832,51 @@ mod tests {
         })
     }
 
+    fn team_executor_context() -> serde_json::Value {
+        let mut metadata = team_agent_context();
+        metadata["agent_team_execution"] = json!({
+            "schema_version": 1,
+            "delivery_lane": "executor",
+            "trigger_kind": "todo",
+            "delivery_id": "delivery-1",
+            "todo_id": "todo-1",
+            "team_id": "team-1",
+            "agent_id": "agent-1",
+            "project_id": "project-1",
+            "execution_plan": {
+                "requires_execution": true,
+                "builtin_capabilities": ["project_read", "terminal"],
+            }
+        });
+        metadata
+    }
+
+    fn project_resource() -> LocalConversationResourceBinding {
+        LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Project,
+            resource_id: "project-1".into(),
+        }
+    }
+
     #[test]
     fn agent_context_is_strictly_bound_to_an_unbound_direct_conversation() {
         let normalized =
-            normalized_agent_execution_context(&agent_context(), "agent-direct-room-1", true)
+            normalized_agent_execution_context(&agent_context(), "agent-direct-room-1", None, None)
                 .unwrap()
                 .unwrap();
         assert_eq!(normalized["agent_id"], "agent-1");
         assert_eq!(normalized["profession_key"], "software_engineer");
         assert!(
-            normalized_agent_execution_context(&agent_context(), "conversation-1", true,).is_err()
-        );
-        assert!(
-            normalized_agent_execution_context(&agent_context(), "agent-direct-room-1", false,)
+            normalized_agent_execution_context(&agent_context(), "conversation-1", None, None,)
                 .is_err()
         );
+        assert!(normalized_agent_execution_context(
+            &agent_context(),
+            "agent-direct-room-1",
+            Some(&project_resource()),
+            None,
+        )
+        .is_err());
     }
 
     #[test]
@@ -675,13 +884,15 @@ mod tests {
         let mut unknown = agent_context();
         unknown["agent_execution_context"]["secret_path"] = json!("/tmp/private");
         assert!(
-            normalized_agent_execution_context(&unknown, "agent-direct-room-1", true,).is_err()
+            normalized_agent_execution_context(&unknown, "agent-direct-room-1", None, None,)
+                .is_err()
         );
 
         let mut bad_hash = agent_context();
         bad_hash["agent_execution_context"]["profession_skill_sha256"] = json!("ABC");
         assert!(
-            normalized_agent_execution_context(&bad_hash, "agent-direct-room-1", true,).is_err()
+            normalized_agent_execution_context(&bad_hash, "agent-direct-room-1", None, None,)
+                .is_err()
         );
     }
 
@@ -690,7 +901,8 @@ mod tests {
         let normalized = normalized_agent_execution_context(
             &team_agent_context(),
             "agent-team-team-1-agent-1",
-            true,
+            None,
+            None,
         )
         .unwrap()
         .unwrap();
@@ -700,7 +912,8 @@ mod tests {
         assert!(normalized_agent_execution_context(
             &team_agent_context(),
             "agent-team-team-1-agent-2",
-            true,
+            None,
+            None,
         )
         .is_err());
         let mut wrong_source = team_agent_context();
@@ -708,9 +921,97 @@ mod tests {
         assert!(normalized_agent_execution_context(
             &wrong_source,
             "agent-team-team-1-agent-1",
-            true,
+            None,
+            None,
         )
         .is_err());
+    }
+
+    #[test]
+    fn executor_context_is_project_bound_and_capability_scoped() {
+        let metadata = team_executor_context();
+        let executor = normalized_team_executor_context(
+            &metadata,
+            "agent-team-executor-delivery-1",
+            Some(&project_resource()),
+        )
+        .unwrap()
+        .unwrap();
+        let normalized = normalized_agent_execution_context(
+            &metadata,
+            "agent-team-executor-delivery-1",
+            Some(&project_resource()),
+            Some(&executor),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(normalized["project_id"], "project-1");
+        assert_eq!(
+            executor["tool_options"]["enabled_builtin_kinds"],
+            json!(["CodeMaintainerRead", "TerminalController"])
+        );
+        assert!(normalized_team_executor_context(
+            &metadata,
+            "agent-team-executor-delivery-1",
+            None,
+        )
+        .is_err());
+        let mut escalated = metadata;
+        escalated["agent_team_execution"]["execution_plan"]["builtin_capabilities"] =
+            json!(["project_read", "admin"]);
+        assert!(normalized_team_executor_context(
+            &escalated,
+            "agent-team-executor-delivery-1",
+            Some(&project_resource()),
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn only_a_bound_team_executor_turn_uses_task_execution() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        runtime.initialize("user-1").await.expect("initialize");
+        let conversation_id = "agent-team-executor-delivery-1";
+        runtime
+            .try_handle(request(
+                "create-executor-conversation",
+                HostCommand::CreateConversation(CreateConversationCommand {
+                    conversation_id: conversation_id.into(),
+                    owner_user_id: "user-1".into(),
+                    title: "Executor".into(),
+                    resource: Some(project_resource()),
+                }),
+            ))
+            .await
+            .expect("create executor conversation");
+        let mut turn = start_turn(1);
+        turn.conversation_id = conversation_id.into();
+        turn.message_metadata = team_executor_context();
+        let started = runtime
+            .try_handle(request(
+                "start-executor-turn",
+                HostCommand::StartConversationTurn(turn),
+            ))
+            .await
+            .expect("start executor Turn");
+        let HostResult::ConversationTurnStarted { result } = started else {
+            panic!("unexpected start result")
+        };
+        assert_eq!(result.run.profile_key, "task_execution");
+        assert_eq!(result.run.input["prompt"], "hello");
+        assert_eq!(
+            result.run.input["tool_options"]["enabled_builtin_kinds"],
+            json!(["CodeMaintainerRead", "TerminalController"])
+        );
+        assert_eq!(
+            result.run.input["team_executor_context"]["todo_id"],
+            "todo-1"
+        );
     }
 
     #[tokio::test]

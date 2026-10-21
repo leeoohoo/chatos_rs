@@ -2,9 +2,10 @@ use chatos_local_agent_protocol::{
     CreateConversationCommand, GetConversationCommand, GetConversationRuntimeSettingsCommand,
     GetLatestCapabilityPolicySnapshotCommand, GuideConversationTurnCommand, HostCommand,
     HostResult, ListLatestModelConfigSnapshotsCommand, LocalConversationAttachmentSpec,
-    LocalConversationDetail, LocalConversationMessageRole, LocalConversationRuntimeSettings,
-    LocalConversationTurnRecord, LocalConversationTurnStatus, LocalModelConfigSnapshot,
-    PutConversationRuntimeSettingsCommand, StartConversationTurnCommand,
+    LocalConversationDetail, LocalConversationMessageRole, LocalConversationResourceBinding,
+    LocalConversationResourceKind, LocalConversationRuntimeSettings, LocalConversationTurnRecord,
+    LocalConversationTurnStatus, LocalModelConfigSnapshot, PutConversationRuntimeSettingsCommand,
+    StartConversationTurnCommand,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -346,6 +347,7 @@ struct PendingTeamDelivery {
     content: String,
     trigger_kind: String,
     todo_id: Option<String>,
+    execution_plan: Option<team_todo::AgentTodoExecutionPlan>,
     binding: TeamExecutionBinding,
 }
 
@@ -2041,7 +2043,7 @@ impl AgentConversationStore {
             .query_row(
                 r#"
                 SELECT delivery.id, delivery.message_id, message.content,
-                       delivery.trigger_kind, todo.id,
+                       delivery.trigger_kind, todo.id, todo.execution_plan_json,
                        room.id, profile.id, profile.name, profile.role_prompt,
                        profile.model_config_id, profile.thinking_level,
                        profile.profession_key, profile.default_plugin_ids_json,
@@ -2093,30 +2095,35 @@ impl AgentConversationStore {
                         content: row.get(2)?,
                         trigger_kind: row.get(3)?,
                         todo_id: row.get(4)?,
+                        execution_plan: row
+                            .get::<_, Option<String>>(5)?
+                            .map(|value| serde_json::from_str(&value))
+                            .transpose()
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
                         binding: TeamExecutionBinding {
                             agent: AgentExecutionBinding {
-                                room_id: row.get(5)?,
-                                agent_id: row.get(6)?,
-                                name: row.get(7)?,
-                                role_prompt: row.get(8)?,
-                                model_config_id: row.get(9)?,
-                                thinking_level: row.get(10)?,
-                                profession_key: row.get(11)?,
+                                room_id: row.get(6)?,
+                                agent_id: row.get(7)?,
+                                name: row.get(8)?,
+                                role_prompt: row.get(9)?,
+                                model_config_id: row.get(10)?,
+                                thinking_level: row.get(11)?,
+                                profession_key: row.get(12)?,
                                 default_plugin_ids: parse_identifier_array(
-                                    &row.get::<_, String>(12)?,
-                                )
-                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
-                                default_skill_ids: parse_identifier_array(
                                     &row.get::<_, String>(13)?,
                                 )
                                 .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                                default_skill_ids: parse_identifier_array(
+                                    &row.get::<_, String>(14)?,
+                                )
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
                             },
-                            project_id: row.get(14)?,
-                            team_name: row.get(15)?,
-                            team_goal: row.get(16)?,
-                            team_role: row.get(17)?,
-                            team_responsibility: row.get(18)?,
-                            is_project_manager: row.get::<_, i64>(19)? == 1,
+                            project_id: row.get(15)?,
+                            team_name: row.get(16)?,
+                            team_goal: row.get(17)?,
+                            team_role: row.get(18)?,
+                            team_responsibility: row.get(19)?,
+                            is_project_manager: row.get::<_, i64>(20)? == 1,
                         },
                     })
                 },
@@ -2137,9 +2144,19 @@ impl AgentConversationStore {
         match (&pending.trigger_kind[..], pending.todo_id.as_deref()) {
             ("todo", Some(todo_id)) => {
                 validate_identifier(todo_id).map_err(|_| team_store_error())?;
+                let plan = pending
+                    .execution_plan
+                    .as_ref()
+                    .ok_or_else(team_store_error)?;
+                if !plan.plugins.is_empty() {
+                    return Err("团队 Todo 当前只能调度已接入的项目与终端能力。".into());
+                }
             }
             ("todo", None) | (_, Some(_)) => return Err(team_store_error()),
             _ => {}
+        }
+        if pending.trigger_kind != "todo" && pending.execution_plan.is_some() {
+            return Err(team_store_error());
         }
         validate_team_execution_binding(&pending.binding)?;
         validate_text(&pending.content, 1_000_000, false).map_err(|_| team_store_error())?;
@@ -2204,6 +2221,20 @@ impl AgentConversationStore {
             .ok_or_else(|| "Agent 不是当前团队的可执行活动成员。".to_owned())?;
         validate_team_execution_binding(&binding)?;
         Ok(binding)
+    }
+
+    pub(crate) fn validate_team_executor_binding(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        agent_id: &str,
+        project_id: &str,
+    ) -> Result<(), String> {
+        let binding = self.load_project_team_execution_binding(owner_user_id, team_id, agent_id)?;
+        if binding.project_id != project_id {
+            return Err("The team executor binding is no longer active for this Project.".into());
+        }
+        Ok(())
     }
 
     fn claim_project_team_delivery(
@@ -3437,17 +3468,23 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
             pending.binding.agent.room_id, pending.binding.agent.agent_id
         )
     };
-    ensure_agent_host_conversation(
-        &manager,
-        &owner_user_id,
-        &conversation_id,
-        &format!(
-            "{} · {}",
-            pending.binding.team_name, pending.binding.agent.name
-        ),
-    )
-    .await?;
-    let detail = agent_conversation_context(&manager, &owner_user_id, &conversation_id).await?;
+    let title = format!(
+        "{} · {}",
+        pending.binding.team_name, pending.binding.agent.name
+    );
+    let detail = if pending.trigger_kind == "todo" {
+        ensure_team_executor_host_conversation(
+            &manager,
+            &owner_user_id,
+            &conversation_id,
+            &title,
+            &pending.binding.project_id,
+        )
+        .await?
+    } else {
+        ensure_agent_host_conversation(&manager, &owner_user_id, &conversation_id, &title).await?;
+        agent_conversation_context(&manager, &owner_user_id, &conversation_id).await?
+    };
     let model = selected_agent_model(
         &manager,
         &owner_user_id,
@@ -3462,7 +3499,13 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
         pending.binding.agent.thinking_level.as_deref(),
     )
     .await?;
-    let capability_revision = latest_main_chat_capability(&manager, &owner_user_id).await?;
+    let profile_key = if pending.trigger_kind == "todo" {
+        "task_execution"
+    } else {
+        MAIN_CHAT_PROFILE
+    };
+    let capability_revision =
+        latest_capability_revision(&manager, &owner_user_id, profile_key).await?;
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
@@ -3477,11 +3520,7 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
         message_id: host_message_id.clone(),
         run_id: run_id.clone(),
         message: pending.content.clone(),
-        message_metadata: team_agent_execution_metadata(
-            &pending.binding,
-            &profession,
-            &pending.trigger_kind,
-        ),
+        message_metadata: team_agent_execution_metadata(&pending, &profession)?,
         attachments: vec![],
         model_config_ref: settings.selected_model_config_ref,
         model_config_revision: settings.selected_model_config_revision,
@@ -3660,7 +3699,8 @@ pub(crate) async fn send_agent_conversation_draft(
         binding.thinking_level.as_deref(),
     )
     .await?;
-    let capability_revision = latest_main_chat_capability(&manager, &input.owner_user_id).await?;
+    let capability_revision =
+        latest_capability_revision(&manager, &input.owner_user_id, MAIN_CHAT_PROFILE).await?;
     authentication
         .require_session_generation(&input.owner_user_id, generation)
         .await?;
@@ -3802,6 +3842,82 @@ async fn ensure_agent_host_conversation(
     }
 }
 
+async fn ensure_team_executor_host_conversation(
+    manager: &HostManager,
+    owner_user_id: &str,
+    conversation_id: &str,
+    title: &str,
+    project_id: &str,
+) -> Result<LocalConversationDetail, String> {
+    validate_identifier(project_id).map_err(|_| invalid_team_input())?;
+    let existing = manager
+        .execute_detailed(HostCommand::GetConversationContext(
+            GetConversationCommand {
+                owner_user_id: owner_user_id.to_owned(),
+                conversation_id: conversation_id.to_owned(),
+            },
+        ))
+        .await;
+    match existing {
+        Ok(HostResult::Conversation { conversation }) => {
+            validate_team_executor_host_conversation(
+                &conversation,
+                owner_user_id,
+                conversation_id,
+                project_id,
+            )?;
+            Ok(conversation)
+        }
+        Ok(_) => Err("Local Agent Host 返回了错误的 executor 会话响应。".into()),
+        Err(error) if error.code.as_deref() == Some("not_found") => {
+            let created = manager
+                .execute(HostCommand::CreateConversation(CreateConversationCommand {
+                    conversation_id: conversation_id.to_owned(),
+                    owner_user_id: owner_user_id.to_owned(),
+                    title: title.to_owned(),
+                    resource: Some(LocalConversationResourceBinding {
+                        kind: LocalConversationResourceKind::Project,
+                        resource_id: project_id.to_owned(),
+                    }),
+                }))
+                .await;
+            match created {
+                Ok(HostResult::Conversation { conversation }) => {
+                    validate_team_executor_host_conversation(
+                        &conversation,
+                        owner_user_id,
+                        conversation_id,
+                        project_id,
+                    )?;
+                    Ok(conversation)
+                }
+                Ok(_) => Err("Local Agent Host 返回了错误的 executor 会话响应。".into()),
+                Err(_) => {
+                    let retry = manager
+                        .execute(HostCommand::GetConversationContext(
+                            GetConversationCommand {
+                                owner_user_id: owner_user_id.to_owned(),
+                                conversation_id: conversation_id.to_owned(),
+                            },
+                        ))
+                        .await?;
+                    let HostResult::Conversation { conversation } = retry else {
+                        return Err("Local Agent Host 返回了错误的 executor 会话响应。".into());
+                    };
+                    validate_team_executor_host_conversation(
+                        &conversation,
+                        owner_user_id,
+                        conversation_id,
+                        project_id,
+                    )?;
+                    Ok(conversation)
+                }
+            }
+        }
+        Err(error) => Err(error.message),
+    }
+}
+
 async fn send_agent_guidance(
     manager: &HostManager,
     owner_user_id: &str,
@@ -3917,22 +4033,23 @@ async fn ensure_agent_runtime_settings(
     Ok(settings)
 }
 
-async fn latest_main_chat_capability(
+async fn latest_capability_revision(
     manager: &HostManager,
     owner_user_id: &str,
+    profile_key: &str,
 ) -> Result<String, String> {
     let result = manager
         .execute(HostCommand::GetLatestCapabilityPolicySnapshot(
             GetLatestCapabilityPolicySnapshotCommand {
                 owner_user_id: owner_user_id.to_owned(),
-                profile_key: MAIN_CHAT_PROFILE.into(),
+                profile_key: profile_key.to_owned(),
             },
         ))
         .await?;
     let HostResult::CapabilityPolicySnapshot { snapshot } = result else {
         return Err("Local Agent Host 返回了错误的能力配置响应。".into());
     };
-    if snapshot.owner_user_id != owner_user_id || snapshot.profile_key != MAIN_CHAT_PROFILE {
+    if snapshot.owner_user_id != owner_user_id || snapshot.profile_key != profile_key {
         return Err("Local Agent Host 返回了不匹配的能力配置。".into());
     }
     Ok(snapshot.capability_policy_revision)
@@ -3962,16 +4079,11 @@ fn agent_execution_metadata(
 }
 
 fn team_agent_execution_metadata(
-    binding: &TeamExecutionBinding,
+    pending: &PendingTeamDelivery,
     profession: &AgentProfessionRuntimeSnapshot,
-    trigger_kind: &str,
-) -> serde_json::Value {
-    let lane = if trigger_kind == "todo" {
-        "executor"
-    } else {
-        "manager"
-    };
-    json!({
+) -> Result<serde_json::Value, String> {
+    let binding = &pending.binding;
+    let mut metadata = json!({
         "source": "native_agent_team",
         "agent_execution_context": {
             "schema_version": 2,
@@ -3992,10 +4104,30 @@ fn team_agent_execution_metadata(
             "team_role": binding.team_role,
             "team_responsibility": binding.team_responsibility,
             "is_project_manager": binding.is_project_manager,
-            "delivery_lane": lane,
-            "trigger_kind": trigger_kind,
         }
-    })
+    });
+    if pending.trigger_kind == "todo" {
+        let todo_id = pending.todo_id.as_deref().ok_or_else(team_store_error)?;
+        let plan = pending
+            .execution_plan
+            .as_ref()
+            .ok_or_else(team_store_error)?;
+        metadata["agent_team_execution"] = json!({
+            "schema_version": 1,
+            "delivery_lane": "executor",
+            "trigger_kind": "todo",
+            "delivery_id": pending.delivery_id,
+            "todo_id": todo_id,
+            "team_id": binding.agent.room_id,
+            "agent_id": binding.agent.agent_id,
+            "project_id": binding.project_id,
+            "execution_plan": {
+                "requires_execution": plan.requires_execution,
+                "builtin_capabilities": plan.builtin_capabilities,
+            }
+        });
+    }
+    Ok(metadata)
 }
 
 fn delivery_state(turn: &LocalConversationTurnRecord) -> (&'static str, Option<i64>) {
@@ -4037,6 +4169,27 @@ fn validate_host_conversation(
         || conversation.conversation.resource.is_some()
     {
         return Err("Local Agent Host 返回了不匹配的 Agent 会话。".into());
+    }
+    Ok(())
+}
+
+fn validate_team_executor_host_conversation(
+    conversation: &LocalConversationDetail,
+    owner_user_id: &str,
+    conversation_id: &str,
+    project_id: &str,
+) -> Result<(), String> {
+    if conversation.conversation.owner_user_id != owner_user_id
+        || conversation.conversation.conversation_id != conversation_id
+        || !matches!(
+            conversation.conversation.resource.as_ref(),
+            Some(LocalConversationResourceBinding {
+                kind: LocalConversationResourceKind::Project,
+                resource_id,
+            }) if resource_id == project_id
+        )
+    {
+        return Err("Local Agent Host 返回了不匹配的 executor 项目会话。".into());
     }
     Ok(())
 }
@@ -5098,6 +5251,7 @@ mod tests {
             manager.delivery_id,
             manager_message.deliveries[0].delivery_id
         );
+        assert!(manager.execution_plan.is_none());
         store
             .claim_project_team_delivery("alice", &manager, "turn-manager", "run-manager", 100)
             .unwrap();
@@ -5146,6 +5300,13 @@ mod tests {
             .unwrap();
         assert_eq!(executor.trigger_kind, "todo");
         assert_eq!(executor.todo_id.as_deref(), Some(first.id.as_str()));
+        assert_eq!(
+            executor
+                .execution_plan
+                .as_ref()
+                .map(|plan| plan.builtin_capabilities.as_slice()),
+            Some(["project_read".to_owned()].as_slice())
+        );
         assert!(executor.content.contains("独立 Todo"));
         assert!(executor.content.contains("实现任务执行"));
         store
