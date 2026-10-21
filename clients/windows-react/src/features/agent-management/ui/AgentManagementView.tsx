@@ -7,6 +7,7 @@ import { ConversationHistoryView } from "../../conversation-history/ui/Conversat
 import type { ConversationRealtimePort } from "../../conversation-realtime/ports/ConversationRealtimePort";
 import type { ConversationRuntimeSettingsPort } from "../../conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
+import type { RunInspectorDetail } from "../../run-inspector/domain/runInspector";
 import { useAgentManagementStore } from "../application/agentManagementStore";
 import { type AgentTeamMemberMutation, useAgentTeamStore } from "../application/agentTeamStore";
 import { useAgentTeamConversationStore } from "../application/agentTeamConversationStore";
@@ -322,6 +323,7 @@ export function AgentManagementView({
             profiles={profiles}
             ownerUserId={ownerUserId}
             port={port}
+            runInspectorPort={runInspectorPort}
             projects={projects}
             selectedTeamId={selectedTeamId}
             teams={teams}
@@ -467,6 +469,7 @@ function AgentTeamCatalog({
   profiles,
   ownerUserId,
   port,
+  runInspectorPort,
   projects,
   selectedTeamId,
   teams,
@@ -485,6 +488,7 @@ function AgentTeamCatalog({
   profiles: AgentProfileSummary[];
   ownerUserId: string;
   port: AgentManagementPort;
+  runInspectorPort?: RunInspectorPort;
   projects: Array<{ id: string; title: string }>;
   selectedTeamId: string | null;
   teams: AgentTeamSummary[];
@@ -597,6 +601,7 @@ function AgentTeamCatalog({
                   ownerUserId={ownerUserId}
                   port={port}
                   profiles={profiles}
+                  runInspectorPort={runInspectorPort}
                 />
               ) : detail?.team.id === selectedTeamId && detail.members.length > 0 ? (
                 <div className="agent-team-members__list">
@@ -639,11 +644,13 @@ function AgentTeamRunsView({
   ownerUserId,
   port,
   profiles,
+  runInspectorPort,
 }: {
   detail: AgentTeamDetail;
   ownerUserId: string;
   port: AgentManagementPort;
   profiles: AgentProfileSummary[];
+  runInspectorPort?: RunInspectorPort;
 }) {
   const snapshot = useAgentTeamRunStore((state) => state.snapshot);
   const isLoading = useAgentTeamRunStore((state) => state.isLoading);
@@ -652,6 +659,7 @@ function AgentTeamRunsView({
   const refresh = useAgentTeamRunStore((state) => state.refresh);
   const reset = useAgentTeamRunStore((state) => state.reset);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const visibleSnapshot = snapshot?.teamId === detail.team.id ? snapshot : null;
   const hasActiveRun = visibleSnapshot?.runs.some(
     (run) => run.deliveryStatus === "pending" || run.deliveryStatus === "running",
@@ -726,10 +734,145 @@ function AgentTeamRunsView({
             <footer>
               <time>{formatTeamMessageTime(run.updatedAtUnixMs)}</time>
               {run.lastError && <span title={run.lastError}>{run.lastError}</span>}
+              <button
+                disabled={!runInspectorPort}
+                onClick={() => setSelectedRunId(run.runId)}
+                type="button"
+              >查看详情</button>
             </footer>
           </article>
         ))}
       </div>
+      {selectedRunId && runInspectorPort && (
+        <AgentTeamRunDetailSheet
+          agentName={profileNames.get(
+            visibleSnapshot?.runs.find((run) => run.runId === selectedRunId)?.agentId ?? "",
+          ) ?? "Agent"}
+          ownerUserId={ownerUserId}
+          port={runInspectorPort}
+          runId={selectedRunId}
+          onClose={() => setSelectedRunId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AgentTeamRunDetailSheet({
+  agentName,
+  ownerUserId,
+  port,
+  runId,
+  onClose,
+}: {
+  agentName: string;
+  ownerUserId: string;
+  port: RunInspectorPort;
+  runId: string;
+  onClose(): void;
+}) {
+  const [detail, setDetail] = useState<RunInspectorDetail | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setDetail(null);
+    setIsLoading(true);
+    setError(null);
+    void port.loadRun(ownerUserId, runId, 0).then((snapshot) => {
+      if (!active || snapshot.run.runId !== runId) return;
+      setDetail(snapshot);
+      setIsLoading(false);
+    }).catch((failure: unknown) => {
+      if (!active) return;
+      setError(failure instanceof Error ? failure.message : "Run 详情暂时不可用。");
+      setIsLoading(false);
+    });
+    return () => { active = false; };
+  }, [ownerUserId, port, runId]);
+
+  useEffect(() => {
+    if (!detail || !["ready", "running"].includes(detail.run.status.toLowerCase())) return undefined;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void port.loadRun(ownerUserId, runId, 0).then((snapshot) => {
+        if (active && snapshot.run.runId === runId) setDetail(snapshot);
+      }).catch(() => undefined);
+    }, 1_500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [detail, ownerUserId, port, runId]);
+
+  return (
+    <div className="agent-editor-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        aria-label="团队 Run 检查器"
+        aria-modal="true"
+        className="agent-team-run-detail"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <header>
+          <div><h2>Run 检查器</h2><p>{agentName} · {runId}</p></div>
+          <button aria-label="关闭团队 Run 检查器" onClick={onClose} type="button">×</button>
+        </header>
+        <div className="agent-team-run-detail__body">
+          {isLoading ? (
+            <div className="agent-team-runs__state"><span className="mini-spinner" />正在读取 Run…</div>
+          ) : error && !detail ? (
+            <div className="agent-team-runs__state is-error"><strong>无法读取 Run</strong><span>{error}</span></div>
+          ) : detail ? (
+            <>
+              {error && <div className="agent-team-run-detail__error" role="alert">{error}</div>}
+              <dl>
+                <Row label="状态" value={detail.run.status} />
+                <Row label="迭代" value={`${detail.run.iteration} / ${detail.run.maxIterations}`} />
+                <Row label="更新时间" value={formatTeamMessageTime(detail.run.updatedAtUnixMs)} />
+              </dl>
+              {detail.run.resultSummary && <div className="agent-team-run-detail__summary"><strong>结果摘要</strong><p>{detail.run.resultSummary}</p></div>}
+              {detail.run.errorMessage && <div className="agent-team-run-detail__error" role="alert">{detail.run.errorMessage}</div>}
+              <section>
+                <h3>执行事件</h3>
+                {detail.events.length === 0 ? (
+                  <p className="agent-team-run-detail__empty">本次 Run 还没有执行事件。</p>
+                ) : detail.events.map((event) => (
+                  <article key={event.eventId}>
+                    <span aria-hidden="true" />
+                    <div>
+                      <header><strong>{event.eventType}</strong><time>{formatTeamMessageTime(event.createdAtUnixMs)}</time></header>
+                      {event.summary && <p>{event.summary}</p>}
+                      {event.status && <small>{event.status}</small>}
+                    </div>
+                  </article>
+                ))}
+                {detail.eventsHasMore && (
+                  <button
+                    disabled={isLoadingOlder}
+                    onClick={() => {
+                      setIsLoadingOlder(true);
+                      void port.loadRun(ownerUserId, runId, detail.nextOffset).then((older) => {
+                        if (older.run.runId !== runId) return;
+                        setDetail((current) => current ? {
+                          ...older,
+                          events: [...current.events, ...older.events],
+                        } : older);
+                      }).catch((failure: unknown) => {
+                        setError(failure instanceof Error ? failure.message : "较早事件读取失败。");
+                      }).finally(() => setIsLoadingOlder(false));
+                    }}
+                    type="button"
+                  >{isLoadingOlder ? "读取中…" : "加载较早事件"}</button>
+                )}
+              </section>
+            </>
+          ) : null}
+        </div>
+        <footer><button className="primary-button" onClick={onClose} type="button">完成</button></footer>
+      </section>
     </div>
   );
 }

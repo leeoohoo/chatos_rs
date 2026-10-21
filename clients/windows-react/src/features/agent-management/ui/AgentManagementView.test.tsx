@@ -12,6 +12,7 @@ import {
   type AgentProfileSummary,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
+import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import { AgentManagementView } from "./AgentManagementView";
 
 vi.mock("../../conversation-history/ui/ConversationHistoryView", () => ({
@@ -434,11 +435,29 @@ describe("AgentManagementView", () => {
     const port = stubPort({
       listTeams: vi.fn(async () => [team]), loadTeam: vi.fn(async () => detail), loadTeamRuns,
     });
+    const loadRun = vi.fn(async () => ({
+      run: {
+        runId: "run-team-1", taskId: "task-1", status: "succeeded", iteration: 2,
+        maxIterations: 32, resultSummary: "已完成团队回复", reportContent: null,
+        errorMessage: null, createdAtUnixMs: 30, updatedAtUnixMs: 40, finishedAtUnixMs: 40,
+      },
+      events: [{
+        cursor: 1, eventId: "event-1", eventType: "run_completed",
+        summary: "Run 已完成", status: "succeeded", createdAtUnixMs: 40,
+      }],
+      eventsHasMore: false,
+      nextOffset: 1,
+    }));
+    const runInspectorPort: RunInspectorPort = {
+      loadGraph: vi.fn(), loadTask: vi.fn(), loadRun,
+      retryTask: vi.fn(), cancelTask: vi.fn(), restartTask: vi.fn(),
+    };
     render(
       <AgentManagementView
         ownerUserId="owner-1"
         port={port}
         projects={[{ id: "project-1", title: "Alpha" }]}
+        runInspectorPort={runInspectorPort}
       />,
     );
     await screen.findByText("界面设计师");
@@ -452,6 +471,11 @@ describe("AgentManagementView", () => {
     expect(screen.getByText("已完成")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "界面设计师" }));
     expect(screen.getByText("Run run-team-1", { exact: false })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(await screen.findByRole("dialog", { name: "团队 Run 检查器" })).toBeVisible();
+    await waitFor(() => expect(loadRun).toHaveBeenCalledWith("owner-1", "run-team-1", 0));
+    expect(await screen.findByText("Run 已完成")).toBeVisible();
+    expect(screen.getByText("已完成团队回复")).toBeVisible();
   });
 
   it("selects an Agent and loads its existing private-chat activity without opening a conversation", async () => {
