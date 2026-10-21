@@ -83,6 +83,7 @@ export interface AgentManagementPort {
     teamId: string,
     content: string,
     mentionedAgentIds: string[],
+    attachmentIds: string[],
   ): Promise<QueuedAgentTeamMessage>;
   dispatchNextTeamDelivery?(
     ownerUserId: string,

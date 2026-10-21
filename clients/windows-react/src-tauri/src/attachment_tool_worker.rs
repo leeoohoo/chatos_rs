@@ -571,6 +571,7 @@ pub(crate) fn schedule_team_todo_drain(app: AppHandle, owner_user_id: String, te
                 app.state::<AgentConversationStore>(),
                 app.state::<AgentSkillStore>(),
                 app.state::<HostManager>(),
+                app.state::<AttachmentManager>(),
                 app.state::<AttachmentToolWorker>(),
                 app.state::<TerminalToolWorker>(),
             )
@@ -1920,7 +1921,7 @@ pub fn team_chat_read_tool_schemas() -> Vec<Value> {
         json!({
             "type": "function",
             "name": "chat_read_attachment",
-            "description": "读取 chat_read_all_unread 返回的文本附件。message_ref 与 attachment_ref 必须来自同一条当前 Run 已签发的消息；内容按字符分页返回。",
+            "description": "读取 chat_read_all_unread 返回的附件。message_ref 与 attachment_ref 必须来自同一条当前 Run 已签发的消息；文本按字符分页返回。当前触发消息中的二进制附件已作为多模态输入提供，历史二进制附件只返回元数据和重新附带提示。",
             "parameters": {
                 "type": "object",
                 "properties": {

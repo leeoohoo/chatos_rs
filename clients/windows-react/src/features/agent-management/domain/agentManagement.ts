@@ -554,11 +554,29 @@ export const agentTeamMessageSchema = z.object({
   senderId: z.string().trim().min(1).max(512),
   content: z.string().max(1_000_000),
   mentionedAgentIds: z.array(z.string().trim().min(1).max(512)).max(100),
+  attachments: z.array(z.object({
+    id: z.string().trim().min(1).max(512),
+    name: z.string().trim().min(1).max(255),
+    mimeType: z.string().trim().min(1).max(200),
+    size: z.number().int().positive().max(20 * 1_024 * 1_024),
+    kind: z.enum(["image", "file", "audio"]),
+  }).strict()).max(20),
   createdAtUnixMs: z.number().int().nonnegative(),
 }).strict().superRefine((message, context) => {
   if (new Set(message.mentionedAgentIds).size !== message.mentionedAgentIds.length) {
     context.addIssue({ code: "custom", message: "团队消息中的 @Agent 不能重复。", path: ["mentionedAgentIds"] });
   }
+  const attachmentIds = new Set<string>();
+  message.attachments.forEach((attachment, index) => {
+    if (attachmentIds.has(attachment.id)) {
+      context.addIssue({
+        code: "custom",
+        message: "团队消息附件不能重复。",
+        path: ["attachments", index, "id"],
+      });
+    }
+    attachmentIds.add(attachment.id);
+  });
 });
 
 export const agentTeamDeliverySchema = z.object({

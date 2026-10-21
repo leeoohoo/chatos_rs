@@ -138,4 +138,75 @@ mod tests {
         manager.commit(scope(), &[committed.id]).unwrap();
         assert!(file.exists());
     }
+
+    #[test]
+    fn reauthorizes_verified_team_payload_for_the_exact_host_conversation() {
+        let (_directory, manager) = manager();
+        let target = AttachmentScope {
+            owner_user_id: "owner-1".into(),
+            conversation_id: "agent-team-room-agent-1".into(),
+            draft_generation: 0,
+        };
+        let data = b"verified image bytes".to_vec();
+        let payload = VerifiedAttachmentPayload {
+            display_name: "design.png".into(),
+            media_type: "image/png".into(),
+            kind: "image".into(),
+            origin: "file".into(),
+            sha256: digest(&data),
+            data,
+        };
+        let (ids, specs) = manager
+            .authorize_verified_payloads(target.clone(), &[payload])
+            .unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].display_name, "design.png");
+        assert_eq!(specs[0].media_type, "image/png");
+        assert_eq!(specs[0].byte_size, 20);
+        manager.commit(target, &ids).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_duplicate_team_draft_ids_before_persistence() {
+        let (_directory, manager) = manager();
+        let draft = manager
+            .stage_candidate_for_scope(scope(), candidate(b"one copy".to_vec()))
+            .await
+            .attachments
+            .remove(0);
+        let error = manager
+            .verified_draft_payloads(scope(), &[draft.id.clone(), draft.id])
+            .unwrap_err();
+        assert_eq!(error, "团队消息附件不能重复。");
+    }
+
+    #[test]
+    fn gives_each_agent_conversation_an_independent_authorized_reference() {
+        let (_directory, manager) = manager();
+        let data = b"verified image bytes".to_vec();
+        let payload = VerifiedAttachmentPayload {
+            display_name: "design.png".into(),
+            media_type: "image/png".into(),
+            kind: "image".into(),
+            origin: "file".into(),
+            sha256: digest(&data),
+            data,
+        };
+        let first_scope = AttachmentScope::new("owner-1", "agent-team-room-agent-1");
+        let second_scope = AttachmentScope::new("owner-1", "agent-team-room-agent-2");
+        let (first_ids, first_specs) = manager
+            .authorize_verified_payloads(first_scope.clone(), std::slice::from_ref(&payload))
+            .unwrap();
+        let (second_ids, second_specs) = manager
+            .authorize_verified_payloads(second_scope.clone(), &[payload])
+            .unwrap();
+        assert_ne!(first_ids, second_ids);
+        assert_ne!(
+            first_specs[0].authorized_local_ref,
+            second_specs[0].authorized_local_ref
+        );
+        manager.discard_ids(first_scope, first_ids);
+        manager.discard_ids(second_scope, second_ids);
+    }
 }

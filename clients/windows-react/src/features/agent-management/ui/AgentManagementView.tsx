@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AskUserPort } from "../../ask-user/ports/AskUserPort";
 import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
+import {
+  formatAttachmentSize,
+  mergeAttachmentDrafts,
+  type AttachmentImportResult,
+  type ConversationAttachmentDraft,
+} from "../../conversation-attachments/domain/conversationAttachment";
 import type { ConversationComposerPort } from "../../conversation-composer/ports/ConversationComposerPort";
 import type { ConversationHistoryPort } from "../../conversation-history/ports/ConversationHistoryPort";
 import { ConversationHistoryView } from "../../conversation-history/ui/ConversationHistoryView";
@@ -335,6 +341,7 @@ export function AgentManagementView({
 
         {surface === "teams" ? (
           <AgentTeamCatalog
+            attachmentPort={attachmentPort}
             detail={teamDetail}
             error={teamError}
             isDetailLoading={isTeamDetailLoading}
@@ -485,6 +492,7 @@ export function AgentManagementView({
 }
 
 function AgentTeamCatalog({
+  attachmentPort,
   detail,
   error,
   isDetailLoading,
@@ -505,6 +513,7 @@ function AgentTeamCatalog({
   onStaffingResolved,
   onSelect,
 }: {
+  attachmentPort?: ConversationAttachmentPort;
   detail: AgentTeamDetail | null;
   error: string | null;
   isDetailLoading: boolean;
@@ -650,6 +659,8 @@ function AgentTeamCatalog({
                 />
               ) : workspaceSection === "conversation" && detail?.team.id === selectedTeamId ? (
                 <AgentTeamConversationView
+                  key={detail.team.id}
+                  attachmentPort={attachmentPort}
                   detail={detail}
                   ownerUserId={ownerUserId}
                   port={port}
@@ -1825,11 +1836,13 @@ function teamRunTriggerLabel(trigger: "mention" | "default_agent" | "agent_menti
 }
 
 function AgentTeamConversationView({
+  attachmentPort,
   detail,
   ownerUserId,
   port,
   profiles,
 }: {
+  attachmentPort?: ConversationAttachmentPort;
   detail: AgentTeamDetail;
   ownerUserId: string;
   port: AgentManagementPort;
@@ -1846,6 +1859,16 @@ function AgentTeamConversationView({
   const reset = useAgentTeamConversationStore((state) => state.reset);
   const [content, setContent] = useState("");
   const [mentionedAgentIds, setMentionedAgentIds] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<ConversationAttachmentDraft[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [isPickingAttachments, setIsPickingAttachments] = useState(false);
+  const attachmentScope = useMemo(() => ({
+    ownerUserId,
+    conversationId: `agent-team-compose-${detail.team.id}`,
+    draftGeneration: 0,
+  }), [detail.team.id, ownerUserId]);
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
   const supportsConversation = Boolean(
     port.loadTeamConversation
     && port.queueTeamMessage
@@ -1865,8 +1888,48 @@ function AgentTeamConversationView({
     (delivery) => delivery.status === "pending" || delivery.status === "running",
   ) ?? false;
   const canRoute = mentionedAgentIds.length > 0 || detail.team.defaultAgentId != null;
-  const canSend = supportsConversation && content.trim().length > 0 && canRoute
+  const canSend = supportsConversation && (content.trim().length > 0 || attachments.length > 0) && canRoute
     && !isSending && !isCycling;
+
+  const acceptAttachmentResult = useCallback((result: AttachmentImportResult) => {
+    if (result.scope.ownerUserId !== attachmentScope.ownerUserId
+      || result.scope.conversationId !== attachmentScope.conversationId
+      || result.scope.draftGeneration !== attachmentScope.draftGeneration) return;
+    setAttachments((current) => mergeAttachmentDrafts(result.attachments, current));
+    setAttachmentError(result.errors[0] ?? null);
+  }, [attachmentScope]);
+
+  useEffect(() => {
+    if (!attachmentPort) return undefined;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void attachmentPort.activateScope(attachmentScope);
+    void attachmentPort.onStaged(acceptAttachmentResult).then((listener) => {
+      if (disposed) listener();
+      else unlisten = listener;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+      const ids = attachmentsRef.current.map((attachment) => attachment.id);
+      if (ids.length > 0) void attachmentPort.discard(attachmentScope, ids);
+      void attachmentPort.deactivateScope(attachmentScope);
+    };
+  }, [attachmentPort, attachmentScope]);
+
+  const sendMessage = () => void send(
+    port,
+    content,
+    mentionedAgentIds,
+    attachments.map((attachment) => attachment.id),
+  ).then((succeeded) => {
+    if (succeeded) {
+      setContent("");
+      setMentionedAgentIds([]);
+      setAttachments([]);
+      setAttachmentError(null);
+    }
+  });
 
   useEffect(() => {
     if (supportsConversation) void activate(port, ownerUserId, detail.team.id);
@@ -1920,6 +1983,16 @@ function AgentTeamConversationView({
                 <time>{formatTeamMessageTime(message.createdAtUnixMs)}</time>
               </div>
               <p>{message.content}</p>
+              {message.attachments.length > 0 && (
+                <div className="agent-team-message__attachments" aria-label="消息附件">
+                  {message.attachments.map((attachment) => (
+                    <span key={attachment.id}>
+                      <b>{attachment.kind === "image" ? "▧" : attachment.kind === "audio" ? "♪" : "↗"}</b>
+                      {attachment.name}<small>{formatAttachmentSize(attachment.size)}</small>
+                    </span>
+                  ))}
+                </div>
+              )}
               {message.mentionedAgentIds.length > 0 && (
                 <div className="agent-team-message__mentions">
                   {message.mentionedAgentIds.map((agentId) => (
@@ -1972,7 +2045,42 @@ function AgentTeamConversationView({
             <span>默认发送给 {profileNames.get(detail.team.defaultAgentId) ?? "默认 Agent"}</span>
           )}
         </div>
+        {attachments.length > 0 && (
+          <div className="agent-team-composer__attachments" aria-label="待发送附件">
+            {attachments.map((attachment) => (
+              <span key={attachment.id}>
+                <b>{attachment.name}</b><small>{formatAttachmentSize(attachment.byteSize)}</small>
+                <button
+                  aria-label={`移除附件：${attachment.name}`}
+                  onClick={() => {
+                    if (attachmentPort) void attachmentPort.discard(attachmentScope, [attachment.id]);
+                    setAttachments((current) => current.filter((item) => item.id !== attachment.id));
+                  }}
+                  type="button"
+                >×</button>
+              </span>
+            ))}
+          </div>
+        )}
+        {attachmentError && <div className="agent-team-conversation__error" role="alert">{attachmentError}</div>}
         <div className="agent-team-composer__input">
+          {attachmentPort && (
+            <button
+              aria-label="添加团队附件"
+              disabled={isPickingAttachments || isSending}
+              onClick={() => {
+                setIsPickingAttachments(true);
+                setAttachmentError(null);
+                void attachmentPort.pickFiles(attachmentScope)
+                  .then(acceptAttachmentResult)
+                  .catch((failure: unknown) => setAttachmentError(
+                    failure instanceof Error ? failure.message : "附件暂时无法添加。",
+                  ))
+                  .finally(() => setIsPickingAttachments(false));
+              }}
+              type="button"
+            >＋</button>
+          )}
           <textarea
             aria-label="团队消息"
             disabled={isSending}
@@ -1981,12 +2089,7 @@ function AgentTeamConversationView({
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && canSend) {
                 event.preventDefault();
-                void send(port, content, mentionedAgentIds).then((succeeded) => {
-                  if (succeeded) {
-                    setContent("");
-                    setMentionedAgentIds([]);
-                  }
-                });
+                sendMessage();
               }
             }}
             placeholder={canRoute ? "给团队发送消息…" : "请先选择一个 Agent"}
@@ -1997,12 +2100,7 @@ function AgentTeamConversationView({
             aria-label="发送团队消息"
             className="primary-button"
             disabled={!canSend}
-            onClick={() => void send(port, content, mentionedAgentIds).then((succeeded) => {
-              if (succeeded) {
-                setContent("");
-                setMentionedAgentIds([]);
-              }
-            })}
+            onClick={sendMessage}
             type="button"
           >{isSending ? "发送中…" : "发送"}</button>
         </div>

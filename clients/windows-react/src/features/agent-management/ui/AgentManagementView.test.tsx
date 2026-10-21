@@ -14,6 +14,7 @@ import {
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
+import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
 import { AgentManagementView } from "./AgentManagementView";
 
 vi.mock("../../conversation-history/ui/ConversationHistoryView", () => ({
@@ -335,7 +336,7 @@ describe("AgentManagementView", () => {
     expect(await screen.findByText("项目经理", { selector: "em" })).toBeVisible();
   });
 
-  it("sends a team message through the native queue and shows its real Delivery state", async () => {
+  it("sends a team message with a native attachment and shows its real Delivery state", async () => {
     const team = {
       id: "11111111-1111-4111-8111-111111111111",
       projectId: "project-1",
@@ -353,9 +354,17 @@ describe("AgentManagementView", () => {
         agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20,
       }],
     };
+    const attachment = {
+      id: "attachment-1", name: "设计图.png", mimeType: "image/png",
+      kind: "image" as const, origin: "file" as const, byteSize: 1_024,
+      previewUrl: "chatos-attachment://localhost/a/b/c",
+    };
     const message = {
       id: "message-1", senderKind: "human" as const, senderId: "owner-1",
-      content: "开始实现", mentionedAgentIds: [], createdAtUnixMs: 30,
+      content: "开始实现", mentionedAgentIds: [], attachments: [{
+        id: "stored-attachment-1", name: attachment.name, mimeType: attachment.mimeType,
+        size: attachment.byteSize, kind: attachment.kind,
+      }], createdAtUnixMs: 30,
     };
     const pending = {
       id: "delivery-1", messageId: message.id, targetAgentId: "agent-1",
@@ -391,8 +400,21 @@ describe("AgentManagementView", () => {
         conversationVersion: 1, hasActiveDelivery: false, items: [],
       })),
     });
+    const attachmentPort = {
+      activateScope: vi.fn(async () => undefined),
+      deactivateScope: vi.fn(async () => undefined),
+      pickFiles: vi.fn(async (scope) => ({ scope, attachments: [attachment], errors: [] })),
+      importClipboard: vi.fn(),
+      discard: vi.fn(async () => undefined),
+      previewText: vi.fn(),
+      loadPersisted: vi.fn(),
+      previewPersistedText: vi.fn(),
+      onStaged: vi.fn(async () => () => undefined),
+      onDragState: vi.fn(async () => () => undefined),
+    } satisfies ConversationAttachmentPort;
     render(
       <AgentManagementView
+        attachmentPort={attachmentPort}
         ownerUserId="owner-1"
         port={port}
         projects={[{ id: "project-1", title: "Alpha" }]}
@@ -403,14 +425,17 @@ describe("AgentManagementView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
     fireEvent.click(await screen.findByRole("button", { name: "聊天" }));
     expect(await screen.findByRole("region", { name: "Agent 团队聊天" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "添加团队附件" }));
+    expect(await screen.findByText("设计图.png")).toBeVisible();
     fireEvent.change(screen.getByLabelText("团队消息"), { target: { value: " 开始实现 " } });
     fireEvent.click(screen.getByRole("button", { name: "发送团队消息" }));
 
     await waitFor(() => expect(queueTeamMessage).toHaveBeenCalledWith(
-      "owner-1", team.id, "开始实现", [],
+      "owner-1", team.id, "开始实现", [], [attachment.id],
     ));
     expect(await screen.findByText("开始实现")).toBeVisible();
     expect(await screen.findByText("界面设计师 · 正在执行")).toBeVisible();
+    expect(screen.getByText("1.0 KB")).toBeVisible();
     expect(screen.getByLabelText("团队消息")).toHaveValue("");
   });
 

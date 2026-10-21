@@ -268,9 +268,12 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       messageId: "message-1", teamId: team.id, createdAtUnixMs: 30,
       deliveries: [{ deliveryId: "delivery-1", targetAgentId: "agent-1", triggerKind: "default_agent" }],
     });
-    await adapter.queueTeamMessage("owner-1", team.id, "开始实现", []);
+    await adapter.queueTeamMessage("owner-1", team.id, "开始实现", [], []);
     expect(invoke).toHaveBeenLastCalledWith("queue_agent_team_message", {
-      input: { ownerUserId: "owner-1", teamId: team.id, content: "开始实现", mentionedAgentIds: [] },
+      input: {
+        ownerUserId: "owner-1", teamId: team.id, content: "开始实现",
+        mentionedAgentIds: [], attachmentIds: [],
+      },
     });
 
     vi.mocked(invoke).mockResolvedValueOnce({

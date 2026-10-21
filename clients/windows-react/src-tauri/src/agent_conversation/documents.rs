@@ -1,5 +1,6 @@
 use super::team_todo::todo_planning_reference;
 use super::*;
+use crate::conversation_attachments::VerifiedAttachmentPayload;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -8,6 +9,8 @@ const MAXIMUM_DOCUMENTS_PER_RUN: i64 = 20;
 const MAXIMUM_DOCUMENT_BYTES: usize = 2 * 1_024 * 1_024;
 const MAXIMUM_DOCUMENT_BYTES_PER_RUN: i64 = 8 * 1_024 * 1_024;
 const MAXIMUM_ATTACHMENT_READ_CHARACTERS: usize = 12_000;
+const MAXIMUM_MESSAGE_ATTACHMENTS: usize = 20;
+const MAXIMUM_MESSAGE_ATTACHMENT_BYTES: usize = 20 * 1_024 * 1_024;
 
 #[derive(Clone)]
 pub(super) struct AgentDocumentDraft {
@@ -150,7 +153,15 @@ impl AgentConversationStore {
             .query_row(
                 r#"
                 SELECT attachment.name, attachment.mime_type, attachment.size_bytes,
-                       attachment.kind, attachment.relative_path, attachment.sha256
+                       attachment.kind, attachment.relative_path, attachment.sha256,
+                       EXISTS(
+                         SELECT 1 FROM windows_agent_delivery_runs run
+                         JOIN project_agent_deliveries delivery
+                           ON delivery.owner_user_id = run.owner_user_id
+                          AND delivery.id = run.delivery_id
+                         WHERE run.owner_user_id = ?1 AND run.run_id = ?2
+                           AND delivery.message_id = attachment_ref.message_id
+                       )
                 FROM windows_agent_chat_message_references message_ref
                 JOIN windows_agent_chat_attachment_references attachment_ref
                   ON attachment_ref.owner_user_id = message_ref.owner_user_id
@@ -183,21 +194,45 @@ impl AgentConversationStore {
                         row.get::<_, String>(3)?,
                         row.get::<_, String>(4)?,
                         row.get::<_, String>(5)?,
+                        row.get::<_, bool>(6)?,
                     ))
                 },
             )
             .optional()
             .map_err(|_| document_store_error())?
             .ok_or_else(|| "The attachment reference is unavailable for this Run.".to_owned())?;
-        let (name, mime_type, size, kind, relative_path, sha256) = record;
-        if size <= 0 || size as usize > MAXIMUM_DOCUMENT_BYTES {
+        let (name, mime_type, size, kind, relative_path, sha256, is_trigger_message) = record;
+        if size <= 0 || size as usize > MAXIMUM_MESSAGE_ATTACHMENT_BYTES {
             return Err(document_store_error());
         }
         let path = attachment_path(&self.database, &relative_path, false)?;
         let data = read_verified_file(&path, size as usize, &sha256)?;
-        let text = String::from_utf8(data).map_err(|_| {
-            "This binary attachment cannot be read as text in the Windows Agent runtime.".to_owned()
-        })?;
+        let is_binary = data.iter().take(8_000).any(|byte| *byte == 0);
+        let text = if is_binary {
+            None
+        } else {
+            String::from_utf8(data).ok()
+        };
+        let Some(text) = text else {
+            return Ok((
+                binding,
+                json!({
+                    "message_ref": message_reference,
+                    "attachment_ref": attachment_reference,
+                    "name": name,
+                    "mime_type": mime_type,
+                    "kind": kind,
+                    "size": size,
+                    "content": null,
+                    "multimodal_on_trigger": is_trigger_message,
+                    "note": if is_trigger_message {
+                        "该二进制附件已作为当前触发消息的多模态输入提供给模型。"
+                    } else {
+                        "该二进制附件不能作为文本读取；请让 Human 在新消息中重新附带，或使用匹配的本机 Plugin。"
+                    },
+                }),
+            ));
+        };
         let characters = text.chars().collect::<Vec<_>>();
         let start = offset.min(characters.len());
         let end = start.saturating_add(limit).min(characters.len());
@@ -217,6 +252,145 @@ impl AgentConversationStore {
             }),
         ))
     }
+}
+
+pub(super) fn persist_external_attachments(
+    connection: &Connection,
+    database: &Path,
+    owner_user_id: &str,
+    message_id: &str,
+    payloads: &[VerifiedAttachmentPayload],
+) -> Result<Vec<PathBuf>, String> {
+    if payloads.len() > MAXIMUM_MESSAGE_ATTACHMENTS {
+        return Err("Each message may attach at most twenty files.".into());
+    }
+    let total_bytes = payloads
+        .iter()
+        .try_fold(0_usize, |total, payload| {
+            total.checked_add(payload.data.len())
+        })
+        .ok_or_else(document_error)?;
+    if total_bytes > MAXIMUM_MESSAGE_ATTACHMENT_BYTES {
+        return Err("Message attachments may total at most 20 MB.".into());
+    }
+    for payload in payloads {
+        if payload.data.is_empty()
+            || !matches!(payload.kind.as_str(), "image" | "file" | "audio")
+            || !matches!(
+                payload.origin.as_str(),
+                "file" | "pastedImage" | "pastedText"
+            )
+            || format!("{:x}", Sha256::digest(&payload.data)) != payload.sha256
+            || validate_text(&payload.display_name, 255, false).is_err()
+            || validate_text(&payload.media_type, 200, false).is_err()
+        {
+            return Err(document_error());
+        }
+    }
+    let mut paths = Vec::with_capacity(payloads.len());
+    for (position, payload) in payloads.iter().enumerate() {
+        let attachment_id = identifier("attachment");
+        let relative_path = format!("messages/{message_id}/{attachment_id}");
+        let path = match attachment_path(database, &relative_path, true) {
+            Ok(path) => path,
+            Err(error) => {
+                remove_files(&paths);
+                return Err(error);
+            }
+        };
+        if let Err(error) = write_private_file(&path, &payload.data) {
+            remove_files(&paths);
+            return Err(error);
+        }
+        paths.push(path);
+        if connection
+            .execute(
+                r#"
+                INSERT INTO project_agent_message_attachments (
+                    owner_user_id, message_id, id, position, name, mime_type,
+                    size_bytes, kind, origin, relative_path, sha256, sync_status,
+                    source_document_ref
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                          'local_only', NULL)
+                "#,
+                params![
+                    owner_user_id,
+                    message_id,
+                    attachment_id,
+                    position as i64,
+                    payload.display_name,
+                    payload.media_type,
+                    payload.data.len() as i64,
+                    payload.kind,
+                    payload.origin,
+                    relative_path,
+                    payload.sha256,
+                ],
+            )
+            .is_err()
+        {
+            remove_files(&paths);
+            return Err(document_store_error());
+        }
+    }
+    Ok(paths)
+}
+
+pub(super) fn load_message_attachment_payloads(
+    connection: &Connection,
+    database: &Path,
+    owner_user_id: &str,
+    message_id: &str,
+) -> Result<Vec<VerifiedAttachmentPayload>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT name, mime_type, size_bytes, kind, origin, relative_path, sha256 \
+             FROM project_agent_message_attachments WHERE owner_user_id = ?1 AND message_id = ?2 \
+             ORDER BY position LIMIT 21",
+        )
+        .map_err(|_| document_store_error())?;
+    let rows = statement
+        .query_map(params![owner_user_id, message_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        })
+        .map_err(|_| document_store_error())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| document_store_error())?;
+    if rows.len() > MAXIMUM_MESSAGE_ATTACHMENTS {
+        return Err(document_store_error());
+    }
+    let mut total_bytes = 0_usize;
+    let mut payloads = Vec::with_capacity(rows.len());
+    for (display_name, media_type, size, kind, origin, relative_path, sha256) in rows {
+        if size <= 0 {
+            return Err(document_store_error());
+        }
+        total_bytes = total_bytes
+            .checked_add(size as usize)
+            .ok_or_else(document_store_error)?;
+        if total_bytes > MAXIMUM_MESSAGE_ATTACHMENT_BYTES {
+            return Err(document_store_error());
+        }
+        let path = attachment_path(database, &relative_path, false)?;
+        let data = read_verified_file(&path, size as usize, &sha256)?;
+        payloads.push(VerifiedAttachmentPayload {
+            display_name,
+            media_type,
+            kind,
+            origin,
+            data,
+            sha256,
+        });
+    }
+    Ok(payloads)
 }
 
 pub(super) fn load_document_drafts(

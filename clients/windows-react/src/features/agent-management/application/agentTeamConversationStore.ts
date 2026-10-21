@@ -14,7 +14,12 @@ interface AgentTeamConversationState {
   requestId: number;
   activate(port: AgentManagementPort, ownerUserId: string, teamId: string): Promise<void>;
   refresh(port: AgentManagementPort): Promise<void>;
-  send(port: AgentManagementPort, content: string, mentionedAgentIds: string[]): Promise<boolean>;
+  send(
+    port: AgentManagementPort,
+    content: string,
+    mentionedAgentIds: string[],
+    attachmentIds?: string[],
+  ): Promise<boolean>;
   reset(): void;
 }
 
@@ -79,22 +84,30 @@ export const useAgentTeamConversationStore = create<AgentTeamConversationState>(
     }
   },
 
-  async send(port, contentInput, mentionedAgentIds) {
+  async send(port, contentInput, mentionedAgentIds, attachmentIds = []) {
     const current = get();
     const content = contentInput.trim();
     if (!current.ownerUserId
       || !current.teamId
-      || !content
+      || (!content && attachmentIds.length === 0)
       || current.isSending
       || current.isCycling
       || !supportsConversation(port)) return false;
     const ownerUserId = current.ownerUserId;
     const teamId = current.teamId;
     const requestId = current.sequence + 1;
+    let accepted = false;
     set({ sequence: requestId, requestId, isSending: true, error: null });
     try {
-      const queued = await port.queueTeamMessage(ownerUserId, teamId, content, mentionedAgentIds);
+      const queued = await port.queueTeamMessage(
+        ownerUserId,
+        teamId,
+        content,
+        mentionedAgentIds,
+        attachmentIds,
+      );
       if (queued.teamId !== teamId) throw new Error("Agent 团队消息身份不一致，请刷新后重试。");
+      accepted = true;
       const snapshot = await cycleTeamConversation(port, ownerUserId, teamId);
       const state = get();
       if (state.ownerUserId !== ownerUserId || state.teamId !== teamId || state.requestId !== requestId) return false;
@@ -104,7 +117,7 @@ export const useAgentTeamConversationStore = create<AgentTeamConversationState>(
       const state = get();
       if (state.ownerUserId !== ownerUserId || state.teamId !== teamId || state.requestId !== requestId) return false;
       set({ isSending: false, error: errorMessage(failure), requestId: 0 });
-      return false;
+      return accepted;
     }
   },
 

@@ -8,6 +8,7 @@ import {
   agentStaffingResolutionSchema,
   agentTeamListSchema,
   agentTeamDetailSchema,
+  agentTeamConversationSnapshotSchema,
   heartbeatIntervalLabel,
   preparedAgentConversationSchema,
 } from "./agentManagement";
@@ -221,6 +222,35 @@ describe("agent management domain", () => {
       ...approvedCreation,
       status: "rejected",
     })).toThrow("被拒绝提案不能产生人员变更");
+  });
+
+  it("projects bounded team attachment metadata without native paths", () => {
+    const teamId = "11111111-1111-4111-8111-111111111111";
+    const message = {
+      id: "message-1",
+      senderKind: "human" as const,
+      senderId: "owner-1",
+      content: "请检查图片",
+      mentionedAgentIds: ["agent-1"],
+      attachments: [{
+        id: "attachment-1", name: "设计图.png", mimeType: "image/png",
+        size: 1_024, kind: "image" as const,
+      }],
+      createdAtUnixMs: 10,
+    };
+    expect(agentTeamConversationSnapshotSchema.parse({
+      teamId, messages: [message], deliveries: [],
+    }).messages[0]?.attachments).toEqual(message.attachments);
+    expect(() => agentTeamConversationSnapshotSchema.parse({
+      teamId,
+      messages: [{ ...message, attachments: [message.attachments[0], message.attachments[0]] }],
+      deliveries: [],
+    })).toThrow("团队消息附件不能重复");
+    expect(() => agentTeamConversationSnapshotSchema.parse({
+      teamId,
+      messages: [{ ...message, attachments: [{ ...message.attachments[0], path: "C:\\secret.png" }] }],
+      deliveries: [],
+    })).toThrow();
   });
 });
 

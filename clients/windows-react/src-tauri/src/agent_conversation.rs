@@ -702,6 +702,8 @@ pub(crate) struct QueueAgentTeamMessageInput {
     content: String,
     #[serde(default)]
     mentioned_agent_ids: Vec<String>,
+    #[serde(default)]
+    attachment_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -739,7 +741,18 @@ pub(crate) struct AgentTeamMessageSummary {
     sender_id: String,
     content: String,
     mentioned_agent_ids: Vec<String>,
+    attachments: Vec<AgentTeamMessageAttachmentSummary>,
     created_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamMessageAttachmentSummary {
+    id: String,
+    name: String,
+    mime_type: String,
+    size: i64,
+    kind: String,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -1890,6 +1903,7 @@ impl AgentConversationStore {
         self.load_project_team(owner_user_id, team_id)
     }
 
+    #[cfg(test)]
     fn queue_project_team_message(
         &self,
         owner_user_id: &str,
@@ -1897,8 +1911,28 @@ impl AgentConversationStore {
         content: &str,
         mentioned_agent_ids: &[String],
     ) -> Result<QueueAgentTeamMessageResult, String> {
+        self.queue_project_team_message_with_attachments(
+            owner_user_id,
+            team_id,
+            content,
+            mentioned_agent_ids,
+            &[],
+        )
+    }
+
+    fn queue_project_team_message_with_attachments(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        content: &str,
+        mentioned_agent_ids: &[String],
+        attachments: &[crate::conversation_attachments::VerifiedAttachmentPayload],
+    ) -> Result<QueueAgentTeamMessageResult, String> {
         validate_identifier(team_id).map_err(|_| invalid_team_input())?;
-        validate_text(content, 1_000_000, false).map_err(|_| invalid_team_message())?;
+        validate_text(content, 1_000_000, true).map_err(|_| invalid_team_message())?;
+        if content.is_empty() && attachments.is_empty() {
+            return Err(invalid_team_message());
+        }
         if mentioned_agent_ids.len() > 100 {
             return Err(invalid_team_message());
         }
@@ -2011,7 +2045,17 @@ impl AgentConversationStore {
                 trigger_kind: trigger_kind.to_owned(),
             });
         }
-        transaction.commit().map_err(|_| team_store_error())?;
+        let persisted_attachment_paths = documents::persist_external_attachments(
+            &transaction,
+            &self.database,
+            owner_user_id,
+            &message_id,
+            attachments,
+        )?;
+        if transaction.commit().is_err() {
+            documents::remove_files(&persisted_attachment_paths);
+            return Err(team_store_error());
+        }
         Ok(QueueAgentTeamMessageResult {
             message_id,
             team_id: team_id.to_owned(),
@@ -2074,6 +2118,8 @@ impl AgentConversationStore {
             .collect::<std::collections::HashSet<_>>();
         let mut mentions_by_message: std::collections::HashMap<String, Vec<(i64, String)>> =
             std::collections::HashMap::new();
+        let mut attachments_by_message =
+            std::collections::HashMap::<String, Vec<AgentTeamMessageAttachmentSummary>>::new();
         {
             let mut statement = connection
                 .prepare(
@@ -2108,6 +2154,46 @@ impl AgentConversationStore {
                 }
             }
         }
+        {
+            let mut statement = connection
+                .prepare(
+                    r#"
+                    SELECT attachment.message_id, attachment.id, attachment.name,
+                           attachment.mime_type, attachment.size_bytes, attachment.kind
+                    FROM project_agent_message_attachments attachment
+                    JOIN project_agent_messages message
+                      ON message.owner_user_id = attachment.owner_user_id
+                     AND message.id = attachment.message_id
+                    WHERE attachment.owner_user_id = ?1 AND message.room_id = ?2
+                    ORDER BY attachment.message_id, attachment.position
+                    LIMIT 4000
+                    "#,
+                )
+                .map_err(|_| team_store_error())?;
+            let rows = statement
+                .query_map(params![owner_user_id, team_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        AgentTeamMessageAttachmentSummary {
+                            id: row.get(1)?,
+                            name: row.get(2)?,
+                            mime_type: row.get(3)?,
+                            size: row.get(4)?,
+                            kind: row.get(5)?,
+                        },
+                    ))
+                })
+                .map_err(|_| team_store_error())?;
+            for row in rows {
+                let (message_id, attachment) = row.map_err(|_| team_store_error())?;
+                if message_ids.contains(message_id.as_str()) {
+                    attachments_by_message
+                        .entry(message_id)
+                        .or_default()
+                        .push(attachment);
+                }
+            }
+        }
         let mut messages = Vec::with_capacity(message_rows.len());
         for (id, sender_kind, sender_id, content, created_at_unix_ms) in message_rows {
             validate_identifier(&id).map_err(|_| team_store_error())?;
@@ -2118,12 +2204,14 @@ impl AgentConversationStore {
                 .into_iter()
                 .map(|(_, agent_id)| agent_id)
                 .collect();
+            let attachments = attachments_by_message.remove(&id).unwrap_or_default();
             messages.push(AgentTeamMessageSummary {
                 id,
                 sender_kind,
                 sender_id,
                 content,
                 mentioned_agent_ids,
+                attachments,
                 created_at_unix_ms,
             });
         }
@@ -2163,6 +2251,22 @@ impl AgentConversationStore {
             messages,
             deliveries,
         })
+    }
+
+    fn load_message_attachment_payloads(
+        &self,
+        owner_user_id: &str,
+        message_id: &str,
+    ) -> Result<Vec<crate::conversation_attachments::VerifiedAttachmentPayload>, String> {
+        validate_identifier(message_id).map_err(|_| team_store_error())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        documents::load_message_attachment_payloads(
+            &connection,
+            &self.database,
+            owner_user_id,
+            message_id,
+        )
     }
 
     fn load_project_team_runs(
@@ -2866,7 +2970,20 @@ impl AgentConversationStore {
             return Err(team_store_error());
         }
         validate_team_execution_binding(&pending.binding)?;
-        validate_text(&pending.content, 1_000_000, false).map_err(|_| team_store_error())?;
+        validate_text(&pending.content, 1_000_000, true).map_err(|_| team_store_error())?;
+        if pending.content.is_empty() {
+            let has_attachment = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM project_agent_message_attachments \
+                     WHERE owner_user_id = ?1 AND message_id = ?2)",
+                    params![owner_user_id, pending.message_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|_| team_store_error())?;
+            if !has_attachment {
+                return Err(team_store_error());
+            }
+        }
         Ok(Some(pending))
     }
 
@@ -4203,11 +4320,15 @@ pub(crate) async fn queue_agent_team_message(
     input: QueueAgentTeamMessageInput,
     authentication: State<'_, AuthenticationManager>,
     conversations: State<'_, AgentConversationStore>,
+    attachment_manager: State<'_, AttachmentManager>,
 ) -> Result<QueueAgentTeamMessageResult, String> {
     validate_owner(&input.owner_user_id)?;
     validate_identifier(&input.team_id).map_err(|_| invalid_team_input())?;
     let content = input.content.trim().to_owned();
-    validate_text(&content, 1_000_000, false).map_err(|_| invalid_team_message())?;
+    validate_text(&content, 1_000_000, true).map_err(|_| invalid_team_message())?;
+    if content.is_empty() && input.attachment_ids.is_empty() {
+        return Err("消息或附件不能为空。".into());
+    }
     let generation = authentication
         .session_generation_for_owner(&input.owner_user_id)
         .await?;
@@ -4215,11 +4336,25 @@ pub(crate) async fn queue_agent_team_message(
     let owner = input.owner_user_id.clone();
     let team = input.team_id.clone();
     let mentions = input.mentioned_agent_ids.clone();
+    let attachment_scope = AttachmentScope::new(
+        &input.owner_user_id,
+        &agent_team_attachment_conversation_id(&input.team_id),
+    );
+    let attachment_ids = input.attachment_ids.clone();
+    let attachments =
+        attachment_manager.verified_draft_payloads(attachment_scope.clone(), &attachment_ids)?;
     let result = tauri::async_runtime::spawn_blocking(move || {
-        store.queue_project_team_message(&owner, &team, &content, &mentions)
+        store.queue_project_team_message_with_attachments(
+            &owner,
+            &team,
+            &content,
+            &mentions,
+            &attachments,
+        )
     })
     .await
     .map_err(|_| "Agent 团队消息入队任务异常退出。".to_owned())??;
+    attachment_manager.discard_ids(attachment_scope, attachment_ids);
     authentication
         .require_session_generation(&input.owner_user_id, generation)
         .await?;
@@ -4234,6 +4369,7 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
     conversations: State<'_, AgentConversationStore>,
     skills: State<'_, AgentSkillStore>,
     manager: State<'_, HostManager>,
+    attachment_manager: State<'_, AttachmentManager>,
     attachment_worker: State<'_, AttachmentToolWorker>,
     terminal_worker: State<'_, TerminalToolWorker>,
 ) -> Result<Option<DispatchedAgentTeamDelivery>, String> {
@@ -4325,31 +4461,43 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
     let turn_id = identifier("turn");
     let run_id = identifier("run");
     let host_message_id = identifier("message");
+    let attachment_store = conversations.inner().clone();
+    let attachment_owner = owner_user_id.clone();
+    let attachment_message = pending.message_id.clone();
+    let payloads = tauri::async_runtime::spawn_blocking(move || {
+        attachment_store.load_message_attachment_payloads(&attachment_owner, &attachment_message)
+    })
+    .await
+    .map_err(|_| "Agent 团队附件读取任务异常退出。".to_owned())??;
+    let attachment_scope = AttachmentScope::new(&owner_user_id, &conversation_id);
+    let (delivery_attachment_ids, delivery_attachments) =
+        attachment_manager.authorize_verified_payloads(attachment_scope.clone(), &payloads)?;
     let command = StartConversationTurnCommand {
         owner_user_id: owner_user_id.clone(),
-        conversation_id,
+        conversation_id: conversation_id.clone(),
         expected_conversation_version: detail.conversation.version,
         turn_id: turn_id.clone(),
         message_id: host_message_id.clone(),
         run_id: run_id.clone(),
         message: pending.content.clone(),
         message_metadata: team_agent_execution_metadata(&pending, &profession)?,
-        attachments: vec![],
+        attachments: delivery_attachments,
         model_config_ref: settings.selected_model_config_ref,
         model_config_revision: settings.selected_model_config_revision,
         capability_policy_revision: capability_revision,
         max_iterations: MAX_ITERATIONS,
     };
-    command
-        .validate()
-        .map_err(|_| "Agent 团队消息或执行快照超过安全限制。".to_owned())?;
+    if command.validate().is_err() {
+        attachment_manager.discard_ids(attachment_scope, delivery_attachment_ids);
+        return Err("Agent 团队消息或执行快照超过安全限制。".into());
+    }
     let claim_store = conversations.inner().clone();
     let claim_owner = owner_user_id.clone();
     let claim_pending = pending.clone();
     let claim_turn = turn_id.clone();
     let claim_run = run_id.clone();
     let now = chrono::Utc::now().timestamp_millis().max(0);
-    tauri::async_runtime::spawn_blocking(move || {
+    if let Err(error) = tauri::async_runtime::spawn_blocking(move || {
         claim_store.claim_project_team_delivery(
             &claim_owner,
             &claim_pending,
@@ -4359,13 +4507,19 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
         )
     })
     .await
-    .map_err(|_| "Agent Delivery 领取任务异常退出。".to_owned())??;
+    .map_err(|_| "Agent Delivery 领取任务异常退出。".to_owned())?
+    {
+        attachment_manager.discard_ids(attachment_scope, delivery_attachment_ids);
+        return Err(error);
+    }
     let started = manager
         .execute(HostCommand::StartConversationTurn(command))
         .await;
     let result = match started {
         Ok(HostResult::ConversationTurnStarted { result }) => result,
         Ok(_) => {
+            attachment_manager
+                .discard_ids(attachment_scope.clone(), delivery_attachment_ids.clone());
             fail_dispatched_team_delivery(
                 conversations.inner().clone(),
                 owner_user_id.clone(),
@@ -4376,6 +4530,8 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
             return Err("Local Agent Host 返回了错误的团队 Delivery 响应。".into());
         }
         Err(failure) => {
+            attachment_manager
+                .discard_ids(attachment_scope.clone(), delivery_attachment_ids.clone());
             fail_dispatched_team_delivery(
                 conversations.inner().clone(),
                 owner_user_id.clone(),
@@ -4392,6 +4548,7 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
         || result.message.message_id != host_message_id
         || result.run.run_id != run_id
     {
+        attachment_manager.discard_ids(attachment_scope.clone(), delivery_attachment_ids.clone());
         let failure = "Local Agent Host 返回了不匹配的团队 Delivery。".to_owned();
         fail_dispatched_team_delivery(
             conversations.inner().clone(),
@@ -4402,6 +4559,7 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
         .await;
         return Err(failure);
     }
+    attachment_manager.commit(attachment_scope, &delivery_attachment_ids)?;
     attachment_worker.wake();
     terminal_worker.wake();
     Ok(Some(DispatchedAgentTeamDelivery {
@@ -5565,6 +5723,10 @@ fn validate_agent_execution_binding(binding: &AgentExecutionBinding) -> Result<(
 
 fn agent_communication_conversation_id(room_id: &str, agent_id: &str) -> String {
     format!("agent-communication-{room_id}-{agent_id}")
+}
+
+fn agent_team_attachment_conversation_id(team_id: &str) -> String {
+    format!("agent-team-compose-{team_id}")
 }
 
 fn require_active_project(
@@ -9041,5 +9203,145 @@ mod tests {
             .members
             .iter()
             .any(|member| member.agent_id == "manager"));
+    }
+
+    #[test]
+    fn human_team_binary_attachment_is_persisted_and_marked_multimodal_for_trigger_run() {
+        use sha2::Digest as _;
+
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "agent-1", "active");
+        let team = store
+            .create_project_team("alice", "project-1", "多模态团队", "检查图片")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "agent-1")
+            .unwrap();
+        let data = vec![0x89, b'P', b'N', b'G', 0, 1, 2, 3];
+        let sha256 = format!("{:x}", sha2::Sha256::digest(&data));
+        let historical = store
+            .queue_project_team_message_with_attachments(
+                "alice",
+                &team.id,
+                "",
+                &["agent-1".into()],
+                &[crate::conversation_attachments::VerifiedAttachmentPayload {
+                    display_name: "设计图.png".into(),
+                    media_type: "image/png".into(),
+                    kind: "image".into(),
+                    origin: "file".into(),
+                    data: data.clone(),
+                    sha256: sha256.clone(),
+                }],
+            )
+            .unwrap();
+        let snapshot = store
+            .load_project_team_conversation("alice", &team.id)
+            .unwrap();
+        let message = snapshot
+            .messages
+            .iter()
+            .find(|message| message.id == historical.message_id)
+            .unwrap();
+        assert!(message.content.is_empty());
+        assert_eq!(message.attachments.len(), 1);
+        assert_eq!(message.attachments[0].name, "设计图.png");
+        assert_eq!(message.attachments[0].kind, "image");
+        let persisted = store
+            .load_message_attachment_payloads("alice", &historical.message_id)
+            .unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].data, data);
+        assert_eq!(persisted[0].sha256, sha256);
+
+        let historical_delivery = store
+            .next_project_team_delivery("alice", &team.id)
+            .unwrap()
+            .unwrap();
+        store
+            .claim_project_team_delivery(
+                "alice",
+                &historical_delivery,
+                "turn-historical-binary",
+                "run-historical-binary",
+                20,
+            )
+            .unwrap();
+        store
+            .fail_project_team_delivery(
+                "alice",
+                &historical_delivery.delivery_id,
+                "continue with a newer trigger",
+            )
+            .unwrap();
+        store
+            .queue_project_team_message_with_attachments(
+                "alice",
+                &team.id,
+                "请检查最新图片",
+                &["agent-1".into()],
+                &[crate::conversation_attachments::VerifiedAttachmentPayload {
+                    display_name: "最新设计图.png".into(),
+                    media_type: "image/png".into(),
+                    kind: "image".into(),
+                    origin: "file".into(),
+                    data,
+                    sha256,
+                }],
+            )
+            .unwrap();
+        let current_delivery = store
+            .next_project_team_delivery("alice", &team.id)
+            .unwrap()
+            .unwrap();
+        store
+            .claim_project_team_delivery(
+                "alice",
+                &current_delivery,
+                "turn-current-binary",
+                "run-current-binary",
+                21,
+            )
+            .unwrap();
+        let (_, unread) = store
+            .read_all_unread_team_chat("alice", "run-current-binary", "read-binary", 20, 22)
+            .unwrap();
+        let unread_messages = unread["conversations"][0]["messages"].as_array().unwrap();
+        let historical_message = unread_messages
+            .iter()
+            .find(|message| message["content"] == "")
+            .unwrap();
+        let current_message = unread_messages
+            .iter()
+            .find(|message| message["content"] == "请检查最新图片")
+            .unwrap();
+        let (_, historical_attachment) = store
+            .read_agent_chat_attachment(
+                "alice",
+                "run-current-binary",
+                historical_message["message_ref"].as_str().unwrap(),
+                historical_message["attachments"][0]["attachment_ref"]
+                    .as_str()
+                    .unwrap(),
+                0,
+                12_000,
+            )
+            .unwrap();
+        let (_, current_attachment) = store
+            .read_agent_chat_attachment(
+                "alice",
+                "run-current-binary",
+                current_message["message_ref"].as_str().unwrap(),
+                current_message["attachments"][0]["attachment_ref"]
+                    .as_str()
+                    .unwrap(),
+                0,
+                12_000,
+            )
+            .unwrap();
+        assert_eq!(historical_attachment["content"], serde_json::Value::Null);
+        assert_eq!(historical_attachment["multimodal_on_trigger"], false);
+        assert_eq!(current_attachment["content"], serde_json::Value::Null);
+        assert_eq!(current_attachment["multimodal_on_trigger"], true);
     }
 }

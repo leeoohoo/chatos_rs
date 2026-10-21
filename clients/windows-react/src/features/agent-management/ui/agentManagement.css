@@ -77,6 +77,10 @@
 .agent-team-message > p { margin: 0; color: var(--primary); font-size: 10.5px; line-height: 1.48; overflow-wrap: anywhere; white-space: pre-wrap; }
 .agent-team-message__mentions,.agent-team-message__deliveries { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .agent-team-message__mentions span { border-radius: 999px; padding: 2px 6px; color: var(--accent); background: rgba(10,132,255,.08); font-size: 8.5px; font-weight: 620; }
+.agent-team-message__attachments { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.agent-team-message__attachments span { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(60,60,67,.1); border-radius: 8px; padding: 5px 7px; color: var(--primary); background: rgba(255,255,255,.7); font-size: 9px; }
+.agent-team-message__attachments b { color: var(--accent); font-size: 11px; }
+.agent-team-message__attachments small { color: var(--secondary); }
 .agent-team-message__deliveries span { max-width: 100%; overflow: hidden; border-radius: 999px; padding: 2px 6px; color: var(--secondary); background: rgba(120,120,128,.09); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .agent-team-message__deliveries .is-running { color: #168438; background: rgba(48,209,88,.13); }
 .agent-team-message__deliveries .is-completed { color: #2467b1; background: rgba(10,132,255,.10); }
@@ -89,10 +93,15 @@
 .agent-team-composer__mentions button { min-height: 21px; border: 0; border-radius: 999px; padding: 3px 7px; color: var(--secondary); background: rgba(120,120,128,.10); font-size: 8.5px; font-weight: 620; cursor: pointer; }
 .agent-team-composer__mentions button[aria-pressed="true"] { color: #075fae; background: rgba(10,132,255,.15); }
 .agent-team-composer__mentions span,.agent-team-composer > small { color: var(--secondary); font-size: 8.5px; }
+.agent-team-composer__attachments { display: flex; flex-wrap: wrap; gap: 5px; }
+.agent-team-composer__attachments > span { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(60,60,67,.1); border-radius: 8px; padding: 4px 5px 4px 7px; background: rgba(255,255,255,.82); font-size: 9px; }
+.agent-team-composer__attachments small { color: var(--secondary); }
+.agent-team-composer__attachments button { border: 0; color: var(--secondary); background: transparent; cursor: pointer; }
 .agent-team-composer__input { display: flex; align-items: flex-end; gap: 7px; }
 .agent-team-composer__input textarea { min-height: 48px; max-height: 110px; flex: 1; resize: vertical; border: 1px solid rgba(60,60,67,.13); border-radius: 10px; padding: 8px 10px; color: var(--primary); background: rgba(255,255,255,.92); box-shadow: inset 0 1px 2px rgba(0,0,0,.025); font: 10.5px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; outline: none; }
 .agent-team-composer__input textarea:focus { border-color: rgba(10,132,255,.55); box-shadow: 0 0 0 3px rgba(10,132,255,.10); }
 .agent-team-composer__input button { min-width: 58px; min-height: 31px; border: 0; border-radius: 8px; padding: 5px 11px; color: white; background: var(--accent); font-size: 10px; font-weight: 650; cursor: pointer; }
+.agent-team-composer__input button[aria-label="添加团队附件"] { min-width: 31px; padding: 5px; color: var(--primary); background: rgba(120,120,128,.12); font-size: 16px; font-weight: 400; }
 .agent-team-composer__input button:disabled { cursor: default; opacity: .4; }
 .agent-team-overview { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; padding: 12px 18px 18px; }
 .agent-team-overview__metrics { display: grid; flex: none; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 8px; }

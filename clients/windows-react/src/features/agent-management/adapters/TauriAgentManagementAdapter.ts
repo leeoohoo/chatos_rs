@@ -219,10 +219,11 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
     teamId: string,
     content: string,
     mentionedAgentIds: string[],
+    attachmentIds: string[],
   ) {
     return queuedAgentTeamMessageSchema.parse(
       await invoke("queue_agent_team_message", {
-        input: { ownerUserId, teamId, content, mentionedAgentIds },
+        input: { ownerUserId, teamId, content, mentionedAgentIds, attachmentIds },
       }),
     );
   }

@@ -84,6 +84,16 @@ enum AttachmentOrigin {
     PastedText,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct VerifiedAttachmentPayload {
+    pub(crate) display_name: String,
+    pub(crate) media_type: String,
+    pub(crate) kind: String,
+    pub(crate) origin: String,
+    pub(crate) data: Vec<u8>,
+    pub(crate) sha256: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationAttachmentDraft {
@@ -423,6 +433,137 @@ impl AttachmentManager {
             specs.push(metadata.spec());
         }
         Ok(specs)
+    }
+
+    pub(crate) fn verified_draft_payloads(
+        &self,
+        scope: AttachmentScope,
+        attachment_ids: &[String],
+    ) -> Result<Vec<VerifiedAttachmentPayload>, String> {
+        let scope = scope.validated()?;
+        if attachment_ids.len() > MAXIMUM_ATTACHMENT_COUNT {
+            return Err(format!("单次最多添加 {MAXIMUM_ATTACHMENT_COUNT} 个附件"));
+        }
+        let scope_key = scope.key();
+        let state = self.state()?;
+        let mut unique_ids = std::collections::HashSet::with_capacity(attachment_ids.len());
+        let mut total_bytes = 0_usize;
+        let mut payloads = Vec::with_capacity(attachment_ids.len());
+        for attachment_id in attachment_ids {
+            if !unique_ids.insert(attachment_id) {
+                return Err("团队消息附件不能重复。".into());
+            }
+            let metadata = state
+                .drafts
+                .get(&(scope_key.clone(), attachment_id.clone()))
+                .ok_or_else(|| "附件已失效，请重新添加。".to_string())?;
+            let data = self.read_verified_file(&scope_key, metadata)?;
+            total_bytes = total_bytes.saturating_add(data.len());
+            if total_bytes > MAXIMUM_ATTACHMENT_BYTES {
+                return Err("附件总大小不能超过 20 MB".into());
+            }
+            payloads.push(VerifiedAttachmentPayload {
+                display_name: metadata.display_name.clone(),
+                media_type: metadata.media_type.clone(),
+                kind: match metadata.kind {
+                    AttachmentKind::Image => "image",
+                    AttachmentKind::File => "file",
+                    AttachmentKind::Audio => "audio",
+                }
+                .into(),
+                origin: match metadata.origin {
+                    AttachmentOrigin::File => "file",
+                    AttachmentOrigin::PastedImage => "pastedImage",
+                    AttachmentOrigin::PastedText => "pastedText",
+                }
+                .into(),
+                sha256: metadata.sha256.clone(),
+                data,
+            });
+        }
+        Ok(payloads)
+    }
+
+    pub(crate) fn authorize_verified_payloads(
+        &self,
+        scope: AttachmentScope,
+        payloads: &[VerifiedAttachmentPayload],
+    ) -> Result<(Vec<String>, Vec<LocalConversationAttachmentSpec>), String> {
+        let scope = scope.validated()?;
+        if payloads.len() > MAXIMUM_ATTACHMENT_COUNT {
+            return Err(format!("单次最多添加 {MAXIMUM_ATTACHMENT_COUNT} 个附件"));
+        }
+        if payloads.iter().any(|payload| {
+            payload.data.is_empty()
+                || !matches!(payload.kind.as_str(), "image" | "file" | "audio")
+                || !matches!(
+                    payload.origin.as_str(),
+                    "file" | "pastedImage" | "pastedText"
+                )
+                || digest(&payload.data) != payload.sha256
+        }) {
+            return Err("团队消息附件完整性校验失败。".into());
+        }
+        let mut total_bytes = 0_usize;
+        let mut attachment_ids = Vec::with_capacity(payloads.len());
+        for payload in payloads {
+            total_bytes = total_bytes.saturating_add(payload.data.len());
+            if total_bytes > MAXIMUM_ATTACHMENT_BYTES {
+                let _ = self.discard(AttachmentIDsInput {
+                    scope: scope.clone(),
+                    attachment_ids,
+                });
+                return Err("团队消息附件完整性校验失败。".into());
+            }
+            let kind = match payload.kind.as_str() {
+                "image" => AttachmentKind::Image,
+                "file" => AttachmentKind::File,
+                "audio" => AttachmentKind::Audio,
+                _ => return Err("团队消息附件类型无效。".into()),
+            };
+            let origin = match payload.origin.as_str() {
+                "file" => AttachmentOrigin::File,
+                "pastedImage" => AttachmentOrigin::PastedImage,
+                "pastedText" => AttachmentOrigin::PastedText,
+                _ => return Err("团队消息附件来源无效。".into()),
+            };
+            match self.stage_candidate(
+                &scope,
+                AttachmentCandidate {
+                    name: payload.display_name.clone(),
+                    media_type: payload.media_type.clone(),
+                    kind,
+                    origin,
+                    bytes: payload.data.clone(),
+                },
+            ) {
+                Ok(draft) => attachment_ids.push(draft.id),
+                Err(error) => {
+                    let _ = self.discard(AttachmentIDsInput {
+                        scope: scope.clone(),
+                        attachment_ids,
+                    });
+                    return Err(error);
+                }
+            }
+        }
+        match self.resolve_specs(scope.clone(), &attachment_ids) {
+            Ok(specs) => Ok((attachment_ids, specs)),
+            Err(error) => {
+                let _ = self.discard(AttachmentIDsInput {
+                    scope,
+                    attachment_ids,
+                });
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn discard_ids(&self, scope: AttachmentScope, attachment_ids: Vec<String>) {
+        let _ = self.discard(AttachmentIDsInput {
+            scope,
+            attachment_ids,
+        });
     }
 
     pub fn verified_record_bytes(

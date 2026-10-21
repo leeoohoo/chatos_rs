@@ -25,9 +25,28 @@ describe("agent team conversation store", () => {
     });
     await useAgentTeamConversationStore.getState().activate(port, "owner-1", TEAM_ID);
     expect(await useAgentTeamConversationStore.getState().send(port, " 开始实现 ", [])).toBe(true);
-    expect(port.queueTeamMessage).toHaveBeenCalledWith("owner-1", TEAM_ID, "开始实现", []);
+    expect(port.queueTeamMessage).toHaveBeenCalledWith("owner-1", TEAM_ID, "开始实现", [], []);
     expect(port.dispatchNextTeamDelivery).toHaveBeenCalledTimes(3);
     expect(useAgentTeamConversationStore.getState().snapshot).toEqual(running);
+  });
+
+  it("accepts an attachment-only message and does not invite a duplicate retry after refresh fails", async () => {
+    const port = stubPort({
+      loadTeamConversation: vi.fn().mockResolvedValueOnce(snapshot())
+        .mockRejectedValueOnce(new Error("刷新暂时失败")),
+      queueTeamMessage: vi.fn(async () => ({
+        messageId: "message-attachment", teamId: TEAM_ID, createdAtUnixMs: 10,
+        deliveries: [{ deliveryId: "delivery-attachment", targetAgentId: "agent-1", triggerKind: "default_agent" as const }],
+      })),
+    });
+    await useAgentTeamConversationStore.getState().activate(port, "owner-1", TEAM_ID);
+    expect(await useAgentTeamConversationStore.getState().send(
+      port, "", [], ["attachment-1"],
+    )).toBe(true);
+    expect(port.queueTeamMessage).toHaveBeenCalledWith(
+      "owner-1", TEAM_ID, "", [], ["attachment-1"],
+    );
+    expect(useAgentTeamConversationStore.getState().error).toBe("刷新暂时失败");
   });
 
   it("reconciles running Agent lanes before dispatching more work", async () => {
@@ -87,7 +106,10 @@ function snapshot(overrides: Partial<AgentTeamConversationSnapshot> = {}): Agent
 }
 
 function message(id: string): AgentTeamConversationSnapshot["messages"][number] {
-  return { id, senderKind: "human", senderId: "owner-1", content: "开始实现", mentionedAgentIds: [], createdAtUnixMs: 10 };
+  return {
+    id, senderKind: "human", senderId: "owner-1", content: "开始实现",
+    mentionedAgentIds: [], attachments: [], createdAtUnixMs: 10,
+  };
 }
 
 function delivery(id: string, status: "running" | "completed"): AgentTeamConversationSnapshot["deliveries"][number] {
