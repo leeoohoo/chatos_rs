@@ -2,6 +2,7 @@ mod application;
 mod commands;
 mod domain;
 mod media;
+mod planning;
 mod projection;
 mod store;
 

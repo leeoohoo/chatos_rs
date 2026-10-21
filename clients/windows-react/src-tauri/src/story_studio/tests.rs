@@ -5,6 +5,10 @@ use super::{
         StoryModelSelectionInput, StoryProjectCreationInput, StoryProjectSettingsInput,
     },
     media::{story_studio_protocol, StoryStudioManager},
+    planning::{
+        project_fingerprint, StoryAgentReceipt, StoryAgentRunPolicy, StoryAgentToolCall,
+        StoryAgentToolOutcome, StoryPlanningRun, StoryPlanningStage,
+    },
     projection::StoryProjectSnapshot,
     store::StoryProjectStore,
 };
@@ -497,6 +501,175 @@ fn model_admission_requires_current_owner_enabled_model_and_credential_status() 
 
     assert!(models.iter().all(|model| model.task_enabled == Some(false)));
     assert!(make_story_project(input, "alice", &models, 1).is_ok());
+}
+
+#[test]
+fn planning_checkpoint_is_native_only_and_safe_snapshot_omits_provider_and_tool_payloads() {
+    let mut canonical = project();
+    canonical.source = "A complete source story".into();
+    canonical.segments.clear();
+    canonical.relations.clear();
+    let mut captured_ideas = String::new();
+    let ideas = format!("  {}  ", "想".repeat(2_020));
+    let mut run = StoryPlanningRun::new(
+        &canonical,
+        " alice ",
+        StoryPlanningStage::Outline,
+        Vec::new(),
+        &ideas,
+        StoryAgentRunPolicy::default(),
+        "private-system-prompt".into(),
+        |value| {
+            captured_ideas = value.to_owned();
+            format!("private-goal:{value}")
+        },
+        100,
+    )
+    .unwrap();
+    assert_eq!(captured_ideas.chars().count(), 2_000);
+    run.checkpoint.pending_calls.push(StoryAgentToolCall {
+        id: "call-1".into(),
+        name: "story_private_tool".into(),
+        arguments: "provider-tool-arguments-must-not-cross".into(),
+    });
+    run.tool_receipts.insert(
+        "call-1".into(),
+        StoryAgentReceipt {
+            name: "story_private_tool".into(),
+            arguments: "receipt-arguments-must-not-cross".into(),
+            outcome: StoryAgentToolOutcome {
+                content: "private-tool-outcome".into(),
+                made_progress: true,
+                is_error: false,
+            },
+        },
+    );
+    run.checkpoint.messages[0].response_output_json =
+        Some(b"provider-response-output-must-not-cross".to_vec());
+
+    let snapshot = serde_json::to_string(&run.snapshot("alice")).unwrap();
+    for forbidden in [
+        "private-system-prompt",
+        "private-goal",
+        "provider-tool-arguments-must-not-cross",
+        "receipt-arguments-must-not-cross",
+        "private-tool-outcome",
+        "provider-response-output-must-not-cross",
+        "pendingCalls",
+        "toolReceipts",
+        "messages",
+    ] {
+        assert!(
+            !snapshot.contains(forbidden),
+            "leaked {forbidden}: {snapshot}"
+        );
+    }
+    assert!(snapshot.contains("baseProjectFingerprint"));
+    assert!(snapshot.contains("usesCloudMemory"));
+}
+
+#[test]
+fn planning_fingerprint_ignores_revision_and_video_capability_snapshot() {
+    let mut original = project();
+    original.models.supported_video_durations = Some(vec![4, 8, 12]);
+    let mut refreshed = original.clone();
+    refreshed.updated_at_unix_ms = 9_999;
+    refreshed.models.supported_video_durations = Some((4..=15).collect());
+
+    assert_eq!(
+        project_fingerprint(&original).unwrap(),
+        project_fingerprint(&refreshed).unwrap()
+    );
+}
+
+#[test]
+fn refine_planning_archives_completed_video_only_inside_the_run_draft() {
+    let mut canonical = project();
+    canonical.source = "x".into();
+    canonical.segments[0].video = Some(StoryVideo {
+        filename: "completed.mp4".into(),
+        job_id: "provider-job".into(),
+        model_name: "video".into(),
+    });
+    canonical.segments[0].attempt = Some(StoryVideoAttempt {
+        id: Uuid::new_v4().to_string(),
+        model_config_id: "video".into(),
+        prompt: "prompt".into(),
+        size: "768P".into(),
+        ratio: "16:9".into(),
+        seconds: 15,
+        job_id: Some("provider-job".into()),
+        status: "completed".into(),
+        created_at_unix_ms: 1,
+    });
+    let run = StoryPlanningRun::new(
+        &canonical,
+        "alice",
+        StoryPlanningStage::Refine,
+        vec!["s1".into()],
+        "",
+        StoryAgentRunPolicy::default(),
+        "system".into(),
+        |_| "goal".into(),
+        100,
+    )
+    .unwrap();
+
+    assert!(canonical.segments[0].video.is_some());
+    assert!(canonical.segments[0].archived_videos.is_empty());
+    assert!(run.draft.segments[0].video.is_none());
+    assert!(run.draft.segments[0].attempt.is_none());
+    assert_eq!(run.draft.segments[0].archived_videos.len(), 1);
+    assert_eq!(run.draft.segments[0].previous_attempts.len(), 1);
+    assert_eq!(run.id(), run.checkpoint.id);
+}
+
+#[test]
+fn planning_checkpoint_store_is_atomic_owner_scoped_and_strictly_decoded() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    canonical.source = "A complete source story".into();
+    canonical.segments.clear();
+    canonical.relations.clear();
+    store.save("alice", &canonical).unwrap();
+    let run = StoryPlanningRun::new(
+        &canonical,
+        "alice",
+        StoryPlanningStage::Outline,
+        Vec::new(),
+        "ideas",
+        StoryAgentRunPolicy::default(),
+        "system".into(),
+        |ideas| format!("goal:{ideas}"),
+        100,
+    )
+    .unwrap();
+
+    store.save_planning_run("alice", &run).unwrap();
+    let loaded = store
+        .load_planning_run("alice", &canonical.id, run.id())
+        .unwrap();
+    assert_eq!(loaded, run);
+    assert!(store
+        .load_planning_run("bob", &canonical.id, run.id())
+        .is_err());
+
+    let path = projects_directory(app_data.path(), "alice")
+        .join(&canonical.id)
+        .join("runs")
+        .join(format!("{}.json", run.id()));
+    assert!(!path.with_extension("json.tmp").exists());
+    let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .insert("providerSecret".into(), serde_json::json!("must-not-cross"));
+    fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(store
+        .load_planning_run("alice", &canonical.id, run.id())
+        .is_err());
+    assert!(path.exists(), "an unreadable checkpoint must be preserved");
 }
 
 fn projects_directory(app_data: &std::path::Path, owner: &str) -> std::path::PathBuf {

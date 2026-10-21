@@ -12,10 +12,12 @@ use uuid::Uuid;
 
 use super::{
     domain::{valid_storage_filename, StoryProject},
+    planning::StoryPlanningRun,
     projection::StoryProjectSnapshot,
 };
 
 const MAXIMUM_PROJECT_BYTES: usize = 8 * 1_024 * 1_024;
+const MAXIMUM_PLANNING_RUN_BYTES: usize = 64 * 1_024 * 1_024;
 pub(super) const MAXIMUM_STORY_IMAGE_BYTES: usize = 20 * 1_024 * 1_024;
 pub(super) const MAXIMUM_STORY_VIDEO_BYTES: usize = 512 * 1_024 * 1_024;
 const DEFAULT_PROJECT_PAGE_SIZE: usize = 40;
@@ -249,6 +251,65 @@ impl StoryProjectStore {
         read_private_file(&directory.join(filename), maximum_bytes)
     }
 
+    pub(super) fn save_planning_run(
+        &self,
+        owner_user_id: &str,
+        run: &StoryPlanningRun,
+    ) -> Result<(), String> {
+        let owner = validate_owner(owner_user_id)?;
+        let owner_hash = owner_hash(owner);
+        let project_id = canonical_project_id(&run.project_id)?;
+        let run_id = canonical_project_id(run.id())?;
+        run.validate(&owner_hash, &project_id)?;
+        let bytes = serde_json::to_vec(run).map_err(|_| planning_store_error())?;
+        if bytes.is_empty() || bytes.len() > MAXIMUM_PLANNING_RUN_BYTES {
+            return Err(planning_store_error());
+        }
+        let _guard = self.mutation_lock.lock().map_err(|_| store_error())?;
+        let projects = self
+            .existing_projects_directory(owner)?
+            .ok_or_else(planning_store_error)?;
+        let project_directory = projects.join(&project_id);
+        validate_private_directory(&project_directory)?;
+        let runs_directory = private_child_directory(&project_directory, "runs")?;
+        commit_private_json(
+            &runs_directory,
+            &format!("{run_id}.json.tmp"),
+            &format!("{run_id}.json"),
+            &bytes,
+        )
+    }
+
+    pub(super) fn load_planning_run(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        run_id: &str,
+    ) -> Result<StoryPlanningRun, String> {
+        let owner = validate_owner(owner_user_id)?;
+        let expected_owner_hash = owner_hash(owner);
+        let project_id = canonical_project_id(project_id)?;
+        let run_id = canonical_project_id(run_id)?;
+        let projects = self
+            .existing_projects_directory(owner)?
+            .ok_or_else(planning_store_error)?;
+        let project_directory = projects.join(&project_id);
+        validate_private_directory(&project_directory)?;
+        let runs_directory = project_directory.join("runs");
+        validate_private_directory(&runs_directory)?;
+        let bytes = read_private_file(
+            &runs_directory.join(format!("{run_id}.json")),
+            MAXIMUM_PLANNING_RUN_BYTES,
+        )?;
+        let run: StoryPlanningRun =
+            serde_json::from_slice(&bytes).map_err(|_| planning_store_error())?;
+        if run.id() != run_id {
+            return Err(planning_store_error());
+        }
+        run.validate(&expected_owner_hash, &project_id)?;
+        Ok(run)
+    }
+
     fn ensure_projects_directory(&self, owner: &str) -> Result<PathBuf, String> {
         validate_private_directory(&self.root)?;
         let accounts = private_child_directory(&self.root, "Accounts")?;
@@ -355,9 +416,21 @@ fn load_project_manifest(
 }
 
 fn commit_project_manifest(directory: &Path, bytes: &[u8]) -> Result<(), String> {
+    commit_private_json(directory, "project.json.tmp", "project.json", bytes)
+}
+
+fn commit_private_json(
+    directory: &Path,
+    temporary_name: &str,
+    target_name: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    if !valid_storage_filename(temporary_name) || !valid_storage_filename(target_name) {
+        return Err(store_error());
+    }
     validate_private_directory(directory)?;
-    let temporary = directory.join("project.json.tmp");
-    let target = directory.join("project.json");
+    let temporary = directory.join(temporary_name);
+    let target = directory.join(target_name);
     if let Ok(metadata) = fs::symlink_metadata(&temporary) {
         if !is_private_file_metadata(&metadata) {
             return Err(store_error());
@@ -619,4 +692,8 @@ fn system_time_milliseconds(value: Option<std::time::SystemTime>) -> u64 {
 
 fn store_error() -> String {
     "剧情项目文件或记录无效。".into()
+}
+
+fn planning_store_error() -> String {
+    "剧情规划运行记录无效，原文件已保留。".into()
 }
