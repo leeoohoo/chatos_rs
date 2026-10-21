@@ -9,6 +9,12 @@ import {
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import { mediaStudioHistoryPageSchema } from "../../media-studio/domain/mediaStudio";
+import {
+  agentSkillCatalogSchema,
+  agentSkillDefinitionSchema,
+  type AgentSkillKind,
+  type AgentSkillMutationInput,
+} from "../domain/agentSkillManagement";
 
 export class TauriAgentManagementAdapter implements AgentManagementPort {
   async listProfiles(ownerUserId: string) {
@@ -61,5 +67,23 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
 
   async discardAvatarPresentation(ownerUserId: string, presentationId: string) {
     await invoke("discard_media_studio_presentation", { input: { ownerUserId, presentationId } });
+  }
+
+  async loadSkillCatalog(ownerUserId: string) {
+    return agentSkillCatalogSchema.parse(
+      await invoke("load_agent_skill_catalog", { ownerUserId }),
+    );
+  }
+
+  async saveSkillOverride(ownerUserId: string, input: AgentSkillMutationInput) {
+    return agentSkillDefinitionSchema.parse(
+      await invoke("save_agent_skill_override", { ownerUserId, input }),
+    );
+  }
+
+  async resetSkillOverride(ownerUserId: string, kind: AgentSkillKind, key: string) {
+    return agentSkillDefinitionSchema.parse(
+      await invoke("reset_agent_skill_override", { ownerUserId, kind, key }),
+    );
   }
 }

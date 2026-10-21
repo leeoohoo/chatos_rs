@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAgentManagementStore } from "../application/agentManagementStore";
+import { useAgentSkillManagementStore } from "../application/agentSkillManagementStore";
 import {
   agentProfessionLabels,
   type AgentProfileEditorCatalog,
@@ -11,6 +12,7 @@ import { AgentManagementView } from "./AgentManagementView";
 
 describe("AgentManagementView", () => {
   beforeEach(() => useAgentManagementStore.getState().reset());
+  beforeEach(() => useAgentSkillManagementStore.getState().reset());
   afterEach(cleanup);
 
   it("renders macOS profile card facts and enables profile editing", async () => {
@@ -157,6 +159,43 @@ describe("AgentManagementView", () => {
     renderView(stubPort({ listProfiles: vi.fn(async () => []) }));
     expect(await screen.findByText("还没有 Agent")).toBeVisible();
     expect(screen.getByText(/创建一个 Agent/)).toBeVisible();
+  });
+
+  it("edits the macOS-compatible bilingual Skill catalog", async () => {
+    const item = {
+      kind: "profession" as const,
+      key: "project_manager",
+      label: "项目经理",
+      labelEn: "Project Manager",
+      description: "推进项目",
+      descriptionEn: "Deliver projects",
+      categoryKey: "management",
+      categoryLabel: "管理与领导",
+      categoryLabelEn: "Management & Leadership",
+      markdown: "# 项目经理",
+      markdownEn: "# Project Manager",
+      customized: false,
+    };
+    const port = stubPort({
+      loadSkillCatalog: vi.fn(async () => [item]),
+      saveSkillOverride: vi.fn(async (_owner, input) => ({ ...item, ...input, customized: true })),
+      resetSkillOverride: vi.fn(async () => item),
+    });
+    renderView(port);
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "Skill 管理" }));
+    expect(await screen.findByRole("dialog", { name: "Skill 管理" })).toBeVisible();
+    expect(screen.getByLabelText("名称")).toHaveValue("项目经理");
+    fireEvent.click(screen.getByRole("button", { name: "English" }));
+    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "Delivery Lead" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(port.saveSkillOverride).toHaveBeenCalledWith("owner-1", expect.objectContaining({
+      key: "project_manager",
+      label: "项目经理",
+      labelEn: "Delivery Lead",
+      markdown: "# 项目经理",
+      markdownEn: "# Project Manager",
+    })));
   });
 });
 

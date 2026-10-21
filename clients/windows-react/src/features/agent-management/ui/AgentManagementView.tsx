@@ -11,6 +11,7 @@ import {
   type AgentAvatarHistoryAsset,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
+import { AgentSkillManagementSheet } from "./AgentSkillManagementSheet";
 import "./agentManagement.css";
 
 export function AgentManagementView({
@@ -36,6 +37,7 @@ export function AgentManagementView({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(20);
   const [preparingId, setPreparingId] = useState<string | null>(null);
+  const [showsSkillManagement, setShowsSkillManagement] = useState(false);
   const [editor, setEditor] = useState<{
     catalog: AgentProfileEditorCatalog;
     data: AgentProfileEditorData | null;
@@ -78,7 +80,11 @@ export function AgentManagementView({
           </div>
           <div className="agent-management__actions">
             <span>{isSaving ? "正在保存" : "本机资料"}</span>
-            <button disabled title="Skill 管理将在对应原生能力完成后开放" type="button">Skill 管理</button>
+            <button
+              disabled={!port.loadSkillCatalog || !port.saveSkillOverride || !port.resetSkillOverride}
+              onClick={() => setShowsSkillManagement(true)}
+              type="button"
+            >Skill 管理</button>
             <button
               className="primary-button"
               disabled={isCatalogLoading || isEditorLoading || preparingId === "new-agent"}
@@ -154,6 +160,13 @@ export function AgentManagementView({
           onSave={async (input) => {
             if (await saveProfile(port, input)) setEditor(null);
           }}
+        />
+      )}
+      {showsSkillManagement && (
+        <AgentSkillManagementSheet
+          ownerUserId={ownerUserId}
+          port={port}
+          onClose={() => setShowsSkillManagement(false)}
         />
       )}
     </div>

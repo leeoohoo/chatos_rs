@@ -1,5 +1,6 @@
 mod access_control;
 mod agent_management;
+mod agent_skill_management;
 mod ask_user;
 mod attachment_tool_worker;
 mod authentication;
@@ -35,6 +36,10 @@ use access_control::load_access_control;
 use agent_management::{
     agent_avatar_protocol, list_agent_profiles, load_agent_profile_editor,
     load_agent_profile_editor_catalog, save_agent_profile, AgentProfileStore,
+};
+use agent_skill_management::{
+    load_agent_skill_catalog, reset_agent_skill_override, save_agent_skill_override,
+    AgentSkillStore,
 };
 use ask_user::{cancel_ask_user_prompt, load_ask_user_prompts, submit_ask_user_prompt};
 use attachment_tool_worker::AttachmentToolWorker;
@@ -154,6 +159,8 @@ pub fn run() {
         StoryStudioManager::from_runtime().expect("failed to configure story studio");
     let agent_profile_store =
         AgentProfileStore::from_runtime().expect("failed to configure Agent profile store");
+    let agent_skill_store =
+        AgentSkillStore::from_runtime().expect("failed to configure Agent Skill store");
     let protocol_attachment_manager = attachment_manager.clone();
     let protocol_media_studio_manager = media_studio_manager.clone();
     let protocol_story_studio_manager = story_studio_manager.clone();
@@ -165,6 +172,7 @@ pub fn run() {
         .manage(media_studio_manager)
         .manage(story_studio_manager)
         .manage(agent_profile_store)
+        .manage(agent_skill_store)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
@@ -256,6 +264,9 @@ pub fn run() {
             load_agent_profile_editor_catalog,
             load_agent_profile_editor,
             save_agent_profile,
+            load_agent_skill_catalog,
+            save_agent_skill_override,
+            reset_agent_skill_override,
             list_project_types,
             pick_project_directory,
             discard_project_directory_selection,

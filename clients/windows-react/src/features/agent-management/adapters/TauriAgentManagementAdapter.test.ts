@@ -79,4 +79,49 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       limit: 40,
     });
   });
+
+  it("uses account-scoped native commands for Skill mutations", async () => {
+    const item = {
+      kind: "profession",
+      key: "skill-0",
+      label: "名称",
+      labelEn: "Name",
+      description: "说明",
+      descriptionEn: "Description",
+      categoryKey: "general",
+      categoryLabel: "通用",
+      categoryLabelEn: "General",
+      markdown: "# 正文",
+      markdownEn: "# Body",
+      customized: false,
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(Array.from({ length: 60 }, (_, index) => ({
+      ...item,
+      kind: index < 33 ? "profession" : "projectType",
+      key: `skill-${index}`,
+    })));
+    const adapter = new TauriAgentManagementAdapter();
+    await adapter.loadSkillCatalog("owner-1");
+    expect(invoke).toHaveBeenLastCalledWith("load_agent_skill_catalog", { ownerUserId: "owner-1" });
+
+    const input = {
+      kind: "profession" as const,
+      key: "skill-0",
+      label: "新名称",
+      labelEn: "New name",
+      description: "新说明",
+      descriptionEn: "New description",
+      markdown: "# 新正文",
+      markdownEn: "# New body",
+    };
+    vi.mocked(invoke).mockResolvedValueOnce({ ...item, ...input, customized: true });
+    await adapter.saveSkillOverride("owner-1", input);
+    expect(invoke).toHaveBeenLastCalledWith("save_agent_skill_override", { ownerUserId: "owner-1", input });
+
+    vi.mocked(invoke).mockResolvedValueOnce(item);
+    await adapter.resetSkillOverride("owner-1", "profession", "skill-0");
+    expect(invoke).toHaveBeenLastCalledWith("reset_agent_skill_override", {
+      ownerUserId: "owner-1", kind: "profession", key: "skill-0",
+    });
+  });
 });
