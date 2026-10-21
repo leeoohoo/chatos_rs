@@ -18,6 +18,7 @@ mod local_terminal;
 mod media_studio;
 mod platform_execution_context;
 mod plugin_application;
+mod product_skill_runtime;
 mod project_conversation;
 mod project_creation;
 mod project_favorite;

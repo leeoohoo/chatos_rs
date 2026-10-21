@@ -43,6 +43,7 @@ use crate::{
     host_lifecycle::HostManager,
     platform_execution_context::resolve_platform_execution_context,
     plugin_application::{PluginApplicationManager, TrustedAgentPluginOption},
+    product_skill_runtime::ProductSkillRuntime,
     terminal_tool_worker::TerminalToolWorker,
 };
 
@@ -93,6 +94,7 @@ pub struct AttachmentToolWorker {
     generation: Arc<AtomicU64>,
     wake: Arc<Notify>,
     task: Mutex<Option<JoinHandle<()>>>,
+    product_skills: ProductSkillRuntime,
 }
 
 impl Default for AttachmentToolWorker {
@@ -101,6 +103,7 @@ impl Default for AttachmentToolWorker {
             generation: Arc::new(AtomicU64::new(0)),
             wake: Arc::new(Notify::new()),
             task: Mutex::new(None),
+            product_skills: ProductSkillRuntime::default(),
         }
     }
 }
@@ -123,6 +126,7 @@ impl AttachmentToolWorker {
     pub async fn reset(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.wake.notify_waiters();
+        self.product_skills.reset().await;
         if let Some(task) = self.task.lock().await.take() {
             task.abort();
         }
@@ -334,6 +338,25 @@ async fn execute_capability_broker_tool(
     validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
     if binding.todo_id.is_none() {
         return Err("Plugin capabilities are available only in a Todo executor Run.".into());
+    }
+    if matches!(
+        claim.invocation.tool_name.as_str(),
+        "agent_skill_activate" | "agent_skill_read_resource"
+    ) {
+        if let Some(outcome) = app
+            .state::<AttachmentToolWorker>()
+            .product_skills
+            .execute_if_product(
+                host.inner(),
+                owner_user_id,
+                &run.run_id,
+                &claim.invocation.tool_name,
+                arguments,
+            )
+            .await?
+        {
+            return Ok(outcome);
+        }
     }
     let platform =
         resolve_platform_execution_context(app, host.inner(), owner_user_id, &run.run_id).await?;
