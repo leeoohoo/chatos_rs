@@ -9,6 +9,10 @@ import {
   agentProfileActivitySnapshotSchema,
   agentTeamListSchema,
   agentTeamDetailSchema,
+  agentTeamConversationSnapshotSchema,
+  agentTeamMemberActivitySnapshotSchema,
+  queuedAgentTeamMessageSchema,
+  dispatchedAgentTeamDeliverySchema,
   agentTeamSummarySchema,
   preparedAgentConversationSchema,
   type AgentProfileMutationInput,
@@ -166,6 +170,37 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async removeAgentFromTeam(ownerUserId: string, teamId: string, agentId: string) {
     return agentTeamDetailSchema.parse(
       await invoke("remove_agent_from_team", { input: { ownerUserId, teamId, agentId } }),
+    );
+  }
+
+  async loadTeamConversation(ownerUserId: string, teamId: string) {
+    return agentTeamConversationSnapshotSchema.parse(
+      await invoke("load_agent_team_conversation", { ownerUserId, teamId }),
+    );
+  }
+
+  async queueTeamMessage(
+    ownerUserId: string,
+    teamId: string,
+    content: string,
+    mentionedAgentIds: string[],
+  ) {
+    return queuedAgentTeamMessageSchema.parse(
+      await invoke("queue_agent_team_message", {
+        input: { ownerUserId, teamId, content, mentionedAgentIds },
+      }),
+    );
+  }
+
+  async dispatchNextTeamDelivery(ownerUserId: string, teamId: string) {
+    return dispatchedAgentTeamDeliverySchema.nullable().parse(
+      await invoke("dispatch_next_agent_team_delivery", { ownerUserId, teamId }),
+    );
+  }
+
+  async loadTeamMemberActivity(ownerUserId: string, teamId: string, agentId: string) {
+    return agentTeamMemberActivitySnapshotSchema.parse(
+      await invoke("load_agent_team_member_activity", { ownerUserId, teamId, agentId }),
     );
   }
 

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAgentManagementStore } from "../application/agentManagementStore";
 import { useAgentSkillManagementStore } from "../application/agentSkillManagementStore";
+import { useAgentTeamConversationStore } from "../application/agentTeamConversationStore";
 import { useAgentTeamStore } from "../application/agentTeamStore";
 import {
   agentProfessionLabels,
@@ -22,6 +23,7 @@ describe("AgentManagementView", () => {
   beforeEach(() => useAgentManagementStore.getState().reset());
   beforeEach(() => useAgentSkillManagementStore.getState().reset());
   beforeEach(() => useAgentTeamStore.getState().reset());
+  beforeEach(() => useAgentTeamConversationStore.getState().reset());
   afterEach(cleanup);
 
   it("renders macOS profile card facts and enables profile editing", async () => {
@@ -326,6 +328,85 @@ describe("AgentManagementView", () => {
       "owner-1", team.id, "agent-1",
     ));
     expect(await screen.findByText("项目经理", { selector: "em" })).toBeVisible();
+  });
+
+  it("sends a team message through the native queue and shows its real Delivery state", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111",
+      projectId: "project-1",
+      name: "Alpha Agent 团队",
+      goal: "交付 Alpha",
+      defaultAgentId: "agent-1",
+      projectManagerAgentId: null,
+      memberCount: 1,
+      createdAtUnixMs: 10,
+      updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{
+        agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20,
+      }],
+    };
+    const message = {
+      id: "message-1", senderKind: "human" as const, senderId: "owner-1",
+      content: "开始实现", mentionedAgentIds: [], createdAtUnixMs: 30,
+    };
+    const pending = {
+      id: "delivery-1", messageId: message.id, targetAgentId: "agent-1",
+      triggerKind: "default_agent" as const, status: "pending" as const,
+      responseMessageId: null, lastError: null, createdAtUnixMs: 30, completedAtUnixMs: null,
+    };
+    const loadTeamConversation = vi.fn()
+      .mockResolvedValueOnce({ teamId: team.id, messages: [], deliveries: [] })
+      .mockResolvedValueOnce({ teamId: team.id, messages: [message], deliveries: [pending] })
+      .mockResolvedValueOnce({
+        teamId: team.id, messages: [message], deliveries: [{ ...pending, status: "running" as const }],
+      });
+    const queueTeamMessage = vi.fn(async () => ({
+      messageId: message.id, teamId: team.id, createdAtUnixMs: 30,
+      deliveries: [{
+        deliveryId: pending.id, targetAgentId: "agent-1", triggerKind: "default_agent" as const,
+      }],
+    }));
+    const dispatchNextTeamDelivery = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        deliveryId: pending.id, teamId: team.id, agentId: "agent-1", turnId: "turn-1", runId: "run-1",
+      })
+      .mockResolvedValueOnce(null);
+    const port = stubPort({
+      listTeams: vi.fn(async () => [team]),
+      loadTeam: vi.fn(async () => detail),
+      loadTeamConversation,
+      queueTeamMessage,
+      dispatchNextTeamDelivery,
+      loadTeamMemberActivity: vi.fn(async () => ({
+        roomId: team.id, agentId: "agent-1", conversationId: `agent-team-${team.id}-agent-1`,
+        conversationVersion: 1, hasActiveDelivery: false, items: [],
+      })),
+    });
+    render(
+      <AgentManagementView
+        ownerUserId="owner-1"
+        port={port}
+        projects={[{ id: "project-1", title: "Alpha" }]}
+      />,
+    );
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "团队" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "聊天" }));
+    expect(await screen.findByRole("region", { name: "Agent 团队聊天" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("团队消息"), { target: { value: " 开始实现 " } });
+    fireEvent.click(screen.getByRole("button", { name: "发送团队消息" }));
+
+    await waitFor(() => expect(queueTeamMessage).toHaveBeenCalledWith(
+      "owner-1", team.id, "开始实现", [],
+    ));
+    expect(await screen.findByText("开始实现")).toBeVisible();
+    expect(await screen.findByText("界面设计师 · 正在执行")).toBeVisible();
+    expect(screen.getByLabelText("团队消息")).toHaveValue("");
   });
 
   it("selects an Agent and loads its existing private-chat activity without opening a conversation", async () => {

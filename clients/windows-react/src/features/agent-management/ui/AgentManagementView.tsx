@@ -9,6 +9,7 @@ import type { ConversationRuntimeSettingsPort } from "../../conversation-runtime
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import { useAgentManagementStore } from "../application/agentManagementStore";
 import { type AgentTeamMemberMutation, useAgentTeamStore } from "../application/agentTeamStore";
+import { useAgentTeamConversationStore } from "../application/agentTeamConversationStore";
 import {
   agentProfessionLabels,
   heartbeatIntervalLabel,
@@ -318,6 +319,8 @@ export function AgentManagementView({
             isMutatingMember={isMutatingTeamMember}
             isLoading={isLoadingTeams}
             profiles={profiles}
+            ownerUserId={ownerUserId}
+            port={port}
             projects={projects}
             selectedTeamId={selectedTeamId}
             teams={teams}
@@ -461,6 +464,8 @@ function AgentTeamCatalog({
   isMutatingMember,
   isLoading,
   profiles,
+  ownerUserId,
+  port,
   projects,
   selectedTeamId,
   teams,
@@ -477,6 +482,8 @@ function AgentTeamCatalog({
   isMutatingMember: boolean;
   isLoading: boolean;
   profiles: AgentProfileSummary[];
+  ownerUserId: string;
+  port: AgentManagementPort;
   projects: Array<{ id: string; title: string }>;
   selectedTeamId: string | null;
   teams: AgentTeamSummary[];
@@ -486,6 +493,8 @@ function AgentTeamCatalog({
   onRetry(): void;
   onSelect(teamId: string): void;
 }) {
+  const [workspaceSection, setWorkspaceSection] = useState<"members" | "conversation">("members");
+  useEffect(() => setWorkspaceSection("members"), [selectedTeamId]);
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.title])),
     [projects],
@@ -542,23 +551,43 @@ function AgentTeamCatalog({
             ))}
           </div>
           {selectedTeamId && (
-            <section aria-label="Agent 团队成员" className="agent-team-members">
+            <section
+              aria-label={workspaceSection === "members" ? "Agent 团队成员" : "Agent 团队聊天"}
+              className={workspaceSection === "members"
+                ? "agent-team-members"
+                : "agent-team-members agent-team-members--conversation"}
+            >
               <header>
                 <div>
-                  <h3>{detail?.team.id === selectedTeamId ? `${detail.team.name} · 团队成员` : "正在读取团队成员"}</h3>
-                  <p>同一个 Agent 可以加入多个团队；角色和职责按当前团队隔离。</p>
+                  <h3>{detail?.team.id === selectedTeamId
+                    ? `${detail.team.name} · ${workspaceSection === "members" ? "团队成员" : "团队聊天"}`
+                    : "正在读取团队空间"}</h3>
+                  <p>{workspaceSection === "members"
+                    ? "同一个 Agent 可以加入多个团队；角色和职责按当前团队隔离。"
+                    : "消息、路由与执行状态均来自本机原生事实。"}</p>
                 </div>
                 <div>
                   {isDetailLoading && <span aria-label="正在读取团队成员" className="mini-spinner" />}
-                  <button
+                  <div className="agent-team-members__segmented" aria-label="团队工作区">
+                    <button aria-pressed={workspaceSection === "members"} onClick={() => setWorkspaceSection("members")} type="button">成员</button>
+                    <button aria-pressed={workspaceSection === "conversation"} onClick={() => setWorkspaceSection("conversation")} type="button">聊天</button>
+                  </div>
+                  {workspaceSection === "members" && <button
                     disabled={!detail || detail.team.id !== selectedTeamId || isInviting
                       || detail.members.length >= profiles.length}
                     onClick={onInvite}
                     type="button"
-                  >邀请 Agent</button>
+                  >邀请 Agent</button>}
                 </div>
               </header>
-              {detail?.team.id === selectedTeamId && detail.members.length > 0 ? (
+              {workspaceSection === "conversation" && detail?.team.id === selectedTeamId ? (
+                <AgentTeamConversationView
+                  detail={detail}
+                  ownerUserId={ownerUserId}
+                  port={port}
+                  profiles={profiles}
+                />
+              ) : detail?.team.id === selectedTeamId && detail.members.length > 0 ? (
                 <div className="agent-team-members__list">
                   {detail.members.map((member) => {
                     const profile = profiles.find((candidate) => candidate.id === member.agentId);
@@ -592,6 +621,210 @@ function AgentTeamCatalog({
       )}
     </div>
   );
+}
+
+function AgentTeamConversationView({
+  detail,
+  ownerUserId,
+  port,
+  profiles,
+}: {
+  detail: AgentTeamDetail;
+  ownerUserId: string;
+  port: AgentManagementPort;
+  profiles: AgentProfileSummary[];
+}) {
+  const snapshot = useAgentTeamConversationStore((state) => state.snapshot);
+  const isLoading = useAgentTeamConversationStore((state) => state.isLoading);
+  const isSending = useAgentTeamConversationStore((state) => state.isSending);
+  const isCycling = useAgentTeamConversationStore((state) => state.isCycling);
+  const error = useAgentTeamConversationStore((state) => state.error);
+  const activate = useAgentTeamConversationStore((state) => state.activate);
+  const refresh = useAgentTeamConversationStore((state) => state.refresh);
+  const send = useAgentTeamConversationStore((state) => state.send);
+  const reset = useAgentTeamConversationStore((state) => state.reset);
+  const [content, setContent] = useState("");
+  const [mentionedAgentIds, setMentionedAgentIds] = useState<string[]>([]);
+  const supportsConversation = Boolean(
+    port.loadTeamConversation
+    && port.queueTeamMessage
+    && port.dispatchNextTeamDelivery
+    && port.loadTeamMemberActivity,
+  );
+  const memberProfiles = useMemo(() => detail.members.map((member) => ({
+    member,
+    profile: profiles.find((candidate) => candidate.id === member.agentId) ?? null,
+  })), [detail.members, profiles]);
+  const profileNames = useMemo(
+    () => new Map(profiles.map((profile) => [profile.id, profile.name])),
+    [profiles],
+  );
+  const visibleSnapshot = snapshot?.teamId === detail.team.id ? snapshot : null;
+  const hasActiveDelivery = visibleSnapshot?.deliveries.some(
+    (delivery) => delivery.status === "pending" || delivery.status === "running",
+  ) ?? false;
+  const canRoute = mentionedAgentIds.length > 0 || detail.team.defaultAgentId != null;
+  const canSend = supportsConversation && content.trim().length > 0 && canRoute
+    && !isSending && !isCycling;
+
+  useEffect(() => {
+    if (supportsConversation) void activate(port, ownerUserId, detail.team.id);
+    else reset();
+    return reset;
+  }, [activate, detail.team.id, ownerUserId, port, reset, supportsConversation]);
+
+  useEffect(() => {
+    if (!supportsConversation || !hasActiveDelivery) return undefined;
+    const timer = window.setInterval(() => void refresh(port), 1_000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveDelivery, port, refresh, supportsConversation]);
+
+  useEffect(() => {
+    const memberIds = new Set(detail.members.map((member) => member.agentId));
+    setMentionedAgentIds((current) => current.filter((agentId) => memberIds.has(agentId)));
+  }, [detail.members]);
+
+  if (!supportsConversation) {
+    return (
+      <div className="agent-team-conversation__state is-error" role="alert">
+        <strong>当前版本尚未连接团队聊天</strong>
+        <span>请更新本机客户端后再发送团队消息。</span>
+      </div>
+    );
+  }
+
+  const deliveriesByMessage = new Map<string, NonNullable<typeof visibleSnapshot>["deliveries"]>();
+  for (const delivery of visibleSnapshot?.deliveries ?? []) {
+    const deliveries = deliveriesByMessage.get(delivery.messageId) ?? [];
+    deliveries.push(delivery);
+    deliveriesByMessage.set(delivery.messageId, deliveries);
+  }
+
+  return (
+    <div className="agent-team-conversation">
+      <div aria-live="polite" className="agent-team-conversation__messages">
+        {isLoading && !visibleSnapshot ? (
+          <div className="agent-team-conversation__state"><span className="mini-spinner" />正在读取团队消息…</div>
+        ) : visibleSnapshot?.messages.length ? visibleSnapshot.messages.map((message) => {
+          const senderName = message.senderKind === "human"
+            ? "你"
+            : message.senderKind === "system"
+              ? "系统"
+              : profileNames.get(message.senderId) ?? message.senderId;
+          const deliveries = deliveriesByMessage.get(message.id) ?? [];
+          return (
+            <article className={`agent-team-message agent-team-message--${message.senderKind}`} key={message.id}>
+              <div className="agent-team-message__meta">
+                <strong>{senderName}</strong>
+                <time>{formatTeamMessageTime(message.createdAtUnixMs)}</time>
+              </div>
+              <p>{message.content}</p>
+              {message.mentionedAgentIds.length > 0 && (
+                <div className="agent-team-message__mentions">
+                  {message.mentionedAgentIds.map((agentId) => (
+                    <span key={agentId}>@{profileNames.get(agentId) ?? agentId}</span>
+                  ))}
+                </div>
+              )}
+              {deliveries.length > 0 && (
+                <div className="agent-team-message__deliveries" aria-label="消息执行状态">
+                  {deliveries.map((delivery) => (
+                    <span className={`is-${delivery.status}`} key={delivery.id} title={delivery.lastError ?? undefined}>
+                      {profileNames.get(delivery.targetAgentId) ?? delivery.targetAgentId}
+                      {` · ${teamDeliveryStatusLabel(delivery.status)}`}
+                      {delivery.lastError ? `：${delivery.lastError}` : ""}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </article>
+          );
+        }) : (
+          <div className="agent-team-conversation__state">
+            <strong>开始团队协作</strong>
+            <span>选择一个或多个 Agent，或直接交给默认 Agent。</span>
+          </div>
+        )}
+      </div>
+      {error && (
+        <div className="agent-team-conversation__error" role="alert">
+          <span>{error}</span>
+          <button disabled={isCycling} onClick={() => void refresh(port)} type="button">重试</button>
+        </div>
+      )}
+      <div className="agent-team-composer">
+        <div aria-label="选择接收消息的 Agent" className="agent-team-composer__mentions">
+          {memberProfiles.map(({ member, profile }) => {
+            const selected = mentionedAgentIds.includes(member.agentId);
+            return (
+              <button
+                aria-pressed={selected}
+                key={member.agentId}
+                onClick={() => setMentionedAgentIds((current) => selected
+                  ? current.filter((agentId) => agentId !== member.agentId)
+                  : [...current, member.agentId])}
+                type="button"
+              >@{profile?.name ?? member.role}</button>
+            );
+          })}
+          {mentionedAgentIds.length === 0 && detail.team.defaultAgentId && (
+            <span>默认发送给 {profileNames.get(detail.team.defaultAgentId) ?? "默认 Agent"}</span>
+          )}
+        </div>
+        <div className="agent-team-composer__input">
+          <textarea
+            aria-label="团队消息"
+            disabled={isSending}
+            maxLength={1_000_000}
+            onChange={(event) => setContent(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && canSend) {
+                event.preventDefault();
+                void send(port, content, mentionedAgentIds).then((succeeded) => {
+                  if (succeeded) {
+                    setContent("");
+                    setMentionedAgentIds([]);
+                  }
+                });
+              }
+            }}
+            placeholder={canRoute ? "给团队发送消息…" : "请先选择一个 Agent"}
+            rows={2}
+            value={content}
+          />
+          <button
+            aria-label="发送团队消息"
+            className="primary-button"
+            disabled={!canSend}
+            onClick={() => void send(port, content, mentionedAgentIds).then((succeeded) => {
+              if (succeeded) {
+                setContent("");
+                setMentionedAgentIds([]);
+              }
+            })}
+            type="button"
+          >{isSending ? "发送中…" : "发送"}</button>
+        </div>
+        {!canRoute && <small>当前团队没有默认 Agent，请先选择一个接收者。</small>}
+      </div>
+    </div>
+  );
+}
+
+function teamDeliveryStatusLabel(status: "pending" | "running" | "completed" | "failed" | "cancelled") {
+  return {
+    pending: "等待执行",
+    running: "正在执行",
+    completed: "已完成",
+    failed: "执行失败",
+    cancelled: "已取消",
+  }[status];
+}
+
+function formatTeamMessageTime(unixMs: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit",
+  }).format(new Date(unixMs));
 }
 
 function AgentTeamMemberSheet({

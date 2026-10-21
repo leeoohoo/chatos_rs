@@ -231,6 +231,42 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       });
     }
 
+    vi.mocked(invoke).mockResolvedValueOnce({ teamId: team.id, messages: [], deliveries: [] });
+    await adapter.loadTeamConversation("owner-1", team.id);
+    expect(invoke).toHaveBeenLastCalledWith("load_agent_team_conversation", {
+      ownerUserId: "owner-1", teamId: team.id,
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce({
+      messageId: "message-1", teamId: team.id, createdAtUnixMs: 30,
+      deliveries: [{ deliveryId: "delivery-1", targetAgentId: "agent-1", triggerKind: "default_agent" }],
+    });
+    await adapter.queueTeamMessage("owner-1", team.id, "开始实现", []);
+    expect(invoke).toHaveBeenLastCalledWith("queue_agent_team_message", {
+      input: { ownerUserId: "owner-1", teamId: team.id, content: "开始实现", mentionedAgentIds: [] },
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce({
+      deliveryId: "delivery-1", teamId: team.id, agentId: "agent-1", turnId: "turn-1", runId: "run-1",
+    });
+    await adapter.dispatchNextTeamDelivery("owner-1", team.id);
+    expect(invoke).toHaveBeenLastCalledWith("dispatch_next_agent_team_delivery", {
+      ownerUserId: "owner-1", teamId: team.id,
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce({
+      roomId: team.id,
+      agentId: "agent-1",
+      conversationId: `agent-team-${team.id}-agent-1`,
+      conversationVersion: 0,
+      hasActiveDelivery: false,
+      items: [],
+    });
+    await adapter.loadTeamMemberActivity("owner-1", team.id, "agent-1");
+    expect(invoke).toHaveBeenLastCalledWith("load_agent_team_member_activity", {
+      ownerUserId: "owner-1", teamId: team.id, agentId: "agent-1",
+    });
+
     const input = {
       ownerUserId: "owner-1",
       roomId,

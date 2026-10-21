@@ -311,6 +311,55 @@ export const agentConversationActivitySnapshotSchema = z.object({
 
 export type AgentConversationActivitySnapshot = z.infer<typeof agentConversationActivitySnapshotSchema>;
 
+export const agentTeamMemberActivitySnapshotSchema = z.object({
+  roomId: z.string().uuid(),
+  agentId: z.string().trim().min(1).max(512),
+  conversationId: z.string().trim().min(1).max(1_100),
+  conversationVersion: z.number().int().nonnegative(),
+  hasActiveDelivery: z.boolean(),
+  items: z.array(agentConversationActivityItemSchema).max(100),
+}).strict().superRefine((snapshot, context) => {
+  if (snapshot.conversationId !== `agent-team-${snapshot.roomId}-${snapshot.agentId}`) {
+    context.addIssue({
+      code: "custom",
+      message: "团队 Agent 运行动态会话身份不一致。",
+      path: ["conversationId"],
+    });
+  }
+  const identifiers = new Set<string>();
+  snapshot.items.forEach((item, index) => {
+    if (item.roomId !== snapshot.roomId || item.agentId !== snapshot.agentId) {
+      context.addIssue({
+        code: "custom",
+        message: "团队 Agent 运行动态成员身份不一致。",
+        path: ["items", index],
+      });
+    }
+    for (const identity of [item.deliveryId, item.turnId, item.runId]) {
+      if (identifiers.has(identity)) {
+        context.addIssue({
+          code: "custom",
+          message: "团队 Agent 运行动态标识不能重复。",
+          path: ["items", index],
+        });
+      }
+      identifiers.add(identity);
+    }
+  });
+  const hasActiveDelivery = snapshot.items.some(({ deliveryStatus }) => (
+    deliveryStatus === "pending" || deliveryStatus === "running"
+  ));
+  if (snapshot.hasActiveDelivery !== hasActiveDelivery) {
+    context.addIssue({
+      code: "custom",
+      message: "团队 Agent 活跃 Delivery 状态不一致。",
+      path: ["hasActiveDelivery"],
+    });
+  }
+});
+
+export type AgentTeamMemberActivitySnapshot = z.infer<typeof agentTeamMemberActivitySnapshotSchema>;
+
 export const agentProfileActivitySnapshotSchema = z.object({
   agentId: z.string().trim().min(1).max(512),
   hasActiveDelivery: z.boolean(),
@@ -430,6 +479,71 @@ export const agentTeamDetailSchema = z.object({
   }
 });
 
+export const agentTeamMessageSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  senderKind: z.enum(["human", "agent", "system"]),
+  senderId: z.string().trim().min(1).max(512),
+  content: z.string().max(1_000_000),
+  mentionedAgentIds: z.array(z.string().trim().min(1).max(512)).max(100),
+  createdAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((message, context) => {
+  if (new Set(message.mentionedAgentIds).size !== message.mentionedAgentIds.length) {
+    context.addIssue({ code: "custom", message: "团队消息中的 @Agent 不能重复。", path: ["mentionedAgentIds"] });
+  }
+});
+
+export const agentTeamDeliverySchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  messageId: z.string().trim().min(1).max(512),
+  targetAgentId: z.string().trim().min(1).max(512),
+  triggerKind: z.enum(["mention", "default_agent", "agent_mention", "heartbeat", "todo", "todo_status"]),
+  status: z.enum(["pending", "running", "completed", "failed", "cancelled"]),
+  responseMessageId: z.string().trim().min(1).max(512).nullable(),
+  lastError: z.string().max(2_000).nullable(),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  completedAtUnixMs: z.number().int().nonnegative().nullable(),
+}).strict();
+
+export const agentTeamConversationSnapshotSchema = z.object({
+  teamId: z.string().uuid(),
+  messages: z.array(agentTeamMessageSchema).max(200),
+  deliveries: z.array(agentTeamDeliverySchema).max(500),
+}).strict().superRefine((snapshot, context) => {
+  const messageIds = new Set<string>();
+  snapshot.messages.forEach((message, index) => {
+    if (messageIds.has(message.id)) {
+      context.addIssue({ code: "custom", message: "团队消息不能重复。", path: ["messages", index, "id"] });
+    }
+    messageIds.add(message.id);
+  });
+  const deliveryIds = new Set<string>();
+  snapshot.deliveries.forEach((delivery, index) => {
+    if (deliveryIds.has(delivery.id)) {
+      context.addIssue({ code: "custom", message: "团队 Delivery 不能重复。", path: ["deliveries", index, "id"] });
+    }
+    deliveryIds.add(delivery.id);
+  });
+});
+
+export const queuedAgentTeamMessageSchema = z.object({
+  messageId: z.string().trim().min(1).max(512),
+  teamId: z.string().uuid(),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  deliveries: z.array(z.object({
+    deliveryId: z.string().trim().min(1).max(512),
+    targetAgentId: z.string().trim().min(1).max(512),
+    triggerKind: z.enum(["mention", "default_agent"]),
+  }).strict()).max(100),
+}).strict();
+
+export const dispatchedAgentTeamDeliverySchema = z.object({
+  deliveryId: z.string().trim().min(1).max(512),
+  teamId: z.string().uuid(),
+  agentId: z.string().trim().min(1).max(512),
+  turnId: z.string().trim().min(1).max(512),
+  runId: z.string().trim().min(1).max(512),
+}).strict();
+
 export interface CreateAgentTeamInput {
   projectId: string;
   name: string;
@@ -443,6 +557,9 @@ export interface UpdateAgentTeamMemberInput {
 
 export type AgentTeamSummary = z.infer<typeof agentTeamSummarySchema>;
 export type AgentTeamDetail = z.infer<typeof agentTeamDetailSchema>;
+export type AgentTeamConversationSnapshot = z.infer<typeof agentTeamConversationSnapshotSchema>;
+export type QueuedAgentTeamMessage = z.infer<typeof queuedAgentTeamMessageSchema>;
+export type DispatchedAgentTeamDelivery = z.infer<typeof dispatchedAgentTeamDeliverySchema>;
 
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",

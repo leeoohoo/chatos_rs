@@ -9,6 +9,10 @@ import type {
   AgentProfileActivitySnapshot,
   AgentTeamSummary,
   AgentTeamDetail,
+  AgentTeamConversationSnapshot,
+  AgentTeamMemberActivitySnapshot,
+  QueuedAgentTeamMessage,
+  DispatchedAgentTeamDelivery,
   CreateAgentTeamInput,
   UpdateAgentTeamMemberInput,
   PreparedAgentConversation,
@@ -54,6 +58,22 @@ export interface AgentManagementPort {
   setTeamDefaultAgent?(ownerUserId: string, teamId: string, agentId: string): Promise<AgentTeamDetail>;
   setTeamProjectManager?(ownerUserId: string, teamId: string, agentId: string): Promise<AgentTeamDetail>;
   removeAgentFromTeam?(ownerUserId: string, teamId: string, agentId: string): Promise<AgentTeamDetail>;
+  loadTeamConversation?(ownerUserId: string, teamId: string): Promise<AgentTeamConversationSnapshot>;
+  queueTeamMessage?(
+    ownerUserId: string,
+    teamId: string,
+    content: string,
+    mentionedAgentIds: string[],
+  ): Promise<QueuedAgentTeamMessage>;
+  dispatchNextTeamDelivery?(
+    ownerUserId: string,
+    teamId: string,
+  ): Promise<DispatchedAgentTeamDelivery | null>;
+  loadTeamMemberActivity?(
+    ownerUserId: string,
+    teamId: string,
+    agentId: string,
+  ): Promise<AgentTeamMemberActivitySnapshot>;
   sendConversationDraft?(input: {
     ownerUserId: string;
     roomId: string;
