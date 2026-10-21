@@ -1305,6 +1305,66 @@ impl AgentConversationStore {
         Ok(Some(pending))
     }
 
+    fn load_project_team_execution_binding(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        agent_id: &str,
+    ) -> Result<TeamExecutionBinding, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        validate_agent_identifier(agent_id).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let binding = connection
+            .query_row(
+                r#"
+                SELECT room.id, profile.id, profile.name, profile.role_prompt,
+                       profile.model_config_id, profile.thinking_level,
+                       profile.profession_key, profile.default_plugin_ids_json,
+                       profile.default_skill_ids_json, room.project_id, room.name, room.goal,
+                       member.role, member.responsibility,
+                       CASE WHEN room.project_manager_agent_id = profile.id THEN 1 ELSE 0 END
+                FROM project_agent_rooms room
+                JOIN project_agent_room_members member
+                  ON member.owner_user_id = room.owner_user_id AND member.room_id = room.id
+                JOIN local_agent_profiles profile
+                  ON profile.owner_user_id = member.owner_user_id AND profile.id = member.agent_id
+                WHERE room.owner_user_id = ?1 AND room.id = ?2 AND profile.id = ?3
+                  AND room.status = 'active' AND room.conversation_kind = 'project_team'
+                  AND member.status = 'active' AND profile.status = 'active'
+                "#,
+                params![owner_user_id, team_id, agent_id],
+                |row| {
+                    Ok(TeamExecutionBinding {
+                        agent: AgentExecutionBinding {
+                            room_id: row.get(0)?,
+                            agent_id: row.get(1)?,
+                            name: row.get(2)?,
+                            role_prompt: row.get(3)?,
+                            model_config_id: row.get(4)?,
+                            thinking_level: row.get(5)?,
+                            profession_key: row.get(6)?,
+                            default_plugin_ids: parse_identifier_array(&row.get::<_, String>(7)?)
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                            default_skill_ids: parse_identifier_array(&row.get::<_, String>(8)?)
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        },
+                        project_id: row.get(9)?,
+                        team_name: row.get(10)?,
+                        team_goal: row.get(11)?,
+                        team_role: row.get(12)?,
+                        team_responsibility: row.get(13)?,
+                        is_project_manager: row.get::<_, i64>(14)? == 1,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|_| team_store_error())?
+            .ok_or_else(|| "Agent 不是当前团队的可执行活动成员。".to_owned())?;
+        validate_team_execution_binding(&binding)?;
+        Ok(binding)
+    }
+
     fn claim_project_team_delivery(
         &self,
         owner_user_id: &str,
@@ -1790,6 +1850,86 @@ pub(crate) async fn load_agent_conversation_activity(
     Ok(AgentConversationActivitySnapshot {
         room_id: binding.room_id,
         agent_id: binding.agent_id,
+        conversation_id,
+        conversation_version,
+        has_active_delivery: items
+            .iter()
+            .any(|item| matches!(item.delivery_status.as_str(), "pending" | "running")),
+        items,
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn load_agent_team_member_activity(
+    owner_user_id: String,
+    team_id: String,
+    agent_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+    manager: State<'_, HostManager>,
+) -> Result<AgentConversationActivitySnapshot, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
+    validate_agent_identifier(&agent_id).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let binding_owner = owner_user_id.clone();
+    let binding_team = team_id.clone();
+    let binding_agent = agent_id.clone();
+    let binding = tauri::async_runtime::spawn_blocking(move || {
+        store.load_project_team_execution_binding(&binding_owner, &binding_team, &binding_agent)
+    })
+    .await
+    .map_err(|_| "团队 Agent 执行身份读取任务异常退出。".to_owned())??;
+    let conversation_id = format!(
+        "agent-team-{}-{}",
+        binding.agent.room_id, binding.agent.agent_id
+    );
+    let host_result = manager
+        .execute_detailed(HostCommand::GetConversationContext(
+            GetConversationCommand {
+                owner_user_id: owner_user_id.clone(),
+                conversation_id: conversation_id.clone(),
+            },
+        ))
+        .await;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let activity_store = conversations.inner().clone();
+    let activity_owner = owner_user_id.clone();
+    let activity_binding = binding.agent.clone();
+    let (conversation_version, items) = match host_result {
+        Ok(HostResult::Conversation { conversation }) => {
+            validate_host_conversation(&conversation, &owner_user_id, &conversation_id)?;
+            let version = conversation.conversation.version;
+            let items = tauri::async_runtime::spawn_blocking(move || {
+                activity_store.reconcile_direct_activity(
+                    &activity_owner,
+                    &activity_binding,
+                    &conversation,
+                )
+            })
+            .await
+            .map_err(|_| "团队 Agent 运行动态读取任务异常退出。".to_owned())??;
+            (version, items)
+        }
+        Err(error) if error.code.as_deref() == Some("not_found") => {
+            let items = tauri::async_runtime::spawn_blocking(move || {
+                activity_store.list_direct_activity(&activity_owner, &activity_binding)
+            })
+            .await
+            .map_err(|_| "团队 Agent 运行动态读取任务异常退出。".to_owned())??;
+            (0, items)
+        }
+        Ok(_) => return Err("Local Agent Host 返回了错误的团队 Agent 会话响应。".into()),
+        Err(error) => return Err(error.message),
+    };
+    Ok(AgentConversationActivitySnapshot {
+        room_id: binding.agent.room_id,
+        agent_id: binding.agent.agent_id,
         conversation_id,
         conversation_version,
         has_active_delivery: items

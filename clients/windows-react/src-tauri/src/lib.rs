@@ -37,9 +37,9 @@ use access_control::load_access_control;
 use agent_conversation::{
     create_agent_team, dispatch_next_agent_team_delivery, invite_agent_to_team, list_agent_teams,
     load_agent_conversation_activity, load_agent_profile_activity, load_agent_team,
-    prepare_agent_conversation, queue_agent_team_message, remove_agent_from_team,
-    send_agent_conversation_draft, set_agent_team_default_agent, set_agent_team_project_manager,
-    update_agent_team_member, AgentConversationStore,
+    load_agent_team_member_activity, prepare_agent_conversation, queue_agent_team_message,
+    remove_agent_from_team, send_agent_conversation_draft, set_agent_team_default_agent,
+    set_agent_team_project_manager, update_agent_team_member, AgentConversationStore,
 };
 use agent_management::{
     agent_avatar_protocol, list_agent_profiles, load_agent_profile_editor,
@@ -285,6 +285,7 @@ pub fn run() {
             prepare_agent_conversation,
             load_agent_conversation_activity,
             load_agent_profile_activity,
+            load_agent_team_member_activity,
             send_agent_conversation_draft,
             load_agent_profile_editor_catalog,
             load_agent_profile_editor,
