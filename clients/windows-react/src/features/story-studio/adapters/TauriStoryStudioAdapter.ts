@@ -6,6 +6,9 @@ import {
   storyProjectPageSchema,
   storyProjectSchema,
   storyPlanningEventSchema,
+  storyPlanningHistoryPageSchema,
+  storyPlanningOutcomeSchema,
+  storyPlanningRunSchema,
   storyVideoGenerationOutcomeSchema,
 } from "../domain/storyStudio";
 import type { StoryPresentationScope, StoryStudioPort } from "../ports/StoryStudioPort";
@@ -86,12 +89,39 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
       targetIds: z.array(identifierSchema).max(200).parse(request.targetIds),
       userIdeas: safeText(2_000).parse(request.userIdeas),
     };
-    const value = z.object({
-      run: z.unknown(),
-      project: storyProjectSchema.nullable(),
-      stopReason: safeText(2_000).nullable(),
-    }).strip().parse(await invoke("start_story_planning", { input }));
+    const value = storyPlanningOutcomeSchema.parse(await invoke("start_story_planning", { input }));
     return value.project;
+  }
+
+  async loadPlanningHistory(request: Parameters<StoryStudioPort["loadPlanningHistory"]>[0]) {
+    const input = {
+      ...scope(request),
+      projectId: uuidSchema.parse(request.projectId),
+      after: request.after == null ? null : storyProjectCursorSchema.parse(request.after),
+      limit: request.limit == null ? null : z.number().int().min(1).max(200).parse(request.limit),
+    };
+    return storyPlanningHistoryPageSchema.parse(
+      await invoke("load_story_planning_history", { input }),
+    );
+  }
+
+  async resumePlanning(request: Parameters<StoryStudioPort["resumePlanning"]>[0]) {
+    const input = {
+      ...scope(request),
+      projectId: uuidSchema.parse(request.projectId),
+      runId: uuidSchema.parse(request.runId),
+    };
+    const value = storyPlanningOutcomeSchema.parse(await invoke("resume_story_planning", { input }));
+    return value.project;
+  }
+
+  async abandonPlanning(request: Parameters<StoryStudioPort["abandonPlanning"]>[0]) {
+    const input = {
+      ...scope(request),
+      projectId: uuidSchema.parse(request.projectId),
+      runId: uuidSchema.parse(request.runId),
+    };
+    return storyPlanningRunSchema.parse(await invoke("abandon_story_planning", { input }));
   }
 
   async generateAssetImage(request: Parameters<StoryStudioPort["generateAssetImage"]>[0]) {

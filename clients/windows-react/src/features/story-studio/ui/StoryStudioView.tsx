@@ -87,6 +87,9 @@ function ProjectWorkspace({ port, projectId }: { port: StoryStudioPort; projectI
   const dirty = source !== project.source || style !== project.style || ratio !== project.ratio;
   const planning = state.planningProgress[project.id] ?? null;
   const isPlanning = state.busy && planningIsActive(planning);
+  const recoverable = !state.busy
+    ? recoverablePlanningRun(state.planningRuns[project.id] ?? [], project.baseFingerprint)
+    : null;
   const save = () => state.saveSource(port, { source, style, ratio });
   const planOutline = async () => {
     if (dirty) await useStoryStudioStore.getState().saveSource(port, { source, style, ratio });
@@ -104,6 +107,7 @@ function ProjectWorkspace({ port, projectId }: { port: StoryStudioPort; projectI
           <span><strong>{project.segments.filter((segment) => segment.video).length}</strong>成片</span>
         </div>
       </header>
+      {recoverable && <PlanningRecoveryBanner port={port} run={recoverable} />}
       {project.segments.length === 0 ? (
         <div className="story-source-workspace">
           <section className="story-source-card">
@@ -236,6 +240,35 @@ function PlanningStatus({ progress }: { progress: StoryPlanningProgress }) {
       </div>
     </section>
   );
+}
+
+function PlanningRecoveryBanner({ port, run }: {
+  port: StoryStudioPort;
+  run: ReturnType<typeof useStoryStudioStore.getState>["planningRuns"][string][number];
+}) {
+  const state = useStoryStudioStore();
+  return (
+    <section className="story-planning-recovery">
+      <span aria-hidden="true">◷</span>
+      <div>
+        <strong>上次规划已中断，草稿已安全保存</strong>
+        <p>{run.stage === "outline" ? "剧情拆解" : "镜头细化"} · {run.draft.characters.length + run.draft.scenes.length + run.draft.props.length} 个素材 · {run.draft.segments.length} 个分段 · 已调用模型 {run.modelCalls} 次</p>
+        {run.stopReason && <small>{run.stopReason}</small>}
+      </div>
+      <button className="is-destructive" disabled={state.busy} onClick={() => void state.abandonPlanning(port, run.projectId, run.id)} type="button">放弃草稿</button>
+      <button disabled={state.busy} onClick={() => void state.resumePlanning(port, run.projectId, run.id)} type="button">继续规划</button>
+    </section>
+  );
+}
+
+function recoverablePlanningRun(
+  runs: ReturnType<typeof useStoryStudioStore.getState>["planningRuns"][string],
+  baseFingerprint: string | undefined,
+) {
+  if (!baseFingerprint) return null;
+  return runs.find((run) => !run.applied
+    && run.abandonedAtUnixMs == null
+    && run.baseProjectFingerprint === baseFingerprint) ?? null;
 }
 
 function planningActionLabel(progress: StoryPlanningProgress | null) {

@@ -193,19 +193,46 @@ export const storyVideoGenerationOutcomeSchema = z.object({
   terminal: z.boolean(),
 }).strict();
 
+export const storyPlanningRunSchema = z.object({
+  id: uuid,
+  ownerUserId: safeText(1_024).min(1),
+  projectId: uuid,
+  stage: z.enum(["outline", "refine"]),
+  targetIds: z.array(identifier).max(200),
+  baseProjectFingerprint: fingerprint,
+  draft: storyProjectSchema,
+  events: z.array(z.object({
+    id: uuid,
+    dateUnixMs: unixMilliseconds,
+    kind: safeText(1_024).min(1),
+    detail: safeText(1_000),
+    modelCalls: z.number().int().nonnegative().safe(),
+  }).strip()).max(100_000),
+  status: z.enum(["ready", "running", "paused", "completed", "failed", "needs_review", "limit_reached"]),
+  stopReason: safeText(2_000).nullable(),
+  modelCalls: z.number().int().nonnegative().safe(),
+  usesCloudMemory: z.boolean(),
+  applied: z.boolean(),
+  abandonedAtUnixMs: unixMilliseconds.nullable(),
+  updatedAtUnixMs: unixMilliseconds,
+}).strip();
+
+export const storyPlanningHistoryPageSchema = z.object({
+  runs: z.array(storyPlanningRunSchema).max(200),
+  nextCursor: storyProjectCursorSchema.nullable(),
+  unreadableCount: z.number().int().nonnegative().safe(),
+  recoveredProject: storyProjectSchema.nullable(),
+}).strict();
+
+export const storyPlanningOutcomeSchema = z.object({
+  run: storyPlanningRunSchema,
+  project: storyProjectSchema.nullable(),
+  stopReason: safeText(2_000).nullable(),
+}).strip();
+
 export const storyPlanningEventSchema = z.object({
   presentationId: uuid,
-  run: z.object({
-    id: uuid,
-    ownerUserId: safeText(1_024).min(1),
-    projectId: uuid,
-    stage: z.enum(["outline", "refine"]),
-    draft: storyProjectSchema,
-    status: z.enum(["ready", "running", "paused", "completed", "failed", "needs_review", "limit_reached"]),
-    stopReason: safeText(2_000).nullable(),
-    modelCalls: z.number().int().nonnegative().safe(),
-    updatedAtUnixMs: unixMilliseconds,
-  }).strip(),
+  run: storyPlanningRunSchema,
 }).strip();
 
 export type StoryProject = z.infer<typeof storyProjectSchema>;
@@ -213,6 +240,8 @@ export type StoryProjectCursor = z.infer<typeof storyProjectCursorSchema>;
 export type StoryProjectPage = z.infer<typeof storyProjectPageSchema>;
 export type StorySegment = z.infer<typeof storySegmentSchema>;
 export type StoryVideoGenerationOutcome = z.infer<typeof storyVideoGenerationOutcomeSchema>;
+export type StoryPlanningRun = z.infer<typeof storyPlanningRunSchema>;
+export type StoryPlanningHistoryPage = z.infer<typeof storyPlanningHistoryPageSchema>;
 export type StoryPlanningEvent = z.infer<typeof storyPlanningEventSchema>;
 
 export function storyConfirmedImage(collection: z.infer<typeof storyImageCollectionSchema>) {

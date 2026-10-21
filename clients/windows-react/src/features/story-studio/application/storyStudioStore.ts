@@ -1,7 +1,7 @@
 import { create, type StoreApi } from "zustand";
 import type { MediaStudioModel } from "../../media-studio/domain/mediaStudio";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
-import type { StoryPlanningEvent, StoryProject } from "../domain/storyStudio";
+import type { StoryPlanningEvent, StoryPlanningRun, StoryProject } from "../domain/storyStudio";
 import type { StoryStudioPort } from "../ports/StoryStudioPort";
 
 interface StoryVideoProgress {
@@ -30,6 +30,8 @@ interface StoryStudioState {
   error: string | null;
   unreadableCount: number;
   planningProgress: Record<string, StoryPlanningProgress>;
+  planningRuns: Record<string, StoryPlanningRun[]>;
+  planningHistoryUnreadable: Record<string, number>;
   videoProgress: Record<string, StoryVideoProgress>;
   activeMediaTarget: string | null;
   activate(storyPort: StoryStudioPort, mediaPort: MediaStudioPort, ownerUserId: string): Promise<void>;
@@ -48,6 +50,9 @@ interface StoryStudioState {
     ratio: string;
   }): Promise<void>;
   startPlanning(storyPort: StoryStudioPort, stage: "outline" | "refine", targetIds: string[], userIdeas: string): Promise<void>;
+  loadPlanningHistory(storyPort: StoryStudioPort, projectId: string): Promise<void>;
+  resumePlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
+  abandonPlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
   generateAssetImage(storyPort: StoryStudioPort, resourceId: string, userIdeas: string): Promise<void>;
   generateFrameImage(storyPort: StoryStudioPort, segmentId: string, frameRole: "first" | "last", referenceResourceIds: string[], userIdeas: string): Promise<void>;
   confirmLatestResources(storyPort: StoryStudioPort, resourceIds: string[]): Promise<void>;
@@ -75,6 +80,8 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
   error: null,
   unreadableCount: 0,
   planningProgress: {},
+  planningRuns: {},
+  planningHistoryUnreadable: {},
   videoProgress: {},
   activeMediaTarget: null,
 
@@ -94,6 +101,8 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       error: null,
       unreadableCount: 0,
       planningProgress: {},
+      planningRuns: {},
+      planningHistoryUnreadable: {},
       videoProgress: {},
       activeMediaTarget: null,
     });
@@ -111,6 +120,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
         loading: false,
         unreadableCount: page.unreadableCount,
       });
+      if (page.items[0]) void get().loadPlanningHistory(storyPort, page.items[0].id);
     } catch (error) {
       if (!isActive(get(), sequence, ownerUserId, presentationId)) return;
       set({ loading: false, error: errorMessage(error, "剧情项目暂时无法读取。") });
@@ -133,6 +143,8 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       error: null,
       unreadableCount: 0,
       planningProgress: {},
+      planningRuns: {},
+      planningHistoryUnreadable: {},
       videoProgress: {},
       activeMediaTarget: null,
     });
@@ -149,6 +161,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       const project = await storyPort.loadProject({ ...scope, projectId });
       if (!sameScope(get(), scope) || get().selectedProjectId !== projectId) return;
       set((state) => ({ projects: replaceProject(state.projects, project), loading: false }));
+      void get().loadPlanningHistory(storyPort, projectId);
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ loading: false, error: errorMessage(error, "剧情项目暂时无法打开。") });
@@ -229,6 +242,78 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ busy: false, error: errorMessage(error, "剧情规划没有完成。") });
+    } finally {
+      if (sameScope(get(), scope)) void get().loadPlanningHistory(storyPort, project.id);
+    }
+  },
+
+  async loadPlanningHistory(storyPort, projectId) {
+    const scope = activeScope(get());
+    if (!scope) return;
+    try {
+      const page = await storyPort.loadPlanningHistory({ ...scope, projectId, limit: 20 });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        projects: page.recoveredProject
+          ? replaceProject(state.projects, page.recoveredProject)
+          : state.projects,
+        planningRuns: { ...state.planningRuns, [projectId]: page.runs },
+        planningHistoryUnreadable: {
+          ...state.planningHistoryUnreadable,
+          [projectId]: page.unreadableCount,
+        },
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ error: errorMessage(error, "剧情规划历史暂时无法读取。") });
+    }
+  },
+
+  async resumePlanning(storyPort, projectId, runId) {
+    const scope = activeScope(get());
+    const run = get().planningRuns[projectId]?.find((value) => value.id === runId);
+    if (!scope || !run || get().busy) return;
+    set((state) => ({
+      busy: true,
+      error: null,
+      planningProgress: {
+        ...state.planningProgress,
+        [projectId]: planningProgressFromRun(run),
+      },
+    }));
+    try {
+      const project = await storyPort.resumePlanning({ ...scope, projectId, runId });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        projects: project ? replaceProject(state.projects, project) : state.projects,
+        busy: false,
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ busy: false, error: errorMessage(error, "剧情规划恢复失败。") });
+    } finally {
+      if (sameScope(get(), scope)) void get().loadPlanningHistory(storyPort, projectId);
+    }
+  },
+
+  async abandonPlanning(storyPort, projectId, runId) {
+    const scope = activeScope(get());
+    if (!scope || get().busy) return;
+    set({ busy: true, error: null });
+    try {
+      const run = await storyPort.abandonPlanning({ ...scope, projectId, runId });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        busy: false,
+        planningRuns: {
+          ...state.planningRuns,
+          [projectId]: replacePlanningRun(state.planningRuns[projectId] ?? [], run),
+        },
+        planningProgress: withoutKey(state.planningProgress, projectId),
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ busy: false, error: errorMessage(error, "剧情规划草稿无法放弃。") });
     }
   },
 
@@ -491,14 +576,18 @@ function installPlanningWatch(
 }
 
 function planningProgress(event: StoryPlanningEvent): StoryPlanningProgress {
+  return planningProgressFromRun(event.run);
+}
+
+function planningProgressFromRun(run: StoryPlanningRun): StoryPlanningProgress {
   return {
-    runId: event.run.id,
-    projectId: event.run.projectId,
-    stage: event.run.stage,
-    status: event.run.status,
-    stopReason: event.run.stopReason,
-    modelCalls: event.run.modelCalls,
-    updatedAtUnixMs: event.run.updatedAtUnixMs,
+    runId: run.id,
+    projectId: run.projectId,
+    stage: run.stage,
+    status: run.status,
+    stopReason: run.stopReason,
+    modelCalls: run.modelCalls,
+    updatedAtUnixMs: run.updatedAtUnixMs,
   };
 }
 
@@ -533,6 +622,11 @@ function isActive(
 
 function replaceProject(projects: StoryProject[], project: StoryProject) {
   return projects.map((value) => value.id === project.id ? project : value);
+}
+
+function replacePlanningRun(runs: StoryPlanningRun[], run: StoryPlanningRun) {
+  return [run, ...runs.filter((value) => value.id !== run.id)]
+    .sort((left, right) => right.updatedAtUnixMs - left.updatedAtUnixMs);
 }
 
 function withoutKey<T>(values: Record<string, T>, key: string) {

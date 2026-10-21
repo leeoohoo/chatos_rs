@@ -3,6 +3,8 @@ import type {
   StoryProjectCursor,
   StoryProjectPage,
   StoryPlanningEvent,
+  StoryPlanningHistoryPage,
+  StoryPlanningRun,
   StoryVideoGenerationOutcome,
 } from "../domain/storyStudio";
 
@@ -41,6 +43,19 @@ export interface StoryStudioPort {
     targetIds: string[];
     userIdeas: string;
   }): Promise<StoryProject | null>;
+  loadPlanningHistory(request: StoryPresentationScope & {
+    projectId: string;
+    after?: StoryProjectCursor | null;
+    limit?: number | null;
+  }): Promise<StoryPlanningHistoryPage>;
+  resumePlanning(request: StoryPresentationScope & {
+    projectId: string;
+    runId: string;
+  }): Promise<StoryProject | null>;
+  abandonPlanning(request: StoryPresentationScope & {
+    projectId: string;
+    runId: string;
+  }): Promise<StoryPlanningRun>;
   generateAssetImage(request: StoryPresentationScope & {
     projectId: string;
     baseFingerprint: string;

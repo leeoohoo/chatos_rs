@@ -67,13 +67,9 @@ describe("StoryStudioView", () => {
     act(() => planningListener?.({
       presentationId: usePresentationId(storyPort),
       run: {
-        id: "22222222-2222-4222-8222-222222222222",
-        ownerUserId: "alice",
-        projectId: canonical.id,
-        stage: "outline",
+        ...planningRun(),
         draft: { ...canonical, title: "不应提前应用的草稿" },
         status: "running",
-        stopReason: null,
         modelCalls: 3,
         updatedAtUnixMs: Date.now() + 1,
       },
@@ -87,6 +83,37 @@ describe("StoryStudioView", () => {
     view.unmount();
     expect(unlisten).toHaveBeenCalledOnce();
   });
+
+  it("offers the macOS recovery actions for a matching interrupted draft", async () => {
+    const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
+    const interrupted = {
+      ...planningRun(),
+      draft: { ...canonical, summary: "已经完成一部分剧情拆解" },
+      modelCalls: 8,
+      stopReason: "应用退出前已保存当前步骤。",
+    };
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      loadPlanningHistory: vi.fn(async () => ({
+        runs: [interrupted],
+        nextCursor: null,
+        unreadableCount: 0,
+        recoveredProject: null,
+      })),
+      resumePlanning: vi.fn(async () => canonical),
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+
+    expect(await screen.findByText("上次规划已中断，草稿已安全保存")).toBeVisible();
+    expect(screen.getByText("应用退出前已保存当前步骤。")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "继续规划" }));
+
+    await waitFor(() => expect(storyPort.resumePlanning).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUserId: "alice",
+      projectId: canonical.id,
+      runId: interrupted.id,
+    })));
+  });
 });
 
 function usePresentationId(storyPort: StoryStudioPort) {
@@ -97,6 +124,9 @@ function usePresentationId(storyPort: StoryStudioPort) {
 function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
   return {
     watchPlanning: vi.fn(async () => () => undefined),
+    loadPlanningHistory: vi.fn(async () => ({ runs: [], nextCursor: null, unreadableCount: 0, recoveredProject: null })),
+    resumePlanning: vi.fn(async () => project()),
+    abandonPlanning: vi.fn(async () => planningRun()),
     loadProjects: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadProject: vi.fn(async () => project()),
     createProject: vi.fn(async () => project()),
@@ -112,6 +142,26 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     archiveCompletedVideo: vi.fn(async () => project()),
     discardPresentation: vi.fn(async () => undefined),
     ...overrides,
+  };
+}
+
+function planningRun() {
+  return {
+    id: "22222222-2222-4222-8222-222222222222",
+    ownerUserId: "alice",
+    projectId: project().id,
+    stage: "outline" as const,
+    targetIds: [],
+    baseProjectFingerprint: "a".repeat(64),
+    draft: project(),
+    events: [],
+    status: "paused" as const,
+    stopReason: null,
+    modelCalls: 1,
+    usesCloudMemory: false,
+    applied: false,
+    abandonedAtUnixMs: null,
+    updatedAtUnixMs: 2,
   };
 }
 
