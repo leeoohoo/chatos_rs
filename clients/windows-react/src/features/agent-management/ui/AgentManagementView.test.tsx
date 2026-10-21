@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAgentManagementStore } from "../application/agentManagementStore";
 import { useAgentSkillManagementStore } from "../application/agentSkillManagementStore";
 import { useAgentTeamConversationStore } from "../application/agentTeamConversationStore";
+import { useAgentTeamRunStore } from "../application/agentTeamRunStore";
 import { useAgentTeamStore } from "../application/agentTeamStore";
 import {
   agentProfessionLabels,
@@ -24,6 +25,7 @@ describe("AgentManagementView", () => {
   beforeEach(() => useAgentSkillManagementStore.getState().reset());
   beforeEach(() => useAgentTeamStore.getState().reset());
   beforeEach(() => useAgentTeamConversationStore.getState().reset());
+  beforeEach(() => useAgentTeamRunStore.getState().reset());
   afterEach(cleanup);
 
   it("renders macOS profile card facts and enables profile editing", async () => {
@@ -407,6 +409,49 @@ describe("AgentManagementView", () => {
     expect(await screen.findByText("开始实现")).toBeVisible();
     expect(await screen.findByText("界面设计师 · 正在执行")).toBeVisible();
     expect(screen.getByLabelText("团队消息")).toHaveValue("");
+  });
+
+  it("shows native team Run history and filters it by Agent", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
+      name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
+      projectManagerAgentId: null, memberCount: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{ agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20 }],
+    };
+    const loadTeamRuns = vi.fn(async () => ({
+      teamId: team.id,
+      runs: [{
+        deliveryId: "delivery-1", messageId: "message-1", agentId: "agent-1",
+        lane: "manager" as const, triggerKind: "default_agent" as const,
+        deliveryStatus: "completed" as const, runStatus: "succeeded" as const,
+        turnId: "turn-1", runId: "run-team-1", responseMessageId: "answer-1", lastError: null,
+        createdAtUnixMs: 30, updatedAtUnixMs: 40,
+      }],
+    }));
+    const port = stubPort({
+      listTeams: vi.fn(async () => [team]), loadTeam: vi.fn(async () => detail), loadTeamRuns,
+    });
+    render(
+      <AgentManagementView
+        ownerUserId="owner-1"
+        port={port}
+        projects={[{ id: "project-1", title: "Alpha" }]}
+      />,
+    );
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "团队" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "运行" }));
+
+    await waitFor(() => expect(loadTeamRuns).toHaveBeenCalledWith("owner-1", team.id));
+    expect(await screen.findByRole("region", { name: "Agent 团队运行" })).toBeVisible();
+    expect(screen.getByText("默认 Agent · Run run-team-1")).toBeVisible();
+    expect(screen.getByText("已完成")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "界面设计师" }));
+    expect(screen.getByText("Run run-team-1", { exact: false })).toBeVisible();
   });
 
   it("selects an Agent and loads its existing private-chat activity without opening a conversation", async () => {

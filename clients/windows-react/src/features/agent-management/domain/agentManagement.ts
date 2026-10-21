@@ -544,6 +544,54 @@ export const dispatchedAgentTeamDeliverySchema = z.object({
   runId: z.string().trim().min(1).max(512),
 }).strict();
 
+export const agentTeamRunSummarySchema = z.object({
+  deliveryId: z.string().trim().min(1).max(512),
+  messageId: z.string().trim().min(1).max(512),
+  agentId: z.string().trim().min(1).max(512),
+  lane: z.enum(["manager", "executor"]),
+  triggerKind: z.enum(["mention", "default_agent", "agent_mention", "heartbeat", "todo", "todo_status"]),
+  deliveryStatus: z.enum(["pending", "running", "completed", "failed", "cancelled"]),
+  runStatus: z.enum(["ready", "running", "succeeded", "failed", "cancelled"]),
+  turnId: z.string().trim().min(1).max(512),
+  runId: z.string().trim().min(1).max(512),
+  responseMessageId: z.string().trim().min(1).max(512).nullable(),
+  lastError: z.string().max(2_000).nullable(),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  updatedAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((run, context) => {
+  const expectedRunStatus = {
+    pending: "ready",
+    running: "running",
+    completed: "succeeded",
+    failed: "failed",
+    cancelled: "cancelled",
+  }[run.deliveryStatus];
+  if (run.runStatus !== expectedRunStatus) {
+    context.addIssue({ code: "custom", message: "团队 Delivery 与 Run 状态不一致。", path: ["runStatus"] });
+  }
+  if ((run.lane === "executor") !== (run.triggerKind === "todo")) {
+    context.addIssue({ code: "custom", message: "团队 Run 执行通道与触发来源不一致。", path: ["lane"] });
+  }
+  if (run.updatedAtUnixMs < run.createdAtUnixMs) {
+    context.addIssue({ code: "custom", message: "团队 Run 更新时间不能早于创建时间。", path: ["updatedAtUnixMs"] });
+  }
+});
+
+export const agentTeamRunHistorySnapshotSchema = z.object({
+  teamId: z.string().uuid(),
+  runs: z.array(agentTeamRunSummarySchema).max(500),
+}).strict().superRefine((snapshot, context) => {
+  const identities = new Set<string>();
+  snapshot.runs.forEach((run, index) => {
+    for (const identity of [run.deliveryId, run.turnId, run.runId]) {
+      if (identities.has(identity)) {
+        context.addIssue({ code: "custom", message: "团队 Run 标识不能重复。", path: ["runs", index] });
+      }
+      identities.add(identity);
+    }
+  });
+});
+
 export interface CreateAgentTeamInput {
   projectId: string;
   name: string;
@@ -560,6 +608,8 @@ export type AgentTeamDetail = z.infer<typeof agentTeamDetailSchema>;
 export type AgentTeamConversationSnapshot = z.infer<typeof agentTeamConversationSnapshotSchema>;
 export type QueuedAgentTeamMessage = z.infer<typeof queuedAgentTeamMessageSchema>;
 export type DispatchedAgentTeamDelivery = z.infer<typeof dispatchedAgentTeamDeliverySchema>;
+export type AgentTeamRunSummary = z.infer<typeof agentTeamRunSummarySchema>;
+export type AgentTeamRunHistorySnapshot = z.infer<typeof agentTeamRunHistorySnapshotSchema>;
 
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",

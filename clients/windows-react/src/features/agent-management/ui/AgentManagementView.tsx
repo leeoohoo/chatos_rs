@@ -10,6 +10,7 @@ import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPor
 import { useAgentManagementStore } from "../application/agentManagementStore";
 import { type AgentTeamMemberMutation, useAgentTeamStore } from "../application/agentTeamStore";
 import { useAgentTeamConversationStore } from "../application/agentTeamConversationStore";
+import { useAgentTeamRunStore } from "../application/agentTeamRunStore";
 import {
   agentProfessionLabels,
   heartbeatIntervalLabel,
@@ -493,7 +494,7 @@ function AgentTeamCatalog({
   onRetry(): void;
   onSelect(teamId: string): void;
 }) {
-  const [workspaceSection, setWorkspaceSection] = useState<"members" | "conversation">("members");
+  const [workspaceSection, setWorkspaceSection] = useState<"members" | "conversation" | "runs">("members");
   useEffect(() => setWorkspaceSection("members"), [selectedTeamId]);
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.title])),
@@ -552,7 +553,7 @@ function AgentTeamCatalog({
           </div>
           {selectedTeamId && (
             <section
-              aria-label={workspaceSection === "members" ? "Agent 团队成员" : "Agent 团队聊天"}
+              aria-label={{ members: "Agent 团队成员", conversation: "Agent 团队聊天", runs: "Agent 团队运行" }[workspaceSection]}
               className={workspaceSection === "members"
                 ? "agent-team-members"
                 : "agent-team-members agent-team-members--conversation"}
@@ -560,17 +561,20 @@ function AgentTeamCatalog({
               <header>
                 <div>
                   <h3>{detail?.team.id === selectedTeamId
-                    ? `${detail.team.name} · ${workspaceSection === "members" ? "团队成员" : "团队聊天"}`
+                    ? `${detail.team.name} · ${{ members: "团队成员", conversation: "团队聊天", runs: "运行" }[workspaceSection]}`
                     : "正在读取团队空间"}</h3>
-                  <p>{workspaceSection === "members"
-                    ? "同一个 Agent 可以加入多个团队；角色和职责按当前团队隔离。"
-                    : "消息、路由与执行状态均来自本机原生事实。"}</p>
+                  <p>{{
+                    members: "同一个 Agent 可以加入多个团队；角色和职责按当前团队隔离。",
+                    conversation: "消息、路由与执行状态均来自本机原生事实。",
+                    runs: "按更新时间查看通讯与任务执行 Run。",
+                  }[workspaceSection]}</p>
                 </div>
                 <div>
                   {isDetailLoading && <span aria-label="正在读取团队成员" className="mini-spinner" />}
                   <div className="agent-team-members__segmented" aria-label="团队工作区">
                     <button aria-pressed={workspaceSection === "members"} onClick={() => setWorkspaceSection("members")} type="button">成员</button>
                     <button aria-pressed={workspaceSection === "conversation"} onClick={() => setWorkspaceSection("conversation")} type="button">聊天</button>
+                    <button aria-pressed={workspaceSection === "runs"} onClick={() => setWorkspaceSection("runs")} type="button">运行</button>
                   </div>
                   {workspaceSection === "members" && <button
                     disabled={!detail || detail.team.id !== selectedTeamId || isInviting
@@ -582,6 +586,13 @@ function AgentTeamCatalog({
               </header>
               {workspaceSection === "conversation" && detail?.team.id === selectedTeamId ? (
                 <AgentTeamConversationView
+                  detail={detail}
+                  ownerUserId={ownerUserId}
+                  port={port}
+                  profiles={profiles}
+                />
+              ) : workspaceSection === "runs" && detail?.team.id === selectedTeamId ? (
+                <AgentTeamRunsView
                   detail={detail}
                   ownerUserId={ownerUserId}
                   port={port}
@@ -621,6 +632,127 @@ function AgentTeamCatalog({
       )}
     </div>
   );
+}
+
+function AgentTeamRunsView({
+  detail,
+  ownerUserId,
+  port,
+  profiles,
+}: {
+  detail: AgentTeamDetail;
+  ownerUserId: string;
+  port: AgentManagementPort;
+  profiles: AgentProfileSummary[];
+}) {
+  const snapshot = useAgentTeamRunStore((state) => state.snapshot);
+  const isLoading = useAgentTeamRunStore((state) => state.isLoading);
+  const error = useAgentTeamRunStore((state) => state.error);
+  const activate = useAgentTeamRunStore((state) => state.activate);
+  const refresh = useAgentTeamRunStore((state) => state.refresh);
+  const reset = useAgentTeamRunStore((state) => state.reset);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const visibleSnapshot = snapshot?.teamId === detail.team.id ? snapshot : null;
+  const hasActiveRun = visibleSnapshot?.runs.some(
+    (run) => run.deliveryStatus === "pending" || run.deliveryStatus === "running",
+  ) ?? false;
+  const visibleRuns = selectedAgentId
+    ? visibleSnapshot?.runs.filter((run) => run.agentId === selectedAgentId) ?? []
+    : visibleSnapshot?.runs ?? [];
+  const profileNames = useMemo(
+    () => new Map(profiles.map((profile) => [profile.id, profile.name])),
+    [profiles],
+  );
+
+  useEffect(() => {
+    if (port.loadTeamRuns) void activate(port, ownerUserId, detail.team.id);
+    else reset();
+    return reset;
+  }, [activate, detail.team.id, ownerUserId, port, reset]);
+
+  useEffect(() => {
+    if (!port.loadTeamRuns || !hasActiveRun) return undefined;
+    const timer = window.setInterval(() => void refresh(port), 1_000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveRun, port, refresh]);
+
+  if (!port.loadTeamRuns) {
+    return (
+      <div className="agent-team-runs__state is-error" role="alert">
+        <strong>当前版本尚未连接团队运行记录</strong>
+        <span>请更新本机客户端后重试。</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="agent-team-runs">
+      <div className="agent-team-runs__filters" aria-label="按 Agent 筛选运行记录">
+        <button aria-pressed={selectedAgentId == null} onClick={() => setSelectedAgentId(null)} type="button">全部</button>
+        {detail.members.map((member) => (
+          <button
+            aria-pressed={selectedAgentId === member.agentId}
+            key={member.agentId}
+            onClick={() => setSelectedAgentId(member.agentId)}
+            type="button"
+          >{profileNames.get(member.agentId) ?? member.role}</button>
+        ))}
+        <button aria-label="刷新团队运行记录" disabled={isLoading} onClick={() => void refresh(port)} type="button">↻</button>
+      </div>
+      {error && (
+        <div className="agent-team-conversation__error" role="alert">
+          <span>{error}</span>
+          <button onClick={() => void refresh(port)} type="button">重试</button>
+        </div>
+      )}
+      <div className="agent-team-runs__list">
+        {isLoading && !visibleSnapshot ? (
+          <div className="agent-team-runs__state"><span className="mini-spinner" />正在读取运行历史…</div>
+        ) : visibleRuns.length === 0 ? (
+          <div className="agent-team-runs__state">
+            <strong>{selectedAgentId ? "这个 Agent 还没有运行记录" : "还没有运行记录"}</strong>
+            <span>Agent 被唤醒后，通讯与任务执行 Run 会显示在这里。</span>
+          </div>
+        ) : visibleRuns.map((run) => (
+          <article key={run.runId}>
+            <header>
+              <strong>{profileNames.get(run.agentId) ?? run.agentId}</strong>
+              <span className={`agent-team-runs__lane is-${run.lane}`}>
+                {run.lane === "manager" ? "通讯" : "任务执行"}
+              </span>
+              <em className={`is-${run.deliveryStatus}`}>{teamRunStatusLabel(run.deliveryStatus)}</em>
+            </header>
+            <p>{teamRunTriggerLabel(run.triggerKind)} · Run {run.runId}</p>
+            <footer>
+              <time>{formatTeamMessageTime(run.updatedAtUnixMs)}</time>
+              {run.lastError && <span title={run.lastError}>{run.lastError}</span>}
+            </footer>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function teamRunStatusLabel(status: "pending" | "running" | "completed" | "failed" | "cancelled") {
+  return {
+    pending: "等待执行",
+    running: "正在运行",
+    completed: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+  }[status];
+}
+
+function teamRunTriggerLabel(trigger: "mention" | "default_agent" | "agent_mention" | "heartbeat" | "todo" | "todo_status") {
+  return {
+    mention: "Human 点名",
+    default_agent: "默认 Agent",
+    agent_mention: "Agent 点名",
+    heartbeat: "主动巡检",
+    todo: "团队任务",
+    todo_status: "任务状态",
+  }[trigger];
 }
 
 function AgentTeamConversationView({

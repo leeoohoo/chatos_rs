@@ -13,6 +13,7 @@ import {
   agentTeamMemberActivitySnapshotSchema,
   queuedAgentTeamMessageSchema,
   dispatchedAgentTeamDeliverySchema,
+  agentTeamRunHistorySnapshotSchema,
   agentTeamSummarySchema,
   preparedAgentConversationSchema,
   type AgentProfileMutationInput,
@@ -201,6 +202,12 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async loadTeamMemberActivity(ownerUserId: string, teamId: string, agentId: string) {
     return agentTeamMemberActivitySnapshotSchema.parse(
       await invoke("load_agent_team_member_activity", { ownerUserId, teamId, agentId }),
+    );
+  }
+
+  async loadTeamRuns(ownerUserId: string, teamId: string) {
+    return agentTeamRunHistorySnapshotSchema.parse(
+      await invoke("load_agent_team_runs", { ownerUserId, teamId }),
     );
   }
 

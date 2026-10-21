@@ -13,6 +13,7 @@ import type {
   AgentTeamMemberActivitySnapshot,
   QueuedAgentTeamMessage,
   DispatchedAgentTeamDelivery,
+  AgentTeamRunHistorySnapshot,
   CreateAgentTeamInput,
   UpdateAgentTeamMemberInput,
   PreparedAgentConversation,
@@ -74,6 +75,7 @@ export interface AgentManagementPort {
     teamId: string,
     agentId: string,
   ): Promise<AgentTeamMemberActivitySnapshot>;
+  loadTeamRuns?(ownerUserId: string, teamId: string): Promise<AgentTeamRunHistorySnapshot>;
   sendConversationDraft?(input: {
     ownerUserId: string;
     roomId: string;

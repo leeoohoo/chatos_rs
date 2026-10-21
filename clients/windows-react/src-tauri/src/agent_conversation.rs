@@ -407,6 +407,31 @@ pub(crate) struct AgentTeamConversationSnapshot {
     deliveries: Vec<AgentTeamDeliverySummary>,
 }
 
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamRunSummary {
+    delivery_id: String,
+    message_id: String,
+    agent_id: String,
+    lane: String,
+    trigger_kind: String,
+    delivery_status: String,
+    run_status: String,
+    turn_id: String,
+    run_id: String,
+    response_message_id: Option<String>,
+    last_error: Option<String>,
+    created_at_unix_ms: i64,
+    updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamRunHistorySnapshot {
+    team_id: String,
+    runs: Vec<AgentTeamRunSummary>,
+}
+
 impl AgentConversationStore {
     pub(crate) fn new(app_data_directory: PathBuf) -> Result<Self, String> {
         let connector = confined_connector_directory(&app_data_directory)?;
@@ -1392,6 +1417,71 @@ impl AgentConversationStore {
         })
     }
 
+    fn load_project_team_runs(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+    ) -> Result<AgentTeamRunHistorySnapshot, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM project_agent_rooms WHERE owner_user_id = ?1 \
+                 AND id = ?2 AND status = 'active' AND conversation_kind = 'project_team')",
+                params![owner_user_id, team_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_store_error())?;
+        if !exists {
+            return Err("Agent 团队不存在或已停用。".into());
+        }
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT delivery.id, delivery.message_id, delivery.target_agent_id,
+                       CASE WHEN delivery.trigger_kind = 'todo' THEN 'executor' ELSE 'manager' END,
+                       delivery.trigger_kind, delivery.status, run.status, run.turn_id,
+                       run.run_id, delivery.response_message_id, delivery.last_error,
+                       delivery.created_at_unix_ms, run.updated_at_unix_ms
+                FROM project_agent_deliveries delivery
+                JOIN windows_agent_delivery_runs run
+                  ON run.owner_user_id = delivery.owner_user_id
+                 AND run.delivery_id = delivery.id
+                WHERE delivery.owner_user_id = ?1 AND delivery.room_id = ?2
+                ORDER BY run.updated_at_unix_ms DESC, run.run_id DESC
+                LIMIT 500
+                "#,
+            )
+            .map_err(|_| team_store_error())?;
+        let rows = statement
+            .query_map(params![owner_user_id, team_id], |row| {
+                Ok(AgentTeamRunSummary {
+                    delivery_id: row.get(0)?,
+                    message_id: row.get(1)?,
+                    agent_id: row.get(2)?,
+                    lane: row.get(3)?,
+                    trigger_kind: row.get(4)?,
+                    delivery_status: row.get(5)?,
+                    run_status: row.get(6)?,
+                    turn_id: row.get(7)?,
+                    run_id: row.get(8)?,
+                    response_message_id: row.get(9)?,
+                    last_error: row.get(10)?,
+                    created_at_unix_ms: row.get(11)?,
+                    updated_at_unix_ms: row.get(12)?,
+                })
+            })
+            .map_err(|_| team_store_error())?;
+        let runs = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| team_store_error())?;
+        Ok(AgentTeamRunHistorySnapshot {
+            team_id: team_id.to_owned(),
+            runs,
+        })
+    }
+
     fn next_project_team_delivery(
         &self,
         owner_user_id: &str,
@@ -2307,6 +2397,31 @@ pub(crate) async fn load_agent_team_conversation(
     })
     .await
     .map_err(|_| "Agent 团队消息读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) async fn load_agent_team_runs(
+    owner_user_id: String,
+    team_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentTeamRunHistorySnapshot, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = owner_user_id.clone();
+    let team = team_id.clone();
+    let snapshot =
+        tauri::async_runtime::spawn_blocking(move || store.load_project_team_runs(&owner, &team))
+            .await
+            .map_err(|_| "Agent 团队运行记录读取任务异常退出。".to_owned())??;
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
@@ -3679,6 +3794,21 @@ mod tests {
             state,
             ("failed".into(), "failed".into(), "host unavailable".into())
         );
+        drop(connection);
+        let history = store.load_project_team_runs("alice", &created.id).unwrap();
+        assert_eq!(history.team_id, created.id);
+        assert_eq!(history.runs.len(), 1);
+        assert_eq!(history.runs[0].delivery_id, pending.delivery_id);
+        assert_eq!(history.runs[0].agent_id, "agent-1");
+        assert_eq!(history.runs[0].lane, "manager");
+        assert_eq!(history.runs[0].trigger_kind, "default_agent");
+        assert_eq!(history.runs[0].delivery_status, "failed");
+        assert_eq!(history.runs[0].run_status, "failed");
+        assert_eq!(
+            history.runs[0].last_error.as_deref(),
+            Some("host unavailable")
+        );
+        assert!(store.load_project_team_runs("bob", &created.id).is_err());
     }
 
     #[test]

@@ -267,6 +267,20 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       ownerUserId: "owner-1", teamId: team.id, agentId: "agent-1",
     });
 
+    vi.mocked(invoke).mockResolvedValueOnce({
+      teamId: team.id,
+      runs: [{
+        deliveryId: "delivery-1", messageId: "message-1", agentId: "agent-1",
+        lane: "manager", triggerKind: "default_agent", deliveryStatus: "running", runStatus: "running",
+        turnId: "turn-1", runId: "run-1", responseMessageId: null, lastError: null,
+        createdAtUnixMs: 30, updatedAtUnixMs: 40,
+      }],
+    });
+    await adapter.loadTeamRuns("owner-1", team.id);
+    expect(invoke).toHaveBeenLastCalledWith("load_agent_team_runs", {
+      ownerUserId: "owner-1", teamId: team.id,
+    });
+
     const input = {
       ownerUserId: "owner-1",
       roomId,
