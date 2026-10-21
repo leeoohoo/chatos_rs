@@ -310,6 +310,16 @@ async fn agent_catalog_hides_unresolvable_secret_or_argument_bindings() {
 #[tokio::test]
 async fn agent_runtime_resolves_only_the_exact_frozen_installation() {
     let fixture = CatalogFixture::new();
+    let skill = fixture.installation.join("skills").join("plugin-helper");
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: plugin-helper\ndescription: Plugin helper\n---\nFollow the Plugin rules.\n",
+    )
+    .unwrap();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["skills"] = json!(["./skills/plugin-helper"]);
+    fixture.write_manifest(manifest);
     let mut record = fixture.record();
     record.spec.args = vec!["mcp".into()];
     let expected = frozen_agent_option(&record);
@@ -325,12 +335,13 @@ async fn agent_runtime_resolves_only_the_exact_frozen_installation() {
     assert_eq!(resolved.executable, fixture.executable);
     assert_eq!(resolved.args, ["mcp"]);
     assert!(resolved.environment.is_empty());
+    assert_eq!(resolved.skill_snapshot.len(), 1);
     assert_eq!(client.remaining(), 0);
 }
 
 #[tokio::test]
 async fn agent_runtime_rejects_component_release_or_manifest_drift() {
-    for drift in ["component", "release", "manifest"] {
+    for drift in ["component", "release", "manifest", "skill"] {
         let fixture = CatalogFixture::new();
         let mut record = fixture.record();
         record.spec.args = vec!["mcp".into()];
@@ -341,6 +352,11 @@ async fn agent_runtime_rejects_component_release_or_manifest_drift() {
             "manifest" => {
                 let mut manifest = CatalogFixture::valid_manifest();
                 manifest["version"] = json!("2.0.0");
+                fixture.write_manifest(manifest);
+            }
+            "skill" => {
+                let mut manifest = CatalogFixture::valid_manifest();
+                manifest["skills"] = json!(["./skills/missing"]);
                 fixture.write_manifest(manifest);
             }
             _ => unreachable!(),

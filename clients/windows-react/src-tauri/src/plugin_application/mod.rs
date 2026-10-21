@@ -14,7 +14,9 @@ use std::{
 use tauri::State;
 
 mod runtime;
-use crate::agent_plugin_runtime::AgentPluginRuntime;
+use crate::agent_plugin_runtime::{
+    load_agent_plugin_skill_snapshot, AgentPluginRuntime, AgentPluginSkillSnapshot,
+};
 use runtime::{
     PluginApplicationBridgeRequest, PluginApplicationLaunchRequest, PluginApplicationRuntime,
     PresentedPluginApplicationBridgeResponse, PresentedPluginApplicationLaunch,
@@ -92,6 +94,11 @@ impl PluginApplicationManager {
         }
         let plugin_root = confined_plugin_root(&self.plugin_root)?;
         let (installation_root, manifest) = load_manifest(&plugin_root, &record)?;
+        let skill_snapshot = load_agent_plugin_skill_snapshot(
+            &installation_root,
+            &manifest.name,
+            manifest.skills.iter().map(PathReference::path),
+        )?;
         let projected = project_agent_plugin(&record, &manifest)?;
         if projected.installation_id != expected.installation_id
             || projected.plugin_id != expected.plugin_id
@@ -133,6 +140,7 @@ impl PluginApplicationManager {
             working_directory,
             environment: server.env.clone(),
             allowed_tools: record.spec.allowed_tools,
+            skill_snapshot,
         })
     }
 
@@ -173,9 +181,18 @@ impl PluginApplicationManager {
             if !record.spec.environment_secret_refs.is_empty() {
                 continue;
             }
-            let Ok((_, manifest)) = load_manifest(&plugin_root, &record) else {
+            let Ok((installation_root, manifest)) = load_manifest(&plugin_root, &record) else {
                 continue;
             };
+            if load_agent_plugin_skill_snapshot(
+                &installation_root,
+                &manifest.name,
+                manifest.skills.iter().map(PathReference::path),
+            )
+            .is_err()
+            {
+                continue;
+            }
             let Ok(option) = project_agent_plugin(&record, &manifest) else {
                 continue;
             };
@@ -342,6 +359,7 @@ pub(crate) struct ResolvedAgentPluginExecution {
     pub(crate) working_directory: Option<PathBuf>,
     pub(crate) environment: BTreeMap<String, String>,
     pub(crate) allowed_tools: Option<Vec<String>>,
+    pub(crate) skill_snapshot: AgentPluginSkillSnapshot,
 }
 
 impl TrustedAgentPluginOption {
@@ -377,6 +395,8 @@ struct PluginManifest {
     version: String,
     #[serde(default)]
     description: String,
+    #[serde(default)]
+    skills: Vec<PathReference>,
     #[serde(default)]
     mcp_servers: BTreeMap<String, PluginMcpServer>,
     #[serde(default)]
