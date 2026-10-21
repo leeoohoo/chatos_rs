@@ -34,7 +34,9 @@ mod tool_approval;
 mod workspace_index;
 
 use access_control::load_access_control;
-use agent_conversation::{prepare_agent_conversation, AgentConversationStore};
+use agent_conversation::{
+    prepare_agent_conversation, send_agent_conversation_draft, AgentConversationStore,
+};
 use agent_management::{
     agent_avatar_protocol, list_agent_profiles, load_agent_profile_editor,
     load_agent_profile_editor_catalog, save_agent_profile, AgentProfileStore,
@@ -267,6 +269,7 @@ pub fn run() {
             list_local_projects,
             list_agent_profiles,
             prepare_agent_conversation,
+            send_agent_conversation_draft,
             load_agent_profile_editor_catalog,
             load_agent_profile_editor,
             save_agent_profile,

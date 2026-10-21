@@ -139,6 +139,11 @@ impl LocalAgentRuntime {
         let now = self.now()?;
         let explicit_capability_selection =
             normalized_explicit_capability_selection(&command.message_metadata)?;
+        let agent_execution_context = normalized_agent_execution_context(
+            &command.message_metadata,
+            &command.conversation_id,
+            conversation.conversation.resource.is_none(),
+        )?;
         let mut input = json!({
             "conversation_id": &command.conversation_id,
             "turn_id": &command.turn_id,
@@ -157,6 +162,12 @@ impl LocalAgentRuntime {
                 .as_object_mut()
                 .expect("conversation Run input is an object")
                 .insert("explicit_capability_selection".to_string(), selection);
+        }
+        if let Some(context) = agent_execution_context {
+            input
+                .as_object_mut()
+                .expect("conversation Run input is an object")
+                .insert("agent_execution_context".to_string(), context);
         }
         let run = LocalAgentRunRecord {
             run_id: command.run_id.clone(),
@@ -226,6 +237,152 @@ impl LocalAgentRuntime {
             .cancel_conversation_turn(idempotency, &command, &new_event_id(), self.now()?)
             .await?)
     }
+}
+
+fn normalized_agent_execution_context(
+    metadata: &serde_json::Value,
+    conversation_id: &str,
+    conversation_is_unbound: bool,
+) -> Result<Option<serde_json::Value>, LocalAgentRuntimeError> {
+    let Some(context) = metadata.get("agent_execution_context") else {
+        return Ok(None);
+    };
+    if metadata.get("source").and_then(serde_json::Value::as_str) != Some("native_agent_direct") {
+        return Err(invalid_agent_context("source must be native_agent_direct"));
+    }
+    if !conversation_is_unbound {
+        return Err(invalid_agent_context(
+            "Agent direct conversations must not use Contact or Project resource bindings",
+        ));
+    }
+    let values = context
+        .as_object()
+        .ok_or_else(|| invalid_agent_context("context must be an object"))?;
+    const KEYS: [&str; 12] = [
+        "schema_version",
+        "room_id",
+        "agent_id",
+        "agent_name",
+        "role_prompt",
+        "profession_key",
+        "profession_label",
+        "profession_skill_ref",
+        "profession_skill_sha256",
+        "profession_skill_markdown",
+        "default_plugin_ids",
+        "default_skill_ids",
+    ];
+    if values.len() != KEYS.len() || values.keys().any(|key| !KEYS.contains(&key.as_str())) {
+        return Err(invalid_agent_context(
+            "context fields do not match schema version 1",
+        ));
+    }
+    if values
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+    {
+        return Err(invalid_agent_context("schema_version must be 1"));
+    }
+    let room_id = agent_context_string(values, "room_id", 512, true)?;
+    let expected_conversation_id = format!("agent-direct-{room_id}");
+    if conversation_id != expected_conversation_id {
+        return Err(invalid_agent_context(
+            "room_id does not match the Host conversation identity",
+        ));
+    }
+    let agent_id = agent_context_string(values, "agent_id", 512, true)?;
+    let agent_name = agent_context_string(values, "agent_name", 120, false)?;
+    let role_prompt = agent_context_string(values, "role_prompt", 32_000, false)?;
+    let profession_key = agent_context_string(values, "profession_key", 512, true)?;
+    let profession_label = agent_context_string(values, "profession_label", 200, false)?;
+    let profession_skill_ref = agent_context_string(values, "profession_skill_ref", 700, true)?;
+    let profession_skill_sha256 =
+        agent_context_string(values, "profession_skill_sha256", 64, true)?;
+    if profession_skill_sha256.len() != 64
+        || !profession_skill_sha256
+            .bytes()
+            .all(|value| value.is_ascii_digit() || (b'a'..=b'f').contains(&value))
+    {
+        return Err(invalid_agent_context(
+            "profession_skill_sha256 must be lowercase SHA-256",
+        ));
+    }
+    let profession_skill_markdown =
+        agent_context_string(values, "profession_skill_markdown", 500_000, false)?;
+    let default_plugin_ids = agent_context_identifiers(values, "default_plugin_ids")?;
+    let default_skill_ids = agent_context_identifiers(values, "default_skill_ids")?;
+    Ok(Some(json!({
+        "schema_version": 1,
+        "room_id": room_id,
+        "agent_id": agent_id,
+        "agent_name": agent_name,
+        "role_prompt": role_prompt,
+        "profession_key": profession_key,
+        "profession_label": profession_label,
+        "profession_skill_ref": profession_skill_ref,
+        "profession_skill_sha256": profession_skill_sha256,
+        "profession_skill_markdown": profession_skill_markdown,
+        "default_plugin_ids": default_plugin_ids,
+        "default_skill_ids": default_skill_ids,
+    })))
+}
+
+fn agent_context_string<'a>(
+    values: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    maximum: usize,
+    identifier: bool,
+) -> Result<&'a str, LocalAgentRuntimeError> {
+    let value = values
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| invalid_agent_context(&format!("{field} must be a string")))?;
+    let valid = !value.is_empty()
+        && value.trim() == value
+        && value.chars().count() <= maximum
+        && !value.contains('\0')
+        && (!identifier
+            || value
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "-_.:|".contains(character)));
+    if !valid {
+        return Err(invalid_agent_context(&format!("{field} is invalid")));
+    }
+    Ok(value)
+}
+
+fn agent_context_identifiers<'a>(
+    values: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<Vec<&'a str>, LocalAgentRuntimeError> {
+    let items = values
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .filter(|items| items.len() <= 100)
+        .ok_or_else(|| invalid_agent_context(&format!("{field} must be an array")))?;
+    let mut unique = std::collections::HashSet::new();
+    let mut result = Vec::with_capacity(items.len());
+    for item in items {
+        let value = item
+            .as_str()
+            .ok_or_else(|| invalid_agent_context(&format!("{field} must contain strings")))?;
+        let valid = !value.is_empty()
+            && value.trim() == value
+            && value.chars().count() <= 512
+            && !value.chars().any(char::is_control);
+        if !valid || !unique.insert(value) {
+            return Err(invalid_agent_context(&format!(
+                "{field} contains an invalid value"
+            )));
+        }
+        result.push(value);
+    }
+    Ok(result)
+}
+
+fn invalid_agent_context(detail: &str) -> LocalAgentRuntimeError {
+    LocalAgentRuntimeError::InvalidRequest(format!("invalid Agent execution context: {detail}"))
 }
 
 fn normalized_explicit_capability_selection(
@@ -370,6 +527,58 @@ mod tests {
             capability_policy_revision: "policy-1".to_string(),
             max_iterations: 8,
         }
+    }
+
+    fn agent_context() -> serde_json::Value {
+        json!({
+            "source": "native_agent_direct",
+            "agent_execution_context": {
+                "schema_version": 1,
+                "room_id": "room-1",
+                "agent_id": "agent-1",
+                "agent_name": "工程 Agent",
+                "role_prompt": "负责工程实现\n保持证据可追踪。",
+                "profession_key": "software_engineer",
+                "profession_label": "软件工程师",
+                "profession_skill_ref": "AS-profession-software_engineer-123456789abc",
+                "profession_skill_sha256": "a".repeat(64),
+                "profession_skill_markdown": "# 工作流\n先核实，再实现。",
+                "default_plugin_ids": [],
+                "default_skill_ids": ["local.project.list"],
+            }
+        })
+    }
+
+    #[test]
+    fn agent_context_is_strictly_bound_to_an_unbound_direct_conversation() {
+        let normalized =
+            normalized_agent_execution_context(&agent_context(), "agent-direct-room-1", true)
+                .unwrap()
+                .unwrap();
+        assert_eq!(normalized["agent_id"], "agent-1");
+        assert_eq!(normalized["profession_key"], "software_engineer");
+        assert!(
+            normalized_agent_execution_context(&agent_context(), "conversation-1", true,).is_err()
+        );
+        assert!(
+            normalized_agent_execution_context(&agent_context(), "agent-direct-room-1", false,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn agent_context_rejects_unknown_fields_and_bad_skill_hashes() {
+        let mut unknown = agent_context();
+        unknown["agent_execution_context"]["secret_path"] = json!("/tmp/private");
+        assert!(
+            normalized_agent_execution_context(&unknown, "agent-direct-room-1", true,).is_err()
+        );
+
+        let mut bad_hash = agent_context();
+        bad_hash["agent_execution_context"]["profession_skill_sha256"] = json!("ABC");
+        assert!(
+            normalized_agent_execution_context(&bad_hash, "agent-direct-room-1", true,).is_err()
+        );
     }
 
     #[tokio::test]

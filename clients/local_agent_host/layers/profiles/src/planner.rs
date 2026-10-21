@@ -10,13 +10,13 @@ use std::sync::Arc;
 
 use crate::planner_support::{
     apply_run_thinking_level, completed_async_task_handoff, completed_task_outcome_report,
-    durable_step_input, main_chat_scoped_tools, merge_instructions, merge_local_tools,
+    durable_step_input, main_chat_scoped_tools, merge_instructions, merge_local_tools, tool_name,
     validate_unique_tool_names,
 };
 use crate::planner_tools::task_scoped_tools;
 
 #[cfg(test)]
-use crate::planner_support::{requirement_survey_output_item, tool_name};
+use crate::planner_support::requirement_survey_output_item;
 
 pub const MAIN_CHAT_PROFILE_KEY: &str = "main_chat";
 pub const TASK_EXECUTION_PROFILE_KEY: &str = "task_execution";
@@ -40,6 +40,72 @@ fn runtime_clock_context() -> Value {
 }
 
 const TASK_EXECUTION_WORKSPACE_INSTRUCTIONS: &str = "[Local Workspace Boundary]\nWhen local project tools are available, path `.` is the authoritative root currently bound to this conversation. Treat the entries returned by `list_dir` for `.` as the root contents. Never replace that root with a child directory merely because its name appears to match the task or project; descend into a child only when the user's request requires inspecting that child, and keep root-relative paths and the distinction between the bound root and nested directories explicit in the final answer.";
+
+const AGENT_PROJECT_PERMISSION: &str = "local.project.list";
+const LEGACY_AGENT_PROJECT_PERMISSION: &str = "builtin.project-steward";
+const AGENT_TASK_TOOLS: [&str; 8] = [
+    "list_tasks",
+    "get_task",
+    "create_task",
+    "create_tasks_with_prerequisites",
+    "cancel_task",
+    "wait_for_task_completion",
+    "get_task_dependency_graph",
+    "resolve_task_followup",
+];
+
+fn agent_direct_instructions(input: &Value) -> Result<Option<String>, String> {
+    let Some(context) = input.get("agent_execution_context") else {
+        return Ok(None);
+    };
+    let required = |field: &str| {
+        context
+            .get(field)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("Agent execution context is missing {field}"))
+    };
+    let agent_name = required("agent_name")?;
+    let agent_id = required("agent_id")?;
+    let room_id = required("room_id")?;
+    let role_prompt = required("role_prompt")?;
+    let profession_key = required("profession_key")?;
+    let profession_label = required("profession_label")?;
+    let skill_ref = required("profession_skill_ref")?;
+    let skill_sha256 = required("profession_skill_sha256")?;
+    let skill_markdown = required("profession_skill_markdown")?;
+    let permissions = context
+        .get("default_skill_ids")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Agent execution context is missing default_skill_ids".to_string())?;
+    let plugins = context
+        .get("default_plugin_ids")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Agent execution context is missing default_plugin_ids".to_string())?;
+    Ok(Some(format!(
+        "[Bound ChatOS Agent Identity]\nAgent name: {agent_name}\nAgent id: {agent_id}\nDirect room id: {room_id}\nProfession: {profession_label} ({profession_key})\nProfession Skill snapshot: {skill_ref}\nProfession Skill SHA-256: {skill_sha256}\nBound permission ids: {}\nBound plugin ids: {}\n\nIdentity and authority rules:\n- You are the bound Agent above, not the default Main Chat assistant. Keep this identity for the entire Run.\n- The native client selected your model and thinking level from the persisted Agent profile. Never claim a different model or identity.\n- Permission ids and plugin ids are frozen data, not authority by themselves. Only tools actually present in this Run may be used.\n- Do not claim access to a project, staff management, a Plugin, or a side effect unless both the bound permission and an actual tool allow it.\n- Answer the Human in this private conversation. Do not invent another Agent or route the message through a Contact.\n\n[Agent role prompt]\n{role_prompt}\n\n[Bound profession Skill]\n{skill_markdown}",
+        Value::Array(permissions.clone()),
+        Value::Array(plugins.clone()),
+    )))
+}
+
+fn scope_agent_direct_tools(mut tools: Vec<Value>, input: &Value) -> Vec<Value> {
+    let Some(context) = input.get("agent_execution_context") else {
+        return tools;
+    };
+    let permissions = context
+        .get("default_skill_ids")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    let can_access_projects = permissions.contains(AGENT_PROJECT_PERMISSION)
+        || permissions.contains(LEGACY_AGENT_PROJECT_PERMISSION);
+    if !can_access_projects {
+        tools.retain(|tool| tool_name(tool).is_none_or(|name| !AGENT_TASK_TOOLS.contains(&name)));
+    }
+    tools
+}
 
 /// A model runtime resolved for one step. This type is deliberately neither
 /// serializable nor debuggable because `model_config` may contain credentials.
@@ -254,6 +320,7 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             capabilities.tools = task_scoped_tools(capabilities.tools, &claim.run.input)?;
         } else if self.profile_key == MAIN_CHAT_PROFILE_KEY {
             capabilities.tools = main_chat_scoped_tools(capabilities.tools, &claim.run.input);
+            capabilities.tools = scope_agent_direct_tools(capabilities.tools, &claim.run.input);
         }
         capabilities
             .prefixed_input_items
@@ -265,6 +332,10 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
         let configured_instructions = merge_instructions(
             capabilities.instructions,
             transient.model_config.instructions,
+        );
+        let configured_instructions = merge_instructions(
+            agent_direct_instructions(&claim.run.input)?,
+            configured_instructions,
         );
         transient.model_config.instructions = if self.profile_key == TASK_EXECUTION_PROFILE_KEY {
             merge_instructions(
@@ -487,3 +558,52 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
 #[cfg(test)]
 #[path = "planner_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod agent_direct_tests {
+    use super::*;
+
+    fn input(permission_ids: &[&str]) -> Value {
+        json!({
+            "agent_execution_context": {
+                "room_id": "room-1",
+                "agent_id": "agent-1",
+                "agent_name": "工程 Agent",
+                "role_prompt": "负责工程实现。",
+                "profession_key": "software_engineer",
+                "profession_label": "软件工程师",
+                "profession_skill_ref": "AS-profession-software_engineer-123456789abc",
+                "profession_skill_sha256": "a".repeat(64),
+                "profession_skill_markdown": "# 工作流\n先核实，再实现。",
+                "default_plugin_ids": [],
+                "default_skill_ids": permission_ids,
+            }
+        })
+    }
+
+    #[test]
+    fn bound_agent_identity_and_skill_become_model_instructions() {
+        let instructions = agent_direct_instructions(&input(&[])).unwrap().unwrap();
+        assert!(instructions.contains("工程 Agent"));
+        assert!(instructions.contains("负责工程实现"));
+        assert!(instructions.contains("AS-profession-software_engineer"));
+        assert!(instructions.contains("先核实，再实现"));
+    }
+
+    #[test]
+    fn project_task_tools_require_the_persisted_agent_permission() {
+        let tools = vec![
+            json!({"name": "create_task"}),
+            json!({"name": "agent_skill_activate"}),
+            json!({"name": "read_conversation_attachment"}),
+        ];
+        let restricted = scope_agent_direct_tools(tools.clone(), &input(&[]));
+        assert!(!restricted.iter().any(|tool| tool["name"] == "create_task"));
+        assert!(restricted
+            .iter()
+            .any(|tool| tool["name"] == "agent_skill_activate"));
+
+        let allowed = scope_agent_direct_tools(tools, &input(&[AGENT_PROJECT_PERMISSION]));
+        assert!(allowed.iter().any(|tool| tool["name"] == "create_task"));
+    }
+}

@@ -157,6 +157,15 @@ pub(crate) struct AgentSkillDefinition {
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub(crate) struct AgentProfessionRuntimeSnapshot {
+    pub(crate) key: String,
+    pub(crate) label: String,
+    pub(crate) skill_ref: String,
+    pub(crate) instructions_sha256: String,
+    pub(crate) markdown: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct AgentSkillResource {
     relative_path: String,
@@ -206,6 +215,27 @@ impl AgentSkillStore {
         let payload = self.payload.lock().map_err(|_| storage_error())?;
         let account = payload.accounts.get(owner_user_id);
         Ok(merged_catalog(&catalog, account))
+    }
+
+    pub(crate) fn profession_runtime_snapshot(
+        &self,
+        owner_user_id: &str,
+        profession_key: &str,
+    ) -> Result<AgentProfessionRuntimeSnapshot, String> {
+        let definition = self
+            .catalog(owner_user_id)?
+            .into_iter()
+            .find(|definition| {
+                definition.kind == AgentSkillKind::Profession && definition.key == profession_key
+            })
+            .ok_or_else(|| "Agent 职业 Skill 不可用，请刷新后重试。".to_owned())?;
+        Ok(AgentProfessionRuntimeSnapshot {
+            key: definition.key,
+            label: definition.label,
+            skill_ref: definition.skill_ref,
+            instructions_sha256: definition.instructions_sha256,
+            markdown: definition.markdown,
+        })
     }
 
     fn save(
