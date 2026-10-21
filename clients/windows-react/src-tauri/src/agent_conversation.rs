@@ -289,6 +289,24 @@ pub(crate) struct InviteAgentToTeamInput {
     agent_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UpdateAgentTeamMemberInput {
+    owner_user_id: String,
+    team_id: String,
+    agent_id: String,
+    role: String,
+    responsibility: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ManageAgentTeamMemberInput {
+    owner_user_id: String,
+    team_id: String,
+    agent_id: String,
+}
+
 impl AgentConversationStore {
     pub(crate) fn new(app_data_directory: PathBuf) -> Result<Self, String> {
         let connector = confined_connector_directory(&app_data_directory)?;
@@ -792,6 +810,209 @@ impl AgentConversationStore {
                 params![member_count, agent_id, now, owner_user_id, team_id],
             )
             .map_err(|_| team_store_error())?;
+        transaction.commit().map_err(|_| team_store_error())?;
+        self.load_project_team(owner_user_id, team_id)
+    }
+
+    fn update_project_team_member(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        agent_id: &str,
+        role: &str,
+        responsibility: &str,
+    ) -> Result<AgentTeamDetail, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        validate_agent_identifier(agent_id).map_err(|_| invalid_team_input())?;
+        validate_text(role, 160, false).map_err(|_| invalid_team_input())?;
+        validate_text(responsibility, 8_000, true).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, false)?;
+        let changed = connection
+            .execute(
+                r#"
+                UPDATE project_agent_room_members
+                SET role = ?1, responsibility = ?2
+                WHERE owner_user_id = ?3 AND room_id = ?4 AND agent_id = ?5
+                  AND status = 'active'
+                  AND EXISTS (
+                    SELECT 1 FROM project_agent_rooms room
+                    WHERE room.owner_user_id = ?3 AND room.id = ?4
+                      AND room.status = 'active' AND room.conversation_kind = 'project_team'
+                  )
+                "#,
+                params![role, responsibility, owner_user_id, team_id, agent_id],
+            )
+            .map_err(|_| team_store_error())?;
+        if changed != 1 {
+            return Err("Agent 不是当前团队的活动成员。".into());
+        }
+        self.load_project_team(owner_user_id, team_id)
+    }
+
+    fn set_project_team_default_agent(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        agent_id: &str,
+    ) -> Result<AgentTeamDetail, String> {
+        self.assign_project_team_agent(owner_user_id, team_id, agent_id, false)
+    }
+
+    fn set_project_team_manager(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        agent_id: &str,
+    ) -> Result<AgentTeamDetail, String> {
+        self.assign_project_team_agent(owner_user_id, team_id, agent_id, true)
+    }
+
+    fn assign_project_team_agent(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        agent_id: &str,
+        project_manager: bool,
+    ) -> Result<AgentTeamDetail, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        validate_agent_identifier(agent_id).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        let member_exists: bool = transaction
+            .query_row(
+                r#"
+                SELECT EXISTS(
+                    SELECT 1 FROM project_agent_room_members member
+                    JOIN project_agent_rooms room
+                      ON room.owner_user_id = member.owner_user_id AND room.id = member.room_id
+                    WHERE member.owner_user_id = ?1 AND member.room_id = ?2
+                      AND member.agent_id = ?3 AND member.status = 'active'
+                      AND room.status = 'active' AND room.conversation_kind = 'project_team'
+                )
+                "#,
+                params![owner_user_id, team_id, agent_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_store_error())?;
+        if !member_exists {
+            return Err("Agent 不是当前团队的活动成员。".into());
+        }
+        if project_manager {
+            let profession = transaction
+                .query_row(
+                    "SELECT profession_key FROM local_agent_profiles \
+                     WHERE owner_user_id = ?1 AND id = ?2",
+                    params![owner_user_id, agent_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|_| team_store_error())?;
+            if profession.as_deref() != Some("project_manager") {
+                return Err("只有职业为“项目经理”的 Agent 才能担任项目经理。".into());
+            }
+        }
+        let now = chrono::Utc::now().timestamp_millis().max(0);
+        let column = if project_manager {
+            "project_manager_agent_id"
+        } else {
+            "default_agent_id"
+        };
+        let changed = transaction
+            .execute(
+                &format!(
+                    "UPDATE project_agent_rooms SET {column} = ?1, updated_at_unix_ms = \
+                     max(updated_at_unix_ms, ?2) WHERE owner_user_id = ?3 AND id = ?4 \
+                     AND status = 'active' AND conversation_kind = 'project_team'"
+                ),
+                params![agent_id, now, owner_user_id, team_id],
+            )
+            .map_err(|_| team_store_error())?;
+        if changed != 1 {
+            return Err("Agent 团队不存在或已停用。".into());
+        }
+        transaction.commit().map_err(|_| team_store_error())?;
+        self.load_project_team(owner_user_id, team_id)
+    }
+
+    fn remove_agent_from_project_team(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        agent_id: &str,
+    ) -> Result<AgentTeamDetail, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        validate_agent_identifier(agent_id).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        let room = transaction
+            .query_row(
+                "SELECT default_agent_id, project_manager_agent_id, updated_at_unix_ms \
+                 FROM project_agent_rooms WHERE owner_user_id = ?1 AND id = ?2 \
+                 AND status = 'active' AND conversation_kind = 'project_team'",
+                params![owner_user_id, team_id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|_| team_store_error())?
+            .ok_or_else(|| "Agent 团队不存在或已停用。".to_owned())?;
+        if room.1.as_deref() == Some(agent_id) {
+            return Err("请先指定新的项目经理，再移出当前项目经理。".into());
+        }
+        let now = chrono::Utc::now().timestamp_millis().max(room.2);
+        transaction
+            .execute(
+                "UPDATE project_agent_deliveries \
+                 SET status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE 'failed' END, \
+                     last_error = '成员已由 Human 移出当前团队。', completed_at_unix_ms = ?1 \
+                 WHERE owner_user_id = ?2 AND room_id = ?3 AND target_agent_id = ?4 \
+                   AND status IN ('pending', 'running')",
+                params![now, owner_user_id, team_id, agent_id],
+            )
+            .map_err(|_| team_store_error())?;
+        let changed = transaction
+            .execute(
+                "UPDATE project_agent_room_members SET status = 'removed' \
+                 WHERE owner_user_id = ?1 AND room_id = ?2 AND agent_id = ?3 \
+                   AND status = 'active'",
+                params![owner_user_id, team_id, agent_id],
+            )
+            .map_err(|_| team_store_error())?;
+        if changed != 1 {
+            return Err("Agent 不是当前团队的活动成员。".into());
+        }
+        if room.0.as_deref() == Some(agent_id) {
+            let replacement = transaction
+                .query_row(
+                    "SELECT agent_id FROM project_agent_room_members \
+                     WHERE owner_user_id = ?1 AND room_id = ?2 AND status = 'active' \
+                     ORDER BY joined_at_unix_ms, agent_id LIMIT 1",
+                    params![owner_user_id, team_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|_| team_store_error())?;
+            transaction
+                .execute(
+                    "UPDATE project_agent_rooms SET default_agent_id = ?1, \
+                     updated_at_unix_ms = ?2 WHERE owner_user_id = ?3 AND id = ?4 \
+                     AND status = 'active'",
+                    params![replacement, now, owner_user_id, team_id],
+                )
+                .map_err(|_| team_store_error())?;
+        }
         transaction.commit().map_err(|_| team_store_error())?;
         self.load_project_team(owner_user_id, team_id)
     }
@@ -1403,6 +1624,112 @@ pub(crate) async fn invite_agent_to_team(
         .require_session_generation(&input.owner_user_id, generation)
         .await?;
     Ok(detail)
+}
+
+#[tauri::command]
+pub(crate) async fn update_agent_team_member(
+    input: UpdateAgentTeamMemberInput,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentTeamDetail, String> {
+    validate_owner(&input.owner_user_id)?;
+    validate_identifier(&input.team_id).map_err(|_| invalid_team_input())?;
+    validate_agent_identifier(&input.agent_id).map_err(|_| invalid_team_input())?;
+    validate_text(&input.role, 160, false).map_err(|_| invalid_team_input())?;
+    validate_text(&input.responsibility, 8_000, true).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = input.owner_user_id.clone();
+    let team = input.team_id.clone();
+    let agent = input.agent_id.clone();
+    let role = input.role.clone();
+    let responsibility = input.responsibility.clone();
+    let detail = tauri::async_runtime::spawn_blocking(move || {
+        store.update_project_team_member(&owner, &team, &agent, &role, &responsibility)
+    })
+    .await
+    .map_err(|_| "Agent 团队成员保存任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    Ok(detail)
+}
+
+async fn manage_agent_team_member(
+    input: ManageAgentTeamMemberInput,
+    authentication: &AuthenticationManager,
+    conversations: &AgentConversationStore,
+    operation: fn(&AgentConversationStore, &str, &str, &str) -> Result<AgentTeamDetail, String>,
+    task_error: &'static str,
+) -> Result<AgentTeamDetail, String> {
+    validate_owner(&input.owner_user_id)?;
+    validate_identifier(&input.team_id).map_err(|_| invalid_team_input())?;
+    validate_agent_identifier(&input.agent_id).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let store = conversations.clone();
+    let owner = input.owner_user_id.clone();
+    let team = input.team_id.clone();
+    let agent = input.agent_id.clone();
+    let detail =
+        tauri::async_runtime::spawn_blocking(move || operation(&store, &owner, &team, &agent))
+            .await
+            .map_err(|_| task_error.to_owned())??;
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    Ok(detail)
+}
+
+#[tauri::command]
+pub(crate) async fn set_agent_team_default_agent(
+    input: ManageAgentTeamMemberInput,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentTeamDetail, String> {
+    manage_agent_team_member(
+        input,
+        authentication.inner(),
+        conversations.inner(),
+        AgentConversationStore::set_project_team_default_agent,
+        "默认 Agent 设置任务异常退出。",
+    )
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn set_agent_team_project_manager(
+    input: ManageAgentTeamMemberInput,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentTeamDetail, String> {
+    manage_agent_team_member(
+        input,
+        authentication.inner(),
+        conversations.inner(),
+        AgentConversationStore::set_project_team_manager,
+        "项目经理设置任务异常退出。",
+    )
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn remove_agent_from_team(
+    input: ManageAgentTeamMemberInput,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentTeamDetail, String> {
+    manage_agent_team_member(
+        input,
+        authentication.inner(),
+        conversations.inner(),
+        AgentConversationStore::remove_agent_from_project_team,
+        "Agent 移出团队任务异常退出。",
+    )
+    .await
 }
 
 #[tauri::command]
@@ -2120,6 +2447,92 @@ mod tests {
         assert!(store
             .create_project_team("bob", "project-1", "Bob 团队", "")
             .is_ok());
+    }
+
+    #[test]
+    fn project_team_member_management_matches_macos_invariants() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "agent-1", "active");
+        insert_agent(&store, "alice", "manager", "active");
+        let connection = Connection::open(store.database()).unwrap();
+        connection
+            .execute(
+                "UPDATE local_agent_profiles SET profession_key = 'project_manager' \
+                 WHERE owner_user_id = 'alice' AND id = 'manager'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        let created = store
+            .create_project_team("alice", "project-1", "Alpha 团队", "交付 Alpha")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &created.id, "agent-1")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &created.id, "manager")
+            .unwrap();
+
+        let updated = store
+            .update_project_team_member(
+                "alice",
+                &created.id,
+                "agent-1",
+                "前端工程师",
+                "负责 Windows UI",
+            )
+            .unwrap();
+        assert_eq!(updated.members[0].role, "前端工程师");
+        assert_eq!(updated.members[0].responsibility, "负责 Windows UI");
+        assert!(store
+            .set_project_team_manager("alice", &created.id, "agent-1")
+            .is_err());
+
+        let managed = store
+            .set_project_team_manager("alice", &created.id, "manager")
+            .unwrap();
+        assert_eq!(
+            managed.team.project_manager_agent_id.as_deref(),
+            Some("manager")
+        );
+        assert!(store
+            .remove_agent_from_project_team("alice", &created.id, "manager")
+            .is_err());
+
+        let defaulted = store
+            .set_project_team_default_agent("alice", &created.id, "manager")
+            .unwrap();
+        assert_eq!(defaulted.team.default_agent_id.as_deref(), Some("manager"));
+        let removed = store
+            .remove_agent_from_project_team("alice", &created.id, "agent-1")
+            .unwrap();
+        assert_eq!(removed.team.member_count, 1);
+        assert_eq!(removed.members[0].agent_id, "manager");
+        assert!(store
+            .update_project_team_member("bob", &created.id, "manager", "项目经理", "负责交付",)
+            .is_err());
+    }
+
+    #[test]
+    fn removing_the_default_team_agent_selects_the_next_active_member() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "agent-1", "active");
+        insert_agent(&store, "alice", "agent-2", "active");
+        let created = store
+            .create_project_team("alice", "project-1", "Alpha 团队", "")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &created.id, "agent-1")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &created.id, "agent-2")
+            .unwrap();
+
+        let removed = store
+            .remove_agent_from_project_team("alice", &created.id, "agent-1")
+            .unwrap();
+        assert_eq!(removed.team.default_agent_id.as_deref(), Some("agent-2"));
+        assert_eq!(removed.team.member_count, 1);
     }
 
     #[test]
