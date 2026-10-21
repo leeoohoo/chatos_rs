@@ -35,8 +35,9 @@ mod workspace_index;
 
 use access_control::load_access_control;
 use agent_conversation::{
-    load_agent_conversation_activity, load_agent_profile_activity, prepare_agent_conversation,
-    send_agent_conversation_draft, AgentConversationStore,
+    create_agent_team, list_agent_teams, load_agent_conversation_activity,
+    load_agent_profile_activity, prepare_agent_conversation, send_agent_conversation_draft,
+    AgentConversationStore,
 };
 use agent_management::{
     agent_avatar_protocol, list_agent_profiles, load_agent_profile_editor,
@@ -269,6 +270,8 @@ pub fn run() {
             logout,
             list_local_projects,
             list_agent_profiles,
+            list_agent_teams,
+            create_agent_team,
             prepare_agent_conversation,
             load_agent_conversation_activity,
             load_agent_profile_activity,

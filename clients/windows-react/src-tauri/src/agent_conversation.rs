@@ -13,7 +13,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::{
     agent_skill_management::{AgentProfessionRuntimeSnapshot, AgentSkillStore},
@@ -240,6 +240,29 @@ pub(crate) struct AgentProfileActivitySnapshot {
     agent_id: String,
     has_active_delivery: bool,
     items: Vec<AgentConversationActivityItem>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamSummary {
+    id: String,
+    project_id: String,
+    name: String,
+    goal: String,
+    default_agent_id: Option<String>,
+    project_manager_agent_id: Option<String>,
+    member_count: i64,
+    created_at_unix_ms: i64,
+    updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CreateAgentTeamInput {
+    owner_user_id: String,
+    project_id: String,
+    name: String,
+    goal: String,
 }
 
 impl AgentConversationStore {
@@ -473,6 +496,108 @@ impl AgentConversationStore {
             .map_err(|_| store_error())?;
         rows.collect::<Result<Vec<String>, _>>()
             .map_err(|_| store_error())
+    }
+
+    fn list_project_teams(&self, owner_user_id: &str) -> Result<Vec<AgentTeamSummary>, String> {
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT room.id, room.project_id, room.name, room.goal,
+                       room.default_agent_id, room.project_manager_agent_id,
+                       (SELECT count(*) FROM project_agent_room_members member
+                        WHERE member.owner_user_id = room.owner_user_id
+                          AND member.room_id = room.id AND member.status = 'active'),
+                       room.created_at_unix_ms, room.updated_at_unix_ms
+                FROM project_agent_rooms room
+                WHERE room.owner_user_id = ?1 AND room.status = 'active'
+                  AND room.conversation_kind = 'project_team'
+                ORDER BY room.updated_at_unix_ms DESC, room.id DESC
+                LIMIT 1000
+                "#,
+            )
+            .map_err(|_| team_store_error())?;
+        let rows = statement
+            .query_map(params![owner_user_id], |row| {
+                Ok(AgentTeamSummary {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    name: row.get(2)?,
+                    goal: row.get(3)?,
+                    default_agent_id: row.get(4)?,
+                    project_manager_agent_id: row.get(5)?,
+                    member_count: row.get(6)?,
+                    created_at_unix_ms: row.get(7)?,
+                    updated_at_unix_ms: row.get(8)?,
+                })
+            })
+            .map_err(|_| team_store_error())?;
+        let teams = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| team_store_error())?;
+        for team in &teams {
+            validate_team_summary(team)?;
+        }
+        Ok(teams)
+    }
+
+    fn create_project_team(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        name: &str,
+        goal: &str,
+    ) -> Result<AgentTeamSummary, String> {
+        validate_identifier(project_id).map_err(|_| invalid_team_input())?;
+        validate_text(name, 160, false).map_err(|_| invalid_team_input())?;
+        validate_text(goal, 8_000, true).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        let exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM project_agent_rooms \
+                 WHERE owner_user_id = ?1 AND project_id = ?2 \
+                   AND status = 'active' AND conversation_kind = 'project_team')",
+                params![owner_user_id, project_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_store_error())?;
+        if exists {
+            return Err("这个项目已经有 Agent 团队，请直接打开现有团队。".into());
+        }
+        let now = chrono::Utc::now().timestamp_millis().max(0);
+        let id = uuid::Uuid::new_v4().to_string().to_lowercase();
+        transaction
+            .execute(
+                r#"
+                INSERT INTO project_agent_rooms (
+                    owner_user_id, id, project_id, name, goal, default_agent_id, status,
+                    created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key,
+                    project_manager_agent_id
+                ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, 'active', ?6, ?6,
+                          'project_team', NULL, NULL)
+                "#,
+                params![owner_user_id, id, project_id, name, goal, now],
+            )
+            .map_err(|_| team_store_error())?;
+        transaction.commit().map_err(|_| team_store_error())?;
+        let team = AgentTeamSummary {
+            id,
+            project_id: project_id.to_owned(),
+            name: name.to_owned(),
+            goal: goal.to_owned(),
+            default_agent_id: None,
+            project_manager_agent_id: None,
+            member_count: 0,
+            created_at_unix_ms: now,
+            updated_at_unix_ms: now,
+        };
+        validate_team_summary(&team)?;
+        Ok(team)
     }
 
     fn record_direct_delivery(
@@ -975,6 +1100,63 @@ pub(crate) async fn load_agent_profile_activity(
 }
 
 #[tauri::command]
+pub(crate) async fn list_agent_teams(
+    owner_user_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<Vec<AgentTeamSummary>, String> {
+    validate_owner(&owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = owner_user_id.clone();
+    let teams = tauri::async_runtime::spawn_blocking(move || store.list_project_teams(&owner))
+        .await
+        .map_err(|_| "Agent 团队读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(teams)
+}
+
+#[tauri::command]
+pub(crate) async fn create_agent_team(
+    app: AppHandle,
+    input: CreateAgentTeamInput,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentTeamSummary, String> {
+    validate_owner(&input.owner_user_id)?;
+    validate_identifier(&input.project_id).map_err(|_| invalid_team_input())?;
+    validate_text(&input.name, 160, false).map_err(|_| invalid_team_input())?;
+    validate_text(&input.goal, 8_000, true).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "项目注册表不可用。".to_owned())?;
+    let project_database = data_dir.join("NativeConnector").join("Projects.sqlite3");
+    let store = conversations.inner().clone();
+    let owner = input.owner_user_id.clone();
+    let project_id = input.project_id.clone();
+    let name = input.name.clone();
+    let goal = input.goal.clone();
+    let team = tauri::async_runtime::spawn_blocking(move || {
+        require_active_project(&project_database, &owner, &project_id)?;
+        store.create_project_team(&owner, &project_id, &name, &goal)
+    })
+    .await
+    .map_err(|_| "Agent 团队创建任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    Ok(team)
+}
+
+#[tauri::command]
 pub(crate) async fn send_agent_conversation_draft(
     input: SendAgentConversationDraftInput,
     authentication: State<'_, AuthenticationManager>,
@@ -1469,6 +1651,54 @@ fn validate_text(value: &str, maximum: usize, optional: bool) -> Result<(), Stri
     Ok(())
 }
 
+fn validate_team_summary(team: &AgentTeamSummary) -> Result<(), String> {
+    validate_identifier(&team.id).map_err(|_| team_store_error())?;
+    validate_identifier(&team.project_id).map_err(|_| team_store_error())?;
+    validate_text(&team.name, 160, false).map_err(|_| team_store_error())?;
+    validate_text(&team.goal, 8_000, true).map_err(|_| team_store_error())?;
+    if let Some(agent_id) = team.default_agent_id.as_deref() {
+        validate_agent_identifier(agent_id).map_err(|_| team_store_error())?;
+    }
+    if let Some(agent_id) = team.project_manager_agent_id.as_deref() {
+        validate_agent_identifier(agent_id).map_err(|_| team_store_error())?;
+    }
+    if team.member_count < 0
+        || team.created_at_unix_ms < 0
+        || team.updated_at_unix_ms < team.created_at_unix_ms
+    {
+        return Err(team_store_error());
+    }
+    Ok(())
+}
+
+fn require_active_project(
+    database: &Path,
+    owner_user_id: &str,
+    project_id: &str,
+) -> Result<(), String> {
+    let connection = crate::workspace_index::open_project_registry(database)?;
+    let project = connection
+        .query_row(
+            "SELECT name, revision FROM local_project_records \
+             WHERE owner_user_id = ?1 AND id = ?2 AND status = 'active'",
+            params![owner_user_id, project_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .map_err(|_| "项目注册表包含无效数据。".to_owned())?;
+    let Some((name, revision)) = project else {
+        return Err("项目不存在或已停用，不能创建 Agent 团队。".into());
+    };
+    if name.trim().is_empty()
+        || name.chars().count() > 1_024
+        || name.chars().any(char::is_control)
+        || revision <= 0
+    {
+        return Err("项目注册表包含无效数据。".into());
+    }
+    Ok(())
+}
+
 fn parse_identifier_array(json: &str) -> Result<Vec<String>, String> {
     let values: Vec<String> = serde_json::from_str(json).map_err(|_| store_error())?;
     if values.len() > 100 {
@@ -1486,6 +1716,14 @@ fn parse_identifier_array(json: &str) -> Result<Vec<String>, String> {
 
 fn store_error() -> String {
     "Agent 私聊数据不可用，请检查本机存储后重试。".into()
+}
+
+fn team_store_error() -> String {
+    "Agent 团队数据不可用，请检查本机存储后重试。".into()
+}
+
+fn invalid_team_input() -> String {
+    "Agent 团队信息无效，请检查后重试。".into()
 }
 
 #[cfg(test)]
@@ -1581,6 +1819,55 @@ mod tests {
         assert_eq!(binding.profession_key, "software_engineer");
         assert_eq!(binding.default_skill_ids, vec!["local.project.list"]);
         assert!(store.load_execution_binding("bob", &room.id).is_err());
+    }
+
+    #[test]
+    fn project_teams_are_account_scoped_and_unique_per_active_project() {
+        let (_directory, store) = store();
+        let created = store
+            .create_project_team("alice", "project-1", "Alpha 团队", "交付 Alpha")
+            .unwrap();
+        assert_eq!(created.project_id, "project-1");
+        assert_eq!(created.member_count, 0);
+        assert_eq!(store.list_project_teams("alice").unwrap(), vec![created]);
+        assert!(store.list_project_teams("bob").unwrap().is_empty());
+        assert!(store
+            .create_project_team("alice", "project-1", "重复团队", "")
+            .is_err());
+        assert!(store
+            .create_project_team("bob", "project-1", "Bob 团队", "")
+            .is_ok());
+    }
+
+    #[test]
+    fn team_creation_requires_an_active_account_scoped_project() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("Projects.sqlite3");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(crate::workspace_index::PROJECT_REGISTRY_SCHEMA)
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO local_project_records VALUES \
+                 ('alice', 'project-1', 'Alpha', '', 'workspace-1', '', \
+                  'software_development', 1, 'active', 1, 1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO local_project_records VALUES \
+                 ('alice', 'removed', 'Removed', '', 'workspace-1', '', \
+                  'software_development', 1, 'removed', 1, 1)",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(require_active_project(&database, "alice", "project-1").is_ok());
+        assert!(require_active_project(&database, "bob", "project-1").is_err());
+        assert!(require_active_project(&database, "alice", "removed").is_err());
     }
 
     #[test]
