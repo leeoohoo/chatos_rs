@@ -401,7 +401,7 @@ impl AuthenticationApiClient {
     }
 }
 
-fn runtime_api_base_url() -> String {
+pub(crate) fn runtime_api_base_url() -> String {
     if let Ok(value) = std::env::var("CHATOS_API_BASE_URL") {
         if !value.trim().is_empty() {
             return value;

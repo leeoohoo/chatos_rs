@@ -6,15 +6,20 @@ use super::{
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
+    memory::{assemble_memory_input, bind_memory, memory_records, synced_digest},
     planning::{
-        project_fingerprint, StoryAgentReceipt, StoryAgentRunPolicy, StoryAgentToolCall,
-        StoryAgentToolOutcome, StoryPlanningRun, StoryPlanningStage, StoryPlanningStatus,
+        project_fingerprint, StoryAgentMessage, StoryAgentMessageRole, StoryAgentReceipt,
+        StoryAgentRunPolicy, StoryAgentToolCall, StoryAgentToolOutcome, StoryPlanningRun,
+        StoryPlanningStage, StoryPlanningStatus,
     },
     projection::StoryProjectSnapshot,
     store::StoryProjectStore,
     tools,
 };
 use crate::authentication::GatewayModelConfig;
+use memory_engine_sdk::{
+    ComposeContextBlock, ComposeContextMeta, ComposeContextResponse, EngineRecord,
+};
 use sha2::{Digest, Sha256};
 use std::fs;
 use tempfile::tempdir;
@@ -568,6 +573,111 @@ fn planning_checkpoint_is_native_only_and_safe_snapshot_omits_provider_and_tool_
     }
     assert!(snapshot.contains("baseProjectFingerprint"));
     assert!(snapshot.contains("usesCloudMemory"));
+}
+
+#[test]
+fn story_memory_contract_binds_syncs_and_composes_only_the_current_run() {
+    let mut canonical = project();
+    canonical.source = "A complete source story".into();
+    canonical.segments.clear();
+    canonical.relations.clear();
+    let mut run = StoryPlanningRun::new(
+        &canonical,
+        "alice",
+        StoryPlanningStage::Outline,
+        Vec::new(),
+        "ideas",
+        StoryAgentRunPolicy::default(),
+        "private system".into(),
+        |ideas| format!("goal:{ideas}"),
+        1_700_000_000_000,
+    )
+    .unwrap();
+    bind_memory(&mut run, "alice", 1_700_000_000_000).unwrap();
+    let scope = run.checkpoint.memory.as_ref().unwrap().scope.clone();
+    assert_eq!(
+        scope.thread_id,
+        format!("client-agent:story:{}:{}", canonical.id, run.id())
+    );
+    assert_eq!(
+        scope.subject_id,
+        format!("client-agent:story:{}", canonical.id)
+    );
+    assert!(run.uses_cloud_memory);
+
+    run.checkpoint.messages.push(StoryAgentMessage {
+        role: StoryAgentMessageRole::Assistant,
+        content: String::new(),
+        tool_calls: vec![StoryAgentToolCall {
+            id: "call-1".into(),
+            name: "story_read_state".into(),
+            arguments: "{}".into(),
+        }],
+        tool_call_id: None,
+        response_output_json: Some(serde_json::to_vec(&vec![serde_json::json!({
+            "type": "function_call", "call_id": "call-1", "name": "story_read_state", "arguments": "{}"
+        })]).unwrap()),
+        usage: None,
+    });
+    run.checkpoint.messages.push(StoryAgentMessage {
+        role: StoryAgentMessageRole::Tool,
+        content: "state-result".into(),
+        tool_calls: Vec::new(),
+        tool_call_id: Some("call-1".into()),
+        response_output_json: None,
+        usage: None,
+    });
+    let records = memory_records(&run, 0, run.checkpoint.messages.len()).unwrap();
+    let end = run.checkpoint.messages.len();
+    let digest = synced_digest(&run, end).unwrap();
+    let memory = run.checkpoint.memory.as_mut().unwrap();
+    memory.thread_created = true;
+    memory.synced_message_count = end;
+    memory.synced_digest = digest;
+    let recent_records = records
+        .into_iter()
+        .map(|record| EngineRecord {
+            id: record.id,
+            thread_id: scope.thread_id.clone(),
+            tenant_id: "alice".into(),
+            source_id: scope.source_id.clone(),
+            external_record_id: record.external_record_id,
+            role: record.role,
+            record_type: record.record_type,
+            content: record.content,
+            structured_payload: record.structured_payload,
+            metadata: record.metadata,
+            summary_status: "pending".into(),
+            summary_id: None,
+            summarized_at: None,
+            created_at: record.created_at,
+        })
+        .collect::<Vec<_>>();
+    let response = ComposeContextResponse {
+        thread_id: scope.thread_id.clone(),
+        blocks: vec![ComposeContextBlock {
+            block_type: "thread_summary".into(),
+            text: "summary".into(),
+        }],
+        meta: ComposeContextMeta {
+            summary_count: 1,
+            recent_record_count: recent_records.len(),
+        },
+        recent_records,
+    };
+    let input = assemble_memory_input(&run, &response).unwrap();
+    assert_eq!(input[0]["role"], "system");
+    assert!(input.iter().any(|item| item["type"] == "function_call"));
+    assert!(input.iter().any(|item| {
+        item["type"] == "function_call_output" && item["output"] == "state-result"
+    }));
+    assert_eq!(input.last().unwrap()["content"], "goal:ideas");
+    assert!(input.iter().all(|item| item["content"] != "private system"));
+
+    let mut foreign = response;
+    foreign.recent_records[0].tenant_id = "bob".into();
+    assert!(assemble_memory_input(&run, &foreign).is_err());
+    assert!(run.validate(&run.owner_hash.clone(), &canonical.id).is_ok());
 }
 
 #[test]

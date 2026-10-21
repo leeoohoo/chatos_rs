@@ -3,8 +3,8 @@ mod credentials;
 
 use std::sync::Arc;
 
+pub(crate) use client::{runtime_api_base_url, GatewayAgentCapability, GatewayModelConfig};
 use client::{ApiError, AuthenticationApiClient};
-pub(crate) use client::{GatewayAgentCapability, GatewayModelConfig};
 pub(crate) use credentials::model_credential_environment_variable;
 use credentials::{CredentialStore, PlatformCredentialStore};
 use serde::{Deserialize, Serialize};

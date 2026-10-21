@@ -2,8 +2,8 @@
 
 use chatos_ai_runtime::{
     tool_call::{
-        build_function_call_output_item, extract_tool_call_id, extract_tool_call_name,
-        parse_tool_calls_value, tool_call_arguments_text,
+        build_function_call_item, build_function_call_output_item, extract_tool_call_id,
+        extract_tool_call_name, parse_tool_calls_value, tool_call_arguments_text,
     },
     AiRuntime, AiRuntimeOptions, AiSingleStepOutcome, AiSingleStepRequest, ModelRequest,
 };
@@ -18,6 +18,9 @@ use crate::authentication::{AuthenticationManager, GatewayModelConfig};
 use super::{
     execution::StoryPlanningExecutionLease,
     media::StoryStudioManager,
+    memory::{
+        assemble_memory_input, bind_memory, memory_records, synced_digest, StoryMemoryAdapter,
+    },
     planning::{
         project_fingerprint, StoryAgentMessage, StoryAgentMessageRole, StoryAgentReceipt,
         StoryAgentRunPolicy, StoryAgentToolCall, StoryAgentUsage, StoryPlanningEvent,
@@ -155,6 +158,8 @@ impl StoryPlanningRuntime<'_> {
         if resume {
             prepare_for_resume(run)?;
         }
+        let memory = StoryMemoryAdapter::for_owner(self.authentication, self.owner_user_id).await?;
+        bind_memory(run, self.owner_user_id, current_unix_milliseconds())?;
         self.persist(run, lease, "started", "Agent 运行开始 / 恢复")
             .await?;
         if run.checkpoint.status == StoryPlanningStatus::Completed {
@@ -179,6 +184,8 @@ impl StoryPlanningRuntime<'_> {
                 run.policy.request_timeout_seconds as u64,
             ))
             .build_runtime();
+        let mut active_model_input: Option<Vec<Value>> = None;
+        let mut active_checkpoint_message_count = run.checkpoint.messages.len();
         let mut last_accounting = Instant::now();
         loop {
             if let Err(message) = self.require_active(lease).await {
@@ -188,6 +195,21 @@ impl StoryPlanningRuntime<'_> {
                     .persist(run, lease, "paused", "账号或页面状态已变化，运行已暂停")
                     .await;
                 return Err(message);
+            }
+            if let Err(error) = self.synchronize_memory(run, lease, &memory).await {
+                let _ = self.fail_memory(run, lease, &error).await;
+                return Err(error);
+            }
+            if let Some(input) = active_model_input.as_mut() {
+                if active_checkpoint_message_count > run.checkpoint.messages.len() {
+                    return Err("剧情规划历史记录与当前运行不匹配。".into());
+                }
+                if active_checkpoint_message_count < run.checkpoint.messages.len() {
+                    input.extend(checkpoint_input(
+                        &run.checkpoint.messages[active_checkpoint_message_count..],
+                    )?);
+                    active_checkpoint_message_count = run.checkpoint.messages.len();
+                }
             }
             let now = Instant::now();
             run.checkpoint.elapsed_seconds += now.duration_since(last_accounting).as_secs_f64();
@@ -239,7 +261,49 @@ impl StoryPlanningRuntime<'_> {
                     )
                     .await;
             }
-            if let Err(error) = self.model_step(run, lease, &model, &runtime).await {
+            if active_model_input.is_none() {
+                let scope = run
+                    .checkpoint
+                    .memory
+                    .as_ref()
+                    .ok_or_else(|| "剧情规划历史记录无效。".to_owned())?
+                    .scope
+                    .clone();
+                let response = match tokio::select! {
+                    _ = lease.cancellation.cancelled() => Err("剧情规划已取消。".into()),
+                    response = memory.compose(self.owner_user_id, &scope) => response,
+                } {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let _ = self.fail_memory(run, lease, &error).await;
+                        return Err(error);
+                    }
+                };
+                self.require_active(lease).await?;
+                let assembled = match assemble_memory_input(run, &response) {
+                    Ok(input) => input,
+                    Err(error) => {
+                        let _ = self.fail_memory(run, lease, &error).await;
+                        return Err(error);
+                    }
+                };
+                active_model_input = Some(assembled);
+                active_checkpoint_message_count = run.checkpoint.messages.len();
+                self.persist(run, lease, "memory_composed", "已装配当前运行的历史上下文")
+                    .await?;
+            }
+            if let Err(error) = self
+                .model_step(
+                    run,
+                    lease,
+                    &model,
+                    &runtime,
+                    active_model_input
+                        .as_ref()
+                        .ok_or_else(|| "剧情规划历史上下文无效。".to_owned())?,
+                )
+                .await
+            {
                 if lease.cancellation.is_cancelled()
                     || !self.manager.planning_executions.accepts(lease)
                 {
@@ -260,6 +324,7 @@ impl StoryPlanningRuntime<'_> {
         lease: &StoryPlanningExecutionLease,
         model: &ResolvedStoryModel,
         runtime: &AiRuntime,
+        active_model_input: &[Value],
     ) -> Result<(), String> {
         let mut attempt = 1usize;
         loop {
@@ -277,7 +342,7 @@ impl StoryPlanningRuntime<'_> {
                 ),
             )
             .await?;
-            let input = checkpoint_input(&run.checkpoint.messages)?;
+            let input = Value::Array(active_model_input.to_vec());
             let request_body_limit = usize::try_from(
                 run.policy
                     .context
@@ -592,6 +657,107 @@ impl StoryPlanningRuntime<'_> {
         .await
     }
 
+    async fn synchronize_memory(
+        &self,
+        run: &mut StoryPlanningRun,
+        lease: &StoryPlanningExecutionLease,
+        adapter: &StoryMemoryAdapter,
+    ) -> Result<(), String> {
+        loop {
+            let memory = run
+                .checkpoint
+                .memory
+                .as_ref()
+                .ok_or_else(|| "剧情规划历史记录无效。".to_owned())?
+                .clone();
+            if !memory.thread_created {
+                self.persist(run, lease, "memory_connecting", "正在连接当前运行的历史")
+                    .await?;
+                tokio::select! {
+                    _ = lease.cancellation.cancelled() => return Err("剧情规划已取消。".into()),
+                    result = adapter.ensure_thread(self.owner_user_id, &memory.scope) => result?,
+                }
+                self.require_active(lease).await?;
+                run.checkpoint
+                    .memory
+                    .as_mut()
+                    .ok_or_else(|| "剧情规划历史记录无效。".to_owned())?
+                    .thread_created = true;
+                self.persist(run, lease, "memory_connected", "运行历史已连接")
+                    .await?;
+                continue;
+            }
+            if memory.synced_message_count >= run.checkpoint.messages.len() {
+                return Ok(());
+            }
+            let start = memory.synced_message_count;
+            let reconciling = memory.sync_in_flight_end.is_some();
+            let end = memory
+                .sync_in_flight_end
+                .unwrap_or_else(|| (start + 32).min(run.checkpoint.messages.len()));
+            if !reconciling {
+                run.checkpoint
+                    .memory
+                    .as_mut()
+                    .ok_or_else(|| "剧情规划历史记录无效。".to_owned())?
+                    .sync_in_flight_end = Some(end);
+                self.persist(
+                    run,
+                    lease,
+                    "memory_syncing",
+                    &format!("正在同步运行记录 {}–{}", start + 1, end),
+                )
+                .await?;
+            }
+            let records = memory_records(run, start, end)?;
+            if reconciling {
+                tokio::select! {
+                    _ = lease.cancellation.cancelled() => return Err("剧情规划已取消。".into()),
+                    result = adapter.reconcile_records(self.owner_user_id, &memory.scope, &records) => result?,
+                }
+            } else {
+                tokio::select! {
+                    _ = lease.cancellation.cancelled() => return Err("剧情规划已取消。".into()),
+                    result = adapter.sync_records(self.owner_user_id, &memory.scope, records) => result?,
+                }
+            }
+            self.require_active(lease).await?;
+            let digest = synced_digest(run, end)?;
+            let checkpoint = run
+                .checkpoint
+                .memory
+                .as_mut()
+                .ok_or_else(|| "剧情规划历史记录无效。".to_owned())?;
+            checkpoint.synced_message_count = end;
+            checkpoint.sync_in_flight_end = None;
+            checkpoint.synced_digest = digest;
+            self.persist(
+                run,
+                lease,
+                "memory_synced",
+                &format!("已同步 {end} 条运行记录"),
+            )
+            .await?;
+        }
+    }
+
+    async fn fail_memory(
+        &self,
+        run: &mut StoryPlanningRun,
+        lease: &StoryPlanningExecutionLease,
+        message: &str,
+    ) -> Result<(), String> {
+        run.checkpoint.status = StoryPlanningStatus::Failed;
+        run.checkpoint.stop_reason = Some(message.to_owned());
+        self.persist(
+            run,
+            lease,
+            "memory_failed",
+            "历史服务暂时不可用，运行记录已保存",
+        )
+        .await
+    }
+
     async fn resolve_model(&self, run: &StoryPlanningRun) -> Result<ResolvedStoryModel, String> {
         let model_id = run.draft.models.text_model_id.clone();
         let mut values = self
@@ -834,7 +1000,7 @@ fn resolved_model(
     })
 }
 
-fn checkpoint_input(messages: &[StoryAgentMessage]) -> Result<Value, String> {
+pub(super) fn checkpoint_input(messages: &[StoryAgentMessage]) -> Result<Vec<Value>, String> {
     let mut items = Vec::new();
     for message in messages {
         match message.role {
@@ -852,6 +1018,11 @@ fn checkpoint_input(messages: &[StoryAgentMessage]) -> Result<Value, String> {
                         "type": "message", "role": "assistant", "content": message.content
                     }));
                 }
+                if message.response_output_json.is_none() {
+                    items.extend(message.tool_calls.iter().map(|call| {
+                        build_function_call_item(&call.id, &call.name, &call.arguments)
+                    }));
+                }
             }
             StoryAgentMessageRole::Tool => {
                 let call_id = message
@@ -863,7 +1034,7 @@ fn checkpoint_input(messages: &[StoryAgentMessage]) -> Result<Value, String> {
             }
         }
     }
-    Ok(Value::Array(items))
+    Ok(items)
 }
 
 fn parse_story_tool_calls(value: &Value) -> Result<Vec<StoryAgentToolCall>, String> {

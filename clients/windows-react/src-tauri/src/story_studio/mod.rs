@@ -3,6 +3,7 @@ mod commands;
 mod domain;
 mod execution;
 mod media;
+mod memory;
 mod planning;
 mod projection;
 mod runtime;

@@ -267,8 +267,9 @@ impl StoryPlanningRun {
             stage,
             target_ids,
             base_project_fingerprint,
-            // Windows does not claim cloud Memory participation until the Local Agent Host
-            // exposes the same owner-scoped Story memory contract used by macOS.
+            // The authenticated native runtime binds the owner-scoped Memory contract before
+            // the first durable execution boundary. A newly constructed, unstarted run is not
+            // allowed to claim participation before that binding succeeds.
             uses_cloud_memory: false,
             consent_at_unix_ms: now_unix_ms,
             policy,
@@ -353,6 +354,7 @@ impl StoryPlanningRun {
             return Err(planning_error());
         }
         self.draft.validate()?;
+        super::memory::validate_memory(self, expected_owner_hash)?;
         Ok(())
     }
 
