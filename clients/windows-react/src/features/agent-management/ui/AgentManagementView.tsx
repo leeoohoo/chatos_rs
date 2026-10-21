@@ -8,7 +8,7 @@ import type { ConversationRealtimePort } from "../../conversation-realtime/ports
 import type { ConversationRuntimeSettingsPort } from "../../conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import { useAgentManagementStore } from "../application/agentManagementStore";
-import { useAgentTeamStore } from "../application/agentTeamStore";
+import { type AgentTeamMemberMutation, useAgentTeamStore } from "../application/agentTeamStore";
 import {
   agentProfessionLabels,
   heartbeatIntervalLabel,
@@ -70,12 +70,15 @@ export function AgentManagementView({
   const isCreatingTeam = useAgentTeamStore((state) => state.isCreating);
   const isTeamDetailLoading = useAgentTeamStore((state) => state.isDetailLoading);
   const isInvitingAgent = useAgentTeamStore((state) => state.isInviting);
+  const isMutatingTeamMember = useAgentTeamStore((state) => state.isMutatingMember);
+  const mutatingAgentId = useAgentTeamStore((state) => state.mutatingAgentId);
   const teamError = useAgentTeamStore((state) => state.error);
   const activateTeams = useAgentTeamStore((state) => state.activate);
   const refreshTeams = useAgentTeamStore((state) => state.refresh);
   const createTeam = useAgentTeamStore((state) => state.createTeam);
   const selectTeam = useAgentTeamStore((state) => state.selectTeam);
   const inviteAgent = useAgentTeamStore((state) => state.inviteAgent);
+  const mutateTeamMember = useAgentTeamStore((state) => state.mutateMember);
   const resetTeams = useAgentTeamStore((state) => state.reset);
   const [surface, setSurface] = useState<"agents" | "teams">("agents");
   const [page, setPage] = useState(0);
@@ -89,6 +92,7 @@ export function AgentManagementView({
   const [showsSkillManagement, setShowsSkillManagement] = useState(false);
   const [showsTeamCreator, setShowsTeamCreator] = useState(false);
   const [showsAgentInvite, setShowsAgentInvite] = useState(false);
+  const [editingTeamMemberId, setEditingTeamMemberId] = useState<string | null>(null);
   const [editor, setEditor] = useState<{
     catalog: AgentProfileEditorCatalog;
     data: AgentProfileEditorData | null;
@@ -124,6 +128,7 @@ export function AgentManagementView({
     setShowsSkillManagement(false);
     setShowsTeamCreator(false);
     setShowsAgentInvite(false);
+    setEditingTeamMemberId(null);
     void activate(port, ownerUserId).then(() => loadEditorCatalog(port, false));
     if (port.listTeams) void activateTeams(port, ownerUserId);
     return () => {
@@ -310,6 +315,7 @@ export function AgentManagementView({
             error={teamError}
             isDetailLoading={isTeamDetailLoading}
             isInviting={isInvitingAgent}
+            isMutatingMember={isMutatingTeamMember}
             isLoading={isLoadingTeams}
             profiles={profiles}
             projects={projects}
@@ -317,8 +323,12 @@ export function AgentManagementView({
             teams={teams}
             onCreate={() => setShowsTeamCreator(true)}
             onInvite={() => setShowsAgentInvite(true)}
+            onManageMember={setEditingTeamMemberId}
             onRetry={() => void refreshTeams(port)}
-            onSelect={(teamId) => void selectTeam(port, teamId)}
+            onSelect={(teamId) => {
+              setEditingTeamMemberId(null);
+              void selectTeam(port, teamId);
+            }}
           />
         ) : isLoading && profiles.length === 0 ? (
           <div className="agent-management__state"><span className="mini-spinner" />正在读取 Agent…</div>
@@ -418,6 +428,27 @@ export function AgentManagementView({
           }}
         />
       )}
+      {editingTeamMemberId && teamDetail && selectedTeamId === teamDetail.team.id && (() => {
+        const member = teamDetail.members.find((candidate) => candidate.agentId === editingTeamMemberId);
+        if (!member) return null;
+        return (
+          <AgentTeamMemberSheet
+            detail={teamDetail}
+            error={teamError}
+            isMutating={isMutatingTeamMember && mutatingAgentId === member.agentId}
+            key={`${teamDetail.team.id}:${member.agentId}`}
+            member={member}
+            profile={profiles.find((candidate) => candidate.id === member.agentId) ?? null}
+            onCancel={() => setEditingTeamMemberId(null)}
+            onMutate={async (mutation) => {
+              const succeeded = await mutateTeamMember(
+                port, teamDetail.team.id, member.agentId, mutation,
+              );
+              if (succeeded) setEditingTeamMemberId(null);
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -427,6 +458,7 @@ function AgentTeamCatalog({
   error,
   isDetailLoading,
   isInviting,
+  isMutatingMember,
   isLoading,
   profiles,
   projects,
@@ -434,6 +466,7 @@ function AgentTeamCatalog({
   teams,
   onCreate,
   onInvite,
+  onManageMember,
   onRetry,
   onSelect,
 }: {
@@ -441,6 +474,7 @@ function AgentTeamCatalog({
   error: string | null;
   isDetailLoading: boolean;
   isInviting: boolean;
+  isMutatingMember: boolean;
   isLoading: boolean;
   profiles: AgentProfileSummary[];
   projects: Array<{ id: string; title: string }>;
@@ -448,6 +482,7 @@ function AgentTeamCatalog({
   teams: AgentTeamSummary[];
   onCreate(): void;
   onInvite(): void;
+  onManageMember(agentId: string): void;
   onRetry(): void;
   onSelect(teamId: string): void;
 }) {
@@ -534,9 +569,16 @@ function AgentTeamCatalog({
                           <strong>{profile?.name ?? member.role}</strong>
                           <small>{member.role}{member.responsibility ? ` · ${member.responsibility}` : ""}</small>
                         </div>
-                        <em>{detail.team.projectManagerAgentId === member.agentId
-                          ? "项目经理"
-                          : detail.team.defaultAgentId === member.agentId ? "默认 Agent" : "成员"}</em>
+                        <div className="agent-team-members__actions">
+                          <em>{detail.team.projectManagerAgentId === member.agentId
+                            ? "项目经理"
+                            : detail.team.defaultAgentId === member.agentId ? "默认 Agent" : "成员"}</em>
+                          <button
+                            disabled={isMutatingMember}
+                            onClick={() => onManageMember(member.agentId)}
+                            type="button"
+                          >管理</button>
+                        </div>
                       </article>
                     );
                   })}
@@ -548,6 +590,102 @@ function AgentTeamCatalog({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function AgentTeamMemberSheet({
+  detail,
+  error,
+  isMutating,
+  member,
+  profile,
+  onCancel,
+  onMutate,
+}: {
+  detail: AgentTeamDetail;
+  error: string | null;
+  isMutating: boolean;
+  member: AgentTeamDetail["members"][number];
+  profile: AgentProfileSummary | null;
+  onCancel(): void;
+  onMutate(mutation: AgentTeamMemberMutation): Promise<void>;
+}) {
+  const [role, setRole] = useState(member.role);
+  const [responsibility, setResponsibility] = useState(member.responsibility);
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const isDefault = detail.team.defaultAgentId === member.agentId;
+  const isProjectManager = detail.team.projectManagerAgentId === member.agentId;
+  const canManageProject = profile?.professionKey === "project_manager";
+  const normalizedRole = role.trim();
+  const normalizedResponsibility = responsibility.trim();
+  const canSave = normalizedRole.length > 0 && normalizedRole.length <= 160
+    && normalizedResponsibility.length <= 8_000;
+  return (
+    <div className="agent-editor-backdrop" role="presentation">
+      <section aria-label="管理团队成员" aria-modal="true" className="agent-editor agent-team-member-editor" role="dialog">
+        <header>
+          <div><h2>管理团队成员</h2><p>{profile?.name ?? member.agentId}</p></div>
+          <button aria-label="关闭团队成员管理" disabled={isMutating} onClick={onCancel} type="button">×</button>
+        </header>
+        <div className="agent-editor__body">
+          {error && <div className="agent-editor__error" role="alert">{error}</div>}
+          <label>当前项目角色<input maxLength={160} onChange={(event) => setRole(event.target.value)} value={role} /></label>
+          <label>当前项目职责<textarea maxLength={8_000} onChange={(event) => setResponsibility(event.target.value)} rows={4} value={responsibility} /></label>
+          <div className="agent-team-member-editor__assignments">
+            <div>
+              <strong>默认 Agent</strong>
+              <small>Human 未点名发送团队消息时，由默认 Agent 接收。</small>
+              <button
+                disabled={isMutating || isDefault}
+                onClick={() => void onMutate({ kind: "setDefault" })}
+                type="button"
+              >{isDefault ? "当前默认 Agent" : "设为默认 Agent"}</button>
+            </div>
+            <div>
+              <strong>项目经理</strong>
+              <small>{canManageProject
+                ? "负责团队任务板的创建、分配、优先级和依赖管理。"
+                : "只有职业为“项目经理”的 Agent 才能担任此角色。"}</small>
+              <button
+                disabled={isMutating || isProjectManager || !canManageProject}
+                onClick={() => void onMutate({ kind: "setProjectManager" })}
+                type="button"
+              >{isProjectManager ? "当前项目经理" : "设为项目经理"}</button>
+            </div>
+          </div>
+          <div className="agent-team-member-editor__danger">
+            <div><strong>移出团队</strong><small>{isProjectManager
+              ? "当前项目经理必须先完成交接。"
+              : "移出后，该 Agent 不再接收此团队的任务和消息。"}</small></div>
+            {confirmingRemoval ? (
+              <div>
+                <button disabled={isMutating} onClick={() => setConfirmingRemoval(false)} type="button">取消</button>
+                <button
+                  className="danger-button"
+                  disabled={isMutating || isProjectManager}
+                  onClick={() => void onMutate({ kind: "remove" })}
+                  type="button"
+                >确认移出</button>
+              </div>
+            ) : (
+              <button disabled={isMutating || isProjectManager} onClick={() => setConfirmingRemoval(true)} type="button">移出团队</button>
+            )}
+          </div>
+        </div>
+        <footer>
+          <button disabled={isMutating} onClick={onCancel} type="button">取消</button>
+          <button
+            className="primary-button"
+            disabled={isMutating || !canSave}
+            onClick={() => void onMutate({
+              kind: "update",
+              input: { role: normalizedRole, responsibility: normalizedResponsibility },
+            })}
+            type="button"
+          >{isMutating ? "正在保存…" : "保存"}</button>
+        </footer>
+      </section>
     </div>
   );
 }

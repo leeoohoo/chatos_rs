@@ -13,6 +13,7 @@ import {
   preparedAgentConversationSchema,
   type AgentProfileMutationInput,
   type CreateAgentTeamInput,
+  type UpdateAgentTeamMemberInput,
 } from "../domain/agentManagement";
 import { z } from "zod";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
@@ -134,6 +135,37 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async inviteAgentToTeam(ownerUserId: string, teamId: string, agentId: string) {
     return agentTeamDetailSchema.parse(
       await invoke("invite_agent_to_team", { input: { ownerUserId, teamId, agentId } }),
+    );
+  }
+
+  async updateTeamMember(
+    ownerUserId: string,
+    teamId: string,
+    agentId: string,
+    input: UpdateAgentTeamMemberInput,
+  ) {
+    return agentTeamDetailSchema.parse(
+      await invoke("update_agent_team_member", {
+        input: { ownerUserId, teamId, agentId, ...input },
+      }),
+    );
+  }
+
+  async setTeamDefaultAgent(ownerUserId: string, teamId: string, agentId: string) {
+    return agentTeamDetailSchema.parse(
+      await invoke("set_agent_team_default_agent", { input: { ownerUserId, teamId, agentId } }),
+    );
+  }
+
+  async setTeamProjectManager(ownerUserId: string, teamId: string, agentId: string) {
+    return agentTeamDetailSchema.parse(
+      await invoke("set_agent_team_project_manager", { input: { ownerUserId, teamId, agentId } }),
+    );
+  }
+
+  async removeAgentFromTeam(ownerUserId: string, teamId: string, agentId: string) {
+    return agentTeamDetailSchema.parse(
+      await invoke("remove_agent_from_team", { input: { ownerUserId, teamId, agentId } }),
     );
   }
 

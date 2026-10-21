@@ -55,6 +55,9 @@
 .agent-team-members__list strong { font-size: 10.5px; }
 .agent-team-members__list small { overflow: hidden; color: var(--secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .agent-team-members__list em { border-radius: 999px; padding: 3px 7px; color: var(--secondary); background: rgba(120,120,128,.09); font-size: 8.5px; font-style: normal; font-weight: 650; }
+.agent-team-members__actions { display: flex; align-items: center; gap: 6px; }
+.agent-team-members__actions button { min-height: 24px; border: 0; border-radius: 7px; padding: 3px 8px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 9px; font-weight: 620; }
+.agent-team-members__actions button:disabled { opacity: .45; }
 .agent-team-members__empty { display: grid; flex: 1; place-items: center; color: var(--secondary); font-size: 10.5px; }
 .agent-team-creator__intro { margin: 0; color: var(--secondary); font-size: 10.5px; line-height: 1.5; }
 .agent-team-creator__empty { border-radius: 10px; padding: 22px; color: var(--secondary); background: rgba(120,120,128,.07); font-size: 10.5px; text-align: center; }
@@ -66,6 +69,21 @@
 .agent-team-invite__list strong { font-size: 11px; }
 .agent-team-invite__list small { color: var(--secondary); font-size: 9px; }
 .agent-team-invite__list em { color: var(--accent); font-size: 15px; font-style: normal; }
+.agent-team-member-editor { width: min(600px,calc(100vw - 32px)); }
+.agent-team-member-editor > header > div { display: grid; gap: 2px; }
+.agent-team-member-editor > header p { margin: 0; color: var(--secondary); font-size: 10px; }
+.agent-team-member-editor__assignments { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.agent-team-member-editor__assignments > div { display: grid; min-height: 112px; align-content: start; gap: 6px; border: 1px solid rgba(60,60,67,.09); border-radius: 11px; padding: 11px; background: rgba(120,120,128,.055); }
+.agent-team-member-editor__assignments strong,.agent-team-member-editor__danger strong { font-size: 10.5px; }
+.agent-team-member-editor__assignments small,.agent-team-member-editor__danger small { color: var(--secondary); font-size: 9px; line-height: 1.45; }
+.agent-team-member-editor__assignments button { align-self: end; min-height: 28px; border: 0; border-radius: 7px; color: var(--accent); background: rgba(10,132,255,.10); font-size: 9.5px; font-weight: 620; }
+.agent-team-member-editor__assignments button:disabled { color: var(--secondary); background: rgba(120,120,128,.08); }
+.agent-team-member-editor__danger { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--separator); padding-top: 13px; }
+.agent-team-member-editor__danger > div { display: grid; gap: 3px; }
+.agent-team-member-editor__danger > div:last-child { display: flex; grid-auto-flow: column; gap: 6px; }
+.agent-team-member-editor__danger button { min-height: 28px; border: 1px solid rgba(255,59,48,.18); border-radius: 7px; padding: 4px 10px; color: #d70015; background: rgba(255,59,48,.06); font-size: 9.5px; font-weight: 620; }
+.agent-team-member-editor__danger button:disabled { opacity: .42; }
+.agent-team-member-editor__danger .danger-button { color: white; background: #ff3b30; }
 .agent-management__grid { display: grid; flex: 1; min-height: 0; grid-template-columns: repeat(auto-fill,minmax(280px,1fr)); align-content: start; gap: 14px; overflow: auto; padding: 18px; }
 .agent-card { display: flex; min-width: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(60,60,67,.10); border-radius: 12px; padding: 14px; background: rgba(255,255,255,.78); box-shadow: 0 4px 16px rgba(0,0,0,.035); cursor: pointer; transition: border-color .16s ease,box-shadow .16s ease,transform .16s ease; }
 .agent-card:hover { border-color: rgba(10,132,255,.24); box-shadow: 0 7px 20px rgba(0,0,0,.055); transform: translateY(-1px); }

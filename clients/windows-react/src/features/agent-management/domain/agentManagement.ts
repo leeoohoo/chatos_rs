@@ -436,6 +436,11 @@ export interface CreateAgentTeamInput {
   goal: string;
 }
 
+export interface UpdateAgentTeamMemberInput {
+  role: string;
+  responsibility: string;
+}
+
 export type AgentTeamSummary = z.infer<typeof agentTeamSummarySchema>;
 export type AgentTeamDetail = z.infer<typeof agentTeamDetailSchema>;
 

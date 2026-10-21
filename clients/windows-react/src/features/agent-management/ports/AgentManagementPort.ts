@@ -10,6 +10,7 @@ import type {
   AgentTeamSummary,
   AgentTeamDetail,
   CreateAgentTeamInput,
+  UpdateAgentTeamMemberInput,
   PreparedAgentConversation,
 } from "../domain/agentManagement";
 import type { ConversationSendAck } from "../../conversation-composer/domain/conversationComposer";
@@ -44,6 +45,15 @@ export interface AgentManagementPort {
   createTeam?(ownerUserId: string, input: CreateAgentTeamInput): Promise<AgentTeamSummary>;
   loadTeam?(ownerUserId: string, teamId: string): Promise<AgentTeamDetail>;
   inviteAgentToTeam?(ownerUserId: string, teamId: string, agentId: string): Promise<AgentTeamDetail>;
+  updateTeamMember?(
+    ownerUserId: string,
+    teamId: string,
+    agentId: string,
+    input: UpdateAgentTeamMemberInput,
+  ): Promise<AgentTeamDetail>;
+  setTeamDefaultAgent?(ownerUserId: string, teamId: string, agentId: string): Promise<AgentTeamDetail>;
+  setTeamProjectManager?(ownerUserId: string, teamId: string, agentId: string): Promise<AgentTeamDetail>;
+  removeAgentFromTeam?(ownerUserId: string, teamId: string, agentId: string): Promise<AgentTeamDetail>;
   sendConversationDraft?(input: {
     ownerUserId: string;
     roomId: string;

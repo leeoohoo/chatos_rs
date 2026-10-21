@@ -266,6 +266,68 @@ describe("AgentManagementView", () => {
     expect(screen.getByText("2 位 Agent")).toBeVisible();
   });
 
+  it("edits team-scoped duties and assigns a qualified project manager", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111",
+      projectId: "project-1",
+      name: "Alpha Agent 团队",
+      goal: "交付 Alpha",
+      defaultAgentId: "agent-1",
+      projectManagerAgentId: null,
+      memberCount: 1,
+      createdAtUnixMs: 10,
+      updatedAtUnixMs: 20,
+    };
+    const manager = { ...profile(), name: "项目经理", professionKey: "project_manager" as const };
+    const initialDetail = {
+      team,
+      members: [{
+        agentId: "agent-1", role: "交付负责人", responsibility: "负责项目交付", joinedAtUnixMs: 20,
+      }],
+    };
+    const updatedDetail = {
+      team,
+      members: [{ ...initialDetail.members[0]!, role: "项目统筹", responsibility: "维护计划与风险" }],
+    };
+    const managedDetail = {
+      ...updatedDetail,
+      team: { ...team, projectManagerAgentId: "agent-1", updatedAtUnixMs: 30 },
+    };
+    const port = stubPort({
+      listProfiles: vi.fn(async () => [manager]),
+      listTeams: vi.fn(async () => [team]),
+      loadTeam: vi.fn(async () => initialDetail),
+      updateTeamMember: vi.fn(async () => updatedDetail),
+      setTeamProjectManager: vi.fn(async () => managedDetail),
+    });
+    render(
+      <AgentManagementView
+        ownerUserId="owner-1"
+        port={port}
+        projects={[{ id: "project-1", title: "Alpha" }]}
+      />,
+    );
+    await screen.findByRole("heading", { name: "项目经理", level: 3 });
+    fireEvent.click(screen.getByRole("button", { name: "团队" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "管理" }));
+    expect(await screen.findByRole("dialog", { name: "管理团队成员" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("当前项目角色"), { target: { value: " 项目统筹 " } });
+    fireEvent.change(screen.getByLabelText("当前项目职责"), { target: { value: " 维护计划与风险 " } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(port.updateTeamMember).toHaveBeenCalledWith(
+      "owner-1", team.id, "agent-1", { role: "项目统筹", responsibility: "维护计划与风险" },
+    ));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "管理团队成员" })).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "管理" }));
+    fireEvent.click(await screen.findByRole("button", { name: "设为项目经理" }));
+    await waitFor(() => expect(port.setTeamProjectManager).toHaveBeenCalledWith(
+      "owner-1", team.id, "agent-1",
+    ));
+    expect(await screen.findByText("项目经理", { selector: "em" })).toBeVisible();
+  });
+
   it("selects an Agent and loads its existing private-chat activity without opening a conversation", async () => {
     const loadProfileActivity = vi.fn(async () => ({
       agentId: "agent-1",

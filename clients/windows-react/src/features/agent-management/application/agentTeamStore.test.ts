@@ -77,6 +77,45 @@ describe("agent team store", () => {
     expect(useAgentTeamStore.getState().detail).toEqual(invited);
     expect(useAgentTeamStore.getState().teams[0]?.memberCount).toBe(1);
   });
+
+  it("updates team member assignments from validated native snapshots", async () => {
+    const initial = detail({ ...team(), memberCount: 1, defaultAgentId: "agent-1" }, [{
+      agentId: "agent-1", role: "设计师", responsibility: "负责界面", joinedAtUnixMs: 30,
+    }]);
+    const managed = detail({
+      ...initial.team, projectManagerAgentId: "agent-1", updatedAtUnixMs: 40,
+    }, initial.members);
+    const port = stubPort({
+      loadTeam: vi.fn(async () => initial),
+      setTeamProjectManager: vi.fn(async () => managed),
+    });
+    await useAgentTeamStore.getState().activate(port, "owner-1");
+    await useAgentTeamStore.getState().selectTeam(port, team().id);
+
+    expect(await useAgentTeamStore.getState().mutateMember(
+      port, team().id, "agent-1", { kind: "setProjectManager" },
+    )).toBe(true);
+    expect(useAgentTeamStore.getState().detail).toEqual(managed);
+    expect(useAgentTeamStore.getState().teams[0]?.projectManagerAgentId).toBe("agent-1");
+  });
+
+  it("rejects a native removal snapshot that still contains the member", async () => {
+    const initial = detail({ ...team(), memberCount: 1, defaultAgentId: "agent-1" }, [{
+      agentId: "agent-1", role: "设计师", responsibility: "负责界面", joinedAtUnixMs: 30,
+    }]);
+    const port = stubPort({
+      loadTeam: vi.fn(async () => initial),
+      removeAgentFromTeam: vi.fn(async () => initial),
+    });
+    await useAgentTeamStore.getState().activate(port, "owner-1");
+    await useAgentTeamStore.getState().selectTeam(port, team().id);
+
+    expect(await useAgentTeamStore.getState().mutateMember(
+      port, team().id, "agent-1", { kind: "remove" },
+    )).toBe(false);
+    expect(useAgentTeamStore.getState().error).toBe("Agent 移出团队结果不一致，请刷新后重试。");
+    expect(useAgentTeamStore.getState().detail).toEqual(initial);
+  });
 });
 
 function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagementPort {
@@ -93,6 +132,10 @@ function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagement
     createTeam: vi.fn(async () => team()),
     loadTeam: vi.fn(async () => detail(team())),
     inviteAgentToTeam: vi.fn(async () => detail(team())),
+    updateTeamMember: vi.fn(async () => detail(team())),
+    setTeamDefaultAgent: vi.fn(async () => detail(team())),
+    setTeamProjectManager: vi.fn(async () => detail(team())),
+    removeAgentFromTeam: vi.fn(async () => detail(team())),
     ...overrides,
   };
 }
