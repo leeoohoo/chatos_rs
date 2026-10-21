@@ -369,6 +369,81 @@ impl StoryMediaBatchRecord {
             error: self.error.clone(),
         }
     }
+
+    pub(super) fn is_finished(&self) -> bool {
+        matches!(
+            self.status,
+            StoryMediaBatchStatus::Completed | StoryMediaBatchStatus::Abandoned
+        )
+    }
+
+    pub(super) fn abandon(
+        &mut self,
+        current: StoryProject,
+        now_unix_ms: u64,
+    ) -> Result<(), String> {
+        if self.is_finished() || current.id != self.project_id {
+            return Err("制作批次已经结束或项目身份不匹配。".into());
+        }
+        let current_fingerprint = project_fingerprint(&current)?;
+        let draft_fingerprint = project_fingerprint(&self.draft)?;
+        if current_fingerprint != self.expected_project_fingerprint
+            && current_fingerprint != draft_fingerprint
+        {
+            return Err("项目已被修改，不能结束旧制作批次。".into());
+        }
+        let image_intents = self
+            .steps
+            .iter()
+            .filter(|step| step.kind != StoryMediaBatchKind::Videos)
+            .filter_map(|step| step.generation_intent_id.as_deref())
+            .collect::<HashSet<_>>();
+        let mut draft = current;
+        for resource in draft
+            .characters
+            .iter_mut()
+            .map(|value| &mut value.media)
+            .chain(draft.scenes.iter_mut().map(|value| &mut value.media))
+            .chain(draft.props.iter_mut().map(|value| &mut value.media))
+        {
+            if resource
+                .generation_attempt_id
+                .as_deref()
+                .is_some_and(|id| image_intents.contains(id))
+            {
+                resource.generation_attempt_id = None;
+            }
+        }
+        for segment in &mut draft.segments {
+            if segment
+                .first_frames
+                .generation_attempt_id
+                .as_deref()
+                .is_some_and(|id| image_intents.contains(id))
+            {
+                segment.first_frames.generation_attempt_id = None;
+            }
+            if segment
+                .last_frames
+                .generation_attempt_id
+                .as_deref()
+                .is_some_and(|id| image_intents.contains(id))
+            {
+                segment.last_frames.generation_attempt_id = None;
+            }
+        }
+        draft.validate()?;
+        self.draft = draft;
+        self.status = StoryMediaBatchStatus::Abandoned;
+        self.error = None;
+        self.events.push(StoryMediaBatchEvent {
+            id: Uuid::new_v4().to_string(),
+            date_unix_ms: now_unix_ms,
+            detail: "用户核对后结束本批，保留已有结果及视频任务".into(),
+        });
+        self.updated_at_unix_ms = now_unix_ms.max(self.updated_at_unix_ms);
+        Ok(())
+    }
 }
 
 pub(super) fn batch_owner_hash(owner_user_id: &str) -> Result<String, String> {
@@ -880,6 +955,19 @@ mod tests {
         assert!(!safe_json.contains("generationIntentId"));
         assert!(!safe_json.contains("expectedProjectFingerprint"));
         assert!(!safe_json.contains("draft"));
+
+        batch.abandon(project, 20).unwrap();
+        store.commit_media_batch("alice", &mut batch).unwrap();
+        assert_eq!(
+            store
+                .inspect_media_batches("alice", &batch.project_id)
+                .unwrap(),
+            (false, 0)
+        );
+        let ended = store
+            .load_media_batch("alice", &batch.project_id, &batch.id)
+            .unwrap();
+        assert_eq!(ended.status, StoryMediaBatchStatus::Abandoned);
     }
 
     fn confirm_image(collection: &mut StoryImageCollection, filename: &str) {

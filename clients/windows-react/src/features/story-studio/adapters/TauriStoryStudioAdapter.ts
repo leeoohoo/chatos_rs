@@ -102,6 +102,17 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
     );
   }
 
+  async abandonMediaBatch(request: Parameters<StoryStudioPort["abandonMediaBatch"]>[0]) {
+    const input = {
+      ...scope(request),
+      projectId: uuidSchema.parse(request.projectId),
+      batchId: uuidSchema.parse(request.batchId),
+    };
+    return storyMediaBatchSnapshotSchema.parse(
+      await invoke("abandon_story_media_batch", { input }),
+    );
+  }
+
   async createProject(request: Parameters<StoryStudioPort["createProject"]>[0]) {
     const input = {
       ...scope(request),

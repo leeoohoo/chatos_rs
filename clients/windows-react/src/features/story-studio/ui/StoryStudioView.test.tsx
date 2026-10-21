@@ -333,6 +333,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     previewMediaBatch: vi.fn(async () => { throw new Error("unused batch preview"); }),
     loadMediaBatchHistory: vi.fn(async () => ({ batches: [], nextCursor: null, unreadableCount: 0 })),
     startMediaBatch: vi.fn(async () => { throw new Error("unused batch start"); }),
+    abandonMediaBatch: vi.fn(async () => { throw new Error("unused batch abandon"); }),
     createProject: vi.fn(async () => project()),
     updateSource: vi.fn(async () => project()),
     startPlanning: vi.fn(async () => project()),

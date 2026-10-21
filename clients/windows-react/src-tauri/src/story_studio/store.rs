@@ -603,6 +603,61 @@ impl StoryProjectStore {
         )
     }
 
+    /// Write-ahead batch first, canonical project second, then normalize the expected digest.
+    /// A retry can safely complete either interrupted write without overwriting manual edits.
+    pub(super) fn commit_media_batch(
+        &self,
+        owner_user_id: &str,
+        batch: &mut StoryMediaBatchRecord,
+    ) -> Result<(), String> {
+        let owner = validate_owner(owner_user_id)?;
+        let expected_owner_hash = owner_hash(owner);
+        let project_id = canonical_project_id(&batch.project_id)?;
+        let batch_id = canonical_project_id(&batch.id)?;
+        batch.validate(&expected_owner_hash, &project_id)?;
+        let _guard = self.mutation_lock.lock().map_err(|_| store_error())?;
+        let projects = self
+            .existing_projects_directory(owner)?
+            .ok_or_else(media_batch_store_error)?;
+        let project_directory = projects.join(&project_id);
+        validate_private_directory(&project_directory)?;
+        let current = load_project_manifest(&project_directory, &project_id)?;
+        let current_fingerprint = project_fingerprint(&current)?;
+        let draft_fingerprint = project_fingerprint(&batch.draft)?;
+        if current_fingerprint != batch.expected_project_fingerprint
+            && current_fingerprint != draft_fingerprint
+        {
+            return Err("项目已被修改，不能覆盖旧制作批次。".into());
+        }
+        let batch_target = format!("media-batch-{batch_id}.json");
+        let batch_temporary = format!("media-batch-{batch_id}.json.tmp");
+        let batch_bytes = serde_json::to_vec(batch).map_err(|_| media_batch_store_error())?;
+        if batch_bytes.is_empty() || batch_bytes.len() > MAXIMUM_MEDIA_BATCH_BYTES {
+            return Err(media_batch_store_error());
+        }
+        commit_private_json(
+            &project_directory,
+            &batch_temporary,
+            &batch_target,
+            &batch_bytes,
+        )?;
+        if current_fingerprint != draft_fingerprint {
+            let project_bytes = serde_json::to_vec(&batch.draft).map_err(|_| store_error())?;
+            if project_bytes.is_empty() || project_bytes.len() > MAXIMUM_PROJECT_BYTES {
+                return Err(store_error());
+            }
+            commit_project_manifest(&project_directory, &project_bytes)?;
+        }
+        batch.expected_project_fingerprint = draft_fingerprint;
+        let normalized_bytes = serde_json::to_vec(batch).map_err(|_| media_batch_store_error())?;
+        commit_private_json(
+            &project_directory,
+            &batch_temporary,
+            &batch_target,
+            &normalized_bytes,
+        )
+    }
+
     pub(super) fn load_media_batch(
         &self,
         owner_user_id: &str,

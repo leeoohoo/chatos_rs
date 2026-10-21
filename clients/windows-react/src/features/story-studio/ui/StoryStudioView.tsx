@@ -158,7 +158,7 @@ function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: Medi
   return (
     <div className="story-plan-workspace">
       {planning && <PlanningStatus progress={planning} />}
-      <StoryMediaBatchPanel projectId={project.id} />
+      <StoryMediaBatchPanel port={port} projectId={project.id} />
       <section className="story-resource-strip">
         <header><div><h3>角色与场景</h3><p>规划生成的素材事实源</p></div><div className="story-resource-strip__actions"><button disabled={state.busy} onClick={() => setShowBatchPreview(true)} type="button">批量制作</button><button disabled={state.busy || project.segments.length === 0} onClick={() => void state.startPlanning(port, "refine", project.segments.map((value) => value.id), "")} type="button">{isRefining ? planningActionLabel(planning) : "细化全部镜头"}</button></div></header>
         <div>{resources.map((resource) => {
@@ -295,14 +295,18 @@ function StoryMediaBatchPreviewSheet({ port, project, onClose }: {
   );
 }
 
-function StoryMediaBatchPanel({ projectId }: { projectId: string }) {
+function StoryMediaBatchPanel({ port, projectId }: { port: StoryStudioPort; projectId: string }) {
   const storedBatches = useStoryStudioStore((state) => state.mediaBatches[projectId]);
   const batches = storedBatches ?? EMPTY_STORY_BATCHES;
   const unreadable = useStoryStudioStore((state) => state.mediaBatchHistoryUnreadable[projectId] ?? 0);
+  const busy = useStoryStudioStore((state) => state.busy);
+  const abandon = useStoryStudioStore((state) => state.abandonMediaBatch);
+  const [confirmAbandon, setConfirmAbandon] = useState(false);
   const latest = batches[0];
   if (!latest && unreadable === 0) return null;
   const complete = latest?.steps.filter((step) => step.completed).length ?? 0;
-  return <section className="story-batch-panel"><span aria-hidden="true">{latest?.status === "completed" ? "✓" : "▦"}</span><div><header><strong>制作队列</strong>{latest && <small>{batchStatusLabel(latest.status)}</small>}</header>{latest ? <><progress max={Math.max(latest.steps.length, 1)} value={complete} /><p>已完成 {complete} / {latest.steps.length} 个步骤 · {batchKindLabel(latest.kind)}</p>{latest.error && <em>{latest.error}</em>}</> : <p>没有可读取的制作记录。</p>}{unreadable > 0 && <em>{unreadable} 条损坏记录已隔离</em>}</div></section>;
+  const unfinished = latest && !["completed", "abandoned"].includes(latest.status);
+  return <><section className="story-batch-panel"><span aria-hidden="true">{latest?.status === "completed" ? "✓" : "▦"}</span><div><header><strong>制作队列</strong>{latest && <small>{batchStatusLabel(latest.status)}</small>}</header>{latest ? <><progress max={Math.max(latest.steps.length, 1)} value={complete} /><p>已完成 {complete} / {latest.steps.length} 个步骤 · {batchKindLabel(latest.kind)}</p>{latest.error && <em>{latest.error}</em>}</> : <p>没有可读取的制作记录。</p>}{unreadable > 0 && <em>{unreadable} 条损坏记录已隔离</em>}</div>{unfinished && <button disabled={busy} onClick={() => setConfirmAbandon(true)} type="button">核对后结束</button>}</section>{confirmAbandon && latest && <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmAbandon(false); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>!</span><div><h2>已核实原生成任务？</h2><p>结束旧批次前必须核对服务商记录，避免重复提交和重复计费。</p></div></div><button aria-label="关闭" onClick={() => setConfirmAbandon(false)} type="button">×</button></header><div className="story-sheet__body"><p className="story-retry-warning">已有图片、视频和任务记录会保留。图片提交结果不明时，请先确认失败或未创建；结束后重新生成可能再次计费。</p></div><footer><button onClick={() => setConfirmAbandon(false)} type="button">取消</button><button className="story-retry-confirm" disabled={busy} onClick={() => { setConfirmAbandon(false); void abandon(port, projectId, latest.id); }} type="button">已核对，结束旧批次</button></footer></section></div>}</>;
 }
 
 function batchStatusLabel(status: ReturnType<typeof useStoryStudioStore.getState>["mediaBatches"][string][number]["status"]) {

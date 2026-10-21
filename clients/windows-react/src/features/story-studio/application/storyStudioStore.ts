@@ -59,6 +59,7 @@ interface StoryStudioState {
   abandonPlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
   loadMediaBatchHistory(storyPort: StoryStudioPort, projectId: string): Promise<void>;
   startMediaBatch(storyPort: StoryStudioPort, preparation: StoryMediaBatchPreparation, userIdeas: string): Promise<boolean>;
+  abandonMediaBatch(storyPort: StoryStudioPort, projectId: string, batchId: string): Promise<void>;
   importLocalImage(storyPort: StoryStudioPort, target: StoryImageImportTarget): Promise<void>;
   loadStoryImageHistory(mediaPort: MediaStudioPort): Promise<void>;
   importHistoryImage(storyPort: StoryStudioPort, target: StoryImageImportTarget, recordId: string, contentToken: string): Promise<void>;
@@ -384,6 +385,26 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       if (!sameScope(get(), scope)) return false;
       set({ busy: false, error: errorMessage(error, "批量制作队列创建失败。") });
       return false;
+    }
+  },
+
+  async abandonMediaBatch(storyPort, projectId, batchId) {
+    const scope = activeScope(get());
+    if (!scope || get().busy) return;
+    set({ busy: true, error: null });
+    try {
+      const batch = await storyPort.abandonMediaBatch({ ...scope, projectId, batchId });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        busy: false,
+        mediaBatches: {
+          ...state.mediaBatches,
+          [projectId]: replaceMediaBatch(state.mediaBatches[projectId] ?? [], batch),
+        },
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ busy: false, error: errorMessage(error, "制作批次无法结束。") });
     }
   },
 

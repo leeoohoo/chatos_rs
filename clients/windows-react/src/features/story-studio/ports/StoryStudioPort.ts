@@ -48,6 +48,10 @@ export interface StoryStudioPort {
     preparation: StoryMediaBatchPreparation;
     userIdeas: string;
   }): Promise<StoryMediaBatchSnapshot>;
+  abandonMediaBatch(request: StoryPresentationScope & {
+    projectId: string;
+    batchId: string;
+  }): Promise<StoryMediaBatchSnapshot>;
   createProject(request: StoryPresentationScope & {
     title: string;
     description: string;
