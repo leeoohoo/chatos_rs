@@ -332,6 +332,11 @@ mod platform {
 mod tests {
     use super::{encode_png, normalized_rgba, BgraFrame};
 
+    #[cfg(target_os = "windows")]
+    use super::last_frame_png;
+    #[cfg(target_os = "windows")]
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
     fn two_by_two(rotation: u32, stride: i32) -> BgraFrame {
         let top = [[0, 0, 255, 0], [0, 255, 0, 0]];
         let bottom = [[255, 0, 0, 0], [255, 255, 255, 0]];
@@ -366,5 +371,26 @@ mod tests {
         assert_eq!(&rgba[0..4], &[0, 0, 255, 255]);
         assert_eq!(&rgba[4..8], &[255, 0, 0, 255]);
         assert!(!encode_png(two_by_two(270, 8)).unwrap().is_empty());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn media_foundation_decodes_the_actual_last_h264_frame() {
+        let encoded = include_str!("fixtures/tail-red-blue-h264.mp4.b64");
+        let video = STANDARD
+            .decode(encoded.trim())
+            .expect("embedded H.264 MP4 fixture");
+
+        let png = last_frame_png(&video).expect("Media Foundation tail frame");
+        let decoded = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
+            .expect("decoded tail PNG")
+            .to_rgba8();
+
+        assert_eq!(decoded.dimensions(), (16, 16));
+        let center = decoded.get_pixel(8, 8).0;
+        assert!(
+            center[2] > 150 && center[2] > center[0].saturating_add(100),
+            "expected the blue final frame, got rgba={center:?}"
+        );
     }
 }
