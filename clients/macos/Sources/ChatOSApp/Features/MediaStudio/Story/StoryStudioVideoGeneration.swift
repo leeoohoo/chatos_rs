@@ -150,8 +150,9 @@ extension StoryStudioViewModel {
     /// The old cut is archived before the provider request, so failure never destroys it.
     func regenerateCompletedVideo(_ segmentID: String, availableModels: [MediaGenerationModel],
                                   useOriginalVideo: Bool = true, userIdeas: String = "") {
-        guard !isBusy, !isLoading, videoBatchTask == nil, let owner, var next = project,
-              let index = next.segments.firstIndex(where: { $0.id == segmentID }),
+        guard !isBusy, !isLoading, videoBatchTask == nil, let owner, let project else { return }
+        var next = project
+        guard let index = next.segments.firstIndex(where: { $0.id == segmentID }),
               next.segments[index].video != nil else { return }
         guard let model = availableModels.first(where: { $0.id == next.models.videoModelID }),
               model.enabled, model.hasAPIKey else {
@@ -185,24 +186,47 @@ extension StoryStudioViewModel {
         }
         let token = session
         let projectID = next.id
-        let store = store
+        let archiveCommand: StoryProjectEditCommand
+        do {
+            archiveCommand = try .init(
+                base: project,
+                project: next,
+                preservingVideoSegmentIDs: []
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        guard let archiveRequest = projectMutationState.begin(
+            ownerUserID: owner,
+            accountSessionID: token,
+            kind: .edit(
+                projectID: archiveCommand.projectID,
+                baseFingerprint: archiveCommand.baseFingerprint
+            )
+        ) else { return }
+        let projectMutation = projectMutation
         errorMessage = nil
         selectedSegments = [segmentID]
-        videoBatchTask = Task { [weak self, store] in
+        videoBatchTask = Task { [weak self, projectMutation] in
             let saved: Result<StoryProject, Error>
             do {
-                var archived = next
-                StoryContinuityContext.reconcileInheritedFirstFrames(&archived)
-                archived.updatedAt = Date()
-                saved = .success(try await store.save(
-                    archived, owner: owner, preservingVideoSegmentIDs: []
+                saved = .success(try await projectMutation.persistEdit(
+                    archiveCommand,
+                    ownerUserID: owner
                 ))
             } catch {
                 saved = .failure(error)
             }
-            guard !Task.isCancelled else { return }
             let generation: Task<Void, Never>? = {
-                guard let self, self.session == token else { return nil }
+                guard let self else { return nil }
+                let accepted = self.projectMutationState.accepts(
+                    archiveRequest,
+                    ownerUserID: self.owner,
+                    accountSessionID: token
+                )
+                _ = self.projectMutationState.finish(archiveRequest)
+                guard accepted, !Task.isCancelled else { return nil }
                 switch saved {
                 case .success(let latest):
                     self.publishProject(latest, token: token)
