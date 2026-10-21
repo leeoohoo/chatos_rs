@@ -234,6 +234,14 @@ pub(crate) struct AgentConversationActivitySnapshot {
     items: Vec<AgentConversationActivityItem>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentProfileActivitySnapshot {
+    agent_id: String,
+    has_active_delivery: bool,
+    items: Vec<AgentConversationActivityItem>,
+}
+
 impl AgentConversationStore {
     pub(crate) fn new(app_data_directory: PathBuf) -> Result<Self, String> {
         let connector = confined_connector_directory(&app_data_directory)?;
@@ -424,6 +432,47 @@ impl AgentConversationStore {
             default_plugin_ids: parse_identifier_array(&plugin_ids_json)?,
             default_skill_ids: parse_identifier_array(&skill_ids_json)?,
         })
+    }
+
+    fn activity_room_ids(
+        &self,
+        owner_user_id: &str,
+        agent_id: &str,
+    ) -> Result<Vec<String>, String> {
+        validate_agent_identifier(agent_id)?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let active: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM local_agent_profiles \
+                 WHERE owner_user_id = ?1 AND id = ?2 AND status = 'active')",
+                params![owner_user_id, agent_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| store_error())?;
+        if !active {
+            return Err("Agent 不存在或已停用。".into());
+        }
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT DISTINCT room.id
+                FROM project_agent_rooms room
+                JOIN project_agent_room_members member
+                  ON member.owner_user_id = room.owner_user_id AND member.room_id = room.id
+                WHERE room.owner_user_id = ?1 AND member.agent_id = ?2
+                  AND room.status = 'active' AND member.status = 'active'
+                  AND room.conversation_kind = 'human_agent_direct'
+                ORDER BY room.updated_at_unix_ms DESC, room.id DESC
+                LIMIT 100
+                "#,
+            )
+            .map_err(|_| store_error())?;
+        let rows = statement
+            .query_map(params![owner_user_id, agent_id], |row| row.get(0))
+            .map_err(|_| store_error())?;
+        rows.collect::<Result<Vec<String>, _>>()
+            .map_err(|_| store_error())
     }
 
     fn record_direct_delivery(
@@ -831,6 +880,93 @@ pub(crate) async fn load_agent_conversation_activity(
         agent_id: binding.agent_id,
         conversation_id,
         conversation_version,
+        has_active_delivery: items
+            .iter()
+            .any(|item| matches!(item.delivery_status.as_str(), "pending" | "running")),
+        items,
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn load_agent_profile_activity(
+    owner_user_id: String,
+    agent_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+    manager: State<'_, HostManager>,
+) -> Result<AgentProfileActivitySnapshot, String> {
+    validate_owner(&owner_user_id)?;
+    validate_agent_identifier(&agent_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let room_store = conversations.inner().clone();
+    let room_owner = owner_user_id.clone();
+    let room_agent = agent_id.clone();
+    let room_ids = tauri::async_runtime::spawn_blocking(move || {
+        room_store.activity_room_ids(&room_owner, &room_agent)
+    })
+    .await
+    .map_err(|_| "Agent 运行 Room 查询任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+
+    let mut items = Vec::new();
+    for room_id in room_ids {
+        let binding_store = conversations.inner().clone();
+        let binding_owner = owner_user_id.clone();
+        let binding_room = room_id.clone();
+        let binding = tauri::async_runtime::spawn_blocking(move || {
+            binding_store.load_execution_binding(&binding_owner, &binding_room)
+        })
+        .await
+        .map_err(|_| "Agent 执行身份读取任务异常退出。".to_owned())??;
+        if binding.agent_id != agent_id {
+            return Err("Agent 运行动态成员身份不一致。".into());
+        }
+        let conversation_id = format!("agent-direct-{}", binding.room_id);
+        let result = manager
+            .execute_detailed(HostCommand::GetConversationContext(
+                GetConversationCommand {
+                    owner_user_id: owner_user_id.clone(),
+                    conversation_id: conversation_id.clone(),
+                },
+            ))
+            .await;
+        let detail = match result {
+            Ok(HostResult::Conversation { conversation }) => {
+                validate_host_conversation(&conversation, &owner_user_id, &conversation_id)?;
+                conversation
+            }
+            Err(error) if error.code.as_deref() == Some("not_found") => continue,
+            Ok(_) => return Err("Local Agent Host 返回了错误的 Agent 会话响应。".into()),
+            Err(error) => return Err(error.message),
+        };
+        authentication
+            .require_session_generation(&owner_user_id, generation)
+            .await?;
+        let activity_store = conversations.inner().clone();
+        let activity_owner = owner_user_id.clone();
+        let room_items = tauri::async_runtime::spawn_blocking(move || {
+            activity_store.reconcile_direct_activity(&activity_owner, &binding, &detail)
+        })
+        .await
+        .map_err(|_| "Agent 运行动态读取任务异常退出。".to_owned())??;
+        items.extend(room_items);
+    }
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    items.sort_by(|left, right| {
+        right
+            .updated_at_unix_ms
+            .cmp(&left.updated_at_unix_ms)
+            .then_with(|| right.run_id.cmp(&left.run_id))
+    });
+    items.truncate(100);
+    Ok(AgentProfileActivitySnapshot {
+        agent_id,
         has_active_delivery: items
             .iter()
             .any(|item| matches!(item.delivery_status.as_str(), "pending" | "running")),
@@ -1529,5 +1665,15 @@ mod tests {
             response,
             ("agent".into(), "agent-1".into(), "已完成".into())
         );
+        assert_eq!(
+            store.activity_room_ids("alice", "agent-1").unwrap(),
+            vec![room.id]
+        );
+        insert_agent(&store, "alice", "agent-2", "active");
+        assert!(store
+            .activity_room_ids("alice", "agent-2")
+            .unwrap()
+            .is_empty());
+        assert!(store.activity_room_ids("bob", "agent-1").is_err());
     }
 }
