@@ -269,6 +269,26 @@ describe("StoryStudioView", () => {
         },
         validationError: null,
       })),
+      startMediaBatch: vi.fn(async (request: Parameters<StoryStudioPort["startMediaBatch"]>[0]) => ({
+        id: request.preparation.previewId,
+        ownerUserId: "alice",
+        projectId: canonical.id,
+        kind: "pipeline" as const,
+        status: "ready" as const,
+        steps: request.preparation.steps.map((step) => ({
+          ...step,
+          completed: false,
+          progressStatus: null,
+        })),
+        events: [{
+          id: "55555555-5555-4555-8555-555555555555",
+          dateUnixMs: 10,
+          detail: "用户已确认批量制作计划",
+        }],
+        consentAtUnixMs: 10,
+        updatedAtUnixMs: 10,
+        error: null,
+      })),
     });
     render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
     await screen.findByRole("heading", { name: "雨夜来客", level: 2 });
@@ -282,6 +302,12 @@ describe("StoryStudioView", () => {
       projectId: canonical.id,
       kind: "pipeline",
       targetIds: undefined,
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "确认并创建队列" }));
+    expect(await screen.findByText("制作队列")).toBeVisible();
+    expect(screen.getByText("已完成 0 / 3 个步骤 · 一键全流程")).toBeVisible();
+    expect(storyPort.startMediaBatch).toHaveBeenCalledWith(expect.objectContaining({
+      preparation: expect.objectContaining({ previewId: "44444444-4444-4444-8444-444444444444" }),
     }));
   });
 });
@@ -306,6 +332,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     loadProject: vi.fn(async () => project()),
     previewMediaBatch: vi.fn(async () => { throw new Error("unused batch preview"); }),
     loadMediaBatchHistory: vi.fn(async () => ({ batches: [], nextCursor: null, unreadableCount: 0 })),
+    startMediaBatch: vi.fn(async () => { throw new Error("unused batch start"); }),
     createProject: vi.fn(async () => project()),
     updateSource: vi.fn(async () => project()),
     startPlanning: vi.fn(async () => project()),

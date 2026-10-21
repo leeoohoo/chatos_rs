@@ -733,6 +733,61 @@ impl StoryProjectStore {
         })
     }
 
+    pub(super) fn inspect_media_batches(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+    ) -> Result<(bool, usize), String> {
+        let owner = validate_owner(owner_user_id)?;
+        let expected_owner_hash = owner_hash(owner);
+        let project_id = canonical_project_id(project_id)?;
+        let projects = self
+            .existing_projects_directory(owner)?
+            .ok_or_else(media_batch_store_error)?;
+        let project_directory = projects.join(&project_id);
+        validate_private_directory(&project_directory)?;
+        let mut unfinished = false;
+        let mut unreadable = 0usize;
+        for entry in fs::read_dir(&project_directory).map_err(|_| media_batch_store_error())? {
+            let Ok(entry) = entry else { continue };
+            let filename = entry.file_name().to_string_lossy().into_owned();
+            let Some(batch_id) = filename
+                .strip_prefix("media-batch-")
+                .and_then(|value| value.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            if canonical_project_id(batch_id).is_err() {
+                continue;
+            }
+            let loaded = read_private_file(&entry.path(), MAXIMUM_MEDIA_BATCH_BYTES)
+                .and_then(|bytes| {
+                    serde_json::from_slice::<StoryMediaBatchRecord>(&bytes)
+                        .map_err(|_| media_batch_store_error())
+                })
+                .and_then(|batch| {
+                    if batch.id != batch_id {
+                        return Err(media_batch_store_error());
+                    }
+                    batch.validate(&expected_owner_hash, &project_id)?;
+                    Ok(batch)
+                });
+            match loaded {
+                Ok(batch) => {
+                    if !matches!(
+                        batch.status,
+                        super::batch::StoryMediaBatchStatus::Completed
+                            | super::batch::StoryMediaBatchStatus::Abandoned
+                    ) {
+                        unfinished = true;
+                    }
+                }
+                Err(_) => unreadable = unreadable.saturating_add(1),
+            }
+        }
+        Ok((unfinished, unreadable))
+    }
+
     pub(super) fn apply_planning_run(
         &self,
         owner_user_id: &str,

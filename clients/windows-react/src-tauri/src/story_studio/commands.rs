@@ -20,8 +20,9 @@ use super::{
         StoryVideoGenerationStartInput, StoryVideoGuidanceInput, StoryVideoRetryInput,
     },
     batch::{
-        preview_media_batch, StoryMediaBatchHistoryPage, StoryMediaBatchPreviewInput,
-        StoryMediaBatchPreviewResult,
+        batch_owner_hash, prepare_media_batch, preview_media_batch, StoryMediaBatchHistoryPage,
+        StoryMediaBatchPreviewInput, StoryMediaBatchPreviewResult, StoryMediaBatchRecord,
+        StoryMediaBatchSnapshot, StoryMediaBatchStartInput,
     },
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
@@ -46,6 +47,14 @@ pub(crate) struct StoryMediaBatchHistoryInput {
     project_id: String,
     after: Option<StoryProjectCursor>,
     limit: Option<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryMediaBatchStartCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    request: StoryMediaBatchStartInput,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -455,6 +464,68 @@ pub(crate) async fn load_story_media_batch_history(
     .map_err(|_| "批量制作历史读取任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &manager, &owner, generation).await?;
     page
+}
+
+#[tauri::command]
+pub(crate) async fn start_story_media_batch(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryMediaBatchStartCommandInput,
+) -> Result<StoryMediaBatchSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    validate_planning_presentation(
+        &manager,
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.request.project_id,
+    )
+    .await?;
+    let catalog =
+        load_current_catalog(&authentication, &manager, &input.owner_user_id, generation).await?;
+    let store = manager.store();
+    let owner = input.owner_user_id;
+    let persist_owner = owner.clone();
+    let request = input.request;
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        let project = store.load_native_project(&persist_owner, &request.project_id)?;
+        let mut preparation = prepare_media_batch(
+            &project,
+            &persist_owner,
+            &catalog,
+            StoryMediaBatchPreviewInput {
+                project_id: request.project_id,
+                base_fingerprint: request.base_fingerprint,
+                kind: request.kind,
+                target_ids: Some(request.target_ids),
+                user_ideas: request.user_ideas.clone(),
+            },
+        )?;
+        preparation.preview_id = uuid::Uuid::parse_str(&request.preview_id)
+            .map(|value| value.to_string())
+            .map_err(|_| "批量制作预览标识无效。".to_owned())?;
+        let (has_unfinished, unreadable) =
+            store.inspect_media_batches(&persist_owner, &preparation.project_id)?;
+        if has_unfinished || unreadable > 0 {
+            return Err("还有未结束或无法核对的制作批次，请先恢复或核对旧批次。".into());
+        }
+        let record = StoryMediaBatchRecord::from_preparation(
+            batch_owner_hash(&persist_owner)?,
+            project,
+            &preparation,
+            request.user_ideas,
+            current_unix_milliseconds(),
+        )?;
+        store.save_media_batch(&persist_owner, &record)?;
+        Ok(record.snapshot(&persist_owner))
+    })
+    .await
+    .map_err(|_| "批量制作启动任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    prepared
 }
 
 #[tauri::command]
@@ -1547,4 +1618,13 @@ async fn require_current_generation(
         return Err(error);
     }
     Ok(())
+}
+
+fn current_unix_milliseconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }

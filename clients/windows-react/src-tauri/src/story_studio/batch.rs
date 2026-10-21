@@ -1,6 +1,7 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -104,6 +105,17 @@ pub(crate) struct StoryMediaBatchPreviewInput {
     pub kind: StoryMediaBatchKind,
     /// `None` means "select every eligible target". An explicit empty selection is rejected.
     pub target_ids: Option<Vec<String>>,
+    pub user_ideas: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryMediaBatchStartInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub preview_id: String,
+    pub kind: StoryMediaBatchKind,
+    pub target_ids: Vec<String>,
     pub user_ideas: String,
 }
 
@@ -357,6 +369,14 @@ impl StoryMediaBatchRecord {
             error: self.error.clone(),
         }
     }
+}
+
+pub(super) fn batch_owner_hash(owner_user_id: &str) -> Result<String, String> {
+    let owner = owner_user_id.trim();
+    if owner.is_empty() || owner.chars().count() > 1_024 {
+        return Err("批量制作账号无效。".into());
+    }
+    Ok(format!("{:x}", Sha256::digest(owner.as_bytes())))
 }
 
 pub(crate) fn prepare_media_batch(
@@ -839,6 +859,10 @@ mod tests {
         batch.steps[0].generation_intent_id = Some(Uuid::new_v4().to_string());
         batch.steps[0].provider_job_id = Some("provider-job-must-stay-native".into());
         store.save_media_batch("alice", &batch).unwrap();
+        assert_eq!(
+            store.inspect_media_batches("alice", &project.id).unwrap(),
+            (true, 0)
+        );
 
         let loaded = store
             .load_media_batch("alice", &project.id, &batch.id)

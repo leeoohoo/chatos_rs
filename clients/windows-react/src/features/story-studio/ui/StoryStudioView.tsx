@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
 import { isStorySegmentReady, storyConfirmedImage } from "../domain/storyStudio";
-import type { StoryMediaBatchKind, StoryMediaBatchPreparation, StoryProject } from "../domain/storyStudio";
+import type { StoryMediaBatchKind, StoryMediaBatchPreparation, StoryMediaBatchSnapshot, StoryProject } from "../domain/storyStudio";
 import { useStoryStudioStore } from "../application/storyStudioStore";
 import type { StoryPlanningProgress } from "../application/storyStudioStore";
 import type { StoryImageImportTarget, StoryStudioPort } from "../ports/StoryStudioPort";
@@ -12,6 +12,8 @@ interface StoryStudioViewProps {
   mediaPort: MediaStudioPort;
   port: StoryStudioPort;
 }
+
+const EMPTY_STORY_BATCHES: StoryMediaBatchSnapshot[] = [];
 
 export function StoryStudioView({ ownerUserId, mediaPort, port }: StoryStudioViewProps) {
   const state = useStoryStudioStore();
@@ -156,6 +158,7 @@ function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: Medi
   return (
     <div className="story-plan-workspace">
       {planning && <PlanningStatus progress={planning} />}
+      <StoryMediaBatchPanel projectId={project.id} />
       <section className="story-resource-strip">
         <header><div><h3>角色与场景</h3><p>规划生成的素材事实源</p></div><div className="story-resource-strip__actions"><button disabled={state.busy} onClick={() => setShowBatchPreview(true)} type="button">批量制作</button><button disabled={state.busy || project.segments.length === 0} onClick={() => void state.startPlanning(port, "refine", project.segments.map((value) => value.id), "")} type="button">{isRefining ? planningActionLabel(planning) : "细化全部镜头"}</button></div></header>
         <div>{resources.map((resource) => {
@@ -188,6 +191,8 @@ function StoryMediaBatchPreviewSheet({ port, project, onClose }: {
 }) {
   const ownerUserId = useStoryStudioStore((state) => state.ownerUserId);
   const presentationId = useStoryStudioStore((state) => state.presentationId);
+  const busy = useStoryStudioStore((state) => state.busy);
+  const startMediaBatch = useStoryStudioStore((state) => state.startMediaBatch);
   const [kind, setKind] = useState<StoryMediaBatchKind>("pipeline");
   const [eligible, setEligible] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -259,6 +264,10 @@ function StoryMediaBatchPreviewSheet({ port, project, onClose }: {
   const videoSeconds = preview?.steps
     .filter((step) => step.kind === "videos")
     .reduce((total, step) => total + (project.segments.find((item) => item.id === step.targetId)?.seconds ?? 0), 0) ?? 0;
+  const start = async () => {
+    if (!preview || preview.executionMode !== "persistentBatch") return;
+    if (await startMediaBatch(port, preview, userIdeas)) onClose();
+  };
 
   return (
     <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -280,10 +289,36 @@ function StoryMediaBatchPreviewSheet({ port, project, onClose }: {
           {preview && <section className="story-batch-summary"><header><strong>原生执行计划已验证</strong><span>{preview.executionMode === "directVideos" ? "独立顺序视频队列" : "可恢复持久化批次"}</span></header><div><span><strong>{preview.requestedTargetIds.length}</strong>目标</span><span><strong>{counts.assets ?? 0}</strong>素材图</span><span><strong>{(counts.frames ?? 0) + (counts.lastFrames ?? 0)}</strong>首尾帧</span><span><strong>{counts.videos ?? 0}</strong>视频</span><span><strong>{videoSeconds}</strong>视频秒数</span></div><ol>{preview.steps.map((step, index) => <li key={step.id}><span>{index + 1}</span>{batchStepLabel(step.kind)} · {batchTargetName(project, step.targetId)}</li>)}</ol></section>}
           {error && <p className="story-batch-error" role="alert">{error}</p>}
         </div>
-        <footer><small>下一阶段会基于这份原生计划接入启动、恢复、放弃和历史，不会在 React 内伪造队列。</small><button onClick={onClose} type="button">关闭</button></footer>
+        <footer><small>{preview?.executionMode === "directVideos" ? "分段视频必须进入独立顺序队列，不会混入持久化图片批次。" : "创建后会持久化为可恢复队列；本步骤只登记计划，不会伪造完成状态。"}</small><div><button onClick={onClose} type="button">取消</button>{preview?.executionMode === "persistentBatch" && <button className="story-primary-button" disabled={busy || loading} onClick={() => void start()} type="button">{busy ? "正在创建队列…" : "确认并创建队列"}</button>}</div></footer>
       </section>
     </div>
   );
+}
+
+function StoryMediaBatchPanel({ projectId }: { projectId: string }) {
+  const storedBatches = useStoryStudioStore((state) => state.mediaBatches[projectId]);
+  const batches = storedBatches ?? EMPTY_STORY_BATCHES;
+  const unreadable = useStoryStudioStore((state) => state.mediaBatchHistoryUnreadable[projectId] ?? 0);
+  const latest = batches[0];
+  if (!latest && unreadable === 0) return null;
+  const complete = latest?.steps.filter((step) => step.completed).length ?? 0;
+  return <section className="story-batch-panel"><span aria-hidden="true">{latest?.status === "completed" ? "✓" : "▦"}</span><div><header><strong>制作队列</strong>{latest && <small>{batchStatusLabel(latest.status)}</small>}</header>{latest ? <><progress max={Math.max(latest.steps.length, 1)} value={complete} /><p>已完成 {complete} / {latest.steps.length} 个步骤 · {batchKindLabel(latest.kind)}</p>{latest.error && <em>{latest.error}</em>}</> : <p>没有可读取的制作记录。</p>}{unreadable > 0 && <em>{unreadable} 条损坏记录已隔离</em>}</div></section>;
+}
+
+function batchStatusLabel(status: ReturnType<typeof useStoryStudioStore.getState>["mediaBatches"][string][number]["status"]) {
+  if (status === "completed") return "已完成";
+  if (status === "abandoned") return "已结束";
+  if (status === "needsReview") return "需要核对";
+  if (status === "running") return "执行中";
+  if (status === "ready") return "已创建";
+  return "已暂停";
+}
+
+function batchKindLabel(kind: Exclude<StoryMediaBatchKind, "videos">) {
+  if (kind === "assets") return "素材图片";
+  if (kind === "frames") return "分段首帧";
+  if (kind === "lastFrames") return "分段尾帧";
+  return "一键全流程";
 }
 
 const BATCH_KINDS: { id: StoryMediaBatchKind; label: string }[] = [
