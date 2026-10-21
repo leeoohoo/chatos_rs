@@ -237,6 +237,7 @@ jobs:
           npm --prefix clients/windows-react run typecheck
           npm --prefix clients/windows-react test
           npm --prefix clients/windows-react run build
+          npm --prefix clients/windows-react run audit:bundle
 
       - name: Prepare Windows Local Agent Host resource
         env:
