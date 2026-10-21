@@ -3,7 +3,10 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owner};
+use crate::{
+    authentication::AuthenticationManager, host_lifecycle::validate_owner,
+    media_studio::MediaStudioManager,
+};
 
 use super::{
     application::{
@@ -121,6 +124,16 @@ pub(crate) struct StoryLatestFramesCommandInput {
 pub(crate) struct StoryLocalImageImportCommandInput {
     owner_user_id: String,
     presentation_id: String,
+    import: StoryImageImportInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryHistoryImageImportCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    record_id: String,
+    content_token: String,
     import: StoryImageImportInput,
 }
 
@@ -555,6 +568,38 @@ pub(crate) async fn import_local_story_image(
     .map_err(|_| "剧情图片导入任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &manager, &owner, generation).await?;
     result.map(Some)
+}
+
+#[tauri::command]
+pub(crate) async fn import_story_history_image(
+    authentication: State<'_, AuthenticationManager>,
+    media_manager: State<'_, MediaStudioManager>,
+    story_manager: State<'_, StoryStudioManager>,
+    input: StoryHistoryImageImportCommandInput,
+) -> Result<StoryProjectSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let media = media_manager.inner().clone();
+    let story = story_manager.inner().clone();
+    let owner = input.owner_user_id;
+    let saved_owner = owner.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let bytes =
+            media.read_story_history_image(&saved_owner, &input.record_id, &input.content_token)?;
+        story.import_generated_story_image(
+            &saved_owner,
+            generation,
+            &input.presentation_id,
+            input.import,
+            &bytes,
+        )
+    })
+    .await
+    .map_err(|_| "生成图片导入任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &story_manager, &owner, generation).await?;
+    result
 }
 
 #[tauri::command]

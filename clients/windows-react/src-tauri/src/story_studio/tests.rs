@@ -1164,6 +1164,79 @@ fn local_story_image_import_normalizes_png_and_commits_manifest_with_asset() {
 }
 
 #[test]
+fn generated_story_image_import_normalizes_bytes_and_cleans_up_stale_mutations() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let canonical = project();
+    store.save("alice", &canonical).unwrap();
+    let source = app_data.path().join("generated.jpg");
+    image::RgbImage::from_pixel(2, 2, image::Rgb([10, 20, 30]))
+        .save_with_format(&source, image::ImageFormat::Jpeg)
+        .unwrap();
+    let generated_bytes = fs::read(&source).unwrap();
+    let manager = StoryStudioManager::new(app_data.path().to_path_buf()).unwrap();
+    let presentation = Uuid::new_v4().to_string();
+    manager
+        .present_project("alice", 12, &presentation, &canonical.id)
+        .unwrap();
+    let original_fingerprint = project_fingerprint(&canonical).unwrap();
+    let snapshot = manager
+        .import_generated_story_image(
+            "alice",
+            12,
+            &presentation,
+            StoryImageImportInput {
+                project_id: canonical.id.clone(),
+                base_fingerprint: original_fingerprint.clone(),
+                resource_id: None,
+                segment_id: Some("s1".into()),
+                frame_role: Some(StoryFrameRoleInput::First),
+                confirms_imported_image: true,
+            },
+            &generated_bytes,
+        )
+        .unwrap();
+    let encoded = serde_json::to_string(&snapshot).unwrap();
+    assert!(!encoded.contains("provider-result"));
+    assert!(!encoded.contains("provider-asset"));
+
+    let persisted = store.load_native_project("alice", &canonical.id).unwrap();
+    let imported = &persisted.segments[0].first_frames.images[0];
+    assert_eq!(
+        persisted.segments[0].first_frames.confirmed_image_id,
+        Some(imported.id.clone())
+    );
+    assert_eq!(
+        persisted.segments[0].user_selected_first_frame_id,
+        Some(imported.id.clone())
+    );
+    assert_eq!(imported.mime_type, "image/png");
+    assert!(imported.provider_result_id.is_none());
+    assert!(imported.provider_asset_id.is_none());
+    assert!(imported.generation_attempt_id.is_none());
+    assert!(!encoded.contains(&imported.filename));
+    let directory = projects_directory(app_data.path(), "alice").join(&canonical.id);
+    let before = fs::read_dir(&directory).unwrap().count();
+
+    let stale = manager.import_generated_story_image(
+        "alice",
+        12,
+        &presentation,
+        StoryImageImportInput {
+            project_id: canonical.id.clone(),
+            base_fingerprint: original_fingerprint,
+            resource_id: Some("key".into()),
+            segment_id: None,
+            frame_role: None,
+            confirms_imported_image: true,
+        },
+        &generated_bytes,
+    );
+    assert!(stale.is_err());
+    assert_eq!(fs::read_dir(directory).unwrap().count(), before);
+}
+
+#[test]
 fn model_admission_requires_current_owner_enabled_model_and_credential_status() {
     let input = StoryProjectCreationInput {
         title: "Story".into(),

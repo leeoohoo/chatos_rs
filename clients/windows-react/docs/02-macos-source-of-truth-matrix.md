@@ -1322,5 +1322,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 70. [已完成] 第 08 页 Windows Story 已开放 fingerprint/presentation/generation-scoped 单项 resource/frame 图片确认及尾帧取消；资源确认的未决视频门禁、依赖帧失效、显式首帧选择/继承清除，以及 first+last guidance 降级规则均与 macOS Core 一致。目标 DTO 严格拒绝歧义组合，不接受媒体对象或 filename。Story Rust 定向 35 项及 Clippy `-D warnings` 通过。React 入口继续关闭；下一片补批量 latest 确认与图片导入边界。
 71. [已完成] 第 08 页 Windows Story 已开放最新素材图和最新首尾帧批量确认 typed commands；只对实际变化目标写盘，资源未决视频门禁、依赖帧失效、显式首帧 identity、继承清除及可选 first+last guidance 均与 macOS Core 一致。Story Rust 定向 36 项及 Clippy `-D warnings` 通过。React 入口继续关闭；下一片进入图片导入 token/文件落盘边界。
 72. [已完成] 第 08 页 Windows Story 本机图片导入已通过原生 picker、20 MiB/PNG-JPEG-WebP/6,400 万像素/读取竞态校验与 PNG 归一化接入；路径不进入 React。随机私有文件与 fingerprint-guarded canonical attachment 在同一 Store mutation lock 内提交，失败孤儿清理与不明确提交复验进入实现。Story Rust 定向 37 项及 Clippy `-D warnings` 通过。React 入口继续关闭；下一片补 generated/history 图片导入。
+73. [已完成] 第 08 页 Windows Story 已开放 generated/history 图片导入：IPC 仅接受当前账号图片历史的 `recordId/contentToken` 与窄 Story target intent；Media Studio Adapter owner-scoped 读取私有历史字节，Story Adapter 重新校验格式/大小/像素并归一化 PNG，历史路径、filename、provider result/asset identity 均不跨边界。fingerprint、同锁媒体/manifest 提交、孤儿清理及 resource/frame 确认与连续性规则与本机导入一致。Story Rust 定向 38 项、跨 owner/token 桥接测试及 Clippy `-D warnings` 通过。React 入口继续关闭；下一片实现素材图片生成 Port/commands。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

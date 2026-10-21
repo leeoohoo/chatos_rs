@@ -132,6 +132,26 @@ impl MediaStudioManager {
         self.video_jobs.reset();
     }
 
+    /// Reads one already-persisted generated image through Media Studio's owner-scoped history
+    /// boundary. Story Studio deliberately receives bytes rather than a path or provider asset so
+    /// the history layout and provider identities never become part of its IPC contract.
+    pub(crate) fn read_story_history_image(
+        &self,
+        owner_user_id: &str,
+        record_id: &str,
+        content_token: &str,
+    ) -> Result<Vec<u8>, String> {
+        validate_owner(owner_user_id)?;
+        self.history
+            .read_history_asset(
+                &history::owner_hash(owner_user_id),
+                record_id,
+                content_token,
+            )
+            .map(|(_, bytes)| bytes)
+            .map_err(|_| "所选生成图片不存在或不属于当前账号。".to_owned())
+    }
+
     fn present_history_item(
         &self,
         mut item: ImageHistoryItem,
@@ -1448,6 +1468,45 @@ mod tests {
             manager.protocol_body(&path).unwrap_err(),
             http::StatusCode::UNAUTHORIZED
         );
+    }
+
+    #[tokio::test]
+    async fn story_history_bridge_reads_only_the_current_owners_opaque_asset() {
+        let root = tempdir().unwrap();
+        let manager = MediaStudioManager::new(root.path().to_path_buf()).unwrap();
+        let result = ImageGenerationResult {
+            id: "provider-result".into(),
+            model_config_id: "image-model".into(),
+            model_name: "gpt-image-1".into(),
+            created_at_unix_ms: 1_700_000_000_000,
+            images: vec![GeneratedImageAsset {
+                id: "provider-asset".into(),
+                mime_type: "image/png".into(),
+                base64_data: Some(BASE64.encode(b"owner-scoped-image")),
+                url: None,
+                revised_prompt: None,
+            }],
+            client_request_id: "request-1".into(),
+        };
+        let item = manager
+            .history
+            .persist_image("alice", "quiet lake", &result)
+            .await
+            .unwrap();
+        let asset = &item.images[0];
+
+        assert_eq!(
+            manager
+                .read_story_history_image("alice", &item.id, &asset.content_token)
+                .unwrap(),
+            b"owner-scoped-image"
+        );
+        assert!(manager
+            .read_story_history_image("bob", &item.id, &asset.content_token)
+            .is_err());
+        assert!(manager
+            .read_story_history_image("alice", &item.id, &"0".repeat(32))
+            .is_err());
     }
 
     #[test]

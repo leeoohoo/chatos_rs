@@ -556,6 +556,38 @@ impl StoryStudioManager {
         self.project_snapshot(owner, generation, presentation, &session, &project)
     }
 
+    pub(super) fn import_generated_story_image(
+        &self,
+        owner: &str,
+        generation: u64,
+        presentation: &str,
+        input: StoryImageImportInput,
+        source: &[u8],
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner, generation)?;
+        self.media
+            .require_open_presentation(owner, generation, presentation)?;
+        let png = normalized_story_png(source)?;
+        let filename = format!("image-{}.png", Uuid::new_v4().simple());
+        let stored_filename = filename.clone();
+        let project_id = input.project_id.clone();
+        let project = self.store.mutate_project_with_image(
+            owner,
+            &project_id,
+            &filename,
+            &png,
+            |project| {
+                super::application::apply_story_image_import(
+                    project,
+                    input,
+                    stored_filename,
+                    current_unix_milliseconds(),
+                )
+            },
+        )?;
+        self.project_snapshot(owner, generation, presentation, &session, &project)
+    }
+
     pub(super) fn discard_presentation(
         &self,
         owner_user_id: &str,
@@ -917,14 +949,21 @@ fn normalized_local_png(path: &Path) -> Result<Vec<u8>, String> {
     {
         return Err("剧情图片在读取期间发生变化或超过 20 MB。".into());
     }
-    let format = image::guess_format(&source).map_err(|_| "所选文件不是有效图片。".to_owned())?;
+    normalized_story_png(&source)
+}
+
+fn normalized_story_png(source: &[u8]) -> Result<Vec<u8>, String> {
+    if source.is_empty() || source.len() > MAXIMUM_STORY_IMAGE_BYTES {
+        return Err("剧情图片为空或超过 20 MB。".into());
+    }
+    let format = image::guess_format(source).map_err(|_| "所选文件不是有效图片。".to_owned())?;
     if !matches!(
         format,
         image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP
     ) {
         return Err("剧情图片仅支持 PNG、JPEG 或 WebP。".into());
     }
-    let decoded = image::load_from_memory_with_format(&source, format)
+    let decoded = image::load_from_memory_with_format(source, format)
         .map_err(|_| "所选图片无法解码。".to_owned())?;
     let pixels = u64::from(decoded.width()).saturating_mul(u64::from(decoded.height()));
     if decoded.width() == 0 || decoded.height() == 0 || pixels > 64_000_000 {
