@@ -1600,6 +1600,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批只优化已持久化聊天附件的图片预览，不改变发送前 `ConversationAttachmentDraft` 的内存 DTO，也不处理 Markdown/文本附件按契约读取正文的路径。ImageIO 仍在主进程；真实 20 MiB/64 MP physical-footprint、快速开关预览取消风暴、进程隔离、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.55 第五十五批实施记录：Agent 群聊持久化图片预览文件原生化（2026-10-23）
+
+本批把 12.54 的附件文件校验与直接解码边界扩展到 Agent 群聊。此前群聊消息中的持久化图片在用户点按预览时仍通过通用附件读取器聚合最多 20 MiB `Data`，然后再由 `AppAsyncDataImage` 创建解码面；已经随当前消息保留在 `dataByID` 的发送期内存图片则不存在重复文件读取问题。
+
+已实施：
+
+- 新增 `AgentMessageAttachmentImageLoader`，要求附件类型为图片、记录尺寸位于 1...20 MiB 且存在 64 字符 SHA-256；随后复用 `ConversationAttachmentImageLoader`，在同一 `O_NOFOLLOW` descriptor 上增量校验摘要并通过 `/dev/fd` 执行 64 MP/2048 像素有界 ImageIO 解码。
+- 持久化图片的点按加载不再经过 `AgentMessageAttachmentDataLoader`，预览项直接持有已解码的有界 `NSImage`，打开 sheet 时不再次读取压缩源或重复解码。
+- 当前消息已有 `dataByID` 的图片继续走原有内存快速路径；Markdown、另存为及 Agent 执行确实需要字节值的路径仍保留通用有界 `Data` 读取契约。
+- 缺少摘要的旧/异常持久化记录明确拒绝图片预览，不以未校验文件换取兼容；Store 的缺失文件恢复仍先校验尺寸与摘要。
+- 新增 4 项回归，覆盖正确文件解码且保留源文件、记录尺寸不一致、摘要不一致以及缺少摘要拒绝。
+
+验证：Debug 与 arm64 Release 各选择性运行既有图片/HTTP 门禁 48 项和 `AgentMessageAttachmentImageLoaderTests` 4 项，共 52 项，全部通过；Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。未启动/安装正式 App，未访问活动用户数据库。
+
+边界：发送期 `dataByID` 仍按现有消息 DTO 保留完整压缩图片，Markdown、另存为和 Agent 输入仍按业务契约读取最多 20 MiB 正文；ImageIO 仍位于主进程。本批没有改变附件存储格式或恢复协议；真实群聊大图 physical-footprint、快速反复开关预览、恶意图片隔离、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

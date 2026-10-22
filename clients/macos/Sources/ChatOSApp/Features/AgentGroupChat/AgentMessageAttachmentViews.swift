@@ -24,7 +24,10 @@ struct AgentMessageAttachmentChips: View {
                 if attachment.kind == .image,
                    let data = dataByID[attachment.id] {
                     Button {
-                        previewedImage = .init(attachment: attachment, data: data)
+                        previewedImage = .init(
+                            attachment: attachment,
+                            source: .data(data)
+                        )
                     } label: {
                         AppAsyncDataImage(
                             data: data,
@@ -137,7 +140,7 @@ struct AgentMessageAttachmentChips: View {
             AgentLocalImagePreview(
                 name: item.attachment.name,
                 attachmentID: item.attachment.id,
-                data: item.data
+                source: item.source
             )
         }
         .sheet(item: $previewedDocument) { item in
@@ -158,9 +161,19 @@ struct AgentMessageAttachmentChips: View {
         Task {
             defer { loadingAttachmentIDs.remove(attachment.id) }
             do {
-                let data = try await attachmentData(attachment)
+                let store = try await service.store()
+                guard let payload = try await store.messageAttachment(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    messageID: messageID,
+                    attachmentID: attachment.id
+                ) else { throw AgentAttachmentPresentationError.notFound }
+                let decoded = try await AgentMessageAttachmentImageLoader.load(payload)
                 guard !Task.isCancelled else { return }
-                previewedImage = .init(attachment: attachment, data: data)
+                previewedImage = .init(
+                    attachment: attachment,
+                    source: .image(decoded.makeNSImage())
+                )
             } catch is CancellationError {
                 // The row disappeared while its on-demand preview was loading.
             } catch {
@@ -306,9 +319,14 @@ struct AgentMessageAttachmentChips: View {
 
 private struct AgentImagePreviewItem: Identifiable {
     let attachment: ProjectAgentMessageAttachment
-    let data: Data
+    let source: AgentImagePreviewSource
 
     var id: String { attachment.id }
+}
+
+private enum AgentImagePreviewSource {
+    case data(Data)
+    case image(NSImage)
 }
 
 enum AgentMessageAttachmentDataLoader {
@@ -444,7 +462,7 @@ enum MarkdownOccurrenceCounter {
 private struct AgentLocalImagePreview: View {
     let name: String
     let attachmentID: String
-    let data: Data
+    let source: AgentImagePreviewSource
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -458,14 +476,22 @@ private struct AgentLocalImagePreview: View {
             .padding(16)
             Divider()
             ScrollView([.horizontal, .vertical]) {
-                AppAsyncDataImage(
-                    data: data,
-                    identity: "agent-attachment-preview|\(attachmentID)",
-                    maximumDisplayPixelSize: 2_048
-                ) { image in
-                    image.resizable().scaledToFit().padding(20)
-                } placeholder: {
-                    ProgressView().padding(20)
+                switch source {
+                case let .data(data):
+                    AppAsyncDataImage(
+                        data: data,
+                        identity: "agent-attachment-preview|\(attachmentID)",
+                        maximumDisplayPixelSize: 2_048
+                    ) { image in
+                        image.resizable().scaledToFit().padding(20)
+                    } placeholder: {
+                        ProgressView().padding(20)
+                    }
+                case let .image(image):
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .padding(20)
                 }
             }
         }
