@@ -3,10 +3,82 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// Durable, account-scoped source of truth for generic Media Studio video jobs.
-/// Story and Media Batch jobs intentionally remain outside this store until their atomic
-/// migration described by the architecture plan is implemented.
+/// Durable, account-scoped source of truth for Media Studio video jobs. Workload partitions
+/// reserve stable Story/Batch associations, while those callers remain on their legacy stores
+/// until the architecture plan's atomic migration is implemented.
 actor MediaStudioVideoJobStore {
+    struct Workload: Codable, Sendable, Equatable {
+        enum Kind: String, Codable, Sendable {
+            case genericStudio = "generic_studio"
+            case storyVideo = "story_video"
+            case storyBatchVideo = "story_batch_video"
+        }
+
+        var kind: Kind
+        var projectID: UUID?
+        var segmentID: String?
+        var attemptID: UUID?
+        var batchID: UUID?
+
+        static let genericStudio = Workload(kind: .genericStudio)
+
+        static func storyVideo(
+            projectID: UUID,
+            segmentID: String,
+            attemptID: UUID
+        ) -> Workload {
+            .init(
+                kind: .storyVideo,
+                projectID: projectID,
+                segmentID: segmentID,
+                attemptID: attemptID
+            )
+        }
+
+        static func storyBatchVideo(
+            projectID: UUID,
+            batchID: UUID,
+            segmentID: String,
+            attemptID: UUID
+        ) -> Workload {
+            .init(
+                kind: .storyBatchVideo,
+                projectID: projectID,
+                segmentID: segmentID,
+                attemptID: attemptID,
+                batchID: batchID
+            )
+        }
+
+        private init(
+            kind: Kind,
+            projectID: UUID? = nil,
+            segmentID: String? = nil,
+            attemptID: UUID? = nil,
+            batchID: UUID? = nil
+        ) {
+            self.kind = kind
+            self.projectID = projectID
+            self.segmentID = segmentID
+            self.attemptID = attemptID
+            self.batchID = batchID
+        }
+
+        fileprivate var isValid: Bool {
+            let validSegment = segmentID.map {
+                !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.count <= 128
+            } ?? false
+            return switch kind {
+            case .genericStudio:
+                projectID == nil && segmentID == nil && attemptID == nil && batchID == nil
+            case .storyVideo:
+                projectID != nil && validSegment && attemptID != nil && batchID == nil
+            case .storyBatchVideo:
+                projectID != nil && validSegment && attemptID != nil && batchID != nil
+            }
+        }
+    }
+
     enum Status: String, Codable, Sendable {
         case prepared
         case submitting
@@ -35,6 +107,7 @@ actor MediaStudioVideoJobStore {
     struct Snapshot: Sendable, Equatable {
         var id: UUID
         var ownerUserID: String
+        var workload: Workload
         var sessionEpoch: UUID
         var idempotencyKey: String
         var providerJobID: String?
@@ -94,6 +167,9 @@ actor MediaStudioVideoJobStore {
         var formatVersion: Int
         var id: UUID
         var ownerUserID: String
+        /// Missing in format-v1 manifests written before workload partitioning. Those records
+        /// are generic Studio jobs by construction and remain readable without rewriting.
+        var workload: Workload?
         var sessionEpoch: UUID
         var idempotencyKey: String
         var providerJobID: String?
@@ -108,7 +184,7 @@ actor MediaStudioVideoJobStore {
         var request: StoredRequest
     }
 
-    private static let formatVersion = 1
+    private static let formatVersion = 2
     private static let maximumManifestBytes = 1 * 1_024 * 1_024
     private let root: URL
 
@@ -123,10 +199,12 @@ actor MediaStudioVideoJobStore {
     func prepare(
         request: VideoGenerationRequest,
         owner ownerInput: String,
-        sessionEpoch: UUID
+        sessionEpoch: UUID,
+        workload: Workload = .genericStudio
     ) throws -> Execution {
         let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !owner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
+        guard workload.isValid else { throw MediaStudioVideoJobStoreError.invalidWorkload }
         let id = UUID()
         let folder = jobFolder(id: id, owner: owner)
         let inputFolder = folder.appendingPathComponent("inputs", isDirectory: true)
@@ -142,6 +220,7 @@ actor MediaStudioVideoJobStore {
             formatVersion: Self.formatVersion,
             id: id,
             ownerUserID: owner,
+            workload: workload,
             sessionEpoch: sessionEpoch,
             idempotencyKey: "chatos-media-video-\(id.uuidString.lowercased())",
             providerJobID: nil,
@@ -307,11 +386,23 @@ actor MediaStudioVideoJobStore {
     /// `submitting` record without provider identity is reconciled to an explicit uncertain
     /// state and is never converted back to a create request.
     func recover(owner: String, sessionEpoch: UUID) throws -> Execution? {
+        try recover(owner: owner, sessionEpoch: sessionEpoch, workload: .genericStudio)
+    }
+
+    /// Workload-specific recovery is the only entry point future Story/Batch adapters may use.
+    /// It cannot consume or advance another product surface's durable task.
+    func recover(
+        owner: String,
+        sessionEpoch: UUID,
+        workload: Workload
+    ) throws -> Execution? {
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
         let normalizedOwner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedOwner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
+        guard workload.isValid else { throw MediaStudioVideoJobStoreError.invalidWorkload }
         let records = try loadRecords(owner: normalizedOwner)
+            .filter { resolvedWorkload($0) == workload }
             .filter(Self.requiresRecovery)
             .sorted { $0.updatedAt > $1.updatedAt }
         guard var record = records.first else { return nil }
@@ -557,9 +648,14 @@ actor MediaStudioVideoJobStore {
             Record.self,
             from: AppBoundedFileReader.read(url, maximumBytes: Self.maximumManifestBytes)
         )
-        guard record.formatVersion == Self.formatVersion,
+        let hasVersionedWorkload = record.formatVersion == 1
+            ? record.workload == nil
+            : record.workload != nil
+        guard (1...Self.formatVersion).contains(record.formatVersion),
+              hasVersionedWorkload,
               record.stateVersion > 0,
               record.retryCount >= 0,
+              record.workload.map(\.isValid) ?? true,
               !record.idempotencyKey.isEmpty,
               Set(record.request.inputs.map(\.kind)).count == record.request.inputs.count,
               record.request.inputs.allSatisfy({ input in
@@ -661,6 +757,7 @@ actor MediaStudioVideoJobStore {
         .init(
             id: record.id,
             ownerUserID: record.ownerUserID,
+            workload: resolvedWorkload(record),
             sessionEpoch: record.sessionEpoch,
             idempotencyKey: record.idempotencyKey,
             providerJobID: record.providerJobID,
@@ -672,6 +769,10 @@ actor MediaStudioVideoJobStore {
             retryable: record.retryable,
             updatedAt: record.updatedAt
         )
+    }
+
+    private func resolvedWorkload(_ record: Record) -> Workload {
+        record.workload ?? .genericStudio
     }
 
     private func ownerDirectory(_ owner: String) -> URL {
@@ -722,6 +823,7 @@ enum MediaStudioVideoJobStoreError: LocalizedError {
     case invalidTransition
     case staleSession
     case invalidWriterLock
+    case invalidWorkload
 
     var errorDescription: String? {
         switch self {
@@ -731,6 +833,7 @@ enum MediaStudioVideoJobStoreError: LocalizedError {
         case .invalidTransition: "视频任务状态已变化，请刷新后重试。"
         case .staleSession: "视频任务已由新的账号会话接管。"
         case .invalidWriterLock: "视频任务写入锁无效，已拒绝继续操作。"
+        case .invalidWorkload: "视频任务缺少有效的业务关联。"
         }
     }
 }

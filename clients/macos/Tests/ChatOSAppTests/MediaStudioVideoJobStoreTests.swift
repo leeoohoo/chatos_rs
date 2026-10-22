@@ -49,6 +49,61 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
 
+    func testStoryWorkloadIsInvisibleToGenericStudioRecovery() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        let workload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: UUID(),
+            segmentID: "segment-1",
+            attemptID: UUID()
+        )
+        let prepared = try await store.prepare(
+            request: request(prompt: "story partition"),
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        XCTAssertEqual(prepared.snapshot.workload, workload)
+
+        let generic = try await store.recover(owner: "alice", sessionEpoch: UUID())
+        XCTAssertNil(generic)
+
+        let recovered = try await store.recover(
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        XCTAssertEqual(recovered?.snapshot.id, prepared.snapshot.id)
+        XCTAssertEqual(recovered?.snapshot.workload, workload)
+        XCTAssertEqual(recovered?.mode, .create)
+    }
+
+    func testManifestWithoutWorkloadRemainsGenericStudioCompatible() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        let prepared = try await store.prepare(
+            request: request(prompt: "legacy generic"),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        let manifest = try XCTUnwrap(files(named: "job.json", under: root).first)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any]
+        )
+        XCTAssertEqual(object["formatVersion"] as? Int, 2)
+        object.removeValue(forKey: "workload")
+        object["formatVersion"] = 1
+        try JSONSerialization.data(withJSONObject: object).write(to: manifest, options: .atomic)
+
+        let recovered = try await MediaStudioVideoJobStore(root: root).recover(
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        XCTAssertEqual(recovered?.snapshot.id, prepared.snapshot.id)
+        XCTAssertEqual(recovered?.snapshot.workload, .genericStudio)
+        XCTAssertEqual(recovered?.mode, .create)
+    }
+
     func testSymlinkWriterLockIsRejected() async throws {
         let root = try directory().appendingPathComponent("jobs")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

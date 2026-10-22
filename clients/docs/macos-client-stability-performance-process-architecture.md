@@ -1107,6 +1107,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批缩短的是 Store 全局互斥时间，不会减少单个输入必需的一次复制与摘要计算；这些 I/O 仍在 App 进程内，尚未迁往 Media Worker。进程在 manifest 提交前被 `SIGKILL` 仍可留下无 manifest 的私有 job 目录；它不会被恢复或提交，但启动对账/安全清理策略仍待实现。长期 lease/交接协议、Story/Media Batch 迁移和真实多进程强杀矩阵仍未完成，P0-E 仍不能标记完成。
 
+### 12.23 第二十三批实施记录：MediaJobStore workload 分区与兼容读取（2026-10-22）
+
+本批在迁移 Story/Batch 前先固化业务关联和恢复路由，不改变任何 Story 写入者。审计确认：当前新建的批量视频已通过 `directVideos` 逐段执行，任务事实仍在 `segment.attempt`；持久 `StoryMediaBatch.jobs` 的视频执行路径主要承担旧批次恢复兼容。因此后续应先迁移新 Story 单段/直连队列，再对旧 Batch 做可重复导入，不能把两者当成同一种存储结构直接覆盖。
+
+已实施：
+
+- MediaJobStore manifest 新增受校验的 workload 关联：`generic_studio`、`story_video(projectID, segmentID, attemptID)` 和 `story_batch_video(projectID, batchID, segmentID, attemptID)`。关联不包含凭据，Story/Batch 的 attempt/intent ID 作为未来原子切换与重复导入的稳定业务键。
+- 新任务在 prepare 时持久 workload，snapshot 显式返回该关联；非法的字段组合、空 segment ID 或超界 segment ID 被拒绝，避免恢复路径猜测任务归属。
+- 通用 Media Studio 的既有 `recover(owner, epoch)` 只筛选 `generic_studio`，不能消费或推进 Story/Batch 分区中的 job；新增 workload 精确恢复入口，未来 Story 只能用完整业务关联取回自己的 job。
+- 新 manifest 升为 format-v2，避免旧客户端忽略未知 workload 字段后把 Story job 误当通用 Studio job 执行；旧客户端会明确拒绝 v2。12.20–12.22 已写入的 format-v1 manifest 必须缺少 workload，新客户端读取时只将其解释为 `generic_studio`，无需就地重写，也不会被误归类为 Story 任务。v1 却携带 workload、或 v2 缺少 workload 都按损坏记录拒绝。
+
+验证：新增 Story workload 对默认恢复不可见、只能被精确 workload 恢复，以及删除 workload 字段的旧 manifest 仍可按通用 Studio job 恢复的回归。Debug 与 arm64 Release 按 History/Video Job/Video Canvas/Image Interaction/ViewModel/API 各选择性运行 79 项，全部通过；Swift 6 编译与并发检查、`git diff --check` 同步作为门禁。
+
+边界：本批只建立 schema 与恢复隔离，Story `segment.attempt` 和旧 Batch `jobs` 仍是各自的唯一写入者，没有向 MediaJobStore 旁路双写。下一阶段还必须提供可重复的稳定本地 job ID、项目 manifest 与 job manifest 之间的可恢复切换协议，以及旧 provider ID 的只读导入；在这些条件完成前，Story/Batch 不能改由新 Store 推进，P0-E 仍不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
