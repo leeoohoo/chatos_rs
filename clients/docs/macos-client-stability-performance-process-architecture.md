@@ -1682,6 +1682,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：Artifact 创建/上传和 Markdown 正文预览仍按现有 2 MiB 文本契约持有 `Data`；非文件型 `AgentArtifactServing` 的兼容恢复也仍走完整字节值。本批不改变 Host v45 协议，只消费 12.58 已有的只读能力。真实磁盘满/只读卷/睡眠与强杀矩阵、跨进程 FD 传递、全局文件 I/O Governor、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.60 第六十批实施记录：Global Utility 上下文快照主线程去阻塞（2026-10-23）
+
+本批处理主进程与 Global Utility Companion 之间的上下文快照热点。此前项目、联系人或界面语言任一变化都会在主进程 MainActor 上重新映射全部搜索项、JSON 编码并同步 `Data.write(.atomic)`；Companion 收到通知后又在自己的 MainActor 上通过无上限 `Data(contentsOf:)` 读取和 JSON 解码。连续资源刷新会重复执行整套写盘，两个 UI 进程都可能被文件 I/O 和编解码阻塞。
+
+已实施：
+
+- 主进程 Combine 链先对只含不可变 `Sendable` 资源值的输入去重，并以 100 ms debounce 合并同一轮 projects/contacts/language 更新；数组到搜索 DTO 的映射、JSON 编码和文件写入全部移到可取消的 utility detached work，不再占用 MainActor。
+- 新增 `GlobalUtilityContextSnapshotPersistence` actor，任一写入进行时只保留最新 pending 输入；相同已持久化内容不重复写盘和通知。停止客户端会丢弃 pending、取消 drain task，完成写盘后才向 Companion 发布 reload 通知。
+- 快照建立 4 MiB 明确上限。写入在目标同目录创建 `0600`、`O_EXCL | O_NOFOLLOW` 临时文件，处理短写、`EINTR`、取消和 `fsync`，最后以 `rename(2)` 原子安装；编码失败、超限或取消保留上一份有效快照并清理临时文件。
+- Companion reload 改为 latest-task-wins 的异步有界读取和后台 JSON 解码；读取使用 `O_NOFOLLOW | O_CLOEXEC`、要求普通文件且 descriptor 尺寸在 1...4 MiB 内，旧 reload task 会在新通知或进程终止时取消。MainActor 只接收最终的小型值数组并更新上下文。
+- 新增回归覆盖私有权限原子 round-trip、超限编码保留旧快照、符号链接/超限文件拒绝，以及写入中多次提交只落首份与最后一份。
+
+验证：Debug 与 arm64 Release 各选择性运行 12.59 的 101 项图片/HTTP/性能/文件恢复门禁及 `GlobalUtilityContextSnapshotStoreTests` 4 项，共 105 项，全部通过；Swift 6 编译、优化编译、`git diff --check` 与源码审查同步作为本批门禁。测试只使用独立临时目录和受控写入探针；未启动/安装正式 App，未访问活动用户数据库。
+
+边界：快照最终消费者仍需要完整 JSON，因此后台任务内仍会持有一次有上限的编码/解码 `Data`；本批不把 Companion IPC 改成增量数据库或共享内存。Distributed Notification、真实万级资源压力、低磁盘/只读卷、睡眠/强杀、全局 I/O Governor、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

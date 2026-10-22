@@ -38,7 +38,7 @@ enum ProjectWorkspaceTab: String, CaseIterable, Identifiable {
     }
 }
 
-struct ResourceItem: Identifiable, Hashable {
+struct ResourceItem: Identifiable, Hashable, Sendable {
     let id: String
     let title: String
     let subtitle: String?

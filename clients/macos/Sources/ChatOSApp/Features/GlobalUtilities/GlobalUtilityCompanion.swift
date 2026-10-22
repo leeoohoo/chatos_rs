@@ -52,12 +52,6 @@ private enum GlobalUtilityIPC {
     }
 }
 
-private struct GlobalUtilityContextSnapshot: Codable, Sendable {
-    let isEnglish: Bool
-    let projects: [GlobalUtilitySearchItem]
-    let contacts: [GlobalUtilitySearchItem]
-}
-
 private enum GlobalUtilityHostCommand: Codable, Sendable {
     case openProject(String)
     case openContact(String)
@@ -80,6 +74,7 @@ final class GlobalUtilityCompanionClient: NSObject {
     private var hasStarted = false
     private var isCompanionReady = false
     private var pendingAction: GlobalUtilityAction?
+    private var contextSnapshotPersistence: GlobalUtilityContextSnapshotPersistence?
 
     init(model: AppModel, preferences: GlobalUtilityPreferencesStore) {
         self.model = model
@@ -106,10 +101,26 @@ final class GlobalUtilityCompanionClient: NSObject {
         )
 
         guard let model else { return }
+        let persistence = GlobalUtilityContextSnapshotPersistence(
+            url: GlobalUtilityIPC.snapshotURL
+        ) { [sessionID] in
+            GlobalUtilityIPC.post(GlobalUtilityIPC.reloadContext, sessionID: sessionID)
+        }
+        contextSnapshotPersistence = persistence
         Publishers.CombineLatest3(model.$projects, model.$contacts, model.$interfaceLanguage)
+            .map { projects, contacts, language in
+                GlobalUtilityContextSnapshotInput(
+                    isEnglish: language == .english,
+                    projects: projects,
+                    contacts: contacts
+                )
+            }
+            .removeDuplicates()
+            .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _, _, _ in
-                self?.publishContextSnapshot()
+            .sink { [weak self, persistence] snapshot in
+                guard self?.hasStarted == true else { return }
+                Task { await persistence.submit(snapshot) }
             }
             .store(in: &cancellables)
         preferences.$configurationRevision
@@ -124,7 +135,6 @@ final class GlobalUtilityCompanionClient: NSObject {
             }
             .store(in: &cancellables)
 
-        publishContextSnapshot()
         launchCompanionIfNeeded()
     }
 
@@ -134,6 +144,9 @@ final class GlobalUtilityCompanionClient: NSObject {
         process?.terminate()
         process = nil
         cancellables.removeAll()
+        let persistence = contextSnapshotPersistence
+        contextSnapshotPersistence = nil
+        Task { await persistence?.stop() }
         DistributedNotificationCenter.default().removeObserver(self)
         hotKeys.stop()
         isCompanionReady = false
@@ -200,27 +213,6 @@ final class GlobalUtilityCompanionClient: NSObject {
         }
     }
 
-    private func publishContextSnapshot() {
-        guard let model else { return }
-        let snapshot = GlobalUtilityContextSnapshot(
-            isEnglish: model.globalUtilityIsEnglish,
-            projects: model.globalUtilityProjects,
-            contacts: model.globalUtilityContacts
-        )
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        do {
-            let url = GlobalUtilityIPC.snapshotURL
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try data.write(to: url, options: .atomic)
-        } catch {
-            return
-        }
-        GlobalUtilityIPC.post(GlobalUtilityIPC.reloadContext, sessionID: sessionID)
-    }
-
     @objc private func receiveStatus(_ notification: Notification) {
         guard let states = GlobalUtilityIPC.decoded(
             [GlobalUtilityAction: GlobalHotKeyRegistrationState].self,
@@ -273,20 +265,27 @@ private final class GlobalUtilityCompanionContext: GlobalUtilityContext {
     private(set) var globalUtilityContacts: [GlobalUtilitySearchItem] = []
 
     private let sessionID: String
+    private var reloadTask: Task<Void, Never>?
 
     init(sessionID: String) {
         self.sessionID = sessionID
     }
 
     func reload() {
-        guard let data = try? Data(contentsOf: GlobalUtilityIPC.snapshotURL),
-              let snapshot = try? JSONDecoder().decode(
-                GlobalUtilityContextSnapshot.self,
-                from: data
-              ) else { return }
-        globalUtilityIsEnglish = snapshot.isEnglish
-        globalUtilityProjects = snapshot.projects
-        globalUtilityContacts = snapshot.contacts
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self] in
+            guard let snapshot = await GlobalUtilityContextSnapshotStore.read(
+                from: GlobalUtilityIPC.snapshotURL
+            ), !Task.isCancelled, let self else { return }
+            globalUtilityIsEnglish = snapshot.isEnglish
+            globalUtilityProjects = snapshot.projects
+            globalUtilityContacts = snapshot.contacts
+        }
+    }
+
+    func stop() {
+        reloadTask?.cancel()
+        reloadTask = nil
     }
 
     func globalUtilityOpenProject(_ projectID: String) {
@@ -405,6 +404,7 @@ private final class GlobalUtilityCompanionDelegate: NSObject, NSApplicationDeleg
 
     func applicationWillTerminate(_ notification: Notification) {
         parentMonitor?.invalidate()
+        context.stop()
         coordinator.stop()
         DistributedNotificationCenter.default().removeObserver(self)
     }
