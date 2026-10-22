@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
-import conversationHistory from "../../contracts/local-agent/v45/fixtures/conversation-history-success.json";
-import messageTaskGraph from "../../contracts/local-agent/v45/fixtures/message-task-graph-success.json";
-import runEventsLatest from "../../contracts/local-agent/v45/fixtures/run-events-latest-success.json";
+import conversationHistory from "../../contracts/local-agent/v46/fixtures/conversation-history-success.json";
+import messageTaskGraph from "../../contracts/local-agent/v46/fixtures/message-task-graph-success.json";
+import runEventsLatest from "../../contracts/local-agent/v46/fixtures/run-events-latest-success.json";
 import {
   conversationHistoryResponseSchema,
   messageTaskGraphResponseSchema,
   runEventsResponseSchema,
 } from "./contracts/conversationRunContract";
 
-describe("Conversation and Run shared Host v45 fixtures", () => {
+describe("Conversation and Run shared Host v46 fixtures", () => {
   it("preserves conversation, turn, message, task, and run links", () => {
     const history = conversationHistoryResponseSchema.parse(conversationHistory).result.page;
     const graph = messageTaskGraphResponseSchema.parse(messageTaskGraph).result.graph;

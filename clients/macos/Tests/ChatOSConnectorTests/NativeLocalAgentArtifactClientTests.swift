@@ -1,21 +1,37 @@
 @testable import ChatOSConnector
 import ChatOSCore
+import CryptoKit
 import Foundation
 import XCTest
 
 final class NativeLocalAgentArtifactClientTests: XCTestCase {
     func testCRUDCommandsRemainOwnerScopedAndCarryContent() async throws {
-        let host = ArtifactHostStub()
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("artifacts")
-        let client = NativeLocalAgentArtifactClient(host: host, artifactDirectoryURL: root)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "artifact-client-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let artifacts = root.appendingPathComponent("artifacts", isDirectory: true)
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let host = ArtifactHostStub(stagingDirectoryURL: staging)
+        let client = NativeLocalAgentArtifactClient(
+            host: host,
+            artifactDirectoryURL: artifacts,
+            stagingDirectoryURL: staging
+        )
         let data = Data("# Local\n".utf8)
+        let source = root.appendingPathComponent("source.md")
+        try data.write(to: source)
+        let sha256 = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         let metadata = try await client.store(
             ownerUserID: "owner-1",
             request: .init(
                 name: "local.md",
                 mimeType: "text/markdown",
-                data: data,
-                sha256: String(repeating: "a", count: 64),
+                fileURL: source,
+                size: data.count,
+                sha256: sha256,
                 idempotencyKey: "attachment-1"
             )
         )
@@ -23,7 +39,15 @@ final class NativeLocalAgentArtifactClientTests: XCTestCase {
         var command = try await host.lastCommand()
         XCTAssertEqual(command.type, "create_artifact")
         XCTAssertEqual(command.ownerUserID, "owner-1")
-        XCTAssertEqual(command.dataBase64, data.base64EncodedString())
+        XCTAssertEqual(command.size, data.count)
+        XCTAssertNotNil(command.stagingToken)
+        XCTAssertNil(command.dataBase64)
+        let uploaded = await host.uploadedData()
+        XCTAssertEqual(uploaded, data)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: staging.path),
+            []
+        )
 
         let page = try await client.list(ownerUserID: "owner-1", limit: 50, cursor: nil)
         XCTAssertEqual(page.artifacts.map(\.artifactID), ["artifact-1"])
@@ -36,7 +60,7 @@ final class NativeLocalAgentArtifactClientTests: XCTestCase {
             ownerUserID: "owner-1",
             artifactID: "artifact-1"
         )
-        XCTAssertEqual(reference.fileURL, root.appendingPathComponent("artifact-1.artifact"))
+        XCTAssertEqual(reference.fileURL, artifacts.appendingPathComponent("artifact-1.artifact"))
         XCTAssertEqual(reference.size, data.count)
         command = try await host.lastCommand()
         XCTAssertEqual(command.type, "get_artifact_file")
@@ -67,10 +91,16 @@ final class NativeLocalAgentArtifactClientTests: XCTestCase {
 private actor ArtifactHostStub: LocalAgentHostClientServicing {
     private let data = Data("# Local\n".utf8)
     private let relativePath: String
+    private let stagingDirectoryURL: URL?
     private var commands: [Data] = []
+    private var uploaded: Data?
 
-    init(relativePath: String = "artifact-1.artifact") {
+    init(
+        relativePath: String = "artifact-1.artifact",
+        stagingDirectoryURL: URL? = nil
+    ) {
         self.relativePath = relativePath
+        self.stagingDirectoryURL = stagingDirectoryURL
     }
 
     func start(ownerUserID _: String) async throws {}
@@ -81,6 +111,11 @@ private actor ArtifactHostStub: LocalAgentHostClientServicing {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: command) as? [String: Any])
         switch object["type"] as? String {
         case "create_artifact":
+            let token = try XCTUnwrap(object["staging_token"] as? String)
+            let stagingDirectoryURL = try XCTUnwrap(stagingDirectoryURL)
+            uploaded = try Data(
+                contentsOf: stagingDirectoryURL.appendingPathComponent("\(token).staged")
+            )
             return try json(["type": "artifact", "artifact": artifact])
         case "list_artifacts":
             return try json([
@@ -116,9 +151,13 @@ private actor ArtifactHostStub: LocalAgentHostClientServicing {
         return .init(
             type: object["type"] as? String,
             ownerUserID: object["owner_user_id"] as? String,
+            stagingToken: object["staging_token"] as? String,
+            size: object["size"] as? Int,
             dataBase64: object["data_base64"] as? String
         )
     }
+
+    func uploadedData() -> Data? { uploaded }
 
     private var artifact: [String: Any] {
         [
@@ -141,5 +180,7 @@ private actor ArtifactHostStub: LocalAgentHostClientServicing {
 private struct ArtifactCommandSnapshot: Sendable {
     let type: String?
     let ownerUserID: String?
+    let stagingToken: String?
+    let size: Int?
     let dataBase64: String?
 }

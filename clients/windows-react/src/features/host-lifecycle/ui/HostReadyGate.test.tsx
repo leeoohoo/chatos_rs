@@ -10,7 +10,7 @@ describe("HostReadyGate", () => {
         snapshot={{
           phase: "degraded",
           ready: false,
-          protocolVersion: 45,
+          protocolVersion: 46,
           detail: "本地服务没有响应。",
           retryable: true,
         }}

@@ -1730,6 +1730,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：`AgentArtifactWriteRequest` 与 Host v45 的 `store_artifact` 仍携带最多 2 MiB `Data`/Base64，跨进程放大尚未消除；要继续文件化必须设计 App-owned staging、opaque token、Host 根目录校验、崩溃回收及协议升级，不能把任意绝对路径直接暴露给 Host。全局 I/O Governor、真实慢盘/磁盘故障、签名 Release soak 与 P0-D/P0-E 综合压力门禁仍待完成。
 
+### 12.63 第六十三批实施记录：Agent Artifact 创建文件原生 IPC（2026-10-23）
+
+本批关闭 12.62 保留的 Agent Artifact 创建侧跨进程内存放大。此前最多 2 MiB Markdown 会先在附件 Store 外读取成 Swift `Data`，再编码为约 2.67 MiB Base64 JSON，Host 解码成完整 `Vec<u8>` 后才写入 artifact 文件；同一正文会同时出现在源文件、App 堆、IPC 消息与 Host 堆中。
+
+已实施：
+
+- `AgentArtifactWriteRequest` 改为只持有受控源文件 URL、精确大小、SHA-256 和幂等键；领取队列不再读取正文。`NativeLocalAgentArtifactClient` 在 utility detached task 中以固定 256 KiB 缓冲、`O_NOFOLLOW | O_CLOEXEC`、descriptor 前后身份复验、增量摘要、短读/短写/`EINTR`、取消和 `fsync` 把源文件发布到数据库旁的私有 `.artifact-staging` 根，文件与目录权限分别为 `0600/0700`。
+- IPC `create_artifact` 不再携带 `data_base64` 或任意绝对路径，只传 lowercase UUID staging token、大小、SHA-256 与原有 owner/名称/MIME/幂等键。App 在请求成功、失败或取消后都尝试清理 token 文件；Host 进程启动时只回收名称严格匹配且超过 24 小时的普通 staging 文件，未知项和 symlink 保留，避免误删。
+- Host 从配置数据库路径独立派生同一个 staging 根；协议层限制 token 语法和 2 MiB 大小，存储层再在该根下构造单文件名，以 `O_NOFOLLOW` 打开并要求普通文件、单硬链接、私有权限、精确大小、稳定 device/inode/size/mtime/ctime。正文使用固定缓冲增量校验 SHA-256 与 UTF-8，不聚合 `Vec<u8>`；校验完成后先移动为 artifact 根内隐藏 import 文件，再在短 SQLite 写事务中原子发布最终文件和元数据。
+- command receipt 与 artifact 幂等键都在读取 staging 前预检，并在短事务内再次复验；响应丢失重放不要求已被消费的 token 仍存在，并发同幂等键只发布一个 artifact。校验失败、事务失败和竞争输家会清理隐藏 import，数据库不会引用未验证或半发布文件。
+- Local Agent Host 协议升级到 v46；Rust、Swift 与 Windows React 的常量、共享 fixture 和契约测试同步迁移。新增回归覆盖多分块 staging、权限、摘要失败无残留、symlink 拒绝、IPC 不含 Base64、Host 摘要/symlink 双重拒绝、逻辑幂等重放，以及 24 小时崩溃遗留只清理受控名称。
+
+验证：Debug 与 arm64 Release 各运行 `AgentArtifactStorageTests` 7 项、`NativeLocalAgentArtifactClientTests` 2 项、v46 Host contract 3 项和 `AgentArtifactUploadStagerTests` 3 项，共 15 项，全部通过；Host protocol/runtime/storage/process 全量 428 项 Rust 测试通过，Windows 6 个受影响契约测试文件共 17 项通过。Swift 6 编译、优化编译、`cargo fmt --check`、TypeScript 类型检查与 `git diff --check` 同步作为本批门禁。测试只使用独立临时目录和内存/临时数据库；不启动/安装正式 App，不访问活动用户数据库。
+
+边界：本批只文件化 Agent Artifact 创建；Markdown 预览的最终消费者仍需要有界字符串，非文件型兼容读取仍可能返回完整 `Data`。staging 与 Host artifact 根必须位于同一数据库派生位置并由同一登录用户访问，不扩展为网络客户端上传协议；跨进程 FD 传递、全局文件 I/O Governor、真实 ENOSPC/只读卷/睡眠与强杀矩阵、签名 Release soak 和 P0-D/P0-E 综合压力门禁仍待完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
@@ -1860,7 +1876,7 @@ Release 验收建议记录：
 
 ### 16.1 源码与文档漂移治理
 
-- 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift Host 常量为 v45，而 `clients/local_agent_host/ARCHITECTURE.md` 仍有“validate protocol v28”陈述，属于待修的文档漂移；本方案引用版本不能替代实际握手。
+- 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift/Windows Host 常量与共享 fixture 为 v46；本方案引用版本不能替代实际握手。
 - CI 比较 Swift/Rust 协议版本、payload 边界、支持能力和打包后的真实可执行版本；Schema 兼容矩阵、进程布局及 ADR 随实现更新。
 - 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；新增 Governor、Worker、job 状态机与门禁仍为待实施项。
 

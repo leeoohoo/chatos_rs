@@ -83,7 +83,7 @@ final class NativeLocalAgentHostContractFixtureTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         return try Data(contentsOf: clients
-            .appendingPathComponent("contracts/local-agent/v45/fixtures")
+            .appendingPathComponent("contracts/local-agent/v46/fixtures")
             .appendingPathComponent(name))
     }
 

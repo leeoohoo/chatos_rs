@@ -4,25 +4,40 @@ import Foundation
 public struct NativeLocalAgentArtifactClient: AgentArtifactFileServing, Sendable {
     private let host: any LocalAgentHostClientServicing
     private let artifactDirectoryURL: URL
+    private let stagingDirectoryURL: URL
 
     public init(
         host: any LocalAgentHostClientServicing,
-        artifactDirectoryURL: URL
+        artifactDirectoryURL: URL,
+        stagingDirectoryURL: URL? = nil
     ) {
         self.host = host
         self.artifactDirectoryURL = artifactDirectoryURL.standardizedFileURL
+        self.stagingDirectoryURL = (
+            stagingDirectoryURL ?? artifactDirectoryURL
+                .deletingPathExtension()
+                .appendingPathExtension("artifact-staging")
+        ).standardizedFileURL
     }
 
     public func store(
         ownerUserID: String,
         request: AgentArtifactWriteRequest
     ) async throws -> AgentArtifactMetadata {
+        let staged = try await AgentArtifactUploadStager.stage(
+            from: request.fileURL,
+            in: stagingDirectoryURL,
+            expectedBytes: request.size,
+            expectedSHA256: request.sha256
+        )
+        defer { AgentArtifactUploadStager.discard(staged) }
         let response: ArtifactResult = try await host.request(CreateCommand(
             type: "create_artifact",
             ownerUserID: ownerUserID,
             name: request.name,
             mimeType: request.mimeType,
-            dataBase64: request.data.base64EncodedString(),
+            stagingToken: staged.token,
+            size: request.size,
             sha256: request.sha256,
             idempotencyKey: request.idempotencyKey
         ))
@@ -122,15 +137,16 @@ private struct CreateCommand: Encodable, Sendable {
     let ownerUserID: String
     let name: String
     let mimeType: String
-    let dataBase64: String
+    let stagingToken: String
+    let size: Int
     let sha256: String
     let idempotencyKey: String
 
     enum CodingKeys: String, CodingKey {
-        case type, name, sha256
+        case type, name, size, sha256
         case ownerUserID = "owner_user_id"
         case mimeType = "mime_type"
-        case dataBase64 = "data_base64"
+        case stagingToken = "staging_token"
         case idempotencyKey = "idempotency_key"
     }
 }

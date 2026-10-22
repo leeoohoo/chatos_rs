@@ -384,6 +384,7 @@ dependencies = [
  "chatos_local_agent_protocol",
  "chrono",
  "fs2",
+ "libc",
  "serde",
  "serde_json",
  "sha2 0.10.9",

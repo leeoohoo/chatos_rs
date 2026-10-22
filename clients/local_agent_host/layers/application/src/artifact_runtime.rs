@@ -8,7 +8,6 @@ use chatos_local_agent_protocol::{
     CreateArtifactCommand, HostCommand, HostResult, LocalAgentArtifact,
     LOCAL_AGENT_ARTIFACT_MAX_BYTES,
 };
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 impl LocalAgentRuntime {
@@ -83,12 +82,9 @@ fn artifact_write(
     command: CreateArtifactCommand,
     now_unix_ms: i64,
 ) -> Result<LocalAgentArtifactWrite, LocalAgentRuntimeError> {
-    let data = STANDARD.decode(&command.data_base64).map_err(|_| {
-        LocalAgentRuntimeError::InvalidRequest("artifact data is not valid base64".to_string())
-    })?;
-    if data.is_empty() || data.len() > LOCAL_AGENT_ARTIFACT_MAX_BYTES {
+    if command.size == 0 || command.size > LOCAL_AGENT_ARTIFACT_MAX_BYTES as u64 {
         return Err(LocalAgentRuntimeError::InvalidRequest(format!(
-            "artifact data must contain 1..={LOCAL_AGENT_ARTIFACT_MAX_BYTES} decoded bytes"
+            "artifact data must contain 1..={LOCAL_AGENT_ARTIFACT_MAX_BYTES} bytes"
         )));
     }
     let mime_type = command.mime_type.trim().to_ascii_lowercase();
@@ -97,33 +93,20 @@ fn artifact_write(
             "agent artifacts must use the text/markdown MIME type".to_string(),
         ));
     }
-    std::str::from_utf8(&data).map_err(|_| {
-        LocalAgentRuntimeError::InvalidRequest(
-            "agent artifact Markdown must contain valid UTF-8".to_string(),
-        )
-    })?;
-    let digest = format!("{:x}", Sha256::digest(&data));
-    if digest != command.sha256.to_ascii_lowercase() {
-        return Err(LocalAgentRuntimeError::InvalidRequest(
-            "artifact SHA-256 does not match its content".to_string(),
-        ));
-    }
-    let size = u64::try_from(data.len()).map_err(|_| {
-        LocalAgentRuntimeError::InvalidRequest("artifact size exceeds supported range".to_string())
-    })?;
+    let digest = command.sha256.to_ascii_lowercase();
     Ok(LocalAgentArtifactWrite {
         artifact: LocalAgentArtifact {
             artifact_id: Uuid::new_v4().to_string(),
             owner_user_id: command.owner_user_id,
             name: command.name.trim().to_string(),
             mime_type,
-            size,
+            size: command.size,
             sha256: digest,
             created_at_unix_ms: now_unix_ms,
             updated_at_unix_ms: now_unix_ms,
         },
         idempotency_key: command.idempotency_key,
-        data,
+        staging_token: command.staging_token,
     })
 }
 
@@ -152,6 +135,7 @@ mod tests {
         DeleteArtifactCommand, GetArtifactDataCommand, GetArtifactFileCommand, HostRequestEnvelope,
         ListArtifactsCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
+    use sha2::{Digest, Sha256};
     use std::sync::Arc;
 
     fn request(command_id: &str, command: HostCommand) -> HostRequestEnvelope {
@@ -162,13 +146,30 @@ mod tests {
         }
     }
 
-    fn create_command(owner: &str, key: &str, content: &str) -> CreateArtifactCommand {
+    fn create_command(
+        storage: &SqliteClientStorage,
+        owner: &str,
+        key: &str,
+        content: &str,
+    ) -> CreateArtifactCommand {
         let data = content.as_bytes();
+        let staging_token = Uuid::new_v4().to_string();
+        let path = storage
+            .artifact_staging_root()
+            .join(format!("{staging_token}.staged"));
+        std::fs::write(&path, data).expect("stage artifact");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                .expect("restrict staged artifact");
+        }
         CreateArtifactCommand {
             owner_user_id: owner.to_string(),
             name: "report.md".to_string(),
             mime_type: "text/markdown".to_string(),
-            data_base64: STANDARD.encode(data),
+            staging_token,
+            size: data.len() as u64,
             sha256: format!("{:x}", Sha256::digest(data)),
             idempotency_key: key.to_string(),
         }
@@ -181,13 +182,18 @@ mod tests {
                 .await
                 .expect("storage"),
         );
-        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        let runtime = LocalAgentRuntime::with_clock(storage.clone(), Arc::new(|| Ok(10_000)));
         runtime.initialize("owner-1").await.expect("initialize");
 
         let created = runtime
             .try_handle(request(
                 "create-1",
-                HostCommand::CreateArtifact(create_command("owner-1", "attachment-1", "# hi")),
+                HostCommand::CreateArtifact(create_command(
+                    &storage,
+                    "owner-1",
+                    "attachment-1",
+                    "# hi",
+                )),
             ))
             .await
             .expect("create artifact");
@@ -197,7 +203,12 @@ mod tests {
         let replay = runtime
             .try_handle(request(
                 "create-2",
-                HostCommand::CreateArtifact(create_command("owner-1", "attachment-1", "# hi")),
+                HostCommand::CreateArtifact(create_command(
+                    &storage,
+                    "owner-1",
+                    "attachment-1",
+                    "# hi",
+                )),
             ))
             .await
             .expect("logical replay");
@@ -302,5 +313,56 @@ mod tests {
             ))
             .await;
         assert!(deleted.is_err());
+    }
+
+    #[tokio::test]
+    async fn staged_artifact_digest_mismatch_is_rejected() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = LocalAgentRuntime::with_clock(storage.clone(), Arc::new(|| Ok(10_000)));
+        runtime.initialize("owner-1").await.expect("initialize");
+        let mut command = create_command(&storage, "owner-1", "attachment-bad", "# actual");
+        command.sha256 = "0".repeat(64);
+
+        let result = runtime
+            .try_handle(request("create-bad", HostCommand::CreateArtifact(command)))
+            .await;
+
+        assert!(result.is_err());
+        assert!(runtime
+            .store
+            .list_artifacts("owner-1", None, None, 10)
+            .await
+            .expect("list artifacts")
+            .artifacts
+            .is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn staged_artifact_symbolic_link_is_rejected() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = LocalAgentRuntime::with_clock(storage.clone(), Arc::new(|| Ok(10_000)));
+        runtime.initialize("owner-1").await.expect("initialize");
+        let command = create_command(&storage, "owner-1", "attachment-link", "# actual");
+        let staged = storage
+            .artifact_staging_root()
+            .join(format!("{}.staged", command.staging_token));
+        let external = storage.artifact_staging_root().join("external.md");
+        std::fs::rename(&staged, &external).expect("move staged payload");
+        std::os::unix::fs::symlink(&external, &staged).expect("replace with symlink");
+
+        let result = runtime
+            .try_handle(request("create-link", HostCommand::CreateArtifact(command)))
+            .await;
+
+        assert!(result.is_err());
     }
 }

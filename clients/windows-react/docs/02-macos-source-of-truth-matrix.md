@@ -67,7 +67,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 Windows 只读索引实现（2026-10-20）：
 
 - Tauri/Rust 中建立与 macOS 同 schema 的账号隔离 `Projects.sqlite3`，第一阶段只读取 `status = active` 的项目并立即返回；数据库损坏或字段无效时失败关闭，不伪装成空列表；
-- 第二阶段通过账号绑定的 Host v45 `ListConversations` 分页读取关系，并按 macOS 规则保证“叽咕狸”和“插件安装助手”两个系统联系人会话存在；
+- 第二阶段通过账号绑定的 Host v46 `ListConversations` 分页读取关系，并按 macOS 规则保证“叽咕狸”和“插件安装助手”两个系统联系人会话存在；
 - Host 中出现 project conversation 但本地 Registry 没有对应项目时，只保留关系记录，绝不凭远端关系创建或复活项目；
 - React `WorkspaceIndexPort`、Application store 和 resolver 保留 local-first 顺序、账号切换 latest-wins、远端失败保留项目及显式错误/重试；
 - Host 业务请求统一使用有界 framed transport。协议、IO、EOF 或超时会终止假健康进程；普通业务拒绝不会误杀健康 Host；
@@ -631,7 +631,7 @@ Adapter：
 - `clients/macos/Tests/ChatOSCoreTests/ConversationViewportUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSAppTests/ConversationTimelineBottomSyncPolicyTests.swift`
 
-共享 Host v45 fixture 已固定 Conversation history、Message Task Graph 与最新 Run events，并由 Rust interface、Swift Connector、TypeScript Zod contract 同时读取验证；Windows 后续实现必须继续复用这些 fixture，并覆盖上述状态分支，不能只做组件快照测试。
+共享 Host v46 fixture 已固定 Conversation history、Message Task Graph 与最新 Run events，并由 Rust interface、Swift Connector、TypeScript Zod contract 同时读取验证；Windows 后续实现必须继续复用这些 fixture，并覆盖上述状态分支，不能只做组件快照测试。
 
 准入结论：Conversation 核心时间线与发送/恢复状态机已达到 `macOS 分层完成，可进入 React`；React 实现仍必须按 History→Composer→Realtime 的垂直顺序逐片落地。
 
@@ -883,7 +883,7 @@ macOS 重构应把现有分散事实收敛为可测试的 `HostLifecycleState` �
 - authenticated gateway bootstrap 的 `立即 / 1s / 2s / 5s / 10s` 有界重试已进入 `LocalAgentControlPlaneBootstrapUseCase`；credential refresh deferred 通过 Application non-retryable error contract 明确短路，其他错误只在最后一次失败后上抛；
 - API credential、Connector bootstrap 和 service configuration 组合收口在 App composition adapter，token/lifecycle 校验覆盖 sleep、token 读取、Host bootstrap 与逐服务配置后的每个 await；
 - 已增加 generation、owner、恢复、停止、degraded、health check、重启退避、配置/launch/bootstrap 顺序、迟到取消、non-retryable 短路、adapter 失败和 Host-last shutdown 测试；
-- `clients/contracts/local-agent/v45` 已提供 canonical health request/success/failure fixture；Rust interface、Swift Connector 与 TypeScript 均读取同一份 fixture，固定协议版本 45、4 MiB frame、64 MiB message 和 `chatos-local-agent-host` service identity；
+- `clients/contracts/local-agent/v46` 已提供 canonical health request/success/failure fixture；Rust interface、Swift Connector 与 TypeScript 均读取同一份 fixture，固定协议版本 46、4 MiB frame、64 MiB message 和 `chatos-local-agent-host` service identity；
 - `clients/windows-react` 已建立 typed `HostLifecyclePort`、Tauri adapter、Zustand presentation store 和 `HostReadyGate`；Rust Tauri command 使用真实 framed health handshake，不以子进程存在代替 ready；
 - Host lifecycle 与 Shell 已升级为 `macOS 分层完成，可进入 React`。当前准入只覆盖生命周期和 Shell；账号 bootstrap、Conversation 以及其他业务页面仍按各自行状态门禁执行。
 
@@ -1209,7 +1209,7 @@ Windows React 已完成对应独立切片：
 - Agent Group Chat 相关 89 项契约、迁移、Store、Scheduler 与 UI 测试通过（2 项显式性能基线按环境变量跳过），继续作为 Windows 行为事实源。
 - Windows 已按这条调用链完成 Agent 档案、头像、Skills、私聊、团队创建/成员、概览、Human 团队消息、需求调研、共享资产、Todo、Run 历史与运行详情的 Domain → Store → Port → Tauri Adapter → React 垂直切片；React 不读取团队 SQLite、Host payload、项目绝对路径或模型 Secret。
 - 第 18 页全局需求调研已按 macOS `RequirementSurveyCenterView`、`ProjectRequirementSurveysView`、`RequirementSurveyFollowUpView` 与 Host client 行为完成独立准入：侧栏提供一级入口，按当前 owner 的 Workspace Index 项目聚合真实 Host Survey，支持项目总览、待填写/已提交分组、四种题型、版本化提交、原 Run 恢复、后续状态、方案查看/确认及历史成功回复保存确认。Domain schema、Port、Tauri Adapter 与聚合 Store 从 Agent 团队 UI 解耦并由团队页复用同一回答校验；Rust 原生层重新读取并逐项复验 Survey/Run/Plan owner、project、conversation、task、revision 与终态，只投影最终用户回复和方案 Markdown，不投影 trace/tool payload。owner/项目/页面 teardown identity 拒绝迟到结果，版本冲突后重读 Host 真值，无全局 event subscription 时使用可卸载的可见页面 polling；确认只认可当前方案，不自动创建或执行任务。
-- 第 20 页记事本已按 macOS `NotepadViewModel`、`NotepadSheet`、`NotepadMarkdownEditor` 与 `NativeLocalAgentNotepadService` 完成独立准入：复用 Host v45 Notepad 协议，提供文件夹树、搜索、创建/重命名/递归删除目录、创建/选择/版本化保存与删除笔记、标签及 Markdown 编辑/预览/分栏。React 不接收 owner、`file` 或本机路径；Rust 在读写前后复验账号 generation、owner、note ID 与 expected version，mutation 冲突后回读 Host 真值。选择、搜索、账号与页面 teardown 均拒绝迟到结果；页面可见期间执行可卸载一致性刷新。图片选择和剪贴板读取只在原生层进行，限制 512 KiB 并复验 MIME、签名、大小与 SHA-256 后插入 Markdown，再通过同一版本化保存链落盘。
+- 第 20 页记事本已按 macOS `NotepadViewModel`、`NotepadSheet`、`NotepadMarkdownEditor` 与 `NativeLocalAgentNotepadService` 完成独立准入：复用 Host v46 Notepad 协议，提供文件夹树、搜索、创建/重命名/递归删除目录、创建/选择/版本化保存与删除笔记、标签及 Markdown 编辑/预览/分栏。React 不接收 owner、`file` 或本机路径；Rust 在读写前后复验账号 generation、owner、note ID 与 expected version，mutation 冲突后回读 Host 真值。选择、搜索、账号与页面 teardown 均拒绝迟到结果；页面可见期间执行可卸载一致性刷新。图片选择和剪贴板读取只在原生层进行，限制 512 KiB 并复验 MIME、签名、大小与 SHA-256 后插入 Markdown，再通过同一版本化保存链落盘。
 - 第 22 页设置 / 通用已按 macOS `SettingsView`、`AppModelAuthentication`、`AgentManagementView` 与 `LocalAgentGroupChatSchedulerExecution` 完成独立准入：owner-scoped JSON 偏好由 Rust 原子持久化并以 revision 防止并发覆盖；界面语言、内部上下文语言、12...18 pt 全局缩放、Windows 防空闲休眠、账号信息与退出登录已进入 Apple 主题 React 设置页。界面语言由共享 locale domain 驱动 Authentication、App Shell、Workspace Sidebar、设置入口及顶级 Host 空态/错误；Skill 管理器从全局上下文语言初始化并像 macOS 一样反向保存。Agent 私聊、团队 Delivery 与 Agent 间通讯创建 Run 时只从 Rust `GeneralSettingsStore` 读取当前 owner 的可信上下文语言，再选择对应双语 Skill 快照；React 不能随消息提交覆盖语言、Skill 正文或摘要。
 - 第 23 页设置 / 微信已按 macOS `WeChatCompanionSettingsView`、`WeChatCompanionSettingsViewModel` 与 `ChatOSWeChatCompanionService` 完成独立准入：绑定状态与小程序 session 并行读取，短期单次二维码、扫码后的桌面二次确认、单 session 撤销与整体解绑均进入 Apple 主题 React 页面。Windows Rust 使用当前 owner 的系统凭据 access token 访问同源 User Service；authentication generation 在网络响应后复验。bind ticket、scene、二维码字节与服务端身份只留在 Rust，React 只接收 `issued/claimed/expired`、过期时间和随机 opaque 预览 URL；自定义协议限制 PNG/JPEG、2 MiB、400 万像素及 no-store/nosniff，页面离开、账号恢复/退出和应用重置都会销毁预览能力。轮询保持 2/4/8 秒有界退避，迟到 load/mutation/poll 由 owner、epoch、operation 与 preview identity 拒绝。
 - Todo 使用独立 executor Conversation 和 Run；执行能力由创建时固化的计划决定，团队资产按启动 revision 冻结。`started/progress/completed/blocked` 都是持久化回执；Host 成功但缺少终态工具回执，或 `project_write` 缺少提交后读取证据时，任务必须转为 blocked，禁止用模型文本伪装完成。

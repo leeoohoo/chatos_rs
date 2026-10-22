@@ -11,7 +11,11 @@ use chatos_local_agent_protocol::{
 };
 use sha2::{Digest, Sha256};
 use sqlx::Row;
-use std::path::{Path, PathBuf};
+use std::{
+    fs::{Metadata, OpenOptions},
+    io::Read,
+    path::{Path, PathBuf},
+};
 use uuid::Uuid;
 
 const ARTIFACT_SELECT: &str = "SELECT artifact_id, owner_user_id, name, mime_type, size, sha256, \
@@ -24,8 +28,41 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
         command: &IdempotentCommand,
         write: &LocalAgentArtifactWrite,
     ) -> Result<LocalAgentArtifact, ClientStorageError> {
-        let mut database = self.acquire_write().await.db()?;
-        Self::begin_immediate(&mut database).await?;
+        {
+            let mut database = self.pool.acquire().await.db()?;
+            if let Some(replay) = Self::replay(&mut database, command).await? {
+                discard_staged_file(&self.artifact_staging_root, &write.staging_token).await;
+                return Ok(replay);
+            }
+        }
+        if let Some(existing) = existing_artifact(self, write).await? {
+            discard_staged_file(&self.artifact_staging_root, &write.staging_token).await;
+            return validate_idempotent_artifact(existing, write);
+        }
+
+        let mut prepared_path = Some(
+            prepare_staged_artifact(
+                self.artifact_staging_root.clone(),
+                self.artifact_root.clone(),
+                write.clone(),
+            )
+            .await?,
+        );
+        let mut database = match self.acquire_write().await.db() {
+            Ok(database) => database,
+            Err(error) => {
+                if let Some(path) = prepared_path.take() {
+                    let _ = tokio::fs::remove_file(path).await;
+                }
+                return Err(error);
+            }
+        };
+        if let Err(error) = Self::begin_immediate(&mut database).await {
+            if let Some(path) = prepared_path.take() {
+                let _ = tokio::fs::remove_file(path).await;
+            }
+            return Err(error);
+        }
         let mut created_path = None;
         let result = async {
             if let Some(replay) = Self::replay(&mut database, command).await? {
@@ -44,15 +81,7 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
             .db()?
             {
                 let existing = decode_artifact(&row)?;
-                if existing.sha256 != write.artifact.sha256
-                    || existing.size != write.artifact.size
-                    || existing.name != write.artifact.name
-                    || existing.mime_type != write.artifact.mime_type
-                {
-                    return Err(ClientStorageError::Conflict(
-                        "artifact idempotency key was reused with different content".to_string(),
-                    ));
-                }
+                let existing = validate_idempotent_artifact(existing, write)?;
                 Self::record_receipt(
                     &mut database,
                     command,
@@ -65,7 +94,18 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
 
             let relative_path = format!("{}.artifact", write.artifact.artifact_id);
             let final_path = safe_artifact_path(&self.artifact_root, &relative_path)?;
-            write_private_file(&self.artifact_root, &final_path, &write.data).await?;
+            if tokio::fs::symlink_metadata(&final_path).await.is_ok() {
+                return Err(ClientStorageError::Conflict(
+                    "artifact content path already exists".to_string(),
+                ));
+            }
+            let source_path = prepared_path.as_ref().ok_or_else(|| {
+                ClientStorageError::InvalidState("artifact staging file was consumed".to_string())
+            })?;
+            tokio::fs::rename(source_path, &final_path)
+                .await
+                .map_err(ClientStorageError::database)?;
+            prepared_path = None;
             created_path = Some(final_path);
             sqlx::query(
                 "INSERT INTO local_agent_artifacts(\
@@ -97,6 +137,9 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
         }
         .await;
         let result = Self::finish_write(&mut database, result).await;
+        if let Some(path) = prepared_path {
+            let _ = tokio::fs::remove_file(path).await;
+        }
         if result.is_err() {
             if let Some(path) = created_path {
                 let _ = tokio::fs::remove_file(path).await;
@@ -309,43 +352,239 @@ fn safe_artifact_path(root: &Path, relative_path: &str) -> Result<PathBuf, Clien
     Ok(root.join(relative_path))
 }
 
-async fn write_private_file(
-    root: &Path,
-    final_path: &Path,
-    data: &[u8],
-) -> Result<(), ClientStorageError> {
-    let temporary_path = root.join(format!(".{}.tmp", Uuid::new_v4()));
-    tokio::fs::write(&temporary_path, data)
-        .await
+async fn existing_artifact(
+    storage: &SqliteClientStorage,
+    write: &LocalAgentArtifactWrite,
+) -> Result<Option<LocalAgentArtifact>, ClientStorageError> {
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "{ARTIFACT_SELECT} WHERE owner_user_id = ? AND artifact_id = (\
+         SELECT artifact_id FROM local_agent_artifacts \
+         WHERE owner_user_id = ? AND idempotency_key = ?)"
+    )))
+    .bind(&write.artifact.owner_user_id)
+    .bind(&write.artifact.owner_user_id)
+    .bind(&write.idempotency_key)
+    .fetch_optional(&storage.pool)
+    .await
+    .db()?;
+    row.as_ref().map(decode_artifact).transpose()
+}
+
+fn validate_idempotent_artifact(
+    existing: LocalAgentArtifact,
+    write: &LocalAgentArtifactWrite,
+) -> Result<LocalAgentArtifact, ClientStorageError> {
+    if existing.sha256 != write.artifact.sha256
+        || existing.size != write.artifact.size
+        || existing.name != write.artifact.name
+        || existing.mime_type != write.artifact.mime_type
+    {
+        return Err(ClientStorageError::Conflict(
+            "artifact idempotency key was reused with different content".to_string(),
+        ));
+    }
+    Ok(existing)
+}
+
+async fn discard_staged_file(root: &Path, token: &str) {
+    if let Ok(path) = safe_staging_path(root, token) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+}
+
+fn safe_staging_path(root: &Path, token: &str) -> Result<PathBuf, ClientStorageError> {
+    if token.len() != 36
+        || !token.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+        })
+    {
+        return Err(ClientStorageError::InvalidState(
+            "invalid artifact staging token".to_string(),
+        ));
+    }
+    Ok(root.join(format!("{token}.staged")))
+}
+
+async fn prepare_staged_artifact(
+    staging_root: PathBuf,
+    artifact_root: PathBuf,
+    write: LocalAgentArtifactWrite,
+) -> Result<PathBuf, ClientStorageError> {
+    tokio::task::spawn_blocking(move || {
+        prepare_staged_artifact_sync(&staging_root, &artifact_root, &write)
+    })
+    .await
+    .map_err(ClientStorageError::database)?
+}
+
+fn prepare_staged_artifact_sync(
+    staging_root: &Path,
+    artifact_root: &Path,
+    write: &LocalAgentArtifactWrite,
+) -> Result<PathBuf, ClientStorageError> {
+    let staged_path = safe_staging_path(staging_root, &write.staging_token)?;
+    let path_metadata =
+        std::fs::symlink_metadata(&staged_path).map_err(ClientStorageError::database)?;
+    if !path_metadata.file_type().is_file() || path_metadata.file_type().is_symlink() {
+        return Err(invalid_staged_artifact());
+    }
+
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = options
+        .open(&staged_path)
         .map_err(ClientStorageError::database)?;
-    if let Err(error) = restrict_file_permissions(&temporary_path).await {
-        let _ = tokio::fs::remove_file(&temporary_path).await;
-        return Err(error);
+    let initial = file.metadata().map_err(ClientStorageError::database)?;
+    if !initial.is_file()
+        || initial.len() != write.artifact.size
+        || !same_file_identity(&path_metadata, &initial)
+        || !has_single_link(&initial)
+        || !has_private_permissions(&initial)
+    {
+        return Err(invalid_staged_artifact());
     }
-    if let Err(error) = tokio::fs::rename(&temporary_path, final_path).await {
-        let _ = tokio::fs::remove_file(&temporary_path).await;
-        return Err(ClientStorageError::database(error));
+
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 256 * 1024];
+    let mut utf8_pending = Vec::with_capacity(3);
+    let mut utf8_scratch = Vec::with_capacity(buffer.len() + 3);
+    let mut total = 0_u64;
+    loop {
+        let count = match file.read(&mut buffer) {
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(ClientStorageError::database(error)),
+        };
+        if count == 0 {
+            break;
+        }
+        total = total
+            .checked_add(count as u64)
+            .ok_or_else(invalid_staged_artifact)?;
+        if total > write.artifact.size {
+            return Err(invalid_staged_artifact());
+        }
+        hasher.update(&buffer[..count]);
+        validate_utf8_chunk(&mut utf8_pending, &mut utf8_scratch, &buffer[..count])?;
     }
-    Ok(())
+    if total != write.artifact.size || !utf8_pending.is_empty() {
+        return Err(invalid_staged_artifact());
+    }
+    let digest = format!("{:x}", hasher.finalize());
+    if digest != write.artifact.sha256 {
+        return Err(invalid_staged_artifact());
+    }
+    let final_metadata = file.metadata().map_err(ClientStorageError::database)?;
+    let final_path_metadata =
+        std::fs::symlink_metadata(&staged_path).map_err(ClientStorageError::database)?;
+    if !same_file_identity(&initial, &final_metadata)
+        || !same_file_identity(&final_metadata, &final_path_metadata)
+        || !has_single_link(&final_metadata)
+    {
+        return Err(invalid_staged_artifact());
+    }
+    file.sync_all().map_err(ClientStorageError::database)?;
+
+    let prepared_path = artifact_root.join(format!(".{}.import", Uuid::new_v4()));
+    std::fs::rename(&staged_path, &prepared_path).map_err(ClientStorageError::database)?;
+    let moved_metadata =
+        std::fs::symlink_metadata(&prepared_path).map_err(ClientStorageError::database)?;
+    if !same_inode(&final_metadata, &moved_metadata) || !has_single_link(&moved_metadata) {
+        let _ = std::fs::remove_file(&prepared_path);
+        return Err(invalid_staged_artifact());
+    }
+    Ok(prepared_path)
+}
+
+fn validate_utf8_chunk(
+    pending: &mut Vec<u8>,
+    scratch: &mut Vec<u8>,
+    chunk: &[u8],
+) -> Result<(), ClientStorageError> {
+    scratch.clear();
+    scratch.extend_from_slice(pending);
+    scratch.extend_from_slice(chunk);
+    pending.clear();
+    match std::str::from_utf8(scratch) {
+        Ok(_) => Ok(()),
+        Err(error) if error.error_len().is_none() => {
+            pending.extend_from_slice(&scratch[error.valid_up_to()..]);
+            if pending.len() <= 3 {
+                Ok(())
+            } else {
+                Err(invalid_staged_artifact())
+            }
+        }
+        Err(_) => Err(invalid_staged_artifact()),
+    }
+}
+
+fn invalid_staged_artifact() -> ClientStorageError {
+    ClientStorageError::InvalidState(
+        "artifact staging file failed integrity verification".to_string(),
+    )
 }
 
 #[cfg(unix)]
-async fn restrict_file_permissions(path: &Path) -> Result<(), ClientStorageError> {
-    use std::os::unix::fs::PermissionsExt;
+fn same_file_identity(lhs: &Metadata, rhs: &Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
 
-    let mut permissions = tokio::fs::metadata(path)
-        .await
-        .map_err(ClientStorageError::database)?
-        .permissions();
-    permissions.set_mode(0o600);
-    tokio::fs::set_permissions(path, permissions)
-        .await
-        .map_err(ClientStorageError::database)
+    lhs.dev() == rhs.dev()
+        && lhs.ino() == rhs.ino()
+        && lhs.size() == rhs.size()
+        && lhs.mtime() == rhs.mtime()
+        && lhs.mtime_nsec() == rhs.mtime_nsec()
+        && lhs.ctime() == rhs.ctime()
+        && lhs.ctime_nsec() == rhs.ctime_nsec()
+}
+
+#[cfg(unix)]
+fn same_inode(lhs: &Metadata, rhs: &Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    lhs.dev() == rhs.dev() && lhs.ino() == rhs.ino() && lhs.size() == rhs.size()
 }
 
 #[cfg(not(unix))]
-async fn restrict_file_permissions(_path: &Path) -> Result<(), ClientStorageError> {
-    Ok(())
+fn same_file_identity(lhs: &Metadata, rhs: &Metadata) -> bool {
+    lhs.len() == rhs.len()
+        && lhs.modified().ok() == rhs.modified().ok()
+        && lhs.created().ok() == rhs.created().ok()
+}
+
+#[cfg(not(unix))]
+fn same_inode(lhs: &Metadata, rhs: &Metadata) -> bool {
+    lhs.len() == rhs.len()
+}
+
+#[cfg(unix)]
+fn has_single_link(metadata: &Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    metadata.nlink() == 1
+}
+
+#[cfg(not(unix))]
+fn has_single_link(_metadata: &Metadata) -> bool {
+    true
+}
+
+#[cfg(unix)]
+fn has_private_permissions(metadata: &Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.permissions().mode() & 0o077 == 0
+}
+
+#[cfg(not(unix))]
+fn has_private_permissions(_metadata: &Metadata) -> bool {
+    true
 }
 
 fn to_i64(value: u64, field: &str) -> Result<i64, ClientStorageError> {

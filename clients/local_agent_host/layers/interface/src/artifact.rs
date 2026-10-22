@@ -12,7 +12,8 @@ pub struct CreateArtifactCommand {
     pub owner_user_id: String,
     pub name: String,
     pub mime_type: String,
-    pub data_base64: String,
+    pub staging_token: String,
+    pub size: u64,
     pub sha256: String,
     pub idempotency_key: String,
 }
@@ -75,10 +76,10 @@ impl CreateArtifactCommand {
         validate_text("mime_type", &self.mime_type, 255)?;
         validate_sha256(&self.sha256)?;
         validate_identifier("idempotency_key", &self.idempotency_key)?;
-        let maximum_base64 = LOCAL_AGENT_ARTIFACT_MAX_BYTES.div_ceil(3) * 4;
-        if self.data_base64.is_empty() || self.data_base64.len() > maximum_base64 {
+        validate_staging_token(&self.staging_token)?;
+        if self.size == 0 || self.size > LOCAL_AGENT_ARTIFACT_MAX_BYTES as u64 {
             return Err(format!(
-                "artifact data must contain at most {LOCAL_AGENT_ARTIFACT_MAX_BYTES} decoded bytes"
+                "artifact data must contain 1..={LOCAL_AGENT_ARTIFACT_MAX_BYTES} bytes"
             ));
         }
         Ok(())
@@ -130,17 +131,30 @@ fn validate_sha256(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_staging_token(value: &str) -> Result<(), String> {
+    if value.len() != 36
+        || !value.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+        })
+    {
+        return Err("staging_token must be a lowercase UUID".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn rejects_oversized_artifact_payloads_and_invalid_hashes() {
+    fn rejects_oversized_artifact_metadata_and_invalid_hashes() {
         let mut command = CreateArtifactCommand {
             owner_user_id: "owner-1".to_string(),
             name: "report.md".to_string(),
             mime_type: "text/markdown".to_string(),
-            data_base64: "YQ==".to_string(),
+            staging_token: "01234567-89ab-cdef-0123-456789abcdef".to_string(),
+            size: 1,
             sha256: "a".repeat(64),
             idempotency_key: "attachment-1".to_string(),
         };
@@ -148,7 +162,10 @@ mod tests {
         command.sha256 = "bad".to_string();
         assert!(command.validate().is_err());
         command.sha256 = "a".repeat(64);
-        command.data_base64 = "a".repeat(LOCAL_AGENT_ARTIFACT_MAX_BYTES.div_ceil(3) * 4 + 1);
+        command.size = LOCAL_AGENT_ARTIFACT_MAX_BYTES as u64 + 1;
+        assert!(command.validate().is_err());
+        command.size = 1;
+        command.staging_token = "../escape".to_string();
         assert!(command.validate().is_err());
     }
 }

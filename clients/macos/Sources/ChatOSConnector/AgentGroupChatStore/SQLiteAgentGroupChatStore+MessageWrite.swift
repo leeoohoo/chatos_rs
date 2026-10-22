@@ -292,6 +292,7 @@ extension SQLiteAgentGroupChatStore {
     ) async throws -> ProjectAgentArtifactWriteJob? {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        try Task.checkCancellation()
         guard let candidate: AgentArtifactWriteCandidate = try transaction({
             guard let candidate = try AgentAttachmentRepository.nextUploadCandidate(
                 database,
@@ -317,25 +318,7 @@ extension SQLiteAgentGroupChatStore {
         }) else { return nil }
 
         let fileURL = try attachmentFileURL(relativePath: candidate.relativePath)
-        let data: Data
-        do {
-            data = try await AgentArtifactUploadDataLoader.load(
-                from: fileURL,
-                expectedBytes: candidate.size,
-                expectedSHA256: candidate.sha256
-            )
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            try markAgentArtifactStorageFailed(
-                ownerUserID: ownerUserID,
-                attachmentID: candidate.id,
-                attempt: candidate.attempt,
-                error: "本地文档缺失或完整性校验失败。",
-                nowUnixMs: nowUnixMs
-            )
-            return nil
-        }
+        try Task.checkCancellation()
         return ProjectAgentArtifactWriteJob(
             attachmentID: candidate.id,
             roomID: candidate.roomID,
@@ -343,7 +326,8 @@ extension SQLiteAgentGroupChatStore {
             request: .init(
                 name: candidate.name,
                 mimeType: candidate.mimeType,
-                data: data,
+                fileURL: fileURL,
+                size: candidate.size,
                 sha256: candidate.sha256,
                 idempotencyKey: "agent-attachment:\(candidate.id)"
             )

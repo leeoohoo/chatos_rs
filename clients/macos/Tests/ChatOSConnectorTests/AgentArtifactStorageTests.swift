@@ -271,7 +271,7 @@ final class AgentArtifactStorageTests: XCTestCase {
         XCTAssertEqual(downloadCount, 0)
     }
 
-    func testCancelledArtifactClaimKeepsUploadingLeaseWithoutRecordingFailure() async throws {
+    func testPreCancelledArtifactClaimLeavesQueueUntouched() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let artifactStore = AgentArtifactStoreStub(failuresBeforeSuccess: 0)
@@ -311,26 +311,25 @@ final class AgentArtifactStorageTests: XCTestCase {
         )
         let now: Int64 = 10_000
         let claim = Task {
-            try await store.claimNextAgentArtifactStorage(
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await store.claimNextAgentArtifactStorage(
                 ownerUserID: "alice",
                 nowUnixMs: now
             )
         }
-        claim.cancel()
-
         do {
             _ = try await claim.value
             XCTFail("cancelled artifact claim completed")
         } catch is CancellationError {
-            // Expected: cancellation keeps the upload lease recoverable instead of recording failure.
+            // Expected: cancellation is observed before the queue transaction.
         }
         let messages = try await store.listMessages(ownerUserID: "alice", roomID: room.id)
         let attachment = try XCTUnwrap(messages.last?.attachmentItems.first)
         XCTAssertEqual(attachment.id, posted.message.attachmentItems.first?.id)
-        XCTAssertEqual(attachment.syncStatus, .uploading)
+        XCTAssertEqual(attachment.syncStatus, .queued)
         XCTAssertNil(attachment.uploadError)
         let nextDue = try await store.nextAgentArtifactStorageDue(ownerUserID: "alice")
-        XCTAssertEqual(nextDue, now + 300_000)
+        XCTAssertEqual(nextDue, 0)
     }
 
     func testLegacyAttachmentTableMigratesWithoutLosingRows() async throws {
@@ -496,12 +495,14 @@ private actor AgentArtifactStoreStub: AgentArtifactServing {
             throw AgentArtifactStoreStubError.offline
         }
         let artifactID = "artifact_0123456789abcdef0123456789abcdef"
-        artifacts[artifactID] = request.data
+        let data = try Data(contentsOf: request.fileURL)
+        XCTAssertEqual(data.count, request.size)
+        artifacts[artifactID] = data
         metadataByID[artifactID] = .init(
             artifactID: artifactID,
             name: request.name,
             mimeType: request.mimeType,
-            size: request.data.count,
+            size: request.size,
             sha256: request.sha256,
             status: "stored",
             createdAtUnixMs: 1,
@@ -512,7 +513,7 @@ private actor AgentArtifactStoreStub: AgentArtifactServing {
             artifactID: artifactID,
             name: request.name,
             mimeType: request.mimeType,
-            size: request.data.count,
+            size: request.size,
             sha256: request.sha256
         )
     }
@@ -566,12 +567,12 @@ private actor FileAgentArtifactStoreStub: AgentArtifactFileServing {
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
-        try request.data.write(to: sourceURL(), options: .atomic)
+        try FileManager.default.copyItem(at: request.fileURL, to: sourceURL())
         item = .init(
             artifactID: artifactID,
             name: request.name,
             mimeType: request.mimeType,
-            size: request.data.count,
+            size: request.size,
             sha256: request.sha256,
             status: "stored",
             createdAtUnixMs: 1,
@@ -581,7 +582,7 @@ private actor FileAgentArtifactStoreStub: AgentArtifactFileServing {
             artifactID: artifactID,
             name: request.name,
             mimeType: request.mimeType,
-            size: request.data.count,
+            size: request.size,
             sha256: request.sha256
         )
     }

@@ -20,7 +20,7 @@ pub struct IdempotentCommand {
 pub struct LocalAgentArtifactWrite {
     pub artifact: LocalAgentArtifact,
     pub idempotency_key: String,
-    pub data: Vec<u8>,
+    pub staging_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

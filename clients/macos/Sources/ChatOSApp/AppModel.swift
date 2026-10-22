@@ -248,7 +248,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                         host: host,
                         artifactDirectoryURL: configuration.databaseURL
                             .deletingPathExtension()
-                            .appendingPathExtension("artifacts")
+                            .appendingPathExtension("artifacts"),
+                        stagingDirectoryURL: configuration.databaseURL
+                            .deletingPathExtension()
+                            .appendingPathExtension("artifact-staging")
                     )
                 }
             }

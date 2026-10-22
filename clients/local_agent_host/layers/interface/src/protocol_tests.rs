@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 fn shared_fixture(name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../contracts/local-agent/v45/fixtures")
+        .join("../../../contracts/local-agent/v46/fixtures")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|error| {
         panic!(
@@ -17,7 +17,7 @@ fn shared_fixture(name: &str) -> Vec<u8> {
 }
 
 #[test]
-fn shared_health_fixtures_match_protocol_v45() {
+fn shared_health_fixtures_match_protocol_v46() {
     let request: HostRequestEnvelope =
         serde_json::from_slice(&shared_fixture("health-request.json")).expect("health request");
     request.validate().expect("valid health request");

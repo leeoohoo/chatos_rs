@@ -1,5 +1,5 @@
 {
-  "protocol_version": 45,
+  "protocol_version": 46,
   "command_id": "contract-message-task-graph-1",
   "ok": true,
   "result": {

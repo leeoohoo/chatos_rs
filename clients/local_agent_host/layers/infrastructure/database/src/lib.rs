@@ -127,6 +127,7 @@ impl<T> SqliteResultExt<T> for Result<T, ClientStorageError> {
 pub struct SqliteClientStorage {
     pub(crate) pool: SqlitePool,
     pub(crate) artifact_root: std::path::PathBuf,
+    pub(crate) artifact_staging_root: std::path::PathBuf,
     _temporary_root: Option<std::sync::Arc<tempfile::TempDir>>,
 }
 
@@ -144,10 +145,12 @@ impl SqliteClientStorage {
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
             .busy_timeout(Duration::from_secs(5));
         let artifact_root = path.with_extension("artifacts");
+        let artifact_staging_root = path.with_extension("artifact-staging");
         Self::connect_with_options(
             options,
             Some((path, requires_existing_database_backup)),
             artifact_root,
+            artifact_staging_root,
             None,
             FILE_DATABASE_MAX_CONNECTIONS,
         )
@@ -160,10 +163,12 @@ impl SqliteClientStorage {
             .foreign_keys(true)
             .busy_timeout(Duration::from_secs(5));
         let (artifact_root, temporary_root) = maintenance::temporary_artifact_root()?;
+        let artifact_staging_root = temporary_root.path().join("artifact-staging");
         Self::connect_with_options(
             options,
             None,
             artifact_root,
+            artifact_staging_root,
             Some(temporary_root),
             MEMORY_DATABASE_MAX_CONNECTIONS,
         )
@@ -174,6 +179,7 @@ impl SqliteClientStorage {
         options: SqliteConnectOptions,
         file_context: Option<(&Path, bool)>,
         artifact_root: std::path::PathBuf,
+        artifact_staging_root: std::path::PathBuf,
         temporary_root: Option<std::sync::Arc<tempfile::TempDir>>,
         max_connections: u32,
     ) -> Result<Self, ClientStorageError> {
@@ -188,9 +194,12 @@ impl SqliteClientStorage {
             .await
             .db()?;
         maintenance::create_private_directory(&artifact_root)?;
+        maintenance::create_private_directory(&artifact_staging_root)?;
+        maintenance::remove_stale_artifact_staging_files(&artifact_staging_root)?;
         let storage = Self {
             pool,
             artifact_root,
+            artifact_staging_root,
             _temporary_root: temporary_root,
         };
         if let Some((path, _)) = file_context {
@@ -227,6 +236,11 @@ impl SqliteClientStorage {
             }
         }
         Ok(storage)
+    }
+
+    #[doc(hidden)]
+    pub fn artifact_staging_root(&self) -> &Path {
+        &self.artifact_staging_root
     }
 
     pub(crate) async fn insert_event(

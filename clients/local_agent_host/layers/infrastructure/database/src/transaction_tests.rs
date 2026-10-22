@@ -23,6 +23,7 @@ pub(super) async fn file_storage() -> (tempfile::TempDir, SqliteClientStorage) {
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
         Some((&path, false)),
         path.with_extension("artifacts"),
+        path.with_extension("artifact-staging"),
         None,
         1,
     )

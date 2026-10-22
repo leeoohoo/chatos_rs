@@ -13,7 +13,7 @@ public extension Notification.Name {
 }
 
 enum NativeLocalAgentHostProtocol {
-    static let version = 45
+    static let version = 46
 }
 
 public enum NativeLocalAgentConcurrencyPolicy {

@@ -3,33 +3,44 @@ import Foundation
 import Testing
 @testable import ChatOSConnector
 
-struct AgentArtifactUploadDataLoaderTests {
+struct AgentArtifactUploadStagerTests {
     @Test
-    func verifiedArtifactLoadsAcrossFixedSizeChunks() async throws {
+    func verifiedArtifactStagesAcrossFixedSizeChunks() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
-        let loaded = try await AgentArtifactUploadDataLoader.load(
+        let staged = try await AgentArtifactUploadStager.stage(
             from: fixture.source,
+            in: fixture.staging,
             expectedBytes: fixture.data.count,
             expectedSHA256: fixture.sha256
         )
+        defer { AgentArtifactUploadStager.discard(staged) }
 
-        #expect(loaded == fixture.data)
+        #expect(staged.fileURL.lastPathComponent == "\(staged.token).staged")
+        #expect(try Data(contentsOf: staged.fileURL) == fixture.data)
+        let attributes = try FileManager.default.attributesOfItem(atPath: staged.fileURL.path)
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
     }
 
     @Test
-    func digestMismatchIsRejected() async throws {
+    func digestMismatchLeavesNoStagingFile() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
-        await #expect(throws: AgentArtifactUploadDataError.self) {
-            _ = try await AgentArtifactUploadDataLoader.load(
+        await #expect(throws: AgentArtifactUploadStagingError.self) {
+            _ = try await AgentArtifactUploadStager.stage(
                 from: fixture.source,
+                in: fixture.staging,
                 expectedBytes: fixture.data.count,
                 expectedSHA256: String(repeating: "0", count: 64)
             )
         }
+        let children = try FileManager.default.contentsOfDirectory(
+            at: fixture.staging,
+            includingPropertiesForKeys: nil
+        )
+        #expect(children.isEmpty)
     }
 
     @Test
@@ -42,9 +53,10 @@ struct AgentArtifactUploadDataLoaderTests {
             withDestinationURL: fixture.source
         )
 
-        await #expect(throws: AgentArtifactUploadDataError.self) {
-            _ = try await AgentArtifactUploadDataLoader.load(
+        await #expect(throws: AgentArtifactUploadStagingError.self) {
+            _ = try await AgentArtifactUploadStager.stage(
                 from: link,
+                in: fixture.staging,
                 expectedBytes: fixture.data.count,
                 expectedSHA256: fixture.sha256
             )
@@ -54,6 +66,7 @@ struct AgentArtifactUploadDataLoaderTests {
     private func makeFixture() throws -> (
         root: URL,
         source: URL,
+        staging: URL,
         data: Data,
         sha256: String
     ) {
@@ -68,6 +81,7 @@ struct AgentArtifactUploadDataLoaderTests {
         return (
             root,
             source,
+            root.appendingPathComponent("staging", isDirectory: true),
             data,
             SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         )

@@ -84,7 +84,7 @@ public actor NativeAgentGroupChatService {
                     request: job.request
                 )
                 guard metadata.sha256 == job.request.sha256,
-                      metadata.size == job.request.data.count else {
+                      metadata.size == job.request.size else {
                     throw AgentGroupChatError.storage("Agent artifact metadata mismatch")
                 }
                 try await store.markAgentArtifactStored(
@@ -96,7 +96,7 @@ public actor NativeAgentGroupChatService {
                 try? await store.recordAgentArtifactStorage(
                     ownerUserID: ownerUserID,
                     outcome: .succeeded,
-                    bytes: job.request.data.count,
+                    bytes: job.request.size,
                     nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
                 )
                 publishChange(.init(
@@ -118,7 +118,7 @@ public actor NativeAgentGroupChatService {
                 try? await store.recordAgentArtifactStorage(
                     ownerUserID: ownerUserID,
                     outcome: .failed,
-                    bytes: job.request.data.count,
+                    bytes: job.request.size,
                     nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
                 )
                 publishChange(.init(

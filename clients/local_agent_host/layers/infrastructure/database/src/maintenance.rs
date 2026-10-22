@@ -5,6 +5,7 @@ use super::{ClientStorageError, SqliteResultExt};
 use sqlx::{sqlite::SqliteConnectOptions, Connection, SqliteConnection, SqlitePool};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 
 pub(super) fn create_database_parent(path: &Path) -> Result<(), ClientStorageError> {
@@ -31,7 +32,91 @@ pub(super) fn temporary_artifact_root(
 
 pub(super) fn create_private_directory(path: &Path) -> Result<(), ClientStorageError> {
     std::fs::create_dir_all(path).map_err(ClientStorageError::database)?;
+    let metadata = std::fs::symlink_metadata(path).map_err(ClientStorageError::database)?;
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return Err(ClientStorageError::InvalidState(format!(
+            "private storage root is not a directory: {}",
+            path.display()
+        )));
+    }
     restrict_directory_permissions(path)
+}
+
+pub(super) fn remove_stale_artifact_staging_files(root: &Path) -> Result<(), ClientStorageError> {
+    remove_stale_artifact_staging_files_at(root, SystemTime::now())
+}
+
+fn remove_stale_artifact_staging_files_at(
+    root: &Path,
+    now: SystemTime,
+) -> Result<(), ClientStorageError> {
+    const MAXIMUM_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+    let entries = std::fs::read_dir(root).map_err(ClientStorageError::database)?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !is_artifact_staging_name(name) {
+            continue;
+        }
+        let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        if now
+            .duration_since(modified)
+            .is_ok_and(|age| age >= MAXIMUM_AGE)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn is_artifact_staging_name(name: &str) -> bool {
+    let token = if let Some(token) = name.strip_suffix(".staged") {
+        token
+    } else if let Some(token) = name
+        .strip_prefix('.')
+        .and_then(|value| value.strip_suffix(".tmp"))
+    {
+        token
+    } else {
+        return false;
+    };
+    token.len() == 36
+        && token.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+        })
+}
+
+#[cfg(test)]
+mod artifact_staging_tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_removes_only_old_regular_staging_files() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let token = "01234567-89ab-cdef-0123-456789abcdef";
+        let staged = root.path().join(format!("{token}.staged"));
+        let temporary = root.path().join(format!(".{token}.tmp"));
+        let unknown = root.path().join("keep.txt");
+        std::fs::write(&staged, b"staged").expect("write staged");
+        std::fs::write(&temporary, b"temporary").expect("write temporary");
+        std::fs::write(&unknown, b"unknown").expect("write unknown");
+        let future = SystemTime::now() + Duration::from_secs(25 * 60 * 60);
+
+        remove_stale_artifact_staging_files_at(root.path(), future).expect("cleanup staging");
+
+        assert!(!staged.exists());
+        assert!(!temporary.exists());
+        assert!(unknown.exists());
+    }
 }
 
 #[cfg(unix)]

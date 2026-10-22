@@ -11,20 +11,23 @@ public enum ProjectAgentMessageAttachmentSyncStatus: String, Codable, Sendable {
 public struct AgentArtifactWriteRequest: Sendable, Equatable {
     public let name: String
     public let mimeType: String
-    public let data: Data
+    public let fileURL: URL
+    public let size: Int
     public let sha256: String
     public let idempotencyKey: String
 
     public init(
         name: String,
         mimeType: String,
-        data: Data,
+        fileURL: URL,
+        size: Int,
         sha256: String,
         idempotencyKey: String
     ) {
         self.name = name
         self.mimeType = mimeType
-        self.data = data
+        self.fileURL = fileURL
+        self.size = size
         self.sha256 = sha256
         self.idempotencyKey = idempotencyKey
     }
