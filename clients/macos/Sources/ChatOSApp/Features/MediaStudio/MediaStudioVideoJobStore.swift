@@ -104,10 +104,16 @@ actor MediaStudioVideoJobStore {
         case needsReview
     }
 
+    private enum Activation: String, Codable, Sendable {
+        case staged
+        case active
+    }
+
     struct Snapshot: Sendable, Equatable {
         var id: UUID
         var ownerUserID: String
         var workload: Workload
+        var isActive: Bool
         var sessionEpoch: UUID
         var idempotencyKey: String
         var providerJobID: String?
@@ -144,7 +150,7 @@ actor MediaStudioVideoJobStore {
         }
     }
 
-    private struct InputArtifact: Codable {
+    private struct InputArtifact: Codable, Equatable {
         var kind: InputKind
         var filename: String
         var originalName: String
@@ -153,7 +159,7 @@ actor MediaStudioVideoJobStore {
         var sha256: String
     }
 
-    private struct StoredRequest: Codable {
+    private struct StoredRequest: Codable, Equatable {
         var modelConfigID: String
         var prompt: String
         var size: String
@@ -170,6 +176,9 @@ actor MediaStudioVideoJobStore {
         /// Missing in format-v1 manifests written before workload partitioning. Those records
         /// are generic Studio jobs by construction and remain readable without rewriting.
         var workload: Workload?
+        /// Missing in v1/v2. Those records were published as runnable jobs before the staged
+        /// Story ownership-transfer protocol existed and therefore resolve to `active`.
+        var activation: Activation?
         var sessionEpoch: UUID
         var idempotencyKey: String
         var providerJobID: String?
@@ -184,7 +193,12 @@ actor MediaStudioVideoJobStore {
         var request: StoredRequest
     }
 
-    private static let formatVersion = 2
+    private struct StagedRecord {
+        var record: Record
+        var folder: URL
+    }
+
+    private static let formatVersion = 3
     private static let maximumManifestBytes = 1 * 1_024 * 1_024
     private let root: URL
 
@@ -205,56 +219,116 @@ actor MediaStudioVideoJobStore {
         let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !owner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
         guard workload.isValid else { throw MediaStudioVideoJobStoreError.invalidWorkload }
-        let id = UUID()
-        let folder = jobFolder(id: id, owner: owner)
-        let inputFolder = folder.appendingPathComponent("inputs", isDirectory: true)
-        var committed = false
-        defer {
-            if !committed { try? FileManager.default.removeItem(at: folder) }
+        guard workload == .genericStudio else {
+            throw MediaStudioVideoJobStoreError.activationRequired
         }
-        try createPrivateDirectory(ownerDirectory(owner))
-        try createPrivateDirectory(inputFolder)
-        let storedRequest = try persist(request: request, in: inputFolder)
-        let now = Date()
-        let record = Record(
-            formatVersion: Self.formatVersion,
-            id: id,
-            ownerUserID: owner,
-            workload: workload,
+        let staged = try makeStagedRecord(
+            request: request,
+            id: UUID(),
+            owner: owner,
             sessionEpoch: sessionEpoch,
-            idempotencyKey: "chatos-media-video-\(id.uuidString.lowercased())",
+            workload: workload,
+            activation: .active,
             providerJobID: nil,
             status: .prepared,
-            retryCount: 0,
-            stateVersion: 1,
-            failurePhase: nil,
-            failureMessage: nil,
-            retryable: true,
-            createdAt: now,
-            updatedAt: now,
-            request: storedRequest
+            persistsInputs: true
         )
-        // This folder has no manifest yet, so recovery treats it as uncommitted staging.
-        // Copying and hashing a large input does not need the global writer lock. Only the
-        // atomic manifest commit and publication of its final URLs are serialized.
+        defer { try? FileManager.default.removeItem(at: staged.folder) }
+        let record = try publish(staged.record, from: staged.folder)
+        return try execution(record, mode: .create, validatesInputs: false)
+    }
+
+    /// Stages a new Story job under its stable attempt ID. A staged record is durable but
+    /// invisible to recovery until the Story manifest has atomically switched to this ID and
+    /// `activate` completes. Repeating the same stage is idempotent; conflicting content is not.
+    func stagePrepared(
+        request: VideoGenerationRequest,
+        id: UUID,
+        owner ownerInput: String,
+        sessionEpoch: UUID,
+        workload: Workload
+    ) throws -> Snapshot {
+        let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        try validateStagedIdentity(id: id, owner: owner, workload: workload)
+        let staged = try makeStagedRecord(
+            request: request,
+            id: id,
+            owner: owner,
+            sessionEpoch: sessionEpoch,
+            workload: workload,
+            activation: .staged,
+            providerJobID: nil,
+            status: .prepared,
+            persistsInputs: true
+        )
+        defer { try? FileManager.default.removeItem(at: staged.folder) }
+        return snapshot(try publish(staged.record, from: staged.folder))
+    }
+
+    /// Stages an existing provider task for a one-way legacy import. Imported tasks never
+    /// contain create inputs and therefore can only resume the supplied provider identity.
+    func stageImportedProviderJob(
+        request: VideoGenerationRequest,
+        id: UUID,
+        providerJobID providerJobIDInput: String,
+        owner ownerInput: String,
+        sessionEpoch: UUID,
+        workload: Workload
+    ) throws -> Snapshot {
+        let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        try validateStagedIdentity(id: id, owner: owner, workload: workload)
+        let providerJobID = providerJobIDInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !providerJobID.isEmpty else { throw MediaStudioVideoJobStoreError.invalidProviderJob }
+        let staged = try makeStagedRecord(
+            request: request,
+            id: id,
+            owner: owner,
+            sessionEpoch: sessionEpoch,
+            workload: workload,
+            activation: .staged,
+            providerJobID: providerJobID,
+            status: .submitted,
+            persistsInputs: false
+        )
+        defer { try? FileManager.default.removeItem(at: staged.folder) }
+        return snapshot(try publish(staged.record, from: staged.folder))
+    }
+
+    /// Completes the second half of the ownership handoff after the Story manifest points at
+    /// this local job ID. Activation is idempotent and is the only operation that makes a
+    /// staged Story job visible to recovery or state transitions.
+    func activate(
+        id: UUID,
+        owner ownerInput: String,
+        sessionEpoch: UUID,
+        workload: Workload
+    ) throws -> Execution {
+        let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        try validateStagedIdentity(id: id, owner: owner, workload: workload)
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
-        do {
-            try save(record)
-            let prepared = try execution(record, mode: .create, validatesInputs: false)
-            committed = true
-            return prepared
-        } catch {
-            // Keep a failed manifest commit invisible to another locked reader.
-            try? FileManager.default.removeItem(at: folder)
-            throw error
+        var record = try load(id: id, owner: owner)
+        guard resolvedWorkload(record) == workload else {
+            throw MediaStudioVideoJobStoreError.jobConflict
         }
+        if resolvedActivation(record) == .staged {
+            record.sessionEpoch = sessionEpoch
+            record.activation = .active
+            transition(&record, to: record.status)
+            try save(record)
+        } else if record.sessionEpoch != sessionEpoch {
+            record.sessionEpoch = sessionEpoch
+            record.stateVersion += 1
+            record.updatedAt = Date()
+            try save(record)
+        }
+        return try execution(record, mode: recoveryMode(record))
     }
 
     func markSubmitting(id: UUID, owner: String, sessionEpoch: UUID) throws -> Execution {
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
-        var record = try load(id: id, owner: owner)
+        var record = try loadActive(id: id, owner: owner)
         guard record.status == .prepared else {
             throw MediaStudioVideoJobStoreError.invalidTransition
         }
@@ -272,7 +346,7 @@ actor MediaStudioVideoJobStore {
     ) throws {
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
-        var record = try load(id: id, owner: owner)
+        var record = try loadActive(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
         guard !record.status.isTerminal else { return }
         let hadProviderJobID = record.providerJobID != nil
@@ -308,7 +382,7 @@ actor MediaStudioVideoJobStore {
     ) throws {
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
-        var record = try load(id: id, owner: owner)
+        var record = try loadActive(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
         record.providerJobID = providerJobID
         transition(&record, to: .finalizing)
@@ -324,7 +398,7 @@ actor MediaStudioVideoJobStore {
     ) throws {
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
-        var record = try load(id: id, owner: owner)
+        var record = try loadActive(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
         record.providerJobID = providerJobID
         record.failurePhase = nil
@@ -346,7 +420,7 @@ actor MediaStudioVideoJobStore {
     ) throws {
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
-        var record = try load(id: id, owner: owner)
+        var record = try loadActive(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
         guard !record.status.isTerminal else { return }
         record.failurePhase = phase
@@ -364,7 +438,7 @@ actor MediaStudioVideoJobStore {
     func markCancellation(id: UUID, owner: String, sessionEpoch: UUID? = nil) throws {
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
-        var record = try load(id: id, owner: owner)
+        var record = try loadActive(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
         guard !record.status.isTerminal else { return }
         if record.providerJobID != nil {
@@ -403,6 +477,7 @@ actor MediaStudioVideoJobStore {
         guard workload.isValid else { throw MediaStudioVideoJobStoreError.invalidWorkload }
         let records = try loadRecords(owner: normalizedOwner)
             .filter { resolvedWorkload($0) == workload }
+            .filter { resolvedActivation($0) == .active }
             .filter(Self.requiresRecovery)
             .sorted { $0.updatedAt > $1.updatedAt }
         guard var record = records.first else { return nil }
@@ -437,6 +512,122 @@ actor MediaStudioVideoJobStore {
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
         return snapshot(try load(id: id, owner: owner))
+    }
+
+    private func validateStagedIdentity(id: UUID, owner: String, workload: Workload) throws {
+        guard !owner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
+        guard workload.isValid, workload != .genericStudio else {
+            throw MediaStudioVideoJobStoreError.invalidWorkload
+        }
+        guard workload.attemptID == id else {
+            throw MediaStudioVideoJobStoreError.invalidWorkload
+        }
+    }
+
+    private func makeStagedRecord(
+        request: VideoGenerationRequest,
+        id: UUID,
+        owner: String,
+        sessionEpoch: UUID,
+        workload: Workload,
+        activation: Activation,
+        providerJobID: String?,
+        status: Status,
+        persistsInputs: Bool
+    ) throws -> StagedRecord {
+        let ownerFolder = ownerDirectory(owner)
+        try createPrivateDirectory(ownerFolder)
+        let folder = ownerFolder.appendingPathComponent(
+            ".staging-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        try createPrivateDirectory(folder)
+        do {
+            let storedRequest: StoredRequest
+            if persistsInputs {
+                let inputFolder = folder.appendingPathComponent("inputs", isDirectory: true)
+                try createPrivateDirectory(inputFolder)
+                storedRequest = try persist(request: request, in: inputFolder)
+            } else {
+                storedRequest = requestMetadata(request)
+            }
+            let now = Date()
+            let record = Record(
+                formatVersion: Self.formatVersion,
+                id: id,
+                ownerUserID: owner,
+                workload: workload,
+                activation: activation,
+                sessionEpoch: sessionEpoch,
+                idempotencyKey: "chatos-media-video-\(id.uuidString.lowercased())",
+                providerJobID: providerJobID,
+                status: status,
+                retryCount: 0,
+                stateVersion: 1,
+                failurePhase: nil,
+                failureMessage: nil,
+                retryable: true,
+                createdAt: now,
+                updatedAt: now,
+                request: storedRequest
+            )
+            try write(record, to: folder.appendingPathComponent(".job.json.staged"))
+            return .init(record: record, folder: folder)
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
+    }
+
+    /// Publishes a fully copied and hashed hidden staging directory with one same-volume
+    /// rename. The writer lock covers collision resolution and the final visibility change,
+    /// not the large input copy.
+    private func publish(_ expected: Record, from stagingFolder: URL) throws -> Record {
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
+        let finalFolder = jobFolder(id: expected.id, owner: expected.ownerUserID)
+        let finalManifest = finalFolder.appendingPathComponent("job.json")
+        if FileManager.default.fileExists(atPath: finalManifest.path) {
+            let existing = try decode(finalManifest)
+            guard isIdempotentMatch(existing, expected: expected) else {
+                throw MediaStudioVideoJobStoreError.jobConflict
+            }
+            return existing
+        }
+        guard !FileManager.default.fileExists(atPath: finalFolder.path) else {
+            throw MediaStudioVideoJobStoreError.invalidRecord
+        }
+        let stagedManifest = stagingFolder.appendingPathComponent(".job.json.staged")
+        try FileManager.default.moveItem(
+            at: stagedManifest,
+            to: stagingFolder.appendingPathComponent("job.json")
+        )
+        try FileManager.default.moveItem(at: stagingFolder, to: finalFolder)
+        return expected
+    }
+
+    private func isIdempotentMatch(_ existing: Record, expected: Record) -> Bool {
+        guard existing.id == expected.id,
+              existing.ownerUserID == expected.ownerUserID,
+              resolvedWorkload(existing) == resolvedWorkload(expected),
+              existing.idempotencyKey == expected.idempotencyKey,
+              existing.providerJobID == expected.providerJobID else { return false }
+        if expected.providerJobID != nil {
+            return existing.request == expected.request
+        }
+        return existing.status == .prepared && existing.request == expected.request
+    }
+
+    private func requestMetadata(_ request: VideoGenerationRequest) -> StoredRequest {
+        .init(
+            modelConfigID: request.modelConfigID,
+            prompt: request.prompt,
+            size: request.size,
+            seconds: request.seconds,
+            referencePurpose: referencePurpose(request.referencePurpose),
+            ratio: request.ratio,
+            inputs: []
+        )
     }
 
     /// Serializes a complete read/verify/transition/write operation across independent
@@ -643,6 +834,14 @@ actor MediaStudioVideoJobStore {
         return record
     }
 
+    private func loadActive(id: UUID, owner: String) throws -> Record {
+        let record = try load(id: id, owner: owner)
+        guard resolvedActivation(record) == .active else {
+            throw MediaStudioVideoJobStoreError.activationRequired
+        }
+        return record
+    }
+
     private func decode(_ url: URL) throws -> Record {
         let record = try JSONDecoder().decode(
             Record.self,
@@ -651,8 +850,12 @@ actor MediaStudioVideoJobStore {
         let hasVersionedWorkload = record.formatVersion == 1
             ? record.workload == nil
             : record.workload != nil
+        let hasVersionedActivation = record.formatVersion < 3
+            ? record.activation == nil
+            : record.activation != nil
         guard (1...Self.formatVersion).contains(record.formatVersion),
               hasVersionedWorkload,
+              hasVersionedActivation,
               record.stateVersion > 0,
               record.retryCount >= 0,
               record.workload.map(\.isValid) ?? true,
@@ -674,11 +877,14 @@ actor MediaStudioVideoJobStore {
     private func save(_ record: Record) throws {
         let folder = jobFolder(id: record.id, owner: record.ownerUserID)
         try createPrivateDirectory(folder)
+        try write(record, to: folder.appendingPathComponent("job.json"))
+    }
+
+    private func write(_ record: Record, to manifest: URL) throws {
         let data = try JSONEncoder().encode(record)
         guard data.count <= Self.maximumManifestBytes else {
             throw MediaStudioVideoJobStoreError.invalidRecord
         }
-        let manifest = folder.appendingPathComponent("job.json")
         try data.write(to: manifest, options: [.atomic])
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o600],
@@ -758,6 +964,7 @@ actor MediaStudioVideoJobStore {
             id: record.id,
             ownerUserID: record.ownerUserID,
             workload: resolvedWorkload(record),
+            isActive: resolvedActivation(record) == .active,
             sessionEpoch: record.sessionEpoch,
             idempotencyKey: record.idempotencyKey,
             providerJobID: record.providerJobID,
@@ -773,6 +980,21 @@ actor MediaStudioVideoJobStore {
 
     private func resolvedWorkload(_ record: Record) -> Workload {
         record.workload ?? .genericStudio
+    }
+
+    private func resolvedActivation(_ record: Record) -> Activation {
+        record.activation ?? .active
+    }
+
+    private func recoveryMode(_ record: Record) -> RecoveryMode {
+        if record.status == .prepared { return .create }
+        if let providerJobID = record.providerJobID,
+           Self.requiresRecovery(record),
+           record.status != .submissionUncertain,
+           record.status != .cancelled {
+            return .resume(providerJobID: providerJobID)
+        }
+        return .needsReview
     }
 
     private func ownerDirectory(_ owner: String) -> URL {
@@ -824,6 +1046,9 @@ enum MediaStudioVideoJobStoreError: LocalizedError {
     case staleSession
     case invalidWriterLock
     case invalidWorkload
+    case invalidProviderJob
+    case activationRequired
+    case jobConflict
 
     var errorDescription: String? {
         switch self {
@@ -834,6 +1059,9 @@ enum MediaStudioVideoJobStoreError: LocalizedError {
         case .staleSession: "视频任务已由新的账号会话接管。"
         case .invalidWriterLock: "视频任务写入锁无效，已拒绝继续操作。"
         case .invalidWorkload: "视频任务缺少有效的业务关联。"
+        case .invalidProviderJob: "视频任务缺少有效的服务商任务 ID。"
+        case .activationRequired: "视频任务尚未完成业务所有权切换。"
+        case .jobConflict: "视频任务 ID 已关联到不同的请求，已拒绝覆盖。"
         }
     }
 }

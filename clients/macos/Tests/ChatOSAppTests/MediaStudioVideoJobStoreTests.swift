@@ -52,30 +52,199 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
     func testStoryWorkloadIsInvisibleToGenericStudioRecovery() async throws {
         let root = try directory().appendingPathComponent("jobs")
         let store = MediaStudioVideoJobStore(root: root)
+        let attemptID = UUID()
         let workload = MediaStudioVideoJobStore.Workload.storyVideo(
             projectID: UUID(),
             segmentID: "segment-1",
-            attemptID: UUID()
+            attemptID: attemptID
         )
-        let prepared = try await store.prepare(
+        let staged = try await store.stagePrepared(
             request: request(prompt: "story partition"),
+            id: attemptID,
             owner: "alice",
             sessionEpoch: UUID(),
             workload: workload
         )
-        XCTAssertEqual(prepared.snapshot.workload, workload)
+        XCTAssertEqual(staged.id, attemptID)
+        XCTAssertEqual(staged.workload, workload)
+        XCTAssertFalse(staged.isActive)
 
         let generic = try await store.recover(owner: "alice", sessionEpoch: UUID())
         XCTAssertNil(generic)
+        let inactiveStory = try await store.recover(
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        XCTAssertNil(inactiveStory)
+
+        let activationEpoch = UUID()
+        let activated = try await store.activate(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: activationEpoch,
+            workload: workload
+        )
+        XCTAssertTrue(activated.snapshot.isActive)
+        XCTAssertEqual(activated.mode, .create)
 
         let recovered = try await store.recover(
             owner: "alice",
             sessionEpoch: UUID(),
             workload: workload
         )
-        XCTAssertEqual(recovered?.snapshot.id, prepared.snapshot.id)
+        XCTAssertEqual(recovered?.snapshot.id, attemptID)
         XCTAssertEqual(recovered?.snapshot.workload, workload)
         XCTAssertEqual(recovered?.mode, .create)
+    }
+
+    func testStableStoryStageIsIdempotentAndRejectsConflictingRequest() async throws {
+        let directory = try directory()
+        let root = directory.appendingPathComponent("jobs")
+        let source = directory.appendingPathComponent("stable-input.png")
+        let originalBytes = Data(repeating: 0x31, count: 4_096)
+        try originalBytes.write(to: source)
+        let store = MediaStudioVideoJobStore(root: root)
+        let attemptID = UUID()
+        let workload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: UUID(),
+            segmentID: "segment-1",
+            attemptID: attemptID
+        )
+        let stableRequest = VideoGenerationRequest(
+            modelConfigID: "video-model",
+            prompt: "same intent",
+            size: "768P",
+            seconds: 4,
+            inputImage: .init(
+                name: "stable-input.png",
+                mimeType: "image/png",
+                fileURL: source
+            )
+        )
+
+        let first = try await store.stagePrepared(
+            request: stableRequest,
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        let repeated = try await MediaStudioVideoJobStore(root: root).stagePrepared(
+            request: stableRequest,
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        XCTAssertEqual(repeated.id, first.id)
+        XCTAssertEqual(repeated.idempotencyKey, first.idempotencyKey)
+        XCTAssertFalse(repeated.isActive)
+
+        try Data(repeating: 0x72, count: originalBytes.count).write(to: source)
+        do {
+            _ = try await store.stagePrepared(
+                request: stableRequest,
+                id: attemptID,
+                owner: "alice",
+                sessionEpoch: UUID(),
+                workload: workload
+            )
+            XCTFail("A stable job ID must not be rebound to different request content")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                MediaStudioVideoJobStoreError.jobConflict.localizedDescription
+            )
+        }
+
+        do {
+            _ = try await store.markSubmitting(
+                id: attemptID,
+                owner: "alice",
+                sessionEpoch: first.sessionEpoch
+            )
+            XCTFail("A staged job must not execute before ownership activation")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                MediaStudioVideoJobStoreError.activationRequired.localizedDescription
+            )
+        }
+        XCTAssertEqual(files(named: "job.json", under: root).count, 1)
+
+        let activationEpoch = UUID()
+        let activated = try await store.activate(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: activationEpoch,
+            workload: workload
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: XCTUnwrap(activated.request.inputImage?.fileURL)),
+            originalBytes
+        )
+    }
+
+    func testImportedProviderJobCanOnlyResumeAfterActivation() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let source = try directory().appendingPathComponent("legacy.mov")
+        try Data(repeating: 0x4A, count: 1_024).write(to: source)
+        let store = MediaStudioVideoJobStore(root: root)
+        let attemptID = UUID()
+        let workload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: UUID(),
+            segmentID: "segment-legacy",
+            attemptID: attemptID
+        )
+        let legacyRequest = VideoGenerationRequest(
+            modelConfigID: "video-model",
+            prompt: "legacy provider task",
+            size: "768P",
+            seconds: 4,
+            referenceVideo: .init(
+                name: "legacy.mov",
+                mimeType: "video/quicktime",
+                fileURL: source
+            )
+        )
+
+        let staged = try await store.stageImportedProviderJob(
+            request: legacyRequest,
+            id: attemptID,
+            providerJobID: "provider-existing",
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        XCTAssertFalse(staged.isActive)
+        XCTAssertEqual(staged.providerJobID, "provider-existing")
+        XCTAssertTrue(files(named: "referenceVideo.artifact", under: root).isEmpty)
+        let inactive = try await store.recover(
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        XCTAssertNil(inactive)
+
+        let activationEpoch = UUID()
+        let activated = try await store.activate(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: activationEpoch,
+            workload: workload
+        )
+        XCTAssertEqual(activated.mode, .resume(providerJobID: "provider-existing"))
+        XCTAssertNil(activated.request.referenceVideo)
+
+        let repeatedActivation = try await store.activate(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: activationEpoch,
+            workload: workload
+        )
+        XCTAssertEqual(repeatedActivation.mode, .resume(providerJobID: "provider-existing"))
+        XCTAssertEqual(repeatedActivation.snapshot.stateVersion, activated.snapshot.stateVersion)
     }
 
     func testManifestWithoutWorkloadRemainsGenericStudioCompatible() async throws {
@@ -90,8 +259,9 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         var object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any]
         )
-        XCTAssertEqual(object["formatVersion"] as? Int, 2)
+        XCTAssertEqual(object["formatVersion"] as? Int, 3)
         object.removeValue(forKey: "workload")
+        object.removeValue(forKey: "activation")
         object["formatVersion"] = 1
         try JSONSerialization.data(withJSONObject: object).write(to: manifest, options: .atomic)
 
@@ -101,6 +271,33 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         )
         XCTAssertEqual(recovered?.snapshot.id, prepared.snapshot.id)
         XCTAssertEqual(recovered?.snapshot.workload, .genericStudio)
+        XCTAssertEqual(recovered?.mode, .create)
+    }
+
+    func testVersionTwoManifestWithoutActivationRemainsActive() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        let prepared = try await store.prepare(
+            request: request(prompt: "version two generic"),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        let manifest = try XCTUnwrap(files(named: "job.json", under: root).first)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any]
+        )
+        XCTAssertEqual(object["formatVersion"] as? Int, 3)
+        object.removeValue(forKey: "activation")
+        object["formatVersion"] = 2
+        try JSONSerialization.data(withJSONObject: object).write(to: manifest, options: .atomic)
+
+        let recovered = try await MediaStudioVideoJobStore(root: root).recover(
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        XCTAssertEqual(recovered?.snapshot.id, prepared.snapshot.id)
+        XCTAssertEqual(recovered?.snapshot.workload, .genericStudio)
+        XCTAssertEqual(recovered?.snapshot.isActive, true)
         XCTAssertEqual(recovered?.mode, .create)
     }
 

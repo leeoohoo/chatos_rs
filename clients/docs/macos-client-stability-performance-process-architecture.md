@@ -1122,6 +1122,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批只建立 schema 与恢复隔离，Story `segment.attempt` 和旧 Batch `jobs` 仍是各自的唯一写入者，没有向 MediaJobStore 旁路双写。下一阶段还必须提供可重复的稳定本地 job ID、项目 manifest 与 job manifest 之间的可恢复切换协议，以及旧 provider ID 的只读导入；在这些条件完成前，Story/Batch 不能改由新 Store 推进，P0-E 仍不能标记完成。
 
+### 12.24 第二十四批实施记录：稳定 job ID、幂等发布与所有权切换协议（2026-10-22）
+
+本批只完成迁移协议的 MediaJobStore 一侧，仍不修改 Story/Batch 写入者。直接给原 `prepare` 增加固定 UUID 并不安全：输入复制发生在 writer lock 外，同一 ID 的两个进程可能互相覆盖最终目录。因此发布模型改为每次先在账户目录创建不可恢复的隐藏 staging，完成受限复制、SHA-256 和临时 manifest 后，再在 writer lock 内校验稳定 ID 冲突并通过同卷目录 rename 一次发布。
+
+已实施：
+
+- Story/Batch 的稳定本地 job ID 强制等于现有 attempt UUID；`stagePrepared` 对同 ID、同 workload、同请求内容可重复执行并返回同一记录，prompt、模型、参数或 artifact 摘要不同则以 conflict 拒绝，不能覆盖第一次已持久化的输入。通用 Studio 仍生成随机 ID，但也改走隐藏 staging 发布，继续保持大文件复制在全局锁外。
+- format-v3 新增 `staged/active` 所有权状态。staged job 已持久但不参与任何 recovery，所有状态推进 API 也拒绝它；只有业务 manifest 已原子改为引用该 local job ID 后，协调者才可调用幂等 `activate`。因此正确切换顺序固定为“stage job → 原子提交 Story/Batch 业务关联并停止旧状态推进 → activate”；若第二步后崩溃，业务关联可在重启时重复 activate，若第二步前崩溃，旧写入者仍是唯一所有者。
+- 旧任务导入只接受非空 provider job ID，且不复制 create 输入；激活后唯一执行模式是 resume。没有 provider ID 的旧 attempt 不能证明远端未接单，继续留在旧事实源或进入人工对账，禁止通过导入重新 create。
+- 同稳定 ID 的并发 staging 在锁内比较不可变 workload、idempotency key、provider ID、请求字段与 artifact 摘要；完全一致才视为成功重放。隐藏 staging 即使被 `SIGKILL` 留下也不会被扫描或提交。v1/v2 manifest 没有 activation 字段，按当时语义只读为 active；新 v3 对旧客户端仍以未知版本明确拒绝，避免旧版本绕过 staged 隔离。
+
+验证：新增稳定 staging 重放、冲突输入不覆盖、staged recovery/状态推进隔离、激活恢复、旧 provider ID 仅 resume、重复激活，以及 v1/v2 兼容读取回归。Debug 与 arm64 Release 按 History/Video Job/Video Canvas/Image Interaction/ViewModel/API 各选择性运行 82 项，全部通过；Swift 6 编译与并发检查、`git diff --check` 同步作为门禁。
+
+边界：本批尚未把 `localJobID` 写入 Story project schema，也未接入单段适配器或启动扫描器，因此不会形成双写。下一批必须先实现 Story manifest 的关联字段、上述切换顺序和崩溃恢复，再让新 Story attempt 使用 MediaJobStore；旧 Batch 仍需单独分页导入。隐藏 staging 的启动限龄清理、长期 lease/App→Worker 交接、真实多进程逐状态强杀和最终 job 保留策略仍未完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
