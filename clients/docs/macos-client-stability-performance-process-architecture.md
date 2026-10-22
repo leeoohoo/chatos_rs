@@ -1568,6 +1568,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：`MediaStudioImageLoader.data` 仍保留给确实要求字节值的兼容调用，Agent Avatar 选择器的归一化仍以 `Data` 为输入；旧 Base64-only 预览也仍需一次源解码。位图解码和缓存继续位于主进程，真实多图滚动 physical-footprint、内存压力/取消风暴、恶意图片进程隔离、断网/睡眠/ENOSPC、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.53 第五十三批实施记录：Agent Avatar 文件原生归一化（2026-10-23）
+
+本批关闭 12.52 明确保留的头像选择峰值。用户本地选图与生成记录选图此前都会先形成最多 20 MiB 的完整 `Data`，再创建 ImageIO source、2048 像素解码面和 256×256 JPEG；HTTPS 生成图还会先经历网络响应聚合。
+
+已实施：
+
+- `AgentAvatarImageProcessor.normalizeFile` 复用 `AppImageThumbnailLoader.decodeFile`，以 `O_NOFOLLOW` 打开并对同一 descriptor 执行 `fstat`，只接受 1...20 MiB 普通文件；ImageIO 经 `/dev/fd` 直接解码，继续执行 64 MP 源像素与 2048 解码像素上限。
+- 本地 security-scoped 头像选择在授权范围内直接调用文件归一化，不再执行 `AppBoundedFileReader.read`；授权覆盖安全打开、属性读取与完整解码，归一化结束后立即释放。
+- 新增 `AgentAvatarImageLoader` 统一生成资产入口：file-backed 资产保持 owner 到解码完成，HTTPS 资产使用 12.50 response artifact 流式下载后文件归一化，只有旧 Base64-only 兼容结果保留有界 `Data` 路径。
+- `Data` 与文件入口共享同一个 `AppDecodedThumbnail → 居中裁剪 → 256×256 JPEG` 后半段，避免像素边界和输出策略漂移；输出继续限制在 512 KiB。
+- 新增远端生成头像回归：拆分 payload 只允许一次 `stream`、禁止 `send` 且不携带 Authorization，输出为 256×256 有界 JPEG，返回时 response artifact 已清理。
+
+验证：Debug 与 arm64 Release 各选择性运行 `HTTPTransportTests` 13 项、`Base64PayloadFileWriterTests` 1 项、`MediaStudioHistoryStoreTests` 11 项、`MediaStudioImageInteractionTests` 16 项和 `AgentAvatarImageProcessorTests` 4 项，共 45 项，全部通过；Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。未启动/安装正式 App，未请求真实 provider，未访问活动用户数据库。
+
+边界：旧 Base64-only 头像仍需一次源 `Data`，最终 512 KiB JPEG 按 UI/持久化契约返回 `Data`；ImageIO 解码与 JPEG 编码仍在主进程。本批没有改变头像存储格式或账户模型；真实大图 physical-footprint、内存压力/取消风暴、恶意图片进程隔离、断网/睡眠/ENOSPC、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

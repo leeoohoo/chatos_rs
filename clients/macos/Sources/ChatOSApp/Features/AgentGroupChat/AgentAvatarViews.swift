@@ -147,16 +147,7 @@ struct AgentAvatarEditor: View {
                 let normalized = try await AppCancellableDetachedWork.run {
                     let accessed = url.startAccessingSecurityScopedResource()
                     defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                    let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-                    guard values.isRegularFile == true, (values.fileSize ?? 0) <= 20 * 1_024 * 1_024 else {
-                        throw AgentAvatarImageError.invalidImage
-                    }
-                    return try AgentAvatarImageProcessor.normalize(
-                        try AppBoundedFileReader.read(
-                            url,
-                            maximumBytes: 20 * 1_024 * 1_024
-                        )
-                    )
+                    return try AgentAvatarImageProcessor.normalizeFile(url)
                 }
                 guard loadGeneration == generation, !Task.isCancelled else { return }
                 avatarData = normalized
@@ -257,10 +248,7 @@ private struct AgentGeneratedAvatarPicker: View {
         errorMessage = nil
         loadTask = Task {
             do {
-                let source = try await MediaStudioImageLoader.data(for: asset)
-                let normalized = try await AppCancellableDetachedWork.run {
-                    try AgentAvatarImageProcessor.normalize(source)
-                }
+                let normalized = try await AgentAvatarImageLoader.normalizedData(for: asset)
                 guard loadGeneration == generation, !Task.isCancelled else { return }
                 onSelect(normalized)
                 dismiss()
@@ -283,32 +271,43 @@ enum AgentAvatarImageProcessor {
 
     static func normalize(_ data: Data) throws -> Data {
         try Task.checkCancellation()
-        guard !data.isEmpty,
-              data.count <= maximumInputBytes,
-              let source = CGImageSourceCreateWithData(data as CFData, [
-                kCGImageSourceShouldCache: false,
-              ] as CFDictionary),
-              CGImageSourceGetCount(source) > 0,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
-                as? [CFString: Any],
-              let widthValue = properties[kCGImagePropertyPixelWidth] as? NSNumber,
-              let heightValue = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
+        guard !data.isEmpty, data.count <= maximumInputBytes else {
             throw AgentAvatarImageError.invalidImage
         }
+        let decoded = AppImageThumbnailLoader.decode(
+            data,
+            maximumSourcePixelCount: maximumSourcePixelCount,
+            maximumDisplayPixelSize: maximumDecodePixelSize
+        )
         try Task.checkCancellation()
-        let sourceWidth = widthValue.doubleValue
-        let sourceHeight = heightValue.doubleValue
-        guard sourceWidth.isFinite, sourceHeight.isFinite,
-              sourceWidth > 0, sourceHeight > 0,
-              sourceWidth * sourceHeight <= Double(maximumSourcePixelCount),
-              let decoded = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maximumDecodePixelSize,
-                kCGImageSourceShouldCacheImmediately: true,
-              ] as CFDictionary) else {
+        guard let decoded else { throw AgentAvatarImageError.invalidImage }
+        return try normalizeDecoded(decoded.image)
+    }
+
+    static func normalizeFile(_ url: URL) throws -> Data {
+        try Task.checkCancellation()
+        let decoded: AppDecodedThumbnail
+        do {
+            let result = try AppImageThumbnailLoader.decodeFile(
+                url,
+                maximumBytes: maximumInputBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumDisplayPixelSize: maximumDecodePixelSize
+            )
+            try Task.checkCancellation()
+            guard let result else { throw AgentAvatarImageError.invalidImage }
+            decoded = result
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as AgentAvatarImageError {
+            throw error
+        } catch {
             throw AgentAvatarImageError.invalidImage
         }
+        return try normalizeDecoded(decoded.image)
+    }
+
+    private static func normalizeDecoded(_ decoded: CGImage) throws -> Data {
         try Task.checkCancellation()
         let side = min(decoded.width, decoded.height)
         let cropRect = CGRect(
