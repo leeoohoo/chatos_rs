@@ -95,6 +95,42 @@ actor RecordingFrameImageService: MediaGenerationServicing {
     func lastRequest() -> ImageGenerationRequest? { request }
 }
 
+actor RecordingBatchImageService: MediaGenerationServicing {
+    private let imageData: Data
+    private var requests: [ImageGenerationRequest] = []
+
+    init(imageData: Data) { self.imageData = imageData }
+
+    func fetchModels() async throws -> [MediaGenerationModel] { [] }
+
+    func generateImage(_ request: ImageGenerationRequest) async throws -> ImageGenerationResult {
+        requests.append(request)
+        return .init(
+            id: "batch-image-result-\(requests.count)",
+            modelConfigID: request.modelConfigID,
+            modelName: "image-model",
+            createdAt: "",
+            images: [.init(
+                id: "batch-image-\(requests.count)",
+                mimeType: "image/png",
+                base64Data: imageData.base64EncodedString()
+            )],
+            clientRequestID: request.clientRequestID,
+            projectID: request.projectID,
+            resourceID: request.resourceID
+        )
+    }
+
+    func generateVideo(
+        _ request: VideoGenerationRequest,
+        progress: @escaping @Sendable (VideoGenerationProgress) async -> Void
+    ) async throws -> VideoGenerationResult {
+        throw StoryError.unavailable
+    }
+
+    func imageRequests() -> [ImageGenerationRequest] { requests }
+}
+
 struct StoryTestPreflightError: LocalizedError, MediaGenerationSubmissionFailure {
     var errorDescription: String? { "preflight rejected" }
     var requestMayHaveBeenSubmitted: Bool { false }

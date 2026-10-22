@@ -6,6 +6,99 @@ import XCTest
 @testable import ChatOSApp
 
 extension StoryStudioTests {
+    func testPersistentMediaBatchUsesFileBackedFrameReferences() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryBatchImageReferenceTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 16,
+            pixelsHigh: 16,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let service = RecordingBatchImageService(imageData: png)
+        var project = try await readyProject(store)
+        let guide = try XCTUnwrap(project.segments[0].firstFrame)
+        var hero = StoryCharacter(id: "hero", name: "主角", profile: characterProfile())
+        hero.media.images = [guide]
+        hero.media.confirmedImageID = guide.id
+        project.characters = [hero]
+        project.segments[1].characterIDs = [hero.id]
+        project.segments[1].firstFrames = .init()
+        project.segments[1].lastFrames = .init()
+        try await store.save(project, owner: "alice")
+        let videoJobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("jobs", isDirectory: true)
+        )
+
+        let frameBatch = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .frames,
+            targets: ["s2"],
+            models: models
+        )
+        let frameResult = try await StoryMediaBatchSession(
+            batch: frameBatch,
+            store: store,
+            media: service,
+            videoJobStore: videoJobStore,
+            accountSessionID: UUID()
+        ).run()
+        XCTAssertEqual(frameResult.status, .completed, frameResult.error ?? "missing batch error")
+        var frameProject = frameResult.draft
+        frameProject.segments[1].confirmedFrameID = try XCTUnwrap(
+            frameProject.segments[1].firstFrames.images.last?.id
+        )
+        try await store.save(frameProject, owner: "alice")
+
+        let lastFrameBatch = try StoryMediaBatch(
+            project: frameProject,
+            owner: "alice",
+            kind: .lastFrames,
+            targets: ["s2"],
+            models: models
+        )
+        let lastFrameResult = try await StoryMediaBatchSession(
+            batch: lastFrameBatch,
+            store: store,
+            media: service,
+            videoJobStore: videoJobStore,
+            accountSessionID: UUID()
+        ).run()
+        XCTAssertEqual(lastFrameResult.status, .completed, lastFrameResult.error ?? "missing batch error")
+
+        let requests = await service.imageRequests()
+        guard requests.count == 2 else {
+            return XCTFail("Expected two image requests, got \(requests.count)")
+        }
+        XCTAssertEqual(
+            requests[0].referenceImages.map(\.name),
+            ["主角.png", "previous-segment-last-frame.png"]
+        )
+        XCTAssertEqual(
+            requests[1].referenceImages.map(\.name),
+            ["主角.png", "current-segment-first-frame.png"]
+        )
+        for request in requests {
+            XCTAssertTrue(request.referenceImages.allSatisfy(\.base64Data.isEmpty))
+            XCTAssertTrue(request.referenceImages.allSatisfy { $0.fileURL?.isFileURL == true })
+            for reference in request.referenceImages {
+                XCTAssertFalse(try Data(contentsOf: XCTUnwrap(reference.fileURL)).isEmpty)
+            }
+        }
+    }
+
     func testPersistentMediaBatchUsesDurableVideoProgressAsItsOnlyWriter() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "StoryBatchProgressTests-\(UUID().uuidString)",

@@ -669,6 +669,11 @@ extension StoryStudioTests {
         let capturedRequest = await service.lastRequest()
         let request = try XCTUnwrap(capturedRequest)
         XCTAssertEqual(request.referenceImages.map(\.name), ["主角.png", "previous-segment-last-frame.png"])
+        XCTAssertTrue(request.referenceImages.allSatisfy(\.base64Data.isEmpty))
+        XCTAssertTrue(request.referenceImages.allSatisfy { $0.fileURL?.isFileURL == true })
+        for reference in request.referenceImages {
+            XCTAssertEqual(try Data(contentsOf: XCTUnwrap(reference.fileURL)), png)
+        }
         XCTAssertTrue(request.prompt.contains("previousSegmentTailReferenceIndex\":2"))
         XCTAssertNotNil(vm.project?.segments[1].firstFrame)
 
@@ -677,6 +682,19 @@ extension StoryStudioTests {
         let capturedLastRequest = await service.lastRequest()
         let lastRequest = try XCTUnwrap(capturedLastRequest)
         XCTAssertEqual(lastRequest.referenceImages.map(\.name), ["主角.png", "current-segment-first-frame.png"])
+        XCTAssertTrue(lastRequest.referenceImages.allSatisfy(\.base64Data.isEmpty))
+        XCTAssertTrue(lastRequest.referenceImages.allSatisfy { $0.fileURL?.isFileURL == true })
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(lastRequest.referenceImages[0].fileURL)), png)
+        let currentFirstFrame = try XCTUnwrap(vm.project?.segments[1].firstFrame)
+        let currentFirstFrameURL = try store.fileURL(
+            currentFirstFrame.filename,
+            projectID: project.id,
+            owner: "alice"
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: XCTUnwrap(lastRequest.referenceImages[1].fileURL)),
+            try Data(contentsOf: currentFirstFrameURL)
+        )
         XCTAssertTrue(lastRequest.prompt.contains("currentSegmentFirstFrameReferenceIndex\":2"))
         XCTAssertTrue(lastRequest.prompt.contains("本段已确认首帧"))
         XCTAssertNotNil(vm.project?.segments[1].lastFrame)

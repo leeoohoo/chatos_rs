@@ -2,7 +2,7 @@ import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
-/// macOS adapter for Story first/last-frame generation. Reference media bytes, filenames,
+/// macOS adapter for Story first/last-frame generation. Reference media files, filenames,
 /// prompt payloads and durable Store intents remain behind the application Port.
 struct StoryFrameImageGenerationAdapter: StoryFrameImageGenerating {
     let store: StoryProjectStore
@@ -35,16 +35,11 @@ struct StoryFrameImageGenerationAdapter: StoryFrameImageGenerating {
                 projectID: command.projectID,
                 owner: ownerUserID
             )
-            let data = try await MediaStudioImageLoader.data(for: .init(
-                id: image.id.uuidString,
-                mimeType: image.mimeType,
-                url: url
-            ))
             try await continuationCheck()
             references.append(.init(
                 name: resource.name + ".png",
                 mimeType: image.mimeType,
-                base64Data: data.base64EncodedString()
+                fileURL: url
             ))
         }
 
@@ -60,16 +55,11 @@ struct StoryFrameImageGenerationAdapter: StoryFrameImageGenerating {
                 projectID: command.projectID,
                 owner: ownerUserID
             )
-            let data = try await MediaStudioImageLoader.data(for: .init(
-                id: previous.image.id.uuidString,
-                mimeType: previous.image.mimeType,
-                url: url
-            ))
             try await continuationCheck()
             references.append(.init(
                 name: "previous-segment-last-frame.png",
                 mimeType: previous.image.mimeType,
-                base64Data: data.base64EncodedString()
+                fileURL: url
             ))
             previousTailReferenceIndex = references.count
         } else if command.role == .last, let firstFrame = segment.firstFrame {
@@ -78,16 +68,11 @@ struct StoryFrameImageGenerationAdapter: StoryFrameImageGenerating {
                 projectID: command.projectID,
                 owner: ownerUserID
             )
-            let data = try await MediaStudioImageLoader.data(for: .init(
-                id: firstFrame.id.uuidString,
-                mimeType: firstFrame.mimeType,
-                url: url
-            ))
             try await continuationCheck()
             references.append(.init(
                 name: "current-segment-first-frame.png",
                 mimeType: firstFrame.mimeType,
-                base64Data: data.base64EncodedString()
+                fileURL: url
             ))
             currentFirstFrameReferenceIndex = references.count
         }

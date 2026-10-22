@@ -1373,6 +1373,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批覆盖“request body 已生成、上传尚未结束”窗口的真实进程强杀，不注入 writer 每个 chunk 的中间指令窗口，也不证明 URLSession 内核/daemon 已停止读取文件。真实 provider 网络、睡眠/唤醒、断网、写入中 ENOSPC、断电、App→Worker lease 交接、Media Worker 和签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.40 第四十批实施记录：Story 图片参考输入文件原生化（2026-10-23）
+
+本批消除 Story 首帧/尾帧生成在应用层仍保留的确定性图片内存放大。审计确认，单次生成适配器和持久 Media Batch 都会先把每张项目图片完整读成 `Data`，再生成约 4/3 体积的 Base64 字符串；API 层随后又把 Base64 解码并写入 multipart 临时文件，使同一参考图在提交前同时存在项目文件、`Data`、Base64 和 multipart 副本。
+
+已实施：
+
+- 单次 Story 首帧/尾帧生成对已确认人物/场景/道具图、上一段已确认尾帧和当前段已确认首帧，均直接构造带项目 `fileURL` 的 `ImageGenerationInputImage`；不再调用 `MediaStudioImageLoader` 预读输入，也不再在 Story 层生成 Base64。
+- 持久 Media Batch 的 frames/lastFrames 路径采用同一文件引用方式，删除异步整图读取 helper；已有参考图顺序、文件名、MIME、prompt reference index、continuation fencing 和 Batch intent/完成提交协议保持不变。
+- 全部为本地文件引用且 Base64 为空时，既有 `ChatOSImageGenerationWire` 会自动进入 12.38 已加固的流式 multipart writer，因此大图只按 chunk 复制到受 lease 保护的 request artifact，不重新拼出整份内存 multipart。
+- 回归分别验证单次首帧与尾帧、持久 Batch 首帧与尾帧请求：参考资源、上一段尾帧和当前段首帧都保留正确顺序与真实文件内容，`base64Data` 为空且 `fileURL` 为本地文件；连续性 prompt index 和生成后的 Story/Batch 状态仍正确。
+
+验证：Debug 与 arm64 Release 各运行完整 `StoryStudioTests` 93 项，全部通过；新增的单次生成与持久 Batch 文件引用回归包含在内。Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。测试只使用独立临时目录和受控内存 provider，不启动/安装正式 App，不读取活动用户数据。
+
+边界：本批只消除 Story 图片生成**输入参考图**的 `Data + Base64` 峰值；provider 返回图片目前仍可能是完整 JSON/Base64，输出解码、AppKit 归一化和项目落盘仍在主进程。真实大图 memory/physical-footprint trace、响应侧流式协议、恶意/超大像素解码隔离、网络/睡眠/ENOSPC 故障矩阵、App→Worker lease 交接、Media Worker 和签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

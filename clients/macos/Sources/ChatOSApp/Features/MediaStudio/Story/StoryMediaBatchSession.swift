@@ -100,16 +100,16 @@ actor StoryMediaBatchSession {
             var references: [ImageGenerationInputImage] = []
             for assetID in segment.resourceIDs {
                 guard let asset = project.resource(id: assetID), let image = asset.confirmedImage else { throw StoryError.invalidPlan }
-                references.append(try await input(image, name: asset.name + ".png"))
+                references.append(try imageInput(image, name: asset.name + ".png"))
             }
             var previousTailReferenceIndex: Int?
             var currentFirstFrameReferenceIndex: Int?
             if step.kind == .frames,
                let previous = StoryContinuityContext.previousTail(project, segmentID: segment.id) {
-                references.append(try await input(previous.image, name: "previous-segment-last-frame.png"))
+                references.append(try imageInput(previous.image, name: "previous-segment-last-frame.png"))
                 previousTailReferenceIndex = references.count
             } else if step.kind == .lastFrames, let firstFrame = segment.firstFrame {
-                references.append(try await input(firstFrame, name: "current-segment-first-frame.png"))
+                references.append(try imageInput(firstFrame, name: "current-segment-first-frame.png"))
                 currentFirstFrameReferenceIndex = references.count
             }
             request = .init(modelConfigID: project.models.imageModelID,
@@ -567,10 +567,9 @@ actor StoryMediaBatchSession {
         }
     }
 
-    private func input(_ image: StoryImage, name: String) async throws -> ImageGenerationInputImage {
+    private func imageInput(_ image: StoryImage, name: String) throws -> ImageGenerationInputImage {
         let url = try store.fileURL(image.filename, projectID: state.draft.id, owner: state.owner)
-        let bytes = try await MediaStudioImageLoader.data(for: .init(id: image.id.uuidString, mimeType: image.mimeType, url: url))
-        return .init(name: name, mimeType: image.mimeType, base64Data: bytes.base64EncodedString())
+        return .init(name: name, mimeType: image.mimeType, fileURL: url)
     }
     private func videoInput(_ image: StoryImage, name: String) throws -> ImageGenerationInputImage {
         let url = try store.fileURL(
