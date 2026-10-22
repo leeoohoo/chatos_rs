@@ -2,7 +2,7 @@
 
 更新时间：2026-10-22
 
-状态：强化版方案，P0 部分实施中；阶段记录见 12.1—12.36，完整 Release 验收待完成
+状态：强化版方案，P0 部分实施中；阶段记录见 12.1—12.37，完整 Release 验收待完成
 
 适用范围：`clients/macos`、`clients/local_agent_host` 以及 macOS 客户端启动的 Plugin/Companion 进程
 
@@ -1327,6 +1327,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 验证：`HTTPTransportTests` 新增目录/文件权限与正常释放、活跃 lease 保护及释放后回收、新鲜与异常结构保守策略、64 候选上限、取消和流失败无残留；原有流式内容、超限 partial、Content-Length 截断和磁盘准入测试继续覆盖。Debug 与 arm64 Release 均选择性运行 13 项 HTTP transport 测试，Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
 
 边界：本批只管理新版目录化的视频下载结果，不猜测或删除旧版 lease-less 的 `chatos-video-download-*.tmp`，也尚未给上传侧 `chatos-video-request-*.json` / multipart request body 建立同等崩溃对账。测试覆盖真实 `flock` 竞争但尚未用独立下载 writer 子进程执行 SIGKILL；真实网络中断、睡眠/唤醒、写入中 ENOSPC、App→Worker lease 所有权交接、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
+### 12.37 第三十七批实施记录：视频下载 writer 真实 SIGKILL 回归（2026-10-23）
+
+本批把 12.36 的下载 artifact lease 从同进程 descriptor 竞争提升为真实进程死亡验证。父测试启动独立 xctest 子进程，子进程运行生产 `ChatOSResponseBodyFileWriter`，写入部分视频响应后故意让 `AsyncThrowingStream` 保持未完成；只有在真实 payload 已出现且字节数可见后才发布 checkpoint，随后由父进程发送 signal 9。生产 writer 没有增加测试环境分支、暂停点或崩溃钩子。
+
+已验证：
+
+- 子进程仍存活时，父进程把 artifact 修改时间设为超过 24 小时并执行生产维护；跨进程 `.lease` 独占锁使维护返回零删除，真实 partial payload 和目录保持存在，证明年龄不能越过活跃 writer 所有权。
+- 父进程发送 `SIGKILL` 后使用有界异步 `Process.isRunning` 观察退出，不依赖 Release 下可能无界等待的同步 `waitUntilExit()`；终止原因和 signal 均必须精确匹配 `SIGKILL`。
+- 进程死亡没有执行 Swift `deinit`、取消或错误清理，但内核释放 `flock`；全新的维护调用随即取得同一 lease，校验目录/文件结构并删除过期 artifact，证明 partial 下载不会在强杀后永久泄漏。
+- 每个场景使用独立临时根目录并在测试结束清理，不启动/安装 ChatOS App、不发真实网络请求，也不读取活动用户数据。checkpoint 超时、子进程提前退出和 kill 后未及时退出均有明确失败路径。
+
+验证：Debug 与 arm64 Release 各选择性运行 1 项父进程 XCTest；该测试内部再精确选择 1 项 probe 入口运行独立 xctest 子进程，均通过。Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
+
+边界：本批验证的是生产 writer、真实文件锁和真实 signal 9，但响应源仍是受控内存 stream，不覆盖 URLSession 正在接收内核网络数据、真实断网/睡眠、写入中 ENOSPC、断电或文件系统损坏。上传 request body 临时文件对账、App→Worker lease 所有权交接、Media Worker、完整签名 App 强杀及 Release soak 仍待完成，P0-E 不能标记完成。
 
 ## 十三、验证矩阵
 
