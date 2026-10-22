@@ -58,7 +58,7 @@ pub fn task_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": LIST_TASKS_TOOL,
-            "description": "List durable local tasks created from the current conversation/project. Use keyword when the user refers to earlier work. Results are newest-first and never include another conversation or account.",
+            "description": "List durable tasks created from the current conversation/project. Use this before answering any question about current Task state instead of relying on conversation history or retained Memory. Results are newest-first, mark superseded historical Tasks, and never include another conversation or account.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -80,7 +80,7 @@ pub fn task_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": GET_TASK_TOOL,
-            "description": "Get one durable local task created from the current conversation/project by task_id.",
+            "description": "Get a durable task by task_id and resolve its complete replacement chain to the current leaf Task(s). Always use current_tasks for the current status; requested_task may be a cancelled or otherwise superseded historical Task.",
             "parameters": {
                 "type": "object",
                 "properties": {"task_id": {"type": "string", "minLength": 1}},

@@ -5,7 +5,10 @@ use super::memory_sync::*;
 use async_trait::async_trait;
 use chatos_ai_runtime::{MemoryContextCache, MemoryRecordWriter, MemoryScope, SaveRecordInput};
 use chatos_client_storage::SqliteClientStorage;
-use chatos_local_agent_ports::LocalMemoryOutboxStore;
+use chatos_local_agent_ports::{
+    ClientStorageError, LocalMemoryContextCacheEntry, LocalMemoryContextCacheStore,
+    LocalMemoryOutboxStore,
+};
 use memory_engine_sdk::{ComposeContextMeta, ComposeContextResponse};
 use serde_json::json;
 use std::sync::{
@@ -16,6 +19,32 @@ use std::sync::{
 struct RemoteWriter {
     fail: bool,
     records: Mutex<Vec<SaveRecordInput>>,
+}
+
+struct FixedContextCacheStore {
+    entry: Mutex<Option<LocalMemoryContextCacheEntry>>,
+}
+
+#[async_trait]
+impl LocalMemoryContextCacheStore for FixedContextCacheStore {
+    async fn put_memory_context_cache(
+        &self,
+        _cache_key: &str,
+        _tenant_id: &str,
+        _source_id: &str,
+        _thread_id: &str,
+        _response: &serde_json::Value,
+        _refreshed_at_unix_ms: i64,
+    ) -> Result<(), ClientStorageError> {
+        Ok(())
+    }
+
+    async fn get_memory_context_cache(
+        &self,
+        _cache_key: &str,
+    ) -> Result<Option<LocalMemoryContextCacheEntry>, ClientStorageError> {
+        Ok(self.entry.lock().expect("entry").clone())
+    }
 }
 
 #[async_trait]
@@ -69,6 +98,48 @@ async fn context_cache_round_trips_by_exact_memory_scope() {
         .await
         .expect("missing")
         .is_none());
+}
+
+#[tokio::test]
+async fn context_cache_rejects_expired_or_locally_overtaken_facts() {
+    let scope = MemoryScope::thread("user-1", "local_agent", "conversation-1");
+    let response = serde_json::to_value(ComposeContextResponse {
+        thread_id: "conversation-1".to_string(),
+        blocks: Vec::new(),
+        recent_records: Vec::new(),
+        meta: ComposeContextMeta {
+            summary_count: 0,
+            recent_record_count: 0,
+        },
+    })
+    .unwrap();
+    for entry in [
+        LocalMemoryContextCacheEntry {
+            response: response.clone(),
+            refreshed_at_unix_ms: 1_000,
+            cached_message_high_water: 4,
+            current_message_high_water: 5,
+        },
+        LocalMemoryContextCacheEntry {
+            response: response.clone(),
+            refreshed_at_unix_ms: 1_000,
+            cached_message_high_water: 5,
+            current_message_high_water: 5,
+        },
+    ] {
+        let clock_now = if entry.cached_message_high_water == 4 {
+            2_000
+        } else {
+            1_000 + MEMORY_CONTEXT_CACHE_TTL.as_millis() as i64 + 1
+        };
+        let cache = LocalMemoryContextCache::with_clock(
+            Arc::new(FixedContextCacheStore {
+                entry: Mutex::new(Some(entry)),
+            }),
+            Arc::new(move || Ok(clock_now)),
+        );
+        assert!(cache.load(&scope).await.expect("load").is_none());
+    }
 }
 
 #[tokio::test]

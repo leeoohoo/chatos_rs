@@ -71,11 +71,12 @@ pub use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentArtifactStore, LocalAgentArtifactWrite,
     LocalAgentRunStore, LocalAgentStore, LocalAgentTaskStore, LocalAgentToolStore,
     LocalCapabilityPolicySnapshot, LocalCapabilitySnapshotStore,
-    LocalConversationRuntimeSettingsStore, LocalConversationStore, LocalMemoryContextCacheStore,
-    LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore,
-    LocalMemorySyncStatus, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
-    LocalNotepadImageWrite, LocalNotepadStore, LocalPluginInstallationStore,
-    LocalRemoteConnectionStore, LocalRequirementSurveyStore, RunTransition,
+    LocalConversationRuntimeSettingsStore, LocalConversationStore, LocalMemoryContextCacheEntry,
+    LocalMemoryContextCacheStore, LocalMemoryOutboxRecord, LocalMemoryOutboxStatus,
+    LocalMemoryOutboxStore, LocalMemorySyncStatus, LocalModelConfigSnapshot,
+    LocalModelConfigSnapshotStore, LocalNotepadImageWrite, LocalNotepadStore,
+    LocalPluginInstallationStore, LocalRemoteConnectionStore, LocalRequirementSurveyStore,
+    RunTransition,
 };
 use run_record::{decode_run, decode_run_summary};
 use schema::RUN_SELECT;

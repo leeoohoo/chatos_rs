@@ -29,7 +29,7 @@ pub use chatos_local_agent_protocol::{
     MAX_CONTROL_PLANE_SNAPSHOT_BYTES,
 };
 pub use command::{IdempotentCommand, LocalAgentArtifactWrite, RunTransition};
-pub use memory_cache::LocalMemoryContextCacheStore;
+pub use memory_cache::{LocalMemoryContextCacheEntry, LocalMemoryContextCacheStore};
 pub use memory_outbox::{LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore};
 
 #[derive(Debug, Error)]

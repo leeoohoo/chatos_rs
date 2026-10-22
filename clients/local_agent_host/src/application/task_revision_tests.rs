@@ -4,9 +4,8 @@
 use super::*;
 use crate::application::CREATE_TASKS_TOOL;
 use chatos_local_agent_protocol::{
-    CancelRunCommand, ClaimNextRunCommand, CommitStepCommand, CreateTaskGraphCommand,
-    HostResult, LocalAgentRunStatus, LocalAgentStepOutcome, LocalTaskSpec, LocalTaskStatus,
-    RestartTaskCommand,
+    CancelRunCommand, ClaimNextRunCommand, CommitStepCommand, CreateTaskGraphCommand, HostResult,
+    LocalAgentRunStatus, LocalAgentStepOutcome, LocalTaskSpec, LocalTaskStatus, RestartTaskCommand,
 };
 
 fn corrected_input(task_id: &str) -> Value {
@@ -98,6 +97,51 @@ async fn correction_requires_cancel_and_does_not_reuse_unaffected_active_graph()
         .unwrap()
         .unwrap();
     assert_eq!(stored.input["supersedes_task_ids"], json!([old_id]));
+    let old_after_replacement = runtime
+        .get_task_for_conversation("user-1", "conversation-1", old_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        old_after_replacement.replacement_task_ids,
+        vec![replacement_id.to_string()]
+    );
+    let old_graph = runtime
+        .task_graph_by_id("user-1", &old_after_replacement.graph_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        old_graph
+            .tasks
+            .iter()
+            .find(|task| task.task_id == old_id)
+            .unwrap()
+            .replacement_task_ids,
+        vec![replacement_id.to_string()]
+    );
+    let queried = succeeded_output(
+        &executor,
+        invocation(
+            "query-old-after-replacement",
+            "parent-run",
+            GET_TASK_TOOL,
+            json!({"task_id": old_id}),
+        ),
+    )
+    .await;
+    assert_eq!(queried["requested_task"]["id"], old_id);
+    assert_eq!(queried["is_superseded"], true);
+    assert_eq!(queried["current_tasks"][0]["id"], replacement_id);
+    let local_context = runtime
+        .latest_task_context_items("user-1", "conversation-1")
+        .await
+        .unwrap();
+    assert!(local_context.iter().any(|item| {
+        item.pointer("/metadata/task_runner_async/task_id")
+            .and_then(Value::as_str)
+            == Some(old_id)
+    }));
 }
 
 #[tokio::test]

@@ -206,6 +206,13 @@ pub(super) async fn fetch_graph(
         "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
          t.model_config_revision, t.capability_policy_revision, t.input_json, t.max_iterations, \
          t.status, t.active_run_id, t.version, t.created_at_unix_ms, t.updated_at_unix_ms, \
+         t.cancel_reason, t.replacement_task_ids_json, t.cancelled_because_task_id, \
+         (SELECT json_group_array(replacement.task_id) FROM local_tasks replacement \
+            JOIN local_task_graphs replacement_graph \
+              ON replacement_graph.graph_id = replacement.graph_id \
+            CROSS JOIN json_each(replacement.input_json, '$.supersedes_task_ids') superseded \
+            WHERE replacement_graph.owner_user_id = g.owner_user_id \
+              AND superseded.value = t.task_id) AS derived_replacement_task_ids_json, \
          (SELECT f.state FROM local_task_followup_reviews f WHERE f.task_id = t.task_id) \
            AS followup_review_state, \
          (SELECT r.terminal_outcome_json FROM local_agent_runs r \
@@ -289,6 +296,20 @@ fn decode_task(row: SqliteRow, graph: &SqliteRow) -> Result<LocalTaskRecord, Cli
             .map_err(|_| ClientStorageError::InvalidState("invalid max_iterations".to_string()))?,
         status: LocalTaskStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
         active_run_id: row.try_get("active_run_id").db()?,
+        cancel_reason: row.try_get("cancel_reason").db()?,
+        replacement_task_ids: {
+            let mut ids = serde_json::from_str::<Vec<String>>(
+                &row.try_get::<String, _>("replacement_task_ids_json").db()?,
+            )?;
+            ids.extend(serde_json::from_str::<Vec<String>>(
+                &row.try_get::<String, _>("derived_replacement_task_ids_json")
+                    .db()?,
+            )?);
+            ids.sort();
+            ids.dedup();
+            ids
+        },
+        cancelled_because_task_id: row.try_get("cancelled_because_task_id").db()?,
         result_summary: decode_result_summary(&row)?,
         version: u64::try_from(row.try_get::<i64, _>("version").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?,

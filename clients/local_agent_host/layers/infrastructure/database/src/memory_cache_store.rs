@@ -2,7 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    ClientStorageError, LocalMemoryContextCacheStore, SqliteClientStorage, SqliteResultExt,
+    ClientStorageError, LocalMemoryContextCacheEntry, LocalMemoryContextCacheStore,
+    SqliteClientStorage, SqliteResultExt,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -20,6 +21,13 @@ impl LocalMemoryContextCacheStore for SqliteClientStorage {
     ) -> Result<(), ClientStorageError> {
         validate(cache_key, tenant_id, source_id, thread_id, response)?;
         let mut connection = self.pool.acquire().await.db()?;
+        let message_high_water =
+            conversation_message_high_water(&mut connection, thread_id).await?;
+        let payload = serde_json::json!({
+            "schema_version": 1,
+            "response": response,
+            "local_message_high_water": message_high_water,
+        });
         sqlx::query(
             "INSERT INTO local_memory_context_cache(\
              cache_key, tenant_id, source_id, thread_id, response_json, refreshed_at_unix_ms) \
@@ -32,7 +40,7 @@ impl LocalMemoryContextCacheStore for SqliteClientStorage {
         .bind(tenant_id)
         .bind(source_id)
         .bind(thread_id)
-        .bind(serde_json::to_string(response)?)
+        .bind(serde_json::to_string(&payload)?)
         .bind(refreshed_at_unix_ms)
         .execute(&mut *connection)
         .await
@@ -43,24 +51,71 @@ impl LocalMemoryContextCacheStore for SqliteClientStorage {
     async fn get_memory_context_cache(
         &self,
         cache_key: &str,
-    ) -> Result<Option<Value>, ClientStorageError> {
+    ) -> Result<Option<LocalMemoryContextCacheEntry>, ClientStorageError> {
         if cache_key.is_empty() || cache_key.len() > 65_536 {
             return Err(ClientStorageError::InvalidState(
                 "Memory context cache key must contain 1..=65536 bytes".to_string(),
             ));
         }
         let mut connection = self.pool.acquire().await.db()?;
-        let response = sqlx::query_scalar::<_, String>(
-            "SELECT response_json FROM local_memory_context_cache WHERE cache_key = ?",
+        let row = sqlx::query(
+            "SELECT response_json, refreshed_at_unix_ms, thread_id FROM local_memory_context_cache \
+             WHERE cache_key = ?",
         )
         .bind(cache_key)
         .fetch_optional(&mut *connection)
         .await
         .db()?;
-        response
-            .map(|value| serde_json::from_str(&value).map_err(Into::into))
-            .transpose()
+        let Some(row) = row else { return Ok(None) };
+        use sqlx::Row;
+        let payload: Value =
+            serde_json::from_str(&row.try_get::<String, _>("response_json").db()?)?;
+        let thread_id: String = row.try_get("thread_id").db()?;
+        let current_message_high_water =
+            conversation_message_high_water(&mut connection, &thread_id).await?;
+        let (response, cached_message_high_water) =
+            if payload.get("schema_version").and_then(Value::as_u64) == Some(1) {
+                (
+                    payload.get("response").cloned().ok_or_else(|| {
+                        ClientStorageError::InvalidState(
+                            "Memory context cache envelope is missing response".to_string(),
+                        )
+                    })?,
+                    payload
+                        .get("local_message_high_water")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                )
+            } else {
+                // Legacy cache rows have no trustworthy local high-water mark. Keep
+                // the payload decodable but force freshness validation to reject it
+                // whenever this conversation already contains any local message.
+                (payload, 0)
+            };
+        Ok(Some(LocalMemoryContextCacheEntry {
+            response,
+            refreshed_at_unix_ms: row.try_get("refreshed_at_unix_ms").db()?,
+            cached_message_high_water,
+            current_message_high_water,
+        }))
     }
+}
+
+async fn conversation_message_high_water(
+    connection: &mut sqlx::SqliteConnection,
+    conversation_id: &str,
+) -> Result<u64, ClientStorageError> {
+    let value = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(MAX(ordinal), 0) FROM local_conversation_messages \
+         WHERE conversation_id = ?",
+    )
+    .bind(conversation_id)
+    .fetch_one(&mut *connection)
+    .await
+    .db()?;
+    u64::try_from(value).map_err(|_| {
+        ClientStorageError::InvalidState("conversation message ordinal is negative".to_string())
+    })
 }
 
 fn validate(
@@ -115,14 +170,15 @@ mod tests {
             )
             .await
             .expect("put");
-        assert_eq!(
-            storage
-                .get_memory_context_cache("scope-1")
-                .await
-                .expect("get")
-                .expect("cached")["thread_id"],
-            "conversation-1"
-        );
+        let cached = storage
+            .get_memory_context_cache("scope-1")
+            .await
+            .expect("get")
+            .expect("cached");
+        assert_eq!(cached.response["thread_id"], "conversation-1");
+        assert_eq!(cached.refreshed_at_unix_ms, 1_000);
+        assert_eq!(cached.cached_message_high_water, 0);
+        assert_eq!(cached.current_message_high_water, 0);
         assert!(storage
             .get_memory_context_cache("scope-2")
             .await

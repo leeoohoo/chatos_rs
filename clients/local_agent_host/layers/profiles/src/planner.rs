@@ -5,6 +5,7 @@ use crate::{memory::memory_plan, LocalAiStepPlanner, PreparedLocalAiStep};
 use async_trait::async_trait;
 use chatos_ai_runtime::{message_item, ContextualTurnRunner, ModelRuntimeConfig, RuntimeTurnSpec};
 use chatos_local_agent_protocol::LocalAgentRunClaim;
+use chatos_local_agent_runtime::LocalAgentRuntime;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -220,6 +221,7 @@ pub struct ControlPlaneLocalAiStepPlanner {
     local_tools: Vec<Value>,
     local_tool_prefixes: Vec<String>,
     local_prefixed_input_items: Vec<Value>,
+    local_context_runtime: Option<Arc<LocalAgentRuntime>>,
 }
 
 impl ControlPlaneLocalAiStepPlanner {
@@ -268,6 +270,7 @@ impl ControlPlaneLocalAiStepPlanner {
             local_tools: Vec::new(),
             local_tool_prefixes: Vec::new(),
             local_prefixed_input_items: Vec::new(),
+            local_context_runtime: None,
         }
     }
 
@@ -305,6 +308,11 @@ impl ControlPlaneLocalAiStepPlanner {
 
     pub fn with_local_prefixed_input_items(mut self, items: Vec<Value>) -> Self {
         self.local_prefixed_input_items = items;
+        self
+    }
+
+    pub fn with_local_conversation_context(mut self, runtime: Arc<LocalAgentRuntime>) -> Self {
+        self.local_context_runtime = Some(runtime);
         self
     }
 
@@ -452,6 +460,44 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             }
         }
         if self.profile_key == MAIN_CHAT_PROFILE_KEY {
+            capabilities.prefixed_input_items.push(message_item(
+                "system",
+                Value::String(
+                    json!({
+                        "type": "current_task_status_contract",
+                        "guidance": "Conversation text and retained Memory are historical evidence, not authoritative current Task state. Before answering any question about what a Task is doing now, whether it completed, failed, blocked, was cancelled, or was replaced, call get_task or list_tasks. get_task resolves a historical id through its replacement chain; report current_tasks as the current state."
+                    })
+                    .to_string(),
+                ),
+            ));
+            if let (Some(runtime), Some(conversation_id)) = (
+                self.local_context_runtime.as_ref(),
+                claim
+                    .run
+                    .input
+                    .get("conversation_id")
+                    .and_then(Value::as_str),
+            ) {
+                let task_updates = runtime
+                    .latest_task_context_items(&claim.run.owner_user_id, conversation_id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if !task_updates.is_empty() {
+                    capabilities.prefixed_input_items.push(message_item(
+                        "system",
+                        Value::String(
+                            json!({
+                                "type": "local_conversation_fresh_context",
+                                "conversation_id": conversation_id,
+                                "authority": "local_committed_task_writebacks",
+                                "guidance": "These are the newest committed local Task lifecycle facts. They override older conversation prose or retained Memory when discussing current Task status. For a status question, still call get_task or list_tasks so replacement chains and the current leaf are resolved before answering.",
+                                "task_updates": task_updates,
+                            })
+                            .to_string(),
+                        ),
+                    ));
+                }
+            }
             if let Some(selection) = claim.run.input.get("explicit_capability_selection") {
                 let kind = selection.get("kind").and_then(Value::as_str);
                 let contract = match kind {

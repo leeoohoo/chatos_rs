@@ -13,6 +13,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 type SyncClock = Arc<dyn Fn() -> Result<i64, String> + Send + Sync>;
+pub(super) const MEMORY_CONTEXT_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone)]
 pub struct LocalMemoryContextCache {
@@ -38,8 +39,15 @@ impl MemoryContextCache for LocalMemoryContextCache {
             .get_memory_context_cache(&key)
             .await
             .map_err(|error| error.to_string())?
-            .map(|value| {
-                serde_json::from_value(value)
+            .filter(|entry| {
+                let now = (self.clock)().unwrap_or(i64::MAX);
+                let age = now.saturating_sub(entry.refreshed_at_unix_ms);
+                age >= 0
+                    && age <= MEMORY_CONTEXT_CACHE_TTL.as_millis() as i64
+                    && entry.current_message_high_water == entry.cached_message_high_water
+            })
+            .map(|entry| {
+                serde_json::from_value(entry.response)
                     .map_err(|error| format!("decode local Memory context cache failed: {error}"))
             })
             .transpose()

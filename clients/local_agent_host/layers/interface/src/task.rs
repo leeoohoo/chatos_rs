@@ -665,6 +665,12 @@ pub struct LocalTaskRecord {
     pub status: LocalTaskStatus,
     pub active_run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replacement_task_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancelled_because_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_summary: Option<String>,
     pub version: u64,
     pub created_at_unix_ms: i64,

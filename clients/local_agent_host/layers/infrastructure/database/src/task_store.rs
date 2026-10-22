@@ -22,10 +22,16 @@ pub(super) const SCOPED_TASK_SELECT: &str =
     "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
      t.model_config_revision, t.capability_policy_revision, t.input_json, \
      t.max_iterations, t.status, t.active_run_id, t.version, \
+     t.cancel_reason, t.replacement_task_ids_json, t.cancelled_because_task_id, \
      t.created_at_unix_ms, t.updated_at_unix_ms, g.owner_user_id, \
      g.source_entity_type, g.source_entity_id, \
      (SELECT f.state FROM local_task_followup_reviews f WHERE f.task_id = t.task_id) \
        AS followup_review_state, \
+     (SELECT json_group_array(replacement.task_id) FROM local_tasks replacement \
+        JOIN local_task_graphs replacement_graph ON replacement_graph.graph_id = replacement.graph_id \
+        CROSS JOIN json_each(replacement.input_json, '$.supersedes_task_ids') superseded \
+        WHERE replacement_graph.owner_user_id = g.owner_user_id \
+          AND superseded.value = t.task_id) AS derived_replacement_task_ids_json, \
      (SELECT r.terminal_outcome_json FROM local_agent_runs r \
         WHERE r.owner_user_id = g.owner_user_id \
           AND r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
@@ -85,6 +91,12 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             insert_graph(&mut connection, &frozen_graph, now_unix_ms)
                 .await
                 .db()?;
+            super::task_replacement_validation::link_replacements(
+                &mut connection,
+                &frozen_graph,
+                now_unix_ms,
+            )
+            .await?;
             let created = fetch_graph(&mut connection, &graph.graph_id)
                 .await
                 .db()?
@@ -462,12 +474,27 @@ fn decode_scoped_task(row: SqliteRow) -> Result<LocalTaskRecord, ClientStorageEr
             .map_err(|_| ClientStorageError::InvalidState("invalid max_iterations".to_string()))?,
         status: LocalTaskStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
         active_run_id: row.try_get("active_run_id").db()?,
+        cancel_reason: row.try_get("cancel_reason").db()?,
+        replacement_task_ids: replacement_task_ids(&row)?,
+        cancelled_because_task_id: row.try_get("cancelled_because_task_id").db()?,
         result_summary: decode_result_summary(&row)?,
         version: u64::try_from(row.try_get::<i64, _>("version").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?,
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
         updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
     })
+}
+
+fn replacement_task_ids(row: &SqliteRow) -> Result<Vec<String>, ClientStorageError> {
+    let task_id: String = row.try_get("task_id").db()?;
+    let stored: String = row.try_get("replacement_task_ids_json").db()?;
+    let mut ids = serde_json::from_str::<Vec<String>>(&stored)?;
+    let derived: String = row.try_get("derived_replacement_task_ids_json").db()?;
+    ids.extend(serde_json::from_str::<Vec<String>>(&derived)?);
+    ids.retain(|candidate| candidate != &task_id && !candidate.trim().is_empty());
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 fn validate_task_query(

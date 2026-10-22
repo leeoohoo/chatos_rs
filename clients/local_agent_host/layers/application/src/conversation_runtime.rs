@@ -9,8 +9,72 @@ use chatos_local_agent_protocol::{
     LocalConversationResourceKind, ResumeConversationTurnCommand, StartConversationTurnCommand,
 };
 use serde_json::json;
+use std::collections::HashSet;
+
+const LOCAL_TASK_CONTEXT_MAX_ITEMS: usize = 16;
+const LOCAL_TASK_CONTEXT_MAX_BYTES: usize = 64 * 1024;
 
 impl LocalAgentRuntime {
+    /// Returns the newest program-owned Task writebacks from the authoritative
+    /// local conversation log. This deliberately does not depend on retained
+    /// Memory, which may be offline or behind the local commit watermark.
+    pub async fn latest_task_context_items(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+    ) -> Result<Vec<serde_json::Value>, LocalAgentRuntimeError> {
+        let page = self
+            .store
+            .get_conversation_history(owner_user_id, conversation_id, None, 100)
+            .await?;
+        let mut seen = HashSet::new();
+        let mut bytes = 0usize;
+        let mut items = Vec::new();
+        for message in page.messages.into_iter().rev() {
+            let kind = message
+                .metadata
+                .get("kind")
+                .and_then(serde_json::Value::as_str);
+            if !matches!(
+                kind,
+                Some("task_execution_callback" | "task_graph_terminal")
+            ) {
+                continue;
+            }
+            let identity = message
+                .metadata
+                .pointer("/task_runner_async/task_id")
+                .or_else(|| message.metadata.get("graph_id"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&message.message_id)
+                .to_string();
+            if !seen.insert((kind.unwrap_or_default().to_string(), identity)) {
+                continue;
+            }
+            let item = json!({
+                "message_id": message.message_id,
+                "ordinal": message.ordinal,
+                "content": message.content,
+                "metadata": message.metadata,
+                "created_at_unix_ms": message.created_at_unix_ms,
+            });
+            let item_bytes = serde_json::to_vec(&item)
+                .map_err(|error| LocalAgentRuntimeError::InvalidRunState(error.to_string()))?
+                .len();
+            if !items.is_empty() && bytes.saturating_add(item_bytes) > LOCAL_TASK_CONTEXT_MAX_BYTES
+            {
+                break;
+            }
+            bytes = bytes.saturating_add(item_bytes);
+            items.push(item);
+            if items.len() >= LOCAL_TASK_CONTEXT_MAX_ITEMS {
+                break;
+            }
+        }
+        items.reverse();
+        Ok(items)
+    }
+
     pub(super) async fn handle_conversation_command(
         &self,
         idempotency: &IdempotentCommand,

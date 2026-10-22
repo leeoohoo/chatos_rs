@@ -27,7 +27,10 @@ use chatos_local_agent_protocol::{
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{
+    collections::{HashSet, VecDeque},
+    sync::Arc,
+};
 
 #[derive(Clone)]
 pub struct LocalTaskToolExecutor {
@@ -48,6 +51,35 @@ impl LocalTaskToolExecutor {
             runtime,
             owner_user_id,
         })
+    }
+
+    async fn replacement_chain(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        requested: &LocalTaskRecord,
+    ) -> Result<Vec<LocalTaskRecord>, String> {
+        const MAX_REPLACEMENT_TASKS: usize = 64;
+        let mut pending = VecDeque::from(requested.replacement_task_ids.clone());
+        let mut visited = HashSet::from([requested.task_id.clone()]);
+        let mut chain = Vec::new();
+        while let Some(task_id) = pending.pop_front() {
+            if !visited.insert(task_id.clone()) {
+                continue;
+            }
+            if visited.len() > MAX_REPLACEMENT_TASKS {
+                return Err("Task replacement chain exceeds the 64 Task safety limit".to_string());
+            }
+            let task = self
+                .runtime
+                .get_task_for_conversation(owner_user_id, conversation_id, &task_id)
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("replacement Task not found: {task_id}"))?;
+            pending.extend(task.replacement_task_ids.iter().cloned());
+            chain.push(task);
+        }
+        Ok(chain)
     }
 }
 
@@ -171,7 +203,41 @@ impl LocalTaskToolExecutor {
                     .await
                     .map_err(|error| error.to_string())?
                     .ok_or_else(|| format!("Task Graph not found: {}", task.graph_id))?;
-                task_for_agent_tool(&task, &graph.dependencies)
+                let requested_task = task_for_agent_tool(&task, &graph.dependencies);
+                let replacement_chain = self
+                    .replacement_chain(&parent.owner_user_id, conversation_id, &task)
+                    .await?;
+                let current_tasks = if replacement_chain.is_empty() {
+                    vec![requested_task.clone()]
+                } else {
+                    replacement_chain
+                        .iter()
+                        .filter(|candidate| candidate.replacement_task_ids.is_empty())
+                        .map(|candidate| task_for_agent_tool(candidate, &[]))
+                        .collect::<Vec<_>>()
+                };
+                let chain_values = replacement_chain
+                    .iter()
+                    .map(|candidate| task_for_agent_tool(candidate, &[]))
+                    .collect::<Vec<_>>();
+                let mut output = requested_task.clone();
+                if let Some(object) = output.as_object_mut() {
+                    object.insert("requested_task".to_string(), requested_task);
+                    object.insert(
+                        "is_superseded".to_string(),
+                        Value::Bool(!task.replacement_task_ids.is_empty()),
+                    );
+                    object.insert("replacement_chain".to_string(), Value::Array(chain_values));
+                    object.insert("current_tasks".to_string(), Value::Array(current_tasks));
+                    object.insert(
+                        "current_status_guidance".to_string(),
+                        Value::String(
+                            "Use current_tasks, not the requested historical Task, as the current status."
+                                .to_string(),
+                        ),
+                    );
+                }
+                output
             }
             CREATE_TASK_TOOL => {
                 let mut args: CreateTaskArgs = serde_json::from_value(invocation.arguments.clone())

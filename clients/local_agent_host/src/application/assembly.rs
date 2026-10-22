@@ -149,7 +149,8 @@ impl LocalAgentHostAssembly {
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),
         )
-        .with_local_tools(main_tools)?;
+        .with_local_tools(main_tools)?
+        .with_local_conversation_context(Arc::clone(&runtime));
         let mut task_tools = notepad_model_tools();
         task_tools.extend(ask_user_model_tools());
         task_tools.extend(requirement_survey_model_tools());
