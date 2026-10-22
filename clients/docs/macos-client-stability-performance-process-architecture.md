@@ -1538,6 +1538,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：全屏/缩略预览仍按 UI 解码契约使用有界 `Data` 或像素面，旧 Base64-only 资产仍需一次源解码；本批只移除最终消费者为文件的 HTTPS 聚合。非 identity `Content-Encoding` 不把传输长度误当解码后长度，仍由 20 MiB 累计写入约束最终字节。URLSession 真实断网/睡眠、响应中途 ENOSPC、CDN 重定向策略、真实 20 MiB physical-footprint 与 Media Worker 仍待完成，P0-E 不能标记完成。
 
+### 12.51 第五十一批实施记录：Story HTTPS 图片归一化源文件化（2026-10-23）
+
+本批继续消除最终消费者为文件的 HTTPS 图片聚合。12.50 已把 History 持久化和“加入参考图”切到 response artifact，但 Story 资源图、首尾帧与 Batch 消费 provider URL 时仍经 `normalizedPNGFile → thumbnail → transport.send` 先形成最多 20 MiB 的完整压缩源 `Data`，随后才交给 ImageIO；这会让网络响应、解码像素面和归一化输出在主进程叠加。
+
+已实施：
+
+- `MediaStudioImageLoader.normalizedPNGFile` 对 HTTPS 资产先复用 12.50 的无凭据 pull stream 下载器，响应块直接进入 lease-owned `.chatos-image-response-*` artifact；随后 `AppImageThumbnailLoader.loadLocalFile` 从文件 URL 直接创建增量 ImageIO source，继续执行 20 MiB、64 MP 输入与 8192 像素归一化边界。
+- response owner 覆盖完整的文件打开与 ImageIO 解码周期，归一化 PNG 写入独立 lease artifact 成功或失败后立即释放；正常返回时临时 response artifact 已删除，只把归一化文件 owner 交给 Story Store。
+- Base64、已有 file-backed 资产和 UI 全屏/缩略预览保持原契约；本批不为 UI 解码制造额外磁盘往返。
+- 新增远端归一化回归：拆分 payload 的 transport 必须只调用一次 `stream`、从不调用聚合 `send`，输出像素尺寸正确，函数返回时下载 artifact 已清理，释放最终 owner 后归一化 artifact 同样消失。
+
+验证：Debug 与 arm64 Release 各选择性运行 `HTTPTransportTests` 13 项、`Base64PayloadFileWriterTests` 1 项、`MediaStudioHistoryStoreTests` 11 项和 `MediaStudioImageInteractionTests` 15 项，共 40 项，全部通过；Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。未启动/安装正式 App，未请求真实 provider，未访问活动用户数据库。
+
+边界：本批移除的是 Story 最终文件化路径的 HTTPS 压缩源 `Data`，ImageIO 像素解码/PNG 编码仍在主进程；旧 Base64-only 结果仍有一次源解码，UI 预览仍按调用契约返回有界像素面。真实 20 MiB/64 MP physical-footprint、内存压力/取消风暴、恶意图片进程隔离、URLSession 断网/睡眠/ENOSPC、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

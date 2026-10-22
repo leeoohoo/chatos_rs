@@ -276,6 +276,55 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: artifact.path))
     }
 
+    func testRemoteNormalizationStreamsThroughTemporaryFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MediaStudioRemoteNormalizationTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 72, pixelsHigh: 36,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        bitmap.bitmapData?.initialize(repeating: 75, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+        let sourcePNG = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let transport = StreamingImageTransport(data: sourcePNG)
+
+        var normalized: GeneratedMediaFile? = try await MediaStudioImageLoader.normalizedPNGFile(
+            for: .init(
+                id: "remote-normalization",
+                mimeType: "image/png",
+                url: URL(string: "https://cdn.example/normalize.png")!
+            ),
+            transport: transport,
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max
+        )
+
+        let outputURL = try XCTUnwrap(normalized?.url)
+        let outputArtifact = outputURL.deletingLastPathComponent()
+        let representation = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: outputURL)))
+        XCTAssertEqual(representation.pixelsWide, 72)
+        XCTAssertEqual(representation.pixelsHigh, 36)
+        let streamRequestCount = await transport.streamRequestCount
+        let dataRequestCount = await transport.dataRequestCount
+        XCTAssertEqual(streamRequestCount, 1)
+        XCTAssertEqual(dataRequestCount, 0)
+        let remainingArtifacts = try FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(
+            remainingArtifacts.map(\.lastPathComponent),
+            [outputArtifact.lastPathComponent]
+        )
+
+        normalized = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputArtifact.path))
+    }
+
     func testFileBackedThumbnailCacheKeepsOwnerThroughDirectDecode() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "MediaStudioFileThumbnailTests-\(UUID().uuidString)",

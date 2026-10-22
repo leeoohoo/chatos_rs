@@ -135,11 +135,29 @@ enum MediaStudioImageLoader {
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         availableCapacityOverride: Int64? = nil
     ) async throws -> GeneratedMediaFile {
-        let decoded = try await thumbnail(
-            for: asset,
-            maximumDisplayPixelSize: maximumNormalizedPixelSize,
-            transport: transport
-        )
+        let decoded: AppDecodedThumbnail
+        if let url = asset.url,
+           url.scheme?.lowercased() == "https" {
+            let downloaded = try await downloadedFile(
+                from: url,
+                transport: transport,
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: availableCapacityOverride
+            )
+            defer { withExtendedLifetime(downloaded) {} }
+            decoded = try await AppImageThumbnailLoader.loadLocalFile(
+                downloaded.url,
+                maximumBytes: maximumImageBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumDisplayPixelSize: maximumNormalizedPixelSize
+            )
+        } else {
+            decoded = try await thumbnail(
+                for: asset,
+                maximumDisplayPixelSize: maximumNormalizedPixelSize,
+                transport: transport
+            )
+        }
         return try await ChatOSMediaArtifactFileWriter.writeNormalizedImage(
             maximumBytes: maximumImageBytes,
             temporaryDirectory: temporaryDirectory,
