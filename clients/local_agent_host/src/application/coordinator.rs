@@ -131,6 +131,10 @@ impl LocalAgentHostCoordinator {
     }
 
     pub fn wake(&self) {
+        // One command can make several durable work items ready. Wake every
+        // idle slot so capacity is filled immediately, and retain one permit
+        // for the case where all slots are currently busy.
+        self.wakeup.notify_waiters();
         self.wakeup.notify_one();
         self.memory_wakeup.notify_one();
     }
@@ -152,6 +156,25 @@ impl LocalAgentHostCoordinator {
 
     async fn run_schedulers_until_shutdown(
         &self,
+        shutdown: watch::Receiver<bool>,
+    ) -> Result<(), LocalAgentCoordinatorError> {
+        let workers = (0..self.maximum_concurrent_work_items)
+            .map(|_| self.run_scheduler_worker_until_shutdown(shutdown.clone()));
+        for result in join_all(workers).await {
+            result?;
+        }
+        Ok(())
+    }
+
+    /// Keeps one global work slot alive for the lifetime of the Host.
+    ///
+    /// A batch-oriented loop cannot reuse slots that found no work until the
+    /// slowest future in that batch returns. A Run arriving in the meantime is
+    /// then queued behind unrelated work despite available capacity. Persistent
+    /// workers refill their slots independently and preserve the configured
+    /// global concurrency limit across model and tool work.
+    async fn run_scheduler_worker_until_shutdown(
+        &self,
         mut shutdown: watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
         let mut failure_backoff = Duration::from_millis(100);
@@ -159,22 +182,30 @@ impl LocalAgentHostCoordinator {
             if *shutdown.borrow() {
                 return Ok(());
             }
-            if self.drain_ready_work(&shutdown).await.is_err() {
-                tokio::select! {
-                    _ = self.wakeup.notified() => {}
-                    _ = tokio::time::sleep(failure_backoff) => {}
-                    changed = shutdown.changed() => {
-                        if changed.is_err() || *shutdown.borrow() {
-                            return Ok(());
+            let progressed = match self.run_ready_work_once(&shutdown).await {
+                Ok(progressed) => {
+                    failure_backoff = Duration::from_millis(100);
+                    progressed
+                }
+                Err(_) => {
+                    tokio::select! {
+                        _ = self.wakeup.notified() => {}
+                        _ = tokio::time::sleep(failure_backoff) => {}
+                        changed = shutdown.changed() => {
+                            if changed.is_err() || *shutdown.borrow() {
+                                return Ok(());
+                            }
                         }
                     }
+                    failure_backoff = (failure_backoff * 2).min(Duration::from_secs(5));
+                    continue;
                 }
-                failure_backoff = (failure_backoff * 2).min(Duration::from_secs(5));
-                continue;
-            }
-            failure_backoff = Duration::from_millis(100);
+            };
             if *shutdown.borrow() {
                 return Ok(());
+            }
+            if progressed {
+                continue;
             }
             let delay = match self.next_run_retry_delay().await {
                 Ok(delay) => delay,
@@ -192,6 +223,32 @@ impl LocalAgentHostCoordinator {
         }
     }
 
+    async fn run_ready_work_once(
+        &self,
+        shutdown: &watch::Receiver<bool>,
+    ) -> Result<bool, LocalAgentCoordinatorError> {
+        let mut progressed = false;
+        if let Some(scheduler) = self.model_scheduler.as_ref() {
+            let committed = matches!(scheduler.run_once().await?, SchedulerTick::Committed(_));
+            if committed {
+                self.signal_activity();
+            }
+            progressed |= committed;
+        }
+        if *shutdown.borrow() {
+            return Ok(progressed);
+        }
+        if let Some(scheduler) = self.tool_scheduler.as_ref() {
+            let committed = matches!(scheduler.run_once().await?, ToolSchedulerTick::Committed(_));
+            if committed {
+                self.signal_activity();
+            }
+            progressed |= committed;
+        }
+        Ok(progressed)
+    }
+
+    #[cfg(test)]
     async fn drain_ready_work(
         &self,
         shutdown: &watch::Receiver<bool>,
@@ -200,33 +257,13 @@ impl LocalAgentHostCoordinator {
             if *shutdown.borrow() {
                 return Ok(());
             }
+            let results = join_all(
+                (0..self.maximum_concurrent_work_items).map(|_| self.run_ready_work_once(shutdown)),
+            )
+            .await;
             let mut progressed = false;
-            if let Some(scheduler) = self.model_scheduler.as_ref() {
-                let results =
-                    join_all((0..self.maximum_concurrent_work_items).map(|_| scheduler.run_once()))
-                        .await;
-                for result in results {
-                    let committed = matches!(result?, SchedulerTick::Committed(_));
-                    if committed {
-                        self.signal_activity();
-                    }
-                    progressed |= committed;
-                }
-            }
-            if *shutdown.borrow() {
-                return Ok(());
-            }
-            if let Some(scheduler) = self.tool_scheduler.as_ref() {
-                let results =
-                    join_all((0..self.maximum_concurrent_work_items).map(|_| scheduler.run_once()))
-                        .await;
-                for result in results {
-                    let committed = matches!(result?, ToolSchedulerTick::Committed(_));
-                    if committed {
-                        self.signal_activity();
-                    }
-                    progressed |= committed;
-                }
+            for result in results {
+                progressed |= result?;
             }
             if !progressed {
                 return Ok(());

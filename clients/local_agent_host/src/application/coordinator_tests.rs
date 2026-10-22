@@ -18,7 +18,7 @@ use chatos_local_agent_protocol::{
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::sync::Barrier;
+use tokio::sync::{Barrier, Notify};
 use uuid::Uuid;
 
 struct ModelProfile;
@@ -26,6 +26,12 @@ struct ModelProfile;
 struct ConcurrentSuccessProfile {
     barrier: Arc<Barrier>,
     started: Arc<AtomicUsize>,
+}
+
+struct LateArrivalProfile {
+    first_started: Arc<Notify>,
+    release_first: Arc<Notify>,
+    second_started: Arc<Notify>,
 }
 
 struct ConcurrentToolExecutor {
@@ -55,6 +61,24 @@ impl LocalAgentProfile for ConcurrentSuccessProfile {
     ) -> Result<LocalAgentStepOutcome, String> {
         self.started.fetch_add(1, Ordering::SeqCst);
         self.barrier.wait().await;
+        Ok(LocalAgentStepOutcome::Succeed {
+            output: json!({"run_id": claim.run.run_id}),
+        })
+    }
+}
+
+#[async_trait]
+impl LocalAgentProfile for LateArrivalProfile {
+    async fn execute_step(
+        &self,
+        claim: &LocalAgentRunClaim,
+    ) -> Result<LocalAgentStepOutcome, String> {
+        if claim.run.run_id == "run-first" {
+            self.first_started.notify_one();
+            self.release_first.notified().await;
+        } else if claim.run.run_id == "run-second" {
+            self.second_started.notify_one();
+        }
         Ok(LocalAgentStepOutcome::Succeed {
             output: json!({"run_id": claim.run.run_id}),
         })
@@ -129,6 +153,124 @@ async fn coordinator_executes_independent_model_runs_concurrently() {
             .expect("persisted Run");
         assert_eq!(run.status.as_str(), "succeeded");
     }
+}
+
+#[tokio::test]
+async fn coordinator_refills_an_idle_slot_when_a_run_arrives_mid_execution() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = Arc::new(LocalAgentRuntime::new(storage));
+    runtime.initialize("user-1").await.expect("initialize");
+    runtime
+        .try_handle(HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "create-first".to_string(),
+            command: HostCommand::CreateRun(CreateRunCommand {
+                run_id: "run-first".to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "conversation".to_string(),
+                owner_entity_id: "conversation-first".to_string(),
+                profile_key: "late-arrival".to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({"message": "first"}),
+                max_iterations: 4,
+            }),
+        })
+        .await
+        .expect("create first Run");
+
+    let first_started = Arc::new(Notify::new());
+    let release_first = Arc::new(Notify::new());
+    let second_started = Arc::new(Notify::new());
+    let mut profiles = LocalAgentProfileRegistry::new();
+    profiles
+        .register(
+            "late-arrival",
+            LateArrivalProfile {
+                first_started: Arc::clone(&first_started),
+                release_first: Arc::clone(&release_first),
+                second_started: Arc::clone(&second_started),
+            },
+        )
+        .expect("profile");
+    let scheduler =
+        LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "user-1", "model-worker")
+            .expect("scheduler");
+    let coordinator = Arc::new(
+        LocalAgentHostCoordinator::new(Arc::clone(&runtime), "user-1", Some(scheduler), None)
+            .expect("coordinator")
+            .with_maximum_concurrent_work_items(2)
+            .expect("two work slots"),
+    );
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let coordinator_task = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move { coordinator.run_until_shutdown(shutdown_receiver).await }
+    });
+
+    tokio::time::timeout(Duration::from_secs(1), first_started.notified())
+        .await
+        .expect("first Run started");
+    runtime
+        .try_handle(HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "create-second".to_string(),
+            command: HostCommand::CreateRun(CreateRunCommand {
+                run_id: "run-second".to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "conversation".to_string(),
+                owner_entity_id: "conversation-second".to_string(),
+                profile_key: "late-arrival".to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({"message": "second"}),
+                max_iterations: 4,
+            }),
+        })
+        .await
+        .expect("create second Run");
+    coordinator.wake();
+
+    tokio::time::timeout(Duration::from_secs(1), second_started.notified())
+        .await
+        .expect("an idle slot should claim the late-arriving Run");
+
+    release_first.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let first = runtime
+                .get_run_for_host_worker("run-first")
+                .await
+                .expect("read first Run")
+                .expect("first Run");
+            let second = runtime
+                .get_run_for_host_worker("run-second")
+                .await
+                .expect("read second Run")
+                .expect("second Run");
+            if first.status == chatos_local_agent_protocol::LocalAgentRunStatus::Succeeded
+                && second.status == chatos_local_agent_protocol::LocalAgentRunStatus::Succeeded
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("both Runs completed");
+
+    shutdown_sender.send(true).expect("shutdown");
+    coordinator.wake();
+    coordinator_task
+        .await
+        .expect("coordinator task")
+        .expect("coordinator shutdown");
 }
 
 #[tokio::test]
