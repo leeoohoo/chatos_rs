@@ -98,10 +98,26 @@ impl LocalMemoryRuntimeConfig {
             .map_err(|error| format!("build Memory HTTP client failed: {error}"))?;
         let mut client = MemoryEngineClient::new_direct_with_http_client(base_url, source_id, http);
         if let Some(access_token) = self.access_token.as_deref() {
-            client = client.with_bearer_token(access_token);
+            client = client
+                .with_bearer_token(access_token)
+                .with_bearer_token_refresh_endpoint(user_service_refresh_endpoint(&self.base_url)?);
         }
         Ok(client)
     }
+}
+
+fn user_service_refresh_endpoint(memory_base_url: &str) -> Result<String, String> {
+    let mut url = reqwest::Url::parse(memory_base_url.trim())
+        .map_err(|error| format!("Memory base_url is invalid: {error}"))?;
+    let path = url.path().trim_end_matches('/');
+    let prefix = path
+        .find("/api/memory")
+        .map(|index| &path[..index])
+        .unwrap_or(path);
+    url.set_path(&format!("{prefix}/api/user/auth/refresh"));
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
 }
 
 fn required(label: &str, value: &str) -> Result<String, String> {
@@ -136,5 +152,18 @@ mod tests {
 
         let invalid = LocalMemoryRuntimeConfig::new(" ", "local_agent", Duration::from_secs(1));
         assert!(invalid.build_client().is_err());
+    }
+
+    #[test]
+    fn derives_user_service_refresh_endpoint_from_gateway_memory_url() {
+        assert_eq!(
+            user_service_refresh_endpoint("https://gateway.example/api/memory").expect("url"),
+            "https://gateway.example/api/user/auth/refresh"
+        );
+        assert_eq!(
+            user_service_refresh_endpoint("https://gateway.example/prefix/api/memory-engine/v1")
+                .expect("url"),
+            "https://gateway.example/prefix/api/user/auth/refresh"
+        );
     }
 }

@@ -4,9 +4,9 @@
 use std::error::Error;
 use std::time::Duration;
 
-use reqwest::{Method, RequestBuilder};
+use reqwest::{header::HeaderMap, Method, RequestBuilder, StatusCode};
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{AuthMode, MemoryEngineClient};
 
@@ -20,6 +20,13 @@ const CONNECT_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_millis(500),
     Duration::from_secs(1),
 ];
+const REFRESH_RESPONSE_LIMIT_BYTES: usize = 64 * 1024;
+
+#[derive(Deserialize)]
+struct RefreshAccessTokenResponse {
+    #[serde(alias = "access_token")]
+    token: String,
+}
 
 fn should_retry_connect_error(error: &reqwest::Error, completed_retries: usize) -> bool {
     error.is_connect() && completed_retries < CONNECT_RETRY_DELAYS.len()
@@ -38,31 +45,47 @@ impl MemoryEngineClient {
     {
         let url = format!("{}{}", self.base_url, path);
         let method_label = method.as_str().to_string();
-        let mut connect_retry_index = 0usize;
+        let mut completed_auth_retries = 0usize;
         let resp = loop {
-            let req = self.http.request(method.clone(), url.clone());
-            let req = self.apply_auth(req, path)?;
-            let req = if let Some(body) = body {
-                req.json(body)
-            } else {
-                req
+            let request_access_token = self.current_access_token();
+            let mut connect_retry_index = 0usize;
+            let resp = loop {
+                let req = self.http.request(method.clone(), url.clone());
+                let req = self.apply_auth(req, path, request_access_token.as_deref())?;
+                let req = if let Some(body) = body {
+                    req.json(body)
+                } else {
+                    req
+                };
+                match req.send().await {
+                    Ok(resp) => break resp,
+                    Err(err) if should_retry_connect_error(&err, connect_retry_index) => {
+                        let delay = CONNECT_RETRY_DELAYS[connect_retry_index];
+                        connect_retry_index += 1;
+                        tokio::time::sleep(delay).await;
+                    }
+                    Err(err) => {
+                        return Err(format_reqwest_error(
+                            "send",
+                            method_label.as_str(),
+                            url.as_str(),
+                            err,
+                        ));
+                    }
+                }
             };
-            match req.send().await {
-                Ok(resp) => break resp,
-                Err(err) if should_retry_connect_error(&err, connect_retry_index) => {
-                    let delay = CONNECT_RETRY_DELAYS[connect_retry_index];
-                    connect_retry_index += 1;
-                    tokio::time::sleep(delay).await;
-                }
-                Err(err) => {
-                    return Err(format_reqwest_error(
-                        "send",
-                        method_label.as_str(),
-                        url.as_str(),
-                        err,
-                    ));
-                }
+            if resp.status() == StatusCode::UNAUTHORIZED
+                && completed_auth_retries == 0
+                && self.access_token_refresh_endpoint.is_some()
+                && request_access_token.is_some()
+            {
+                self.refresh_access_token(request_access_token.as_deref().unwrap_or_default())
+                    .await?;
+                completed_auth_retries += 1;
+                continue;
             }
+            self.adopt_response_access_token(request_access_token.as_deref(), resp.headers());
+            break resp;
         };
         if !resp.status().is_success() {
             let status = resp.status();
@@ -112,7 +135,12 @@ impl MemoryEngineClient {
         Ok(resp.deleted)
     }
 
-    fn apply_auth(&self, req: RequestBuilder, path: &str) -> Result<RequestBuilder, String> {
+    fn apply_auth(
+        &self,
+        req: RequestBuilder,
+        path: &str,
+        access_token: Option<&str>,
+    ) -> Result<RequestBuilder, String> {
         if let Some(auth) = self.internal_service_auth.as_ref() {
             let token = chatos_service_runtime::issue_internal_service_token(
                 auth.secret.as_str(),
@@ -125,7 +153,7 @@ impl MemoryEngineClient {
                 .header("x-memory-caller", auth.caller.as_str())
                 .header("x-memory-internal-token", token));
         }
-        let req = if let Some(access_token) = self.access_token.as_deref() {
+        let req = if let Some(access_token) = access_token {
             req.bearer_auth(access_token)
         } else {
             req
@@ -140,6 +168,85 @@ impl MemoryEngineClient {
                 .header("x-memory-system-id", system_id)
                 .header("x-memory-system-key", secret_key),
         })
+    }
+
+    fn current_access_token(&self) -> Option<String> {
+        self.access_token
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn adopt_response_access_token(&self, request_access_token: Option<&str>, headers: &HeaderMap) {
+        let Some(refreshed) = headers
+            .get("x-access-token")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| super::normalize_token(value.to_string()))
+        else {
+            return;
+        };
+        let mut current = self
+            .access_token
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if current.as_deref() == request_access_token {
+            *current = Some(refreshed);
+        }
+    }
+
+    async fn refresh_access_token(&self, rejected_access_token: &str) -> Result<(), String> {
+        let _guard = self.access_token_refresh_gate.lock().await;
+        if self.current_access_token().as_deref() != Some(rejected_access_token) {
+            return Ok(());
+        }
+        let endpoint = self
+            .access_token_refresh_endpoint
+            .as_deref()
+            .ok_or_else(|| "Memory access-token refresh endpoint is unavailable".to_string())?;
+        let response = self
+            .http
+            .post(endpoint)
+            .bearer_auth(rejected_access_token)
+            .header("accept", "application/json")
+            .send()
+            .await
+            .map_err(|error| {
+                format_reqwest_error("refresh_access_token", "POST", endpoint, error)
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "Memory access-token refresh failed: status={} detail={}",
+                status,
+                truncate_detail(body.as_str(), 1024)
+            ));
+        }
+        if response.content_length().is_some_and(|length| {
+            length > u64::try_from(REFRESH_RESPONSE_LIMIT_BYTES).unwrap_or(u64::MAX)
+        }) {
+            return Err("Memory access-token refresh response is too large".to_string());
+        }
+        let bytes = response.bytes().await.map_err(|error| {
+            format!("read Memory access-token refresh response failed: {error}")
+        })?;
+        if bytes.len() > REFRESH_RESPONSE_LIMIT_BYTES {
+            return Err("Memory access-token refresh response is too large".to_string());
+        }
+        let payload: RefreshAccessTokenResponse =
+            serde_json::from_slice(bytes.as_ref()).map_err(|error| {
+                format!("decode Memory access-token refresh response failed: {error}")
+            })?;
+        let token = super::normalize_token(payload.token)
+            .ok_or_else(|| "Memory access-token refresh returned an empty token".to_string())?;
+        let mut current = self
+            .access_token
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if current.as_deref() == Some(rejected_access_token) {
+            *current = Some(token);
+        }
+        Ok(())
     }
 }
 
@@ -361,7 +468,11 @@ mod tests {
                 .with_bearer_token(" user-token-1 ");
 
         let request = client
-            .apply_auth(client.http.get("http://localhost:3000/test"), "/test")
+            .apply_auth(
+                client.http.get("http://localhost:3000/test"),
+                "/test",
+                client.current_access_token().as_deref(),
+            )
             .expect("apply auth")
             .build()
             .expect("request");
@@ -385,6 +496,7 @@ mod tests {
             .apply_auth(
                 client.http.get("http://localhost:3000/admin/sources"),
                 "/admin/sources",
+                None,
             )
             .expect("apply auth")
             .build()
@@ -410,5 +522,162 @@ mod tests {
             SOURCE_SCOPE,
         )
         .expect("valid token");
+    }
+
+    #[tokio::test]
+    async fn unauthorized_memory_request_refreshes_once_and_reuses_the_rotated_token() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind server");
+        let address = listener.local_addr().expect("server address");
+        let captured = Arc::new(Mutex::new(Vec::<String>::new()));
+        let server_captured = Arc::clone(&captured);
+        let server = std::thread::spawn(move || {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut buffer = [0_u8; 4096];
+                let count = stream.read(&mut buffer).expect("read request");
+                let request = String::from_utf8_lossy(&buffer[..count]).to_string();
+                server_captured
+                    .lock()
+                    .expect("captured")
+                    .push(request.clone());
+                let first_line = request.lines().next().unwrap_or_default();
+                let authorization = request
+                    .lines()
+                    .find(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+                    .unwrap_or_default();
+                let (status, body) = if first_line.contains("/api/user/auth/refresh") {
+                    assert!(authorization.contains("Bearer expired-token"));
+                    ("200 OK", r#"{"token":"renewed-token"}"#)
+                } else if authorization.contains("Bearer renewed-token") {
+                    ("200 OK", r#"{"ok":true}"#)
+                } else {
+                    ("401 Unauthorized", r#"{"error":"expired"}"#)
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .expect("write response");
+            }
+        });
+        let client = MemoryEngineClient::new_direct(
+            format!("http://{address}/api/memory"),
+            Duration::from_secs(2),
+            "chatos",
+        )
+        .expect("client")
+        .with_bearer_token("expired-token")
+        .with_bearer_token_refresh_endpoint(format!("http://{address}/api/user/auth/refresh"));
+
+        for _ in 0..2 {
+            let response: serde_json::Value = client
+                .send_json(reqwest::Method::GET, "/probe", Option::<&()>::None)
+                .await
+                .expect("request should recover");
+            assert_eq!(response, serde_json::json!({"ok": true}));
+        }
+
+        server.join().expect("server");
+        let requests = captured.lock().expect("captured");
+        assert_eq!(requests.len(), 4);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /api/user/auth/refresh "))
+                .count(),
+            1
+        );
+        assert!(requests[3].contains("Bearer renewed-token"));
+    }
+
+    #[tokio::test]
+    async fn forbidden_memory_request_does_not_refresh() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind server");
+        let address = listener.local_addr().expect("server address");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request).expect("read request");
+            stream
+                .write_all(
+                    b"HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: 21\r\nConnection: close\r\n\r\n{\"error\":\"forbidden\"}",
+                )
+                .expect("write response");
+        });
+        let client = MemoryEngineClient::new_direct(
+            format!("http://{address}/api/memory"),
+            Duration::from_secs(2),
+            "chatos",
+        )
+        .expect("client")
+        .with_bearer_token("valid-token")
+        .with_bearer_token_refresh_endpoint(format!("http://{address}/api/user/auth/refresh"));
+
+        let error = client
+            .send_json::<serde_json::Value, ()>(reqwest::Method::GET, "/probe", None)
+            .await
+            .expect_err("403 must remain a permission error");
+
+        assert!(error.contains("status=403 Forbidden"));
+        server.join().expect("server");
+    }
+
+    #[tokio::test]
+    async fn response_header_rotates_the_shared_token_for_all_client_clones() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind server");
+        let address = listener.local_addr().expect("server address");
+        let server = std::thread::spawn(move || {
+            for index in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut buffer = [0_u8; 2048];
+                let count = stream.read(&mut buffer).expect("read request");
+                let request = String::from_utf8_lossy(&buffer[..count]);
+                if index == 0 {
+                    assert!(request.contains("Bearer current-token"));
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Access-Token: proactive-token\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}",
+                        )
+                        .expect("write first response");
+                } else {
+                    assert!(request.contains("Bearer proactive-token"));
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}",
+                        )
+                        .expect("write second response");
+                }
+            }
+        });
+        let client = MemoryEngineClient::new_direct(
+            format!("http://{address}/api/memory"),
+            Duration::from_secs(2),
+            "chatos",
+        )
+        .expect("client")
+        .with_bearer_token("current-token");
+        let clone = client.clone();
+
+        let _: serde_json::Value = client
+            .send_json(reqwest::Method::GET, "/probe", Option::<&()>::None)
+            .await
+            .expect("first request");
+        let _: serde_json::Value = clone
+            .send_json(reqwest::Method::GET, "/probe", Option::<&()>::None)
+            .await
+            .expect("clone request");
+
+        server.join().expect("server");
     }
 }

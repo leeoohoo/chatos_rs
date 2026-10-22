@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::time::Duration;
+use std::{
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 mod admin;
 mod context;
@@ -33,7 +36,9 @@ pub struct MemoryEngineClient {
     http: reqwest::Client,
     base_url: String,
     auth: AuthMode,
-    access_token: Option<String>,
+    access_token: Arc<RwLock<Option<String>>>,
+    access_token_refresh_endpoint: Option<String>,
+    access_token_refresh_gate: Arc<tokio::sync::Mutex<()>>,
     internal_service_auth: Option<InternalServiceAuth>,
 }
 
@@ -62,7 +67,9 @@ impl MemoryEngineClient {
             auth: AuthMode::Direct {
                 source_id: String::new(),
             },
-            access_token: None,
+            access_token: Arc::new(RwLock::new(None)),
+            access_token_refresh_endpoint: None,
+            access_token_refresh_gate: Arc::new(tokio::sync::Mutex::new(())),
             internal_service_auth: None,
         }
     }
@@ -90,7 +97,9 @@ impl MemoryEngineClient {
             auth: AuthMode::Direct {
                 source_id: source_id.into(),
             },
-            access_token: None,
+            access_token: Arc::new(RwLock::new(None)),
+            access_token_refresh_endpoint: None,
+            access_token_refresh_gate: Arc::new(tokio::sync::Mutex::new(())),
             internal_service_auth: None,
         }
     }
@@ -111,13 +120,27 @@ impl MemoryEngineClient {
                 system_id: system_id.into(),
                 secret_key: secret_key.into(),
             },
-            access_token: None,
+            access_token: Arc::new(RwLock::new(None)),
+            access_token_refresh_endpoint: None,
+            access_token_refresh_gate: Arc::new(tokio::sync::Mutex::new(())),
             internal_service_auth: None,
         })
     }
 
-    pub fn with_bearer_token(mut self, access_token: impl Into<String>) -> Self {
-        self.access_token = normalize_token(access_token.into());
+    pub fn with_bearer_token(self, access_token: impl Into<String>) -> Self {
+        *self
+            .access_token
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            normalize_token(access_token.into());
+        self
+    }
+
+    /// Enables one-shot recovery when a user-scoped Memory request is rejected with 401.
+    /// Clones share both the latest token and the refresh gate, so concurrent compose/outbox
+    /// requests cannot start a refresh storm or overwrite a newer credential.
+    pub fn with_bearer_token_refresh_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.access_token_refresh_endpoint = normalize_token(endpoint.into());
         self
     }
 
