@@ -17,6 +17,8 @@ import { useGeneralSettingsStore } from "../features/general-settings/applicatio
 import type { GeneralSettingsPort } from "../features/general-settings/ports/GeneralSettingsPort";
 import { usePetPreferencesStore } from "../features/pet/application/petPreferencesStore";
 import type { PetPreferencesPort } from "../features/pet/ports/PetPreferencesPort";
+import type { PetPresentationPort } from "../features/pet/ports/PetPresentationPort";
+import { startPetPresentationPolling } from "../features/pet/application/petPresentationPolling";
 import { usePluginApplicationStore } from "../features/plugin-applications/application/pluginApplicationStore";
 import type { PluginApplicationPort } from "../features/plugin-applications/ports/PluginApplicationPort";
 import { useProjectConversationStore } from "../features/project-conversation/application/projectConversationStore";
@@ -265,6 +267,7 @@ interface AppShellProps {
   hostLifecycle: HostLifecyclePort;
   generalSettings: GeneralSettingsPort;
   petPreferences: PetPreferencesPort;
+  petPresentation: PetPresentationPort;
   pluginApplication: PluginApplicationPort;
   workspaceIndex: WorkspaceIndexPort;
   remoteConnection: RemoteConnectionPort;
@@ -284,6 +287,7 @@ export function AppShell({
   hostLifecycle,
   generalSettings,
   petPreferences,
+  petPresentation,
   pluginApplication,
   workspaceIndex,
   remoteConnection,
@@ -338,6 +342,14 @@ export function AppShell({
   useEffect(() => {
     void activatePetPreferences(petPreferences, session.user.id);
   }, [activatePetPreferences, petPreferences, session.user.id]);
+
+  useEffect(() => {
+    if (!snapshot.ready) {
+      void petPresentation.refresh(session.user.id).catch(() => undefined);
+      return undefined;
+    }
+    return startPetPresentationPolling(petPresentation, session.user.id);
+  }, [petPresentation, session.user.id, snapshot.ready]);
 
   useEffect(() => {
     setSelection({ kind: "workbench" });

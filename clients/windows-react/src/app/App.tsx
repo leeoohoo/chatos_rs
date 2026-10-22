@@ -16,6 +16,8 @@ import { TauriPluginApplicationAdapter } from "../features/plugin-applications/a
 import { TauriGeneralSettingsAdapter } from "../features/general-settings/adapters/TauriGeneralSettingsAdapter";
 import { TauriPetPreferencesAdapter } from "../features/pet/adapters/TauriPetPreferencesAdapter";
 import { PetOverlaySurface } from "../features/pet/ui/PetOverlaySurface";
+import { PetActivitySurface } from "../features/pet/ui/PetActivitySurface";
+import { TauriPetPresentationAdapter } from "../features/pet/adapters/TauriPetPresentationAdapter";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import { TauriWindowChromeAdapter } from "../platform/window/adapters/TauriWindowChromeAdapter";
 import { WindowControls } from "../platform/window/ui/WindowControls";
@@ -28,6 +30,7 @@ const hostLifecycle = new TauriHostLifecycleAdapter();
 const pluginApplication = new TauriPluginApplicationAdapter();
 const generalSettings = new TauriGeneralSettingsAdapter();
 const petPreferences = new TauriPetPreferencesAdapter();
+const petPresentation = new TauriPetPresentationAdapter();
 const windowChrome = new TauriWindowChromeAdapter();
 const workspaceIndex = new TauriWorkspaceIndexAdapter();
 const conversationHistory = new TauriConversationHistoryAdapter();
@@ -41,7 +44,10 @@ const toolApproval = new TauriToolApprovalAdapter();
 
 export function App() {
   if (new URLSearchParams(window.location.search).get("surface") === "pet-overlay") {
-    return <PetOverlaySurface />;
+    return <PetOverlaySurface port={petPresentation} />;
+  }
+  if (new URLSearchParams(window.location.search).get("surface") === "pet-activity") {
+    return <PetActivitySurface port={petPresentation} />;
   }
   return (
     <Routes>
@@ -71,6 +77,7 @@ function ApplicationRoot() {
             hostLifecycle={hostLifecycle}
             generalSettings={generalSettings}
             petPreferences={petPreferences}
+            petPresentation={petPresentation}
             pluginApplication={pluginApplication}
             workspaceIndex={workspaceIndex}
             remoteConnection={remoteConnection}

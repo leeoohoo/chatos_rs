@@ -114,8 +114,8 @@ use notepad::{
     update_notepad_note,
 };
 use pet::{
-    load_pet_preferences, pet_asset_protocol, reset_pet_position, update_pet_preferences,
-    PetAssetStore, PetPreferencesStore,
+    load_pet_preferences, pet_asset_protocol, refresh_pet_presentation, reset_pet_position,
+    update_pet_preferences, PetAssetStore, PetPreferencesStore,
 };
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
@@ -425,6 +425,7 @@ pub fn run() {
             load_pet_preferences,
             update_pet_preferences,
             reset_pet_position,
+            refresh_pet_presentation,
             load_wechat_companion,
             issue_wechat_bind_ticket,
             poll_wechat_bind_ticket,

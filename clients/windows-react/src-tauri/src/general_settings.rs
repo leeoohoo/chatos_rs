@@ -98,6 +98,14 @@ impl GeneralSettingsStore {
         Ok(snapshot.context_language)
     }
 
+    pub(crate) fn interface_language(&self, owner_user_id: &str) -> Result<String, String> {
+        let _guard = self.lock.lock().map_err(|_| settings_error())?;
+        let file = self.load()?;
+        let snapshot = file.owners.get(owner_user_id).cloned().unwrap_or_default();
+        validate_snapshot(&snapshot)?;
+        Ok(snapshot.interface_language)
+    }
+
     fn update(&self, input: UpdateGeneralSettingsInput) -> Result<GeneralSettingsSnapshot, String> {
         let _guard = self.lock.lock().map_err(|_| settings_error())?;
         let mut file = self.load()?;
@@ -374,14 +382,14 @@ mod tests {
     }
 
     #[test]
-    fn exposes_the_owner_scoped_context_language_to_native_runtimes() {
+    fn exposes_owner_scoped_languages_to_native_runtimes() {
         let directory = tempfile::tempdir().unwrap();
         let store = GeneralSettingsStore::new(directory.path().to_path_buf());
         let initial = store.snapshot("alice").unwrap();
         store
             .update(UpdateGeneralSettingsInput {
                 owner_user_id: "alice".into(),
-                interface_language: "zh-CN".into(),
+                interface_language: "en-US".into(),
                 context_language: "en-US".into(),
                 interface_font_size: 14,
                 prevents_idle_system_sleep: false,
@@ -391,5 +399,7 @@ mod tests {
 
         assert_eq!(store.context_language("alice").unwrap(), "en-US");
         assert_eq!(store.context_language("bob").unwrap(), "zh-CN");
+        assert_eq!(store.interface_language("alice").unwrap(), "en-US");
+        assert_eq!(store.interface_language("bob").unwrap(), "zh-CN");
     }
 }

@@ -3,5 +3,9 @@
   "identifier": "pet-overlay",
   "description": "Minimal capability for dragging the trusted pet overlay window",
   "windows": ["pet-overlay"],
-  "permissions": ["core:window:allow-start-dragging"]
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
 }
