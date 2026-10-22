@@ -15,6 +15,7 @@ mod conversation_composer;
 mod conversation_history;
 mod conversation_realtime;
 mod conversation_runtime_settings;
+mod device_gateway;
 mod general_settings;
 mod global_utilities;
 mod host_lifecycle;
@@ -100,6 +101,7 @@ use conversation_runtime_settings::{
     select_conversation_reasoning_level, select_conversation_remote_connection,
     ConversationRuntimeSettingsManager,
 };
+use device_gateway::load_device_gateway;
 use general_settings::{load_general_settings, update_general_settings, GeneralSettingsStore};
 use global_utilities::{
     deactivate_global_utilities, load_global_utility_preferences,
@@ -459,6 +461,7 @@ pub fn run() {
             refresh_ai_model_provider,
             delete_ai_model_provider,
             save_ai_model_configuration,
+            load_device_gateway,
             load_global_utility_preferences,
             update_global_utility_preferences,
             deactivate_global_utilities,
