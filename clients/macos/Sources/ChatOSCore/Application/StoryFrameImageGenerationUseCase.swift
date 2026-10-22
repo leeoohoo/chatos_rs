@@ -74,7 +74,7 @@ public struct StoryFrameImageGenerationUseCase: Sendable {
         try project.validate()
         guard let segment = project.segments.first(where: { $0.id == segmentID }),
               segment.detail != nil,
-              segment.attempt == nil else {
+              !segment.hasVideoJob else {
             throw StoryFrameImageGenerationError.targetUnavailable
         }
         let referenceResourceIDs = segment.resourceIDs.filter(

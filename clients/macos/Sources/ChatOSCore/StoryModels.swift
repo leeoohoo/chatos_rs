@@ -81,7 +81,8 @@ public struct StoryResource: Equatable, Identifiable, Sendable {
 
 public struct StoryProject: Codable, Equatable, Identifiable, Sendable {
     public var id = UUID()
-    /// This is the first and only story-studio schema. There is no v1 migration.
+    /// Version 3 is written only when a segment hands video ownership to MediaJobStore.
+    /// Ordinary version-2 projects remain byte-compatible until that atomic switch.
     public var version = 2
     public var title: String
     public var description: String
@@ -112,9 +113,9 @@ public struct StoryProject: Codable, Equatable, Identifiable, Sendable {
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         version = try values.decode(Int.self, forKey: .version)
-        guard version == 2 else {
+        guard (2...3).contains(version) else {
             throw DecodingError.dataCorruptedError(forKey: .version, in: values,
-                debugDescription: "Unsupported story project schema. Only the new StoryProject schema is accepted.")
+                debugDescription: "Unsupported story project schema.")
         }
         id = try values.decode(UUID.self, forKey: .id)
         title = try values.decode(String.self, forKey: .title)
@@ -135,7 +136,11 @@ public struct StoryProject: Codable, Equatable, Identifiable, Sendable {
 
     public var totalSeconds: Int { segments.reduce(0) { $0 + $1.seconds } }
     public var completedCount: Int { segments.filter { $0.video != nil }.count }
-    public var hasUnresolvedVideoJobs: Bool { segments.contains { $0.attempt != nil && $0.video == nil } }
+    public var hasUnresolvedVideoJobs: Bool {
+        segments.contains {
+            $0.hasVideoJob && $0.video == nil
+        }
+    }
     public var hasUnresolvedImageJobs: Bool {
         resources.contains { $0.media.generationAttemptID != nil }
         || segments.contains {
@@ -168,7 +173,9 @@ public struct StoryProject: Codable, Equatable, Identifiable, Sendable {
     public func relations(for segmentID: String) -> [StorySegmentRelation] { relations.filter { $0.segmentID == segmentID } }
 
     public func validate() throws {
-        guard version == 2, !title.isEmpty, title.count <= 120, description.count <= 4_000,
+        guard (2...3).contains(version),
+              version == 3 || segments.allSatisfy({ $0.videoJobRecordID == nil }),
+              !title.isEmpty, title.count <= 120, description.count <= 4_000,
               source.count <= 80_000, style.count <= 2_000, summary.count <= 16_000,
               !models.textModelID.isEmpty, !models.imageModelID.isEmpty, !models.videoModelID.isEmpty,
               models.supportedVideoDurations.map({ durations in
@@ -203,6 +210,7 @@ public struct StoryProject: Codable, Equatable, Identifiable, Sendable {
                   segment.sceneIDs.allSatisfy(sceneIDs.contains),
                   segment.propIDs.allSatisfy(propIDs.contains),
                   segment.archivedVideos.count <= 100,
+                  segment.attempt == nil || segment.videoJobRecordID == nil,
                   Set(segment.archivedVideos.map(\.jobID)).count == segment.archivedVideos.count else {
                 throw StoryError.invalidPlan
             }
@@ -369,6 +377,9 @@ public struct StorySegment: Codable, Equatable, Identifiable, Sendable {
         }
     }
     public var attempt: StoryVideoAttempt?
+    /// Stable local MediaJobStore identity. It is mutually exclusive with the legacy attempt:
+    /// once set, provider status and identity are advanced only by MediaJobStore.
+    public var videoJobRecordID: UUID? = nil
     public var previousAttempts: [StoryVideoAttempt] = []
     public var video: StoryVideo?
     /// Completed versions replaced by an explicit user regeneration. Their files remain
@@ -386,7 +397,7 @@ public struct StorySegment: Codable, Equatable, Identifiable, Sendable {
         case id, title, synopsis, kind, seconds, sourceRange, characterIDs, sceneIDs, propIDs, detail
         case firstFrames, userSelectedFirstFrameID, inheritedFirstFrameSourceSegmentID
         case lastFrames, actualVideoLastFrameID, useLastFrameForVideo, videoGuidanceMode
-        case attempt, previousAttempts, video, archivedVideos, error
+        case attempt, videoJobRecordID, previousAttempts, video, archivedVideos, error
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -413,6 +424,7 @@ public struct StorySegment: Codable, Equatable, Identifiable, Sendable {
             videoGuidanceMode = legacyUsesTail ? .firstAndLastFrames : .firstFrame
         }
         attempt = try values.decodeIfPresent(StoryVideoAttempt.self, forKey: .attempt)
+        videoJobRecordID = try values.decodeIfPresent(UUID.self, forKey: .videoJobRecordID)
         previousAttempts = try values.decodeIfPresent([StoryVideoAttempt].self, forKey: .previousAttempts) ?? []
         video = try values.decodeIfPresent(StoryVideo.self, forKey: .video)
         archivedVideos = try values.decodeIfPresent([StoryVideo].self, forKey: .archivedVideos) ?? []
@@ -442,6 +454,7 @@ public struct StorySegment: Codable, Equatable, Identifiable, Sendable {
             try values.encode(videoGuidanceMode, forKey: .videoGuidanceMode)
         }
         try values.encodeIfPresent(attempt, forKey: .attempt)
+        try values.encodeIfPresent(videoJobRecordID, forKey: .videoJobRecordID)
         try values.encode(previousAttempts, forKey: .previousAttempts)
         try values.encodeIfPresent(video, forKey: .video)
         // Omitting an empty archive keeps digests and persisted runs from builds made
@@ -455,6 +468,7 @@ public struct StorySegment: Codable, Equatable, Identifiable, Sendable {
     public var actualVideoLastFrame: StoryImage? {
         lastFrames.images.first { $0.id == actualVideoLastFrameID }
     }
+    public var hasVideoJob: Bool { attempt != nil || videoJobRecordID != nil }
     /// Moves the active completed video into history without deleting its local file.
     /// The segment becomes ready for another generation using its confirmed frame choices.
     @discardableResult public mutating func archiveCompletedVideoForRegeneration() -> Bool {
@@ -467,6 +481,7 @@ public struct StorySegment: Codable, Equatable, Identifiable, Sendable {
         }
         video = nil
         attempt = nil
+        videoJobRecordID = nil
         actualVideoLastFrameID = nil
         error = nil
         return true
@@ -490,7 +505,9 @@ public struct StorySegment: Codable, Equatable, Identifiable, Sendable {
     public func frames(for role: StoryFrameRole) -> StoryImageCollection {
         role == .first ? firstFrames : lastFrames
     }
-    public var isReady: Bool { detail != nil && firstFrame != nil && attempt == nil && video == nil }
+    public var isReady: Bool {
+        detail != nil && firstFrame != nil && attempt == nil && videoJobRecordID == nil && video == nil
+    }
 }
 
 public struct StorySourceRange: Codable, Equatable, Sendable {

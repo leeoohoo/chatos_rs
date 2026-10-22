@@ -36,7 +36,7 @@ extension StoryWorkbenchView {
                         mediaBatchKind = .pipeline; showsMediaBatch = true
                     }
                     Button(appModel.localized("逐段细化未完成计划", english: "Refine Unfinished Plans")) {
-                        confirmPlanning(.refine, targets: project.segments.filter { $0.detail == nil && $0.attempt == nil && $0.video == nil }.map(\.id))
+                        confirmPlanning(.refine, targets: project.segments.filter { $0.detail == nil && !$0.hasVideoJob && $0.video == nil }.map(\.id))
                     }.disabled(project.segments.isEmpty)
                     Button(appModel.localized("添加剧情分段", english: "Add Story Segment")) { viewModel.addSegment() }
                         .disabled(project.source.isEmpty || project.hasUnresolvedJobs || project.completedCount > 0)
@@ -100,7 +100,7 @@ extension StoryWorkbenchView {
         .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous)
             .stroke(viewModel.selectedSegmentID == segment.id ? Color.blue.opacity(0.55) : Color.primary.opacity(0.045)))
         .contextMenu {
-            Button(appModel.localized("编辑分段", english: "Edit Segment")) { editSegment = segment }.disabled(editingLocked || segment.attempt != nil)
+            Button(appModel.localized("编辑分段", english: "Edit Segment")) { editSegment = segment }.disabled(editingLocked || segment.hasVideoJob)
             Button(appModel.localized("上移（重新细化衔接）", english: "Move Up and Re-plan")) { viewModel.moveSegment(segment.id, offset: -1) }
                 .disabled(editingLocked || index == 0 || project.hasUnresolvedJobs || project.completedCount > 0)
             Button(appModel.localized("下移（重新细化衔接）", english: "Move Down and Re-plan")) { viewModel.moveSegment(segment.id, offset: 1) }

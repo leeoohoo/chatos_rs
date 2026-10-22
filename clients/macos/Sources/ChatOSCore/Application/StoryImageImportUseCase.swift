@@ -107,7 +107,7 @@ public struct StoryImageImportUseCase: Sendable {
             }
         case .frame(let segmentID, _):
             guard let segment = project.segments.first(where: { $0.id == segmentID }),
-                  segment.attempt == nil else {
+                  !segment.hasVideoJob else {
                 throw StoryImageImportError.invalidTarget
             }
         }

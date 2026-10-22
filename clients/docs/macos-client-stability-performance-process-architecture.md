@@ -1137,6 +1137,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批尚未把 `localJobID` 写入 Story project schema，也未接入单段适配器或启动扫描器，因此不会形成双写。下一批必须先实现 Story manifest 的关联字段、上述切换顺序和崩溃恢复，再让新 Story attempt 使用 MediaJobStore；旧 Batch 仍需单独分页导入。隐藏 staging 的启动限龄清理、长期 lease/App→Worker 交接、真实多进程逐状态强杀和最终 job 保留策略仍未完成，P0-E 不能标记完成。
 
+### 12.25 第二十五批实施记录：Story manifest 原子所有权切换（2026-10-22）
+
+本批完成迁移协议的 Story project 一侧，但尚不让生成适配器调用该协议。兼容性审查确认：若只给 v2 segment 增加可选 local job ID，旧客户端会忽略未知字段，并因 legacy attempt 已清除而把同一段误判成“可生成”，存在重复计费风险。因此项目只在实际 handoff 时从 schema-v2 升为 v3；当前客户端同时读取 v2/v3，旧客户端会明确拒绝 v3。
+
+已实施：
+
+- `StorySegment.videoJobRecordID` 保存稳定的 MediaJobStore job ID，并与 legacy `attempt` 强制互斥；`hasVideoJob`、项目未完成任务判断、生成/图片/编辑/Agent/Batch 准入和 UI 锁定同时识别两种所有权。迁移后的段落不会因为 `attempt == nil` 被错误开放编辑、重绘或再次提交。
+- `handoffVideoGenerationToMediaJob` 从最新 project manifest 校验完整 expected attempt，在一次原子项目保存中升级 v3、写入与 attempt UUID 相同的 job record ID、清除 legacy attempt。完全相同的崩溃重试不更新时间；attempt、segment 或 job ID 不匹配均拒绝切换。
+- handoff 一旦提交，旧 `updateVideoGenerationProgress` 因 attempt 已清除而被 fencing，不能继续写 provider ID/status。MediaJobStore 仍须在项目提交之后显式 activate，符合 12.24 的“stage → project handoff → activate”顺序。
+- 普通项目编辑现在从最新 manifest 自动合并所有 durable `videoJobRecordID` 和 schema 版本，即使调用方没有进程内 active-task token，也不能用旧 v2 UI snapshot 擦除已交接任务；删除仍拥有 durable job 的 segment 会被拒绝。完成视频重新编辑时会同时清除该关联，为下一次 attempt 生成新稳定 ID。
+
+验证：新增 handoff 升级 v3、清除 legacy writer、幂等重试、普通旧快照编辑自动保留关联、legacy progress fencing 和 v2 不得携带新关联的回归。Debug 与 arm64 Release 选择性运行 Story/Core/MediaJobStore 共 195 项，全部通过；Swift 6 编译与并发检查、`git diff --check` 同步作为门禁。
+
+边界：本批仅提供 project schema 与事务边界，尚未在 `StoryVideoGenerationAdapter` 接入 stage/handoff/activate，也没有启动时按 `videoJobRecordID` 恢复任务，因此正常产品路径还不会写 v3 关联。下一批应迁移新 Story 单段/直连视频并补 stage 后、project handoff 后、activate 后三个崩溃点的端到端测试；旧 Batch provider job 导入继续保持独立阶段。Worker、长期 lease、staging 限龄清理和真实强杀矩阵仍未完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

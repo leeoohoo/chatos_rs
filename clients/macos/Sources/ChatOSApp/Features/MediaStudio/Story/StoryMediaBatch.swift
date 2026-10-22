@@ -45,7 +45,7 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
         if kind == .pipeline {
             let segments = try targets.map { id in
                 guard let segment = project.segments.first(where: { $0.id == id }), segment.detail != nil,
-                      segment.video == nil, segment.attempt == nil, segment.imageGenerationAttemptID == nil,
+                      segment.video == nil, !segment.hasVideoJob, segment.imageGenerationAttemptID == nil,
                       segment.lastFrameGenerationAttemptID == nil else { throw StoryError.invalidPlan }
                 return segment
             }
@@ -77,11 +77,11 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
                     guard let asset = project.resource(id: id), asset.imageGenerationAttemptID == nil else { throw StoryError.unresolvedSubmission }
                 case .frames:
                     guard let segment = project.segments.first(where: { $0.id == id }), segment.detail != nil,
-                          segment.attempt == nil, segment.video == nil, segment.imageGenerationAttemptID == nil,
+                          !segment.hasVideoJob, segment.video == nil, segment.imageGenerationAttemptID == nil,
                           segment.resourceIDs.allSatisfy({ project.resource(id: $0)?.confirmedImage != nil }) else { throw StoryError.invalidPlan }
                 case .lastFrames:
                     guard let segment = project.segments.first(where: { $0.id == id }), segment.detail != nil,
-                          segment.attempt == nil, segment.video == nil, segment.lastFrameGenerationAttemptID == nil,
+                          !segment.hasVideoJob, segment.video == nil, segment.lastFrameGenerationAttemptID == nil,
                           segment.resourceIDs.allSatisfy({ project.resource(id: $0)?.confirmedImage != nil }) else { throw StoryError.invalidPlan }
                 case .videos:
                     guard project.segments.first(where: { $0.id == id })?.isReady == true else { throw StoryError.invalidPlan }

@@ -694,7 +694,7 @@ final class StoryStudioViewModel: ObservableObject {
     func refineSegments(_ ids: [String], userIdeas: String = "") {
         guard let project else { return }
         let targets = project.segments.filter {
-            ids.contains($0.id) && $0.detail == nil && $0.attempt == nil && $0.video == nil
+            ids.contains($0.id) && $0.detail == nil && !$0.hasVideoJob && $0.video == nil
         }.map(\.id)
         guard !targets.isEmpty else { return }
         if supportsAgentPlanning {
@@ -729,7 +729,7 @@ final class StoryStudioViewModel: ObservableObject {
         guard let project else { return }
         let targets = project.segments.filter {
             ids.contains($0.id) && $0.detail != nil
-                && ($0.video != nil || ($0.attempt == nil && $0.video == nil))
+                && ($0.video != nil || (!$0.hasVideoJob && $0.video == nil))
         }.map(\.id)
         guard !targets.isEmpty else { return }
         if supportsAgentPlanning {
@@ -783,11 +783,11 @@ final class StoryStudioViewModel: ObservableObject {
             if regenerate {
                 guard current.segments[index].detail != nil,
                       current.segments[index].video != nil
-                        || (current.segments[index].attempt == nil
+                        || (!current.segments[index].hasVideoJob
                             && current.segments[index].video == nil) else { continue }
             } else {
                 guard current.segments[index].detail == nil,
-                      current.segments[index].attempt == nil,
+                      !current.segments[index].hasVideoJob,
                       current.segments[index].video == nil else { continue }
             }
             await progress(
@@ -855,7 +855,7 @@ final class StoryStudioViewModel: ObservableObject {
 
     func setVideoGuidanceMode(_ mode: StoryVideoGuidanceMode, segmentID: String) {
         guard var next = project, let index = next.segments.firstIndex(where: { $0.id == segmentID }),
-              next.segments[index].attempt == nil, next.segments[index].video == nil,
+              !next.segments[index].hasVideoJob, next.segments[index].video == nil,
               next.segments[index].videoGuidanceMode != mode else { return }
         switch mode {
         case .firstFrame:
@@ -877,7 +877,7 @@ final class StoryStudioViewModel: ObservableObject {
         let supported = VideoGenerationProfile(modelName: model.modelName).durations.sorted()
         var changed = false
         for index in next.segments.indices where segmentIDs.contains(next.segments[index].id) {
-            guard next.segments[index].attempt == nil, next.segments[index].video == nil,
+            guard !next.segments[index].hasVideoJob, next.segments[index].video == nil,
                   next.segments[index].imageGenerationAttemptID == nil,
                   next.segments[index].lastFrameGenerationAttemptID == nil,
                   !supported.contains(next.segments[index].seconds),

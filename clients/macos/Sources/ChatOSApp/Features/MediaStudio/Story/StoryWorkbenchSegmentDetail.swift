@@ -12,7 +12,7 @@ extension StoryWorkbenchView {
                         Text(segment.title).font(.headline)
                         Spacer()
                         Button(appModel.localized("编辑", english: "Edit")) { editSegment = segment }
-                            .disabled(editingLocked || segment.attempt != nil)
+                            .disabled(editingLocked || segment.hasVideoJob)
                     }
                     Text(status(segment)).font(.caption).foregroundStyle(.secondary)
                     if let video = segment.video, let url = viewModel.videoURL(video, projectID: project.id) {
@@ -105,7 +105,7 @@ extension StoryWorkbenchView {
                                           systemImage: "sparkles.rectangle.stack")
                                 }
                                 .buttonStyle(.bordered)
-                                .disabled(next.attempt != nil)
+                                .disabled(next.hasVideoJob)
                             }
                         }
                         .padding(12)
@@ -136,6 +136,21 @@ extension StoryWorkbenchView {
                                 segmentToRetry = segment.id
                             }
                             .disabled(editingLocked)
+                        }
+                    } else if segment.videoJobRecordID != nil {
+                        if viewModel.isGeneratingVideo(segment.id, projectID: project.id) {
+                            StoryVideoGenerationProgressView(
+                                activity: viewModel.generationActivity,
+                                key: .init(projectID: project.id, segmentID: segment.id),
+                                isAwaitingJobID: false
+                            )
+                            .environmentObject(appModel)
+                        } else {
+                            Text(appModel.localized(
+                                "视频任务已安全保存，将从本地任务记录恢复，不会重新提交。",
+                                english: "The video job is safely stored and will resume from its local job record without resubmission."
+                            ))
+                            .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     if let error = segment.error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
@@ -179,7 +194,7 @@ extension StoryWorkbenchView {
                         .buttonStyle(.bordered)
                         .disabled(editingLocked
                                   || viewModel.activeVideoGenerationCount(projectID: project.id) > 0
-                                  || (segment.attempt != nil && segment.video == nil)
+                                  || (segment.hasVideoJob && segment.video == nil)
                                   || segment.imageGenerationAttemptID != nil
                                   || segment.lastFrameGenerationAttemptID != nil)
                         .help(appModel.localized("旧图片版本会保留；新计划应用后需要重新确认首帧与尾帧。",
@@ -244,7 +259,7 @@ extension StoryWorkbenchView {
             }
             .labelsHidden()
             .pickerStyle(.segmented)
-            .disabled(editingLocked || segment.attempt != nil || segment.video != nil)
+            .disabled(editingLocked || segment.hasVideoJob || segment.video != nil)
 
             switch segment.videoGuidanceMode {
             case .firstFrame:
@@ -357,7 +372,7 @@ extension StoryWorkbenchView {
                    ? appModel.localized("选择 / 上传 / 确认首帧", english: "Choose / Upload / Confirm First Frame")
                    : appModel.localized("选择 / 上传 / 确认尾帧", english: "Choose / Upload / Confirm Last Frame")) {
                 imageTarget = .init(assetID: nil, segmentID: segment.id, frameRole: role)
-            }.disabled((editingLocked && !isGenerating) || segment.attempt != nil)
+            }.disabled((editingLocked && !isGenerating) || segment.hasVideoJob)
             if isGenerating {
                 Button {
                     imageTarget = .init(assetID: nil, segmentID: segment.id, frameRole: role)
@@ -376,11 +391,11 @@ extension StoryWorkbenchView {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.indigo)
-                .disabled(editingLocked || segment.detail == nil || segment.attempt != nil
+                .disabled(editingLocked || segment.detail == nil || segment.hasVideoJob
                           || collection.generationAttemptID != nil)
             }
             if !isFirst, collection.confirmedImage != nil,
-               segment.attempt == nil, segment.video == nil {
+               !segment.hasVideoJob, segment.video == nil {
                 Button(role: .destructive) {
                     viewModel.clearConfirmedLastFrame(segment.id)
                 } label: {
@@ -400,7 +415,7 @@ extension StoryWorkbenchView {
     }
 
     @ViewBuilder func videoActionPanel(_ segment: StorySegment) -> some View {
-        if segment.video == nil, segment.attempt == nil, segment.detail != nil {
+        if segment.video == nil, !segment.hasVideoJob, segment.detail != nil {
             let hasGeneratedFirst = !segment.firstFrames.images.isEmpty
             let hasUnconfirmedFirst = segment.firstFrame == nil && hasGeneratedFirst
             VStack(alignment: .leading, spacing: 10) {

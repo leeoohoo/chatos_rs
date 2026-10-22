@@ -209,7 +209,7 @@ enum StoryAgentTools {
             let args = try JSONDecoder().decode(Args.self, from: data)
             guard run.stage == .outline || run.targetIDs.contains(args.segmentID),
                   let index = run.draft.segments.firstIndex(where: { $0.id == args.segmentID }),
-                  run.draft.segments[index].attempt == nil, run.draft.segments[index].video == nil else { throw StoryAgentError.forbiddenTarget }
+                  !run.draft.segments[index].hasVideoJob, run.draft.segments[index].video == nil else { throw StoryAgentError.forbiddenTarget }
             let relations = args.relations.map { StorySegmentRelation(id: $0.relationID, segmentID: args.segmentID, characterID: $0.characterID, sceneID: $0.sceneID, action: $0.action, position: $0.position, startSecond: $0.startSecond, endSecond: $0.endSecond) }
             if run.draft.segments[index].characterIDs == args.characterIDs,
                run.draft.segments[index].sceneIDs == args.sceneIDs,
@@ -321,7 +321,7 @@ enum StoryAgentTools {
             struct Args: Decodable { let segmentID: String; let detail: StorySegmentDetail }
             let args = try JSONDecoder().decode(Args.self, from: data)
             guard run.targetIDs.contains(args.segmentID), let index = run.draft.segments.firstIndex(where: { $0.id == args.segmentID }),
-                  run.draft.segments[index].attempt == nil, run.draft.segments[index].video == nil else { throw StoryAgentError.forbiddenTarget }
+                  !run.draft.segments[index].hasVideoJob, run.draft.segments[index].video == nil else { throw StoryAgentError.forbiddenTarget }
             guard hasReadSegment(args.segmentID, run: run) else { throw StoryAgentError.incompletePlan }
             try args.detail.validate(duration: run.draft.segments[index].seconds)
             try validateRelations(run.draft, segment: run.draft.segments[index])

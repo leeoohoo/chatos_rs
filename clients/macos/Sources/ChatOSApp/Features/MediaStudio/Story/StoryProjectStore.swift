@@ -186,7 +186,9 @@ actor StoryProjectStore {
     /// returned job ID or a video that completed in the opposite order.
     func save(_ input: StoryProject, owner: String,
               preservingVideoSegmentIDs: Set<String>) throws -> StoryProject {
-        guard !preservingVideoSegmentIDs.isEmpty else {
+        let manifest = directory(owner: owner, projectID: input.id).appendingPathComponent("project.json")
+        guard FileManager.default.fileExists(atPath: manifest.path) else {
+            guard preservingVideoSegmentIDs.isEmpty else { throw StoryError.invalidProject }
             var project = input
             StoryContinuityContext.reconcileInheritedFirstFrames(&project)
             try save(project, owner: owner)
@@ -194,10 +196,20 @@ actor StoryProjectStore {
         }
         let current = try loadProject(projectID: input.id, owner: owner)
         var project = input
-        for segmentID in preservingVideoSegmentIDs {
+        project.version = max(project.version, current.version)
+        let durableJobSegmentIDs = Set(current.segments.lazy.compactMap { segment in
+            segment.videoJobRecordID == nil ? nil : segment.id
+        })
+        for segmentID in preservingVideoSegmentIDs.union(durableJobSegmentIDs) {
             guard let currentSegment = current.segments.first(where: { $0.id == segmentID }),
-                  let index = project.segments.firstIndex(where: { $0.id == segmentID }) else { continue }
+                  let index = project.segments.firstIndex(where: { $0.id == segmentID }) else {
+                if durableJobSegmentIDs.contains(segmentID) {
+                    throw StoryError.unresolvedSubmission
+                }
+                continue
+            }
             project.segments[index].attempt = currentSegment.attempt
+            project.segments[index].videoJobRecordID = currentSegment.videoJobRecordID
             project.segments[index].video = currentSegment.video
             project.segments[index].error = currentSegment.error
         }
@@ -243,7 +255,7 @@ actor StoryProjectStore {
         if automaticallyConfirmed {
             for index in project.segments.indices
                 where project.segments[index].resourceIDs.contains(resourceID)
-                    && project.segments[index].attempt == nil {
+                    && !project.segments[index].hasVideoJob {
                 project.segments[index].confirmedFrameID = nil
                 project.segments[index].confirmedLastFrameID = nil
             }
@@ -257,7 +269,7 @@ actor StoryProjectStore {
                                    attemptID: UUID, owner: String) throws -> FrameImageGenerationIntent {
         var project = try loadProject(projectID: projectID, owner: owner)
         guard let index = project.segments.firstIndex(where: { $0.id == segmentID }),
-              project.segments[index].attempt == nil else { throw StoryError.invalidPlan }
+              !project.segments[index].hasVideoJob else { throw StoryError.invalidPlan }
         switch role {
         case .first:
             guard project.segments[index].firstFrames.generationAttemptID == nil else { throw StoryError.unresolvedSubmission }
@@ -318,6 +330,38 @@ actor StoryProjectStore {
         project.updatedAt = Date()
         try save(project, owner: owner)
         return .init(project: project, segment: project.segments[index], attempt: attempt)
+    }
+
+    /// Atomically changes the Story manifest from the legacy attempt writer to a stable
+    /// MediaJobStore association. The caller must stage the matching job first and activate it
+    /// only after this commit succeeds. An exact retry after a crash is a read-only success.
+    func handoffVideoGenerationToMediaJob(
+        projectID: UUID,
+        segmentID: String,
+        expectedAttempt: StoryVideoAttempt,
+        owner: String
+    ) throws -> StoryProject {
+        var project = try loadProject(projectID: projectID, owner: owner)
+        guard let index = project.segments.firstIndex(where: { $0.id == segmentID }) else {
+            throw StoryError.invalidPlan
+        }
+        if project.segments[index].videoJobRecordID == expectedAttempt.id {
+            guard project.version == 3, project.segments[index].attempt == nil else {
+                throw StoryError.unresolvedSubmission
+            }
+            return project
+        }
+        guard project.segments[index].videoJobRecordID == nil,
+              project.segments[index].video == nil,
+              project.segments[index].attempt == expectedAttempt else {
+            throw StoryError.unresolvedSubmission
+        }
+        project.version = 3
+        project.segments[index].videoJobRecordID = expectedAttempt.id
+        project.segments[index].attempt = nil
+        project.updatedAt = Date()
+        try save(project, owner: owner)
+        return project
     }
 
     func updateVideoGenerationProgress(_ progress: VideoGenerationProgress, projectID: UUID,

@@ -143,7 +143,7 @@ extension StoryWorkbenchView {
         if viewModel.isGeneratingVideo(segment.id, projectID: project.id) {
             return appModel.localized("正在生成视频", english: "Generating Video")
         }
-        if segment.attempt != nil { return appModel.localized("已提交 · 查询原任务", english: "Submitted · Check Existing Task") }
+        if segment.hasVideoJob { return appModel.localized("已提交 · 查询原任务", english: "Submitted · Check Existing Task") }
         if viewModel.isGeneratingFrame(segment.id, role: .first, projectID: project.id) {
             return appModel.localized("正在生成首帧 · 可点开查看", english: "Generating First Frame · Click to View")
         }

@@ -125,7 +125,7 @@ public struct StoryMediaBatchUseCase: Sendable {
         case .frames:
             project.segments.filter { segment in
                 segment.detail != nil
-                    && segment.attempt == nil
+                    && !segment.hasVideoJob
                     && segment.video == nil
                     && segment.firstFrames.images.isEmpty
                     && segment.imageGenerationAttemptID == nil
@@ -136,7 +136,7 @@ public struct StoryMediaBatchUseCase: Sendable {
         case .lastFrames:
             project.segments.filter { segment in
                 segment.detail != nil
-                    && segment.attempt == nil
+                    && !segment.hasVideoJob
                     && segment.video == nil
                     && segment.lastFrames.images.isEmpty
                     && segment.lastFrameGenerationAttemptID == nil
@@ -149,7 +149,7 @@ public struct StoryMediaBatchUseCase: Sendable {
         case .pipeline:
             project.segments.filter {
                 $0.detail != nil
-                    && $0.attempt == nil
+                    && !$0.hasVideoJob
                     && $0.video == nil
                     && $0.imageGenerationAttemptID == nil
                     && $0.lastFrameGenerationAttemptID == nil

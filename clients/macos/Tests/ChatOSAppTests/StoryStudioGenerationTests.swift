@@ -6,6 +6,75 @@ import XCTest
 @testable import ChatOSApp
 
 extension StoryStudioTests {
+    func testVideoJobHandoffAtomicallyReplacesLegacyAttemptAndPreservesOwnership() async throws {
+        let (_, store, _) = try await fixture()
+        var project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        let segmentID = try XCTUnwrap(project.segments.first?.id)
+        let attempt = StoryVideoAttempt(
+            modelConfigID: project.models.videoModelID,
+            prompt: "handoff prompt",
+            size: "768P",
+            ratio: project.ratio,
+            seconds: project.segments[0].seconds
+        )
+        let intent = try await store.beginVideoGeneration(
+            projectID: project.id,
+            segmentID: segmentID,
+            attempt: attempt,
+            owner: "alice"
+        )
+
+        let handedOff = try await store.handoffVideoGenerationToMediaJob(
+            projectID: project.id,
+            segmentID: segmentID,
+            expectedAttempt: attempt,
+            owner: "alice"
+        )
+        XCTAssertEqual(handedOff.version, 3)
+        XCTAssertEqual(handedOff.segments[0].videoJobRecordID, attempt.id)
+        XCTAssertNil(handedOff.segments[0].attempt)
+        XCTAssertTrue(handedOff.segments[0].hasVideoJob)
+        XCTAssertTrue(handedOff.hasUnresolvedVideoJobs)
+        XCTAssertFalse(handedOff.segments[0].isReady)
+
+        let repeated = try await store.handoffVideoGenerationToMediaJob(
+            projectID: project.id,
+            segmentID: segmentID,
+            expectedAttempt: attempt,
+            owner: "alice"
+        )
+        XCTAssertEqual(repeated.updatedAt, handedOff.updatedAt)
+
+        var staleEdit = intent.project
+        staleEdit.title = "A concurrent title edit"
+        let merged = try await store.save(
+            staleEdit,
+            owner: "alice",
+            preservingVideoSegmentIDs: []
+        )
+        XCTAssertEqual(merged.version, 3)
+        XCTAssertEqual(merged.segments[0].videoJobRecordID, attempt.id)
+        XCTAssertNil(merged.segments[0].attempt)
+
+        do {
+            _ = try await store.updateVideoGenerationProgress(
+                .init(status: "queued", jobID: "legacy-writer-must-stop"),
+                projectID: project.id,
+                segmentID: segmentID,
+                attemptID: attempt.id,
+                owner: "alice"
+            )
+            XCTFail("The legacy writer must be fenced after the project handoff")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, StoryError.unresolvedSubmission.localizedDescription)
+        }
+
+        project = merged
+        project.version = 2
+        XCTAssertThrowsError(try project.validate())
+    }
+
     func testRepeatedVideoProgressDoesNotRewriteTheStoryManifest() async throws {
         let (_, store, _) = try await fixture()
         var project = try await readyProject(store)

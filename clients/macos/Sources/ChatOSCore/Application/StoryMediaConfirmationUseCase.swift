@@ -215,7 +215,7 @@ public struct StoryMediaConfirmationUseCase: Sendable {
         ) {
             for adjacent in [index - 1, index + 1]
                 where next.segments.indices.contains(adjacent)
-                    && next.segments[adjacent].attempt == nil {
+                    && !next.segments[adjacent].hasVideoJob {
                 next.segments[adjacent].detail = nil
                 next.segments[adjacent].confirmedFrameID = nil
                 next.segments[adjacent].confirmedLastFrameID = nil
@@ -250,7 +250,7 @@ public struct StoryMediaConfirmationUseCase: Sendable {
 
     private func editableSegmentIndex(_ segmentID: String, in project: StoryProject) -> Int? {
         guard let index = project.segments.firstIndex(where: { $0.id == segmentID }),
-              project.segments[index].attempt == nil else { return nil }
+              !project.segments[index].hasVideoJob else { return nil }
         return index
     }
 
@@ -259,7 +259,7 @@ public struct StoryMediaConfirmationUseCase: Sendable {
         in project: StoryProject
     ) -> Bool {
         project.segments.contains {
-            $0.resourceIDs.contains(resourceID) && $0.attempt != nil && $0.video == nil
+            $0.resourceIDs.contains(resourceID) && $0.hasVideoJob && $0.video == nil
         }
     }
 
@@ -283,7 +283,7 @@ public struct StoryMediaConfirmationUseCase: Sendable {
     private func invalidateDependentFrames(resourceID: String, in project: inout StoryProject) {
         for index in project.segments.indices
             where project.segments[index].resourceIDs.contains(resourceID)
-                && project.segments[index].attempt == nil {
+                && !project.segments[index].hasVideoJob {
             project.segments[index].confirmedFrameID = nil
             project.segments[index].confirmedLastFrameID = nil
         }

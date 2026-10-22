@@ -40,7 +40,7 @@ struct StoryAgentRun: Codable, Equatable, Identifiable, Sendable {
             guard !targetIDs.isEmpty, Set(targetIDs).count == targetIDs.count,
                   targetIDs.allSatisfy({ id in
                       project.segments.contains {
-                          $0.id == id && ($0.video != nil || ($0.attempt == nil && $0.video == nil))
+                          $0.id == id && ($0.video != nil || (!$0.hasVideoJob && $0.video == nil))
                       }
                   }) else { throw StoryError.invalidPlan }
         }

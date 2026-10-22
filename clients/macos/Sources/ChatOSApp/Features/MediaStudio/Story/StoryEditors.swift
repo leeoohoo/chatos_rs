@@ -227,7 +227,7 @@ struct StoryImagePicker: View {
                         Label(appModel.localized("取消使用尾帧", english: "Stop Using Last Frame"),
                               systemImage: "xmark.circle")
                     }
-                    .disabled(viewModel.isBusy || isGeneratingFrame || segment?.attempt != nil)
+                    .disabled(viewModel.isBusy || isGeneratingFrame || segment?.hasVideoJob == true)
                 }
                 Button(appModel.localized("关闭", english: "Close")) { dismiss() }.keyboardShortcut(.cancelAction)
             }
