@@ -2,7 +2,7 @@
 
 更新时间：2026-10-22
 
-状态：强化版方案，P0 部分实施中；阶段记录见 12.1—12.13，完整 Release 验收待完成
+状态：强化版方案，P0 部分实施中；阶段记录见 12.1—12.36，完整 Release 验收待完成
 
 适用范围：`clients/macos`、`clients/local_agent_host` 以及 macOS 客户端启动的 Plugin/Companion 进程
 
@@ -1311,6 +1311,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 验证：Debug 与 arm64 Release 均运行 5 个真实 SIGKILL 场景和 1 个仅供显式子进程选择的 probe 入口，共 6 项 XCTest，全部通过；子进程提前退出会回传 stdout/stderr，未到 checkpoint 或 kill 后未及时退出都会明确失败。`git diff --check` 同步作为本批提交门禁。
 
 边界：这是独立 xctest 子进程上的真实内核强杀与生产 Store 文件协议，不是签名后的完整 App/Media Worker 组合验收，也不发真实 provider 请求。它不覆盖 POST 正在内核/网络栈传输、下载 partial、Story/History 文件 rename 任意指令窗口、睡眠/唤醒、断网、ENOSPC、断电或两份正式 App 包并存；这些仍需固定 Release 场景和 Worker 进程矩阵。App→Worker lease 所有权交接与 Media Worker 尚未实现，P0-E 仍不能标记完成。
+
+### 12.36 第三十六批实施记录：视频下载临时 artifact 崩溃对账（2026-10-23）
+
+本批收口生产视频响应流在进程被 SIGKILL 后遗留的下载临时文件。原实现直接创建 `chatos-video-download-<UUID>.tmp`，正常取消和对象释放能够删除，但崩溃后既没有活跃所有权凭据，也不能安全地区分仍被另一 App 使用的文件；现在每次下载拥有独立的小型 artifact 目录和由内核释放的 lease。
+
+已实施：
+
+- 新下载使用严格 UUID 命名的 `.chatos-video-download-<UUID>/`，目录强制 `0700`，内部只包含 `0600` 的 `.lease` 与 `payload.tmp`。lease 和 payload 均以 `O_NOFOLLOW | O_CLOEXEC | O_EXCL` 创建并校验为当前 euid 的普通单硬链接文件；下载仍按 chunk 流式写入，不重新引入整段视频 `Data`。
+- writer 从创建目录开始持有 `.lease` 的 `flock(LOCK_EX)`，成功返回后由 `GeneratedMediaFile` 的共享清理所有者继续持有。显式消费完成、最后引用释放、取消、超限、流错误或写入失败都会幂等删除整个目录，并在删除完成后才释放 lease；SIGKILL 则由内核自动释放锁，保留可对账结构。
+- 每次新下载前执行 best-effort 有界维护：仅检查超过 24 小时的严格 UUID 目录，每轮最多 64 个。清理方只有在目录属于当前 euid、内容严格限定为 lease/payload、文件不是 symlink/硬链接，并能非阻塞取得独占 lease 后才删除；取得锁后再次核验目录 inode、内容集合和文件身份，无法证明安全时全部保留。
+- 新鲜 orphan、活跃 lease、畸形 UUID、symlink 目录、symlink payload、硬链接 payload、未知文件和无 lease 的非空旧结构均保留。只允许回收崩溃发生在 `mkdir` 与 lease 创建之间留下的过期空目录；维护错误不阻断当前下载或改变原磁盘预算语义。
+- `GeneratedMediaFile` 增加可选的线程安全自定义清理动作，默认初始化器和既有单文件删除行为保持兼容；生产视频下载用它同时管理 artifact 目录与 lease descriptor，而调用方仍只看到可直接复制/读取的 payload URL。
+
+验证：`HTTPTransportTests` 新增目录/文件权限与正常释放、活跃 lease 保护及释放后回收、新鲜与异常结构保守策略、64 候选上限、取消和流失败无残留；原有流式内容、超限 partial、Content-Length 截断和磁盘准入测试继续覆盖。Debug 与 arm64 Release 均选择性运行 13 项 HTTP transport 测试，Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
+
+边界：本批只管理新版目录化的视频下载结果，不猜测或删除旧版 lease-less 的 `chatos-video-download-*.tmp`，也尚未给上传侧 `chatos-video-request-*.json` / multipart request body 建立同等崩溃对账。测试覆盖真实 `flock` 竞争但尚未用独立下载 writer 子进程执行 SIGKILL；真实网络中断、睡眠/唤醒、写入中 ENOSPC、App→Worker lease 所有权交接、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
 ## 十三、验证矩阵
 

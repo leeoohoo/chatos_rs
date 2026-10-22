@@ -1,5 +1,6 @@
 @testable import ChatOSAPI
 import ChatOSAgentRuntime
+import Darwin
 import Foundation
 import XCTest
 
@@ -83,10 +84,19 @@ final class HTTPTransportTests: XCTestCase {
             temporaryDirectory: root
         )
         let fileURL = file.url
+        let artifactURL = fileURL.deletingLastPathComponent()
         XCTAssertEqual(file.byteCount, expected.count)
         XCTAssertEqual(try Data(contentsOf: fileURL), expected)
+        XCTAssertTrue(artifactURL.lastPathComponent.hasPrefix(".chatos-video-download-"))
+        XCTAssertEqual(
+            Set(try FileManager.default.contentsOfDirectory(atPath: artifactURL.path)),
+            [".lease", "payload.tmp"]
+        )
+        XCTAssertEqual(fileMode(artifactURL), 0o700)
+        XCTAssertEqual(fileMode(artifactURL.appendingPathComponent(".lease")), 0o600)
+        XCTAssertEqual(fileMode(fileURL), 0o600)
         file.removeIfNeeded()
-        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: artifactURL.path))
 
         let oversized = AsyncThrowingStream<Data, Error> { continuation in
             continuation.yield(Data(repeating: 0x61, count: 6))
@@ -105,6 +115,152 @@ final class HTTPTransportTests: XCTestCase {
                 try FileManager.default.contentsOfDirectory(atPath: root.path),
                 []
             )
+        }
+    }
+
+    func testResponseBodyFileWriterReconcilesOnlyReleasedExpiredLease() throws {
+        let root = try makeTemporaryDirectory(prefix: "response-writer-lease")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let artifact = try makeDownloadArtifact(in: root)
+        try makeExpired(artifact.directory)
+
+        let activeLease = Darwin.open(artifact.lease.path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(activeLease, 0)
+        XCTAssertEqual(flock(activeLease, LOCK_EX | LOCK_NB), 0)
+
+        XCTAssertEqual(
+            ChatOSResponseBodyFileWriter.reconcileOrphanedArtifacts(
+                in: root, olderThan: Date(), maximumCandidates: 64
+            ),
+            0
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: artifact.directory.path))
+
+        _ = flock(activeLease, LOCK_UN)
+        _ = Darwin.close(activeLease)
+        XCTAssertEqual(
+            ChatOSResponseBodyFileWriter.reconcileOrphanedArtifacts(
+                in: root, olderThan: Date(), maximumCandidates: 64
+            ),
+            1
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: artifact.directory.path))
+    }
+
+    func testResponseBodyFileWriterPreservesFreshAndMalformedArtifacts() throws {
+        let root = try makeTemporaryDirectory(prefix: "response-writer-safety")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fresh = try makeDownloadArtifact(in: root)
+
+        let malformed = root.appendingPathComponent(
+            ".chatos-video-download-not-a-uuid", isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: malformed, withIntermediateDirectories: false)
+        try makeExpired(malformed)
+
+        let symlinkTarget = try makeTemporaryDirectory(prefix: "response-writer-symlink-target")
+        defer { try? FileManager.default.removeItem(at: symlinkTarget) }
+        let symlinkDirectory = artifactDirectory(in: root)
+        try FileManager.default.createSymbolicLink(at: symlinkDirectory, withDestinationURL: symlinkTarget)
+
+        let symlinkPayload = try makeDownloadArtifact(in: root, payload: false)
+        let payloadTarget = root.appendingPathComponent("payload-target")
+        try Data("target".utf8).write(to: payloadTarget)
+        try FileManager.default.createSymbolicLink(
+            at: symlinkPayload.payload, withDestinationURL: payloadTarget
+        )
+        try makeExpired(symlinkPayload.directory)
+
+        let hardLinkedPayload = try makeDownloadArtifact(in: root, payload: false)
+        let hardLinkTarget = root.appendingPathComponent("hard-link-target")
+        try Data("target".utf8).write(to: hardLinkTarget)
+        try FileManager.default.linkItem(at: hardLinkTarget, to: hardLinkedPayload.payload)
+        try makeExpired(hardLinkedPayload.directory)
+
+        let unknownFile = try makeDownloadArtifact(in: root)
+        try Data("unknown".utf8).write(
+            to: unknownFile.directory.appendingPathComponent("unexpected")
+        )
+        try makeExpired(unknownFile.directory)
+
+        XCTAssertEqual(
+            ChatOSResponseBodyFileWriter.reconcileOrphanedArtifacts(
+                in: root,
+                olderThan: Date().addingTimeInterval(-60),
+                maximumCandidates: 64
+            ),
+            0
+        )
+        for preserved in [
+            fresh.directory, malformed, symlinkDirectory, symlinkPayload.directory,
+            hardLinkedPayload.directory, unknownFile.directory,
+        ] {
+            XCTAssertTrue(
+                FileManager.default.fileExists(atPath: preserved.path),
+                "Expected \(preserved.lastPathComponent) to be preserved"
+            )
+        }
+    }
+
+    func testResponseBodyFileWriterBoundsOrphanReconciliation() throws {
+        let root = try makeTemporaryDirectory(prefix: "response-writer-limit")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for _ in 0..<65 {
+            let artifact = try makeDownloadArtifact(in: root)
+            try makeExpired(artifact.directory)
+        }
+
+        XCTAssertEqual(
+            ChatOSResponseBodyFileWriter.reconcileOrphanedArtifacts(
+                in: root, olderThan: Date(), maximumCandidates: 64
+            ),
+            64
+        )
+        XCTAssertEqual(try downloadArtifactDirectories(in: root).count, 1)
+        XCTAssertEqual(
+            ChatOSResponseBodyFileWriter.reconcileOrphanedArtifacts(
+                in: root, olderThan: Date(), maximumCandidates: 64
+            ),
+            1
+        )
+        XCTAssertEqual(try downloadArtifactDirectories(in: root).count, 0)
+    }
+
+    func testResponseBodyFileWriterRemovesCancelledAndFailedArtifacts() async throws {
+        let root = try makeTemporaryDirectory(prefix: "response-writer-cancel")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var continuation: AsyncThrowingStream<Data, Error>.Continuation!
+        let stream = AsyncThrowingStream<Data, Error> { continuation = $0 }
+        let writing = Task {
+            try await ChatOSResponseBodyFileWriter.write(
+                stream, maximumBytes: 64, temporaryDirectory: root
+            )
+        }
+        continuation.yield(Data("partial".utf8))
+        for _ in 0..<100 where (try? downloadArtifactDirectories(in: root).isEmpty) == true {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        writing.cancel()
+        do {
+            _ = try await writing.value
+            XCTFail("Cancelled writer unexpectedly succeeded")
+        } catch is CancellationError {
+            // Expected.
+        }
+        XCTAssertTrue(try downloadArtifactDirectories(in: root).isEmpty)
+
+        enum StreamFailure: Error { case failed }
+        let failed = AsyncThrowingStream<Data, Error> { continuation in
+            continuation.yield(Data("partial".utf8))
+            continuation.finish(throwing: StreamFailure.failed)
+        }
+        do {
+            _ = try await ChatOSResponseBodyFileWriter.write(
+                failed, maximumBytes: 64, temporaryDirectory: root
+            )
+            XCTFail("Failed stream unexpectedly succeeded")
+        } catch MediaGenerationClientError.invalidVideoContent {
+            XCTAssertTrue(try downloadArtifactDirectories(in: root).isEmpty)
         }
     }
 
@@ -254,6 +410,56 @@ final class HTTPTransportTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [BoundedResponseURLProtocol.self]
         return URLSessionHTTPTransport(session: URLSession(configuration: configuration))
+    }
+
+    private func makeTemporaryDirectory(prefix: String) throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "\(prefix)-\(UUID().uuidString)", isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        return root
+    }
+
+    private func artifactDirectory(in root: URL) -> URL {
+        root.appendingPathComponent(
+            ".chatos-video-download-\(UUID().uuidString.lowercased())", isDirectory: true
+        )
+    }
+
+    private func makeDownloadArtifact(
+        in root: URL,
+        payload: Bool = true
+    ) throws -> (directory: URL, lease: URL, payload: URL) {
+        let directory = artifactDirectory(in: root)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        let lease = directory.appendingPathComponent(".lease")
+        let payloadURL = directory.appendingPathComponent("payload.tmp")
+        XCTAssertTrue(FileManager.default.createFile(atPath: lease.path, contents: Data()))
+        if payload {
+            XCTAssertTrue(FileManager.default.createFile(atPath: payloadURL.path, contents: Data("video".utf8)))
+        }
+        return (directory, lease, payloadURL)
+    }
+
+    private func makeExpired(_ url: URL) throws {
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-48 * 60 * 60)],
+            ofItemAtPath: url.path
+        )
+    }
+
+    private func downloadArtifactDirectories(in root: URL) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix(".chatos-video-download-") }
+    }
+
+    private func fileMode(_ url: URL) -> mode_t? {
+        var status = stat()
+        let result = url.withUnsafeFileSystemRepresentation { path in
+            path.map { Darwin.lstat($0, &status) } ?? -1
+        }
+        return result == 0 ? status.st_mode & mode_t(0o777) : nil
     }
 
 }

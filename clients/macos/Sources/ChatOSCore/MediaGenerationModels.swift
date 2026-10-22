@@ -403,12 +403,19 @@ public final class GeneratedMediaFile: @unchecked Sendable, Equatable {
     public let deleteWhenReleased: Bool
 
     private let lock = NSLock()
+    private let cleanup: (@Sendable () -> Void)?
     private var removed = false
 
-    public init(url: URL, byteCount: Int, deleteWhenReleased: Bool = false) {
+    public init(
+        url: URL,
+        byteCount: Int,
+        deleteWhenReleased: Bool = false,
+        cleanup: (@Sendable () -> Void)? = nil
+    ) {
         self.url = url
         self.byteCount = byteCount
         self.deleteWhenReleased = deleteWhenReleased
+        self.cleanup = cleanup
     }
 
     deinit {
@@ -424,7 +431,11 @@ public final class GeneratedMediaFile: @unchecked Sendable, Equatable {
         }
         removed = true
         lock.unlock()
-        try? FileManager.default.removeItem(at: url)
+        if let cleanup {
+            cleanup()
+        } else {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     public static func == (lhs: GeneratedMediaFile, rhs: GeneratedMediaFile) -> Bool {
