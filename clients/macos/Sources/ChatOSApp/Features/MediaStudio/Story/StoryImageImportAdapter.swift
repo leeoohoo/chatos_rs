@@ -2,8 +2,6 @@ import ChatOSCore
 import Foundation
 
 struct StoryImageImportAdapter: StoryImageImporting {
-    private static let maximumLocalFileBytes = 20 * 1_024 * 1_024
-
     let store: StoryProjectStore
     private let confirmations = StoryMediaConfirmationUseCase()
 
@@ -19,28 +17,12 @@ struct StoryImageImportAdapter: StoryImageImporting {
         command: StoryImageImportCommand,
         fileURL: URL
     ) async throws -> StoryProject {
-        let data = try await AppCancellableDetachedWork.run {
+        let png: Data
+        do {
             let access = fileURL.startAccessingSecurityScopedResource()
             defer { if access { fileURL.stopAccessingSecurityScopedResource() } }
-            let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-            guard values.isRegularFile == true,
-                  (values.fileSize ?? 0) <= Self.maximumLocalFileBytes else {
-                throw StoryError.unsafeFile
-            }
-            return try AppBoundedFileReader.read(
-                fileURL,
-                maximumBytes: Self.maximumLocalFileBytes
-            )
+            png = try await MediaStudioImageLoader.normalizedPNGData(fromFile: fileURL)
         }
-        return try await importImageData(data, command: command)
-    }
-
-    private func importImageData(
-        _ data: Data,
-        command: StoryImageImportCommand
-    ) async throws -> StoryProject {
-        try Task.checkCancellation()
-        let png = try await MediaStudioImageLoader.normalizedPNGData(from: data)
         return try await persistNormalizedImage(png, command: command)
     }
 

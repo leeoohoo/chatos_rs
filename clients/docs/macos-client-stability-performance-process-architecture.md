@@ -1448,6 +1448,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批删除的是 file-backed 输入的完整**压缩源字节**副本；ImageIO 的有界解码像素面和最终 PNG `Data` 仍位于 App 进程，Store 也仍以 `Data` 接收归一化结果。HTTPS/旧 Base64 兼容资产仍会产生源 `Data`。将恶意图片解码、PNG 编码和最终文件提交整体迁入 Media Worker，真实 20 MiB/64 MP physical-footprint trace、内存压力、取消风暴和签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.45 第四十五批实施记录：Story 本地图片授权内直接解码（2026-10-23）
+
+本批关闭 12.44 尚未覆盖的用户本地导入路径。Story 上传资源图或首尾帧时，此前会在 security-scoped 授权窗口内把最多 20 MiB 文件完整读成 `Data`，结束授权后再做 ImageIO 解码；即使文件已在磁盘上，也会产生一份确定性的压缩源字节副本。
+
+已实施：
+
+- 将 12.44 的安全文件归一化抽成明确的 `fromFile` 入口；生成结果继续通过 asset owner 保持 lease，本地导入则在 security-scoped 访问仍有效时直接等待该入口完成，并在归一化结束、项目 Store 提交前释放授权。
+- 本地文件由后台任务以 `O_NOFOLLOW | O_CLOEXEC` 打开并对 descriptor 执行 `fstat`，20 MiB、普通文件、64 MP 和 8,192 px 归一化边界与生成图片完全一致；Story adapter 不再调用 `AppBoundedFileReader.read` 构造完整源 `Data`。
+- 正常导入后的 PNG 保存、用户选中首帧、确认关系、账户 continuation fencing 和项目持久化顺序不变；新增端到端回归确认 symlink 导入在解码前失败，且不会向 Story 挂入图片或确认帧。
+
+验证：Debug 与 arm64 Release 各选择性运行 `StoryStudioTests` 94 项、`MediaStudioImageInteractionTests` 12 项和 `AppBoundedFileReaderTests` 16 项，共 122 项，全部通过。Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁；未启动/安装正式 App，未读取活动用户数据。
+
+边界：security-scoped 授权覆盖异步文件打开、解码和 PNG 编码，归一化结束后即释放，不延伸到项目 Store 提交；未来 Worker 文件授权协议仍需定义 descriptor/lease 成功交接点。本批仍在 App 进程内持有解码像素面和 PNG 输出 `Data`，没有实现跨进程图片解码、文件式 Store 提交或真实内存压力/签名 Release soak，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

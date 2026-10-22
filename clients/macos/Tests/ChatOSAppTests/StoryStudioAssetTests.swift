@@ -129,6 +129,56 @@ extension StoryStudioTests {
         XCTAssertNil(segment.inheritedFirstFrameSourceSegmentID)
     }
 
+    func testLocalStoryImageImportRejectsSymlinkBeforeDecode() async throws {
+        let (vm, _, _) = try await fixture()
+        var draft = makeProject()
+        draft.segments = [
+            .init(
+                id: "segment-1",
+                title: "开场",
+                synopsis: "开场",
+                sourceRange: .init(start: 0, end: draft.source.count)
+            ),
+        ]
+        let created = await vm.create(draft, availableModels: models)
+        XCTAssertTrue(created)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 16,
+            pixelsHigh: 16,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryLocalSymlinkImport-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("target.png")
+        let link = root.appendingPathComponent("link.png")
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: target)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        vm.uploadImage(
+            link,
+            assetID: nil,
+            segmentID: "segment-1",
+            frameRole: .first
+        )
+        try await idle(vm)
+
+        let segment = try XCTUnwrap(vm.project?.segments.first)
+        XCTAssertTrue(segment.firstFrames.images.isEmpty)
+        XCTAssertNil(segment.confirmedFrameID)
+        XCTAssertNotNil(vm.errorMessage)
+    }
+
     func testChangingSharedAssetVersionInvalidatesDependentFramesOnly() async throws {
         let (vm, store, _) = try await fixture()
         var draft = try await readyProject(store)

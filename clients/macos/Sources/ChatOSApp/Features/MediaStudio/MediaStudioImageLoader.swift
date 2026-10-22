@@ -81,29 +81,35 @@ enum MediaStudioImageLoader {
         transport: any HTTPTransport = URLSessionHTTPTransport()
     ) async throws -> Data {
         if let url = asset.url, url.isFileURL {
-            let owner = asset.mediaFile
-            let task = Task.detached(priority: .userInitiated) {
-                try withExtendedLifetime(owner) {
-                    try Task.checkCancellation()
-                    guard let decoded = try AppImageThumbnailLoader.decodeFile(
-                        url,
-                        maximumBytes: maximumImageBytes,
-                        maximumSourcePixelCount: maximumSourcePixelCount,
-                        maximumDisplayPixelSize: maximumNormalizedPixelSize
-                    ) else {
-                        throw ImageError.invalidImage
-                    }
-                    return try encodedPNG(decoded)
-                }
-            }
-            return try await withTaskCancellationHandler {
-                try await task.value
-            } onCancel: {
-                task.cancel()
-            }
+            return try await normalizedPNGData(fromFile: url, retaining: asset.mediaFile)
         }
         let bytes = try await data(for: asset, transport: transport)
         return try await normalizedPNGData(from: bytes)
+    }
+
+    static func normalizedPNGData(
+        fromFile url: URL,
+        retaining owner: GeneratedMediaFile? = nil
+    ) async throws -> Data {
+        let task = Task.detached(priority: .userInitiated) {
+            try withExtendedLifetime(owner) {
+                try Task.checkCancellation()
+                guard let decoded = try AppImageThumbnailLoader.decodeFile(
+                    url,
+                    maximumBytes: maximumImageBytes,
+                    maximumSourcePixelCount: maximumSourcePixelCount,
+                    maximumDisplayPixelSize: maximumNormalizedPixelSize
+                ) else {
+                    throw ImageError.invalidImage
+                }
+                return try encodedPNG(decoded)
+            }
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     private nonisolated static func encodedPNG(_ decoded: AppDecodedThumbnail) throws -> Data {
