@@ -13,6 +13,8 @@ import { GlobalToolApprovalOverlay } from "../features/tool-approval/ui/GlobalTo
 import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
+import { useGeneralSettingsStore } from "../features/general-settings/application/generalSettingsStore";
+import type { GeneralSettingsPort } from "../features/general-settings/ports/GeneralSettingsPort";
 import { usePluginApplicationStore } from "../features/plugin-applications/application/pluginApplicationStore";
 import type { PluginApplicationPort } from "../features/plugin-applications/ports/PluginApplicationPort";
 import { useProjectConversationStore } from "../features/project-conversation/application/projectConversationStore";
@@ -114,6 +116,11 @@ const AccessControlWorkspace = lazy(async () => {
       />
     ),
   };
+});
+
+const GeneralSettingsWorkspace = lazy(async () => {
+  const viewModule = await import("../features/general-settings/ui/GeneralSettingsView");
+  return { default: viewModule.GeneralSettingsView };
 });
 
 const SystemPermissionsWorkspace = lazy(async () => {
@@ -235,6 +242,7 @@ const RemoteConnectionEditorSheet = lazy(async () => {
 
 interface AppShellProps {
   hostLifecycle: HostLifecyclePort;
+  generalSettings: GeneralSettingsPort;
   pluginApplication: PluginApplicationPort;
   workspaceIndex: WorkspaceIndexPort;
   remoteConnection: RemoteConnectionPort;
@@ -252,6 +260,7 @@ interface AppShellProps {
 
 export function AppShell({
   hostLifecycle,
+  generalSettings,
   pluginApplication,
   workspaceIndex,
   remoteConnection,
@@ -267,6 +276,7 @@ export function AppShell({
   onLogout,
 }: AppShellProps) {
   const snapshot = useHostLifecycleStore((state) => state.snapshot);
+  const activateGeneralSettings = useGeneralSettingsStore((state) => state.activate);
   const diagnostics = useHostLifecycleStore((state) => state.diagnostics);
   const start = useHostLifecycleStore((state) => state.start);
   const retry = useHostLifecycleStore((state) => state.retry);
@@ -284,13 +294,17 @@ export function AppShell({
   const pluginApplications = usePluginApplicationStore((state) => state.applications);
   const resetPluginApplications = usePluginApplicationStore((state) => state.reset);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
-  const [activeSurface, setActiveSurface] = useState<"workspace" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
+  const [activeSurface, setActiveSurface] = useState<"workspace" | "general-settings" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [remoteEditorTarget, setRemoteEditorTarget] = useState<"create" | string | null>(null);
 
   useEffect(() => {
     void start(hostLifecycle, session.user.id);
   }, [hostLifecycle, session.user.id, start]);
+
+  useEffect(() => {
+    void activateGeneralSettings(generalSettings, session.user.id);
+  }, [activateGeneralSettings, generalSettings, session.user.id]);
 
   useEffect(() => {
     setSelection({ kind: "workbench" });
@@ -348,7 +362,9 @@ export function AppShell({
     ? remoteConnections.find((connection) => connection.id === remoteEditorTarget) ?? null
     : null;
   const defaultContactReady = workspaceSnapshot.contacts.some((contact) => contact.id === "jiguli");
-  const title = activeSurface === "tool-approval"
+  const title = activeSurface === "general-settings"
+    ? "常规与账号"
+    : activeSurface === "tool-approval"
     ? "命令审批"
     : activeSurface === "runtime-permissions"
       ? "运行与权限"
@@ -394,6 +410,15 @@ export function AppShell({
         <div className="sidebar-settings-group">
           <p>设置</p>
           <button
+            aria-current={activeSurface === "general-settings" ? "page" : undefined}
+            className={`sidebar-settings-button ${activeSurface === "general-settings" ? "sidebar-settings-button--active" : ""}`}
+            onClick={() => setActiveSurface("general-settings")}
+            type="button"
+          >
+            <span aria-hidden="true">⚙</span>
+            <span><strong>常规与账号</strong><small>语言、显示与账号</small></span>
+          </button>
+          <button
             aria-current={activeSurface === "tool-approval" ? "page" : undefined}
             className={`sidebar-settings-button ${activeSurface === "tool-approval" ? "sidebar-settings-button--active" : ""}`}
             onClick={() => setActiveSurface("tool-approval")}
@@ -437,7 +462,9 @@ export function AppShell({
         <header className="workspace-header">
           <div>
             <p className="eyebrow">{
-              activeSurface === "tool-approval"
+              activeSurface === "general-settings"
+                ? "SETTINGS"
+                : activeSurface === "tool-approval"
                 ? "LOCAL SECURITY"
                 : activeSurface === "runtime-permissions"
                   ? "RUNTIME & PERMISSIONS"
@@ -460,7 +487,16 @@ export function AppShell({
           <span className="protocol-badge">Host v{snapshot.protocolVersion}</span>
         </header>
         <Suspense fallback={<div className="workspace-loading"><span className="mini-spinner" />正在载入工作区…</div>}>
-          {activeSurface === "tool-approval" ? (
+          {activeSurface === "general-settings" ? (
+          <GeneralSettingsWorkspace
+            displayName={session.user.displayName}
+            onLogout={onLogout}
+            ownerUserId={session.user.id}
+            port={generalSettings}
+            role={session.user.role}
+            username={session.user.username}
+          />
+        ) : activeSurface === "tool-approval" ? (
           <ToolApprovalSettingsView
             approvalPort={toolApproval}
             hostReady={snapshot.ready}

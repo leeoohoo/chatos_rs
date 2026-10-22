@@ -13,6 +13,7 @@ mod conversation_composer;
 mod conversation_history;
 mod conversation_realtime;
 mod conversation_runtime_settings;
+mod general_settings;
 mod host_lifecycle;
 mod local_terminal;
 mod media_studio;
@@ -83,6 +84,9 @@ use conversation_runtime_settings::{
     load_conversation_runtime_settings, select_conversation_model,
     select_conversation_reasoning_level, select_conversation_remote_connection,
     ConversationRuntimeSettingsManager,
+};
+use general_settings::{
+    load_general_settings, update_general_settings, GeneralSettingsStore,
 };
 use host_lifecycle::{
     host_diagnostics, host_lifecycle_snapshot, start_local_agent_host, stop_local_agent_host,
@@ -229,6 +233,7 @@ pub fn run() {
             app.manage(ProjectRunPreferencesStore::new(data_dir.clone()));
             app.manage(RemoteConnectionManager::new(data_dir.clone()));
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
+            app.manage(GeneralSettingsStore::new(data_dir.clone()));
             app.manage(PluginApplicationManager::new(data_dir));
             #[cfg(target_os = "windows")]
             if std::env::var_os("CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP").as_deref()
@@ -384,6 +389,8 @@ pub fn run() {
             load_requirement_survey_follow_up,
             confirm_requirement_survey_plan,
             adopt_requirement_survey_plan,
+            load_general_settings,
+            update_general_settings,
             load_notepad,
             create_notepad_folder,
             rename_notepad_folder,

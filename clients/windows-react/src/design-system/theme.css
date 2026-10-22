@@ -13,6 +13,7 @@
   --tertiary: rgba(60, 60, 67, 0.3);
   --shadow: 0 24px 70px rgba(24, 24, 28, 0.18);
   color-scheme: light;
+  --interface-scale: 1;
 }
 
 * { box-sizing: border-box; }
@@ -32,8 +33,9 @@ body {
   display: grid;
   grid-template-rows: 46px minmax(0, 1fr);
   grid-template-columns: 230px minmax(0, 1fr);
-  width: 100%;
-  height: 100%;
+  width: calc(100% / var(--interface-scale));
+  height: calc(100% / var(--interface-scale));
+  zoom: var(--interface-scale);
   background: var(--surface);
   backdrop-filter: blur(34px) saturate(1.4);
 }

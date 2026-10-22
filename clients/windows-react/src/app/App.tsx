@@ -13,6 +13,7 @@ import { TauriRemoteConnectionAdapter } from "../features/remote-connection/adap
 import { TauriToolApprovalAdapter } from "../features/tool-approval/adapters/TauriToolApprovalAdapter";
 import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/TauriHostLifecycleAdapter";
 import { TauriPluginApplicationAdapter } from "../features/plugin-applications/adapters/TauriPluginApplicationAdapter";
+import { TauriGeneralSettingsAdapter } from "../features/general-settings/adapters/TauriGeneralSettingsAdapter";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import { TauriWindowChromeAdapter } from "../platform/window/adapters/TauriWindowChromeAdapter";
 import { WindowControls } from "../platform/window/ui/WindowControls";
@@ -23,6 +24,7 @@ const authentication = new TauriAuthenticationAdapter();
 const askUser = new TauriAskUserAdapter();
 const hostLifecycle = new TauriHostLifecycleAdapter();
 const pluginApplication = new TauriPluginApplicationAdapter();
+const generalSettings = new TauriGeneralSettingsAdapter();
 const windowChrome = new TauriWindowChromeAdapter();
 const workspaceIndex = new TauriWorkspaceIndexAdapter();
 const conversationHistory = new TauriConversationHistoryAdapter();
@@ -61,6 +63,7 @@ function ApplicationRoot() {
         {(session) => (
           <AppShell
             hostLifecycle={hostLifecycle}
+            generalSettings={generalSettings}
             pluginApplication={pluginApplication}
             workspaceIndex={workspaceIndex}
             remoteConnection={remoteConnection}
