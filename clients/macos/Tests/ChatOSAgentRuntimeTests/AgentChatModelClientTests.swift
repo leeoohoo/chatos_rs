@@ -45,6 +45,65 @@ final class AgentChatModelClientTests: XCTestCase {
         )
     }
 
+    func testTextAttachmentsUseBoundedPreviewInBothAdapters() async throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-model-text-\(UUID().uuidString).txt")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        try Data(
+            repeating: 0x61,
+            count: AgentAttachmentDataLoader.maximumTextPreviewBytes + 256 * 1_024
+        ).write(to: fileURL)
+        let message = AgentMessage(
+            role: .user,
+            attachments: [.init(
+                name: "notes.txt",
+                mimeType: "text/plain",
+                kind: .file,
+                localFileURL: fileURL
+            )]
+        )
+
+        let responses = try AgentResponsesModelClient(
+            baseURL: URL(string: "https://api.openai.com/v1")!,
+            model: "gpt-test",
+            apiKey: "secret",
+            transport: { request in
+                let payload = try Self.body(request)
+                let input = try XCTUnwrap(payload["input"] as? [[String: Any]])
+                let content = try XCTUnwrap(input.first?["content"] as? [[String: Any]])
+                let text = try XCTUnwrap(content.first?["text"] as? String)
+                XCTAssertTrue(text.contains("附件内容已截断"))
+                XCTAssertFalse(text.contains("data:"))
+                XCTAssertLessThan(text.utf8.count, 600 * 1_024)
+                return (
+                    Data(#"{"id":"resp","status":"completed","output":[]}"#.utf8),
+                    200
+                )
+            }
+        )
+        _ = try await responses.complete(messages: [message], tools: [], timeout: 20)
+
+        let chat = try AgentChatModelClient(
+            baseURL: URL(string: "https://model.example/v1")!,
+            model: "gpt-test",
+            apiKey: "secret",
+            transport: { request in
+                let payload = try Self.body(request)
+                let messages = try XCTUnwrap(payload["messages"] as? [[String: Any]])
+                let content = try XCTUnwrap(messages.first?["content"] as? [[String: Any]])
+                let text = try XCTUnwrap(content.first?["text"] as? String)
+                XCTAssertTrue(text.contains("附件内容已截断"))
+                XCTAssertFalse(text.contains("data:"))
+                XCTAssertLessThan(text.utf8.count, 600 * 1_024)
+                return (
+                    Data(#"{"choices":[{"finish_reason":"stop","message":{"content":"done"}}]}"#.utf8),
+                    200
+                )
+            }
+        )
+        _ = try await chat.complete(messages: [message], tools: [], timeout: 20)
+    }
+
     func testResponsesUsesCompactionAndStatelessFullOutputContinuation() async throws {
         let recorder = ResponsesTransportRecorder()
         let client = try AgentResponsesModelClient(

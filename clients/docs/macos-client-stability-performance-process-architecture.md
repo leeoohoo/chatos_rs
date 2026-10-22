@@ -1746,6 +1746,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批只文件化 Agent Artifact 创建；Markdown 预览的最终消费者仍需要有界字符串，非文件型兼容读取仍可能返回完整 `Data`。staging 与 Host artifact 根必须位于同一数据库派生位置并由同一登录用户访问，不扩展为网络客户端上传协议；跨进程 FD 传递、全局文件 I/O Governor、真实 ENOSPC/只读卷/睡眠与强杀矩阵、签名 Release soak 和 P0-D/P0-E 综合压力门禁仍待完成。
 
+### 12.64 第六十四批实施记录：Agent 文本附件有界前缀读取（2026-10-23）
+
+本批处理 Agent 模型请求组装中的普通文件/音频附件读取。此前 Chat Completions 与 Responses 两个适配器都会先把每份附件完整读取为最多 20 MiB `Data`，即使非图片、非 PDF 最终只检查并使用前 512 KiB 文本；多附件请求会形成与原文件大小线性增长的无效读取和短时堆占用。
+
+已实施：
+
+- `AgentAttachmentDataLoader` 新增 512 KiB 文本预览入口；普通文件与音频只读取该前缀，并从 descriptor 已知的原始大小判断是否添加既有截断提示，不再为了判断 `data.count` 读取剩余最多 19.5 MiB。
+- 文件访问统一改为 `O_NOFOLLOW | O_CLOEXEC` 与 `fstat`：只接受 1 字节—20 MiB 的单链接普通文件，循环处理短读、`EINTR` 和任务取消，读取后复验 device/inode/link count/size/mtime/ctime，拒绝 symlink、读取期间替换或变化的输入。
+- 图片与 Responses PDF 仍保留完整有界读取和现有 data URL wire 语义；普通二进制文件仍只向模型提供 Relay 读取提示，不把二进制塞入文本上下文。两个模型适配器对文本包装、截断提示和 fallback 的外部行为不变。
+
+验证：Debug 与 arm64 Release 各运行 `AgentChatModelClientTests` 14 项和 `AgentAttachmentDataLoaderTests` 4 项，共 18 项，全部通过。新增回归覆盖大文本只返回固定前缀且标记截断、两个模型适配器都不生成 data URL、symlink 双入口拒绝，以及原有 20 MiB 上限；Swift 6 Debug/Release 编译和 `git diff --check` 通过。测试只使用临时文件，不启动/安装正式 App，不访问活动用户数据库。
+
+边界：本批消除的是普通文本/音频附件的无效尾部读取，不是 Agent 模型请求的完全文件原生化。图片和 PDF 仍会形成完整 `Data`、Base64 字符串与 JSON body，多个 20 MiB 输入仍可能叠加；后续需把 Agent 请求改为增量 Base64 临时 body/真正的 file upload，并覆盖 SSE 上传、取消、重定向、磁盘预算和崩溃回收。512 KiB 文本字符串是模型上下文的必要有界消费者，不计为可消除的文件正文副本；全局文件 I/O Governor 和组合压力门禁仍未完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

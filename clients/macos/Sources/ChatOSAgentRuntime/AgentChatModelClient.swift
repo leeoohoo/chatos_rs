@@ -128,8 +128,8 @@ public struct AgentChatModelClient: AgentModelClient {
             content.append(["type": "text", "text": message.content])
         }
         for attachment in message.attachmentItems {
-            let data = try validatedAttachmentData(attachment)
             if attachment.kind == .image {
+                let data = try validatedAttachmentData(attachment)
                 content.append([
                     "type": "image_url",
                     "image_url": [
@@ -137,10 +137,12 @@ public struct AgentChatModelClient: AgentModelClient {
                         "detail": "auto",
                     ],
                 ])
-            } else if let text = boundedText(data) {
+            } else if let preview = try AgentAttachmentDataLoader.textPreview(
+                attachment.localFileURL
+            ) {
                 content.append([
                     "type": "text",
-                    "text": "<attachment name=\"\(attachment.name)\" mime_type=\"\(attachment.mimeType)\">\n\(text)\n</attachment>",
+                    "text": "<attachment name=\"\(attachment.name)\" mime_type=\"\(attachment.mimeType)\">\n\(boundedText(preview))\n</attachment>",
                 ])
             } else {
                 content.append([
@@ -156,12 +158,10 @@ public struct AgentChatModelClient: AgentModelClient {
         try AgentAttachmentDataLoader.load(attachment.localFileURL)
     }
 
-    private static func boundedText(_ data: Data) -> String? {
-        guard !data.prefix(8_000).contains(0),
-              let text = String(data: data.prefix(512 * 1_024), encoding: .utf8) else { return nil }
-        return data.count > 512 * 1_024
-            ? text + "\n[附件内容已截断；可通过 Relay 分段读取]"
-            : text
+    private static func boundedText(_ preview: AgentAttachmentDataLoader.TextPreview) -> String {
+        preview.isTruncated
+            ? preview.text + "\n[附件内容已截断；可通过 Relay 分段读取]"
+            : preview.text
     }
 
     private static func validate(status: Int, errorBody data: Data) throws {
