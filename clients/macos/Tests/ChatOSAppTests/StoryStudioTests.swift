@@ -558,41 +558,35 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertTrue(vm.project?.segments.allSatisfy { $0.detail == nil } == true)
     }
 
-    func testSequentialQueueContinuesAfterFailureAndResumeDoesNotResubmit() async throws {
+    func testSequentialQueueContinuesAfterFailureAndDurableJobsDoNotResubmit() async throws {
         let (vm, store, service) = try await fixture()
         await service.setVideoFailure(true)
         let draft = try await readyProject(store)
         _ = await vm.create(draft, availableModels: models)
         vm.selectedSegments = ["s1", "s2"]
         vm.generateBatch(availableModels: models); try await idle(vm)
-        XCTAssertEqual(vm.project?.segments[0].attempt?.jobID, "remote-job")
-        XCTAssertEqual(vm.project?.segments[1].attempt?.jobID, "remote-job",
+        XCTAssertNotNil(vm.project?.segments[0].videoJobRecordID)
+        XCTAssertNotNil(vm.project?.segments[1].videoJobRecordID,
                        "One failed segment must not stop the next sequential submission")
+        XCTAssertNil(vm.project?.segments[0].attempt)
+        XCTAssertNil(vm.project?.segments[1].attempt)
         let persisted = try await store.load(owner: "alice")
-        XCTAssertEqual(persisted.projects[0].segments[0].attempt?.jobID, "remote-job")
-        XCTAssertEqual(persisted.projects[0].segments[1].attempt?.jobID, "remote-job")
+        XCTAssertNotNil(persisted.projects[0].segments[0].videoJobRecordID)
+        XCTAssertNotNil(persisted.projects[0].segments[1].videoJobRecordID)
         let capturedSubmittedRequest = await service.lastVideoRequest()
         let submittedRequest = try XCTUnwrap(capturedSubmittedRequest)
         let submittedFrame = try XCTUnwrap(submittedRequest.inputImage)
         XCTAssertTrue(submittedFrame.base64Data.isEmpty)
-        XCTAssertEqual(
-            try Data(contentsOf: XCTUnwrap(submittedFrame.fileURL)),
-            Data("test-image".utf8)
-        )
+        let submittedInputData = await service.lastVideoInputData()
+        XCTAssertEqual(submittedInputData, Data("test-image".utf8))
         vm.generateBatch(availableModels: models); try await idle(vm)
         // Both segments remain locked to their original provider jobs.
-        var events = await service.events()
+        let events = await service.events()
         XCTAssertEqual(events.filter { $0 == "video" }.count, 2)
-        await service.setVideoFailure(false)
-        vm.resumeVideo("s1"); try await idle(vm)
-        events = await service.events()
-        XCTAssertEqual(events.filter { $0 == "video" }.count, 2)
-        XCTAssertEqual(events.filter { $0 == "resume" }.count, 1)
-        XCTAssertNotNil(vm.project?.segments[0].video)
         vm.selectedSegments = ["s1"]
         vm.generateBatch(availableModels: models); try await idle(vm)
         let last = await service.events()
-        XCTAssertEqual(last, events, "A completed segment cannot be resubmitted by batch")
+        XCTAssertEqual(last, events, "A durable failed segment cannot be resubmitted by batch")
     }
 
     func testSelectedVideosRunSequentiallySoActualTailCanFeedTheNextRequest() async throws {
@@ -715,7 +709,8 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertNil(request.lastFrameImage)
         let referenceVideo = try XCTUnwrap(request.referenceVideo)
         XCTAssertTrue(referenceVideo.base64Data.isEmpty)
-        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(referenceVideo.fileURL)), previousBytes)
+        let capturedReferenceData = await service.lastVideoReferenceData()
+        XCTAssertEqual(capturedReferenceData, previousBytes)
         XCTAssertEqual(request.referencePurpose, .extend)
         XCTAssertTrue(request.prompt.contains("参考视频1就是紧邻本段之前的完整成片"))
     }
@@ -802,7 +797,8 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertNil(request.lastFrameImage)
         let referenceVideo = try XCTUnwrap(request.referenceVideo)
         XCTAssertTrue(referenceVideo.base64Data.isEmpty)
-        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(referenceVideo.fileURL)), Data("old-video".utf8))
+        let capturedReferenceData = await service.lastVideoReferenceData()
+        XCTAssertEqual(capturedReferenceData, Data("old-video".utf8))
         XCTAssertEqual(request.referencePurpose, .edit)
         XCTAssertTrue(request.prompt.contains("参考视频1就是本段需要修改的原视频"))
         XCTAssertTrue(request.prompt.contains("节奏更舒缓"))
@@ -855,7 +851,7 @@ final class StoryStudioTests: XCTestCase {
         let events = await service.events(); XCTAssertTrue(events.isEmpty)
     }
 
-    func testPreflightVideoFailureReleasesIntentWithoutInventingARecoverableTask() async throws {
+    func testPreflightVideoFailureRemainsOwnedByDurableJobAfterHandoff() async throws {
         let (vm, store, service) = try await fixture()
         await service.setPreflightVideoFailure(true)
         let draft = try await readyProject(store)
@@ -865,7 +861,9 @@ final class StoryStudioTests: XCTestCase {
         try await idle(vm)
 
         let segment = try XCTUnwrap(vm.project?.segments.first)
-        XCTAssertNil(segment.attempt, "A request rejected before POST must not retain a fake remote-task lock")
+        XCTAssertNil(segment.attempt)
+        XCTAssertNotNil(segment.videoJobRecordID,
+                        "Once handoff commits, failures must not recreate the legacy writer")
         XCTAssertEqual(segment.error, "preflight rejected")
         XCTAssertNil(segment.video)
     }

@@ -247,6 +247,59 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         XCTAssertEqual(repeatedActivation.snapshot.stateVersion, activated.snapshot.stateVersion)
     }
 
+    func testProviderIdentityCannotChangeAfterFirstDurableObservation() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        let session = UUID()
+        let prepared = try await store.prepare(
+            request: request(prompt: "provider identity"),
+            owner: "alice",
+            sessionEpoch: session
+        )
+        _ = try await store.markSubmitting(
+            id: prepared.snapshot.id,
+            owner: "alice",
+            sessionEpoch: session
+        )
+        try await store.recordProgress(
+            id: prepared.snapshot.id,
+            owner: "alice",
+            sessionEpoch: session,
+            progress: .init(status: "queued", jobID: "provider-a")
+        )
+
+        do {
+            try await store.recordProgress(
+                id: prepared.snapshot.id,
+                owner: "alice",
+                sessionEpoch: session,
+                progress: .init(status: "running", jobID: "provider-b")
+            )
+            XCTFail("A provider task must not be rebound after its identity is durable")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                MediaStudioVideoJobStoreError.jobConflict.localizedDescription
+            )
+        }
+        do {
+            try await store.markFinalizing(
+                id: prepared.snapshot.id,
+                owner: "alice",
+                sessionEpoch: session,
+                providerJobID: "provider-b"
+            )
+            XCTFail("Finalization must retain the first provider identity")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                MediaStudioVideoJobStoreError.jobConflict.localizedDescription
+            )
+        }
+        let snapshot = try await store.snapshot(id: prepared.snapshot.id, owner: "alice")
+        XCTAssertEqual(snapshot.providerJobID, "provider-a")
+    }
+
     func testManifestWithoutWorkloadRemainsGenericStudioCompatible() async throws {
         let root = try directory().appendingPathComponent("jobs")
         let store = MediaStudioVideoJobStore(root: root)

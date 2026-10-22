@@ -1152,6 +1152,23 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批仅提供 project schema 与事务边界，尚未在 `StoryVideoGenerationAdapter` 接入 stage/handoff/activate，也没有启动时按 `videoJobRecordID` 恢复任务，因此正常产品路径还不会写 v3 关联。下一批应迁移新 Story 单段/直连视频并补 stage 后、project handoff 后、activate 后三个崩溃点的端到端测试；旧 Batch provider job 导入继续保持独立阶段。Worker、长期 lease、staging 限龄清理和真实强杀矩阵仍未完成，P0-E 不能标记完成。
 
+### 12.26 第二十六批实施记录：Story 单段视频接入 durable job 生命周期（2026-10-22）
+
+本批让新 Story 单段/直连视频首次实际执行 12.24–12.25 冻结的所有权协议。原适配器会把 provider job ID/status、业务结果和错误全部写回 `segment.attempt`；现在 handoff 之后只有 MediaJobStore 推进 provider 状态，Story project 只保留稳定关联、最终视频和业务错误。
+
+已实施：
+
+- 新任务固定执行 `begin legacy intent → 组装完整请求 → stagePrepared(attempt UUID) → Story manifest handoff → activate → markSubmitting → provider create`。provider progress 只写 MediaJobStore，百分比仍通过轻量事件实时显示；相同 status/job ID 的轮询由 gate 合并，不再为百分比风暴重复改写 manifest。
+- 旧 Story attempt 仅在已经持有非空 provider job ID 时可导入；导入记录不保存 create 输入，handoff/activate 后只调用 `resumeVideo`，不会回退到 create。顶层 Media Studio 与 Story composition 显式共享同一个 MediaJobStore；隔离测试和独立 Story composition 则把 job root 放在对应 Story root 下，不接触真实用户目录。
+- 账号 session UUID 现在穿过 Core use case 和 adapter，stage/activate/progress/finalize/failure/cancel 都携带同一 epoch；Store 抢占后的旧 writer 会收到 `staleSession`，适配器在失败写 Story 业务字段前也重新执行 continuation fencing。
+- provider 返回后先 `markFinalizing`，再按 `videoJobRecordID` 幂等保存 Story 视频，最后 `markCompleted`。若崩溃发生在 Story 保存之后、job completed 之前，同一 provider result 会复用已提交的 `StoryVideo` 和文件；actor 在异步文件复制后重新读取最新 manifest，并删除竞态中落败的候选文件，避免 finalize 重放产生重复 mp4。
+- handoff 后的错误只更新 durable job 状态和 Story 业务错误，不重建 legacy attempt。provider identity 第一次持久化后不可被后续 progress/result 改成另一个 ID，空 ID 和冲突 ID 都拒绝进入 finalizing/completed。
+- Core 事件/终态身份校验同时接受迁移前 attempt UUID 和迁移后的 `videoJobRecordID`，但完成、失败和提交前失败仍分别校验视频/错误及所有权字段组合，外来 segment/job 结果不能通过。
+
+验证：新增新 Story create 只执行一次且最终 durable record 为 completed、旧 provider task 导入只 resume 不 create、Story finalize 重放不重复文件、provider identity 不可改绑，以及 v3 事件/结果身份过滤回归；现有顺序队列、页面离开、参考视频、重新生成、preflight 失败和输入副本回收测试同步适配 durable 生命周期。Debug 与 arm64 Release 选择性运行 Story/Core/MediaJobStore 各 95 项，全部通过；Swift 6 编译与并发检查、`git diff --check` 同步作为门禁。
+
+边界：本批只迁移当前进程内主动发起的 Story 单段/直连任务，尚未在项目加载后扫描 `videoJobRecordID` 并执行 staged activate、prepared create、已有 provider ID resume 或 submission-uncertain 人工核对。因此 handoff 后进程退出的任务必须由下一批启动恢复协调器接管，本批不能宣称 Story 恢复闭环完成。旧持久 Batch 的分页导入、明确的 durable failed-job 人工释放/重试入口、staging 限龄清理、长期 lease/App→Worker 交接、真实强杀矩阵和 Media Worker 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

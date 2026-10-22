@@ -76,7 +76,8 @@ struct StoryVideoGenerationUseCaseTests {
             modelConfigID: "video", prompt: "foreign", size: "768P", ratio: "16:9"
         )
         var active = project
-        active.segments[0].attempt = prepared.attempt
+        active.version = 3
+        active.segments[0].videoJobRecordID = prepared.attempt.id
         var completed = active
         completed.segments[0].video = .init(filename: "video.mp4", jobID: "job", modelName: "MiniMax-H3")
         let generator = StubStoryVideoGenerator(
@@ -90,6 +91,7 @@ struct StoryVideoGenerationUseCaseTests {
 
         let outcome = try await StoryVideoGenerationUseCase(generator: generator).execute(
             ownerUserID: "alice",
+            accountSessionID: UUID(),
             command: prepared,
             continuationCheck: {},
             onEvent: { await collector.append($0) }
@@ -123,6 +125,7 @@ struct StoryVideoGenerationUseCaseTests {
         await #expect(throws: StoryVideoGenerationError.identityMismatch) {
             _ = try await useCase.execute(
                 ownerUserID: "alice",
+                accountSessionID: UUID(),
                 command: prepared,
                 continuationCheck: {},
                 onEvent: { _ in }
@@ -223,6 +226,7 @@ private struct StubStoryVideoGenerator: StoryVideoGenerating {
 
     func executeStoryVideoGeneration(
         ownerUserID: String,
+        accountSessionID: UUID,
         command: StoryVideoGenerationCommand,
         continuationCheck: @escaping @Sendable () async throws -> Void,
         onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void

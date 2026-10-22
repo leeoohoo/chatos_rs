@@ -128,7 +128,11 @@ final class MediaStudioViewModel: ObservableObject {
         self.imageReferenceUseCase = MediaStudioImageReferenceUseCase(
             importer: imageReferenceImporter
         )
-        self.stories = StoryStudioViewModel(media: service, planner: storyPlanner)
+        self.stories = StoryStudioViewModel(
+            media: service,
+            planner: storyPlanner,
+            videoJobStore: videoJobStore
+        )
     }
 
     deinit {

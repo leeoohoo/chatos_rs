@@ -408,6 +408,54 @@ actor StoryProjectStore {
         return (project, video)
     }
 
+    /// Finalizes a video only while the Story manifest still points at the matching durable
+    /// MediaJobStore record. Replaying the same provider result after a crash is read-only and
+    /// reuses the already committed file instead of producing another local copy.
+    func completeVideoGenerationFromMediaJob(
+        _ result: VideoGenerationResult,
+        projectID: UUID,
+        segmentID: String,
+        jobRecordID: UUID,
+        owner: String
+    ) async throws -> (StoryProject, StoryVideo) {
+        var project = try loadProject(projectID: projectID, owner: owner)
+        guard let initialIndex = project.segments.firstIndex(where: { $0.id == segmentID }),
+              project.segments[initialIndex].videoJobRecordID == jobRecordID,
+              project.segments[initialIndex].attempt == nil else {
+            throw StoryError.unresolvedSubmission
+        }
+        if let existing = project.segments[initialIndex].video {
+            guard existing.jobID == result.id else { throw StoryError.unresolvedSubmission }
+            return (project, existing)
+        }
+
+        let candidate = try await saveVideo(result, projectID: projectID, owner: owner)
+        let candidateURL = try fileURL(candidate.filename, projectID: projectID, owner: owner)
+        do {
+            // `saveVideo` suspends for bounded file I/O. Re-read the manifest so a concurrent
+            // replay cannot overwrite a result that won the race while this actor was reentrant.
+            project = try loadProject(projectID: projectID, owner: owner)
+            guard let index = project.segments.firstIndex(where: { $0.id == segmentID }),
+                  project.segments[index].videoJobRecordID == jobRecordID,
+                  project.segments[index].attempt == nil else {
+                throw StoryError.unresolvedSubmission
+            }
+            if let existing = project.segments[index].video {
+                guard existing.jobID == result.id else { throw StoryError.unresolvedSubmission }
+                try? FileManager.default.removeItem(at: candidateURL)
+                return (project, existing)
+            }
+            project.segments[index].video = candidate
+            project.segments[index].error = nil
+            project.updatedAt = Date()
+            try save(project, owner: owner)
+            return (project, candidate)
+        } catch {
+            try? FileManager.default.removeItem(at: candidateURL)
+            throw error
+        }
+    }
+
     /// Saves the frame decoded from a completed local video without replacing the
     /// pre-generated tail that was confirmed as guidance for the video provider.
     func applyActualVideoLastFrame(_ data: Data, projectID: UUID, segmentID: String,
@@ -447,6 +495,29 @@ actor StoryProjectStore {
               project.segments[index].attempt?.id == attemptID else {
             throw StoryError.unresolvedSubmission
         }
+        project.segments[index].error = error
+        project.updatedAt = Date()
+        try save(project, owner: owner)
+        return project
+    }
+
+    /// Persists only the Story-facing error after MediaJobStore has become the sole task
+    /// owner. It never recreates a legacy attempt or changes the durable record association.
+    func failVideoGenerationFromMediaJob(
+        _ error: String,
+        projectID: UUID,
+        segmentID: String,
+        jobRecordID: UUID,
+        owner: String
+    ) throws -> StoryProject {
+        var project = try loadProject(projectID: projectID, owner: owner)
+        guard let index = project.segments.firstIndex(where: { $0.id == segmentID }),
+              project.segments[index].videoJobRecordID == jobRecordID,
+              project.segments[index].attempt == nil,
+              project.segments[index].video == nil else {
+            throw StoryError.unresolvedSubmission
+        }
+        guard project.segments[index].error != error else { return project }
         project.segments[index].error = error
         project.updatedAt = Date()
         try save(project, owner: owner)

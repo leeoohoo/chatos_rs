@@ -3,28 +3,23 @@ import ChatOSCore
 import Foundation
 
 private actor StoryVideoProgressPersistenceGate {
-    private var project: StoryProject
     private var persistedStatus: String?
     private var persistedJobID: String?
+    private(set) var error: (any Error)?
 
-    init(project: StoryProject, segmentID: String) {
-        self.project = project
-        let attempt = project.segments.first(where: { $0.id == segmentID })?.attempt
-        persistedStatus = attempt?.status
-        persistedJobID = attempt?.jobID
-    }
-
-    func project(
+    func persist(
         for progress: VideoGenerationProgress,
-        persist: @Sendable () async throws -> StoryProject
-    ) async throws -> StoryProject {
+        operation: @Sendable () async throws -> Void
+    ) async throws {
         let introducesJobID = progress.jobID.map { $0 != persistedJobID } ?? false
-        guard progress.status != persistedStatus || introducesJobID else { return project }
-        let saved = try await persist()
-        project = saved
+        guard progress.status != persistedStatus || introducesJobID else { return }
+        try await operation()
         persistedStatus = progress.status
         if let jobID = progress.jobID { persistedJobID = jobID }
-        return saved
+    }
+
+    func fail(_ error: any Error) {
+        if self.error == nil { self.error = error }
     }
 }
 
@@ -33,6 +28,7 @@ private actor StoryVideoProgressPersistenceGate {
 struct StoryVideoGenerationAdapter: StoryVideoGenerating {
     let store: StoryProjectStore
     let media: any MediaGenerationServicing
+    let videoJobStore: MediaStudioVideoJobStore
 
     nonisolated func prepareStoryVideoGeneration(
         ownerUserID: String,
@@ -66,10 +62,20 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
 
     func executeStoryVideoGeneration(
         ownerUserID: String,
+        accountSessionID: UUID,
         command: StoryVideoGenerationCommand,
         continuationCheck: @escaping @Sendable () async throws -> Void,
         onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
     ) async throws -> StoryVideoGenerationOutcome {
+        let localJobID = command.attempt.id
+        let workload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: command.projectID,
+            segmentID: command.segmentID,
+            attemptID: localJobID
+        )
+        var durableProject: StoryProject?
+        var activated = false
+        var phase = "preparing"
         do {
             try await continuationCheck()
             let service: any MediaGenerationServicing
@@ -81,7 +87,6 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
             try await continuationCheck()
 
             let request: VideoGenerationRequest
-            let result: VideoGenerationResult
             switch command.kind {
             case let .start(model):
                 let intent = try await store.beginVideoGeneration(
@@ -90,10 +95,6 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
                     attempt: command.attempt,
                     owner: ownerUserID
                 )
-                await onEvent(.init(
-                    project: intent.project,
-                    progress: .init(status: "submitting")
-                ))
                 try await continuationCheck()
                 request = try await makeRequest(
                     command: command,
@@ -102,14 +103,13 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
                     ownerUserID: ownerUserID,
                     continuationCheck: continuationCheck
                 )
-                result = try await service.generateVideo(
-                    request,
-                    progress: progressHandler(
-                        command: command,
-                        ownerUserID: ownerUserID,
-                        fallbackProject: intent.project,
-                        onEvent: onEvent
-                    )
+                phase = "staging"
+                _ = try await videoJobStore.stagePrepared(
+                    request: request,
+                    id: localJobID,
+                    owner: ownerUserID,
+                    sessionEpoch: accountSessionID,
+                    workload: workload
                 )
             case let .resume(jobID):
                 request = .init(
@@ -119,33 +119,136 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
                     seconds: command.attempt.seconds,
                     ratio: command.attempt.ratio
                 )
-                await onEvent(.init(
-                    project: command.project,
-                    progress: .init(status: "checking")
-                ))
-                guard let resumable = service as? any ResumableVideoGenerationServicing else {
-                    throw StoryError.unavailable
-                }
-                result = try await resumable.resumeVideo(
-                    request,
-                    jobID: jobID,
-                    progress: progressHandler(
-                        command: command,
-                        ownerUserID: ownerUserID,
-                        fallbackProject: command.project,
-                        onEvent: onEvent
-                    )
+                phase = "importing"
+                _ = try await videoJobStore.stageImportedProviderJob(
+                    request: request,
+                    id: localJobID,
+                    providerJobID: jobID,
+                    owner: ownerUserID,
+                    sessionEpoch: accountSessionID,
+                    workload: workload
                 )
             }
 
             try await continuationCheck()
-            let completed = try await store.completeVideoGeneration(
+            phase = "handoff"
+            let handedOff = try await store.handoffVideoGenerationToMediaJob(
+                projectID: command.projectID,
+                segmentID: command.segmentID,
+                expectedAttempt: command.attempt,
+                owner: ownerUserID
+            )
+            durableProject = handedOff
+            await onEvent(.init(
+                project: handedOff,
+                progress: .init(status: "prepared")
+            ))
+
+            try await continuationCheck()
+            phase = "activating"
+            var execution = try await videoJobStore.activate(
+                id: localJobID,
+                owner: ownerUserID,
+                sessionEpoch: accountSessionID,
+                workload: workload
+            )
+            activated = true
+
+            switch execution.mode {
+            case .create:
+                phase = "submitting"
+                execution = try await videoJobStore.markSubmitting(
+                    id: localJobID,
+                    owner: ownerUserID,
+                    sessionEpoch: accountSessionID
+                )
+                await onEvent(.init(
+                    project: handedOff,
+                    progress: .init(status: "submitting")
+                ))
+            case let .resume(providerJobID):
+                phase = "running"
+                await onEvent(.init(
+                    project: handedOff,
+                    progress: .init(status: "checking")
+                ))
+                guard case .resume(let expectedProviderJobID) = command.kind,
+                      expectedProviderJobID == providerJobID else {
+                    throw StoryError.unresolvedSubmission
+                }
+            case .needsReview:
+                throw StoryError.unresolvedSubmission
+            }
+
+            let persistenceGate = StoryVideoProgressPersistenceGate()
+            let progress = progressHandler(
+                localJobID: localJobID,
+                ownerUserID: ownerUserID,
+                accountSessionID: accountSessionID,
+                project: handedOff,
+                persistenceGate: persistenceGate,
+                onEvent: onEvent
+            )
+            let result: VideoGenerationResult
+            do {
+                switch execution.mode {
+                case .create:
+                    result = try await service.generateVideo(execution.request, progress: progress)
+                case let .resume(providerJobID):
+                    guard let resumable = service as? any ResumableVideoGenerationServicing else {
+                        throw StoryError.unavailable
+                    }
+                    result = try await resumable.resumeVideo(
+                        execution.request,
+                        jobID: providerJobID,
+                        progress: progress
+                    )
+                case .needsReview:
+                    throw StoryError.unresolvedSubmission
+                }
+            } catch {
+                if let persistenceError = await persistenceGate.error { throw persistenceError }
+                throw error
+            }
+            if let persistenceError = await persistenceGate.error { throw persistenceError }
+            defer { result.videoFile?.removeIfNeeded() }
+
+            try await continuationCheck()
+            phase = "finalizing"
+            try await videoJobStore.markFinalizing(
+                id: localJobID,
+                owner: ownerUserID,
+                sessionEpoch: accountSessionID,
+                providerJobID: result.id
+            )
+            await onEvent(.init(
+                project: handedOff,
+                progress: .init(status: "saving")
+            ))
+            let completed = try await store.completeVideoGenerationFromMediaJob(
                 result,
                 projectID: command.projectID,
                 segmentID: command.segmentID,
-                attemptID: command.attempt.id,
+                jobRecordID: localJobID,
                 owner: ownerUserID
             )
+            do {
+                try await videoJobStore.markCompleted(
+                    id: localJobID,
+                    owner: ownerUserID,
+                    sessionEpoch: accountSessionID,
+                    providerJobID: result.id
+                )
+            } catch {
+                // The Story result is already durable and replay-safe. Leave the job in
+                // finalizing so startup recovery can reconcile it without duplicating media.
+                await onEvent(.init(
+                    project: completed.0,
+                    progress: .init(status: "saving"),
+                    error: "视频已保存，任务状态将在下次恢复时核对：\(error.localizedDescription)"
+                ))
+                return .init(project: completed.0, status: .completed)
+            }
             result.videoFile?.removeIfNeeded()
             var finalProject = completed.0
             do {
@@ -171,11 +274,60 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
             try await continuationCheck()
             return .init(project: finalProject, status: .completed)
         } catch {
-            if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            if error is CancellationError || Task.isCancelled {
+                if activated {
+                    try? await videoJobStore.markCancellation(
+                        id: localJobID,
+                        owner: ownerUserID,
+                        sessionEpoch: accountSessionID
+                    )
+                }
+                throw CancellationError()
+            }
+            do {
+                try await continuationCheck()
+            } catch {
+                if activated {
+                    try? await videoJobStore.markCancellation(
+                        id: localJobID,
+                        owner: ownerUserID,
+                        sessionEpoch: accountSessionID
+                    )
+                }
+                throw CancellationError()
+            }
             let failed: StoryProject
             let status: StoryVideoGenerationOutcomeStatus
-            if let failure = error as? any MediaGenerationSubmissionFailure,
-               !failure.requestMayHaveBeenSubmitted {
+            if durableProject != nil {
+                if activated {
+                    let mayHaveSubmitted = (error as? any MediaGenerationSubmissionFailure)?
+                        .requestMayHaveBeenSubmitted ?? true
+                    do {
+                        try await videoJobStore.markFailure(
+                            id: localJobID,
+                            owner: ownerUserID,
+                            sessionEpoch: accountSessionID,
+                            phase: phase,
+                            message: error.localizedDescription,
+                            requestMayHaveBeenSubmitted: mayHaveSubmitted,
+                            retryable: true
+                        )
+                    } catch MediaStudioVideoJobStoreError.staleSession {
+                        throw CancellationError()
+                    } catch {
+                        // The Story error is still useful when a same-session state write
+                        // fails; the durable manifest remains conservative for recovery.
+                    }
+                }
+                failed = try await store.failVideoGenerationFromMediaJob(
+                    error.localizedDescription,
+                    projectID: command.projectID,
+                    segmentID: command.segmentID,
+                    jobRecordID: localJobID,
+                    owner: ownerUserID
+                )
+                status = .failedRetainingAttempt
+            } else if case .start = command.kind {
                 failed = try await store.failVideoGenerationBeforeSubmission(
                     error.localizedDescription,
                     projectID: command.projectID,
@@ -276,24 +428,21 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
     }
 
     private func progressHandler(
-        command: StoryVideoGenerationCommand,
+        localJobID: UUID,
         ownerUserID: String,
-        fallbackProject: StoryProject,
+        accountSessionID: UUID,
+        project: StoryProject,
+        persistenceGate: StoryVideoProgressPersistenceGate,
         onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
     ) -> @Sendable (VideoGenerationProgress) async -> Void {
-        let persistenceGate = StoryVideoProgressPersistenceGate(
-            project: fallbackProject,
-            segmentID: command.segmentID
-        )
         return { value in
             do {
-                let project = try await persistenceGate.project(for: value) {
-                    try await store.updateVideoGenerationProgress(
-                        value,
-                        projectID: command.projectID,
-                        segmentID: command.segmentID,
-                        attemptID: command.attempt.id,
-                        owner: ownerUserID
+                try await persistenceGate.persist(for: value) {
+                    try await videoJobStore.recordProgress(
+                        id: localJobID,
+                        owner: ownerUserID,
+                        sessionEpoch: accountSessionID,
+                        progress: value
                     )
                 }
                 await onEvent(.init(
@@ -301,8 +450,9 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
                     progress: .init(status: value.status, percent: value.percent)
                 ))
             } catch {
+                await persistenceGate.fail(error)
                 await onEvent(.init(
-                    project: fallbackProject,
+                    project: project,
                     progress: .init(status: value.status, percent: value.percent),
                     error: "保存任务 ID 失败，请保留任务 ID \(value.jobID ?? "未知")，勿重复提交：\(error.localizedDescription)"
                 ))

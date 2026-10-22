@@ -9,6 +9,7 @@ extension StoryStudioViewModel {
         media: any MediaGenerationServicing,
         planner: (any StoryPlanningServicing)? = nil,
         store: StoryProjectStore = StoryProjectStore(),
+        videoJobStore: MediaStudioVideoJobStore? = nil,
         projectCatalog: (any StoryProjectCatalogLoading)? = nil,
         projectMutation: (any StoryProjectMutationPersisting)? = nil,
         agentServices: (any AgentServiceProviding)? = nil,
@@ -23,6 +24,11 @@ extension StoryStudioViewModel {
         storyVideoTailExtraction: (any StoryVideoTailExtracting)? = nil,
         agentSettings: AgentSettingsStore = .init()
     ) {
+        // The top-level Media Studio passes its shared store explicitly. Standalone Story
+        // compositions (including isolated tests) keep durable jobs beside their Story root.
+        let resolvedVideoJobStore = videoJobStore ?? MediaStudioVideoJobStore(
+            root: store.root.appendingPathComponent("MediaJobs", isDirectory: true)
+        )
         let resolvedAgentServices = agentServices ?? (planner as? any AgentServiceProviding)
         let resolvedStoryPlanning: StoryPlanningUseCase?
         if let storyPlanning {
@@ -74,7 +80,8 @@ extension StoryStudioViewModel {
             storyVideoGeneration: StoryVideoGenerationUseCase(
                 generator: storyVideoGeneration ?? StoryVideoGenerationAdapter(
                     store: store,
-                    media: media
+                    media: media,
+                    videoJobStore: resolvedVideoJobStore
                 )
             ),
             storyVideoTailExtraction: StoryVideoTailExtractionUseCase(

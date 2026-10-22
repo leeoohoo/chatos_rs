@@ -80,6 +80,7 @@ public protocol StoryVideoGenerating: Sendable {
 
     func executeStoryVideoGeneration(
         ownerUserID: String,
+        accountSessionID: UUID,
         command: StoryVideoGenerationCommand,
         continuationCheck: @escaping @Sendable () async throws -> Void,
         onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
@@ -159,6 +160,7 @@ public struct StoryVideoGenerationUseCase: Sendable {
 
     public func execute(
         ownerUserID ownerInput: String,
+        accountSessionID: UUID,
         command: StoryVideoGenerationCommand,
         continuationCheck: @escaping @Sendable () async throws -> Void,
         onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
@@ -168,6 +170,7 @@ public struct StoryVideoGenerationUseCase: Sendable {
         try await continuationCheck()
         let outcome = try await generator.executeStoryVideoGeneration(
             ownerUserID: owner,
+            accountSessionID: accountSessionID,
             command: command,
             continuationCheck: continuationCheck,
             onEvent: { event in
@@ -203,9 +206,12 @@ public struct StoryVideoGenerationUseCase: Sendable {
         _ project: StoryProject,
         command: StoryVideoGenerationCommand
     ) -> Bool {
-        project.id == command.projectID
-            && project.segments.first(where: { $0.id == command.segmentID })?.attempt?.id
-                == command.attempt.id
+        guard project.id == command.projectID,
+              let segment = project.segments.first(where: {
+                  $0.id == command.segmentID
+              }) else { return false }
+        return segment.attempt?.id == command.attempt.id
+            || segment.videoJobRecordID == command.attempt.id
     }
 
     private static func accepts(
@@ -218,12 +224,16 @@ public struct StoryVideoGenerationUseCase: Sendable {
               }) else { return false }
         switch outcome.status {
         case .completed:
-            return segment.attempt?.id == command.attempt.id && segment.video != nil
+            return (segment.attempt?.id == command.attempt.id
+                    || segment.videoJobRecordID == command.attempt.id)
+                && segment.video != nil
         case .failedRetainingAttempt:
-            return segment.attempt?.id == command.attempt.id
+            return (segment.attempt?.id == command.attempt.id
+                    || segment.videoJobRecordID == command.attempt.id)
                 && segment.video == nil && segment.error != nil
         case .failedBeforeSubmission:
-            return segment.attempt == nil && segment.video == nil && segment.error != nil
+            return segment.attempt == nil && segment.videoJobRecordID == nil
+                && segment.video == nil && segment.error != nil
         }
     }
 

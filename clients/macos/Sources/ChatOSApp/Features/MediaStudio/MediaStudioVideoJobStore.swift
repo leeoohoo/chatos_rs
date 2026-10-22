@@ -352,6 +352,9 @@ actor MediaStudioVideoJobStore {
         let hadProviderJobID = record.providerJobID != nil
         if let providerJobID = progress.jobID?.trimmingCharacters(in: .whitespacesAndNewlines),
            !providerJobID.isEmpty {
+            guard record.providerJobID == nil || record.providerJobID == providerJobID else {
+                throw MediaStudioVideoJobStoreError.jobConflict
+            }
             record.providerJobID = providerJobID
         }
         let nextStatus: Status
@@ -380,10 +383,17 @@ actor MediaStudioVideoJobStore {
         sessionEpoch: UUID? = nil,
         providerJobID: String
     ) throws {
+        let providerJobID = providerJobID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !providerJobID.isEmpty else {
+            throw MediaStudioVideoJobStoreError.invalidProviderJob
+        }
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
         var record = try loadActive(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
+        guard record.providerJobID == nil || record.providerJobID == providerJobID else {
+            throw MediaStudioVideoJobStoreError.jobConflict
+        }
         record.providerJobID = providerJobID
         transition(&record, to: .finalizing)
         try removeInputs(for: &record)
@@ -396,10 +406,17 @@ actor MediaStudioVideoJobStore {
         sessionEpoch: UUID? = nil,
         providerJobID: String
     ) throws {
+        let providerJobID = providerJobID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !providerJobID.isEmpty else {
+            throw MediaStudioVideoJobStoreError.invalidProviderJob
+        }
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
         var record = try loadActive(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
+        guard record.providerJobID == nil || record.providerJobID == providerJobID else {
+            throw MediaStudioVideoJobStoreError.jobConflict
+        }
         record.providerJobID = providerJobID
         record.failurePhase = nil
         record.failureMessage = nil

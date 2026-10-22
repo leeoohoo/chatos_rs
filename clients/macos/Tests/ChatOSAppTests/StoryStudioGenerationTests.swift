@@ -6,6 +6,128 @@ import XCTest
 @testable import ChatOSApp
 
 extension StoryStudioTests {
+    func testStoryVideoStartTransfersToDurableJobBeforeProviderSubmission() async throws {
+        let (vm, store, service) = try await fixture()
+        let draft = try await readyProject(store)
+        let created = await vm.create(draft, availableModels: models)
+        XCTAssertTrue(created)
+
+        vm.selectedSegments = ["s1"]
+        vm.generateBatch(availableModels: models)
+        try await idle(vm)
+
+        let segment = try XCTUnwrap(vm.project?.segments.first(where: { $0.id == "s1" }))
+        let recordID = try XCTUnwrap(segment.videoJobRecordID)
+        XCTAssertNil(segment.attempt)
+        XCTAssertEqual(segment.video?.jobID, "remote-job")
+        XCTAssertNil(segment.error)
+        let jobStore = MediaStudioVideoJobStore(
+            root: store.root.appendingPathComponent("MediaJobs", isDirectory: true)
+        )
+        let snapshot = try await jobStore.snapshot(id: recordID, owner: "alice")
+        XCTAssertTrue(snapshot.isActive)
+        XCTAssertEqual(snapshot.status, .completed)
+        XCTAssertEqual(snapshot.providerJobID, "remote-job")
+        XCTAssertEqual(
+            snapshot.workload,
+            .storyVideo(projectID: draft.id, segmentID: "s1", attemptID: recordID)
+        )
+        let events = await service.events()
+        XCTAssertEqual(events.filter { $0 == "video" }.count, 1)
+        XCTAssertFalse(events.contains("resume"))
+    }
+
+    func testLegacyStoryResumeImportsProviderJobWithoutCreatingAgain() async throws {
+        let (vm, store, service) = try await fixture()
+        var draft = try await readyProject(store)
+        var attempt = StoryVideoAttempt(
+            modelConfigID: draft.models.videoModelID,
+            prompt: "legacy prompt",
+            size: "768P",
+            ratio: draft.ratio,
+            seconds: draft.segments[0].seconds
+        )
+        attempt.jobID = "legacy-provider-job"
+        attempt.status = "failed"
+        draft.segments[0].attempt = attempt
+        let created = await vm.create(draft, availableModels: models)
+        XCTAssertTrue(created)
+
+        vm.resumeVideo("s1")
+        try await idle(vm)
+
+        let segment = try XCTUnwrap(vm.project?.segments.first(where: { $0.id == "s1" }))
+        XCTAssertEqual(segment.videoJobRecordID, attempt.id)
+        XCTAssertNil(segment.attempt)
+        XCTAssertEqual(segment.video?.jobID, "legacy-provider-job")
+        let events = await service.events()
+        XCTAssertEqual(events.filter { $0 == "video" }.count, 0)
+        XCTAssertEqual(events.filter { $0 == "resume" }.count, 1)
+        let jobStore = MediaStudioVideoJobStore(
+            root: store.root.appendingPathComponent("MediaJobs", isDirectory: true)
+        )
+        let snapshot = try await jobStore.snapshot(id: attempt.id, owner: "alice")
+        XCTAssertEqual(snapshot.status, .completed)
+        XCTAssertEqual(snapshot.providerJobID, "legacy-provider-job")
+    }
+
+    func testStoryMediaJobFinalizationReplayDoesNotDuplicateVideoFile() async throws {
+        let (_, store, _) = try await fixture()
+        var project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        let attempt = StoryVideoAttempt(
+            modelConfigID: project.models.videoModelID,
+            prompt: "durable finalization",
+            size: "768P",
+            ratio: project.ratio,
+            seconds: project.segments[0].seconds
+        )
+        _ = try await store.beginVideoGeneration(
+            projectID: project.id,
+            segmentID: "s1",
+            attempt: attempt,
+            owner: "alice"
+        )
+        project = try await store.handoffVideoGenerationToMediaJob(
+            projectID: project.id,
+            segmentID: "s1",
+            expectedAttempt: attempt,
+            owner: "alice"
+        )
+        let result = VideoGenerationResult(
+            id: "same-provider-result",
+            modelConfigID: project.models.videoModelID,
+            modelName: "MiniMax-H3",
+            createdAt: "",
+            mimeType: "video/mp4",
+            videoData: Data("one-video".utf8)
+        )
+
+        let first = try await store.completeVideoGenerationFromMediaJob(
+            result,
+            projectID: project.id,
+            segmentID: "s1",
+            jobRecordID: attempt.id,
+            owner: "alice"
+        )
+        let replayed = try await store.completeVideoGenerationFromMediaJob(
+            result,
+            projectID: project.id,
+            segmentID: "s1",
+            jobRecordID: attempt.id,
+            owner: "alice"
+        )
+
+        XCTAssertEqual(replayed.1, first.1)
+        XCTAssertEqual(replayed.0.updatedAt, first.0.updatedAt)
+        let videoURL = try store.fileURL(first.1.filename, projectID: project.id, owner: "alice")
+        let videoFiles = try FileManager.default.contentsOfDirectory(
+            at: videoURL.deletingLastPathComponent(),
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "mp4" }
+        XCTAssertEqual(videoFiles.map(\.lastPathComponent), [first.1.filename])
+    }
+
     func testVideoJobHandoffAtomicallyReplacesLegacyAttemptAndPreservesOwnership() async throws {
         let (_, store, _) = try await fixture()
         var project = try await readyProject(store)

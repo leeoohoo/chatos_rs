@@ -96,6 +96,8 @@ struct StoryTestPreflightError: LocalizedError, MediaGenerationSubmissionFailure
 actor StoryTestService: ResumableVideoGenerationServicing, StoryPlanningServicing {
     private var calls: [String] = []
     private var videoRequests: [VideoGenerationRequest] = []
+    private var lastVideoInputBytes: Data?
+    private var lastVideoReferenceBytes: Data?
     private var failVideo = false
     private var preflightVideoFailure = false
     private var delayed = false
@@ -107,6 +109,8 @@ actor StoryTestService: ResumableVideoGenerationServicing, StoryPlanningServicin
     func setDelay(_ value: Bool) { delayed = value }
     func maximumConcurrentVideoCalls() -> Int { maximumVideoCalls }
     func lastVideoRequest() -> VideoGenerationRequest? { videoRequests.last }
+    func lastVideoInputData() -> Data? { lastVideoInputBytes }
+    func lastVideoReferenceData() -> Data? { lastVideoReferenceBytes }
     func fetchModels() async throws -> [MediaGenerationModel] { [] }
     func plan(_ request: StoryPlanningRequest) async throws -> Data {
         calls.append(request.toolName)
@@ -125,6 +129,10 @@ actor StoryTestService: ResumableVideoGenerationServicing, StoryPlanningServicin
     func generateVideo(_ request: VideoGenerationRequest, progress: @escaping @Sendable (VideoGenerationProgress) async -> Void) async throws -> VideoGenerationResult {
         calls.append("video")
         videoRequests.append(request)
+        lastVideoInputBytes = request.inputImage?.fileURL.flatMap { try? Data(contentsOf: $0) }
+        lastVideoReferenceBytes = request.referenceVideo?.fileURL.flatMap {
+            try? Data(contentsOf: $0)
+        }
         if preflightVideoFailure { throw StoryTestPreflightError() }
         activeVideoCalls += 1
         maximumVideoCalls = max(maximumVideoCalls, activeVideoCalls)
@@ -135,9 +143,9 @@ actor StoryTestService: ResumableVideoGenerationServicing, StoryPlanningServicin
         return result(request)
     }
     func resumeVideo(_ request: VideoGenerationRequest, jobID: String, progress: @escaping @Sendable (VideoGenerationProgress) async -> Void) async throws -> VideoGenerationResult {
-        calls.append("resume"); return result(request)
+        calls.append("resume"); return result(request, id: jobID)
     }
-    private func result(_ request: VideoGenerationRequest) -> VideoGenerationResult {
-        .init(id: "remote-job", modelConfigID: request.modelConfigID, modelName: "MiniMax-H3", createdAt: "", mimeType: "video/mp4", videoData: Data("video".utf8))
+    private func result(_ request: VideoGenerationRequest, id: String = "remote-job") -> VideoGenerationResult {
+        .init(id: id, modelConfigID: request.modelConfigID, modelName: "MiniMax-H3", createdAt: "", mimeType: "video/mp4", videoData: Data("video".utf8))
     }
 }

@@ -290,6 +290,7 @@ extension StoryStudioViewModel {
             do {
                 result = .success(try await storyVideoGeneration.execute(
                     ownerUserID: owner,
+                    accountSessionID: token,
                     command: command,
                     continuationCheck: { [weak self] in
                         guard let self else { throw CancellationError() }
