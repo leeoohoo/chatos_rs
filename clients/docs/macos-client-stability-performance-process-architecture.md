@@ -1262,6 +1262,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：这是同一文件系统上协作式 App/App 互斥，不是 provider cancel、heartbeat、超时抢占或“lease 过期即证明旧副作用结束”。不遵守锁协议的旧客户端仍无法被 advisory lock 强制隔离；升级前仍需停止旧版本。App→Worker 必须显式完成 lease 所有权交接，不能先释放再靠 TTL 猜测；真实双 App `SIGKILL`、睡眠/断网及 Worker 组合矩阵仍待执行。全量历史 Batch 分页迁移、终态 job 引用对账/配额清理和 Media Worker 也仍待完成，P0-E 不能标记完成。
 
+### 12.33 第三十三批实施记录：旧 Story Batch 分页迁移协调器（2026-10-22）
+
+本批补齐 12.30 保留的静态历史迁移缺口。迁移绑定到用户实际读取的每一页 Batch 历史，不在登录或启动路径全盘扫描项目目录；首屏和“加载更早制作记录”使用同一协调器，因此落在第二页及更早页的未完成旧视频任务也能逐页切换到 MediaJobStore 单一事实源。
+
+已实施：
+
+- Story history application boundary 贯穿当前 account session epoch，默认 macOS adapter 共享生产 `MediaStudioVideoJobStore`。每页最多沿用既有 1～200 条上限，逐 Batch、逐 video step 执行 `stage/import → Batch/Story handoff → activate`，并在每个提交边界检查取消；切换账号后的旧分页任务不能用新 session 继续迁移。
+- 已有 provider ID 的 legacy job 只导入为 resume-only；没有 provider identity 的旧 intent 只导入 `submission_uncertain`，协调器不调用 provider，也不会因打开历史页重新 create。新版进程若死在输入已复制的 `prepared` 与 Batch handoff 之间，迁移会保留原输入副本和 create mode，而不会误降级成不确定提交。
+- 已经完成 handoff 的 staged record 会补 activate；active record 只校验 workload，不抢写 epoch。激活只发布 durable 可恢复所有权，返回的 execution lease 随即释放，真正的 provider 查询/提交仍只发生在用户显式恢复 Batch 时。
+- 单条迁移冲突不会让整页消失：原 Batch 文件保留，页面返回独立 migration issue 计数并提示用户；多 step 在后续步骤失败时会重新加载已提交的最新 manifest，避免把部分成功迁移显示成旧快照。迁移后的 canonical project 同页返回并更新 ViewModel，UI 不继续持有 legacy attempt 假象。
+- 分页 cursor 仍来自迁移前选出的稳定文件页；迁移导致当前页文件 mtime 更新不会触发无界重扫，也不会跳过 cursor 之后的更早候选。finished Batch 不创建无意义的 durable job，终态长期保留仍交给后续引用对账/配额策略。
+
+验证：覆盖旧 provider task 只在其历史页真正加载时导入、第二页 cursor 继续可达、无 provider ID 进入 review-only、prepared pre-handoff 崩溃保留输入/create mode、workload 冲突保留原 Batch 并计数，以及 Core 对迁移后 project 的身份校验。Debug 选择性运行 Story 91 项 XCTest 与 Story history 4 项 Swift Testing 全部通过；arm64 Release 同矩阵、Swift 6 编译与 `git diff --check` 作为本批提交门禁。
+
+边界：分页读取只完成 durable ownership 迁移，不自动恢复 provider 工作，也不迁移已完成历史任务。durable terminal job 的 Story/Batch 引用对账、owner 数量/字节配额与安全清理、App→Worker lease 显式交接、真实双 App/`SIGKILL`/睡眠/断网矩阵及 Media Worker 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

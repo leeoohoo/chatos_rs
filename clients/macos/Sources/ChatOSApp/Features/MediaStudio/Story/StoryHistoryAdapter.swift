@@ -7,6 +7,7 @@ import Foundation
 /// and provider job identities never cross this boundary.
 struct StoryHistoryAdapter: StoryHistoryLoading {
     let store: StoryProjectStore
+    let videoJobStore: MediaStudioVideoJobStore
 
     func loadStoryPlanningRuns(
         ownerUserID: String,
@@ -54,6 +55,7 @@ struct StoryHistoryAdapter: StoryHistoryLoading {
 
     func loadStoryMediaBatches(
         ownerUserID: String,
+        accountSessionID: UUID,
         projectID: UUID,
         after cursor: StoryHistoryCursor?,
         limit: Int
@@ -65,16 +67,48 @@ struct StoryHistoryAdapter: StoryHistoryLoading {
             limit: limit
         )
         var batches = page.batches
+        var migrationIssueCount = 0
+        var migratedProject: StoryProject?
+        let migration = StoryMediaBatchMigrationCoordinator(
+            store: store,
+            videoJobStore: videoJobStore
+        )
         for index in batches.indices {
             try Task.checkCancellation()
             if let recovered = try await store.reconcileCompletedVideoBatch(batches[index]) {
                 batches[index] = recovered
             }
+            do {
+                batches[index] = try await migration.migrate(
+                    batches[index],
+                    owner: ownerUserID,
+                    accountSessionID: accountSessionID
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                migrationIssueCount += 1
+                // A multi-step legacy batch may have committed earlier handoffs before a
+                // later step failed. Publish the latest valid file instead of a stale page
+                // snapshot, while preserving the original record if it cannot be reloaded.
+                if let latest = try? await store.loadMediaBatch(
+                    owner: ownerUserID,
+                    projectID: projectID,
+                    batchID: batches[index].id
+                ) {
+                    batches[index] = latest
+                }
+            }
+            if batches[index].draft != page.batches[index].draft {
+                migratedProject = batches[index].draft
+            }
         }
         return StoryMediaBatchHistoryPage(
             batches: batches.map(\.historySnapshot),
             unreadableCount: page.unreadable,
-            nextCursor: Self.historyCursor(page.nextCursor)
+            migrationIssueCount: migrationIssueCount,
+            nextCursor: Self.historyCursor(page.nextCursor),
+            migratedProject: migratedProject
         )
     }
 
@@ -84,6 +118,129 @@ struct StoryHistoryAdapter: StoryHistoryLoading {
 
     private static func historyCursor(_ cursor: StoryProjectStore.PageCursor?) -> StoryHistoryCursor? {
         cursor.map { .init(modifiedAt: $0.modifiedAt, recordID: $0.filename) }
+    }
+}
+
+/// Migrates only the bounded history page selected by `StoryProjectStore`. It never invokes a
+/// provider: legacy jobs with an identity become resume-only records, while jobs without one
+/// become explicit manual-review records. Each step uses the same stage -> business handoff ->
+/// activate protocol as live Batch execution, so every crash point is safe to replay.
+private struct StoryMediaBatchMigrationCoordinator: Sendable {
+    let store: StoryProjectStore
+    let videoJobStore: MediaStudioVideoJobStore
+
+    func migrate(
+        _ input: StoryMediaBatch,
+        owner: String,
+        accountSessionID: UUID
+    ) async throws -> StoryMediaBatch {
+        guard !input.finished else { return input }
+        var batch = input
+        for step in batch.steps where step.kind == .videos {
+            try Task.checkCancellation()
+            guard let job = batch.jobs[step.id], !job.completed else { continue }
+            let workload = MediaStudioVideoJobStore.Workload.storyBatchVideo(
+                projectID: batch.draft.id,
+                batchID: batch.id,
+                segmentID: step.targetID,
+                attemptID: job.intentID
+            )
+
+            if let recordID = job.videoJobRecordID {
+                guard recordID == job.intentID else { throw StoryError.unresolvedSubmission }
+                try await activateIfStaged(
+                    id: recordID,
+                    owner: owner,
+                    accountSessionID: accountSessionID,
+                    workload: workload
+                )
+                continue
+            }
+
+            guard let segment = batch.draft.segments.first(where: { $0.id == step.targetID }),
+                  segment.video == nil,
+                  segment.videoJobRecordID == nil,
+                  let attempt = segment.attempt,
+                  attempt.jobID == job.jobID else {
+                throw StoryError.unresolvedSubmission
+            }
+            let request = VideoGenerationRequest(
+                modelConfigID: attempt.modelConfigID,
+                prompt: attempt.prompt,
+                size: attempt.size,
+                seconds: attempt.seconds,
+                ratio: attempt.ratio
+            )
+            let existing = try await videoJobStore.snapshotIfPresent(
+                id: job.intentID,
+                owner: owner
+            )
+            if let existing, existing.status == .prepared {
+                // A current-version Batch may have durably copied its create inputs and then
+                // crashed before the business handoff. Preserve that safe create record; an
+                // uncertain legacy import would discard its inputs and make recovery impossible.
+                guard existing.workload == workload,
+                      existing.providerJobID == nil,
+                      job.jobID == nil else {
+                    throw MediaStudioVideoJobStoreError.jobConflict
+                }
+            } else if let providerJobID = job.jobID {
+                _ = try await videoJobStore.stageImportedProviderJob(
+                    request: request,
+                    id: job.intentID,
+                    providerJobID: providerJobID,
+                    owner: owner,
+                    sessionEpoch: accountSessionID,
+                    workload: workload
+                )
+            } else {
+                _ = try await videoJobStore.stageSubmissionUncertain(
+                    request: request,
+                    id: job.intentID,
+                    owner: owner,
+                    sessionEpoch: accountSessionID,
+                    workload: workload
+                )
+            }
+            try Task.checkCancellation()
+            batch = try await store.handoffMediaBatchVideoGenerationToMediaJob(
+                owner: owner,
+                projectID: batch.draft.id,
+                batchID: batch.id,
+                stepID: step.id,
+                expectedIntentID: job.intentID
+            )
+            try Task.checkCancellation()
+            try await activateIfStaged(
+                id: job.intentID,
+                owner: owner,
+                accountSessionID: accountSessionID,
+                workload: workload
+            )
+        }
+        return batch
+    }
+
+    private func activateIfStaged(
+        id: UUID,
+        owner: String,
+        accountSessionID: UUID,
+        workload: MediaStudioVideoJobStore.Workload
+    ) async throws {
+        let snapshot = try await videoJobStore.snapshot(id: id, owner: owner)
+        guard snapshot.workload == workload else {
+            throw MediaStudioVideoJobStoreError.jobConflict
+        }
+        guard !snapshot.isActive else { return }
+        let execution = try await videoJobStore.activate(
+            id: id,
+            owner: owner,
+            sessionEpoch: accountSessionID,
+            workload: workload
+        )
+        // Migration only publishes ownership. Releasing this value immediately releases the
+        // execution lease; provider work starts solely from the explicit resume path.
+        _ = execution.snapshot
     }
 }
 

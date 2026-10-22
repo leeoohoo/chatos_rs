@@ -1399,6 +1399,7 @@ private actor DeferredStoryHistory: StoryHistoryLoading {
 
     func loadStoryMediaBatches(
         ownerUserID: String,
+        accountSessionID: UUID,
         projectID: UUID,
         after cursor: StoryHistoryCursor?,
         limit: Int

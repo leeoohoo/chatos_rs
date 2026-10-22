@@ -20,6 +20,7 @@ extension StoryStudioViewModel {
             do {
                 result = .success(try await storyHistory.loadInitial(
                     ownerUserID: owner,
+                    accountSessionID: token,
                     projectID: projectID,
                     currentProject: canonical
                 ))
@@ -46,6 +47,10 @@ extension StoryStudioViewModel {
                    let projectIndex = self.projects.firstIndex(where: { $0.id == projectID }) {
                     self.projects[projectIndex] = recovered
                 }
+                if let migrated = outcome.mediaBatches.migratedProject,
+                   let projectIndex = self.projects.firstIndex(where: { $0.id == projectID }) {
+                    self.projects[projectIndex] = migrated
+                }
                 for run in outcome.planningRuns.runs {
                     self.publishAgentRun(run, token: token)
                 }
@@ -57,6 +62,9 @@ extension StoryStudioViewModel {
                 }
                 if outcome.mediaBatches.unreadableCount > 0 {
                     self.errorMessage = "有 \(outcome.mediaBatches.unreadableCount) 条制作批次无法读取，原文件已保留。"
+                }
+                if outcome.mediaBatches.migrationIssueCount > 0 {
+                    self.errorMessage = "有 \(outcome.mediaBatches.migrationIssueCount) 条旧制作批次未能切换到持久任务，原文件已保留。"
                 }
             case .failure(let error):
                 self.errorMessage = error.localizedDescription
@@ -126,6 +134,7 @@ extension StoryStudioViewModel {
             do {
                 result = .success(try await storyHistory.loadMoreMediaBatches(
                     ownerUserID: owner,
+                    accountSessionID: token,
                     projectID: projectID,
                     after: cursor
                 ))
@@ -144,6 +153,10 @@ extension StoryStudioViewModel {
             self.mediaBatchPageTask = nil
             switch result {
             case .success(let page):
+                if let migrated = page.migratedProject,
+                   let projectIndex = self.projects.firstIndex(where: { $0.id == projectID }) {
+                    self.projects[projectIndex] = migrated
+                }
                 for batch in page.batches {
                     self.publishMediaBatch(batch, token: token)
                 }
@@ -151,6 +164,9 @@ extension StoryStudioViewModel {
                 self.hasMoreMediaBatches = page.nextCursor != nil
                 if page.unreadableCount > 0 {
                     self.errorMessage = "有 \(page.unreadableCount) 条更早制作批次无法读取，原文件已保留。"
+                }
+                if page.migrationIssueCount > 0 {
+                    self.errorMessage = "有 \(page.migrationIssueCount) 条更早旧制作批次未能切换到持久任务，原文件已保留。"
                 }
             case .failure(let error):
                 self.errorMessage = error.localizedDescription

@@ -51,7 +51,10 @@ extension StoryStudioViewModel {
             ),
             storyPlanning: resolvedStoryPlanning,
             storyHistory: StoryHistoryUseCase(
-                history: storyHistory ?? StoryHistoryAdapter(store: store)
+                history: storyHistory ?? StoryHistoryAdapter(
+                    store: store,
+                    videoJobStore: resolvedVideoJobStore
+                )
             ),
             storyMediaBatch: StoryMediaBatchUseCase(
                 executor: storyMediaBatch ?? StoryMediaBatchExecutionAdapter(

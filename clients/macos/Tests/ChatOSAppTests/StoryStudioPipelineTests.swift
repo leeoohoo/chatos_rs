@@ -112,6 +112,329 @@ extension StoryStudioTests {
         XCTAssertEqual(snapshot.providerJobID, "legacy-provider-job")
     }
 
+    func testHistoryPaginationMigratesLegacyBatchWhenItsPageIsLoaded() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryBatchHistoryMigrationTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        let videoJobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("jobs", isDirectory: true)
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+
+        var newerFinished = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        newerFinished.status = .completed
+        try await store.commitMediaBatch(newerFinished)
+
+        var legacy = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        var job = StoryMediaBatch.Job()
+        job.jobID = "historical-provider-job"
+        legacy.jobs["videos:s1"] = job
+        legacy.draft.segments[0].attempt = .init(
+            modelConfigID: "video",
+            prompt: "historical prompt",
+            size: "768P",
+            ratio: "16:9",
+            seconds: 15
+        )
+        legacy.draft.segments[0].attempt?.jobID = job.jobID
+        try await store.commitMediaBatch(legacy)
+
+        let finishedURL = try store.fileURL(
+            "media-batch-\(newerFinished.id).json",
+            projectID: project.id,
+            owner: "alice"
+        )
+        let legacyURL = try store.fileURL(
+            "media-batch-\(legacy.id).json",
+            projectID: project.id,
+            owner: "alice"
+        )
+        let now = Date()
+        try FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: finishedURL.path)
+        try FileManager.default.setAttributes(
+            [.modificationDate: now.addingTimeInterval(-60)],
+            ofItemAtPath: legacyURL.path
+        )
+
+        let adapter = StoryHistoryAdapter(store: store, videoJobStore: videoJobStore)
+        let session = UUID()
+        let first = try await adapter.loadStoryMediaBatches(
+            ownerUserID: "alice",
+            accountSessionID: session,
+            projectID: project.id,
+            after: nil,
+            limit: 1
+        )
+        XCTAssertEqual(first.batches.map(\.id), [newerFinished.id])
+        XCTAssertNotNil(first.nextCursor)
+        let beforeOlderPage = try await videoJobStore.snapshotIfPresent(
+            id: job.intentID,
+            owner: "alice"
+        )
+        XCTAssertNil(beforeOlderPage)
+
+        let second = try await adapter.loadStoryMediaBatches(
+            ownerUserID: "alice",
+            accountSessionID: session,
+            projectID: project.id,
+            after: try XCTUnwrap(first.nextCursor),
+            limit: 1
+        )
+        XCTAssertEqual(second.batches.map(\.id), [legacy.id])
+        XCTAssertEqual(second.migrationIssueCount, 0)
+        XCTAssertEqual(second.migratedProject?.segments[0].videoJobRecordID, job.intentID)
+
+        let migrated = try await store.loadMediaBatch(
+            owner: "alice",
+            projectID: project.id,
+            batchID: legacy.id
+        )
+        XCTAssertEqual(migrated.jobs["videos:s1"]?.videoJobRecordID, job.intentID)
+        XCTAssertNil(migrated.draft.segments[0].attempt)
+        XCTAssertEqual(migrated.draft.segments[0].videoJobRecordID, job.intentID)
+        let snapshot = try await videoJobStore.snapshot(id: job.intentID, owner: "alice")
+        XCTAssertTrue(snapshot.isActive)
+        XCTAssertEqual(snapshot.status, .submitted)
+        XCTAssertEqual(snapshot.providerJobID, "historical-provider-job")
+    }
+
+    func testHistoryMigrationWithoutProviderIdentityBecomesReviewOnly() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryBatchHistoryReviewTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        let videoJobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("jobs", isDirectory: true)
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        var legacy = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        let job = StoryMediaBatch.Job()
+        legacy.jobs["videos:s1"] = job
+        legacy.draft.segments[0].attempt = .init(
+            modelConfigID: "video",
+            prompt: "uncertain historical prompt",
+            size: "768P",
+            ratio: "16:9",
+            seconds: 15
+        )
+        try await store.commitMediaBatch(legacy)
+
+        let session = UUID()
+        let page = try await StoryHistoryAdapter(
+            store: store,
+            videoJobStore: videoJobStore
+        ).loadStoryMediaBatches(
+            ownerUserID: "alice",
+            accountSessionID: session,
+            projectID: project.id,
+            after: nil,
+            limit: 20
+        )
+        XCTAssertEqual(page.migrationIssueCount, 0)
+        let snapshot = try await videoJobStore.snapshot(id: job.intentID, owner: "alice")
+        XCTAssertTrue(snapshot.isActive)
+        XCTAssertEqual(snapshot.status, .submissionUncertain)
+        XCTAssertNil(snapshot.providerJobID)
+        let workload = MediaStudioVideoJobStore.Workload.storyBatchVideo(
+            projectID: project.id,
+            batchID: legacy.id,
+            segmentID: "s1",
+            attemptID: job.intentID
+        )
+        let recovery = try await videoJobStore.recover(
+            owner: "alice",
+            sessionEpoch: session,
+            workload: workload
+        )
+        XCTAssertEqual(recovery?.mode, .needsReview)
+    }
+
+    func testHistoryMigrationPreservesPreparedRecordFromPreHandoffCrash() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryBatchHistoryPreparedTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        let videoJobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("jobs", isDirectory: true)
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        var batch = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        let job = StoryMediaBatch.Job()
+        let workload = MediaStudioVideoJobStore.Workload.storyBatchVideo(
+            projectID: project.id,
+            batchID: batch.id,
+            segmentID: "s1",
+            attemptID: job.intentID
+        )
+        let firstFrame = try XCTUnwrap(project.segments[0].firstFrame)
+        let firstFrameURL = try store.fileURL(
+            firstFrame.filename,
+            projectID: project.id,
+            owner: "alice"
+        )
+        let request = VideoGenerationRequest(
+            modelConfigID: "video",
+            prompt: "prepared historical prompt",
+            size: "768P",
+            seconds: 15,
+            inputImage: .init(
+                name: "first-frame.png",
+                mimeType: firstFrame.mimeType,
+                fileURL: firstFrameURL
+            ),
+            ratio: "16:9"
+        )
+        let session = UUID()
+        _ = try await videoJobStore.stagePrepared(
+            request: request,
+            id: job.intentID,
+            owner: "alice",
+            sessionEpoch: session,
+            workload: workload
+        )
+        batch.jobs["videos:s1"] = job
+        batch.draft.segments[0].attempt = .init(
+            modelConfigID: request.modelConfigID,
+            prompt: request.prompt,
+            size: request.size,
+            ratio: request.ratio,
+            seconds: request.seconds
+        )
+        batch.draft.segments[0].attempt?.id = job.intentID
+        try await store.commitMediaBatch(batch)
+
+        let page = try await StoryHistoryAdapter(
+            store: store,
+            videoJobStore: videoJobStore
+        ).loadStoryMediaBatches(
+            ownerUserID: "alice",
+            accountSessionID: session,
+            projectID: project.id,
+            after: nil,
+            limit: 20
+        )
+        XCTAssertEqual(page.migrationIssueCount, 0)
+        let migrated = try await store.loadMediaBatch(
+            owner: "alice",
+            projectID: project.id,
+            batchID: batch.id
+        )
+        XCTAssertEqual(migrated.jobs["videos:s1"]?.videoJobRecordID, job.intentID)
+        let snapshot = try await videoJobStore.snapshot(id: job.intentID, owner: "alice")
+        XCTAssertTrue(snapshot.isActive)
+        XCTAssertEqual(snapshot.status, .prepared)
+        let recovered = try await videoJobStore.recover(
+            owner: "alice",
+            sessionEpoch: session,
+            workload: workload
+        )
+        XCTAssertEqual(recovered?.mode, .create)
+        XCTAssertNotNil(recovered?.request.inputImage)
+    }
+
+    func testHistoryMigrationConflictPreservesLegacyBatchAndCountsIssue() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryBatchHistoryConflictTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        let videoJobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("jobs", isDirectory: true)
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        var legacy = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        let job = StoryMediaBatch.Job()
+        legacy.jobs["videos:s1"] = job
+        legacy.draft.segments[0].attempt = .init(
+            modelConfigID: "video",
+            prompt: "conflicting historical prompt",
+            size: "768P",
+            ratio: "16:9",
+            seconds: 15
+        )
+        try await store.commitMediaBatch(legacy)
+        let conflictingWorkload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: project.id,
+            segmentID: "s1",
+            attemptID: job.intentID
+        )
+        _ = try await videoJobStore.stageSubmissionUncertain(
+            request: .init(
+                modelConfigID: "video",
+                prompt: "conflicting historical prompt",
+                size: "768P",
+                seconds: 15,
+                ratio: "16:9"
+            ),
+            id: job.intentID,
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: conflictingWorkload
+        )
+
+        let page = try await StoryHistoryAdapter(
+            store: store,
+            videoJobStore: videoJobStore
+        ).loadStoryMediaBatches(
+            ownerUserID: "alice",
+            accountSessionID: UUID(),
+            projectID: project.id,
+            after: nil,
+            limit: 20
+        )
+        XCTAssertEqual(page.batches.map(\.id), [legacy.id])
+        XCTAssertEqual(page.migrationIssueCount, 1)
+        let preserved = try await store.loadMediaBatch(
+            owner: "alice",
+            projectID: project.id,
+            batchID: legacy.id
+        )
+        XCTAssertNil(preserved.jobs["videos:s1"]?.videoJobRecordID)
+        XCTAssertNotNil(preserved.draft.segments[0].attempt)
+    }
+
     func testPreparedMediaBatchRecordSurvivesCrashBeforeHandoffAndCreatesOnce() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "StoryBatchPreparedReplayTests-\(UUID().uuidString)",

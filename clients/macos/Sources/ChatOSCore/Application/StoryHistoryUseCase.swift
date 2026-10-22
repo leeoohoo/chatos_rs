@@ -132,16 +132,22 @@ public struct StoryPlanningRunHistoryPage: Equatable, Sendable {
 public struct StoryMediaBatchHistoryPage: Equatable, Sendable {
     public var batches: [StoryMediaBatchSnapshot]
     public var unreadableCount: Int
+    public var migrationIssueCount: Int
     public var nextCursor: StoryHistoryCursor?
+    public var migratedProject: StoryProject?
 
     public init(
         batches: [StoryMediaBatchSnapshot],
         unreadableCount: Int = 0,
-        nextCursor: StoryHistoryCursor? = nil
+        migrationIssueCount: Int = 0,
+        nextCursor: StoryHistoryCursor? = nil,
+        migratedProject: StoryProject? = nil
     ) {
         self.batches = batches
         self.unreadableCount = unreadableCount
+        self.migrationIssueCount = migrationIssueCount
         self.nextCursor = nextCursor
+        self.migratedProject = migratedProject
     }
 }
 
@@ -169,6 +175,7 @@ public protocol StoryHistoryLoading: Sendable {
 
     func loadStoryMediaBatches(
         ownerUserID: String,
+        accountSessionID: UUID,
         projectID: UUID,
         after cursor: StoryHistoryCursor?,
         limit: Int
@@ -191,6 +198,7 @@ public struct StoryHistoryUseCase: Sendable {
 
     public func loadInitial(
         ownerUserID ownerInput: String,
+        accountSessionID: UUID,
         projectID: UUID,
         currentProject: StoryProject?
     ) async throws -> StoryHistoryInitialPage {
@@ -212,6 +220,7 @@ public struct StoryHistoryUseCase: Sendable {
         let normalizedRuns = try normalized(runs, ownerUserID: owner, projectID: projectID)
         let batches = try await history.loadStoryMediaBatches(
             ownerUserID: owner,
+            accountSessionID: accountSessionID,
             projectID: projectID,
             after: nil,
             limit: pageSize
@@ -242,12 +251,14 @@ public struct StoryHistoryUseCase: Sendable {
 
     public func loadMoreMediaBatches(
         ownerUserID ownerInput: String,
+        accountSessionID: UUID,
         projectID: UUID,
         after cursor: StoryHistoryCursor
     ) async throws -> StoryMediaBatchHistoryPage {
         let owner = try normalizedOwner(ownerInput)
         let page = try await history.loadStoryMediaBatches(
             ownerUserID: owner,
+            accountSessionID: accountSessionID,
             projectID: projectID,
             after: cursor,
             limit: pageSize
@@ -300,8 +311,12 @@ public struct StoryHistoryUseCase: Sendable {
                 && !$0.steps.isEmpty
                 && $0.steps.count <= 500
                 && $0.events.count <= 20_000
-        }), Self.valid(page.nextCursor) else {
+        }), page.migratedProject?.id == projectID || page.migratedProject == nil,
+        Self.valid(page.nextCursor) else {
             throw StoryHistoryError.identityMismatch
+        }
+        if let migratedProject = page.migratedProject {
+            try migratedProject.validate()
         }
         var seen = Set<UUID>()
         return StoryMediaBatchHistoryPage(
@@ -309,7 +324,9 @@ public struct StoryHistoryUseCase: Sendable {
                 .sorted(by: Self.newerBatch)
                 .filter { seen.insert($0.id).inserted },
             unreadableCount: max(0, page.unreadableCount),
-            nextCursor: page.nextCursor
+            migrationIssueCount: max(0, page.migrationIssueCount),
+            nextCursor: page.nextCursor,
+            migratedProject: page.migratedProject
         )
     }
 

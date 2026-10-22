@@ -12,9 +12,11 @@ struct StoryHistoryUseCaseTests {
             batchPage: .init(batches: [])
         )
         let useCase = StoryHistoryUseCase(history: history, pageSize: 500)
+        let session = UUID()
 
         _ = try await useCase.loadInitial(
             ownerUserID: "  alice  ",
+            accountSessionID: session,
             projectID: project.id,
             currentProject: project
         )
@@ -26,7 +28,8 @@ struct StoryHistoryUseCaseTests {
                 projectID: project.id,
                 cursor: nil,
                 limit: 200,
-                includesCurrentProject: true
+                includesCurrentProject: true,
+                accountSessionID: nil
             ),
             .init(
                 kind: .batches,
@@ -34,7 +37,8 @@ struct StoryHistoryUseCaseTests {
                 projectID: project.id,
                 cursor: nil,
                 limit: 200,
-                includesCurrentProject: false
+                includesCurrentProject: false,
+                accountSessionID: session
             ),
         ])
     }
@@ -58,12 +62,14 @@ struct StoryHistoryUseCaseTests {
             ),
             batchPage: .init(
                 batches: [olderBatch, newerBatch, duplicateBatch],
-                unreadableCount: 2
+                unreadableCount: 2,
+                migratedProject: project
             )
         )
 
         let page = try await StoryHistoryUseCase(history: history).loadInitial(
             ownerUserID: "alice",
+            accountSessionID: UUID(),
             projectID: project.id,
             currentProject: project
         )
@@ -73,6 +79,7 @@ struct StoryHistoryUseCaseTests {
         #expect(page.planningRuns.recoveredProject == project)
         #expect(page.mediaBatches.batches.map(\.id) == [newerBatch.id, olderBatch.id])
         #expect(page.mediaBatches.unreadableCount == 2)
+        #expect(page.mediaBatches.migratedProject == project)
     }
 
     @Test("blank owners and foreign records fail closed")
@@ -87,6 +94,7 @@ struct StoryHistoryUseCaseTests {
         await #expect(throws: StoryHistoryError.invalidOwner) {
             _ = try await useCase.loadInitial(
                 ownerUserID: "   ",
+                accountSessionID: UUID(),
                 projectID: project.id,
                 currentProject: project
             )
@@ -100,6 +108,7 @@ struct StoryHistoryUseCaseTests {
         await #expect(throws: StoryHistoryError.identityMismatch) {
             _ = try await StoryHistoryUseCase(history: foreignHistory).loadInitial(
                 ownerUserID: "alice",
+                accountSessionID: UUID(),
                 projectID: project.id,
                 currentProject: project
             )
@@ -252,6 +261,7 @@ private actor RecordingStoryHistory: StoryHistoryLoading {
         var cursor: StoryHistoryCursor?
         var limit: Int
         var includesCurrentProject: Bool
+        var accountSessionID: UUID?
     }
 
     let runPage: StoryPlanningRunHistoryPage
@@ -279,13 +289,15 @@ private actor RecordingStoryHistory: StoryHistoryLoading {
             projectID: projectID,
             cursor: cursor,
             limit: limit,
-            includesCurrentProject: currentProject != nil
+            includesCurrentProject: currentProject != nil,
+            accountSessionID: nil
         ))
         return runPage
     }
 
     func loadStoryMediaBatches(
         ownerUserID: String,
+        accountSessionID: UUID,
         projectID: UUID,
         after cursor: StoryHistoryCursor?,
         limit: Int
@@ -296,7 +308,8 @@ private actor RecordingStoryHistory: StoryHistoryLoading {
             projectID: projectID,
             cursor: cursor,
             limit: limit,
-            includesCurrentProject: false
+            includesCurrentProject: false,
+            accountSessionID: accountSessionID
         ))
         return batchPage
     }
