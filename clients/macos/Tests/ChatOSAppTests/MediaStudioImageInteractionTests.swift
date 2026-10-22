@@ -47,7 +47,15 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         try await wait { !vm.isGeneratingVideo }
         let requests = await service.videoRequests
         XCTAssertEqual(requests.count, 1)
-        XCTAssertEqual(requests.first?.inputImage, input)
+        let submittedInput = try XCTUnwrap(requests.first?.inputImage)
+        XCTAssertEqual(submittedInput.name, input.name)
+        XCTAssertEqual(submittedInput.mimeType, input.mimeType)
+        XCTAssertTrue(submittedInput.base64Data.isEmpty)
+        XCTAssertNotEqual(submittedInput.fileURL, input.fileURL)
+        XCTAssertEqual(
+            try Data(contentsOf: XCTUnwrap(submittedInput.fileURL)),
+            try Data(contentsOf: XCTUnwrap(input.fileURL))
+        )
         XCTAssertEqual(requests.first?.prompt, "keep video prompt")
     }
 
@@ -213,10 +221,16 @@ final class MediaStudioImageInteractionTests: XCTestCase {
             images: ["first", "second"].map { .init(id: $0, mimeType: "image/png", base64Data: png.base64EncodedString()) }
         ), prompt: "saved images", owner: "test-account")
         let service = ImageReferenceCaptureService()
-        let vm = MediaStudioViewModel(service: service, historyStore: store)
+        let vm = MediaStudioViewModel(
+            service: service,
+            historyStore: store,
+            videoJobStore: MediaStudioVideoJobStore(root: root.appendingPathComponent("jobs"))
+        )
         vm.activate(userID: "test-account")
         vm.loadIfNeeded()
-        try await wait { !vm.isLoadingHistory && !vm.isLoadingModels }
+        try await wait {
+            !vm.isLoadingHistory && !vm.isLoadingModels && !vm.isRecoveringVideoJob
+        }
         return (vm, service, upload)
     }
 

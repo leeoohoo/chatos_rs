@@ -94,8 +94,16 @@ final class MediaStudioViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.videoSeconds, 4)
     }
 
-    func testRejectedCreationClearsQueuedProgressAndAllowsRetry() async throws {
-        let viewModel = MediaStudioViewModel(service: MediaStudioFailureService())
+    func testAmbiguousCreationBecomesSubmissionUncertainWithoutQueuedProgress() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MediaStudioRejectedVideoTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let viewModel = MediaStudioViewModel(
+            service: MediaStudioFailureService(),
+            videoJobStore: MediaStudioVideoJobStore(root: root)
+        )
         viewModel.activate(userID: "media-studio-test")
         viewModel.loadIfNeeded()
         for _ in 0..<100 where viewModel.isLoadingModels {
@@ -106,9 +114,9 @@ final class MediaStudioViewModelTests: XCTestCase {
         for _ in 0..<100 where viewModel.isGeneratingVideo {
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTAssertEqual(viewModel.videoProgress?.status, "failed")
+        XCTAssertEqual(viewModel.videoProgress?.status, "submission_uncertain")
         XCTAssertNil(viewModel.videoProgress?.percent)
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertTrue(viewModel.errorMessage?.contains("不会自动重发") == true)
         XCTAssertTrue(viewModel.canGenerateVideo)
     }
 

@@ -27,7 +27,10 @@ final class MediaStudioViewModel: ObservableObject {
 
     var videoCanvasState: VideoCanvasState {
         if isGeneratingVideo { return .progress(videoProgress ?? .init(status: "submitting")) }
-        if videoProgress?.status == "failed" { return .failed }
+        if let status = videoProgress?.status,
+           ["failed", "submission_uncertain", "cancellation_requested"].contains(status) {
+            return .failed
+        }
         if let latest = videoHistory.first { return .result(latest) }
         return .empty
     }
@@ -54,6 +57,7 @@ final class MediaStudioViewModel: ObservableObject {
     @Published private(set) var isLoadingModels = false
     @Published private(set) var isGenerating = false
     @Published private(set) var isGeneratingVideo = false
+    @Published private(set) var isRecoveringVideoJob = false
     @Published private(set) var videoProgress: VideoGenerationProgress?
     @Published private(set) var errorMessage: String?
     @Published private(set) var historyErrorMessage: String?
@@ -66,7 +70,7 @@ final class MediaStudioViewModel: ObservableObject {
 
     private let service: any MediaGenerationServicing
     private let imageGenerationUseCase: MediaStudioImageGenerationUseCase
-    private let videoGenerationUseCase: MediaStudioVideoGenerationUseCase
+    private let videoJobService: MediaStudioVideoJobService
     private let modelCatalogUseCase: MediaStudioModelCatalogUseCase
     private let historyUseCase: MediaStudioHistoryUseCase
     private let imageReferenceUseCase: MediaStudioImageReferenceUseCase
@@ -87,6 +91,7 @@ final class MediaStudioViewModel: ObservableObject {
     private var sessionID = UUID()
     private var imageGenerationState = MediaStudioImageGenerationState()
     private var videoGenerationState = MediaStudioVideoGenerationState()
+    private var hasAttemptedVideoRecovery = false
     private var videoInputSelectionID = UUID()
     private var videoInputTask: Task<Void, Never>?
     private var videoAudioSelectionID = UUID()
@@ -94,7 +99,13 @@ final class MediaStudioViewModel: ObservableObject {
     private var inputImagesTask: Task<Void, Never>?
     private var imageReferenceState = MediaStudioImageReferenceState()
 
-    init(service: any MediaGenerationServicing, historyStore: MediaStudioHistoryStore = MediaStudioHistoryStore(), imageTransport: any HTTPTransport = URLSessionHTTPTransport(), storyPlanner: (any StoryPlanningServicing)? = nil) {
+    init(
+        service: any MediaGenerationServicing,
+        historyStore: MediaStudioHistoryStore = MediaStudioHistoryStore(),
+        videoJobStore: MediaStudioVideoJobStore = MediaStudioVideoJobStore(),
+        imageTransport: any HTTPTransport = URLSessionHTTPTransport(),
+        storyPlanner: (any StoryPlanningServicing)? = nil
+    ) {
         let inputArtifacts = MediaStudioInputArtifactStore()
         self.service = service
         self.inputArtifacts = inputArtifacts
@@ -102,9 +113,10 @@ final class MediaStudioViewModel: ObservableObject {
             generator: service,
             history: historyStore
         )
-        self.videoGenerationUseCase = MediaStudioVideoGenerationUseCase(
+        self.videoJobService = MediaStudioVideoJobService(
             generator: service,
-            history: historyStore
+            history: historyStore,
+            store: videoJobStore
         )
         self.modelCatalogUseCase = MediaStudioModelCatalogUseCase(provider: service)
         self.historyUseCase = MediaStudioHistoryUseCase(history: historyStore)
@@ -147,6 +159,7 @@ final class MediaStudioViewModel: ObservableObject {
     func activate(userID: String) {
         bindAccount(userID: userID)
         loadHistoryIfNeeded()
+        if !isLoadingHistory { recoverVideoJobIfNeeded() }
         loadSelectedSectionIfNeeded()
     }
 
@@ -223,7 +236,9 @@ final class MediaStudioViewModel: ObservableObject {
         }
         guard historyLoadState.finish(token) else { return }
         switch token.kind {
-        case .initial: isLoadingHistory = false
+        case .initial:
+            isLoadingHistory = false
+            recoverVideoJobIfNeeded()
         case .next: isLoadingMoreHistory = false
         }
         historyLoadTask = nil
@@ -274,6 +289,7 @@ final class MediaStudioViewModel: ObservableObject {
 
     var canGenerateVideo: Bool {
         !isGeneratingVideo
+            && !isRecoveringVideoJob
             && !isLoadingVideoInputImage
             && !isLoadingVideoReferenceAudio
             && ownerID != nil && !isLoadingHistory
@@ -401,14 +417,16 @@ final class MediaStudioViewModel: ObservableObject {
         isGeneratingVideo = true
         videoProgress = .init(status: "submitting")
         errorMessage = nil
-        let useCase = videoGenerationUseCase
+        let jobService = videoJobService
+        let sessionEpoch = sessionID
         videoGenerationTask?.cancel()
         videoGenerationTask = Task { [weak self] in
             let outcome: Result<MediaStudioVideoGenerationOutcome, Error>
             do {
-                outcome = .success(try await useCase.generate(
+                outcome = .success(try await jobService.submit(
                     request: request,
-                    owner: ownerID
+                    owner: ownerID,
+                    sessionEpoch: sessionEpoch
                 ) { [weak self] progress in
                     await MainActor.run {
                         self?.applyVideoProgress(progress, token: token)
@@ -421,9 +439,79 @@ final class MediaStudioViewModel: ObservableObject {
             } catch {
                 outcome = .failure(error)
             }
-            guard !Task.isCancelled else { return }
             self?.finishVideoGeneration(outcome, token: token)
         }
+    }
+
+    private func recoverVideoJobIfNeeded() {
+        guard !hasAttemptedVideoRecovery,
+              let ownerID,
+              videoGenerationTask == nil else { return }
+        hasAttemptedVideoRecovery = true
+        let token = videoGenerationState.begin(
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        )
+        let sessionEpoch = sessionID
+        let jobService = videoJobService
+        isRecoveringVideoJob = true
+        videoGenerationTask = Task { [weak self] in
+            do {
+                let result = try await jobService.recover(
+                    owner: ownerID,
+                    sessionEpoch: sessionEpoch
+                ) { [weak self] progress in
+                    await MainActor.run {
+                        self?.applyVideoProgress(progress, token: token)
+                    }
+                }
+                switch result {
+                case .none:
+                    self?.finishEmptyVideoRecovery(token: token)
+                case let .needsReview(progress, message):
+                    self?.finishVideoRecoveryReview(
+                        progress: progress,
+                        message: message,
+                        token: token
+                    )
+                case let .finished(outcome):
+                    self?.finishVideoGeneration(.success(outcome), token: token)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.finishVideoGeneration(.failure(error), token: token)
+            }
+        }
+    }
+
+    private func finishEmptyVideoRecovery(token: MediaStudioVideoGenerationToken) {
+        guard videoGenerationState.accepts(
+            token,
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        ), videoGenerationState.finish(token) else { return }
+        isGeneratingVideo = false
+        isRecoveringVideoJob = false
+        videoProgress = nil
+        videoGenerationTask = nil
+    }
+
+    private func finishVideoRecoveryReview(
+        progress: VideoGenerationProgress,
+        message: String,
+        token: MediaStudioVideoGenerationToken
+    ) {
+        guard videoGenerationState.accepts(
+            token,
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        ), videoGenerationState.finish(token) else { return }
+        isGeneratingVideo = false
+        isRecoveringVideoJob = false
+        videoProgress = progress
+        errorMessage = message
+        videoGenerationTask = nil
     }
 
     private func applyVideoProgress(
@@ -435,6 +523,8 @@ final class MediaStudioViewModel: ObservableObject {
             ownerUserID: ownerID,
             accountSessionID: sessionID
         ) else { return }
+        isRecoveringVideoJob = false
+        isGeneratingVideo = true
         videoProgress = progress
     }
 
@@ -460,10 +550,16 @@ final class MediaStudioViewModel: ObservableObject {
             }
         case let .failure(error):
             errorMessage = error.localizedDescription
-            videoProgress = .init(status: "failed")
+            if let jobError = error as? MediaStudioVideoJobServiceError,
+               jobError == .unresolvedSubmission {
+                videoProgress = .init(status: "submission_uncertain")
+            } else {
+                videoProgress = .init(status: "failed")
+            }
         }
         guard videoGenerationState.finish(token) else { return }
         isGeneratingVideo = false
+        isRecoveringVideoJob = false
         videoGenerationTask = nil
     }
 
@@ -476,6 +572,7 @@ final class MediaStudioViewModel: ObservableObject {
         guard videoGenerationState.finish(token) else { return }
         videoProgress = nil
         isGeneratingVideo = false
+        isRecoveringVideoJob = false
         videoGenerationTask = nil
     }
 
@@ -484,6 +581,7 @@ final class MediaStudioViewModel: ObservableObject {
         videoGenerationTask?.cancel()
         videoGenerationTask = nil
         isGeneratingVideo = false
+        isRecoveringVideoJob = false
         videoProgress = nil
     }
 
@@ -760,6 +858,7 @@ final class MediaStudioViewModel: ObservableObject {
         videoGenerationTask = nil
         hasLoaded = false
         hasLoadedHistory = false
+        hasAttemptedVideoRecovery = false
         prompt = ""
         selectedModelID = nil
         inputImages = []
@@ -774,6 +873,7 @@ final class MediaStudioViewModel: ObservableObject {
         isLoadingModels = false
         isGenerating = false
         isGeneratingVideo = false
+        isRecoveringVideoJob = false
         videoProgress = nil
         errorMessage = nil
         inputArtifacts.removeAll()

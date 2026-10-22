@@ -1062,6 +1062,23 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：Story 图片生成 multipart 仍沿用 Base64，provider 返回的图片结果仍可能是完整 Base64 响应；远端历史资产首次下载不可避免需要受响应上限约束的一份 `Data`，但不再二次编码为 Base64 输入。短生命周期 artifact 的 SIGKILL 启动清理、MediaJobStore、提交不确定态、真实多图峰值 trace 与 Worker 仍待完成，P0-E 仍不能标记完成。
 
+### 12.20 第二十批实施记录：通用视频 MediaJobStore 第一阶段（2026-10-22）
+
+本批按 6.4 冻结的迁移顺序，只接管通用 Media Studio 的新视频任务。原 `MediaStudioVideoGenerationState` 仅保留 UI 订阅/防止旧回调污染的内存 token，不再保存 provider 任务事实；Story `segment.attempt` 与 Media Batch `jobs` 没有双写到新 Store，仍等待后续原子迁移。
+
+已实施：
+
+- 新增账户隔离的 `MediaStudioVideoJobStore` 和进程内 `MediaStudioVideoJobService`。提交前原子保存本地 job ID、owner、session epoch、稳定 idempotency key、请求参数、输入 artifact 引用、provider job ID、retry 次数、状态版本、失败阶段、可重试性和更新时间；manifest 与 artifact 使用私有目录/`0600` 文件，凭据不进入记录。
+- 首帧、尾帧、参考视频和参考音频在 intent 阶段复制到 durable job 目录，记录大小与 SHA-256；恢复创建前用 `O_NOFOLLOW`、普通文件/长度和摘要重新校验。provider job ID 首次出现时先单独提交这个关键事实，再回收已经不再需要的提交输入，避免清理与状态写失败同时丢失恢复身份。
+- `VideoGenerationRequest` 增加稳定 `clientRequestID`，NewAPI 视频创建请求以 `Idempotency-Key` 发送同一值。provider 是否真正实现幂等不能由客户端假定：重启发现已越过提交边界但没有 provider ID 时，状态改为 `submission_uncertain`，UI 明确提示核对且恢复服务绝不调用 create；已有 provider ID 时只调用 `resumeVideo` 查询/下载。
+- ViewModel 在历史分页初次加载完成后再恢复 job，避免恢复结果被稍晚返回的旧 history snapshot 覆盖。恢复、进度、finalize 和取消写入都携带 session epoch；新会话接管后，旧会话的迟到写入被拒绝。模型服务也绑定到创建时的认证 session，切换账户后不能继续使用新账号凭据推进旧任务。
+- 通用视频 history finalize 使用本地 durable job ID 作为稳定 record ID。若视频与 `record.json` 已原子提交但 job 尚未来得及标为 completed，重启重试会验证并复用同一记录；没有 manifest 的 partial folder 才会被确定性清理重写，因此不会生成重复历史项。
+- 损坏的已提交 manifest 不再被当作“没有任务”跳过；Store 会停止恢复和新自动动作。无 provider ID 的确定性前置失败不参与启动恢复；带 provider ID 的可重试失败最多自动恢复 3 次，之后保留记录等待人工处理。
+
+验证：Debug 与 arm64 Release 选择性运行 History/Video Job/Video Canvas/Image Interaction/ViewModel/API 共 71 项，全部通过。新增覆盖 durable 输入复制与摘要篡改、损坏 manifest、稳定幂等头、提交不确定态禁止 create、provider ID 仅 resume、session epoch fencing、启动自动恢复，以及 history 已提交/job 未完成窗口的幂等 finalize；Swift 6 编译与并发检查及 `git diff --check` 同步作为门禁。
+
+边界：当前 Store 只替换通用 Media Studio 视频的任务事实源，Story/Media Batch 的非终态任务尚未执行 6.4 的原子导入；图片任务仍没有进入 MediaJobStore。App 内由单个 service actor 写入并有 epoch fencing，但尚未增加两份 App/未来 Worker 之间的 OS 文件锁与交接协议。`Idempotency-Key` 已发送但没有真实 provider 沙箱对账证据；没有 provider ID 的不确定提交仍需人工核对。取消没有 provider cancel/退款契约，只能保留 `cancellation_requested` 后继续查询最终事实。terminal job 的保留/清理策略、真实逐状态强杀矩阵、睡眠/断网恢复、下载断点续传、Worker 文件授权与独立 Media Worker 仍待完成，因此 P0-E 仍不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

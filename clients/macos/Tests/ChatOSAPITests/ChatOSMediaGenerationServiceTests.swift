@@ -212,6 +212,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             videoPollIntervalNanoseconds: 0
         ).generateVideo(
             .init(
+                clientRequestID: "stable-video-attempt-1",
                 modelConfigID: "video-model",
                 prompt: "camera circles a paper city",
                 size: "768P",
@@ -237,6 +238,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             "/video-1.mp4",
         ])
         XCTAssertEqual(requests[1].method, "POST")
+        XCTAssertEqual(requests[1].headers["Idempotency-Key"], "stable-video-attempt-1")
         XCTAssertEqual(requests[2].method, "GET")
         XCTAssertEqual(requests[3].headers["Accept"], "video/mp4")
         XCTAssertTrue(requests[1...2].allSatisfy {

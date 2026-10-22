@@ -366,6 +366,11 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         let endpoint = try videoCreateEndpoint(baseURL: runtime.baseURL ?? "")
         var headers = providerHeaders(runtime: runtime)
         headers["Content-Type"] = "application/json"
+        if let clientRequestID = request.clientRequestID?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !clientRequestID.isEmpty {
+            headers["Idempotency-Key"] = clientRequestID
+        }
         let inputImagePlaceholder = request.inputImage?.fileURL.map { _ in
             "__CHATOS_FIRST_FRAME_DATA_URL_\(UUID().uuidString)__"
         }

@@ -8,7 +8,8 @@ import Foundation
 actor MediaStudioHistoryStore:
     MediaStudioHistoryLoading,
     MediaStudioImageHistoryPersisting,
-    MediaStudioVideoHistoryPersisting
+    MediaStudioVideoHistoryPersisting,
+    MediaStudioDurableVideoHistoryPersisting
 {
     private static let maximumManifestBytes = 2 * 1_024 * 1_024
     nonisolated static let defaultPageSize = MediaStudioHistoryUseCase.defaultPageSize
@@ -177,11 +178,61 @@ actor MediaStudioHistoryStore:
         prompt: String,
         owner: String
     ) async throws -> MediaStudioVideoHistoryItem {
+        try await saveVideo(
+            result,
+            prompt: prompt,
+            owner: owner,
+            durableRecordID: UUID().uuidString.lowercased()
+        )
+    }
+
+    func saveVideo(
+        _ result: VideoGenerationResult,
+        prompt: String,
+        owner: String,
+        durableRecordID: String
+    ) async throws -> MediaStudioVideoHistoryItem {
         let maximumBytes = 512 * 1_024 * 1_024
         guard (result.videoFile != nil) != (!result.videoData.isEmpty) else {
             throw HistoryError.invalidRecord
         }
-        let folder = try newFolder(owner: owner)
+        guard UUID(uuidString: durableRecordID) != nil,
+              durableRecordID == URL(fileURLWithPath: durableRecordID).lastPathComponent,
+              !durableRecordID.hasPrefix(".") else {
+            throw HistoryError.invalidRecord
+        }
+        let folder = ownerDirectory(owner).appendingPathComponent(
+            durableRecordID.lowercased(),
+            isDirectory: true
+        )
+        let manifest = folder.appendingPathComponent("record.json")
+        if FileManager.default.fileExists(atPath: manifest.path) {
+            let entry = try JSONDecoder().decode(
+                Entry.self,
+                from: AppBoundedFileReader.read(
+                    manifest,
+                    maximumBytes: Self.maximumManifestBytes
+                )
+            )
+            guard entry.version == 1,
+                  entry.id == folder.lastPathComponent,
+                  entry.kind == "video",
+                  entry.prompt == prompt,
+                  entry.assets.count == 1,
+                  entry.assets[0].id == result.id,
+                  FileManager.default.fileExists(
+                      atPath: folder.appendingPathComponent(entry.assets[0].filename).path
+                  ) else {
+                throw HistoryError.invalidRecord
+            }
+            return videoItem(entry, folder: folder)
+        }
+        // Without a committed manifest the folder is an interrupted local finalize, not a
+        // visible history record. Reusing the stable ID makes retry cleanup deterministic.
+        if FileManager.default.fileExists(atPath: folder.path) {
+            try FileManager.default.removeItem(at: folder)
+        }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         var committed = false
         defer {
             if !committed { try? FileManager.default.removeItem(at: folder) }

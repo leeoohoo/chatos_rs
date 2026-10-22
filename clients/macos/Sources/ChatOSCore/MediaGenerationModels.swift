@@ -224,6 +224,9 @@ public struct ImageGenerationResult: Codable, Sendable, Equatable {
 }
 
 public struct VideoGenerationRequest: Sendable, Equatable {
+    /// Stable identity for a logical provider submission. Durable callers must reuse this
+    /// value across process restarts; it is safe to persist and never contains credentials.
+    public var clientRequestID: String?
     public var modelConfigID: String
     public var prompt: String
     public var size: String
@@ -236,6 +239,7 @@ public struct VideoGenerationRequest: Sendable, Equatable {
     public var ratio: String
 
     public init(
+        clientRequestID: String? = nil,
         modelConfigID: String,
         prompt: String,
         size: String,
@@ -247,6 +251,7 @@ public struct VideoGenerationRequest: Sendable, Equatable {
         referencePurpose: VideoGenerationReferencePurpose = .reference,
         ratio: String = "16:9"
     ) {
+        self.clientRequestID = clientRequestID
         self.modelConfigID = modelConfigID
         self.prompt = prompt
         self.size = size

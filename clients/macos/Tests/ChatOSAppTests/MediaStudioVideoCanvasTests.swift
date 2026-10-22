@@ -60,10 +60,16 @@ final class MediaStudioVideoCanvasTests: XCTestCase {
         let store = MediaStudioHistoryStore(root: root)
         _ = try await store.saveVideo(VideoCanvasService.result, prompt: "previous prompt", owner: "canvas-test")
         let service = VideoCanvasService()
-        let vm = MediaStudioViewModel(service: service, historyStore: store)
+        let vm = MediaStudioViewModel(
+            service: service,
+            historyStore: store,
+            videoJobStore: MediaStudioVideoJobStore(root: root.appendingPathComponent("jobs"))
+        )
         vm.activate(userID: "canvas-test")
         vm.loadIfNeeded()
-        try await wait { !vm.isLoadingHistory && !vm.isLoadingModels }
+        try await wait {
+            !vm.isLoadingHistory && !vm.isLoadingModels && !vm.isRecoveringVideoJob
+        }
         vm.videoPrompt = "new video prompt"
         return (vm, service)
     }

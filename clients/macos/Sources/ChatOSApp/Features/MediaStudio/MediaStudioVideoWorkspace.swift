@@ -127,6 +127,7 @@ extension MediaStudioView {
     func videoProgressText(_ progress: VideoGenerationProgress) -> String {
         let status: String
         switch progress.status {
+        case "checking": status = appModel.localized("恢复任务中", english: "Recovering task")
         case "submitting": status = appModel.localized("提交中", english: "Submitting")
         case "uploading": status = appModel.localized("上传素材中", english: "Uploading media")
         case "queued": status = appModel.localized("排队中", english: "Queued")
@@ -134,6 +135,8 @@ extension MediaStudioView {
         case "unknown": status = appModel.localized("等待状态更新", english: "Waiting for status")
         case "downloading": status = appModel.localized("下载中", english: "Downloading")
         case "saving": status = appModel.localized("保存中", english: "Saving")
+        case "submission_uncertain": status = appModel.localized("提交结果待核对", english: "Submission needs review")
+        case "cancellation_requested": status = appModel.localized("取消结果待核对", english: "Cancellation needs review")
         case "failed": status = appModel.localized("生成失败", english: "Failed")
         case "completed": status = appModel.localized("已完成", english: "Complete")
         default: status = progress.status
