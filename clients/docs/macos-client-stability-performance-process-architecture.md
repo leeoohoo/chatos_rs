@@ -1232,6 +1232,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批迁移的是用户显式启动/恢复的生产 Batch session，不会启动应用、扫描或批量改写静态历史。全量历史 Batch 分页迁移协调器、durable terminal job 配额/清理、隐藏 staging 限龄、App→Worker 长期 lease 交接、真实逐状态强杀/睡眠/断网矩阵与 Media Worker 仍待完成，P0-E 不能标记完成。
 
+### 12.31 第三十一批实施记录：durable video 隐藏 staging 有界回收（2026-10-22）
+
+本批收口 MediaJobStore 在大输入复制或 manifest 发布前异常退出留下的隐藏 staging。回收只处理新版显式 lease-aware 目录，不根据“目录够旧”猜测另一个 App writer 已死亡，也不把终态 job 与临时目录混为同一保留策略。
+
+已实施：
+
+- 每个新 `.staging-<UUID>` 在复制输入前创建权限为 `0600` 的 `.staging.lease`，校验 regular file、单硬链接与当前 euid，并从 staging 创建一直持有 `flock(LOCK_EX)` 到 publish/discard 完成。进程退出由内核释放锁；清理方只用非阻塞独占锁判断当前是否无人持有。
+- owner 首次 prepare/stage/recover 时执行一次 best-effort 维护；大输入仍先在 writer lock 外复制并取得 lease，维护不会把文件复制重新串行化到全局写锁之前。清理按 account owner 目录隔离，只接受严格 UUID 名称、真实目录、非 symlink、超过 24 小时且存在合格 lease 的候选。
+- 每次最多检查 64 个 staging 候选。活跃 lease、新鲜目录、旧版本无 lease 目录、畸形名称和 symlink 全部保留；无法安全确认所有权时失败关闭。本次维护失败不阻断视频提交，且同一 Store 后续操作仍可重试。
+- publish 在原子目录 rename 前移除隐藏 lease 文件，descriptor 保持打开到 publish/discard 收尾；正式 job 目录不携带 staging 标记。候选删除后立即 unlock/close，不把最多 64 个文件描述符积压到整轮枚举结束。
+
+验证：新增过期 lease-aware staging 回收、新鲜目录保留、跨 descriptor 活跃 lease 保护及释放后回收、旧版无 lease/畸形名称/symlink 保留、正式发布不含 `.staging.lease`、每轮候选上限，以及“writer lock 被占用时仍先完成大输入 staging”的性能回归。Debug 与 arm64 Release 选择性运行 MediaJobStore 测试，Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
+
+边界：本批不删除正式 durable job。终态记录仍可能被 Story/Batch manifest 引用，在交付引用对账、owner 字节/数量配额和可重放保留协议前，不能仅凭年龄删除。旧版本遗留的无 lease staging 也不会被自动猜测为孤儿；需要后续显式迁移/核对工具处理。全量历史 Batch 分页迁移、终态 job 配额/清理、App→Worker 长期 lease 交接、真实逐状态强杀/睡眠/断网矩阵与 Media Worker 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

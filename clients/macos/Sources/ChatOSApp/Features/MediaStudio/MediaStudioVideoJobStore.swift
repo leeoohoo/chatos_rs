@@ -196,11 +196,16 @@ actor MediaStudioVideoJobStore {
     private struct StagedRecord {
         var record: Record
         var folder: URL
+        var leaseDescriptor: Int32
     }
 
     private static let formatVersion = 3
     private static let maximumManifestBytes = 1 * 1_024 * 1_024
+    private static let stagingLeaseFilename = ".staging.lease"
+    private static let stagingRetention: TimeInterval = 24 * 60 * 60
+    private static let maximumStagingCleanupCandidates = 64
     private let root: URL
+    private var maintainedStagingOwners: Set<String> = []
 
     init(root: URL? = nil) {
         self.root = (root ?? FileManager.default.urls(
@@ -233,7 +238,8 @@ actor MediaStudioVideoJobStore {
             status: .prepared,
             persistsInputs: true
         )
-        defer { try? FileManager.default.removeItem(at: staged.folder) }
+        defer { discard(staged) }
+        maintainStaging(owner: owner)
         let record = try publish(staged.record, from: staged.folder)
         return try execution(record, mode: .create, validatesInputs: false)
     }
@@ -261,7 +267,8 @@ actor MediaStudioVideoJobStore {
             status: .prepared,
             persistsInputs: true
         )
-        defer { try? FileManager.default.removeItem(at: staged.folder) }
+        defer { discard(staged) }
+        maintainStaging(owner: owner)
         return snapshot(try publish(staged.record, from: staged.folder))
     }
 
@@ -290,7 +297,8 @@ actor MediaStudioVideoJobStore {
             status: .submitted,
             persistsInputs: false
         )
-        defer { try? FileManager.default.removeItem(at: staged.folder) }
+        defer { discard(staged) }
+        maintainStaging(owner: owner)
         return snapshot(try publish(staged.record, from: staged.folder))
     }
 
@@ -317,7 +325,8 @@ actor MediaStudioVideoJobStore {
             status: .submissionUncertain,
             persistsInputs: false
         )
-        defer { try? FileManager.default.removeItem(at: staged.folder) }
+        defer { discard(staged) }
+        maintainStaging(owner: owner)
         return snapshot(try publish(staged.record, from: staged.folder))
     }
 
@@ -553,11 +562,12 @@ actor MediaStudioVideoJobStore {
         sessionEpoch: UUID,
         workload: Workload
     ) throws -> Execution? {
-        let lockDescriptor = try acquireStoreLock()
-        defer { releaseStoreLock(lockDescriptor) }
         let normalizedOwner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedOwner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
         guard workload.isValid else { throw MediaStudioVideoJobStoreError.invalidWorkload }
+        maintainStaging(owner: normalizedOwner)
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
         let records = try loadRecords(owner: normalizedOwner)
             .filter { resolvedWorkload($0) == workload }
             .filter { resolvedActivation($0) == .active }
@@ -608,6 +618,85 @@ actor MediaStudioVideoJobStore {
         return snapshot(try load(id: id, owner: owner))
     }
 
+    /// Removes only staging directories created by lease-aware versions of the store. The
+    /// nonblocking lease check protects a slow copy in another App process; older lease-less
+    /// directories are preserved because age alone cannot prove that their writer is dead.
+    func removeExpiredStaging(
+        owner ownerInput: String,
+        olderThan cutoff: Date,
+        limit: Int = MediaStudioVideoJobStore.maximumStagingCleanupCandidates
+    ) throws -> Int {
+        let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !owner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
+        guard limit > 0 else { return 0 }
+        let directory = ownerDirectory(owner)
+        guard FileManager.default.fileExists(atPath: directory.path) else { return 0 }
+        let writer = try acquireStoreLock()
+        defer { releaseStoreLock(writer) }
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .contentModificationDateKey,
+            ],
+            options: [.skipsSubdirectoryDescendants]
+        ) else { throw CocoaError(.fileReadUnknown) }
+        var inspected = 0
+        var removed = 0
+        for case let candidate as URL in enumerator {
+            let prefix = ".staging-"
+            guard candidate.lastPathComponent.hasPrefix(prefix),
+                  UUID(uuidString: String(candidate.lastPathComponent.dropFirst(prefix.count))) != nil
+            else { continue }
+            inspected += 1
+            if inspected > limit { break }
+            let values = try candidate.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .contentModificationDateKey,
+            ])
+            guard values.isDirectory == true,
+                  values.isSymbolicLink != true,
+                  let modifiedAt = values.contentModificationDate,
+                  modifiedAt < cutoff else { continue }
+            let lease = candidate.appendingPathComponent(Self.stagingLeaseFilename)
+            let descriptor = lease.withUnsafeFileSystemRepresentation { path -> Int32 in
+                guard let path else { return -1 }
+                return Darwin.open(path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+            }
+            guard descriptor >= 0 else { continue }
+            var status = stat()
+            guard fstat(descriptor, &status) == 0,
+                  (status.st_mode & S_IFMT) == S_IFREG,
+                  status.st_nlink == 1,
+                  status.st_uid == geteuid() else {
+                _ = Darwin.close(descriptor)
+                continue
+            }
+            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+                _ = Darwin.close(descriptor)
+                continue
+            }
+            do {
+                try FileManager.default.removeItem(at: candidate)
+            } catch {
+                releaseStagingLease(descriptor)
+                throw error
+            }
+            releaseStagingLease(descriptor)
+            removed += 1
+        }
+        return removed
+    }
+
+    private func maintainStaging(owner: String) {
+        guard !maintainedStagingOwners.contains(owner) else { return }
+        let cutoff = Date().addingTimeInterval(-Self.stagingRetention)
+        guard (try? removeExpiredStaging(owner: owner, olderThan: cutoff)) != nil else { return }
+        maintainedStagingOwners.insert(owner)
+    }
+
     private func validateStagedIdentity(id: UUID, owner: String, workload: Workload) throws {
         guard !owner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
         guard workload.isValid, workload != .genericStudio else {
@@ -636,6 +725,13 @@ actor MediaStudioVideoJobStore {
             isDirectory: true
         )
         try createPrivateDirectory(folder)
+        let leaseDescriptor: Int32
+        do {
+            leaseDescriptor = try acquireStagingLease(in: folder)
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
         do {
             let storedRequest: StoredRequest
             if persistsInputs {
@@ -666,8 +762,13 @@ actor MediaStudioVideoJobStore {
                 request: storedRequest
             )
             try write(record, to: folder.appendingPathComponent(".job.json.staged"))
-            return .init(record: record, folder: folder)
+            return .init(
+                record: record,
+                folder: folder,
+                leaseDescriptor: leaseDescriptor
+            )
         } catch {
+            releaseStagingLease(leaseDescriptor)
             try? FileManager.default.removeItem(at: folder)
             throw error
         }
@@ -691,6 +792,9 @@ actor MediaStudioVideoJobStore {
         guard !FileManager.default.fileExists(atPath: finalFolder.path) else {
             throw MediaStudioVideoJobStoreError.invalidRecord
         }
+        try FileManager.default.removeItem(
+            at: stagingFolder.appendingPathComponent(Self.stagingLeaseFilename)
+        )
         let stagedManifest = stagingFolder.appendingPathComponent(".job.json.staged")
         try FileManager.default.moveItem(
             at: stagedManifest,
@@ -698,6 +802,11 @@ actor MediaStudioVideoJobStore {
         )
         try FileManager.default.moveItem(at: stagingFolder, to: finalFolder)
         return expected
+    }
+
+    private func discard(_ staged: StagedRecord) {
+        try? FileManager.default.removeItem(at: staged.folder)
+        releaseStagingLease(staged.leaseDescriptor)
     }
 
     private func isIdempotentMatch(_ existing: Record, expected: Record) -> Bool {
@@ -720,6 +829,45 @@ actor MediaStudioVideoJobStore {
             ratio: request.ratio,
             inputs: []
         )
+    }
+
+    private func acquireStagingLease(in folder: URL) throws -> Int32 {
+        let lease = folder.appendingPathComponent(Self.stagingLeaseFilename)
+        let descriptor = lease.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(
+                path,
+                O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,
+                mode_t(0o600)
+            )
+        }
+        guard descriptor >= 0 else {
+            throw MediaStudioVideoJobStoreError.invalidWriterLock
+        }
+        var shouldClose = true
+        defer {
+            if shouldClose { _ = Darwin.close(descriptor) }
+        }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFREG,
+              status.st_nlink == 1,
+              status.st_uid == geteuid(),
+              fchmod(descriptor, mode_t(0o600)) == 0 else {
+            throw MediaStudioVideoJobStoreError.invalidWriterLock
+        }
+        while flock(descriptor, LOCK_EX) != 0 {
+            guard errno == EINTR else {
+                throw MediaStudioVideoJobStoreError.invalidWriterLock
+            }
+        }
+        shouldClose = false
+        return descriptor
+    }
+
+    private func releaseStagingLease(_ descriptor: Int32) {
+        _ = flock(descriptor, LOCK_UN)
+        _ = Darwin.close(descriptor)
     }
 
     /// Serializes a complete read/verify/transition/write operation across independent

@@ -1,4 +1,5 @@
 import ChatOSCore
+import CryptoKit
 import Darwin
 import Foundation
 import XCTest
@@ -32,6 +33,36 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         return enumerator.compactMap { $0 as? URL }.filter { $0.lastPathComponent == name }
     }
 
+    private func ownerDirectory(root: URL, owner: String) -> URL {
+        let key = SHA256.hash(data: Data(owner.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return root.appendingPathComponent("Accounts/\(key)", isDirectory: true)
+    }
+
+    @discardableResult
+    private func makeStagingDirectory(
+        root: URL,
+        owner: String = "alice",
+        id: UUID = UUID(),
+        modifiedAt: Date,
+        hasLease: Bool = true
+    ) throws -> URL {
+        let folder = ownerDirectory(root: root, owner: owner).appendingPathComponent(
+            ".staging-\(id.uuidString.lowercased())",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if hasLease {
+            try Data().write(to: folder.appendingPathComponent(".staging.lease"))
+        }
+        try FileManager.default.setAttributes(
+            [.modificationDate: modifiedAt],
+            ofItemAtPath: folder.path
+        )
+        return folder
+    }
+
     func testWriterLockIsPrivateRegularFile() async throws {
         let root = try directory().appendingPathComponent("jobs")
         let store = MediaStudioVideoJobStore(root: root)
@@ -47,6 +78,129 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         let attributes = try FileManager.default.attributesOfItem(atPath: lockURL.path)
         XCTAssertEqual(values.isRegularFile, true)
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
+    func testStagingCleanupRemovesOnlyExpiredLeaseAwareDirectories() async throws {
+        let directory = try directory()
+        let root = directory.appendingPathComponent("jobs")
+        let cutoff = Date(timeIntervalSinceNow: -60 * 60)
+        let expired = try makeStagingDirectory(
+            root: root,
+            modifiedAt: cutoff.addingTimeInterval(-1)
+        )
+        let fresh = try makeStagingDirectory(
+            root: root,
+            modifiedAt: cutoff.addingTimeInterval(1)
+        )
+        let legacy = try makeStagingDirectory(
+            root: root,
+            modifiedAt: cutoff.addingTimeInterval(-1),
+            hasLease: false
+        )
+        let ownerFolder = ownerDirectory(root: root, owner: "alice")
+        let malformed = ownerFolder.appendingPathComponent(".staging-not-a-uuid", isDirectory: true)
+        try FileManager.default.createDirectory(at: malformed, withIntermediateDirectories: true)
+        let symlinkTarget = directory.appendingPathComponent("symlink-target", isDirectory: true)
+        try FileManager.default.createDirectory(at: symlinkTarget, withIntermediateDirectories: true)
+        let symlink = ownerFolder.appendingPathComponent(
+            ".staging-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: symlinkTarget)
+
+        let removed = try await MediaStudioVideoJobStore(root: root).removeExpiredStaging(
+            owner: "alice",
+            olderThan: cutoff
+        )
+
+        XCTAssertEqual(removed, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: expired.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fresh.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacy.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: malformed.path))
+        XCTAssertNotNil(try? FileManager.default.destinationOfSymbolicLink(atPath: symlink.path))
+    }
+
+    func testStagingCleanupHonorsLiveLeaseUntilItIsReleased() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let cutoff = Date(timeIntervalSinceNow: -60 * 60)
+        let staging = try makeStagingDirectory(
+            root: root,
+            modifiedAt: cutoff.addingTimeInterval(-1)
+        )
+        let lease = staging.appendingPathComponent(".staging.lease")
+        let descriptor = lease.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        }
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        guard descriptor >= 0 else { return }
+        XCTAssertEqual(flock(descriptor, LOCK_EX), 0)
+
+        let store = MediaStudioVideoJobStore(root: root)
+        let removedWhileLocked = try await store.removeExpiredStaging(
+            owner: "alice",
+            olderThan: cutoff
+        )
+        XCTAssertEqual(removedWhileLocked, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: staging.path))
+
+        XCTAssertEqual(flock(descriptor, LOCK_UN), 0)
+        XCTAssertEqual(Darwin.close(descriptor), 0)
+        let removedAfterRelease = try await store.removeExpiredStaging(
+            owner: "alice",
+            olderThan: cutoff
+        )
+        XCTAssertEqual(removedAfterRelease, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staging.path))
+    }
+
+    func testPrepareMaintainsExpiredStagingWithoutPublishingLeaseFile() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let orphan = try makeStagingDirectory(
+            root: root,
+            modifiedAt: Date(timeIntervalSinceNow: -(25 * 60 * 60))
+        )
+
+        _ = try await MediaStudioVideoJobStore(root: root).prepare(
+            request: request(),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+        XCTAssertTrue(files(named: ".staging.lease", under: root).isEmpty)
+    }
+
+    func testStagingCleanupBoundsCandidatesPerPass() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let cutoff = Date(timeIntervalSinceNow: -60 * 60)
+        for _ in 0..<3 {
+            try makeStagingDirectory(
+                root: root,
+                modifiedAt: cutoff.addingTimeInterval(-1)
+            )
+        }
+        let store = MediaStudioVideoJobStore(root: root)
+
+        let firstPass = try await store.removeExpiredStaging(
+            owner: "alice",
+            olderThan: cutoff,
+            limit: 2
+        )
+        XCTAssertEqual(firstPass, 2)
+        let ownerFolder = ownerDirectory(root: root, owner: "alice")
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: ownerFolder.path)
+                .filter { $0.hasPrefix(".staging-") }.count,
+            1
+        )
+        let secondPass = try await store.removeExpiredStaging(
+            owner: "alice",
+            olderThan: cutoff,
+            limit: 2
+        )
+        XCTAssertEqual(secondPass, 1)
     }
 
     func testStoryWorkloadIsInvisibleToGenericStudioRecovery() async throws {
