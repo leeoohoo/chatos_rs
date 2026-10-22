@@ -612,7 +612,7 @@ impl FromStr for LocalTaskGraphStatus {
             "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
-            _ => Err(format!("unknown local task graph status: {value}")),
+            _ => Err(format!("unknown task graph status: {value}")),
         }
     }
 }
@@ -643,7 +643,7 @@ impl FromStr for LocalTaskStatus {
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
             "blocked" => Ok(Self::Blocked),
-            _ => Err(format!("unknown local task status: {value}")),
+            _ => Err(format!("unknown task status: {value}")),
         }
     }
 }

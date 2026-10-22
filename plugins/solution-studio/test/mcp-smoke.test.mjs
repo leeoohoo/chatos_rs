@@ -26,6 +26,10 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
     for (const name of ['solution_get_active_context', 'solution_upsert_requirements', 'solution_upsert_design', 'solution_upsert_design_block', 'solution_upsert_execution_plan', 'solution_validate', 'solution_export', 'solution_finalize']) assert.ok(tools.has(name));
     assert.deepEqual(tools.get('solution_upsert_execution_plan')._meta['chatos/skillGate'].allOf, ['solution-studio', 'solution-execution-plan']);
+    const planSchema = tools.get('solution_upsert_execution_plan').inputSchema.properties.executionPlan;
+    assert.deepEqual(planSchema.required, ['status', 'basedOnDesignRevision', 'objective', 'tasks']);
+    assert.ok(planSchema.properties.tasks.items.required.includes('dependsOn'));
+    assert.equal(planSchema.properties.statusEvents.maxItems, 0);
 
     const context = await call(client, 'solution_get_active_context', {});
     assert.equal(context.scope.hasProjectContext, true);
@@ -75,7 +79,32 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
       task('T-003', 'R-002', ['T-001']),
       task('T-004', 'R-002', ['T-002', 'T-003'])
     ] };
-    const accepted = await call(client, 'solution_upsert_execution_plan', { title: 'MCP 方案', executionPlan: validPlan });
+    // Reproduce the production request: business content without server metadata/history/layout.
+    const { revision: _revision, updatedAt: _updatedAt, statusEvents: _events, positions: _positions, viewport: _viewport, ...businessPlan } = validPlan;
+    for (const [executionPlan, expectedError] of [
+      [null, /executionPlan must be an object/],
+      [{ ...businessPlan, tasks: null }, /executionPlan.tasks/],
+      [{ ...businessPlan, tasks: [null] }, /executionPlan.tasks\[0\]/],
+      [{ ...businessPlan, tasks: [{ ...businessPlan.tasks[0], dependsOn: undefined }] }, /task.T-001.dependsOn/],
+      [{ ...businessPlan, statusEvents: null }, /executionPlan.statusEvents/],
+      [{ ...businessPlan, positions: { 'T-001': null } }, /executionPlan.positions.T-001/],
+      [{ ...businessPlan, positions: [] }, /executionPlan.positions/],
+      [{ ...businessPlan, viewport: null }, /executionPlan.viewport/],
+      [{ ...businessPlan, statusEvents: [{ id: 'EV-1', taskId: 'T-001', from: 'planned', to: 'in_progress', occurredAt: now(), runtimeSessionId: 'test-session', evidence: [] }] }, /不能提交任务状态事件/],
+      [{ ...businessPlan, tasks: [{ ...businessPlan.tasks[0], status: 'done' }] }, /状态必须是 planned/]
+    ]) {
+      const invalid = await client.callTool({ name: 'solution_upsert_execution_plan', arguments: { title: 'MCP 方案', executionPlan } });
+      assert.equal(invalid.isError, true);
+      assert.match(invalid.structuredContent.error, expectedError);
+      const unchanged = await call(client, 'solution_get_workspace', {});
+      assert.deepEqual(unchanged.workspace, afterReject.workspace, 'Invalid input must not change the persisted workspace');
+    }
+    const accepted = await call(client, 'solution_upsert_execution_plan', { title: 'MCP 方案', executionPlan: businessPlan });
+    assert.deepEqual(accepted.executionPlan.statusEvents, []);
+    assert.deepEqual(accepted.executionPlan.positions, {});
+    assert.deepEqual(accepted.executionPlan.viewport, { x: 0, y: 0, zoom: 1 });
+    assert.equal(accepted.executionPlan.revision, 1);
+    assert.ok(Number.isFinite(Date.parse(accepted.executionPlan.updatedAt)));
     assert.equal(accepted.validation.valid, true, JSON.stringify(accepted.validation));
     assert.deepEqual(accepted.validation.topologicalOrder, ['T-001', 'T-002', 'T-003', 'T-004']);
     const persisted = await call(client, 'solution_get_workspace', {});
@@ -189,6 +218,35 @@ test('executor exposes only task execution tools and enforces prerequisites and 
     const persisted = await store.read(saved.workspaceId);
     assert.equal(persisted.executionPlan.statusEvents.length, 3);
     assert.equal(persisted.executionPlan.statusEvents[0].runtimeSessionId, 'executor-session-1');
+
+    // Authoring updates may omit executor-owned history, but must never erase or forge it.
+    persisted.executionPlan.positions = { 'T-001': { x: 12, y: 34 } };
+    persisted.executionPlan.viewport = { x: 5, y: 6, zoom: 0.8 };
+    const withLayout = await store.replace(persisted, persisted.revision);
+    const author = new Client({ name: 'solution-authoring-history-test', version: '1.0.0' });
+    try {
+      await author.connect(new StdioClientTransport({
+        command: process.execPath,
+        args: [path.join(packageRoot, 'bin/chatos-solution-studio'), 'mcp-authoring'],
+        env: { ...process.env, CHATOS_PLUGIN_DATA_DIR: dataRoot }
+      }));
+      const businessPlan = { status: 'approved', basedOnDesignRevision: 1, objective: '更新目标', tasks: workspace.executionPlan.tasks };
+      const updated = await call(author, 'solution_upsert_execution_plan', { title: workspace.title, executionPlan: businessPlan });
+      assert.deepEqual(updated.executionPlan.statusEvents, withLayout.executionPlan.statusEvents);
+      assert.deepEqual(updated.executionPlan.tasks.map(task => task.status), ['done', 'in_progress']);
+      assert.deepEqual(updated.executionPlan.positions, withLayout.executionPlan.positions);
+      assert.deepEqual(updated.executionPlan.viewport, withLayout.executionPlan.viewport);
+      for (const tasks of [[], businessPlan.tasks.map(task => ({ ...task, title: '篡改定义' }))]) {
+        const rejected = await author.callTool({ name: 'solution_upsert_execution_plan', arguments: { title: workspace.title, executionPlan: { ...businessPlan, tasks } } });
+        assert.equal(rejected.isError, true);
+        assert.match(rejected.structuredContent.error, /不能删除|不能修改/);
+      }
+      const afterAuthoring = await store.read(saved.workspaceId);
+      assert.equal(afterAuthoring.revision, updated.workspace.revision);
+      assert.deepEqual(afterAuthoring.executionPlan.statusEvents, withLayout.executionPlan.statusEvents);
+    } finally {
+      await author.close();
+    }
   } finally {
     await client.close();
     await rm(root, { recursive: true, force: true });

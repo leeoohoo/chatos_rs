@@ -96,7 +96,7 @@ extension AgentGroupChatViewModel {
             case .completed:
                 startScheduler()
             case .suspended, .failed:
-                errorMessage = result.detail ?? "本地 Agent Run 尚未完成。"
+                errorMessage = result.detail ?? "Agent Run 尚未完成。"
             }
         } catch {
             await load()

@@ -67,14 +67,14 @@
 
 ## 2026-10-14 最终发布批次
 
-- macOS Release 客户端已完成构建、签名校验和原位升级；重启后仅有一个 ChatOS 主进程与一个本地执行进程。
+- macOS Release 客户端已完成构建、签名校验和原位升级；重启后仅有一个 ChatOS 主进程与一个执行进程。
 - 已完成并校验 5 个新 Release 包：Document 0.1.11、Diagram 0.4.7、Solution 0.1.12、Web Design 3.0.32、Browser 0.1.18。
 - Computer Use 0.8.19 的已安装 Skill 与当前源码一致；其权限检测和“只读不等于禁止截图”修复由新版客户端宿主生效，仍需正式客户端黑盒复测。
 - 2026-10-14 20:45 更正：之前检查了旧路径 `/api/health` 和 `/api/plugins/catalog`，据其 HTTP 502 推断插件服务故障是错误的。统一管理端实际使用 `/api/admin/plugin-management` 前缀；正确健康接口返回 200，目录接口在未登录时返回预期的 401。继续通过正式 Release 发布，并单独排查管理端空白页。
 - 正式发布进程（终端会话 `50844`）以退出码 0 结束；脚本启用 `set -euo pipefail` 并依次发布五项。正式客户端“插件与 Skills”显示五项均“有更新”，最新版本分别为 Document 0.1.11、Diagram 0.4.7、Solution 0.1.12、Web Design 3.0.32、Browser 0.1.18；当前安装版本仍为上一版，尚未据此宣称实机验收通过。已在安装动作前请求用户确认。
-- 正式客户端只有一个 ChatOS 主进程和一个本地执行进程，未发现仍运行的构建/发布命令。Computer Use 0.8.19 在新版宿主中点击“重新检测”后仍显示辅助功能、屏幕录制两项“等待检测”；P-05 因此仍未通过。已核对安装包的 `bin/open-computer-use` 含 `check-permissions` 命令，宿主现在把诊断目录作为隔离缓存/TMPDIR；真实失败发生在诊断执行或结果解析链，具体错误被 `permissionDiagnostics` 的 `try?` 吞掉，下一步须固定可见错误的回归用例并定位，不能把“已重新检测”提示当作权限已通过。
+- 正式客户端只有一个 ChatOS 主进程和一个执行进程，未发现仍运行的构建/发布命令。Computer Use 0.8.19 在新版宿主中点击“重新检测”后仍显示辅助功能、屏幕录制两项“等待检测”；P-05 因此仍未通过。已核对安装包的 `bin/open-computer-use` 含 `check-permissions` 命令，宿主现在把诊断目录作为隔离缓存/TMPDIR；真实失败发生在诊断执行或结果解析链，具体错误被 `permissionDiagnostics` 的 `try?` 吞掉，下一步须固定可见错误的回归用例并定位，不能把“已重新检测”提示当作权限已通过。
 - P-05 实包回归：先用当前已装 0.8.19 在宿主隔离环境复现退出码 1；增加启动错误反馈后定位到受管 App `spawnSync ... EPERM`。修复未创建目录的 canonical path 后，第二次复现为报告写入被拒；把短生命周期诊断 JSON 从原子写改为隔离缓存内直接写后，`installedComputerUsePermissionProbe` 与路径回归均通过。Computer Use 自身 16/16 与 macOS `swift test --package-path clients/macos` 全量通过；0.8.20 打包与 Skill 门禁通过。新客户端 Release 构建及签名验证通过，正式插件平台已确认 `open-computer-use 0.8.20` 发布成功；尚待正式客户端安装、权限显示和只读观察复测。
-- P-05 宿主版已原位安装：先核对本地任务状态只有 `blocked/cancelled/failed/succeeded`，无运行中任务，且验收项目输入框为空；备份旧版至 `/Applications/.chatos-p05-backup.MH8XOe/` 后，正常退出原进程，把签名验证通过的新 Release 安装至唯一 `/Applications/ChatOS.app`。安装版 `ChatOSBuildDateUTC=2026-10-14T13:56:07Z`；使用用户提供的测试账号重新登录后，叽咕狸、项目列表恢复，进程核对只有一个安装路径主进程及一个 Host。五个旧插件及 Computer Use 0.8.20 仍须经客户端正式更新入口安装与实机验收，不能以发布成功代替。
+- P-05 宿主版已原位安装：先核对任务状态只有 `blocked/cancelled/failed/succeeded`，无运行中任务，且验收项目输入框为空；备份旧版至 `/Applications/.chatos-p05-backup.MH8XOe/` 后，正常退出原进程，把签名验证通过的新 Release 安装至唯一 `/Applications/ChatOS.app`。安装版 `ChatOSBuildDateUTC=2026-10-14T13:56:07Z`；使用用户提供的测试账号重新登录后，叽咕狸、项目列表恢复，进程核对只有一个安装路径主进程及一个 Host。五个旧插件及 Computer Use 0.8.20 仍须经客户端正式更新入口安装与实机验收，不能以发布成功代替。
 - P-08 已加回归用例，先确认粗状态无法区分成功执行后的 `not_verified`，再增加只用于显示的 `display_status`，按运行结果和结构化验收项区分执行失败、未通过验收、部分完成待核验；聊天胶囊、回调首句和任务组摘要采用用户可理解的文案，任务调度状态不变。正式数据库只读检查到 `failed` 任务对应 `succeeded` Run 的验收项有 `not_verified`，说明原问题真实存在。`chatos_client_storage` 101/101、`swift test --package-path clients/macos` 全量通过。该修复尚未安装至正式客户端，不能标为实机通过。
 - P-08 Release 客户端已从当前未提交工作区快照打包在 `clients/macos/.build/ChatOS.app`，构建时间 `2026-10-14T14:58:12Z`，`verify-app-build.sh` 签名与配置校验通过；主程序 SHA-256 `0f2bc42c659d314cd747e15aeb69b85e946499220794d261765eff8eabae20b9`，Host SHA-256 `5aac74b0d64ebe1ef697570c29523746554741210dc736a11b171d728ffeb8ef`。这只是待安装包，未替换运行中的正式客户端，也未作为实机验收证据。
 - 2026-10-14 15:10 UTC 只读复核：正式客户端仍为 `ChatOSBuildDateUTC=2026-10-14T13:56:07Z`，没有活动 Task/Run、构建或发布进程，且仅运行一个 `/Applications/ChatOS.app`。客户端“插件与 Skills”仍显示六项有更新：Web Design 3.0.31→3.0.32、Browser 0.1.17→0.1.18、Computer Use 0.8.19→0.8.20、Diagram 0.4.6→0.4.7、Document 0.1.10→0.1.11、Solution 0.1.11→0.1.12。没有点“更新”；等待已发出的六项安装确认，不以平台已发布推定本机可用。

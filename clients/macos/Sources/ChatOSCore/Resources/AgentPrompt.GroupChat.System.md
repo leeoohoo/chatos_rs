@@ -1,4 +1,4 @@
-你是{{conversation_role}}中的本地 Agent「{{agent_name}}」。
+你是{{conversation_role}}中的Agent「{{agent_name}}」。
 你的角色：{{member_role}}
 你的职责：{{responsibility}}
 角色指令：{{role_prompt}}

@@ -36,12 +36,15 @@ extension NativeLocalConnectorService {
     }
 
     func connectGateway() async throws {
-        shouldMaintainGatewayConnection = true
-        guard webSocket == nil,
-              reconnectTask == nil,
-              gatewayConnectionCleanupCount == 0 else {
+        guard Self.shouldOpenGatewayConnection(
+            hasSocket: webSocket != nil,
+            hasReconnectTask: reconnectTask != nil,
+            hasFailureHandler: gatewayConnectionFailureTask != nil,
+            cleanupInProgress: gatewayConnectionCleanupCount > 0
+        ) else {
             return
         }
+        shouldMaintainGatewayConnection = true
         do {
             try await openGatewayConnection()
         } catch {
@@ -49,6 +52,15 @@ extension NativeLocalConnectorService {
             scheduleGatewayReconnect()
             throw error
         }
+    }
+
+    static func shouldOpenGatewayConnection(
+        hasSocket: Bool,
+        hasReconnectTask: Bool,
+        hasFailureHandler: Bool,
+        cleanupInProgress: Bool
+    ) -> Bool {
+        !hasSocket && !hasReconnectTask && !hasFailureHandler && !cleanupInProgress
     }
 
     private func openGatewayConnection() async throws {
@@ -131,7 +143,7 @@ extension NativeLocalConnectorService {
                 }
             }
         } catch {
-            await handleGatewayConnectionFailure(socket: socket, error: error)
+            scheduleGatewayConnectionFailure(socket: socket, error: error)
         }
     }
 
@@ -145,7 +157,7 @@ extension NativeLocalConnectorService {
             } catch is CancellationError {
                 return
             } catch {
-                await handleGatewayConnectionFailure(socket: socket, error: error)
+                scheduleGatewayConnectionFailure(socket: socket, error: error)
                 return
             }
             guard webSocket === socket else { return }
@@ -155,7 +167,7 @@ extension NativeLocalConnectorService {
                 missedAcknowledgements += 1
             }
             if missedAcknowledgements >= 3 {
-                await handleGatewayConnectionFailure(
+                scheduleGatewayConnectionFailure(
                     socket: socket,
                     error: URLError(.timedOut)
                 )
@@ -164,20 +176,67 @@ extension NativeLocalConnectorService {
         }
     }
 
-    private func handleGatewayConnectionFailure(
+    /// Failure recovery runs outside the socket reader and heartbeat tasks. Closing a
+    /// connection intentionally cancels both of those tasks; doing the ticket exchange from
+    /// either one caused the replacement request to inherit cancellation and fail immediately.
+    private func scheduleGatewayConnectionFailure(
         socket: URLSessionWebSocketTask,
         error: any Error
+    ) {
+        guard Self.shouldStartGatewayConnectionFailureHandling(
+            socketMatches: webSocket === socket,
+            hasActiveHandler: gatewayConnectionFailureTask != nil,
+            cleanupInProgress: gatewayConnectionCleanupCount > 0
+        ) else { return }
+        gatewayConnectionFailureGeneration &+= 1
+        let generation = gatewayConnectionFailureGeneration
+        gatewayConnectionFailureTask = Task { [weak self] in
+            await self?.handleGatewayConnectionFailure(
+                socket: socket,
+                error: error,
+                generation: generation
+            )
+            await self?.finishGatewayConnectionFailureHandling(generation: generation)
+        }
+    }
+
+    private func finishGatewayConnectionFailureHandling(generation: UInt64) {
+        guard gatewayConnectionFailureGeneration == generation else { return }
+        gatewayConnectionFailureTask = nil
+        scheduleGatewayReconnect()
+    }
+
+    static func shouldStartGatewayConnectionFailureHandling(
+        socketMatches: Bool,
+        hasActiveHandler: Bool,
+        cleanupInProgress: Bool
+    ) -> Bool {
+        socketMatches && !hasActiveHandler && !cleanupInProgress
+    }
+
+    private func handleGatewayConnectionFailure(
+        socket: URLSessionWebSocketTask,
+        error: any Error,
+        generation: UInt64
     ) async {
-        guard webSocket === socket else { return }
+        guard Self.gatewayConnectionFailureIsCurrent(
+            expectedGeneration: generation,
+            currentGeneration: gatewayConnectionFailureGeneration,
+            isCancelled: Task.isCancelled,
+            socketMatches: webSocket === socket
+        ) else { return }
+        let statusCode = (socket.response as? HTTPURLResponse)?.statusCode ?? 0
         let authenticationExpired = NativeConnectorGateway.isConnectorAuthenticationRejected(
-            statusCode: (socket.response as? HTTPURLResponse)?.statusCode ?? 0,
+            statusCode: statusCode,
             token: (try? accessToken()) ?? nil
         )
         if authenticationExpired {
             shouldMaintainGatewayConnection = false
             invalidateManagedRuntimeConfig()
         }
-        Self.logger.error("网关长连接中断：\(error.localizedDescription, privacy: .public)")
+        Self.logger.error(
+            "网关长连接中断（HTTP \(statusCode, privacy: .public)）：\(error.localizedDescription, privacy: .public)"
+        )
         recordGatewayReconnectFailure()
         // A transient gateway outage must not destroy prepared Plugin MCP
         // processes. Their adapter session IDs remain valid locally and can be
@@ -185,14 +244,24 @@ extension NativeLocalConnectorService {
         await closeGatewayConnection(
             terminatePluginSessions: Self.transientGatewayFailureTerminatesPluginSessions
         )
+        guard Self.gatewayConnectionFailureIsCurrent(
+            expectedGeneration: generation,
+            currentGeneration: gatewayConnectionFailureGeneration,
+            isCancelled: Task.isCancelled,
+            socketMatches: webSocket == nil
+        ) else { return }
         if authenticationExpired {
-            await refreshConnectorCredentialAfterRejection()
+            await refreshConnectorCredentialAfterRejection(generation: generation)
         } else {
             scheduleGatewayReconnect()
         }
     }
 
-    private func refreshConnectorCredentialAfterRejection() async {
+    private func refreshConnectorCredentialAfterRejection(generation: UInt64) async {
+        // Status polling may call connectGateway while this actor is suspended in the
+        // ticket exchange. Keep the old credential disabled until the replacement has
+        // been verified and durably stored.
+        shouldMaintainGatewayConnection = false
         let now = Date()
         guard Self.shouldAttemptConnectorCredentialRefresh(
             lastAttempt: lastConnectorCredentialRefreshAttemptAt,
@@ -209,14 +278,24 @@ extension NativeLocalConnectorService {
             return
         }
         do {
+            try requireCurrentGatewayConnectionFailure(generation: generation)
             let ticket = try await ticketProvider.issueLocalConnectorPairingTicket()
+            try requireCurrentGatewayConnectionFailure(generation: generation)
             let login = try await gateway.exchange(ticket: ticket, deviceName: deviceName)
+            try requireCurrentGatewayConnectionFailure(generation: generation)
             guard login.user.id == expectedOwnerUserID else {
                 throw NativeConnectorError.server(
                     status: 409,
                     message: "当前登录账号与已配对设备账号不一致"
                 )
             }
+            // Status polling can re-enter the actor while the ticket exchange is in flight.
+            // Remove any old-token socket it managed to start before publishing the new token.
+            shouldMaintainGatewayConnection = false
+            if webSocket != nil {
+                await closeGatewayConnection(terminatePluginSessions: false)
+            }
+            try requireCurrentGatewayConnectionFailure(generation: generation)
             try secretStore.save(Data(login.token.utf8), account: Self.accessTokenAccount)
             cachedAccessToken = login.token
             hasLoadedAccessToken = true
@@ -226,12 +305,34 @@ extension NativeLocalConnectorService {
             gatewayReconnectFailureCount = 0
             Self.logger.info("Connector 凭证已自动续签，正在恢复网关长连接")
             scheduleGatewayReconnect()
+        } catch is CancellationError {
+            return
         } catch {
             shouldMaintainGatewayConnection = false
             Self.logger.error(
                 "Connector 凭证自动续签失败：\(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    private func requireCurrentGatewayConnectionFailure(generation: UInt64) throws {
+        guard Self.gatewayConnectionFailureIsCurrent(
+            expectedGeneration: generation,
+            currentGeneration: gatewayConnectionFailureGeneration,
+            isCancelled: Task.isCancelled,
+            socketMatches: true
+        ) else {
+            throw CancellationError()
+        }
+    }
+
+    static func gatewayConnectionFailureIsCurrent(
+        expectedGeneration: UInt64,
+        currentGeneration: UInt64,
+        isCancelled: Bool,
+        socketMatches: Bool
+    ) -> Bool {
+        !isCancelled && expectedGeneration == currentGeneration && socketMatches
     }
 
     static let transientGatewayFailureTerminatesPluginSessions = false
@@ -248,17 +349,38 @@ extension NativeLocalConnectorService {
     }
 
     func scheduleGatewayReconnect() {
-        guard shouldMaintainGatewayConnection,
-              !isSystemSleeping,
-              state.deviceID != nil,
-              webSocket == nil,
-              gatewayConnectionCleanupCount == 0,
-              reconnectTask == nil else {
+        guard Self.shouldScheduleGatewayReconnect(
+            shouldMaintain: shouldMaintainGatewayConnection,
+            isSystemSleeping: isSystemSleeping,
+            hasDevice: state.deviceID != nil,
+            hasSocket: webSocket != nil,
+            cleanupInProgress: gatewayConnectionCleanupCount > 0,
+            hasFailureHandler: gatewayConnectionFailureTask != nil,
+            hasReconnectTask: reconnectTask != nil
+        ) else {
             return
         }
         reconnectTask = Task { [weak self] in
             await self?.runGatewayReconnectLoop()
         }
+    }
+
+    static func shouldScheduleGatewayReconnect(
+        shouldMaintain: Bool,
+        isSystemSleeping: Bool,
+        hasDevice: Bool,
+        hasSocket: Bool,
+        cleanupInProgress: Bool,
+        hasFailureHandler: Bool,
+        hasReconnectTask: Bool
+    ) -> Bool {
+        shouldMaintain
+            && !isSystemSleeping
+            && hasDevice
+            && !hasSocket
+            && !cleanupInProgress
+            && !hasFailureHandler
+            && !hasReconnectTask
     }
 
     private func runGatewayReconnectLoop() async {
@@ -478,9 +600,16 @@ extension NativeLocalConnectorService {
     }
 
     func stopGatewayConnection() async {
+        cancelGatewayConnectionFailureHandling()
         reconnectTask?.cancel()
         reconnectTask = nil
         await closeGatewayConnection(terminatePluginSessions: true)
+    }
+
+    func cancelGatewayConnectionFailureHandling() {
+        gatewayConnectionFailureGeneration &+= 1
+        gatewayConnectionFailureTask?.cancel()
+        gatewayConnectionFailureTask = nil
     }
 
     func closeGatewayConnection(terminatePluginSessions: Bool) async {

@@ -13,12 +13,12 @@ pub(super) async fn resolve_task_model(
     let requested = requested.map(str::trim).filter(|value| !value.is_empty());
     let requested = match allowed_model_config_ids {
         None => requested,
-        Some([]) => return Err("no model configuration is enabled for local Tasks".to_string()),
+        Some([]) => return Err("no model configuration is enabled for Tasks".to_string()),
         Some(allowed) => {
             if let Some(requested) = requested {
                 if !allowed.iter().any(|candidate| candidate == requested) {
                     return Err(format!(
-                        "model configuration is not enabled for local Tasks: {requested}"
+                        "model configuration is not enabled for Tasks: {requested}"
                     ));
                 }
                 Some(requested)

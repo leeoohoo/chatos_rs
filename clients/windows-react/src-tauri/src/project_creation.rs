@@ -389,7 +389,7 @@ fn create_project_transaction(
         ));
     }
     // Both authoritative stores are committed. A transient cleanup failure must not turn a
-    // successful local project into an apparent failure; recovery is idempotent and retries it.
+    // successful project into an apparent failure; recovery is idempotent and retries it.
     let _ = remove_journal(&journal_path);
     Ok(CreatedLocalProject {
         id: journal.project.id,
@@ -867,7 +867,7 @@ fn duplicate_project() -> String {
 }
 
 fn creation_error() -> String {
-    "无法安全创建本地项目。".into()
+    "无法安全创建项目。".into()
 }
 
 const PROJECT_TYPES: &[ProjectTypeDefinition] = &[

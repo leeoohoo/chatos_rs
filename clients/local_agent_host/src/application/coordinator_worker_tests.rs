@@ -321,7 +321,7 @@ async fn slow_remote_memory_sync_does_not_block_local_model_scheduling() {
     .await;
     assert!(
         completed.is_ok(),
-        "local model scheduling waited for a remote Memory request"
+        "model scheduling waited for a remote Memory request"
     );
 
     memory_release.notify_one();

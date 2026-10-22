@@ -48,7 +48,7 @@ pub async fn prepare_project_conversation(
         load_project_context(&database, &owner, &requested_project_id)
     })
     .await
-    .map_err(|_| "本地项目读取任务异常退出。".to_owned())??;
+    .map_err(|_| "项目读取任务异常退出。".to_owned())??;
 
     let conversations = list_all_conversations(&manager, &owner_user_id).await?;
     if let Some(conversation_id) = project_conversation_id(&conversations, &project.id) {
@@ -98,7 +98,7 @@ fn load_project_context(
             "SELECT id, name, description, workspace_id, relative_root, project_type_key, revision \
              FROM local_project_records WHERE owner_user_id = ?1 AND id = ?2 AND status = 'active'",
         )
-        .map_err(|_| "无法读取本地项目注册表。".to_owned())?;
+        .map_err(|_| "无法读取项目注册表。".to_owned())?;
     let project = statement
         .query_row(params![owner_user_id, project_id], |row| {
             Ok(LocalProjectContext {
@@ -112,8 +112,8 @@ fn load_project_context(
             })
         })
         .map_err(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => "本地项目不存在或已停用。".to_owned(),
-            _ => "本地项目注册表包含无效数据。".to_owned(),
+            rusqlite::Error::QueryReturnedNoRows => "项目不存在或已停用。".to_owned(),
+            _ => "项目注册表包含无效数据。".to_owned(),
         })?;
     validate_project_context(&project)?;
     Ok(project)
@@ -137,7 +137,7 @@ fn validate_project_context(project: &LocalProjectContext) -> Result<(), String>
     }
     validate_route_identifier(&project.workspace_id)?;
     if project.description.contains('\0') || project.revision <= 0 {
-        return Err("本地项目注册表包含无效数据。".into());
+        return Err("项目注册表包含无效数据。".into());
     }
     let relative_root = &project.relative_root;
     if relative_root.trim() != relative_root
@@ -149,7 +149,7 @@ fn validate_project_context(project: &LocalProjectContext) -> Result<(), String>
                 .split('/')
                 .any(|component| component.is_empty() || component == "." || component == ".."))
     {
-        return Err("本地项目注册表包含无效数据。".into());
+        return Err("项目注册表包含无效数据。".into());
     }
     Ok(())
 }
@@ -160,7 +160,7 @@ fn validate_identifier(value: &str) -> Result<(), String> {
         || value.len() > 1_024
         || value.chars().any(char::is_control)
     {
-        return Err("本地项目注册表包含无效数据。".into());
+        return Err("项目注册表包含无效数据。".into());
     }
     Ok(())
 }
@@ -168,7 +168,7 @@ fn validate_identifier(value: &str) -> Result<(), String> {
 fn validate_route_identifier(value: &str) -> Result<(), String> {
     validate_identifier(value)?;
     if value.contains('/') || value.contains('\\') || value == "." || value == ".." {
-        return Err("本地项目注册表包含无效数据。".into());
+        return Err("项目注册表包含无效数据。".into());
     }
     Ok(())
 }

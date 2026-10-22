@@ -51,6 +51,123 @@ struct NativeConnectorReconnectPolicyTests {
     }
 
     @Test
+    func socketFailureHandlingIsSingleFlightAndRejectsStaleSockets() {
+        #expect(NativeLocalConnectorService.shouldStartGatewayConnectionFailureHandling(
+            socketMatches: true,
+            hasActiveHandler: false,
+            cleanupInProgress: false
+        ))
+        #expect(!NativeLocalConnectorService.shouldStartGatewayConnectionFailureHandling(
+            socketMatches: false,
+            hasActiveHandler: false,
+            cleanupInProgress: false
+        ))
+        #expect(!NativeLocalConnectorService.shouldStartGatewayConnectionFailureHandling(
+            socketMatches: true,
+            hasActiveHandler: true,
+            cleanupInProgress: false
+        ))
+        #expect(!NativeLocalConnectorService.shouldStartGatewayConnectionFailureHandling(
+            socketMatches: true,
+            hasActiveHandler: false,
+            cleanupInProgress: true
+        ))
+    }
+
+    @Test
+    func foregroundStatusPollingCannotReconnectDuringCredentialRecovery() {
+        #expect(NativeLocalConnectorService.shouldOpenGatewayConnection(
+            hasSocket: false,
+            hasReconnectTask: false,
+            hasFailureHandler: false,
+            cleanupInProgress: false
+        ))
+        #expect(!NativeLocalConnectorService.shouldOpenGatewayConnection(
+            hasSocket: false,
+            hasReconnectTask: false,
+            hasFailureHandler: true,
+            cleanupInProgress: false
+        ))
+        #expect(!NativeLocalConnectorService.shouldOpenGatewayConnection(
+            hasSocket: true,
+            hasReconnectTask: false,
+            hasFailureHandler: false,
+            cleanupInProgress: false
+        ))
+        #expect(!NativeLocalConnectorService.shouldOpenGatewayConnection(
+            hasSocket: false,
+            hasReconnectTask: true,
+            hasFailureHandler: false,
+            cleanupInProgress: false
+        ))
+        #expect(!NativeLocalConnectorService.shouldOpenGatewayConnection(
+            hasSocket: false,
+            hasReconnectTask: false,
+            hasFailureHandler: false,
+            cleanupInProgress: true
+        ))
+    }
+
+    @Test
+    func reconnectLoopCannotRaceCredentialRecoveryOrSleep() {
+        #expect(NativeLocalConnectorService.shouldScheduleGatewayReconnect(
+            shouldMaintain: true,
+            isSystemSleeping: false,
+            hasDevice: true,
+            hasSocket: false,
+            cleanupInProgress: false,
+            hasFailureHandler: false,
+            hasReconnectTask: false
+        ))
+        #expect(!NativeLocalConnectorService.shouldScheduleGatewayReconnect(
+            shouldMaintain: true,
+            isSystemSleeping: false,
+            hasDevice: true,
+            hasSocket: false,
+            cleanupInProgress: false,
+            hasFailureHandler: true,
+            hasReconnectTask: false
+        ))
+        #expect(!NativeLocalConnectorService.shouldScheduleGatewayReconnect(
+            shouldMaintain: true,
+            isSystemSleeping: true,
+            hasDevice: true,
+            hasSocket: false,
+            cleanupInProgress: false,
+            hasFailureHandler: false,
+            hasReconnectTask: false
+        ))
+    }
+
+    @Test
+    func stoppedOrReplacedFailureRecoveryCannotPublishRefreshedCredentials() {
+        #expect(NativeLocalConnectorService.gatewayConnectionFailureIsCurrent(
+            expectedGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: false,
+            socketMatches: true
+        ))
+        #expect(!NativeLocalConnectorService.gatewayConnectionFailureIsCurrent(
+            expectedGeneration: 4,
+            currentGeneration: 5,
+            isCancelled: false,
+            socketMatches: true
+        ))
+        #expect(!NativeLocalConnectorService.gatewayConnectionFailureIsCurrent(
+            expectedGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: true,
+            socketMatches: true
+        ))
+        #expect(!NativeLocalConnectorService.gatewayConnectionFailureIsCurrent(
+            expectedGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: false,
+            socketMatches: false
+        ))
+    }
+
+    @Test
     func gatewayBootstrapRejectsCancelledReplacedAndDisconnectedWork() {
         #expect(NativeLocalConnectorService.gatewayConnectedBootstrapIsCurrent(
             expectedGeneration: 4,

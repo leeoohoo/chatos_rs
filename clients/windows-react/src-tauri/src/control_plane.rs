@@ -116,7 +116,7 @@ pub(crate) async fn synchronize(
             })
         }
         Err(network_error) => Err(format!(
-            "无法准备本地模型配置：{network_error}。本机也没有完整的离线配置。"
+            "无法准备模型配置：{network_error}。本机也没有完整的离线配置。"
         )),
     }
 }
@@ -157,7 +157,7 @@ async fn restore_persisted(
             .insert(variable, credential)
             .is_some()
         {
-            return Err("本地模型配置产生了重复的凭据环境变量。".into());
+            return Err("模型配置产生了重复的凭据环境变量。".into());
         }
         usable_snapshots.push(snapshot);
     }
@@ -347,7 +347,7 @@ fn validate_capability(
         || !capability.agent_enabled
         || capability.policy_revision.trim().is_empty()
     {
-        return Err("账号的 Local Agent 执行能力不可用。".into());
+        return Err("账号的执行能力不可用。".into());
     }
     // Windows currently publishes only Host-owned tools. Server-side MCP/Plugin bindings are
     // intentionally not projected until a Windows platform tool worker exists.

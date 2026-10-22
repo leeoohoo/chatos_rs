@@ -46,7 +46,7 @@ final class AgentGroupChatCodableContractTests: XCTestCase {
         )
         XCTAssertEqual(
             AgentGroupChatError.storage("disk").localizedDescription,
-            "本地 Agent 群聊存储不可用：disk"
+            "Agent 群聊存储不可用：disk"
         )
 
         XCTAssertEqual(LocalAgentConversationKind.projectTeam.rawValue, "project_team")

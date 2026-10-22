@@ -62,7 +62,7 @@ struct ProjectAgentGroupChatView: View {
     var body: some View {
         Group {
             if viewModel.isLoading, viewModel.room == nil {
-                ProgressView("正在读取本地 Agent 群聊…")
+                ProgressView("正在读取Agent 群聊…")
             } else if viewModel.room == nil {
                 emptyRoom
             } else {
@@ -446,7 +446,7 @@ struct ProjectAgentGroupChatView: View {
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         } else if let projectID = proposal.draft.existingProjectID {
-                            Text("项目：\(model.workspaceProjects.first(where: { $0.id == projectID })?.name ?? "本地项目")")
+                            Text("项目：\(model.workspaceProjects.first(where: { $0.id == projectID })?.name ?? "项目")")
                                 .appFont(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)

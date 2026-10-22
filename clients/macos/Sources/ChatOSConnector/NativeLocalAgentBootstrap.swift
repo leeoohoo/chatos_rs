@@ -56,7 +56,7 @@ struct NativeMainChatTaskSkillSnapshot: Sendable, Equatable {
 
 extension NativeLocalConnectorService {
     /// Restores the non-secret control plane and locally stored model credentials before
-    /// the network catalog refresh completes. This keeps existing local conversations usable
+    /// the network catalog refresh completes. This keeps existing conversations usable
     /// across launch, wake, and temporary gateway outages.
     public func restoreLocalAgentHost(
         _ host: NativeLocalAgentHostLifecycle,
@@ -165,7 +165,7 @@ extension NativeLocalConnectorService {
         } catch where Self.shouldUsePersistedCapability(after: error) {
             // The Local Agent control plane is durable client state. A deployment that has not
             // published the optional catalog binding must not disable an already provisioned
-            // local task runtime.
+            // task runtime for this account.
             agentCapability = nil
         }
         if let agentCapability {
@@ -513,11 +513,11 @@ public enum NativeLocalAgentBootstrapError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .noEnabledModel:
-            "No enabled Local Agent model with a credential is configured."
+            "No enabled model with a credential is configured."
         case .credentialVariableCollision:
-            "Local Agent model identifiers produce the same credential variable."
+            "Model identifiers produce the same credential variable."
         case .executionAgentUnavailable:
-            "The Local Agent execution capability is unavailable for this account."
+            "The execution capability is unavailable for this account."
         case .managedPromptUnavailable:
             "The managed Agent Prompt configuration is unavailable."
         case .skillConfigurationUnavailable:

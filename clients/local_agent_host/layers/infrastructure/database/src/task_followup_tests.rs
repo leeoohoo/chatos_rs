@@ -4,6 +4,8 @@
 use super::*;
 #[path = "task_followup_dispatch_tests.rs"]
 mod dispatch;
+#[path = "task_followup_memory_tests.rs"]
+mod memory;
 use crate::{LocalAgentTaskStore, LocalAgentToolStore};
 use chatos_local_agent_protocol::{
     CreateTaskGraphCommand, LocalAgentRunClaim, LocalAgentToolBatch, LocalAgentToolCall,

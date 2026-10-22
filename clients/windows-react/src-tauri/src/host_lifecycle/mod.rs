@@ -138,10 +138,10 @@ impl HostManager {
     ) -> Result<Vec<control_plane::ControlPlaneModelOption>, String> {
         let catalog = self.model_catalog.lock().await;
         let Some((owner, options)) = catalog.as_ref() else {
-            return Err("本地模型目录尚未就绪。".into());
+            return Err("模型目录尚未就绪。".into());
         };
         if owner != owner_user_id {
-            return Err("本地模型目录与当前账号不一致。".into());
+            return Err("模型目录与当前账号不一致。".into());
         }
         Ok(options.clone())
     }

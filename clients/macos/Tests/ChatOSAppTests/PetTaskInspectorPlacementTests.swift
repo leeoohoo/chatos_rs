@@ -84,7 +84,7 @@ struct PetCompletedActivitySizingTests {
             id: "completed-1",
             source: .taskExecution,
             kind: .succeeded,
-            title: "本地对话"
+            title: "对话"
         )
         store.apply(.upsert(activity))
         let interactionState = PetOverlayInteractionState()
@@ -106,7 +106,7 @@ struct PetCompletedActivitySizingTests {
             id: "completed-1",
             source: .taskExecution,
             kind: .succeeded,
-            title: "本地对话"
+            title: "对话"
         )
         let second = PetActivity(
             id: "completed-2",
@@ -234,7 +234,7 @@ struct PetActivityPanelScopeTests {
         #expect(!PetMessageActivityScope.primary.contains(running))
     }
 
-    @Test("local task routes do not require a cloud message identifier")
+    @Test("task routes do not require a cloud message identifier")
     @MainActor
     func localTaskActionsUseDurableLocalIdentifiers() {
         let activity = PetActivity(

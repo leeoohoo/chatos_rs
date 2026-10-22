@@ -31,7 +31,9 @@ enum NativePluginArtifactRegistrar {
             return result
         }
         guard permissionSnapshot.contains("artifact.create") else {
-            throw NativePluginRuntimeError.permissionDenied("Plugin 未获准注册本地产物")
+            throw NativePluginRuntimeError.permissionDenied(
+                "Plugin 未获准注册本地产物：缺少 artifact.create 权限。请更新或重新安装声明该权限的 Plugin。"
+            )
         }
         guard let workspaceID, let workspaceRootURL else {
             throw NativePluginRuntimeError.permissionDenied("Plugin 注册项目产物需要项目工作区")

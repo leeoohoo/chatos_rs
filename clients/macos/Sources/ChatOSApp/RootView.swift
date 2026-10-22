@@ -18,7 +18,7 @@ struct RootView: View {
                 .safeAreaInset(edge: .top, spacing: 0) {
                     if let error = model.localAgentHostError {
                         VStack(alignment: .leading, spacing: 4) {
-                            Label("本地任务服务提示", systemImage: "exclamationmark.triangle")
+                            Label("任务服务提示", systemImage: "exclamationmark.triangle")
                                 .appFont(.callout.weight(.semibold))
                             Text(error).appFont(.caption)
                                 .textSelection(.enabled)

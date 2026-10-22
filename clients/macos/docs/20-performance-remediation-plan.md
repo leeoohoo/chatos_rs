@@ -91,7 +91,7 @@
 | 已建立网络连接 | 未单独记录 | 采样时 0 |
 | PPID 1 的历史插件应用进程 | 42 个，RSS 合计约 2.73 GiB | 新构建启动清理后 0 个 |
 
-CPU 复测先在宠物可见时完成，随后切换到其他应用并抓取 5 秒调用栈；后台样本中未再出现 `PetSpriteAnimationView` 或 `TimelineView`。共享账户当时仍有本地 Agent 任务继续执行，因此任务启动后的 CPU 不计入空闲指标。
+CPU 复测先在宠物可见时完成，随后切换到其他应用并抓取 5 秒调用栈；后台样本中未再出现 `PetSpriteAnimationView` 或 `TimelineView`。共享账户当时仍有Agent 任务继续执行，因此任务启动后的 CPU 不计入空闲指标。
 
 验证结果：
 

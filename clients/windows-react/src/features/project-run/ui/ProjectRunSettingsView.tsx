@@ -257,7 +257,7 @@ export function ProjectRunSettingsView({
           )}
         </SettingsCard>
 
-        <SettingsCard icon="−" title="项目设置" subtitle="管理 ChatOS 中的本地项目记录">
+        <SettingsCard icon="−" title="项目设置" subtitle="管理 ChatOS 中的项目记录">
           <div className="project-run-setting-row">
             <div><strong>从 ChatOS 删除项目</strong><p>只删除项目记录和运行状态，不会删除本机项目文件夹。</p></div>
             <button className="project-run-danger-button" disabled={busy} onClick={() => setRemoveConfirmation(true)} type="button">删除项目</button>

@@ -243,7 +243,7 @@ extension LocalAgentGroupChatSchedulerTests {
             todoID: todo.id
         )
         XCTAssertEqual(blockedTodo?.status, .blocked)
-        XCTAssertEqual(blockedTodo?.blockedReason, "用户已结束这个未完成的本地 Agent Run。")
+        XCTAssertEqual(blockedTodo?.blockedReason, "用户已结束这个未完成的Agent Run。")
         let progress = try await store.listAgentTodoProgress(
             ownerUserID: "alice",
             agentID: agent.id,

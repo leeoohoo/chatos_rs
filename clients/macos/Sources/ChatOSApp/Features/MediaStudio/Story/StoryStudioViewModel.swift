@@ -6,6 +6,11 @@ import Foundation
 
 @MainActor
 final class StoryStudioViewModel: ObservableObject {
+    // ObservableObject requires this publisher through a nonisolated protocol
+    // requirement. Store one stable instance explicitly: the synthesized lazy
+    // discovery path crashes in optimized builds when mutating this ViewModel's
+    // large set of @Published properties during authentication bootstrap.
+    nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()
     static let imageGenerationLockNotice = "还有图片版本正在后台生成。已确认的素材仍可继续生成视频；项目结构与模型设置将在图片完成后恢复修改。"
     struct SourceDraft { var source: String; var style: String; var ratio: String }
     struct CreationHistoryImage: Identifiable, Sendable {
@@ -364,7 +369,9 @@ final class StoryStudioViewModel: ObservableObject {
 
     func activate(userID: String) {
         guard owner != userID else { return }
-        reset()
+        if owner != nil {
+            reset()
+        }
         owner = userID
         let accountSessionID = session
         let request = projectCatalogLoadState.begin(

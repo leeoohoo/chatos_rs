@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 
 describe("workspace index application state", () => {
-  it("publishes local projects before the Host refresh completes", async () => {
+  it("publishes projects before the Host refresh completes", async () => {
     const port = new TestWorkspaceIndexPort();
     const remote = deferred<WorkspaceRelations>();
     port.remoteResult = remote.promise;
@@ -32,7 +32,7 @@ describe("workspace index application state", () => {
     expect(useWorkspaceIndexStore.getState().isLoading).toBe(false);
   });
 
-  it("keeps local projects when the Host relation refresh fails", async () => {
+  it("keeps projects when the Host relation refresh fails", async () => {
     const port = new TestWorkspaceIndexPort();
     port.remoteResult = Promise.reject(new Error("Host unavailable"));
 
@@ -60,7 +60,7 @@ describe("workspace index application state", () => {
     expect(useWorkspaceIndexStore.getState().snapshot.projects[0].id).toBe("bob-project");
   });
 
-  it("publishes a newly committed local project only into the matching owner index", async () => {
+  it("publishes a newly committed project only into the matching owner index", async () => {
     const port = new TestWorkspaceIndexPort();
     await useWorkspaceIndexStore.getState().load(port, "alice", false);
     useWorkspaceIndexStore.getState().acceptCreatedProject("bob", {

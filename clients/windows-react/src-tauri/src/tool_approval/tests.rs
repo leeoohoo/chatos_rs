@@ -43,6 +43,28 @@ fn projects_only_safe_fields_and_never_serializes_full_arguments() {
 }
 
 #[test]
+fn projects_the_complete_executable_command_without_truncation() {
+    let command = format!(
+        "{}printf 'tail marker' | sed -n '1p'",
+        "printf x; ".repeat(500)
+    );
+    let projected = project_pending(vec![invocation(
+        "approval-1",
+        "remote_connection_controller_run_command",
+        json!({"command": command}),
+    )]);
+
+    assert!(command.chars().count() > 4_000);
+    assert_eq!(
+        projected[0].command,
+        format!("remote SSH command · {command}")
+    );
+    assert!(projected[0]
+        .command
+        .ends_with("printf 'tail marker' | sed -n '1p'"));
+}
+
+#[test]
 fn publishes_session_decision_only_for_supported_terminal_changes() {
     let projected = project_pending(vec![
         invocation("execute", "execute_command", json!({})),

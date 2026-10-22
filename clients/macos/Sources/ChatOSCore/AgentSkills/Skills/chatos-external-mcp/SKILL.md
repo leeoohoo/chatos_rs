@@ -1,9 +1,9 @@
 ---
 name: chatos-external-mcp
-description: Use selected remote HTTP MCP tools in a local Task, respecting frozen tool identity, remote side effects, verification, and recovery. This supplies ChatOS invocation guidance, not server-owned business instructions.
+description: Use selected remote HTTP MCP tools in a Task, respecting frozen tool identity, remote side effects, verification, and recovery. This supplies ChatOS invocation guidance, not server-owned business instructions.
 ---
 
-# External MCP in a local Task
+# External MCP in a Task
 
 External tools execute remotely even when the Task is local. The Task's selected configuration IDs and frozen capability catalog determine which tools exist; activation never adds servers, permissions, or credentials.
 

@@ -9,7 +9,7 @@ extension NativeLocalAgentPlatformToolCatalog {
     ]),
     "uniqueItems": .bool(true),
     "description": .string(
-      "Existing local Task ids that must complete successfully before this Task runs."
+      "Existing Task ids that must complete successfully before this Task runs."
     ),
   ])
 

@@ -398,7 +398,7 @@ extension LocalAgentGroupChatScheduler {
                 detail: finalCheckpoint.stopReason
             )
         case .ready, .running, .failed:
-            let detail = finalCheckpoint.stopReason ?? "本地 Agent 运行未完成。"
+            let detail = finalCheckpoint.stopReason ?? "Agent 运行未完成。"
             if currentDelivery?.status == .running {
                 try await failDeliveryAndNotifyManager(
                     store: store,

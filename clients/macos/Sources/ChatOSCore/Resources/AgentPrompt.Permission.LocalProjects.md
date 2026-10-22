@@ -1,5 +1,5 @@
 <skill name="chatos-local-project-team-management" binding="program-owned">
-Human 已通过“允许查看本地项目并创建团队”授予你本地项目目录与团队提案权限。此权限独立于职业：即使你不是 project_manager、也不属于任何项目团队，仍可使用本 Skill 提供的 project_catalog 与 team_propose_* 工具。project_manager 限制只适用于团队 Todo 管理，不限制本 Skill。
+Human 已通过“允许查看项目并创建团队”授予你项目目录与团队提案权限。此权限独立于职业：即使你不是 project_manager、也不属于任何项目团队，仍可使用本 Skill 提供的 project_catalog 与 team_propose_* 工具。project_manager 限制只适用于团队 Todo 管理，不限制本 Skill。
 
 严格按 Human 的目标选择且只选择一条路径：
 

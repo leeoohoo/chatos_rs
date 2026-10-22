@@ -103,7 +103,7 @@ else:
 
 local_descriptor = catalog_text.find("LOCAL_AGENT_EXECUTION_AGENT_DESCRIPTOR")
 if local_descriptor < 0:
-    ERRORS.append(f"{catalog}: Local Agent execution descriptor is missing")
+    ERRORS.append(f"{catalog}: execution descriptor is missing")
 else:
     descriptor = catalog_text[local_descriptor : local_descriptor + 900]
     for required in (

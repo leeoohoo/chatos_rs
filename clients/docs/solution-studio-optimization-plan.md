@@ -107,7 +107,7 @@ macOS Host 证据：`NativePluginSkillSnapshot.swift` 的 `activateV2/readV2Reso
 - router 没有需求调研的触发判据、问卷回填与冲突处置，也没有各业务场景的引用路由。
 - 执行计划原来未明确跨需求引用、同文件写入边界和与本地 Task 的区别；本轮已补充这些规则与按需 reference。
 - validation Skill 虽要求观察 SVG，工具没有绑定到块内容/revision 的渲染证据，不应由模型自己一句“已看过”充当完成证明。
-- UI 的计划状态是人工/工具记录；没有真实 local Task 的持久映射，不能显示成已派发、等待调度或运行完成。
+- UI 的计划状态是人工/工具记录；没有真实 Task 的持久映射，不能显示成已派发、等待调度或运行完成。
 
 ## 4. 推荐架构：沿用五 Skill，不再拆一套平台 Agent prompt
 
@@ -182,9 +182,9 @@ finalize 必须导出刚校验的对象，proof 绑定同一 revision、artifact
 
 1. 前置条件满足：例如仅 T-001。
 2. 方案/业务选择已确认且用户授权实施。
-3. 已创建 local Task，实际启动/运行/完成。
+3. 已创建 Task，实际启动/运行/完成。
 
-后续可增加独立的 execution binding 数据：规划 workspace/revision/T-* ↔ Host local Task ID/运行结果/验证依据。规划 T-004 不等于 Task Runner 的 Task UUID。先有明确授权和绑定再联动；由既有 Main Chat Task 编排工具派发，Solution 不复制调度器。
+后续可增加独立的 execution binding 数据：规划 workspace/revision/T-* ↔ Host Task ID/运行结果/验证依据。规划 T-004 不等于 Task Runner 的 Task UUID。先有明确授权和绑定再联动；由既有 Main Chat Task 编排工具派发，Solution 不复制调度器。
 
 `dependsOn` 管输入顺序；`owned_paths`/共享产物边界管写入互斥。优先使用现有 Host 契约，避免插件与 runner 各维护一套不同含义的冲突判断。运行开始回调必须来自实际状态迁移，不在批量创建时一次性伪造所有开始通知。
 

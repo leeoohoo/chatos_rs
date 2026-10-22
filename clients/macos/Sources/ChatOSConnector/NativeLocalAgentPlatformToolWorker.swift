@@ -623,14 +623,14 @@ enum NativeLocalAgentPlatformToolError: LocalizedError, Equatable {
     case .invalidField(let field): "The local platform tool field is invalid: \(field)."
     case .invalidRunContext: "The local platform tool Run context is invalid."
     case .attachmentNotAuthorized: "The attachment is not authorized for this conversation."
-    case .projectUnavailable: "The local project is unavailable for this conversation."
+    case .projectUnavailable: "The project is unavailable for this conversation."
     case .projectToolRejected(let reason): reason
-    case .projectToolFailed: "The local project tool arguments or state are invalid."
+    case .projectToolFailed: "The project tool arguments or state are invalid."
     case .pluginInstallerRejected(let reason): "Plugin 安装失败：\(reason)"
     case .pluginInstallerFileOperationFailed(let code):
       "Plugin 安装文件操作失败（错误码 \(code)），旧安装已保留。"
-    case .approvalRequired: "The local project change requires approval before execution."
-    case .capabilityNotSelected: "This Task did not select the requested local capability."
+    case .approvalRequired: "The project change requires approval before execution."
+    case .capabilityNotSelected: "This Task did not select the requested capability."
     }
   }
 

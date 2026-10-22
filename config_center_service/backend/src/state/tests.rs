@@ -208,7 +208,7 @@ fn local_connector_runtime_backfill_adds_all_service_defaults() {
     ] {
         assert!(
             changed_keys.contains(&key.to_string()),
-            "missing Local Agent task execution config key {key}"
+            "missing task execution config key {key}"
         );
     }
 }

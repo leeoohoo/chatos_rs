@@ -92,7 +92,7 @@ export function ProjectConversationPlaceholder({
     );
   }
   const description = !hostReady
-    ? "本地任务服务就绪后会自动继续。"
+    ? "任务服务就绪后会自动继续。"
     : "正在等待默认项目联系人“叽咕狸”可用。";
   return <ProjectStateCard icon="…" title="项目还没有可用会话" description={description} />;
 }

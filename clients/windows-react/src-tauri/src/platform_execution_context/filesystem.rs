@@ -230,7 +230,7 @@ fn sha256(value: &str) -> String {
 }
 
 fn project_unavailable() -> String {
-    "The local project is unavailable for this conversation.".into()
+    "The project is unavailable for this conversation.".into()
 }
 
 fn invalid_path() -> String {

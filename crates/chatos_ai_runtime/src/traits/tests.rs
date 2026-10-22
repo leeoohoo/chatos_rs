@@ -180,6 +180,49 @@ fn tool_records_omit_binary_payloads_and_duplicate_structured_metadata() {
 }
 
 #[test]
+fn tool_records_omit_nested_data_base64_screenshots() {
+    let screenshot = "a".repeat(621_248);
+    let structured = json!({
+        "normalized_result": {
+            "steps": [
+                {"artifacts": {"screenshot": {"value": {"data_base64": screenshot}}}},
+                {"artifacts": {"screenshot": {"value": {"dataBase64": screenshot}}}}
+            ]
+        }
+    });
+    let input = SaveToolRecordInput {
+        conversation_id: "conversation-1".to_string(),
+        tool_call_id: "call-browser".to_string(),
+        tool_name: "capability_invoke".to_string(),
+        content: "browser scenario result".to_string(),
+        success: true,
+        structured_result: Some(structured),
+        ..SaveToolRecordInput::default()
+    };
+
+    let record: SaveRecordInput = input.into();
+    let encoded = serde_json::to_vec(&record).expect("record");
+    let payload = record.structured_payload.expect("structured payload");
+
+    assert!(encoded.len() < 8_000);
+    assert!(
+        payload["normalized_result"]["steps"][0]["artifacts"]["screenshot"]["value"]["data_base64"]
+            .as_str()
+            .unwrap()
+            .starts_with("[binary omitted from memory")
+    );
+    assert!(
+        payload["normalized_result"]["steps"][1]["artifacts"]["screenshot"]["value"]["dataBase64"]
+            .as_str()
+            .unwrap()
+            .starts_with("[binary omitted from memory")
+    );
+    assert!(!serde_json::to_string(&payload)
+        .unwrap()
+        .contains(&"a".repeat(8_192)));
+}
+
+#[test]
 fn tool_records_preserve_complete_large_text_for_durable_memory() {
     let content = "方案".repeat(160_001);
     let input = SaveToolRecordInput {

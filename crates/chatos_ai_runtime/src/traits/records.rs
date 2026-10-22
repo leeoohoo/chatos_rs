@@ -356,6 +356,17 @@ fn memory_safe_tool_value(value: Value) -> Value {
                     );
                 }
             }
+            for field in ["data_base64", "dataBase64"] {
+                if let Some(encoded_chars) = map.get(field).and_then(Value::as_str).map(str::len) {
+                    let mime = mime_type.as_deref().unwrap_or("application/octet-stream");
+                    map.insert(
+                        field.to_string(),
+                        Value::String(format!(
+                            "{OMITTED_BINARY_PREFIX}: field={field}, mime={mime}, encoded_chars={encoded_chars}]"
+                        )),
+                    );
+                }
+            }
             for value in map.values_mut() {
                 let original = std::mem::take(value);
                 *value = memory_safe_tool_value(original);

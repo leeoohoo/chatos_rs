@@ -230,7 +230,9 @@ fn envelope(command: HostCommand, prefix: &str) -> HostRequestEnvelope {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use chatos_ai_runtime::{MemoryRecordWriter, SaveRecordInput};
     use chatos_client_storage::SqliteClientStorage;
+    use chatos_local_agent_ports::LocalMemoryOutboxStore;
     use chatos_local_agent_protocol::{
         CreateConversationCommand, CreateRunCommand, CreateTaskGraphCommand, GetTaskGraphCommand,
         GuideConversationTurnCommand, LocalAgentRunClaim, LocalAgentRunStatus, LocalTaskSpec,
@@ -269,6 +271,7 @@ mod tests {
 
     struct GuidanceProfile {
         runtime: Arc<LocalAgentRuntime>,
+        memory: crate::LocalMemoryOutboxWriter,
     }
 
     #[async_trait]
@@ -277,6 +280,27 @@ mod tests {
             &self,
             claim: &LocalAgentRunClaim,
         ) -> Result<LocalAgentStepOutcome, String> {
+            let record = SaveRecordInput::assistant_message(
+                "conversation-guided-scheduler",
+                if claim.run.continuation_input.is_some() {
+                    "guided"
+                } else {
+                    "stale"
+                },
+            )
+            .with_message_id(format!(
+                "{}:assistant:{}",
+                claim.run.run_id, claim.run.iteration
+            ))
+            .with_metadata(serde_json::json!({
+                "tenant_id": "user-1",
+                "local_agent_step_claim": {
+                    "run_id": claim.run.run_id,
+                    "claim_token": claim.claim_token,
+                    "version": claim.run.version,
+                },
+            }));
+            self.memory.save_record(record.clone()).await?;
             if claim.run.continuation_input.is_some() {
                 return Ok(LocalAgentStepOutcome::Succeed {
                     output: serde_json::json!({"answer": "guided"}),
@@ -299,6 +323,8 @@ mod tests {
                 ))
                 .await
                 .map_err(|error| error.to_string())?;
+            // A model reply arriving after invalidation must also be fenced out.
+            self.memory.save_record(record).await?;
             Ok(LocalAgentStepOutcome::Succeed {
                 output: serde_json::json!({"answer": "stale"}),
             })
@@ -400,7 +426,7 @@ mod tests {
                 .await
                 .expect("storage"),
         );
-        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        let runtime = Arc::new(LocalAgentRuntime::new(storage.clone()));
         runtime.initialize("user-1").await.expect("initialize");
         runtime
             .try_handle(envelope(
@@ -441,6 +467,7 @@ mod tests {
                 "main_chat",
                 GuidanceProfile {
                     runtime: Arc::clone(&runtime),
+                    memory: crate::LocalMemoryOutboxWriter::new(storage.clone(), "chatos").unwrap(),
                 },
             )
             .expect("profile");
@@ -452,6 +479,12 @@ mod tests {
             panic!("expected interrupted claim reconciliation")
         };
         assert_eq!(interrupted.status, LocalAgentRunStatus::ContinuationReady);
+        let now = chrono::Utc::now().timestamp_millis();
+        assert!(storage
+            .claim_next_memory_record("user-1", "sync", now, now + 10_000)
+            .await
+            .unwrap()
+            .is_none());
         let SchedulerTick::Committed(completed) = scheduler.run_once().await.expect("complete")
         else {
             panic!("expected guided completion")
@@ -461,6 +494,16 @@ mod tests {
             completed.terminal_outcome,
             Some(serde_json::json!({"answer": "guided"}))
         );
+        let now = chrono::Utc::now().timestamp_millis();
+        let memory = storage
+            .claim_next_memory_record("user-1", "sync", now, now + 10_000)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(memory.payload["content"], "guided");
+        assert!(memory.payload["metadata"]
+            .get("local_agent_step_claim")
+            .is_none());
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Product-owned prompt templates used by the local Agent runtime.
+/// Product-owned prompt templates used by the Agent runtime.
 ///
 /// Prompt prose lives in bundled Markdown resources so it can be reviewed, versioned and
 /// replaced without mixing policy text into the scheduler implementation. Code supplies only

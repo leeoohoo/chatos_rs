@@ -111,8 +111,7 @@ impl LocalRequirementSurveyToolExecutor {
             ),
             _ => {
                 return Err(
-                    "Requirement Surveys require an active Main Chat turn or local Task"
-                        .to_string(),
+                    "Requirement Surveys require an active Main Chat turn or Task".to_string(),
                 )
             }
         };
@@ -233,7 +232,7 @@ pub fn requirement_survey_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": REQUIREMENT_SURVEY_CREATE_TOOL,
-            "description": "Collect material project goals, audience, constraints, preferences and acceptance decisions in the Requirement Survey center. Main Chat can ask before creating Tasks; a local Task can ask about newly discovered blockers. Call alone, then wait for submitted answers; never invent answers or dispatch dependent work while waiting.",
+            "description": "Collect material project goals, audience, constraints, preferences and acceptance decisions in the Requirement Survey center. Main Chat can ask before creating Tasks; a Task can ask about newly discovered blockers. Call alone, then wait for submitted answers; never invent answers or dispatch dependent work while waiting.",
             "parameters": {
                 "type": "object",
                 "properties": {

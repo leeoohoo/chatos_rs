@@ -167,7 +167,7 @@
     </g>
     <g transform="translate(28 330)">
       <rect width="294" height="58" rx="14" fill="#FFFFFF" fill-opacity="0.88"/>
-      <text x="20" y="26" class="item" font-weight="700">本地执行</text>
+      <text x="20" y="26" class="item" font-weight="700">执行</text>
       <text x="20" y="46" class="small">文件 · 命令 · MCP · 插件</text>
     </g>
     <text x="175" y="405" text-anchor="middle" class="small">结果写回原云端会话</text>
@@ -253,7 +253,7 @@
   </g>
 
   <g transform="translate(72 972)">
-    <text x="0" y="0" class="small">生产 V1 产品边界：不含原生 App · H5 · 项目同步 · 文件浏览 · 远程终端 · 小程序本地执行 · 离线自动补执行</text>
+    <text x="0" y="0" class="small">生产 V1 产品边界：不含原生 App · H5 · 项目同步 · 文件浏览 · 远程终端 · 小程序执行 · 离线自动补执行</text>
     <text x="1296" y="0" text-anchor="end" class="small">ChatOS WeChat Mini Program Companion</text>
   </g>
 </svg>

@@ -617,11 +617,11 @@ public actor NativeLocalAgentConversationService:
 
     private func processTitle(_ status: TurnStatus) -> String {
         switch status {
-        case .queued: "本地执行等待中"
-        case .streaming: "本地执行进行中"
-        case .completed: "本地执行已完成"
-        case .failed: "本地执行失败"
-        case .cancelled: "本地执行已取消"
+        case .queued: "执行等待中"
+        case .streaming: "执行进行中"
+        case .completed: "执行已完成"
+        case .failed: "执行失败"
+        case .cancelled: "执行已取消"
         }
     }
 }

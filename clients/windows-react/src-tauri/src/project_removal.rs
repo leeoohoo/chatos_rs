@@ -148,7 +148,7 @@ fn project_unavailable() -> String {
 }
 
 fn removal_error() -> String {
-    "无法移除本地项目。".into()
+    "无法移除项目。".into()
 }
 
 #[cfg(test)]

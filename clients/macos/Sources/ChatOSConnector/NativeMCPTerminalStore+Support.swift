@@ -348,7 +348,7 @@ enum NativeMCPTerminalError: LocalizedError {
         }
     }
 
-    /// These failures are known before a terminal mutation can be applied. The Local Agent may
+    /// These failures are known before a terminal mutation can be applied. The Agent may
     /// re-observe the process and retry instead of escalating the whole Run to Human review.
     var isKnownPreEffectFailure: Bool {
         switch self {

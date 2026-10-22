@@ -151,6 +151,14 @@ fn failed_task_display_distinguishes_execution_from_unverified_acceptance() {
         super::task_display_status("succeeded", Some("succeeded"), None),
         "completed"
     );
+    assert_eq!(
+        super::task_display_status("succeeded", Some("succeeded"), Some(&unverified)),
+        "evidence_incomplete"
+    );
+    assert_eq!(
+        super::task_display_status("succeeded", Some("succeeded"), Some(&rejected)),
+        "acceptance_failed"
+    );
     let content = super::callback_content_with_status(
         "Research",
         "Research the source",
@@ -171,6 +179,15 @@ fn failed_task_display_distinguishes_execution_from_unverified_acceptance() {
         summary.starts_with("The work has partial results; some items still need verification.")
     );
     assert!(summary.contains("Research [partially complete; not fully verified]"));
+    let completed_summary = super::graph_summary_text(
+        LocalTaskGraphStatus::Succeeded,
+        &[
+            json!({"title":"Acceptance", "status":"succeeded", "display_status":"acceptance_failed", "summary":"Export did not land on disk"}),
+        ],
+        false,
+    );
+    assert!(completed_summary.starts_with("全部任务均已执行完成，但验收发现了未满足的要求。"));
+    assert!(completed_summary.contains("Acceptance [未通过验收]"));
 }
 
 #[test]

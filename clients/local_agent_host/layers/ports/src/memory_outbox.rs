@@ -61,8 +61,30 @@ pub struct LocalMemoryOutboxRecord {
     pub updated_at_unix_ms: i64,
 }
 
+/// Ownership of a model step whose records must not be published before commit.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalMemoryRunClaim {
+    pub run_id: String,
+    pub claim_token: String,
+    pub version: u64,
+}
+
 #[async_trait]
 pub trait LocalMemoryOutboxStore: Send + Sync {
+    /// Stages a record under a live Run claim. It becomes syncable atomically
+    /// with the matching Run transition; invalidating the claim discards it.
+    #[allow(clippy::too_many_arguments)]
+    async fn stage_step_memory_record(
+        &self,
+        claim: &LocalMemoryRunClaim,
+        record_id: &str,
+        tenant_id: &str,
+        source_id: &str,
+        thread_id: &str,
+        payload: &Value,
+        now_unix_ms: i64,
+    ) -> Result<(), ClientStorageError>;
+
     async fn enqueue_memory_record(
         &self,
         record_id: &str,

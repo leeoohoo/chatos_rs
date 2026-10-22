@@ -166,7 +166,7 @@ private struct AgentGroupChatComposerSection: View {
             if isRunningAgents {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text("本地 Agent 正在处理群聊…")
+                    Text("Agent 正在处理群聊…")
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }

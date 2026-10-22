@@ -124,7 +124,7 @@ fn validate_task_run(run: &LocalAgentRunRecord, owner_user_id: &str) -> Result<(
         || run.profile_key != "task_execution"
         || run.owner_entity_type != "task"
     {
-        return Err("Ask User can only be called by the active local Task".to_string());
+        return Err("Ask User can only be called by the active Task".to_string());
     }
     Ok(())
 }

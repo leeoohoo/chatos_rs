@@ -158,7 +158,7 @@ struct AgentProfileEditorSheet: View {
                     }
                     Toggle(isOn: $canAccessLocalProjects) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("允许查看本地项目并创建团队")
+                            Text("允许查看项目并创建团队")
                                 .font(.subheadline.weight(.medium))
                             Text("Agent 只看到项目名称和临时单选项；真实项目 ID 与路径由 ChatOS 内部透传。也可以在默认工作区新建项目。")
                                 .font(.caption)

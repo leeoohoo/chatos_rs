@@ -60,7 +60,7 @@ enum LocalAgentTurnProcessMapper {
         let payload = event.payload?.object ?? [:]
         let mapped: (String, String?, TurnStatus, TurnProcessNode.Kind)? = switch event.eventType {
         case "conversation_turn_started": ("开始处理", nil, .queued, .update)
-        case "run_claimed": ("本地模型开始推理", nil, .streaming, .reasoning)
+        case "run_claimed": ("模型开始推理", nil, .streaming, .reasoning)
         case "continuation_requested": ("继续推理", nil, .streaming, .reasoning)
         case "retry_scheduled": (
             "等待重试",
@@ -96,20 +96,20 @@ enum LocalAgentTurnProcessMapper {
             .update
         )
         case "task_graph_written_back": (
-            "本地任务已汇总",
+            "任务已汇总",
             nil,
             status(payload["status"]?.string ?? "succeeded"),
             .task
         )
-        case "run_succeeded": ("本地执行完成", nil, .completed, .update)
+        case "run_succeeded": ("执行完成", nil, .completed, .update)
         case "run_failed": (
-            "本地执行失败",
+            "执行失败",
             safeDetail(payload["error"]?.string),
             .failed,
             .update
         )
         case "run_cancelled": (
-            "本地执行已取消",
+            "执行已取消",
             safeDetail(payload["reason"]?.string),
             .cancelled,
             .update

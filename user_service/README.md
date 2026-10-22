@@ -25,11 +25,11 @@ The service is now integrated into the repository flow:
 ## Unified Model Configs
 
 - `user_service` is now the source of truth for user-owned model configs.
-- A real user can keep provider credentials here for local execution and memory processing.
+- A real user can keep provider credentials here for execution and memory processing.
 - Creating a model config may omit `model`; `user_service` will call the provider-compatible `/models` endpoint and create one concrete config per returned model id.
 - Local clients and `memory_engine` use those concrete model names from the shared configs.
 - `memory_summary_model_config_id` must point to a config with a concrete `model`.
-- Memory summary thinking level is stored in model settings; local execution usage and thinking level are stored per model config.
+- Memory summary thinking level is stored in model settings; execution usage and thinking level are stored per model config.
 
 ## Downstream Sync Environment
 

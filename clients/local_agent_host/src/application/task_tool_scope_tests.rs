@@ -344,5 +344,5 @@ async fn task_tools_require_the_main_chat_conversation_context() {
         .await
         .expect("unsupported tool rejection has no side effects");
     let error = preparation_error(error);
-    assert!(error.contains("unsupported local Task tool"));
+    assert!(error.contains("unsupported Task tool"));
 }

@@ -161,9 +161,18 @@ struct LocalConnectorApprovalsView: View {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             if let reason = approval.reason, !reason.isEmpty {
-                Text(reason)
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(
+                        reason.hasPrefix("AI 自动审批已转人工：")
+                            ? model.localized("AI 转人工原因", english: "Why AI Escalated")
+                            : model.localized("审批说明", english: "Approval Note"),
+                        systemImage: "info.circle"
+                    )
+                    .appFont(.caption.weight(.semibold))
+                    Text(reason)
+                        .appFont(.caption)
+                }
+                .foregroundStyle(.secondary)
             }
             if let error = viewModel.approvalError(for: approval.id) {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -314,7 +323,7 @@ struct LocalConnectorApprovalsView: View {
         default:
             model.localized(
                 "此操作会改变本机任务的默认审批策略。",
-                english: "This changes the default approval policy for local tasks."
+                english: "This changes the default approval policy for tasks."
             )
         }
     }

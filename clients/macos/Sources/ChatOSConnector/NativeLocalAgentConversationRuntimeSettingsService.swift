@@ -319,9 +319,9 @@ public enum NativeLocalAgentConversationRuntimeSettingsError: LocalizedError {
         case .notConfigured:
             "Local Agent conversation settings are not configured."
         case .unknownModel:
-            "The selected Local Agent model is unavailable."
+            "The selected model is unavailable."
         case .staleModelRevision:
-            "The selected Local Agent model revision is no longer available."
+            "The selected model revision is no longer available."
         case .unsupportedThinkingLevel:
             "The selected reasoning level is not supported by this model."
         }

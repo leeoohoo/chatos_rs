@@ -6,6 +6,7 @@ use super::{
     LocalMemorySyncStatus, SqliteClientStorage, SqliteResultExt,
 };
 use async_trait::async_trait;
+use chatos_local_agent_ports::LocalMemoryRunClaim;
 use serde_json::Value;
 use sqlx::{Row, SqliteConnection};
 use std::str::FromStr;
@@ -18,6 +19,83 @@ const SELECT_RECORD: &str =
 
 #[async_trait]
 impl LocalMemoryOutboxStore for SqliteClientStorage {
+    async fn stage_step_memory_record(
+        &self,
+        claim: &LocalMemoryRunClaim,
+        record_id: &str,
+        tenant_id: &str,
+        source_id: &str,
+        thread_id: &str,
+        payload: &Value,
+        now_unix_ms: i64,
+    ) -> Result<(), ClientStorageError> {
+        validate_enqueue(record_id, tenant_id, source_id, thread_id, payload)?;
+        let mut connection = self.pool.acquire().await.db()?;
+        Self::begin_immediate(&mut connection).await?;
+        let result = async {
+            let owned: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM local_agent_runs WHERE run_id = ? \
+                 AND owner_user_id = ? AND status = 'model_running' AND version = ? \
+                 AND claim_token = ? AND claim_until_unix_ms > ?)",
+            )
+            .bind(&claim.run_id)
+            .bind(tenant_id)
+            .bind(claim.version as i64)
+            .bind(&claim.claim_token)
+            .bind(now_unix_ms)
+            .fetch_one(&mut *connection)
+            .await
+            .db()?;
+            if !owned {
+                return Err(ClientStorageError::Conflict(format!(
+                    "Memory step claim is no longer current: {}",
+                    claim.run_id
+                )));
+            }
+            sqlx::query(
+                "INSERT INTO local_agent_step_memory(\
+                 run_id, claim_token, run_version, record_id, tenant_id, source_id, \
+                 thread_id, payload_json, created_at_unix_ms) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 ON CONFLICT(run_id, claim_token, source_id, record_id) DO NOTHING",
+            )
+            .bind(&claim.run_id)
+            .bind(&claim.claim_token)
+            .bind(claim.version as i64)
+            .bind(record_id)
+            .bind(tenant_id)
+            .bind(source_id)
+            .bind(thread_id)
+            .bind(serde_json::to_string(payload)?)
+            .bind(now_unix_ms)
+            .execute(&mut *connection)
+            .await
+            .db()?;
+            let existing = sqlx::query(
+                "SELECT tenant_id, thread_id, payload_json FROM local_agent_step_memory \
+                 WHERE run_id = ? AND claim_token = ? AND source_id = ? AND record_id = ?",
+            )
+            .bind(&claim.run_id)
+            .bind(&claim.claim_token)
+            .bind(source_id)
+            .bind(record_id)
+            .fetch_one(&mut *connection)
+            .await
+            .db()?;
+            let stored: Value = serde_json::from_str(existing.try_get("payload_json").db()?)?;
+            if existing.try_get::<String, _>("tenant_id").db()? != tenant_id
+                || existing.try_get::<String, _>("thread_id").db()? != thread_id
+                || stored != *payload
+            {
+                return Err(ClientStorageError::Conflict(format!(
+                    "Memory step record id was reused with different content: {source_id}/{record_id}"
+                )));
+            }
+            Ok(())
+        }
+        .await;
+        Self::finish_write(&mut connection, result).await
+    }
+
     async fn enqueue_memory_record(
         &self,
         record_id: &str,
@@ -28,41 +106,17 @@ impl LocalMemoryOutboxStore for SqliteClientStorage {
         now_unix_ms: i64,
     ) -> Result<LocalMemoryOutboxRecord, ClientStorageError> {
         validate_enqueue(record_id, tenant_id, source_id, thread_id, payload)?;
-        let payload_json = serde_json::to_string(payload)?;
         let mut connection = self.pool.acquire().await.db()?;
         Self::begin_immediate(&mut connection).await?;
-        let result = async {
-            if let Some(existing) = fetch_record(&mut connection, source_id, record_id).await? {
-                if existing.tenant_id == tenant_id
-                    && existing.thread_id == thread_id
-                    && existing.payload == *payload
-                {
-                    return Ok(existing);
-                }
-                return Err(ClientStorageError::Conflict(format!(
-                    "Memory record id was reused with different content: {source_id}/{record_id}"
-                )));
-            }
-            sqlx::query(
-                "INSERT INTO local_memory_outbox(\
-                 record_id, tenant_id, source_id, thread_id, payload_json, status, attempt_count, \
-                 version, created_at_unix_ms, updated_at_unix_ms) \
-                 VALUES(?, ?, ?, ?, ?, 'pending', 0, 1, ?, ?)",
-            )
-            .bind(record_id)
-            .bind(tenant_id)
-            .bind(source_id)
-            .bind(thread_id)
-            .bind(payload_json)
-            .bind(now_unix_ms)
-            .bind(now_unix_ms)
-            .execute(&mut *connection)
-            .await
-            .db()?;
-            fetch_record(&mut connection, source_id, record_id)
-                .await?
-                .ok_or_else(|| ClientStorageError::NotFound(record_id.to_string()))
-        }
+        let result = enqueue_on(
+            &mut connection,
+            record_id,
+            tenant_id,
+            source_id,
+            thread_id,
+            payload,
+            now_unix_ms,
+        )
         .await;
         Self::finish_write(&mut connection, result).await
     }
@@ -281,6 +335,82 @@ fn validate_scope_value(label: &str, value: &str) -> Result<(), ClientStorageErr
         )));
     }
     Ok(())
+}
+
+/// Called inside the Run commit transaction, before updating the Run (which
+/// discards its staging rows). A rejected transition rolls back publication too.
+pub(super) async fn publish_step_records(
+    connection: &mut SqliteConnection,
+    run_id: &str,
+    claim_token: &str,
+    version: u64,
+    now_unix_ms: i64,
+) -> Result<(), ClientStorageError> {
+    let rows = sqlx::query(
+        "SELECT record_id, tenant_id, source_id, thread_id, payload_json \
+         FROM local_agent_step_memory WHERE run_id = ? AND claim_token = ? AND run_version = ?",
+    )
+    .bind(run_id)
+    .bind(claim_token)
+    .bind(version as i64)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    for row in rows {
+        let payload: Value = serde_json::from_str(row.try_get("payload_json").db()?)?;
+        enqueue_on(
+            connection,
+            row.try_get("record_id").db()?,
+            row.try_get("tenant_id").db()?,
+            row.try_get("source_id").db()?,
+            row.try_get("thread_id").db()?,
+            &payload,
+            now_unix_ms,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn enqueue_on(
+    connection: &mut SqliteConnection,
+    record_id: &str,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    payload: &Value,
+    now_unix_ms: i64,
+) -> Result<LocalMemoryOutboxRecord, ClientStorageError> {
+    if let Some(existing) = fetch_record(connection, source_id, record_id).await? {
+        if existing.tenant_id == tenant_id
+            && existing.thread_id == thread_id
+            && existing.payload == *payload
+        {
+            return Ok(existing);
+        }
+        return Err(ClientStorageError::Conflict(format!(
+            "Memory record id was reused with different content: {source_id}/{record_id}"
+        )));
+    }
+    sqlx::query(
+        "INSERT INTO local_memory_outbox(\
+         record_id, tenant_id, source_id, thread_id, payload_json, status, attempt_count, \
+         version, created_at_unix_ms, updated_at_unix_ms) \
+         VALUES(?, ?, ?, ?, ?, 'pending', 0, 1, ?, ?)",
+    )
+    .bind(record_id)
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(serde_json::to_string(payload)?)
+    .bind(now_unix_ms)
+    .bind(now_unix_ms)
+    .execute(&mut *connection)
+    .await
+    .db()?;
+    fetch_record(connection, source_id, record_id)
+        .await?
+        .ok_or_else(|| ClientStorageError::NotFound(record_id.to_string()))
 }
 
 #[allow(clippy::too_many_arguments)]

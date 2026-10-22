@@ -36,7 +36,7 @@ GlobalUtilityCoordinator
 - `PetOverlayWindowController` 已经验证了透明 `NSPanel`、跨 Space、全屏辅助窗口、键盘输入和 App 生命周期级悬浮 UI。
 - `NativeSystemPermissions` 已经实现屏幕录制、辅助功能和完全磁盘访问的状态检查与授权引导。
 - 打包脚本生成固定 Bundle ID `com.chatos.swift-client`，并维持稳定 designated requirement，适合承载 TCC 权限。
-- 项目已有本地项目文件搜索、工作区项目/联系人模型和原生 AppKit/SwiftUI 混合结构。
+- 项目已有项目文件搜索、工作区项目/联系人模型和原生 AppKit/SwiftUI 混合结构。
 
 仍需补齐的基础设施：
 

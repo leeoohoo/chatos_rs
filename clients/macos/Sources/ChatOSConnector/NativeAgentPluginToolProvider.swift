@@ -193,7 +193,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 let searchable = "\(option.name) \(option.description)\(builtInKeywords)".lowercased()
                 return terms.contains(where: searchable.contains)
             }
-            // A local Task has already frozen and validated its Plugin selections. If a
+            // A Task has already frozen and validated its Plugin selections. If a
             // translated or user-authored query has no literal overlap with an English
             // manifest, keep those selected capabilities discoverable instead of hiding
             // them behind a language-dependent lexical match.

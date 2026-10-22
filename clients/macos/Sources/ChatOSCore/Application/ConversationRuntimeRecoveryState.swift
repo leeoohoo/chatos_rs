@@ -10,7 +10,7 @@ public struct ConversationRuntimeRecoveryToken: Sendable, Equatable {
     }
 }
 
-/// Identity for restoring one Conversation after its local runtime becomes
+/// Identity for restoring one Conversation after its runtime becomes
 /// ready. A newer ready signal or an unavailable transition invalidates every
 /// older recovery, even when an underlying service ignores Task cancellation.
 public struct ConversationRuntimeRecoveryState: Sendable, Equatable {

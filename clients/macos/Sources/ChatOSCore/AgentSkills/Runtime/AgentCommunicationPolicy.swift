@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// Product-owned limits shared by local Agent communication tools, prompts and tests.
+/// Product-owned limits shared by Agent communication tools, prompts and tests.
 /// Callers must use `standard` instead of duplicating numeric thresholds.
 public struct AgentCommunicationPolicy: Codable, Sendable, Equatable {
     public let recommendedMessageCharacters: Int
@@ -71,7 +71,7 @@ public struct LocalAgentCommunicationSkillSnapshot: Codable, Sendable, Equatable
     }
 }
 
-/// Immutable product Skill used by every local Agent communication run.
+/// Immutable product Skill used by every Agent communication run.
 public enum LocalAgentCompactCommunicationSkill {
     public static let name = "chatos-compact-communication"
     public static let version = 2

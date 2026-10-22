@@ -14,8 +14,8 @@ struct NativeAgentPluginExecutionPresentation: Sendable {
     )
     static let localTaskExecution = Self(
         approvalSource: "local_agent_task_execution",
-        approvalReasonPrefix: "本地任务请求执行 Plugin 操作",
-        taskTitlePrefix: "本地任务"
+        approvalReasonPrefix: "任务请求执行 Plugin 操作",
+        taskTitlePrefix: "任务"
     )
 }
 
@@ -45,19 +45,19 @@ extension NativeLocalConnectorService {
     ) async throws -> any AgentToolProvider {
         guard state.user?.id == ownerUserID else {
             throw NativePluginRuntimeError.invalidRequest(
-                "本地任务 Plugin 与当前账户不匹配"
+                "任务 Plugin 与当前账户不匹配"
             )
         }
         let projectID = projectContext.projectID ?? "direct:\(conversationID)"
         let resolvedProject: NativeResolvedProjectPath?
         if let projectRoot = projectContext.projectRoot {
             guard projectContext.projectID != nil else {
-                throw NativePluginRuntimeError.invalidRequest("本地任务 Plugin 项目上下文无效")
+                throw NativePluginRuntimeError.invalidRequest("任务 Plugin 项目上下文无效")
             }
             resolvedProject = try resolveProjectPath(projectRoot)
         } else {
             guard projectContext.projectID == nil else {
-                throw NativePluginRuntimeError.invalidRequest("本地任务 Plugin 缺少项目根目录")
+                throw NativePluginRuntimeError.invalidRequest("任务 Plugin 缺少项目根目录")
             }
             resolvedProject = nil
         }
@@ -83,14 +83,14 @@ extension NativeLocalConnectorService {
         selectedPlugins = try Array(Set(pluginSelectionIDs)).sorted().map { selectionID in
             guard let plugin = installedByKey[selectionID] else {
                 throw NativePluginRuntimeError.invalidRequest(
-                    "本地任务选择的 Plugin component 未安装或已停用"
+                    "任务选择的 Plugin component 未安装或已停用"
                 )
             }
             return plugin
         }
         guard Set(pluginReleaseSnapshots.keys) == Set(pluginSelectionIDs) else {
             throw NativePluginRuntimeError.invalidRequest(
-                "本地任务 Plugin Release 快照与授权范围不一致"
+                "任务 Plugin Release 快照与授权范围不一致"
             )
         }
         for plugin in selectedPlugins {
@@ -105,7 +105,7 @@ extension NativeLocalConnectorService {
                       (record.pluginKey?.trimmingCharacters(in: .whitespacesAndNewlines)
                         .nilIfEmpty ?? record.pluginID) == expected.pluginKey else {
                     throw NativePluginRuntimeError.invalidRequest(
-                        "本地任务固定的 Plugin Release 已变更，请重新创建任务"
+                        "任务固定的 Plugin Release 已变更，请重新创建任务"
                     )
             }
         }
@@ -134,7 +134,7 @@ extension NativeLocalConnectorService {
         conversationID: String
     ) throws -> URL {
         guard state.user?.id == ownerUserID else {
-            throw NativePluginRuntimeError.invalidRequest("本地任务与当前账户不匹配")
+            throw NativePluginRuntimeError.invalidRequest("任务与当前账户不匹配")
         }
         let ownerScope = NativePluginManifestLoader.sha256(ownerUserID)
         let conversationScope = NativePluginManifestLoader.sha256(conversationID)

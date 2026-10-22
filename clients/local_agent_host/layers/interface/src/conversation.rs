@@ -518,7 +518,7 @@ impl FromStr for LocalConversationTurnStatus {
             "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
-            _ => Err(format!("unknown local conversation turn status: {value}")),
+            _ => Err(format!("unknown conversation turn status: {value}")),
         }
     }
 }
@@ -563,7 +563,7 @@ impl FromStr for LocalConversationMessageRole {
         match value {
             "user" => Ok(Self::User),
             "assistant" => Ok(Self::Assistant),
-            _ => Err(format!("unknown local conversation message role: {value}")),
+            _ => Err(format!("unknown conversation message role: {value}")),
         }
     }
 }

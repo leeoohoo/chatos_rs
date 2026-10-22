@@ -306,7 +306,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         }))
         guard case let .object(runInput) = turnRun.input,
               case let .object(runtimeInput)? = runInput["runtime_settings"] else {
-            return XCTFail("Turn Run must freeze local runtime settings")
+            return XCTFail("Turn Run must freeze runtime settings")
         }
         XCTAssertEqual(runtimeInput["selected_thinking_level"], .string("medium"))
         XCTAssertEqual(runtimeInput["reasoning_enabled"], .bool(true))

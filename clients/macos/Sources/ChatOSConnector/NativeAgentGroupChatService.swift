@@ -29,7 +29,7 @@ public struct NativeAgentGroupChatChange: Sendable, Equatable {
     }
 }
 
-/// Lazily opens the account-scoped local Agent chat database. No remote service is required.
+/// Lazily opens the account-scoped Agent chat database. No remote service is required.
 public actor NativeAgentGroupChatService {
     private struct ChangeObserver {
         let ownerUserID: String
@@ -155,7 +155,7 @@ public actor NativeAgentGroupChatService {
         cursor: String? = nil
     ) async throws -> AgentArtifactPage {
         guard let agentArtifactStore else {
-            throw AgentGroupChatError.storage("Local Agent artifact store is unavailable")
+            throw AgentGroupChatError.storage("Agent artifact store is unavailable")
         }
         return try await agentArtifactStore.list(
             ownerUserID: ownerUserID,
@@ -169,7 +169,7 @@ public actor NativeAgentGroupChatService {
         artifactID: String
     ) async throws -> Data {
         guard let agentArtifactStore else {
-            throw AgentGroupChatError.storage("Local Agent artifact store is unavailable")
+            throw AgentGroupChatError.storage("Agent artifact store is unavailable")
         }
         return try await agentArtifactStore.read(
             ownerUserID: ownerUserID,

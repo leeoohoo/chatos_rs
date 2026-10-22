@@ -29,7 +29,7 @@ struct RequirementSurveyRow: View {
                 HStack(spacing: 12) {
                     Label("\(survey.questions.count) 个问题", systemImage: "list.number")
                     Label(createdAt, systemImage: "clock")
-                    Label(survey.sourceTaskID == nil ? "主聊天" : "本地任务", systemImage: survey.sourceTaskID == nil ? "bubble.left" : "checklist")
+                    Label(survey.sourceTaskID == nil ? "主聊天" : "任务", systemImage: survey.sourceTaskID == nil ? "bubble.left" : "checklist")
                 }
                 .appFont(.caption2)
                 .foregroundStyle(.tertiary)
@@ -165,7 +165,7 @@ struct RequirementSurveyDetailView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack {
-                Label(survey.sourceTaskID == nil ? "主聊天需求调研" : "本地任务需求调研", systemImage: "list.clipboard")
+                Label(survey.sourceTaskID == nil ? "主聊天需求调研" : "任务需求调研", systemImage: "list.clipboard")
                     .appFont(.caption.weight(.semibold))
                     .foregroundStyle(AppPalette.ai)
                 Text(survey.status == .open ? "等待你的输入" : "已提交")

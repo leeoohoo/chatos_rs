@@ -15,7 +15,7 @@ public enum AgentGroupChatError: Error, Equatable, LocalizedError {
         case .conflict: "Agent 群聊状态已经变化，请刷新后重试。"
         case .notMember: "Agent 不是当前群聊成员。"
         case .permissionDenied: "当前身份不能执行这个群聊操作。"
-        case let .storage(message): "本地 Agent 群聊存储不可用：\(message)"
+        case let .storage(message): "Agent 群聊存储不可用：\(message)"
         }
     }
 }

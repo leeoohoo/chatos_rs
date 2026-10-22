@@ -243,7 +243,7 @@ public enum NativeLocalAgentAskUserPromptError: LocalizedError {
         switch self {
         case .notConfigured: "Local Agent Ask User service is not configured."
         case .promptNotFound: "The local Ask User prompt is no longer pending."
-        case .unsupportedRun: "The local Run cannot be cancelled through Ask User."
+        case .unsupportedRun: "The Run cannot be cancelled through Ask User."
         case .secretSubmissionUnsupported:
             "Secret answers cannot be sent through Local Agent IPC or stored in its database."
         }

@@ -99,7 +99,7 @@ struct NativeConnectorStateStoreTests {
                 arguments: ["-lc", "pwd"],
                 cwd: root,
                 projectRoot: root,
-                source: "Local Agent Task",
+                source: "Task",
                 risk: .init(level: "low", reason: nil),
                 purpose: "确认工作目录",
                 workspaceID: "workspace-1"
@@ -112,12 +112,64 @@ struct NativeConnectorStateStoreTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         let approval = try #require(pending.first)
-        #expect(approval.reason == "本机审批 Agent 尚未从本地任务运行时载入。")
+        #expect(approval.reason == "AI 自动审批已转人工：本机审批 Agent 尚未从任务运行时载入。")
         #expect(approval.reason?.contains("网关配对") == false)
 
         try await service.resolveApproval(id: approval.id, decision: .decline)
         let decision = await decisionTask.value
         #expect(decision == .deny(reason: "用户已在本机拒绝。"))
+    }
+
+    @Test
+    func incompleteHostEvidenceBypassesAIAndTransfersDirectlyToHuman() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.approvalMode = .autoApproval
+        state.commandApprovalModelConfigID = "approval-model"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+        let root = directory.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let decisionTask = Task {
+            await service.approvalDecision(
+                requestID: "request-incomplete-evidence",
+                command: "agent_plugin:fixture · publish",
+                arguments: ["字段：payload；内容摘要：abc123"],
+                cwd: root,
+                projectRoot: root,
+                source: "Task",
+                risk: .init(level: "high", reason: nil),
+                evaluationArguments: ["EVIDENCE_COMPLETE=false"],
+                automaticApprovalEvidenceComplete: false,
+                workspaceID: "workspace-1"
+            )
+        }
+        var pending: [LocalConnectorPendingApproval] = []
+        for _ in 0..<100 {
+            pending = try await service.fetchPendingApprovals()
+            if !pending.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let approval = try #require(pending.first)
+        #expect(
+            approval.reason
+                == "AI 自动审批已转人工：宿主未取得本次操作的完整可审核内容。"
+        )
+        #expect(!approval.reason!.contains("模型"))
+        #expect(approval.availableDecisions == ["accept", "decline"])
+
+        try await service.resolveApproval(id: approval.id, decision: .decline)
+        #expect(await decisionTask.value == .deny(reason: "用户已在本机拒绝。"))
     }
 
     @Test
@@ -170,10 +222,27 @@ struct NativeConnectorStateStoreTests {
             workspaceID: "workspace-1", purpose: "执行另一项检查",
             requestedPermissionsDescription: "项目命令", reuse: .exactRequest
         )
+        let exactDifferentEvidence = await service.approvalSessionScope(
+            base: "local-agent-project-write:conversation-1",
+            command: "commit_edit_session",
+            arguments: ["commit staged project edits"], cwd: root, projectRoot: root,
+            workspaceID: "workspace-1", requestedPermissionsDescription: "项目修改",
+            evaluationArguments: ["EVIDENCE_COMPLETE=true\nAFTER: different content"],
+            reuse: .exactRequest
+        )
+        let exactOriginalEvidence = await service.approvalSessionScope(
+            base: "local-agent-project-write:conversation-1",
+            command: "commit_edit_session",
+            arguments: ["commit staged project edits"], cwd: root, projectRoot: root,
+            workspaceID: "workspace-1", requestedPermissionsDescription: "项目修改",
+            evaluationArguments: ["EVIDENCE_COMPLETE=true\nAFTER: original content"],
+            reuse: .exactRequest
+        )
 
         #expect(declaredA == declaredB)
         #expect(exactA != exactB)
         #expect(exactA != exactDifferentPurpose)
+        #expect(exactOriginalEvidence != exactDifferentEvidence)
     }
 
     @Test

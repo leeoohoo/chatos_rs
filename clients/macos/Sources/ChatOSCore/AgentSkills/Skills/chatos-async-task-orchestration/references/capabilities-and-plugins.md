@@ -28,4 +28,13 @@ If the user explicitly requests both a Plugin artifact and a Notepad record, kee
 
 Plugin and External MCP effects are not currently confined to an enforceable project-relative resource range. A Task selecting either is therefore a whole-project writer for runtime scheduling, even when the intended operation appears read-only. Independent read-only Tasks may still proceed, but another potential writer waits. Add a prerequisite when two such Tasks require a deterministic order; do not rely on scheduler order.
 
-Select `default_model_config_id` per Task from the current eligible model catalog, using its usage descriptions to match the work's complexity and honoring the user's model preference. Choose `thinking_level` for that Task's reasoning needs rather than routinely omitting it; `auto` intentionally uses the model default. Never fabricate model IDs or unsupported reasoning levels. If no eligible catalog is advertised, omit the model ID and use the runtime fallback. Do not place credentials or sensitive raw data in titles, objectives, tags, rationale, or hints; the platform owns account, conversation, workspace, and callback scope.
+For browser observation or verification, request the smallest evidence that proves the criterion. URL plus accessibility state is the default for ordinary interaction checks. Request full DOM, response bodies, or per-step captures only for the specific step whose claim requires them. Do not mechanically capture full DOM after every action; repeated page snapshots create large duplicate results and extra model reads without strengthening the evidence.
+
+Select `default_model_config_id` per Task from the current eligible model catalog, using its usage descriptions to match the work's complexity and honoring the user's model preference. Choose `thinking_level` from the reasoning actually required by that Task:
+
+- Use `medium` for implementation from an established diagnosis or checklist, routine browser acceptance, and other bounded work whose success criteria are already explicit.
+- Use `high` only when the Task must resolve substantial ambiguity, compare multiple plausible architectures or causes, or make a consequential synthesis that cannot be reduced to a known checklist.
+- Do not select `high` merely because a Task has many mechanical steps, uses a Plugin, or performs broad regression coverage. Split or batch repetitive evidence collection instead of increasing reasoning effort.
+- Use `auto` only when intentionally delegating the choice to the model configuration; omission uses the runtime fallback and must not be treated as an implicit request for `high`.
+
+Never fabricate model IDs or unsupported reasoning levels. If no eligible catalog is advertised, omit the model ID and use the runtime fallback. Do not place credentials or sensitive raw data in titles, objectives, tags, rationale, or hints; the platform owns account, conversation, workspace, and callback scope.

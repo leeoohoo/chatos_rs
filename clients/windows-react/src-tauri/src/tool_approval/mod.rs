@@ -230,7 +230,7 @@ async fn resolve_terminal_approval_scope(
             (
                 cwd,
                 Some(purpose.to_owned()),
-                "在当前本地项目中执行命令".to_owned(),
+                "在当前项目中执行命令".to_owned(),
                 "powershell.exe".to_owned(),
                 vec![
                     "-NoLogo".to_owned(),

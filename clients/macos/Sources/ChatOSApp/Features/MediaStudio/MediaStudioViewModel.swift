@@ -124,7 +124,13 @@ final class MediaStudioViewModel: ObservableObject {
 
     func activate(userID: String) {
         guard ownerID != userID else { return }
-        resetForSignedOut()
+        // A newly constructed studio is already in its signed-out baseline. Avoid
+        // publishing dozens of redundant resets during authentication bootstrap;
+        // besides unnecessary UI churn, Release Combine has crashed while lazily
+        // installing the nested StoryStudio publisher on that first no-op reset.
+        if ownerID != nil {
+            resetForSignedOut()
+        }
         ownerID = userID
         stories.activate(userID: userID)
         isLoadingHistory = true
@@ -660,7 +666,9 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     func resetForSignedOut() {
-        stories.reset()
+        if ownerID != nil {
+            stories.reset()
+        }
         sessionID = UUID()
         imageGenerationState.reset()
         videoGenerationState.reset()

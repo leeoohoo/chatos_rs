@@ -16,10 +16,7 @@ fn plugin_installer_main_chat_exposes_only_installer_tools() {
         json!({"name": "plugin_installer_install_npm"}),
     ];
     let scoped = main_chat_scoped_tools(tools, &json!({"conversation_id": "installer"}));
-    let names = scoped
-        .iter()
-        .filter_map(tool_name)
-        .collect::<Vec<_>>();
+    let names = scoped.iter().filter_map(tool_name).collect::<Vec<_>>();
     assert_eq!(
         names,
         vec![
@@ -197,7 +194,7 @@ async fn task_execution_keeps_the_bound_workspace_root_authoritative() {
 }
 
 #[tokio::test]
-async fn selected_plugin_is_sent_each_step_as_a_required_delivery_contract() {
+async fn selected_plugin_scope_does_not_invent_deliverables_after_history_truncation() {
     let planner = ControlPlaneLocalAiStepPlanner::task_execution(
         OwnerCheckingModelResolver,
         OwnerCheckingCapabilityResolver,
@@ -232,14 +229,20 @@ async fn selected_plugin_is_sent_each_step_as_a_required_delivery_contract() {
             .filter_map(|content| serde_json::from_str::<Value>(content).ok())
             .find(|content| content["type"] == "task_selected_plugin_contract")
             .expect("program-owned selected Plugin contract");
-        assert_eq!(contract["delivery_route"], "selected_plugin_required");
+        assert_eq!(
+            contract["completion_basis"],
+            "task_objective_and_acceptance_criteria"
+        );
+        assert!(contract.get("delivery_route").is_none());
         assert_eq!(
             contract["selected_plugins"][0]["plugin_key"],
             "chatos-solution-studio@chatos-marketplace"
         );
-        assert!(contract["guidance"]
-            .as_str()
-            .is_some_and(|text| text.contains("cannot create or update notes")));
+        let guidance = contract["guidance"].as_str().unwrap();
+        assert!(guidance.contains("does not make a persisted screenshot mandatory"));
+        assert!(guidance.contains("fallback actually satisfies the criteria"));
+        assert!(guidance.contains("create and verify that deliverable there"));
+        assert!(guidance.contains("an unrelated successful tool call"));
     }
 }
 
@@ -838,8 +841,12 @@ async fn main_chat_receives_the_program_owned_composer_capability_contract() {
             (value["type"] == "user_selected_capability_contract").then_some(value)
         })
         .expect("program-owned selection contract");
-    assert_eq!(contract["delivery_route"], "selected_plugin_required");
+    assert_eq!(contract["required_capability"], "selected_plugin");
+    assert!(contract.get("delivery_route").is_none());
     assert_eq!(contract["selection"]["plugin_key"], "document-plugin");
+    let guidance = contract["guidance"].as_str().unwrap();
+    assert!(guidance.contains("Tool selection alone does not require a persisted artifact"));
+    assert!(guidance.contains("must be created and verified there"));
 }
 
 #[tokio::test]
@@ -909,7 +916,7 @@ async fn successful_task_handoff_forces_one_tool_free_natural_acknowledgement() 
         "name": "wait_for_task_completion",
         "parameters": {"type": "object", "properties": {}}
     })])
-    .expect("local Task tool");
+    .expect("Task tool");
     let handoff = claim(
         json!({"response": {
             "request_input_items": [{"role": "user", "content": "build it"}],

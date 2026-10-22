@@ -432,6 +432,18 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
                 }
                 pluginSkillGatesByName[name] = gate
                 pluginSkillGate = data
+            } else if pluginSkillSnapshot.skillNames.count == 1,
+                      let skillName = pluginSkillSnapshot.skillNames.first {
+                // Portable npm MCP packages commonly ship one authoritative Skill but
+                // older generated manifests/tools did not publish a skillGate. Requiring
+                // that sole Skill is safer than exposing hundreds of tools without their
+                // usage constraints, and keeps multi-Skill packages explicit.
+                let data = try JSONEncoder().encode(NativeJSONValue.object([
+                    "allOf": .array([.string(skillName)]),
+                ]))
+                let gate = try PluginToolSkillGate.decode(data)
+                pluginSkillGatesByName[name] = gate
+                pluginSkillGate = data
             } else {
                 pluginSkillGate = nil
             }
@@ -603,8 +615,8 @@ enum NativeAgentPluginFailurePresenter {
             return "Plugin 工具参数或当前状态无效，请重新查看工具定义后重试。"
         case .invalidManifest:
             return "Plugin 安装或声明已失效，请重新安装后重试。"
-        case .permissionDenied:
-            return "Plugin 工具缺少这次操作所需的本机权限。"
+        case let .permissionDenied(message):
+            return "Plugin 权限检查未通过：\(sanitize(message, projectRootURLs: projectRootURLs))"
         case let .invalidMCPResponse(message):
             return "Plugin 返回了无效响应：\(sanitize(message, projectRootURLs: projectRootURLs))"
         case .sessionNotFound, .processUnavailable:

@@ -95,7 +95,7 @@ enum NativeLocalAgentModelCredentialError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidCredential:
-            "Local Agent model credential is invalid."
+            "Model credential is invalid."
         }
     }
 }

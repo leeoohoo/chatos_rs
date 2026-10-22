@@ -33,7 +33,7 @@
 | 文件 | 界面 |
 | --- | --- |
 | [10-agent-management.png](10-agent-management.png) | Agent 管理 |
-| [11-agent-documents.png](11-agent-documents.png) | 本地 Agent 文档 |
+| [11-agent-documents.png](11-agent-documents.png) | Agent 文档 |
 | [12-agent-team-overview.png](12-agent-team-overview.png) | 团队总览 |
 | [13-agent-team-chat.png](13-agent-team-chat.png) | 团队聊天 |
 | [14-agent-team-tasks.png](14-agent-team-tasks.png) | 团队任务 |

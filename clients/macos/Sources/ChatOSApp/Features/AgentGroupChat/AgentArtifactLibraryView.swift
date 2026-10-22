@@ -42,7 +42,7 @@ struct AgentArtifactLibraryView: View {
     private var header: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("本地 Agent 文档")
+                Text("Agent 文档")
                     .font(.title3.weight(.semibold))
                 Text("显示当前账户由 Local Agent Host 保存的 Markdown 文档。")
                     .font(.caption)
@@ -64,7 +64,7 @@ struct AgentArtifactLibraryView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if artifacts.isEmpty {
             ContentUnavailableView {
-                Label("还没有本地 Agent 文档", systemImage: "doc.text.magnifyingglass")
+                Label("还没有Agent 文档", systemImage: "doc.text.magnifyingglass")
             } description: {
                 Text("Agent 创建并由 Local Agent Host 保存的 Markdown 会出现在这里。")
             }

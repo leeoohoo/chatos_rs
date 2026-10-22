@@ -16,7 +16,7 @@ extension LocalAgentGroupChatScheduler {
         let stopped = try await store.stopOutstandingDeliveries(
             ownerUserID: ownerUserID,
             roomID: room.id,
-            reason: "用户已停止当前项目中的全部本地 Agent。",
+            reason: "用户已停止当前项目中的全部Agent。",
             nowUnixMs: now()
         )
         await service.publishChange(.init(
@@ -261,7 +261,7 @@ extension LocalAgentGroupChatScheduler {
            var run = try await store.run(ownerUserID: ownerUserID, deliveryID: deliveryID) else {
             throw AgentGroupChatError.conflict
         }
-        let detail = "用户已结束这个未完成的本地 Agent Run。"
+        let detail = "用户已结束这个未完成的Agent Run。"
         run.checkpoint.status = .failed
         run.checkpoint.stopReason = detail
         run.events.append(.init(

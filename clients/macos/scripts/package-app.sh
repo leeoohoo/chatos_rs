@@ -92,7 +92,11 @@ cargo build \
   --manifest-path "$REPOSITORY_DIR/Cargo.toml" \
   -p chatos_local_agent_host \
   "${CARGO_PROFILE_ARGUMENTS[@]}"
-LOCAL_AGENT_HOST="$REPOSITORY_DIR/target-shared/$RUST_PROFILE/chatos_local_agent_host"
+CARGO_TARGET_ROOT=${CARGO_TARGET_DIR:-"$REPOSITORY_DIR/target-shared"}
+if [[ "$CARGO_TARGET_ROOT" != /* ]]; then
+  CARGO_TARGET_ROOT="$REPOSITORY_DIR/$CARGO_TARGET_ROOT"
+fi
+LOCAL_AGENT_HOST="$CARGO_TARGET_ROOT/$RUST_PROFILE/chatos_local_agent_host"
 if [[ ! -x "$LOCAL_AGENT_HOST" ]]; then
   echo "Local Agent Host executable not found at $LOCAL_AGENT_HOST" >&2
   exit 1

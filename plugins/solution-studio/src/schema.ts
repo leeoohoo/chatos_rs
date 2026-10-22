@@ -232,7 +232,8 @@ function assertStringList(value: unknown, label: string): asserts value is strin
 
 function assertUniqueIdentifiers(items: readonly { id: string }[], label: string): void {
   const ids = new Set<string>();
-  for (const item of items) {
+  for (const [index, item] of items.entries()) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error(`${label}[${index}] must be an object.`);
     assertIdentifier(item.id, `${label}.id`);
     if (ids.has(item.id)) throw new Error(`${label} contains duplicate id ${item.id}.`);
     ids.add(item.id);
@@ -392,7 +393,7 @@ function assertRenderableSvg(content: string, blockId: string): void {
   }
 }
 
-function assertExecutionPlan(plan: ExecutionPlan): void {
+export function assertExecutionPlan(plan: ExecutionPlan): void {
   if (!plan || typeof plan !== 'object') throw new Error('executionPlan is invalid.');
   assertDocumentHeader(plan, 'executionPlan');
   if (!Number.isSafeInteger(plan.basedOnDesignRevision) || plan.basedOnDesignRevision < 0) throw new Error('executionPlan design revision is invalid.');
@@ -408,6 +409,7 @@ function assertExecutionPlan(plan: ExecutionPlan): void {
     assertText(task.phase, `task.${task.id}.phase`, true);
     if (!['task', 'review', 'milestone'].includes(task.type)) throw new Error(`task.${task.id}.type is invalid.`);
     if (!['planned', 'in_progress', 'blocked', 'done', 'cancelled'].includes(task.status)) throw new Error(`task.${task.id}.status is invalid.`);
+    if (task.blockedReason !== undefined) assertText(task.blockedReason, `task.${task.id}.blockedReason`, true);
     for (const field of ['dependsOn', 'requirementIds', 'designSectionIds', 'acceptanceCriteria', 'sourceReferences'] as const) assertStringList(task[field], `task.${task.id}.${field}`);
     assertStringList(task.deliverables, `task.${task.id}.deliverables`);
   }
@@ -421,10 +423,10 @@ function assertExecutionPlan(plan: ExecutionPlan): void {
     if (event.summary !== undefined) assertText(event.summary, `statusEvent.${event.id}.summary`);
     assertStringList(event.evidence, `statusEvent.${event.id}.evidence`);
   }
-  if (!plan.positions || typeof plan.positions !== 'object') throw new Error('executionPlan.positions is invalid.');
+  if (!plan.positions || typeof plan.positions !== 'object' || Array.isArray(plan.positions)) throw new Error('executionPlan.positions is invalid.');
   for (const [id, position] of Object.entries(plan.positions)) {
     assertIdentifier(id, 'executionPlan.positions key');
-    if (!Number.isFinite(position.x) || !Number.isFinite(position.y)) throw new Error(`Position for ${id} is invalid.`);
+    if (!position || typeof position !== 'object' || !Number.isFinite(position.x) || !Number.isFinite(position.y)) throw new Error(`executionPlan.positions.${id} is invalid.`);
   }
   if (!plan.viewport || !Number.isFinite(plan.viewport.x) || !Number.isFinite(plan.viewport.y) || !Number.isFinite(plan.viewport.zoom)) throw new Error('executionPlan.viewport is invalid.');
 }

@@ -355,7 +355,7 @@ mod tests {
                     && *profile == DEFAULT_AGENT_PROMPT_PROFILE
             })
             .map(|(_, _, content)| *content)
-            .expect("Local Agent execution Prompt");
+            .expect("execution Prompt");
         assert!(run_prompt.contains("`requires_execution=false`"));
         assert!(run_prompt.contains("不能据此推断任务是“仅文件处理任务”"));
         assert!(run_prompt.contains("本轮实际注册并暴露的工具"));

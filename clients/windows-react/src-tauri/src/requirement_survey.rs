@@ -274,12 +274,7 @@ pub(crate) async fn confirm_requirement_survey_plan(
     if current.revision != input.expected_revision || current.confirmed_at_unix_ms.is_some() {
         return Err("需求方案已经变化，请刷新后重试。".into());
     }
-    let source_run = get_run(
-        &manager,
-        &input.owner_user_id,
-        &current.source_run_id,
-    )
-    .await?;
+    let source_run = get_run(&manager, &input.owner_user_id, &current.source_run_id).await?;
     validate_plan_run(&current, &source_run)?;
     if source_run.status != LocalAgentRunStatus::Succeeded {
         return Err("需求方案尚未生成完成。".into());
@@ -359,13 +354,15 @@ pub(crate) async fn adopt_requirement_survey_plan(
         .require_session_generation(&input.owner_user_id, generation)
         .await?;
     let result = manager
-        .execute(HostCommand::SaveRequirementPlan(SaveRequirementPlanCommand {
-            owner_user_id: input.owner_user_id.clone(),
-            survey_id: input.survey_id.clone(),
-            source_run_id: survey.source_run_id.clone(),
-            expected_revision: 0,
-            markdown: markdown.clone(),
-        }))
+        .execute(HostCommand::SaveRequirementPlan(
+            SaveRequirementPlanCommand {
+                owner_user_id: input.owner_user_id.clone(),
+                survey_id: input.survey_id.clone(),
+                source_run_id: survey.source_run_id.clone(),
+                expected_revision: 0,
+                markdown: markdown.clone(),
+            },
+        ))
         .await?;
     let HostResult::RequirementPlan { plan: Some(saved) } = result else {
         return Err("Local Agent Host 返回了错误的需求方案保存结果。".into());
@@ -526,8 +523,7 @@ fn validate_plan_run(plan: &LocalRequirementPlan, run: &LocalAgentRunRecord) -> 
         run.input.get("conversation_id").and_then(Value::as_str)
             == Some(plan.source_conversation_id.as_str())
     } else if is_task {
-        run
-            .input
+        run.input
             .get("source_conversation_id")
             .and_then(Value::as_str)
             == Some(plan.source_conversation_id.as_str())
@@ -714,8 +710,7 @@ mod tests {
         assert!(validate_plan(&survey, &plan).is_ok());
         assert!(validate_plan_run(&plan, &run).is_ok());
         let mut wrong_profile_input = run.clone();
-        wrong_profile_input.input =
-            serde_json::json!({"source_conversation_id": "conversation-1"});
+        wrong_profile_input.input = serde_json::json!({"source_conversation_id": "conversation-1"});
         assert!(validate_plan_run(&plan, &wrong_profile_input).is_err());
         let mut wrong_plan = plan;
         wrong_plan.source_survey_id = "survey-forged".into();

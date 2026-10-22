@@ -142,7 +142,7 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 33);
+    assert_eq!(schema_version, super::migration::SCHEMA_VERSION);
 
     storage.pool.close().await;
     drop(storage);
@@ -215,11 +215,13 @@ async fn version_thirty_three_discards_transient_history_and_bounds_new_rows() {
         .await
         .expect("open version 32 database");
     for statement in [
+        "DROP TRIGGER local_agent_step_memory_discard",
+        "DROP TABLE local_agent_step_memory",
         "DROP TRIGGER local_agent_command_receipts_prune",
         "DROP INDEX local_agent_command_receipts_retention",
         "DROP TRIGGER local_memory_outbox_prune",
         "DROP INDEX local_memory_outbox_synced_retention",
-        "DELETE FROM client_schema_migrations WHERE version = 33",
+        "DELETE FROM client_schema_migrations WHERE version >= 33",
     ] {
         sqlx::query(statement)
             .execute(&mut connection)
@@ -353,7 +355,7 @@ async fn failed_migration_preserves_recovery_backup() {
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("open database to damage migration source");
-    sqlx::query("DELETE FROM client_schema_migrations WHERE version = 33")
+    sqlx::query("DELETE FROM client_schema_migrations WHERE version >= 33")
         .execute(&mut connection)
         .await
         .expect("rewind schema version");
@@ -397,6 +399,14 @@ async fn version_twenty_nine_backfills_failed_conversation_messages() {
         .execute(&mut connection)
         .await
         .expect("remove version 33 receipt trigger");
+    sqlx::query("DROP TRIGGER local_agent_step_memory_discard")
+        .execute(&mut connection)
+        .await
+        .expect("remove version 34 trigger");
+    sqlx::query("DROP TABLE local_agent_step_memory")
+        .execute(&mut connection)
+        .await
+        .expect("remove version 34 table");
     sqlx::query("DROP INDEX local_agent_command_receipts_retention")
         .execute(&mut connection)
         .await
@@ -518,7 +528,7 @@ async fn version_twenty_nine_backfills_failed_conversation_messages() {
             .fetch_one(&migrated.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 33);
+    assert_eq!(schema_version, super::migration::SCHEMA_VERSION);
 
     migrated.pool.close().await;
     drop(migrated);

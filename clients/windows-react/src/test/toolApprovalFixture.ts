@@ -11,7 +11,7 @@ export function sampleToolApproval(
     command: "cargo test",
     purpose: "验证当前改动",
     cwd: "clients/windows-react",
-    source: "Local Agent Task",
+    source: "Task",
     risk: "medium",
     reason: "命令可能修改文件、依赖或远程状态。",
     createdAtUnixMs: 1_700_000_000_000,

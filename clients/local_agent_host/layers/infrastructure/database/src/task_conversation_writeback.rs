@@ -74,7 +74,8 @@ pub(super) async fn write_back_terminal_task_run(
         super::task_lifecycle::reported_task_outcome(connection, &run.run_id).await?;
     let reported_detail = reported_outcome.as_ref().map(|outcome| {
         json!({
-            "status": outcome.status,
+            "result_status": outcome.result_status,
+            "status": outcome.result_status,
             "reason": outcome.reason,
         })
     });
@@ -326,7 +327,8 @@ async fn write_back_terminal_task_callbacks(
         };
         let reported_detail = reported_outcome.as_ref().map(|outcome| {
             json!({
-                "status": outcome.status,
+                "result_status": outcome.result_status,
+                "status": outcome.result_status,
                 "reason": outcome.reason,
             })
         });

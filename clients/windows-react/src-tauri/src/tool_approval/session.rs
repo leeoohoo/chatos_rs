@@ -100,7 +100,7 @@ mod tests {
         let baseline = scope().key();
         assert_eq!(
             baseline,
-            "v2:ec1276cd80b873a628bbf1299b949380ce405c472bdeb48a1750b11c45b8d70f"
+            "v2:afec857ae85eb89bc3e31ad2ec5b5dbb92d0d3685254af5fd38d185de91d0375"
         );
         assert_eq!(baseline, scope().key());
 
@@ -174,7 +174,7 @@ mod tests {
             cwd: PathBuf::from("C:/project"),
             base: "local-agent-terminal:conversation-1".into(),
             purpose: Some("验证当前改动".into()),
-            requested_permissions_description: "在当前本地项目中执行命令".into(),
+            requested_permissions_description: "在当前项目中执行命令".into(),
             command: "powershell.exe".into(),
             arguments: vec![
                 "-NoLogo".into(),

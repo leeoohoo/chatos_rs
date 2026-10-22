@@ -40,7 +40,7 @@ struct EditLocalAgentSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("编辑本地 Agent").font(.title2).fontWeight(.semibold)
+            Text("编辑Agent").font(.title2).fontWeight(.semibold)
             Form {
                 AgentAvatarEditor(
                     avatarData: $avatarData,
@@ -276,7 +276,7 @@ struct CreateAgentRoomSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("创建本地 Agent 群聊").font(.title2).fontWeight(.semibold)
+            Text("创建Agent 群聊").font(.title2).fontWeight(.semibold)
             TextField("群聊名称", text: $name)
             TextField("群聊目标（可选）", text: $goal, axis: .vertical).lineLimit(2...5)
             if projectManagerCandidates.isEmpty {
@@ -343,7 +343,7 @@ struct CreateLocalAgentSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("创建本地 Agent").font(.title2).fontWeight(.semibold)
+            Text("创建Agent").font(.title2).fontWeight(.semibold)
             Form {
                 AgentAvatarEditor(
                     avatarData: $avatarData,

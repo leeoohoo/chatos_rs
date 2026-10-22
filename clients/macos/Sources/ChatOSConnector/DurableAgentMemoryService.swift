@@ -3,7 +3,7 @@ import Foundation
 import SQLite3
 
 /// Adds a client-owned cache and durable upload queue in front of Memory Engine.
-/// A local Agent can keep working while the service is unreachable; immutable
+/// An Agent can keep working while the service is unreachable; immutable
 /// records are uploaded with their program-generated ids when connectivity returns.
 public struct OfflineCapableAgentServiceProvider: AgentServiceProviding {
     private let upstream: any AgentServiceProviding

@@ -795,8 +795,8 @@ public enum NativeLocalAgentMessageTaskGraphServiceError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .notConfigured: "Local Agent task service is not configured."
-        case .taskNotFound: "The local task does not exist."
+        case .notConfigured: "task service is not configured."
+        case .taskNotFound: "The task does not exist."
         }
     }
 }

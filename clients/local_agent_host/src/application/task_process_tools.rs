@@ -156,8 +156,7 @@ impl LocalTaskProcessToolExecutor {
             || run.owner_entity_type != "task"
         {
             return Err(
-                "Task process tools are available only to the active local Task execution"
-                    .to_string(),
+                "Task process tools are available only to the active Task execution".to_string(),
             );
         }
         Ok(run)
@@ -616,7 +615,7 @@ mod tests {
             ))
             .await
             .expect_err("Main Chat must not use Task process tools");
-        assert!(error.contains("active local Task execution"));
+        assert!(error.contains("active Task execution"));
     }
 
     #[tokio::test]

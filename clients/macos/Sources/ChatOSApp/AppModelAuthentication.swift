@@ -152,7 +152,7 @@ extension AppModel {
             $0.localAgentRuntimeDidBecomeUnavailable()
         }
         guard let localAgentHost else {
-            localAgentHostError = localized("本地任务组件缺失，请重新安装应用。", english: "The local Task component is missing. Please reinstall the app.")
+            localAgentHostError = localized("任务组件缺失，请重新安装应用。", english: "The Task component is missing. Please reinstall the app.")
             localAgentRuntimeState.becomeDegraded(
                 ownerUserID: ownerUserID,
                 generation: generation,
@@ -350,7 +350,7 @@ extension AppModel {
         guard localAgentCrashRecoveryTask == nil,
               let ownerUserID = authenticatedUserID else {
             if localAgentHostRecoveryState.hasExhaustedRestarts {
-                localAgentHostError = NSLocalizedString("本地任务服务多次启动失败，联系人和项目暂时无法加载。请重新打开应用；若仍失败，请查看诊断日志。", comment: "Local task service failed to recover")
+                localAgentHostError = NSLocalizedString("任务服务多次启动失败，联系人和项目暂时无法加载。请重新打开应用；若仍失败，请查看诊断日志。", comment: "Local task service failed to recover")
                 localAgentRuntimeState.becomeDegraded(
                     ownerUserID: authenticatedUserID,
                     generation: localAgentHostLifecycleGeneration,
@@ -365,7 +365,7 @@ extension AppModel {
             lifecycleGeneration: localAgentHostLifecycleGeneration
         ) else {
             if localAgentHostRecoveryState.hasExhaustedRestarts {
-                localAgentHostError = NSLocalizedString("本地任务服务多次启动失败，联系人和项目暂时无法加载。请重新打开应用；若仍失败，请查看诊断日志。", comment: "Local task service failed to recover")
+                localAgentHostError = NSLocalizedString("任务服务多次启动失败，联系人和项目暂时无法加载。请重新打开应用；若仍失败，请查看诊断日志。", comment: "Local task service failed to recover")
                 localAgentRuntimeState.becomeDegraded(
                     ownerUserID: authenticatedUserID,
                     generation: localAgentHostLifecycleGeneration,

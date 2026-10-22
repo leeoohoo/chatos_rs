@@ -2,7 +2,7 @@ import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
-/// Starts already-installed stdio MCP plugins directly from the client for one local Agent run.
+/// Starts already-installed stdio MCP plugins directly from the client for one Agent run.
 /// It deliberately bypasses relay request signing because there is no remote caller: account,
 /// project, Agent and plugin selection have already been fixed by local application state.
 extension NativeLocalConnectorService {
@@ -81,29 +81,29 @@ extension NativeLocalConnectorService {
         guard state.user?.id == ownerUserID,
               runContext.ownerUserID == ownerUserID,
               let deviceID = state.deviceID else {
-            throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 与当前账户或项目不匹配")
+            throw NativePluginRuntimeError.invalidRequest("Agent Plugin 与当前账户或项目不匹配")
         }
         let resolvedProject: NativeResolvedProjectPath?
         if let rawProjectRoot = projectContext.projectRoot {
             guard projectContext.projectID == runContext.projectID else {
-                throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 与当前项目不匹配")
+                throw NativePluginRuntimeError.invalidRequest("Agent Plugin 与当前项目不匹配")
             }
             resolvedProject = try resolveProjectPath(rawProjectRoot)
         } else {
             guard projectContext.projectID == nil,
                   runContext.projectID.hasPrefix("direct:") else {
-                throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 缺少项目上下文")
+                throw NativePluginRuntimeError.invalidRequest("Agent Plugin 缺少项目上下文")
             }
             resolvedProject = nil
         }
         guard let workspaceRootURL = resolvedProject?.absoluteURL ?? fallbackWorkspaceRootURL,
               let workspaceID = resolvedProject?.workspace.id ?? fallbackWorkspaceID else {
-            throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 缺少工作目录")
+            throw NativePluginRuntimeError.invalidRequest("Agent Plugin 缺少工作目录")
         }
         let selectedPlugins = plugins.sorted { $0.id < $1.id }
         guard Set(selectedPlugins.map(\.id)).count == selectedPlugins.count,
               selectedPlugins.count <= 100 else {
-            throw NativePluginRuntimeError.invalidRequest("本地 Agent 选择的 Plugin 数量无效")
+            throw NativePluginRuntimeError.invalidRequest("Agent 选择的 Plugin 数量无效")
         }
         var providers: [NativeAgentPluginToolProvider] = []
         for plugin in selectedPlugins {
@@ -259,7 +259,7 @@ extension NativeLocalConnectorService {
               runContext.ownerUserID == ownerUserID,
               projectContext.projectID == runContext.projectID,
               let projectRoot = projectContext.projectRoot else {
-            throw NativePluginRuntimeError.invalidRequest("本地 Agent 能力目录与当前账户或项目不匹配")
+            throw NativePluginRuntimeError.invalidRequest("Agent 能力目录与当前账户或项目不匹配")
         }
         guard runContext.lane == .executor else {
             throw NativePluginRuntimeError.invalidRequest("通讯线程不能装配项目文件、终端或 Plugin 能力")
@@ -353,7 +353,14 @@ extension NativeLocalConnectorService {
     ) throws -> NativePluginManifest {
         let url = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .appendingPathComponent("chatos.plugin.json")
-        let manifest = try NativePluginManifestLoader.loadManifest(from: url)
+        var manifest = try NativePluginManifestLoader.loadManifest(from: url)
+        if manifest.skills.isEmpty {
+            let installationRoot = url.deletingLastPathComponent()
+            manifest.skills = try NativePluginBundledSkillDiscovery.relativeDirectories(
+                installationRoot: installationRoot,
+                packageName: manifest.name
+            ).map(NativePluginManifest.PathReference.init(path:))
+        }
         guard manifest.schemaVersion == 3,
               manifest.version == record.version,
               !manifest.mcpServers.isEmpty || !manifest.skills.isEmpty else {

@@ -7,6 +7,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { assertSolutionWorkspace, validateDesignBlockExpectations, validateWorkspace, workspaceSummary, workspaceToMarkdown, type DesignBlockExpectation, type DesignContentBlock, type ProjectProfile, type RequirementsDocument, type SolutionDesignDocument, type ExecutionPlan, type SourceMode, type TaskStatus, type ValidationIssue } from './schema.js';
 import { SolutionWorkspaceStore } from './store.js';
 import { readHostRuntimeContext } from './runtime-context.js';
+import { executionPlanInputSchema, normalizeAuthoringPlan } from './execution-plan-input.js';
 
 const store = new SolutionWorkspaceStore();
 const runtimeContext = readHostRuntimeContext();
@@ -91,7 +92,7 @@ const AUTHORING_TOOL_DEFINITIONS = [
     name: 'solution_upsert_execution_plan',
     description: 'Create or revise a dependency-aware execution plan. tasks[].dependsOn is canonical; the service rejects unknown references, self-dependencies, and dependency cycles.',
     inputSchema: {
-      type: 'object', properties: { ...workspaceIdentityProperties, executionPlan: { type: 'object', description: 'Complete ExecutionPlan business content including tasks and dependsOn relationships.' } },
+      type: 'object', properties: { ...workspaceIdentityProperties, executionPlan: executionPlanInputSchema },
       required: ['title', 'executionPlan'], additionalProperties: false
     },
     _meta: gate('solution-execution-plan')
@@ -391,9 +392,9 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       return { workspace: workspaceSummary(saved), block: savedBlocks?.find((candidate) => candidate.id === block.id), validation: validateWorkspace(saved), completionRequirement: completionRequirement(saved.workspaceId) };
     }
     case 'solution_upsert_execution_plan': {
-      const executionPlan = input.executionPlan as ExecutionPlan;
       const result = await store.upsert(String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
-        workspace.executionPlan = { ...protectedAuthoringPlan(workspace.executionPlan, executionPlan), revision: workspace.executionPlan.revision + 1, updatedAt: new Date().toISOString() };
+        const executionPlan = normalizeAuthoringPlan(input.executionPlan, workspace.executionPlan);
+        workspace.executionPlan = protectedAuthoringPlan(workspace.executionPlan, executionPlan);
         const validation = validateWorkspace(workspace);
         const dependencyIssues = validation.issues.filter((issue) => ['unknown_dependency', 'self_dependency', 'dependency_cycle', 'redundant_dependency'].includes(issue.code));
         if (dependencyIssues.length > 0) throw new Error(dependencyIssues.map((issue) => issue.message).join(' '));
@@ -476,7 +477,7 @@ function result(value: Record<string, unknown>, isError = false) {
   return response;
 }
 
-const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.1' }, { capabilities: { tools: {} } });
+const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.2' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }

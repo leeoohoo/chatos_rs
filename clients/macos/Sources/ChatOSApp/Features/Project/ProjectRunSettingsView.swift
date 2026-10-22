@@ -144,7 +144,7 @@ struct ProjectRunSettingsView: View {
         )
         let fallback = (rootPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
             ? model.localized("未配置项目目录", english: "Project Folder Not Configured")
-            : model.localized("本机项目目录", english: "Local Project Folder")
+            : model.localized("本机项目目录", english: "Project Folder")
         return Label(directory.name ?? fallback, systemImage: "folder")
             .appFont(.caption)
             .foregroundStyle(.secondary)
@@ -256,7 +256,7 @@ struct ProjectRunSettingsView: View {
                         .appFont(.headline)
                     Text(model.localized(
                         "只删除项目记录和运行状态，不会删除本机项目文件夹。",
-                        english: "Removes the project record and run state without deleting the local project folder."
+                        english: "Removes the project record and run state without deleting the project folder."
                     ))
                     .appFont(.caption)
                     .foregroundStyle(.secondary)

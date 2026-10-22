@@ -93,7 +93,7 @@ macOS 客户端已经包含项目工作区、任务视图、插件应用、Local
 | --- | --- |
 | `clients/macos` | Swift 6.2 / SwiftUI 原生客户端与 macOS Local Connector。 |
 | `clients/windows-react` | Tauri 2 / React / TypeScript 替代 Windows 客户端及其实施方案。 |
-| `clients/local_agent_host` | 由原生客户端内嵌的 Rust 本地任务、工具、调度与执行宿主。 |
+| `clients/local_agent_host` | 由原生客户端内嵌的 Rust 任务、工具、调度与执行宿主。 |
 | `memory_engine/backend` | 会话摘要与分层项目/主题记忆。 |
 | `plugin_management_service/backend` | 插件目录、版本、安装包与运行能力元数据。 |
 | `local_connector_service/backend` | 原生 Local Connector 的云端路由与协调。 |

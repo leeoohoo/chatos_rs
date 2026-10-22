@@ -167,7 +167,7 @@ struct AgentGroupChatWorkspaceView: View {
 
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("本地 Agent 文档")
+                                Text("Agent 文档")
                                     .font(.body.weight(.medium))
                                 Text("跨设备发现与预览")
                                     .font(.caption)

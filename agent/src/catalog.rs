@@ -69,7 +69,7 @@ pub static CHATOS_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescript
 
 pub static LOCAL_AGENT_EXECUTION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::LocalAgentExecutionAgent,
-    "Local Agent Execution Agent",
+    "Execution Agent",
     "local-agent-host",
     "Executes implementation, testing, repair, deployment, and other durable work on the local client.",
     true,

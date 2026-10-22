@@ -107,7 +107,7 @@ ChatOS 当前只接受完整、自包含的 npm package：
 - 同时覆盖 Word、Excel 和 PowerPoint，减少三套编辑引擎之间的行为差异。
 - 支持创建、读取、编辑、模板、图表、公式以及截图/渲染相关能力。
 - 不要求本机安装 Microsoft Office。
-- 提供多平台原生实现，适合本地执行。
+- 提供多平台原生实现，适合执行。
 
 但不能直接把 OfficeCLI 自带的“任意 CLI 命令”MCP 暴露给 ChatOS。Document MCP 必须在其上增加类型化工具、安全路径解析、参数白名单、超时、输出控制和审计边界。
 

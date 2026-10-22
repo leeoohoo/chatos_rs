@@ -289,6 +289,14 @@ impl LocalAgentRunStore for SqliteClientStorage {
             let guarded =
                 super::task_followup_gate::guard_final(&mut connection, transition).await?;
             let transition = &guarded;
+            super::memory_outbox_store::publish_step_records(
+                &mut connection,
+                &transition.run_id,
+                &transition.claim_token,
+                transition.expected_version,
+                transition.occurred_at_unix_ms,
+            )
+            .await?;
             let updated = sqlx::query(
                 "UPDATE local_agent_runs SET status = ?, model_attempt = ?, version = version + 1, \
                  claim_token = NULL, claim_until_unix_ms = NULL, next_attempt_at_unix_ms = ?, \

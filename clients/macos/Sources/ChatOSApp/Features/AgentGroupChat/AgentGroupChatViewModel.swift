@@ -12,8 +12,8 @@ struct AgentSchedulerIssue: Equatable {
         deliveryID = receipt.deliveryID
         outcome = receipt.outcome
         let fallback = switch receipt.outcome {
-        case .failed: "本地 Agent 运行失败。"
-        case .suspended: "本地 Agent 已暂停，运行检查点已保存。"
+        case .failed: "Agent 运行失败。"
+        case .suspended: "Agent 已暂停，运行检查点已保存。"
         case .completed: ""
         }
         message = receipt.detail ?? fallback

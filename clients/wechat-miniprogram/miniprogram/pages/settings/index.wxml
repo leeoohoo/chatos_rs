@@ -33,5 +33,5 @@
   </view>
 
   <button class="danger-button logout-button" loading="{{loggingOut}}" bindtap="logout">退出当前小程序</button>
-  <view class="privacy-copy">小程序仅访问 ChatOS 设备状态与会话，不读取微信聊天、通讯录或本地项目文件。解除微信绑定请前往桌面端。</view>
+  <view class="privacy-copy">小程序仅访问 ChatOS 设备状态与会话，不读取微信聊天、通讯录或项目文件。解除微信绑定请前往桌面端。</view>
 </view>

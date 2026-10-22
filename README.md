@@ -66,7 +66,7 @@ The native clients provide project browsing, full-text search, file viewing and 
 
 ### Project context and memory
 
-Each client-owned project keeps its conversations, tasks, run history, and reusable context isolated by project identity. The memory system supports long-running collaboration through conversation summaries and layered project memory instead of relying on one unbounded transcript. Models, skills, and tool capabilities are supplied jointly by platform configuration and the local runtime.
+Each client-owned project keeps its conversations, tasks, run history, and reusable context isolated by project identity. The memory system supports long-running collaboration through conversation summaries and layered project memory instead of relying on one unbounded transcript. Models, skills, and tool capabilities are supplied jointly by platform configuration and the runtime.
 
 ### Native desktop capabilities
 
@@ -93,7 +93,7 @@ Plugins can combine MCP servers, skills, permission declarations, managed artifa
 | --- | --- |
 | `clients/macos` | Swift 6.2 / SwiftUI native client and macOS Local Connector. |
 | `clients/windows-react` | Tauri 2 / React / TypeScript replacement Windows client and implementation plan. |
-| `clients/local_agent_host` | Rust local task, tool, scheduling, and execution host embedded by native clients. |
+| `clients/local_agent_host` | Rust task, tool, scheduling, and execution host embedded by native clients. |
 | `memory_engine/backend` | Conversation summaries and layered project/subject memory. |
 | `plugin_management_service/backend` | Plugin catalog, releases, packages, and runtime capability metadata. |
 | `local_connector_service/backend` | Cloud routing and coordination for native Local Connectors. |

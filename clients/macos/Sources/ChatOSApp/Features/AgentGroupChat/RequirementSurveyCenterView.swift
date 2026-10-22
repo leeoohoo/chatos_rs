@@ -225,7 +225,7 @@ struct RequirementSurveyCenterView: View {
                             ContentUnavailableView {
                                 Label("暂无项目", systemImage: "folder")
                             } description: {
-                                Text("创建项目后，可以在这里查看主聊天或本地任务发起的需求调研。")
+                                Text("创建项目后，可以在这里查看主聊天或任务发起的需求调研。")
                             }
                             .frame(maxWidth: .infinity, minHeight: 360)
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))

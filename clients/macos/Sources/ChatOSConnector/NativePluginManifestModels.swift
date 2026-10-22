@@ -4,6 +4,10 @@ struct NativePluginManifest: Decodable, Sendable {
     struct PathReference: Decodable, Sendable {
         var path: String
 
+        init(path: String) {
+            self.path = path
+        }
+
         init(from decoder: Decoder) throws {
             if let value = try? decoder.singleValueContainer().decode(String.self) {
                 path = value

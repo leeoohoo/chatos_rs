@@ -165,7 +165,7 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             )
             XCTFail("unknown persisted capabilities must remain a hard failure")
         } catch let error as AgentGroupChatError {
-            XCTAssertEqual(error.localizedDescription, "本地 Agent 群聊存储不可用：invalid Agent Todo execution plan")
+            XCTAssertEqual(error.localizedDescription, "Agent 群聊存储不可用：invalid Agent Todo execution plan")
         }
     }
 

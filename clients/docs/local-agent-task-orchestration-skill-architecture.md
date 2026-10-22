@@ -153,7 +153,7 @@ Shared Rust Task DAG + policy + persistence + callbacks
 | Tool schema | 参数类型、必填字段、能力枚举、闭合 JSON 结构 |
 | shared Rust | owner/scope、权限、DAG、锁、持久化、Skill gate、handoff、callback |
 | 原生客户端 | 本机项目/终端/UI/Plugin/External MCP 的真实执行和审批 |
-| Plugin Management | 发布能力策略、Plugin 元数据、安装来源、版本和 checksum，不承载本地执行 |
+| Plugin Management | 发布能力策略、Plugin 元数据、安装来源、版本和 checksum，不承载执行 |
 
 ### 3.2 Tool-to-Skill 绑定
 

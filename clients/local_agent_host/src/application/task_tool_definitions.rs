@@ -91,7 +91,7 @@ pub fn task_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": CREATE_TASK_TOOL,
-            "description": "Create one coherent durable local task for the current conversation/project. Use this only when splitting would not enable useful concurrency, specialization, ownership, or independent acceptance. The Rust Local Agent Host binds, persists, schedules, and writes the result back locally.",
+            "description": "Create one coherent durable task for the current conversation/project. Use this only when splitting would not enable useful concurrency, specialization, ownership, or independent acceptance. The Rust Local Agent Host binds, persists, schedules, and writes the result back locally.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -111,7 +111,7 @@ pub fn task_model_tools() -> Vec<Value> {
                     "default_model_config_id": {
                         "type": "string",
                         "minLength": 1,
-                        "description": "Optional explicit local model configuration id for this Task. When omitted, inherit the model selected for the current Main Chat."
+                        "description": "Optional explicit model configuration id for this Task. When omitted, inherit the model selected for the current Main Chat."
                     },
                     "thinking_level": thinking_level_override_schema(),
                     "requires_execution": {
@@ -170,7 +170,7 @@ pub fn task_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": CANCEL_TASK_TOOL,
-            "description": "Cancel a pending or running local task from the current conversation/project because it conflicts with the user's latest intent.",
+            "description": "Cancel a pending or running task from the current conversation/project because it conflicts with the user's latest intent.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -230,7 +230,7 @@ fn thinking_level_override_schema() -> Value {
     json!({
         "type": "string",
         "enum": ["none", "auto", "minimal", "low", "medium", "high", "xhigh", "max"],
-        "description": "Optional reasoning level override for this Task. Omit it to use the selected model configuration's default Thinking level."
+        "description": "Optional reasoning level override for this Task. Omit it to use the selected model configuration's default Thinking level. Use medium for implementation from an established diagnosis or checklist and for routine browser acceptance. Use high only when the Task must resolve substantial ambiguity, compare multiple plausible architectures or causes, or make a consequential synthesis; many steps, Plugin use, and broad regression coverage alone do not justify high."
     })
 }
 
@@ -299,7 +299,7 @@ fn create_task_item_schema() -> Value {
             "default_model_config_id": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Optional explicit local model configuration id for this Task. When omitted, inherit the model selected for the current Main Chat."
+                "description": "Optional explicit model configuration id for this Task. When omitted, inherit the model selected for the current Main Chat."
             },
             "thinking_level": thinking_level_override_schema(),
             "requires_execution": {"type": "boolean"},
@@ -354,7 +354,7 @@ fn prerequisite_task_ids_schema() -> Value {
         "type": "array",
         "items": {"type": "string", "minLength": 1},
         "uniqueItems": true,
-        "description": "Existing local Task ids that must complete successfully before this Task runs. Use only ids returned by Task tools for the current user and project."
+        "description": "Existing Task ids that must complete successfully before this Task runs. Use only ids returned by Task tools for the current user and project."
     })
 }
 
@@ -367,6 +367,6 @@ fn task_schedule_schema() -> Value {
             "interval_seconds": {"type": "integer", "minimum": 1}
         },
         "additionalProperties": false,
-        "description": "Optional scheduling request. Main Chat Tasks retain contact_async behavior; a supplied run_at delays local execution."
+        "description": "Optional scheduling request. Main Chat Tasks retain contact_async behavior; a supplied run_at delays execution."
     })
 }

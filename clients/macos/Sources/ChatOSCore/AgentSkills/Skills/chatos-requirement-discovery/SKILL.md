@@ -1,13 +1,13 @@
 ---
 name: chatos-requirement-discovery
-description: Understand material project goals, audience, constraints, preferences and acceptance decisions through the durable Requirement Survey center before committing to a plan. Use in project Main Chat before Task creation, or for a newly discovered local Task blocker; not for clear requests, casual questions or secrets.
+description: Understand material project goals, audience, constraints, preferences and acceptance decisions through the durable Requirement Survey center before committing to a plan. Use in project Main Chat before Task creation, or for a newly discovered Task blocker; not for clear requests, casual questions or secrets.
 ---
 
 # Project requirement discovery
 
 Help the user express the outcome they actually want, not just choose implementation details. Reuse facts and preferences already in the conversation. Ask when missing answers would materially change the scope, design, content, cost, risk, ownership or acceptance criteria; do not turn every request into a questionnaire.
 
-For a project-bound Main Chat, activate this Skill and call `requirement_survey_create` directly before creating dependent Tasks. A survey is not a Task: do not create a placeholder worker merely to ask questions. Use the same existing Requirement Survey center as local Task surveys, not a separate storage or Agent-team workflow. A Task can use its authorized survey capability when a new blocker appears during execution.
+For a project-bound Main Chat, activate this Skill and call `requirement_survey_create` directly before creating dependent Tasks. A survey is not a Task: do not create a placeholder worker merely to ask questions. Use the same existing Requirement Survey center as Task surveys, not a separate storage or Agent-team workflow. A Task can use its authorized survey capability when a new blocker appears during execution.
 
 When the program-owned `user_selected_capability_contract` says the user chose Requirement Survey in the composer, treat that as an explicit request for this workflow. Use the user's natural-language message to design the survey; never ask them for a tool name, Skill ref, version, schema, or internal identifier.
 

@@ -515,7 +515,7 @@ mod tests {
             command: "cargo test".into(),
             purpose: Some("验证".into()),
             cwd: ".".into(),
-            source: "Local Agent Task".into(),
+            source: "Task".into(),
             risk: "medium".into(),
             reason: Some("可能修改文件".into()),
             created_at_unix_ms: 10,

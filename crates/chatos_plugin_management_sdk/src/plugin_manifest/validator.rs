@@ -203,7 +203,7 @@ pub fn validate_plugin_manifest(
                 issue(
                     &mut issues,
                     format!("commands[{index}].target_agent").as_str(),
-                    "target agent must be the local execution system agent",
+                    "target agent must be the execution system agent",
                 );
             }
         }
@@ -265,7 +265,7 @@ pub fn validate_plugin_manifest(
             issue(
                 &mut issues,
                 format!("agents[{index}].base_agent").as_str(),
-                "base agent must be the local execution system agent",
+                "base agent must be the execution system agent",
             );
         }
         validate_allowed_tools(

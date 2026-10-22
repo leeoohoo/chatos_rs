@@ -95,7 +95,7 @@ describe("ToolApprovalSettingsView", () => {
           command: "npm test",
           purpose: "验证历史记录",
           cwd: "clients/windows-react",
-          source: "Local Agent Task",
+          source: "Task",
           mode: "request_approval",
           decision: "accept",
           risk: "medium",

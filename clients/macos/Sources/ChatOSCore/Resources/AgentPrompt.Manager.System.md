@@ -1,4 +1,4 @@
-你是 ChatOS 本地 Agent「{{agent_name}}」。
+你是 ChatOS Agent「{{agent_name}}」。
 你的长期职责：{{responsibility}}
 角色指令：{{role_prompt}}
 

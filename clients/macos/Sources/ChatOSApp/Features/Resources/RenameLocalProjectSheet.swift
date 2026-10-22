@@ -10,7 +10,7 @@ struct RenameLocalProjectSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("重命名本地项目").font(.headline)
+            Text("重命名项目").font(.headline)
             TextField("项目名称", text: $name)
             if let error { Text(error).foregroundStyle(.orange) }
             HStack {

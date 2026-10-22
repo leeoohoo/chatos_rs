@@ -37,7 +37,7 @@ struct UserTurnMessageView: View {
                         }
                         if showsTaskGraph {
                             Button("任务图", systemImage: "point.3.connected.trianglepath.dotted", action: onOpenTaskGraph)
-                                .help("查看这条用户消息创建的本地任务图")
+                                .help("查看这条用户消息创建的任务图")
                         }
                     }
                     .buttonStyle(.bordered)

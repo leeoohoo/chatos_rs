@@ -1,4 +1,4 @@
-# 本地 Agent 可靠性修复清单
+# Agent 可靠性修复清单
 
 日期：2026-10-13。按用户要求逐项实施、验证；macOS 与 shared Host 在本次范围，Windows 的界面和 native executor 由 Windows 开发对齐。
 

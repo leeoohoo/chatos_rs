@@ -19,7 +19,7 @@ final class NativeLocalAgentTurnProcessServiceTests: XCTestCase {
         XCTAssertEqual(tool.title, "调用工具 · browser · open page")
         XCTAssertEqual(tool.status, .completed)
         XCTAssertEqual(tool.detail, "本地工具执行完成")
-        let failure = try XCTUnwrap(nodes.first(where: { $0.title == "本地执行失败" }))
+        let failure = try XCTUnwrap(nodes.first(where: { $0.title == "执行失败" }))
         XCTAssertEqual(failure.status, .failed)
         XCTAssertEqual(failure.detail, "详细信息已隐藏")
 

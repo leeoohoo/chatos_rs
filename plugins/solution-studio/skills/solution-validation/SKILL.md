@@ -9,7 +9,7 @@ metadata:
 
 # Solution Validation
 
-Call `solution_validate` on the target workspace and interpret the result rather than reimplementing graph validation from prose. Validation is diagnostic; `solution_finalize` is the delivery gate that re-reads the exact revision, verifies request-specific design block IDs, registers the internal artifact, and emits the completion proof required by local task execution.
+Call `solution_validate` on the target workspace and interpret the result rather than reimplementing graph validation from prose. Validation is diagnostic; `solution_finalize` is the delivery gate that re-reads the exact revision, verifies request-specific design block IDs, registers the internal artifact, and emits the completion proof required by task execution.
 
 Treat unknown module or document references, cross-module parent relationships, self-dependencies, cycles, redundant transitive dependency edges, missing required documents, empty or non-rendering SVG previews, and tasks without acceptance criteria as blocking. Also check whether design and plan revision links are stale, whether every requirement reaches exactly one substantive design section and at least one task, and whether unresolved questions or risks need human review. Development projects additionally require at least one business module, a technical baseline, and an overall architecture; non-development plans do not require a decorative software architecture diagram. For development projects, a sentence-length summary without module, interface/data, flow, failure, and verification detail is not a completed design.
 

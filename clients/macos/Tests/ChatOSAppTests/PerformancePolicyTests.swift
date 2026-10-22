@@ -231,14 +231,15 @@ struct PerformancePolicyTests {
         #expect(!AgentDirectChatRefreshPolicy.shouldReloadTimeline(for: .deliveryClaimed))
     }
 
-    @Test("pet task process uses activity versions instead of frequent fallback polling")
-    func petTaskProcessUsesRealtimeActivityVersions() {
+    @Test("pet task process keeps local plugin progress visible while active")
+    func petTaskProcessPollsLiveProjection() {
         #expect(PetTaskProcessRefreshPolicy.fallbackInterval(
             hasRealtimeIdentity: true
-        ) == .seconds(60))
+        ) == .seconds(2))
         #expect(PetTaskProcessRefreshPolicy.fallbackInterval(
             hasRealtimeIdentity: false
-        ) == .seconds(5))
+        ) == .seconds(2))
+        #expect(PetTaskLiveActivityPollingPolicy.activeInterval == .seconds(2))
     }
 
     @Test("task reply inspector uses realtime as its primary refresh path")

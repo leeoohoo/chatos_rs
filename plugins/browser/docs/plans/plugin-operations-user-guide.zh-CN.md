@@ -12,7 +12,7 @@ Browser CDP Plugin 的专项开发、权限、安装和端到端验收规则见 
 - Local Connector Service：维护客户端出站连接并转发请求和结果，只承担 Relay，不安装也不执行插件。
 - Local Connector Client：从可信 Catalog 下载和验证 npm `.tgz`，管理安装、权限和凭据，在用户设备上启动 stdio MCP 或请求 HTTP MCP。
 
-所有 MCP 都在客户端一侧执行。HTTP MCP 的“本地执行”表示 HTTP 请求由 Local Connector Client 发起；目标服务可以是外部 HTTPS endpoint，但服务端组件不能代替客户端调用。
+所有 MCP 都在客户端一侧执行。HTTP MCP 的“执行”表示 HTTP 请求由 Local Connector Client 发起；目标服务可以是外部 HTTPS endpoint，但服务端组件不能代替客户端调用。
 
 系统没有 Cloud、Portable、Hybrid、ZIP Plugin、bundled Plugin、内置 Skill/native adapter、直接 MCP 配置或任何 fallback 路径。
 
@@ -36,7 +36,7 @@ ChatOS 创建任务时应执行：
 1. 查询当前用户在线 Local Connector Client 的已安装插件和组件能力。
 2. 根据任务内容给出插件建议，或使用用户显式选择的插件。
 3. 把 plugin、Release、component、device 和 workspace snapshot 写入任务。
-4. 如果需要的插件未安装、客户端离线或组件不可用，创建/启动阶段明确报错，不静默换版本或绕过本地执行。
+4. 如果需要的插件未安装、客户端离线或组件不可用，创建/启动阶段明确报错，不静默换版本或绕过执行。
 
 ChatOS 自身的 Agent 不直接调用插件；插件由它创建的任务在 Task Runner 执行期间使用。
 

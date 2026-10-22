@@ -558,7 +558,7 @@ enum NativeCompanionRelayError: LocalizedError {
         case .invalidMessageCursor: "消息游标参数无效。"
         case .agentResourceNotFound: "Agent 团队资源不存在。"
         case .agentConversationReadOnly: "Agent 之间的协作私聊只能查看。"
-        case .localAgentRuntimeUnavailable: "本地 Agent Host 尚未就绪。"
+        case .localAgentRuntimeUnavailable: "Agent Host 尚未就绪。"
         case .conversationResourceNotFound: "本地会话资源不存在。"
         case .unsupportedRequest: "不支持的 Companion 请求。"
         }

@@ -66,12 +66,12 @@ pub async fn list_local_projects(
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = transaction_lock
             .lock()
-            .map_err(|_| "无法恢复本地项目创建事务。".to_owned())?;
+            .map_err(|_| "无法恢复项目创建事务。".to_owned())?;
         recover_project_creations(&data_dir, &owner_user_id)?;
         load_local_projects(&database, &owner_user_id)
     })
     .await
-    .map_err(|_| "本地项目读取任务异常退出。".to_owned())?
+    .map_err(|_| "项目读取任务异常退出。".to_owned())?
 }
 
 #[tauri::command]
@@ -200,7 +200,7 @@ fn load_local_projects(
             "SELECT id, name, revision, project_type_key FROM local_project_records \
              WHERE owner_user_id = ?1 AND status = 'active' ORDER BY name, id",
         )
-        .map_err(|_| "无法读取本地项目注册表。".to_owned())?;
+        .map_err(|_| "无法读取项目注册表。".to_owned())?;
     let rows = statement
         .query_map(params![owner_user_id], |row| {
             Ok(LocalProjectSummary {
@@ -210,10 +210,10 @@ fn load_local_projects(
                 project_type_key: row.get(3)?,
             })
         })
-        .map_err(|_| "无法查询本地项目注册表。".to_owned())?;
+        .map_err(|_| "无法查询项目注册表。".to_owned())?;
     let projects = rows
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "本地项目注册表包含无效数据。".to_owned())?;
+        .map_err(|_| "项目注册表包含无效数据。".to_owned())?;
     for project in &projects {
         validate_project(project)?;
     }
@@ -222,7 +222,7 @@ fn load_local_projects(
 
 pub(super) fn open_project_registry(database_path: &Path) -> Result<Connection, String> {
     if let Some(parent) = database_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| "无法创建本地项目目录。".to_owned())?;
+        std::fs::create_dir_all(parent).map_err(|_| "无法创建项目目录。".to_owned())?;
     }
     let connection = Connection::open_with_flags(
         database_path,
@@ -230,13 +230,13 @@ pub(super) fn open_project_registry(database_path: &Path) -> Result<Connection, 
             | OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
     )
-    .map_err(|_| "无法打开本地项目注册表。".to_owned())?;
+    .map_err(|_| "无法打开项目注册表。".to_owned())?;
     connection
         .busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|_| "无法配置本地项目注册表。".to_owned())?;
+        .map_err(|_| "无法配置项目注册表。".to_owned())?;
     connection
         .execute_batch(PROJECT_REGISTRY_SCHEMA)
-        .map_err(|_| "本地项目注册表结构无效。".to_owned())?;
+        .map_err(|_| "项目注册表结构无效。".to_owned())?;
     ensure_project_type_column(&connection)?;
     Ok(connection)
 }
@@ -244,12 +244,12 @@ pub(super) fn open_project_registry(database_path: &Path) -> Result<Connection, 
 fn ensure_project_type_column(connection: &Connection) -> Result<(), String> {
     let mut statement = connection
         .prepare("PRAGMA table_info(local_project_records)")
-        .map_err(|_| "本地项目注册表结构无效。".to_owned())?;
+        .map_err(|_| "项目注册表结构无效。".to_owned())?;
     let columns = statement
         .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|_| "本地项目注册表结构无效。".to_owned())?
+        .map_err(|_| "项目注册表结构无效。".to_owned())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "本地项目注册表结构无效。".to_owned())?;
+        .map_err(|_| "项目注册表结构无效。".to_owned())?;
     if !columns.iter().any(|column| column == "project_type_key") {
         connection
             .execute(
@@ -257,25 +257,25 @@ fn ensure_project_type_column(connection: &Connection) -> Result<(), String> {
                  DEFAULT 'software_development'",
                 [],
             )
-            .map_err(|_| "本地项目注册表迁移失败。".to_owned())?;
+            .map_err(|_| "项目注册表迁移失败。".to_owned())?;
     }
     connection
         .execute(
             "INSERT OR IGNORE INTO local_project_schema_migrations(version) VALUES (2)",
             [],
         )
-        .map_err(|_| "本地项目注册表迁移失败。".to_owned())?;
+        .map_err(|_| "项目注册表迁移失败。".to_owned())?;
     Ok(())
 }
 
 fn validate_project(project: &LocalProjectSummary) -> Result<(), String> {
     for value in [&project.id, &project.name, &project.project_type_key] {
         if value.trim().is_empty() || value.len() > 1_024 || value.chars().any(char::is_control) {
-            return Err("本地项目注册表包含无效数据。".into());
+            return Err("项目注册表包含无效数据。".into());
         }
     }
     if project.revision <= 0 {
-        return Err("本地项目注册表包含无效数据。".into());
+        return Err("项目注册表包含无效数据。".into());
     }
     Ok(())
 }

@@ -4,7 +4,7 @@
 
 ## 项目与安全边界
 
-- 测试项目：ChatOS 本地项目 `FinFlow Finance MVP`，路径 `/Users/lilei/project/finflow-finance-mvp`。
+- 测试项目：ChatOS 项目 `FinFlow Finance MVP`，路径 `/Users/lilei/project/finflow-finance-mvp`。
 - 不使用另一个 `FinFlow 财务管理系统` 项目；它绑定整个 `/Users/lilei/project`，范围过宽。
 - 项目 README 明确使用 Python 标准库、SQLite 与虚构数据，不用于真实财务或合规申报。
 - 不修改项目源码、测试、缓存或已有数据库，不联网、不安装依赖、不操作真实账务。动态验证仅允许 Python 禁字节码启动与新建系统临时目录中的 SQLite。

@@ -55,7 +55,7 @@ struct PetOverlayStoreExpirationTests {
             id: "local-run:cancelled",
             source: .taskExecution,
             kind: .working,
-            title: "本地任务",
+            title: "任务",
             activityVersion: "1"
         )))
         let versions = store.versions(for: [.taskExecution])
@@ -78,7 +78,7 @@ struct PetOverlayStoreExpirationTests {
             id: "local-run:review",
             source: .chat,
             kind: .reviewing,
-            title: "本地对话",
+            title: "对话",
             route: .init(conversationID: "conversation-1", turnID: "turn-1", runID: "review"),
             activityVersion: "3"
         )

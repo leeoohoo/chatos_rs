@@ -72,7 +72,7 @@ public actor NativeLocalProjectsService:
         return try ProjectContextSnapshot(record: record, deviceID: deviceID)
     }
 
-    /// Re-pairing creates a new device/workspace grant while the local project registry
+    /// Re-pairing creates a new device/workspace grant while the project registry
     /// intentionally survives. Repair only projects that can be proven to use the current
     /// root-filesystem grant; project-specific workspace changes still require explicit input.
     public func repairRootWorkspaceBindings(ownerUserID: String) async throws {

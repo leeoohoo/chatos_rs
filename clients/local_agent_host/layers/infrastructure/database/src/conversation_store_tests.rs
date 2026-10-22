@@ -491,7 +491,10 @@ async fn startup_recovery_repairs_stranded_main_chat_turn() {
         .await
         .expect("get cancelled conversation")
         .expect("cancelled conversation");
-    assert_eq!(after_cancel.turns[0].status, LocalConversationTurnStatus::Failed);
+    assert_eq!(
+        after_cancel.turns[0].status,
+        LocalConversationTurnStatus::Failed
+    );
     assert_eq!(after_cancel.messages.len(), 2);
 }
 

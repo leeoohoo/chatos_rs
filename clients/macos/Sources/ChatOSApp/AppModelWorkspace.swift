@@ -53,7 +53,7 @@ extension AppModel {
                 let deviceID = try? await localProjectsService.deviceID(ownerUserID: ownerUserID)
                 try Task.checkCancellation()
                 guard self?.workspaceLoadAccepts(token) == true else { return }
-                // Never hide durable local projects behind filesystem/grant repair. A stale or
+                // Never hide durable projects behind filesystem/grant repair. A stale or
                 // unavailable workspace can make path reauthorization slow, while the registry
                 // itself remains immediately useful for navigation and project management.
                 try? await localProjectsService.repairRootWorkspaceBindings(ownerUserID: ownerUserID)

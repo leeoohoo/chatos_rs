@@ -464,7 +464,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             )
             await loadTriggerRuns()
             if result.outcome != .completed {
-                errorMessage = result.detail ?? "本地 Agent Run 尚未完成。"
+                errorMessage = result.detail ?? "Agent Run 尚未完成。"
             }
         } catch {
             await loadTriggerRuns()

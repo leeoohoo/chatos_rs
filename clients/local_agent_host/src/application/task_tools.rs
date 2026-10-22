@@ -438,8 +438,8 @@ impl LocalTaskToolExecutor {
                 json!({
                     "accepted": true,
                     "mode": "background",
-                    "message": "The local task system accepted the arranged tasks for background execution.",
-                    "message_zh": "本地任务系统已接收安排好的任务，并会在完成后回写当前会话。"
+                    "message": "The task system accepted the arranged tasks for background execution.",
+                    "message_zh": "任务系统已接收安排好的任务，并会在完成后回写当前会话。"
                 })
             }
             GET_TASK_DEPENDENCY_GRAPH_TOOL => {
@@ -458,7 +458,7 @@ impl LocalTaskToolExecutor {
                 self.dependency_graph_for_task(conversation_id, task)
                     .await?
             }
-            tool_name => return Err(format!("unsupported local Task tool: {tool_name}")),
+            tool_name => return Err(format!("unsupported Task tool: {tool_name}")),
         };
         Ok(output)
     }

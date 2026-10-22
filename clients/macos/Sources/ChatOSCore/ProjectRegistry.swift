@@ -10,7 +10,7 @@ public enum ProjectRegistryError: Error, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case let .invalidField(field): "无效的项目字段：\(field)"
-        case .notFound: "本地项目不存在。"
+        case .notFound: "项目不存在。"
         case .revisionConflict: "项目已被修改，请刷新后重试。"
         case .removed: "项目已删除，不能更新或自动恢复。"
         case let .storage(message): "项目注册表不可用：\(message)"

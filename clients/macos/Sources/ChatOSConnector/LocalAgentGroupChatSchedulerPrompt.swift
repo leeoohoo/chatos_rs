@@ -96,6 +96,6 @@ extension LocalAgentGroupChatScheduler {
 
     static func failureDetail(_ error: Error) -> String {
         let value = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        return String((value.isEmpty ? "本地 Agent 运行失败。" : value).prefix(8_000))
+        return String((value.isEmpty ? "Agent 运行失败。" : value).prefix(8_000))
     }
 }

@@ -7,7 +7,7 @@ private enum ConversationSendPresentationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .runtimeUnavailable:
-            "本地任务组件连接已中断，请重新发送。"
+            "任务组件连接已中断，请重新发送。"
         }
     }
 }

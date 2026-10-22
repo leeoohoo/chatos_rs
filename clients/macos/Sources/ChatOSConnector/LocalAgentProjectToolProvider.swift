@@ -2,7 +2,7 @@ import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
-/// Host-owned project tools available to local project-team Agents. The model only receives
+/// Host-owned project tools available to project-team Agents. The model only receives
 /// display labels and run-scoped opaque options. Real project identifiers stay inside the client,
 /// where the selected option is resolved and copied into the durable proposal without a model hop.
 public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
@@ -110,7 +110,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         var definitions: [AgentToolDefinition] = [
             .init(
                 name: Self.catalogToolName,
-                description: "读取当前账户的全部活跃本地项目概况，返回准确总数、项目显示名称、是否已有活跃团队、可用于 team_propose_existing 的本轮临时选项，以及提交任何团队提案前必须激活的 Skill 目录。拥有‘查看本地项目并创建团队’权限即可调用，不要求当前 Agent 是项目经理或任何团队成员。不会返回真实项目 ID 或路径。回答项目总数、项目清单或哪些项目尚未建团队前必须调用。",
+                description: "读取当前账户的全部活跃项目概况，返回准确总数、项目显示名称、是否已有活跃团队、可用于 team_propose_existing 的本轮临时选项，以及提交任何团队提案前必须激活的 Skill 目录。拥有‘查看项目并创建团队’权限即可调用，不要求当前 Agent 是项目经理或任何团队成员。不会返回真实项目 ID 或路径。回答项目总数、项目清单或哪些项目尚未建团队前必须调用。",
                 schema: emptyObjectSchema,
                 providerID: ProductToolProviderID.localProjectTeam,
                 skillBindingID: ProductToolSkillBindingID.projectTeamCatalog
@@ -119,7 +119,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         if !options.isEmpty {
             definitions.append(.init(
                 name: Self.proposeExistingTeamToolName,
-                description: "为 project_catalog 中尚无活跃团队的已有 ChatOS 项目提交建团队提案。只传该工具 schema 中的 project_option、team_name、team_goal；不得传新项目字段、absolute_path 或 URL。拥有‘查看本地项目并创建团队’权限即可调用，不要求项目经理职业。只生成提案，必须等待 Human 确认；确认结果会作为新的未读系统消息再次唤醒你，收到后必须核对状态并回复。",
+                description: "为 project_catalog 中尚无活跃团队的已有 ChatOS 项目提交建团队提案。只传该工具 schema 中的 project_option、team_name、team_goal；不得传新项目字段、absolute_path 或 URL。拥有‘查看项目并创建团队’权限即可调用，不要求项目经理职业。只生成提案，必须等待 Human 确认；确认结果会作为新的未读系统消息再次唤醒你，收到后必须核对状态并回复。",
                 schema: try JSONSerialization.data(
                     withJSONObject: existingSchema,
                     options: [.sortedKeys]
@@ -131,7 +131,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         }
         definitions.append(.init(
             name: Self.proposeNewProjectTeamToolName,
-            description: "在 Human 明确要求新建 ChatOS 项目并同时创建团队时提交提案，目录由 ChatOS 在默认工作区创建。只传该工具 schema 中的新项目与团队字段；不得传 project_option、absolute_path 或 URL。拥有‘查看本地项目并创建团队’权限即可调用，不要求项目经理职业。只生成提案，必须等待 Human 确认；确认结果会作为新的未读系统消息再次唤醒你，收到后必须核对状态并回复。",
+            description: "在 Human 明确要求新建 ChatOS 项目并同时创建团队时提交提案，目录由 ChatOS 在默认工作区创建。只传该工具 schema 中的新项目与团队字段；不得传 project_option、absolute_path 或 URL。拥有‘查看项目并创建团队’权限即可调用，不要求项目经理职业。只生成提案，必须等待 Human 确认；确认结果会作为新的未读系统消息再次唤醒你，收到后必须核对状态并回复。",
             schema: try JSONSerialization.data(
                 withJSONObject: newProjectSchema,
                 options: [.sortedKeys]
@@ -143,7 +143,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         if projectsService != nil {
             definitions.append(.init(
                 name: Self.proposeImportedDirectoryTeamToolName,
-                description: "把 Human 当前消息明确给出的、已经存在的本机绝对目录注册为 ChatOS 项目并创建团队。absolute_path 必须原样使用 Human 给出的以 / 开头的目录；不得猜测、补全或编造 /。GitHub/GitLab URL、git@ 和其他远程仓库地址都不是本机路径。目录必须位于已授权工作区且不能是软链接；导入不会创建、移动、复制或链接目录。拥有‘查看本地项目并创建团队’权限即可调用，不要求项目经理职业。只生成提案，必须等待 Human 确认；确认结果会作为新的未读系统消息再次唤醒你，收到后必须核对状态并回复。",
+                description: "把 Human 当前消息明确给出的、已经存在的本机绝对目录注册为 ChatOS 项目并创建团队。absolute_path 必须原样使用 Human 给出的以 / 开头的目录；不得猜测、补全或编造 /。GitHub/GitLab URL、git@ 和其他远程仓库地址都不是本机路径。目录必须位于已授权工作区且不能是软链接；导入不会创建、移动、复制或链接目录。拥有‘查看项目并创建团队’权限即可调用，不要求项目经理职业。只生成提案，必须等待 Human 确认；确认结果会作为新的未读系统消息再次唤醒你，收到后必须核对状态并回复。",
                 schema: try JSONSerialization.data(
                     withJSONObject: importDirectorySchema,
                     options: [.sortedKeys]

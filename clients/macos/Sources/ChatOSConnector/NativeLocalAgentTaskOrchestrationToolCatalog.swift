@@ -6,7 +6,7 @@ extension NativeLocalAgentPlatformToolCatalog {
     taskTool(
       name: listTasksToolName,
       description:
-        "List durable local tasks created from the current conversation/project. Use keyword when the user refers to earlier work.",
+        "List durable tasks created from the current conversation/project. Use keyword when the user refers to earlier work.",
       properties: [
         "status": .object([
           "type": .string("string"),
@@ -37,12 +37,12 @@ extension NativeLocalAgentPlatformToolCatalog {
     ),
     taskIDTool(
       name: getTaskToolName,
-      description: "Get one durable local task created from the current conversation/project."
+      description: "Get one durable task created from the current conversation/project."
     ),
     taskTool(
       name: createTaskToolName,
       description:
-        "Create one coherent durable local task. Use this only when splitting would not enable useful concurrency, specialization, ownership, or independent acceptance.",
+        "Create one coherent durable task. Use this only when splitting would not enable useful concurrency, specialization, ownership, or independent acceptance.",
       properties: [
         "title": .object(["type": .string("string"), "minLength": .number(1)]),
         "objective": .object(["type": .string("string"), "minLength": .number(1)]),
@@ -184,7 +184,7 @@ extension NativeLocalAgentPlatformToolCatalog {
     taskTool(
       name: cancelTaskToolName,
       description:
-        "Cancel a pending or running local task from the current conversation/project because it conflicts with the user's latest intent.",
+        "Cancel a pending or running task from the current conversation/project because it conflicts with the user's latest intent.",
       properties: [
         "task_id": .object(["type": .string("string"), "minLength": .number(1)]),
         "reason": .object([
@@ -252,7 +252,7 @@ extension NativeLocalAgentPlatformToolCatalog {
         .map(LocalAgentJSONValue.string)
     ),
     "description": .string(
-      "Optional reasoning level override for this Task. Omit it to use the selected model configuration's default Thinking level."
+      "Optional reasoning level override for this Task. Omit it to use the selected model configuration's default Thinking level. Use medium for implementation from an established diagnosis or checklist and for routine browser acceptance. Use high only when the Task must resolve substantial ambiguity, compare multiple plausible architectures or causes, or make a consequential synthesis; many steps, Plugin use, and broad regression coverage alone do not justify high."
     ),
   ])
 

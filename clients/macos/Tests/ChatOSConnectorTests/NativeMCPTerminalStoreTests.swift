@@ -196,7 +196,7 @@ struct NativeMCPTerminalStoreTests {
                 projectRoot: fixture.root,
                 ownerRunID: "run-b"
             )
-            Issue.record("Another Local Agent Run accessed a process handle it does not own")
+            Issue.record("Another Agent Run accessed a process handle it does not own")
         } catch {
             // Expected: scoped calls reveal neither process state nor output across Runs.
         }

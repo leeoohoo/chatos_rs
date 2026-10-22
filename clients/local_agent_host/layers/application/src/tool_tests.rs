@@ -168,7 +168,10 @@ async fn tool_needing_review_retains_a_model_continuation_result() {
         result => panic!("unexpected result: {result:?}"),
     };
     assert_eq!(result.run.status, LocalAgentRunStatus::NeedsReview);
-    let continuation = result.run.continuation_input.expect("tool result continuation");
+    let continuation = result
+        .run
+        .continuation_input
+        .expect("tool result continuation");
     assert_eq!(continuation["type"], "tool_results");
     assert_eq!(continuation["invocations"][0]["call_id"], "call-1");
     assert_eq!(continuation["invocations"][0]["status"], "needs_review");

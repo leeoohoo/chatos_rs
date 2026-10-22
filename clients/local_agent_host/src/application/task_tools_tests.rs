@@ -1239,7 +1239,7 @@ async fn task_tool_rejects_a_model_excluded_by_required_policy() {
         .await
         .expect("excluded model rejection precedes mutation");
     let error = preparation_error(error);
-    assert!(error.contains("model configuration is not enabled for local Tasks: model-1"));
+    assert!(error.contains("model configuration is not enabled for Tasks: model-1"));
 }
 
 #[tokio::test]

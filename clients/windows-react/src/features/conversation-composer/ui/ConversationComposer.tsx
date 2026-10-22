@@ -408,7 +408,7 @@ export function AttachmentPreview({
           ) : (
             <div className="attachment-preview__file">
               <AttachmentIcon attachment={attachment} />
-              <p>该文件将在发送后由本地任务组件按授权引用读取。</p>
+              <p>该文件将在发送后由任务组件按授权引用读取。</p>
             </div>
           )}
         </div>

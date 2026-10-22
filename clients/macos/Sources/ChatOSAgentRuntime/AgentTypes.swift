@@ -97,7 +97,7 @@ public struct AgentToolDefinition: Sendable {
     /// binding identity; they do not own Skill prose, paths, or activation policy.
     public var skillBindingID: String?
     /// Immutable Plugin-declared `_meta.chatos/skillGate` JSON. This metadata is retained for
-    /// local runtime enforcement and is never serialized into the model tool schema.
+    /// runtime enforcement and is never serialized into the model tool schema.
     public var pluginSkillGate: Data?
     public init(
         name: String,

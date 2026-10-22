@@ -7,7 +7,7 @@ struct ProjectRequirementSurveysView: View {
     let submittingSurveyIDs: Set<String>
     var showsNavigationBackButton = false
     var heading = "需求调研"
-    var explanation = "主聊天或本地任务需要补充信息时会暂停并创建调研单。"
+    var explanation = "主聊天或任务需要补充信息时会暂停并创建调研单。"
     var requestedSurveyID: String? = nil
     var followUpClient: NativeLocalAgentRequirementSurveyClient? = nil
     var eventHub: NativeLocalAgentEventHub? = nil
@@ -61,7 +61,7 @@ struct ProjectRequirementSurveysView: View {
                         ContentUnavailableView {
                             Label("暂无需求调研", systemImage: "list.clipboard")
                         } description: {
-                            Text("本项目的主聊天或本地任务还没有发起调研。")
+                            Text("本项目的主聊天或任务还没有发起调研。")
                         }
                         .frame(maxWidth: .infinity, minHeight: 320)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))

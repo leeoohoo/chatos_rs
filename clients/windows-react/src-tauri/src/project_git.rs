@@ -1352,7 +1352,7 @@ fn null_device_path() -> &'static str {
 }
 
 fn project_unavailable() -> String {
-    "当前账号无法访问这个本地项目。".into()
+    "当前账号无法访问这个项目。".into()
 }
 
 fn repository_outside_workspace() -> String {

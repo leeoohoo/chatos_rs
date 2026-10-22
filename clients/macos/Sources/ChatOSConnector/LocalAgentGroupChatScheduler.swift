@@ -52,7 +52,7 @@ actor LocalAgentActiveDeliveryRegistry {
 
     /// Atomically claims in-process ownership of a delivery. Manual resume, Human retry, and
     /// crash recovery all use this gate so a durable `running` checkpoint cannot be executed by
-    /// two local tasks at once.
+    /// two tasks at once.
     func acquire(deliveryID: String) -> Bool {
         deliveryIDs.insert(deliveryID).inserted
     }

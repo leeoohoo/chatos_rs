@@ -52,7 +52,7 @@ Why it fails: it mixes a system-context view with Agent runtime and background-t
 
 Repair as a diagram set:
 
-1. `ChatOS system context`: User → Native Client, with one relationship each to the local runtime and retained cloud control planes.
+1. `ChatOS system context`: User → Native Client, with one relationship each to the runtime and retained cloud control planes.
 2. `Agent and Plugin capability`: Local Agent Host, Plugin Marketplace, and local tool execution.
 3. `Background task execution`: Local Agent Host, authorized workspace, local process runtime, and result presentation.
 

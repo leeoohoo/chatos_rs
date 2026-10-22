@@ -8,7 +8,7 @@ struct LocalConnectorTaskModelsSection: View {
 
     var body: some View {
         LocalConnectorCard(
-            appModel.localized("本地任务执行模型", english: "Local Task Execution Models"),
+            appModel.localized("任务执行模型", english: "Task Execution Models"),
             subtitle: appModel.localized(
                 "仅控制创建任务时的模型候选，不影响聊天、Agent、翻译或默认模型选择。",
                 english: "Only controls model choices when creating Tasks, not chat, Agents, translation, or default model selection."

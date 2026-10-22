@@ -30,7 +30,9 @@ pub use chatos_local_agent_protocol::{
 };
 pub use command::{IdempotentCommand, LocalAgentArtifactWrite, RunTransition};
 pub use memory_cache::{LocalMemoryContextCacheEntry, LocalMemoryContextCacheStore};
-pub use memory_outbox::{LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore};
+pub use memory_outbox::{
+    LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore, LocalMemoryRunClaim,
+};
 
 #[derive(Debug, Error)]
 pub enum ClientStorageError {

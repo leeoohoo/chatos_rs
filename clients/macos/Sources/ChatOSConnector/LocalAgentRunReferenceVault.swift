@@ -487,7 +487,7 @@ actor LocalAgentRunReferenceVault {
         let payload = SealedReference(version: 1, kind: kind, authority: authority)
         guard let plaintext = try? encoder.encode(payload),
               let combined = try? AES.GCM.seal(plaintext, using: referenceKey).combined else {
-            preconditionFailure("Unable to create an opaque local Agent reference")
+            preconditionFailure("Unable to create an opaque Agent reference")
         }
         return prefix + Self.base64URL(combined)
     }

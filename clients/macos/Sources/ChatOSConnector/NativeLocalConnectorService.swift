@@ -79,6 +79,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     var webSocket: URLSessionWebSocketTask?
     var receiveTask: Task<Void, Never>?
     var heartbeatTask: Task<Void, Never>?
+    /// Owns connection teardown and credential recovery after a socket failure.
+    /// This must not be the receive/heartbeat task: teardown cancels those tasks.
+    var gatewayConnectionFailureTask: Task<Void, Never>?
+    var gatewayConnectionFailureGeneration: UInt64 = 0
     var reconnectTask: Task<Void, Never>?
     var gatewayConnectedBootstrapTask: Task<Void, Never>?
     var gatewayConnectedBootstrapGeneration: UInt64 = 0
@@ -101,7 +105,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     ] = [:]
     var sessionApprovalAllowlist: Set<String> = []
     var localApprovalAgentRuntime: NativeApprovalAgentRuntimeConfiguration?
-    var localApprovalAgentUnavailableReason = "本机审批 Agent 尚未从本地任务运行时载入。"
+    var localApprovalAgentUnavailableReason = "本机审批 Agent 尚未从任务运行时载入。"
     var seenRelayNonces: [String: Int64] = [:]
 
     public init(
@@ -209,14 +213,14 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         guard let snapshot = bootstrap.modelSnapshots.first(where: {
             $0.ownerUserID == ownerUserID && $0.modelConfigRef == modelConfigID
         }) else {
-            localApprovalAgentUnavailableReason = "本机审批 Agent 所选模型未载入本地任务运行时。"
+            localApprovalAgentUnavailableReason = "本机审批 Agent 所选模型未载入任务运行时。"
             return
         }
         let credentialVariable = localAgentModelCredentialStore.environmentVariable(
             modelConfigRef: modelConfigID
         )
         guard snapshot.credentialRef == "env:\(credentialVariable)" else {
-            localApprovalAgentUnavailableReason = "本机审批 Agent 的本地模型凭据引用无效。"
+            localApprovalAgentUnavailableReason = "本机审批 Agent 的模型凭据引用无效。"
             return
         }
         do {
@@ -224,7 +228,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 ownerUserID: ownerUserID,
                 modelConfigRef: modelConfigID
             )?.trimmedNonEmpty else {
-                localApprovalAgentUnavailableReason = "本机审批 Agent 的本地模型凭据不可用。"
+                localApprovalAgentUnavailableReason = "本机审批 Agent 的模型凭据不可用。"
                 return
             }
             localApprovalAgentRuntime = try .init(
@@ -241,7 +245,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     public func resetLocalApprovalAgent() {
         localApprovalAgentRuntime = nil
-        localApprovalAgentUnavailableReason = "本机审批 Agent 尚未从本地任务运行时载入。"
+        localApprovalAgentUnavailableReason = "本机审批 Agent 尚未从任务运行时载入。"
     }
 
     public func setAgentGroupChatService(_ service: NativeAgentGroupChatService) {
@@ -380,6 +384,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         let generation = powerTransitionGeneration
         guard state.deviceID != nil else { return }
         isSystemSleeping = true
+        cancelGatewayConnectionFailureHandling()
         reconnectTask?.cancel()
         reconnectTask = nil
         await closeGatewayConnection(terminatePluginSessions: true)
@@ -400,6 +405,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         shouldMaintainGatewayConnection = true
         if forceReconnect {
             gatewayReconnectFailureCount = 0
+            cancelGatewayConnectionFailureHandling()
         }
         if forceReconnect, webSocket != nil {
             await closeGatewayConnection(terminatePluginSessions: true)

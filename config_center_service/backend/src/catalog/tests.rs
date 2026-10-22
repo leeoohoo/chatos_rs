@@ -129,7 +129,7 @@ fn catalog_exposes_local_task_execution_policy_without_a_retired_service_domain(
         let definition = definitions
             .iter()
             .find(|definition| definition.key == key)
-            .unwrap_or_else(|| panic!("missing Local Agent task execution definition {key}"));
+            .unwrap_or_else(|| panic!("missing task execution definition {key}"));
         assert_eq!(definition.scope, "shared");
         assert_eq!(definition.service_name, None);
         assert_eq!(definition.default_value, expected_default);

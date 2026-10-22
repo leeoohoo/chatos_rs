@@ -4,9 +4,9 @@
 
 编写日期：2026-10-16
 
-当前实施范围：`plugins/solution-studio`、Rust Host、macOS Main Chat 与本地任务执行链路
+当前实施范围：`plugins/solution-studio`、Rust Host、macOS Main Chat 与任务执行链路
 
-后续实施范围：Windows Main Chat 与本地任务执行链路（本轮不修改 Windows 代码）
+后续实施范围：Windows Main Chat 与任务执行链路（本轮不修改 Windows 代码）
 
 ## 1. 最终产品形态
 

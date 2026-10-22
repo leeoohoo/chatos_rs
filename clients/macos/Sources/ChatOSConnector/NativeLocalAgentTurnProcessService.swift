@@ -71,7 +71,7 @@ public enum NativeLocalAgentTurnProcessServiceError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .notConfigured: "Local Agent Turn Process service is not configured."
-        case .turnNotFound: "The local conversation Turn no longer exists."
+        case .turnNotFound: "The conversation Turn no longer exists."
         }
     }
 }

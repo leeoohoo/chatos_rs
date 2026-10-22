@@ -389,7 +389,7 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
         [
             .init(
                 name: Self.projectInspectToolName,
-                description: "读取当前本地项目、群聊目标和现有 Agent 职责的冻结快照。",
+                description: "读取当前项目、群聊目标和现有 Agent 职责的冻结快照。",
                 schema: Self.emptyObjectSchema,
                 providerID: ProductToolProviderID.agentBuilder,
                 skillBindingID: ProductToolSkillBindingID.agentBuilder

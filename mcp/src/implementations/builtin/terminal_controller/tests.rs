@@ -345,7 +345,7 @@ fn tool_descriptions_expose_project_workspace_semantics_only() {
     assert!(text.contains("workspace root"));
     for forbidden in [
         "LOCAL ONLY",
-        "local project terminal",
+        "project terminal",
         "Local shell command",
         "Local directory path",
         "Hermes-compatible",

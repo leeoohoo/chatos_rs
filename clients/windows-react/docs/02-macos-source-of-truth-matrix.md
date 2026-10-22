@@ -58,18 +58,18 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 
 ### 2.1 项目工作区列表刷新
 
-- `ClientOwnedWorkspaceLoader` 保持 macOS 的本地优先顺序：先只从 Project Registry 组合本地项目并立即发布，再解析设备身份、修复 root workspace binding，最后刷新远端联系人和 Conversation 关系；
-- 未配对时本地项目仍可见；远端关系失败时保留最后可信联系人与 Conversation，不能用空响应覆盖；远端关系不得创建、重命名或复活项目；
+- `ClientOwnedWorkspaceLoader` 保持 macOS 的本地优先顺序：先只从 Project Registry 组合项目并立即发布，再解析设备身份、修复 root workspace binding，最后刷新远端联系人和 Conversation 关系；
+- 未配对时项目仍可见；远端关系失败时保留最后可信联系人与 Conversation，不能用空响应覆盖；远端关系不得创建、重命名或复活项目；
 - `WorkspaceLoadState` 将 owner、account generation 与 request identity 固定为一个 typed token，新刷新、项目删除、账号切换、登出与应用退出都会使旧 token 失效；
-- 刷新 Task 在开始时冻结 Local Projects、Workspace Relations 与 Project Run 服务，各段 registry/Connector/Host await 不强持有 AppModel；每次快照准备、展示写回、错误和 loading 收尾都重新验收 token；
+- 刷新 Task 在开始时冻结 Projects、Workspace Relations 与 Project Run 服务，各段 registry/Connector/Host await 不强持有 AppModel；每次快照准备、展示写回、错误和 loading 收尾都重新验收 token；
 - `NativeProjectRunService` 的 project root 映射跟随每次已验收快照更新；UI 继续只消费 `WorkspaceResourceResolver` 输出，不直接读取 Connector/Host 状态。
 
 Windows 只读索引实现（2026-10-20）：
 
-- Tauri/Rust 中建立与 macOS 同 schema 的账号隔离 `Projects.sqlite3`，第一阶段只读取 `status = active` 的本地项目并立即返回；数据库损坏或字段无效时失败关闭，不伪装成空列表；
+- Tauri/Rust 中建立与 macOS 同 schema 的账号隔离 `Projects.sqlite3`，第一阶段只读取 `status = active` 的项目并立即返回；数据库损坏或字段无效时失败关闭，不伪装成空列表；
 - 第二阶段通过账号绑定的 Host v44 `ListConversations` 分页读取关系，并按 macOS 规则保证“叽咕狸”和“插件安装助手”两个系统联系人会话存在；
 - Host 中出现 project conversation 但本地 Registry 没有对应项目时，只保留关系记录，绝不凭远端关系创建或复活项目；
-- React `WorkspaceIndexPort`、Application store 和 resolver 保留 local-first 顺序、账号切换 latest-wins、远端失败保留本地项目及显式错误/重试；
+- React `WorkspaceIndexPort`、Application store 和 resolver 保留 local-first 顺序、账号切换 latest-wins、远端失败保留项目及显式错误/重试；
 - Host 业务请求统一使用有界 framed transport。协议、IO、EOF 或超时会终止假健康进程；普通业务拒绝不会误杀健康 Host；
 - 侧栏索引仍以本地 Registry 为权威；项目创建与显式文件夹授权已在独立切片通过后开放。导入、重命名、删除及其他 project context 变更仍须等待各自完整切片。
 
@@ -472,7 +472,7 @@ Windows 平台差异：
 - 项目真值仍来自账号隔离的本地 `Projects.sqlite3`；Tauri adapter 负责读取并验证 project context，React 不直接读 SQLite；
 - Conversation 创建/复用仍通过 Rust Host 的 project resource binding，包括并发失败后二次查询；与 macOS 业务语义无差异；
 - Windows 的目录授权与设备/workspace 绑定由 Tauri 平台层提供，不得把绝对路径或平台凭据暴露给 React；
-- 本次 React 准入仅覆盖“选中本地项目→复用/准备 Conversation→显式四态”。Conversation 时间线、发送、项目创建/编辑/删除仍按各自门禁禁止。
+- 本次 React 准入仅覆盖“选中项目→复用/准备 Conversation→显式四态”。Conversation 时间线、发送、项目创建/编辑/删除仍按各自门禁禁止。
 
 Windows 实现（2026-10-20）：
 

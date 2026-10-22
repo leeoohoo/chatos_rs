@@ -53,6 +53,25 @@ mod tests {
     }
 
     #[test]
+    fn package_manifest_declares_every_tool_permission_for_the_browser_component() {
+        let manifest: Value = serde_json::from_str(include_str!("../../../npm/chatos.plugin.json"))
+            .expect("browser package manifest");
+        let permissions = manifest["permissions"].as_array().unwrap();
+        for tool in tool_catalog() {
+            for permission in tool["_meta"]["chatos/requiredPermissions"].as_array().unwrap() {
+                assert!(permissions.iter().any(|declaration| {
+                    declaration["permission"] == *permission
+                        && declaration["components"].as_array().unwrap()
+                            .contains(&json!("browser-cdp-mcp"))
+                }), "{} requires undeclared permission {permission}", tool["name"]);
+            }
+        }
+        assert!(permissions.iter().any(|declaration| {
+            declaration["permission"] == "artifact.create" && declaration["required"] == true
+        }));
+    }
+
+    #[test]
     fn artifact_producing_tools_require_host_artifact_registration_permission() {
         let catalog = tool_catalog();
         for name in ["browser_screenshot", "browser_downloads", "browser_har_stop"] {

@@ -257,12 +257,8 @@ pub(super) async fn recover_expired_claims(
         let run = SqliteClientStorage::fetch_run_on(connection, &run_id)
             .await?
             .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
-        task_conversation_writeback::write_back_terminal_task_run(
-            connection,
-            &run,
-            now_unix_ms,
-        )
-        .await?;
+        task_conversation_writeback::write_back_terminal_task_run(connection, &run, now_unix_ms)
+            .await?;
     }
     // Repair databases where a previous Host already marked a Main Chat Run as
     // needs_review but left the visible Turn running forever. Run this after historical

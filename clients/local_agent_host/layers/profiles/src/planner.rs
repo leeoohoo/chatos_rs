@@ -40,7 +40,7 @@ fn runtime_clock_context() -> Value {
     )
 }
 
-const TASK_EXECUTION_WORKSPACE_INSTRUCTIONS: &str = "[Local Workspace Boundary]\nWhen local project tools are available, path `.` is the authoritative root currently bound to this conversation. Treat the entries returned by `list_dir` for `.` as the root contents. Never replace that root with a child directory merely because its name appears to match the task or project; descend into a child only when the user's request requires inspecting that child, and keep root-relative paths and the distinction between the bound root and nested directories explicit in the final answer.";
+const TASK_EXECUTION_WORKSPACE_INSTRUCTIONS: &str = "[Local Workspace Boundary]\nWhen project tools are available, path `.` is the authoritative root currently bound to this conversation. Treat the entries returned by `list_dir` for `.` as the root contents. Never replace that root with a child directory merely because its name appears to match the task or project; descend into a child only when the user's request requires inspecting that child, and keep root-relative paths and the distinction between the bound root and nested directories explicit in the final answer.";
 
 const AGENT_PROJECT_PERMISSION: &str = "local.project.list";
 const LEGACY_AGENT_PROJECT_PERMISSION: &str = "builtin.project-steward";
@@ -442,17 +442,17 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 .and_then(Value::as_array)
                 .filter(|plugins| !plugins.is_empty())
             {
-                // The selected Plugin is program-owned Task scope, not a soft model hint.
-                // Repeat it on every step so memory truncation or a tempting built-in
-                // cannot silently change the requested delivery surface.
+                // Selection freezes tool scope, not a new output requirement. Repeat the
+                // distinction after truncation: research tools need not produce artifacts,
+                // while a deliverable explicitly requested in a Plugin still belongs there.
                 capabilities.prefixed_input_items.push(message_item(
                     "system",
                     Value::String(
                         json!({
                             "type": "task_selected_plugin_contract",
                             "selected_plugins": selected_plugins,
-                            "delivery_route": "selected_plugin_required",
-                            "guidance": "The selected Plugin is the required primary delivery route for this Task. Discover, describe, activate, and invoke it. Built-in project reads may supply evidence. Notepad may only read an existing note explicitly bound as input; this Plugin Task cannot create or update notes or use Notepad as scratch storage. Do not report success until the selected Plugin has persisted and verified the requested deliverable."
+                            "completion_basis": "task_objective_and_acceptance_criteria",
+                            "guidance": "Use the selected Plugins for their stated purpose; discover, describe, activate, and invoke the relevant tools. Tool selection does not add deliverables to the Task. Determine completion from the objective, expected_outputs, and acceptance_criteria. For example, a browser used to research a text report supplies evidence; it does not make a persisted screenshot mandatory. If the Task permits HTTP fallback, a failed browser call does not prevent success when that fallback actually satisfies the criteria; disclose the failure and any visual evidence limits. In contrast, if the Task requests a screenshot or a document persisted in a selected Plugin, create and verify that deliverable there; prose, Notepad, an unrelated successful tool call, or an ordinary file cannot substitute for it. Report blocked only when an actual required outcome remains unmet and needs external action, not merely because an optional tool or artifact failed."
                         })
                         .to_string(),
                     ),
@@ -504,8 +504,9 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                     Some("plugin") => Some(json!({
                         "type": "user_selected_capability_contract",
                         "selection": selection,
-                        "delivery_route": "selected_plugin_required",
-                        "guidance": "The user explicitly selected this Plugin in the composer. Create the requested durable Task with this exact Plugin as its required delivery route. Do not ask the user for a Plugin key or version, do not substitute Notepad or an ordinary file, and do not claim completion in Main Chat. The Host independently freezes and enforces the selected Plugin on every created Task."
+                        "required_capability": "selected_plugin",
+                        "completion_basis": "task_objective_and_acceptance_criteria",
+                        "guidance": "The user explicitly selected this Plugin in the composer. Create the requested durable Task with this exact Plugin for its requested purpose. The Host independently freezes and enforces this selection on every created Task. Tool selection alone does not require a persisted artifact: browser research may deliver a sourced text report, whereas a document explicitly requested in a Plugin must be created and verified there, not substituted with Notepad or an ordinary file. Express the user's actual deliverable and evidence requirements in the objective and acceptance criteria; do not invent an artifact requirement merely because a Plugin is selected. Do not ask the user for a Plugin key or version, and do not claim completion in Main Chat."
                     })),
                     Some("requirement_survey") => Some(json!({
                         "type": "user_selected_capability_contract",

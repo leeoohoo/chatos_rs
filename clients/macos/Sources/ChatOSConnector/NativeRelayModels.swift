@@ -94,16 +94,20 @@ enum NativeJSONValue: Codable, Sendable, Equatable {
 
     var canonicalJSONString: String {
         switch self {
-        case .null: "null"
-        case let .bool(value): value ? "true" : "false"
+        case .null: return "null"
+        case let .bool(value): return value ? "true" : "false"
         case let .number(value):
-            value.rounded() == value ? String(Int64(value)) : String(value)
+            guard value.isFinite else { return "null" }
+            return value.rounded() == value
+                && value.magnitude <= 9_007_199_254_740_991
+                ? String(format: "%.0f", value)
+                : String(value)
         case let .string(value):
-            Self.canonicalJSONString(value)
+            return Self.canonicalJSONString(value)
         case let .array(values):
-            "[" + values.map(\.canonicalJSONString).joined(separator: ",") + "]"
+            return "[" + values.map(\.canonicalJSONString).joined(separator: ",") + "]"
         case let .object(values):
-            "{" + values.keys.sorted().map { key in
+            return "{" + values.keys.sorted().map { key in
                 let encodedKey = Self.canonicalJSONString(key)
                 return encodedKey + ":" + (values[key]?.canonicalJSONString ?? "null")
             }.joined(separator: ",") + "}"

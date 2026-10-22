@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use chatos_ai_runtime::{MemoryContextCache, MemoryRecordWriter, MemoryScope, SaveRecordInput};
 use chatos_local_agent_ports::{
-    ClientStorageError, LocalMemoryContextCacheStore, LocalMemoryOutboxStore,
+    ClientStorageError, LocalMemoryContextCacheStore, LocalMemoryOutboxStore, LocalMemoryRunClaim,
 };
 use memory_engine_sdk::ComposeContextResponse;
 use serde_json::Value;
@@ -109,7 +109,7 @@ impl LocalMemoryOutboxWriter {
 
 #[async_trait]
 impl MemoryRecordWriter for LocalMemoryOutboxWriter {
-    async fn save_record(&self, input: SaveRecordInput) -> Result<(), String> {
+    async fn save_record(&self, mut input: SaveRecordInput) -> Result<(), String> {
         let record_id = required(input.message_id.as_deref(), "message_id")?.to_string();
         let thread_id =
             required(Some(input.conversation_id.as_str()), "conversation_id")?.to_string();
@@ -119,8 +119,32 @@ impl MemoryRecordWriter for LocalMemoryOutboxWriter {
             .and_then(|metadata| metadata.get("tenant_id"))
             .and_then(Value::as_str);
         let tenant_id = required(tenant_id, "metadata.tenant_id")?.to_string();
+        // This is local transaction provenance, never remote Memory metadata.
+        let step_claim = input
+            .metadata
+            .as_mut()
+            .and_then(Value::as_object_mut)
+            .and_then(|metadata| metadata.remove("local_agent_step_claim"))
+            .map(serde_json::from_value::<LocalMemoryRunClaim>)
+            .transpose()
+            .map_err(|error| format!("decode Memory step claim failed: {error}"))?;
         let payload = serde_json::to_value(input)
             .map_err(|error| format!("serialize Memory outbox record failed: {error}"))?;
+        if let Some(claim) = step_claim {
+            return self
+                .store
+                .stage_step_memory_record(
+                    &claim,
+                    &record_id,
+                    &tenant_id,
+                    &self.source_id,
+                    &thread_id,
+                    &payload,
+                    (self.clock)()?,
+                )
+                .await
+                .map_err(|error| error.to_string());
+        }
         self.store
             .enqueue_memory_record(
                 &record_id,

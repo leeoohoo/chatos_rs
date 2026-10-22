@@ -717,6 +717,22 @@ pub(super) const SCHEMA_V32: &[&str] = &[
        owner_user_id, project_resource_id, created_at_unix_ms DESC, plan_id, revision DESC)",
 ];
 
+/// Model replies remain private to a claim until its Run transition commits.
+pub(super) const SCHEMA_V34: &[&str] = &[
+    "CREATE TABLE local_agent_step_memory (\
+       run_id TEXT NOT NULL REFERENCES local_agent_runs(run_id) ON DELETE CASCADE,\
+       claim_token TEXT NOT NULL, run_version INTEGER NOT NULL,\
+       record_id TEXT NOT NULL, tenant_id TEXT NOT NULL, source_id TEXT NOT NULL,\
+       thread_id TEXT NOT NULL, payload_json TEXT NOT NULL, created_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(run_id, claim_token, source_id, record_id)\
+     )",
+    "CREATE TRIGGER local_agent_step_memory_discard AFTER UPDATE OF version, claim_token, status \
+       ON local_agent_runs WHEN NEW.version <> OLD.version \
+         OR NEW.claim_token IS NOT OLD.claim_token OR NEW.status <> 'model_running' BEGIN \
+         DELETE FROM local_agent_step_memory WHERE run_id = NEW.run_id; \
+       END",
+];
+
 /// Bounds transient replay and delivery bookkeeping. Command receipts only protect short-lived
 /// IPC retries; retaining complete Run responses indefinitely duplicated most of the database.
 /// Synced Memory rows are likewise delivery receipts, not the authoritative Memory store.

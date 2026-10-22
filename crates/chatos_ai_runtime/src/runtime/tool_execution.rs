@@ -350,7 +350,7 @@ fn looks_like_deterministic_tool_error(value: &str) -> bool {
     [
         "not a directory",
         "is a directory",
-        "outside current local project",
+        "outside current project",
         "outside workspace root",
         "outside the task-owned paths",
         "invalid path",

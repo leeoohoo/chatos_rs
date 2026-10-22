@@ -136,7 +136,7 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
             id: "local-run:\(run.runID)",
             source: source,
             kind: kind,
-            title: survey?.title ?? (source == .chat ? "本地对话" : "本地任务"),
+            title: survey?.title ?? (source == .chat ? "对话" : "任务"),
             detail: survey == nil ? detail(run) : "请填写需求调研，帮助我理解你的目标和想法。",
             route: .init(
                 projectID: survey?.projectResourceID,

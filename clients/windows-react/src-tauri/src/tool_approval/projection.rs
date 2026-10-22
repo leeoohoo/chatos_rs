@@ -6,7 +6,6 @@ use serde_json::{Map, Value};
 
 use super::models::{ToolApproval, ToolApprovalDecision};
 
-const MAX_COMMAND_CHARACTERS: usize = 4_000;
 const MAX_PURPOSE_CHARACTERS: usize = 500;
 const MAX_PATH_CHARACTERS: usize = 1_000;
 
@@ -30,7 +29,7 @@ pub fn pending_approval(invocation: &LocalAgentToolInvocationRecord) -> Option<T
         purpose: presentation.purpose,
         cwd: presentation.cwd,
         source: match invocation.execution_route {
-            LocalAgentToolExecutionRoute::Platform => "Local Agent Task".into(),
+            LocalAgentToolExecutionRoute::Platform => "Task".into(),
             LocalAgentToolExecutionRoute::Shared => "Local Agent Shared Runtime".into(),
         },
         risk: presentation.risk,
@@ -64,7 +63,9 @@ fn presentation(tool_name: &str, arguments: Option<&Map<String, Value>>) -> Appr
     match tool_name {
         "execute_command" => {
             let command = first_string(arguments, &["command", "common"])
-                .map(|value| bounded(value, MAX_COMMAND_CHARACTERS))
+                // Approval must present the exact executable text. Truncating here
+                // can split a pipeline, quote, redirection, or compound command and
+                // make the reviewer approve a different operation.
                 .unwrap_or_else(|| "本地终端命令（内容不可用）".into());
             let purpose = first_string(arguments, &["purpose"])
                 .filter(|value| value.chars().count() <= MAX_PURPOSE_CHARACTERS);
@@ -85,14 +86,14 @@ fn presentation(tool_name: &str, arguments: Option<&Map<String, Value>>) -> Appr
             purpose: Some("向当前任务启动的本地命令写入输入".into()),
             cwd: ".".into(),
             risk: "medium".into(),
-            reason: Some("本地任务请求向运行中的命令写入输入。".into()),
+            reason: Some("任务请求向运行中的命令写入输入。".into()),
         },
         "process_kill" => ApprovalPresentation {
             command: "process_kill · task-owned process".into(),
             purpose: Some("终止当前任务启动的本地命令".into()),
             cwd: ".".into(),
             risk: "medium".into(),
-            reason: Some("本地任务请求终止运行中的命令。".into()),
+            reason: Some("任务请求终止运行中的命令。".into()),
         },
         "capability_invoke" => ApprovalPresentation {
             command: "capability_invoke · selected Plugin tool".into(),
@@ -103,12 +104,12 @@ fn presentation(tool_name: &str, arguments: Option<&Map<String, Value>>) -> Appr
         },
         "remote_connection_controller_run_command" => ApprovalPresentation {
             command: first_string(arguments, &["command"])
-                .map(|value| format!("remote SSH command · {}", bounded(value, 500)))
+                .map(|value| format!("remote SSH command · {value}"))
                 .unwrap_or_else(|| "remote SSH command".into()),
             purpose: Some("在选定的远程连接上执行命令".into()),
             cwd: "远程连接".into(),
             risk: "high".into(),
-            reason: Some("本地任务请求在已保存的远程连接上执行命令。".into()),
+            reason: Some("任务请求在已保存的远程连接上执行命令。".into()),
         },
         "remote_connection_controller_upload_file" => ApprovalPresentation {
             command: first_string(arguments, &["path"])
@@ -117,14 +118,14 @@ fn presentation(tool_name: &str, arguments: Option<&Map<String, Value>>) -> Appr
             purpose: Some("向选定的远程连接上传文件".into()),
             cwd: "远程连接".into(),
             risk: "high".into(),
-            reason: Some("本地任务请求向已保存的远程连接写入文件。".into()),
+            reason: Some("任务请求向已保存的远程连接写入文件。".into()),
         },
         _ => ApprovalPresentation {
             command: format!("{} · commit staged project edits", bounded(tool_name, 256)),
-            purpose: Some("修改当前本地项目中的已暂存文件".into()),
+            purpose: Some("修改当前项目中的已暂存文件".into()),
             cwd: ".".into(),
             risk: "medium".into(),
-            reason: Some("本地任务请求提交已暂存的项目文件修改。".into()),
+            reason: Some("任务请求提交已暂存的项目文件修改。".into()),
         },
     }
 }

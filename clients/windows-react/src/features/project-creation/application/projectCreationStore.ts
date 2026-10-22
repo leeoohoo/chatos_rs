@@ -220,5 +220,5 @@ function accepts(
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message;
   if (typeof error === "string" && error.trim()) return error;
-  return "本地项目创建失败。";
+  return "项目创建失败。";
 }

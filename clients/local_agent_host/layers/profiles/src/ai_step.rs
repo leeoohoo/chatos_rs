@@ -82,7 +82,7 @@ impl LocalAiStepExecutor for ChatosAiRuntimeStepExecutor {
         let iteration = usize::try_from(claim.run.iteration)
             .map_err(|_| "Local Agent iteration exceeds usize".to_string())?;
         let model_attempt = usize::try_from(claim.run.model_attempt)
-            .map_err(|_| "Local Agent model attempt exceeds usize".to_string())?;
+            .map_err(|_| "model attempt exceeds usize".to_string())?;
         prepared
             .runner
             .execute_once(prepared.request, iteration, prepared.reason, model_attempt)

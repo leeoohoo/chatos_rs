@@ -65,6 +65,12 @@ pub(super) fn memory_plan(
         .and_then(|value| value.get("batch_id"))
         .and_then(Value::as_str)
         .unwrap_or("model");
+    let mut assistant_metadata = metadata.clone();
+    assistant_metadata["local_agent_step_claim"] = json!({
+        "run_id": claim.run.run_id,
+        "claim_token": claim.claim_token,
+        "version": claim.run.version,
+    });
     let record_options = RuntimeRecordOptions::persist_all()
         .with_assistant_message_id(format!(
             "{}:assistant:{}",
@@ -73,7 +79,7 @@ pub(super) fn memory_plan(
         .with_tool_message_id_prefix(format!("{}:tool:{batch_id}", claim.run.run_id))
         .with_assistant_message_mode(message_mode)
         .with_assistant_message_source(claim.run.profile_key.clone())
-        .with_assistant_metadata(metadata.clone())
+        .with_assistant_metadata(assistant_metadata)
         .with_tool_message_mode(message_mode)
         .with_tool_message_source(claim.run.profile_key.clone())
         .with_tool_metadata(metadata.clone());
@@ -338,6 +344,17 @@ mod tests {
             Some("run-1:assistant:1")
         );
         assert_eq!(user.metadata.expect("metadata")["tenant_id"], "user-1");
+        assert_eq!(
+            plan.record_options.assistant_metadata.as_ref().unwrap()["local_agent_step_claim"],
+            json!({"run_id": "run-1", "claim_token": "claim-1", "version": 2})
+        );
+        assert!(plan
+            .record_options
+            .tool_metadata
+            .as_ref()
+            .unwrap()
+            .get("local_agent_step_claim")
+            .is_none());
     }
 
     #[test]
