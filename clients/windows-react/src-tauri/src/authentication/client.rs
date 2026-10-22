@@ -88,6 +88,95 @@ pub(crate) struct GatewayModelConfig {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayManagedModelConfig {
+    pub id: String,
+    pub owner_user_id: String,
+    pub source_provider_id: Option<String>,
+    pub name: String,
+    pub provider: String,
+    pub prompt_vendor: Option<String>,
+    pub model: String,
+    pub base_url: Option<String>,
+    pub task_usage_scenario: Option<String>,
+    pub task_thinking_level: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
+    pub enabled: bool,
+    #[serde(default)]
+    pub task_enabled: Option<bool>,
+    #[serde(default)]
+    pub has_api_key: bool,
+    #[serde(default)]
+    pub supports_images: bool,
+    #[serde(default)]
+    pub supports_reasoning: bool,
+    #[serde(default)]
+    pub supports_responses: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayModelSettings {
+    pub model_request_max_retries: Option<i64>,
+    pub memory_summary_model_config_id: Option<String>,
+    pub memory_summary_thinking_level: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayModelProvider {
+    pub id: String,
+    pub owner_user_id: String,
+    pub name: String,
+    pub provider: String,
+    pub prompt_vendor: Option<String>,
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub has_api_key: bool,
+    pub enabled: Option<bool>,
+    pub supports_images: Option<bool>,
+    pub supports_reasoning: Option<bool>,
+    pub supports_responses: Option<bool>,
+    pub last_sync_status: Option<String>,
+    pub last_sync_error: Option<String>,
+    pub imported_model_count: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GatewayModelProviderMutation<'a> {
+    pub name: &'a str,
+    pub provider: &'static str,
+    pub prompt_vendor: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<&'a str>,
+    pub clear_api_key: bool,
+    pub base_url: &'a str,
+    pub enabled: bool,
+    pub supports_images: bool,
+    pub supports_reasoning: bool,
+    pub supports_responses: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GatewayModelConfigMutation<'a> {
+    pub task_usage_scenario: Option<&'a str>,
+    pub task_thinking_level: Option<&'a str>,
+    pub temperature: Option<f64>,
+    pub clear_temperature: bool,
+    pub max_output_tokens: Option<i64>,
+    pub clear_max_output_tokens: bool,
+    pub task_enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GatewayModelSettingsMutation<'a> {
+    pub model_request_max_retries: i64,
+    pub memory_summary_model_config_id: Option<&'a str>,
+    pub memory_summary_thinking_level: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+struct EmptyControlPlaneRequest {}
+
+#[derive(Clone, Debug, Deserialize)]
 pub(crate) struct GatewayAgentCapability {
     pub agent_key: String,
     pub owner_user_id: String,
@@ -262,6 +351,14 @@ impl AuthenticationApiClient {
             .await
     }
 
+    pub(crate) async fn managed_model_configs(
+        &self,
+        access_token: &str,
+    ) -> Result<Vec<GatewayManagedModelConfig>, ApiError> {
+        self.control_plane_request("api/model-configs", None, access_token)
+            .await
+    }
+
     pub(crate) async fn model_config(
         &self,
         access_token: &str,
@@ -270,6 +367,110 @@ impl AuthenticationApiClient {
         self.control_plane_request(
             "api/model-configs",
             Some((model_config_ref, "include_secret=true")),
+            access_token,
+        )
+        .await
+    }
+
+    pub(crate) async fn model_settings(
+        &self,
+        access_token: &str,
+    ) -> Result<GatewayModelSettings, ApiError> {
+        self.control_plane_request("api/model-configs/settings", None, access_token)
+            .await
+    }
+
+    pub(crate) async fn model_providers(
+        &self,
+        access_token: &str,
+    ) -> Result<Vec<GatewayModelProvider>, ApiError> {
+        self.control_plane_request("api/model-providers", None, access_token)
+            .await
+    }
+
+    pub(crate) async fn create_model_provider(
+        &self,
+        access_token: &str,
+        input: &GatewayModelProviderMutation<'_>,
+    ) -> Result<GatewayModelProvider, ApiError> {
+        self.control_plane_mutation("api/model-providers", None, "POST", input, access_token)
+            .await
+    }
+
+    pub(crate) async fn update_model_provider(
+        &self,
+        access_token: &str,
+        provider_id: &str,
+        input: &GatewayModelProviderMutation<'_>,
+    ) -> Result<GatewayModelProvider, ApiError> {
+        self.control_plane_mutation(
+            "api/model-providers",
+            Some((provider_id, "")),
+            "PATCH",
+            input,
+            access_token,
+        )
+        .await
+    }
+
+    pub(crate) async fn refresh_model_provider(
+        &self,
+        access_token: &str,
+        provider_id: &str,
+    ) -> Result<GatewayModelProvider, ApiError> {
+        self.control_plane_mutation(
+            "api/model-providers",
+            Some((provider_id, "refresh")),
+            "POST",
+            &EmptyControlPlaneRequest {},
+            access_token,
+        )
+        .await
+    }
+
+    pub(crate) async fn delete_model_provider(
+        &self,
+        access_token: &str,
+        provider_id: &str,
+    ) -> Result<(), ApiError> {
+        let _: serde_json::Value = self
+            .control_plane_mutation(
+                "api/model-providers",
+                Some((provider_id, "")),
+                "DELETE",
+                &EmptyControlPlaneRequest {},
+                access_token,
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn update_model_config(
+        &self,
+        access_token: &str,
+        model_id: &str,
+        input: &GatewayModelConfigMutation<'_>,
+    ) -> Result<GatewayManagedModelConfig, ApiError> {
+        self.control_plane_mutation(
+            "api/model-configs",
+            Some((model_id, "")),
+            "PATCH",
+            input,
+            access_token,
+        )
+        .await
+    }
+
+    pub(crate) async fn update_model_settings(
+        &self,
+        access_token: &str,
+        input: &GatewayModelSettingsMutation<'_>,
+    ) -> Result<GatewayModelSettings, ApiError> {
+        self.control_plane_mutation(
+            "api/model-configs/settings",
+            None,
+            "PUT",
+            input,
             access_token,
         )
         .await
@@ -304,6 +505,33 @@ impl AuthenticationApiClient {
         tail_and_query: Option<(&str, &str)>,
         access_token: &str,
     ) -> Result<R, ApiError> {
+        let url = self.control_plane_url(base_path, tail_and_query)?;
+        let reply = self
+            .send::<(), R>(url, "GET", None, Some(access_token))
+            .await?;
+        Ok(reply.value)
+    }
+
+    async fn control_plane_mutation<B: Serialize + ?Sized, R: DeserializeOwned>(
+        &self,
+        base_path: &str,
+        tail: Option<(&str, &str)>,
+        method: &str,
+        body: &B,
+        access_token: &str,
+    ) -> Result<R, ApiError> {
+        let url = self.control_plane_url(base_path, tail)?;
+        let reply = self
+            .send(url, method, Some(body), Some(access_token))
+            .await?;
+        Ok(reply.value)
+    }
+
+    fn control_plane_url(
+        &self,
+        base_path: &str,
+        tail_and_query: Option<(&str, &str)>,
+    ) -> Result<Url, ApiError> {
         let mut url = self.gateway_url.clone();
         {
             let mut segments = url.path_segments_mut().map_err(|_| ApiError {
@@ -314,19 +542,19 @@ impl AuthenticationApiClient {
             for segment in base_path.split('/') {
                 segments.push(segment);
             }
-            if let Some((tail, _)) = tail_and_query {
+            if let Some((tail, suffix)) = tail_and_query {
                 segments.push(tail);
+                if !suffix.is_empty() && !suffix.contains('=') {
+                    segments.push(suffix);
+                }
             }
         }
         if let Some((_, query)) = tail_and_query {
-            if !query.is_empty() {
+            if query.contains('=') {
                 url.set_query(Some(query));
             }
         }
-        let reply = self
-            .send::<(), R>(url, "GET", None, Some(access_token))
-            .await?;
-        Ok(reply.value)
+        Ok(url)
     }
 
     async fn request<B: Serialize + ?Sized, R: DeserializeOwned>(

@@ -3,6 +3,7 @@ mod agent_conversation;
 mod agent_management;
 mod agent_plugin_runtime;
 mod agent_skill_management;
+mod ai_model_settings;
 mod ask_user;
 mod attachment_tool_worker;
 mod authentication;
@@ -68,6 +69,10 @@ use agent_management::{
 use agent_skill_management::{
     load_agent_skill_catalog, reset_agent_skill_override, save_agent_skill_override,
     AgentSkillStore,
+};
+use ai_model_settings::{
+    create_ai_model_provider, delete_ai_model_provider, load_ai_model_settings,
+    refresh_ai_model_provider, save_ai_model_configuration, update_ai_model_provider,
 };
 use ask_user::{cancel_ask_user_prompt, load_ask_user_prompts, submit_ask_user_prompt};
 use attachment_tool_worker::AttachmentToolWorker;
@@ -448,6 +453,12 @@ pub fn run() {
             adopt_requirement_survey_plan,
             load_general_settings,
             update_general_settings,
+            load_ai_model_settings,
+            create_ai_model_provider,
+            update_ai_model_provider,
+            refresh_ai_model_provider,
+            delete_ai_model_provider,
+            save_ai_model_configuration,
             load_global_utility_preferences,
             update_global_utility_preferences,
             deactivate_global_utilities,

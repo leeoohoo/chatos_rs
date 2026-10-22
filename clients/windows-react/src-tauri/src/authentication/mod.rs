@@ -3,7 +3,11 @@ mod credentials;
 
 use std::sync::Arc;
 
-pub(crate) use client::{runtime_api_base_url, GatewayAgentCapability, GatewayModelConfig};
+pub(crate) use client::{
+    runtime_api_base_url, GatewayAgentCapability, GatewayManagedModelConfig, GatewayModelConfig,
+    GatewayModelConfigMutation, GatewayModelProvider, GatewayModelProviderMutation,
+    GatewayModelSettings, GatewayModelSettingsMutation,
+};
 use client::{ApiError, AuthenticationApiClient};
 pub(crate) use credentials::model_credential_environment_variable;
 use credentials::{CredentialStore, PlatformCredentialStore};
@@ -239,6 +243,119 @@ impl AuthenticationManager {
         self.client.model_configs(&token).await
     }
 
+    pub(crate) async fn managed_model_catalog_for_owner(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<GatewayManagedModelConfig>, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client.managed_model_configs(&token).await
+    }
+
+    pub(crate) async fn model_settings_for_owner(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<GatewayModelSettings, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client.model_settings(&token).await
+    }
+
+    pub(crate) async fn model_providers_for_owner(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<GatewayModelProvider>, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client.model_providers(&token).await
+    }
+
+    pub(crate) async fn create_model_provider_for_owner(
+        &self,
+        owner_user_id: &str,
+        input: &GatewayModelProviderMutation<'_>,
+    ) -> Result<GatewayModelProvider, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client.create_model_provider(&token, input).await
+    }
+
+    pub(crate) async fn update_model_provider_for_owner(
+        &self,
+        owner_user_id: &str,
+        provider_id: &str,
+        input: &GatewayModelProviderMutation<'_>,
+    ) -> Result<GatewayModelProvider, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client
+            .update_model_provider(&token, provider_id, input)
+            .await
+    }
+
+    pub(crate) async fn refresh_model_provider_for_owner(
+        &self,
+        owner_user_id: &str,
+        provider_id: &str,
+    ) -> Result<GatewayModelProvider, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client
+            .refresh_model_provider(&token, provider_id)
+            .await
+    }
+
+    pub(crate) async fn delete_model_provider_for_owner(
+        &self,
+        owner_user_id: &str,
+        provider_id: &str,
+    ) -> Result<(), ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client.delete_model_provider(&token, provider_id).await
+    }
+
+    pub(crate) async fn update_model_config_for_owner(
+        &self,
+        owner_user_id: &str,
+        model_id: &str,
+        input: &GatewayModelConfigMutation<'_>,
+    ) -> Result<GatewayManagedModelConfig, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client
+            .update_model_config(&token, model_id, input)
+            .await
+    }
+
+    pub(crate) async fn update_model_settings_for_owner(
+        &self,
+        owner_user_id: &str,
+        input: &GatewayModelSettingsMutation<'_>,
+    ) -> Result<GatewayModelSettings, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client.update_model_settings(&token, input).await
+    }
+
     pub(crate) async fn resolved_models_for_owner(
         &self,
         owner_user_id: &str,
@@ -325,6 +442,13 @@ impl AuthenticationManager {
 
 fn api_message(error: ApiError) -> String {
     error.message
+}
+
+fn authentication_api_error(message: String) -> ApiError {
+    ApiError {
+        message,
+        unauthorized: true,
+    }
 }
 
 #[tauri::command]
