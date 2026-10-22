@@ -58,6 +58,40 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: manifest.path))
     }
 
+    func testFileBackedImageIsCopiedWithoutMaterializingProviderBase64() async throws {
+        let root = try directory()
+        let sourceURL = root.appendingPathComponent("provider-image.tmp")
+        try Self.png.write(to: sourceURL)
+        var result: ImageGenerationResult? = .init(
+            id: "file-image",
+            modelConfigID: "image",
+            modelName: "gpt-image-2",
+            createdAt: "2026-09-09T00:00:00Z",
+            images: [.init(
+                id: "file-asset",
+                mimeType: "image/png",
+                revisedPrompt: "file backed",
+                mediaFile: GeneratedMediaFile(
+                    url: sourceURL,
+                    byteCount: Self.png.count,
+                    deleteWhenReleased: true
+                )
+            )]
+        )
+
+        let saved = try await MediaStudioHistoryStore(root: root).saveImage(
+            try XCTUnwrap(result),
+            prompt: "file-backed",
+            owner: "alice"
+        )
+
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(saved.images.first?.url)), Self.png)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.path))
+        result = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sourceURL.path))
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(saved.images.first?.url)), Self.png)
+    }
+
     func testDurableVideoReferenceLookupIsExactAndRejectsEscapingAssetName() async throws {
         let root = try directory()
         let store = MediaStudioHistoryStore(root: root)

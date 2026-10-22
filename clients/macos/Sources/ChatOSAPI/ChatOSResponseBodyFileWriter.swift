@@ -3,9 +3,20 @@ import Darwin
 import Foundation
 
 enum ChatOSResponseBodyFileWriter {
+    enum ArtifactKind {
+        case videoDownload
+        case imageResponse
+
+        var prefix: String {
+            switch self {
+            case .videoDownload: ".chatos-video-download-"
+            case .imageResponse: ".chatos-image-response-"
+            }
+        }
+    }
+
     private static let fileMode = mode_t(S_IRUSR | S_IWUSR)
     private static let directoryMode = mode_t(S_IRWXU)
-    private static let artifactPrefix = ".chatos-video-download-"
     private static let leaseFilename = ".lease"
     private static let payloadFilename = "payload.tmp"
     private static let orphanRetention: TimeInterval = 24 * 60 * 60
@@ -55,13 +66,14 @@ enum ChatOSResponseBodyFileWriter {
         let handle: FileHandle
     }
 
-    static func write(
-        _ body: AsyncThrowingStream<Data, Error>,
+    static func write<Body: AsyncSequence>(
+        _ body: Body,
         maximumBytes: Int,
         expectedBytes: Int? = nil,
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
-        availableCapacityOverride: Int64? = nil
-    ) async throws -> GeneratedMediaFile {
+        availableCapacityOverride: Int64? = nil,
+        artifactKind: ArtifactKind = .videoDownload
+    ) async throws -> GeneratedMediaFile where Body.Element == Data {
         guard maximumBytes > 0,
               expectedBytes.map({ $0 > 0 && $0 <= maximumBytes }) ?? true else {
             throw MediaGenerationClientError.invalidVideoContent
@@ -70,7 +82,8 @@ enum ChatOSResponseBodyFileWriter {
         _ = reconcileOrphanedArtifacts(
             in: temporaryDirectory,
             olderThan: Date().addingTimeInterval(-orphanRetention),
-            maximumCandidates: maximumCleanupCandidates
+            maximumCandidates: maximumCleanupCandidates,
+            artifactKind: artifactKind
         )
         do {
             // The downloaded temporary file normally coexists with one final Story/History
@@ -91,7 +104,7 @@ enum ChatOSResponseBodyFileWriter {
         } catch let error as MediaDiskCapacityError {
             throw MediaGenerationClientError.insufficientDiskSpace(error.localizedDescription)
         }
-        let destination = try makeDestination(in: temporaryDirectory)
+        let destination = try makeDestination(in: temporaryDirectory, artifactKind: artifactKind)
         var completed = false
         defer {
             try? destination.handle.close()
@@ -146,7 +159,8 @@ enum ChatOSResponseBodyFileWriter {
     static func reconcileOrphanedArtifacts(
         in temporaryDirectory: URL,
         olderThan cutoff: Date,
-        maximumCandidates: Int = maximumCleanupCandidates
+        maximumCandidates: Int = maximumCleanupCandidates,
+        artifactKind: ArtifactKind = .videoDownload
     ) -> Int {
         guard maximumCandidates > 0,
               let children = try? FileManager.default.contentsOfDirectory(
@@ -156,7 +170,7 @@ enum ChatOSResponseBodyFileWriter {
               ) else { return 0 }
 
         let candidates = children.compactMap { url -> (URL, stat)? in
-            guard isCanonicalArtifactName(url.lastPathComponent),
+            guard isCanonicalArtifactName(url.lastPathComponent, artifactKind: artifactKind),
                   let status = secureStatus(url),
                   (status.st_mode & S_IFMT) == S_IFDIR,
                   status.st_uid == geteuid(),
@@ -254,9 +268,12 @@ enum ChatOSResponseBodyFileWriter {
         return current.st_dev == originalStatus.st_dev && current.st_ino == originalStatus.st_ino
     }
 
-    private static func isCanonicalArtifactName(_ name: String) -> Bool {
-        guard name.hasPrefix(artifactPrefix) else { return false }
-        let value = String(name.dropFirst(artifactPrefix.count))
+    private static func isCanonicalArtifactName(
+        _ name: String,
+        artifactKind: ArtifactKind
+    ) -> Bool {
+        guard name.hasPrefix(artifactKind.prefix) else { return false }
+        let value = String(name.dropFirst(artifactKind.prefix.count))
         guard value.count == 36, value == value.lowercased(), let id = UUID(uuidString: value)
         else { return false }
         return id.uuidString.lowercased() == value
@@ -283,9 +300,12 @@ enum ChatOSResponseBodyFileWriter {
         )
     }
 
-    private static func makeDestination(in temporaryDirectory: URL) throws -> Destination {
+    private static func makeDestination(
+        in temporaryDirectory: URL,
+        artifactKind: ArtifactKind
+    ) throws -> Destination {
         let directoryURL = temporaryDirectory.appendingPathComponent(
-            "\(artifactPrefix)\(UUID().uuidString.lowercased())",
+            "\(artifactKind.prefix)\(UUID().uuidString.lowercased())",
             isDirectory: true
         )
         let created = directoryURL.withUnsafeFileSystemRepresentation { path -> Bool in

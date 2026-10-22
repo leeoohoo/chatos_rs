@@ -1402,6 +1402,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批只删除“预校验后丢弃”的重复解码副本；HTTP 响应 `Data`、JSONDecoder 产生的 Base64 `String` 和业务消费者真正需要的单次图片解码仍同时存在，尚未实现 JSON/Base64 流式落盘。图片像素解码与 PNG 归一化仍在主进程；真实大响应 memory trace、响应 artifact/崩溃对账、Media Worker、睡眠/断网/ENOSPC 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.42 第四十二批实施记录：图片响应 Base64 增量文件化（2026-10-23）
+
+本批继续治理 12.41 明确保留的业务层图片解码和跨层 Base64 传递。此前 API 层把 provider 的 `b64_json` 原样装入 `GeneratedMediaAsset`；History 或 Story 随后再次把完整字符串解码为 `Data`。除 HTTP 响应体和 JSONDecoder 的字符串外，业务消费期间还会常驻一份完整图片字节，并允许大 Base64 继续穿过 API/Core/App 边界。
+
+已实施：
+
+- API 层新增 Base64 响应文件 writer：先复用严格长度校验，再按 64K quartets（约 192 KiB 解码输出）增量解码，直接写入 `.chatos-image-response-<UUID>/payload.tmp`，不再构造完整 decoded `Data`。空值、畸形 padding、非法字符和超过 20 MiB 的响应仍在 provider boundary 失败。
+- 图片响应 artifact 复用视频下载 writer 的文件安全和生命周期协议：目录权限 `0700`、payload/lease 权限 `0600`，写入前执行磁盘预算检查，取消或失败删除 partial，成功结果由 `GeneratedMediaFile` 持有；24 小时孤儿清理按独立图片前缀扫描，避免和视频 artifact 互相误判。
+- `GeneratedMediaAsset` 新增仅进程内的 `mediaFile` owner，并把其 URL 作为消费入口；owner 不进入 Codable，旧 Base64/HTTPS 资产保持兼容。API 返回的 Base64 图片现在 `base64Data == nil`，释放生成结果会自动删除临时 artifact。
+- Media History 对 file-backed 图片执行 20 MiB 上限的有界复制，复制期间不读取整文件；持久副本建立后即与临时响应 artifact 解耦。Story 原有文件 URL 消费路径保持兼容，没有重新引入 Base64。
+- 回归覆盖跨多个解码 chunk 的 400,000 字节内容、真实文件字节、目录/文件权限、lease 防误删和显式清理；完整 service 回归覆盖文件化结果及释放删除；History 回归覆盖持久副本在临时 owner 释放后仍可读取。
+
+验证：Debug 与 arm64 Release 各选择性运行 `ChatOSMediaGenerationServiceTests`、`Base64PayloadFileWriterTests`、`HTTPTransportTests`、`MediaStudioHistoryStoreTests` 和 `StoryStudioTests` 共 150 项，全部通过；Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。测试只使用受控 transport 和独立临时目录，不启动/安装正式 App、不请求真实 provider、不读取活动用户数据。
+
+边界：provider 当前仍以单个 JSON body 返回 Base64，因此 URLSession 的 HTTP response `Data` 和 JSONDecoder 产生的完整 Base64 `String` 会存在到 API 解析结束；本批消除的是完整 decoded `Data` 常驻和解析后的跨层 Base64 传递，不是网络层 JSON 流式解析。Story/AppKit 的图片像素解码与 PNG 归一化仍在主进程；真实大响应 physical-footprint trace、writer 中途 SIGKILL、ENOSPC/睡眠/断网故障矩阵、Media Worker 文件授权和签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

@@ -157,19 +157,24 @@ public struct GeneratedMediaAsset: Codable, Identifiable, Sendable, Equatable {
     public var base64Data: String?
     public var url: URL?
     public var revisedPrompt: String?
+    /// Keeps an app-controlled temporary response file alive while this value is in use.
+    /// It is intentionally transient and omitted from Codable payloads.
+    public var mediaFile: GeneratedMediaFile?
 
     public init(
         id: String,
         mimeType: String,
         base64Data: String? = nil,
         url: URL? = nil,
-        revisedPrompt: String? = nil
+        revisedPrompt: String? = nil,
+        mediaFile: GeneratedMediaFile? = nil
     ) {
         self.id = id
         self.mimeType = mimeType
         self.base64Data = base64Data
-        self.url = url
+        self.url = mediaFile?.url ?? url
         self.revisedPrompt = revisedPrompt
+        self.mediaFile = mediaFile
     }
 
     enum CodingKeys: String, CodingKey {
@@ -178,6 +183,25 @@ public struct GeneratedMediaAsset: Codable, Identifiable, Sendable, Equatable {
         case base64Data = "base64_data"
         case url
         case revisedPrompt = "revised_prompt"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        mimeType = try values.decode(String.self, forKey: .mimeType)
+        base64Data = try values.decodeIfPresent(String.self, forKey: .base64Data)
+        url = try values.decodeIfPresent(URL.self, forKey: .url)
+        revisedPrompt = try values.decodeIfPresent(String.self, forKey: .revisedPrompt)
+        mediaFile = nil
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(mimeType, forKey: .mimeType)
+        try values.encodeIfPresent(base64Data, forKey: .base64Data)
+        try values.encodeIfPresent(url, forKey: .url)
+        try values.encodeIfPresent(revisedPrompt, forKey: .revisedPrompt)
     }
 }
 

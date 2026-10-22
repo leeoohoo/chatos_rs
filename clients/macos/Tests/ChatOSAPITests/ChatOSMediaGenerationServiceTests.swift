@@ -114,9 +114,18 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
                   clientRequestID: "attempt-1", projectID: "project-1", resourceID: "character-1")
         )
 
-        XCTAssertEqual(result.images.first?.base64Data, "aW1hZ2U=")
+        let generatedImage = try XCTUnwrap(result.images.first)
+        XCTAssertNil(generatedImage.base64Data)
+        let generatedFile = try XCTUnwrap(generatedImage.mediaFile)
+        XCTAssertEqual(generatedImage.url, generatedFile.url)
+        XCTAssertEqual(generatedFile.byteCount, 5)
+        XCTAssertEqual(try Data(contentsOf: generatedFile.url), Data("image".utf8))
+        XCTAssertTrue(
+            generatedFile.url.deletingLastPathComponent().lastPathComponent
+                .hasPrefix(".chatos-image-response-")
+        )
         XCTAssertEqual(result.id, "provider-result-1")
-        XCTAssertEqual(result.images.first?.id, "provider-asset-1")
+        XCTAssertEqual(generatedImage.id, "provider-asset-1")
         XCTAssertEqual(result.modelName, "provider-image-model")
         XCTAssertEqual(result.clientRequestID, "attempt-1")
         XCTAssertEqual(result.projectID, "project-1")
@@ -140,6 +149,31 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         XCTAssertEqual(payload["prompt"] as? String, "orange fox")
         XCTAssertEqual(payload["size"] as? String, "1024x1024")
         XCTAssertEqual(payload["n"] as? Int, 1)
+    }
+
+    func testDecodedTemporaryImageIsDeletedWhenResultIsReleased() async throws {
+        let transport = MediaGenerationTransport()
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
+            accessToken: "token",
+            transport: transport
+        )
+        var result: ImageGenerationResult? = try await ChatOSMediaGenerationService(
+            client: client,
+            providerTransport: transport
+        ).generateImage(.init(
+            modelConfigID: "image-model",
+            prompt: "temporary image",
+            size: nil,
+            count: 1
+        ))
+        let fileURL = try XCTUnwrap(result?.images.first?.mediaFile?.url)
+        let artifactURL = fileURL.deletingLastPathComponent()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+
+        result = nil
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: artifactURL.path))
     }
 
     func testGenerateImageEncodesOptionalReferenceImage() async throws {

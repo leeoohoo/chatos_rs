@@ -186,24 +186,50 @@ actor MediaStudioHistoryStore:
         var assets: [Asset] = []
         for image in result.images {
             try Task.checkCancellation()
-            let data: Data
+            let filename = "\(UUID().uuidString).\(fileExtension(image.mimeType))"
+            let destination = folder.appendingPathComponent(filename)
             if let base64 = image.base64Data,
                base64.utf8.count <= MediaStudioImageLoader.maximumEncodedCharacters,
                let decoded = Data(base64Encoded: base64) {
-                data = decoded
+                guard !decoded.isEmpty, decoded.count <= 20 * 1024 * 1024 else {
+                    throw HistoryError.invalidRecord
+                }
+                try decoded.write(to: destination, options: .atomic)
+            } else if let url = image.url, url.isFileURL {
+                let expectedBytes: Int
+                if let mediaFile = image.mediaFile, mediaFile.url == url {
+                    expectedBytes = mediaFile.byteCount
+                } else {
+                    let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                    guard values.isRegularFile == true, let fileSize = values.fileSize else {
+                        throw HistoryError.invalidRecord
+                    }
+                    expectedBytes = fileSize
+                }
+                guard expectedBytes > 0, expectedBytes <= 20 * 1024 * 1024 else {
+                    throw HistoryError.invalidRecord
+                }
+                try await AppCancellableDetachedWork.run {
+                    try AppBoundedFileReader.copy(
+                        url,
+                        to: destination,
+                        expectedBytes: expectedBytes,
+                        maximumBytes: 20 * 1024 * 1024
+                    )
+                }
             } else if let url = image.url, url.scheme?.lowercased() == "https" {
                 let response = try await transport.send(.init(
                     url: url, method: "GET", headers: ["Accept": "image/*"], timeoutInterval: 120,
                     maximumResponseBytes: 20 * 1_024 * 1_024
                 ))
                 guard (200..<300).contains(response.statusCode) else { throw HistoryError.imageDownloadFailed }
-                data = response.body
+                guard !response.body.isEmpty, response.body.count <= 20 * 1024 * 1024 else {
+                    throw HistoryError.invalidRecord
+                }
+                try response.body.write(to: destination, options: .atomic)
             } else {
                 throw HistoryError.invalidRecord
             }
-            guard !data.isEmpty, data.count <= 20 * 1024 * 1024 else { throw HistoryError.invalidRecord }
-            let filename = "\(UUID().uuidString).\(fileExtension(image.mimeType))"
-            try data.write(to: folder.appendingPathComponent(filename), options: .atomic)
             assets.append(Asset(id: image.id, mimeType: image.mimeType, filename: filename, revisedPrompt: image.revisedPrompt))
         }
         let entry = Entry(id: folder.lastPathComponent, kind: "image", prompt: prompt,

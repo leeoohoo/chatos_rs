@@ -108,31 +108,32 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             throw MediaGenerationClientError.invalidProviderResponse
         }
         let resultID = payload.id ?? request.clientRequestID ?? "media_\(UUID().uuidString.lowercased())"
-        let images = try payload.data.enumerated().map { index, item -> GeneratedMediaAsset in
+        var images: [GeneratedMediaAsset] = []
+        images.reserveCapacity(payload.data.count)
+        for (index, item) in payload.data.enumerated() {
+            try Task.checkCancellation()
             let assetID = item.id ?? "\(resultID):image:\(index)"
             if let base64Data = item.b64JSON ?? item.base64Data {
-                guard ChatOSBase64PayloadValidator.decodedByteCount(
+                let mediaFile = try await ChatOSBase64PayloadFileWriter.write(
                     base64Data,
                     maximumBytes: 20 * 1024 * 1024
-                ) != nil else {
-                    throw MediaGenerationClientError.invalidProviderResponse
-                }
-                return GeneratedMediaAsset(
+                )
+                images.append(GeneratedMediaAsset(
                     id: assetID,
                     mimeType: item.mimeType ?? "image/png",
-                    base64Data: base64Data,
-                    revisedPrompt: item.revisedPrompt
-                )
-            }
-            if let url = item.url, url.scheme?.lowercased() == "https" {
-                return GeneratedMediaAsset(
+                    revisedPrompt: item.revisedPrompt,
+                    mediaFile: mediaFile
+                ))
+            } else if let url = item.url, url.scheme?.lowercased() == "https" {
+                images.append(GeneratedMediaAsset(
                     id: assetID,
                     mimeType: item.mimeType ?? "image/png",
                     url: url,
                     revisedPrompt: item.revisedPrompt
-                )
+                ))
+            } else {
+                throw MediaGenerationClientError.invalidProviderResponse
             }
-            throw MediaGenerationClientError.invalidProviderResponse
         }
         guard !images.isEmpty else {
             throw MediaGenerationClientError.invalidProviderResponse
