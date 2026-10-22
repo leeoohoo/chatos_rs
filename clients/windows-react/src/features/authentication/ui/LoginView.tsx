@@ -1,11 +1,14 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { useAuthenticationStore } from "../application/authenticationStore";
 import type { AuthenticationPort } from "../ports/AuthenticationPort";
+import { useGeneralSettingsStore } from "../../general-settings/application/generalSettingsStore";
+import type { ChatOSLanguage } from "../../general-settings/domain/generalSettings";
+import { interfaceText } from "../../../shared/interfaceLocale";
 
-const formSchema = z
+const authenticationFormSchema = (language: ChatOSLanguage) => z
   .object({
     username: z.string(),
     inviteCode: z.string(),
@@ -15,17 +18,20 @@ const formSchema = z
   })
   .superRefine((form, context) => {
     if (!form.username.trim()) {
-      context.addIssue({ code: "custom", path: ["username"], message: "请输入账号。" });
+      context.addIssue({ code: "custom", path: ["username"], message: interfaceText(language, "accountRequired") });
     }
   });
 
-type AuthenticationForm = z.infer<typeof formSchema>;
+type AuthenticationForm = z.infer<ReturnType<typeof authenticationFormSchema>>;
 
 interface LoginViewProps {
   authentication: AuthenticationPort;
 }
 
 export function LoginView({ authentication }: LoginViewProps) {
+  const language = useGeneralSettingsStore((state) => state.settings.interfaceLanguage);
+  const text = (key: Parameters<typeof interfaceText>[1]) => interfaceText(language, key);
+  const formSchema = useMemo(() => authenticationFormSchema(language), [language]);
   const phase = useAuthenticationStore((state) => state.phase);
   const mode = useAuthenticationStore((state) => state.mode);
   const errorMessage = useAuthenticationStore((state) => state.errorMessage);
@@ -64,14 +70,14 @@ export function LoginView({ authentication }: LoginViewProps) {
   const submit = handleSubmit(async (form) => {
     if (mode === "signIn") {
       if (!form.password) {
-        setError("password", { message: "请输入密码。" });
+        setError("password", { message: text("passwordRequired") });
         return;
       }
       await login(authentication, { username: form.username, password: form.password });
       return;
     }
     if (form.password !== form.confirmPassword) {
-      setError("confirmPassword", { message: "两次输入的密码不一致。" });
+      setError("confirmPassword", { message: text("passwordMismatch") });
       return;
     }
     await registerAccount(authentication, {
@@ -97,21 +103,21 @@ export function LoginView({ authentication }: LoginViewProps) {
           <span>✦</span>
         </div>
         <div className="auth-headline">
-          <h1>路还很长，</h1>
-          <h1>我记得我们走到了哪里。</h1>
+          <h1>{text("authHeadlineFirst")}</h1>
+          <h1>{text("authHeadlineSecond")}</h1>
         </div>
-        <p>以岁月打磨，致敬每一份认真。</p>
+        <p>{text("authTagline")}</p>
       </div>
 
       <div className="authentication-form-surface">
         <form className="authentication-form" onSubmit={submit} noValidate>
           <header>
-            <h2>{mode === "signIn" ? "登录" : "创建账号"}</h2>
-            <p>{mode === "signIn" ? "使用 ChatOS 平台账号继续" : "邀请测试 · 邮箱验证"}</p>
+            <h2>{mode === "signIn" ? text("signIn") : text("createAccount")}</h2>
+            <p>{mode === "signIn" ? text("signInSubtitle") : text("registerSubtitle")}</p>
           </header>
 
           <AuthField
-            label={mode === "signIn" ? "账号" : "邮箱"}
+            label={mode === "signIn" ? text("account") : text("email")}
             error={errors.username?.message}
           >
             <input
@@ -124,20 +130,20 @@ export function LoginView({ authentication }: LoginViewProps) {
 
           {mode === "register" && (
             <>
-              <AuthField label="邀请码" error={errors.inviteCode?.message}>
+              <AuthField label={text("inviteCode")} error={errors.inviteCode?.message}>
                 <input
                   autoComplete="off"
-                  placeholder="输入邀请测试码"
+                  placeholder={text("inviteCodePlaceholder")}
                   {...register("inviteCode")}
                 />
               </AuthField>
-              <AuthField label="邮箱验证码" error={errors.verificationCode?.message}>
+              <AuthField label={text("emailCode")} error={errors.verificationCode?.message}>
                 <div className="verification-row">
                   <input
                     autoComplete="one-time-code"
                     inputMode="numeric"
                     maxLength={6}
-                    placeholder="6 位验证码"
+                    placeholder={text("emailCodePlaceholder")}
                     {...register("verificationCode")}
                   />
                   <button
@@ -146,27 +152,27 @@ export function LoginView({ authentication }: LoginViewProps) {
                     onClick={() => void requestCode()}
                     type="button"
                   >
-                    {isSendingCode ? "发送中" : countdown > 0 ? `${countdown}s` : "发送验证码"}
+                    {isSendingCode ? text("sending") : countdown > 0 ? `${countdown}s` : text("sendCode")}
                   </button>
                 </div>
               </AuthField>
             </>
           )}
 
-          <AuthField label="密码" error={errors.password?.message}>
+          <AuthField label={text("password")} error={errors.password?.message}>
             <input
               autoComplete={mode === "signIn" ? "current-password" : "new-password"}
-              placeholder={mode === "signIn" ? "密码" : "12–128 个字符"}
+              placeholder={mode === "signIn" ? text("password") : text("passwordLength")}
               type="password"
               {...register("password")}
             />
           </AuthField>
 
           {mode === "register" && (
-            <AuthField label="确认密码" error={errors.confirmPassword?.message}>
+            <AuthField label={text("confirmPassword")} error={errors.confirmPassword?.message}>
               <input
                 autoComplete="new-password"
-                placeholder="再次输入密码"
+                placeholder={text("confirmPasswordPlaceholder")}
                 type="password"
                 {...register("confirmPassword")}
               />
@@ -179,16 +185,16 @@ export function LoginView({ authentication }: LoginViewProps) {
           </div>
 
           <button className="primary-button auth-submit" disabled={isAuthenticating} type="submit">
-            {isAuthenticating ? <span className="button-spinner" aria-label="处理中" /> : mode === "signIn" ? "登录" : "创建账号"}
+            {isAuthenticating ? <span className="button-spinner" aria-label={text("processing")} /> : mode === "signIn" ? text("signIn") : text("createAccount")}
           </button>
 
           <p className="mode-switch">
-            {mode === "signIn" ? "还没有账号？" : "已有账号？"}
+            {mode === "signIn" ? text("noAccount") : text("hasAccount")}
             <button
               onClick={mode === "signIn" ? showRegistration : showLogin}
               type="button"
             >
-              {mode === "signIn" ? "创建账号" : "返回登录"}
+              {mode === "signIn" ? text("createAccount") : text("backToSignIn")}
             </button>
           </p>
         </form>

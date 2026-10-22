@@ -50,6 +50,7 @@ import {
 } from "../../requirement-surveys/domain/requirementSurvey";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import { AgentSkillManagementSheet } from "./AgentSkillManagementSheet";
+import type { ChatOSLanguage } from "../../general-settings/domain/generalSettings";
 import "./agentManagement.css";
 
 export function AgentManagementView({
@@ -61,6 +62,8 @@ export function AgentManagementView({
   runtimeSettingsPort,
   runInspectorPort,
   askUserPort,
+  contextLanguage = "zh-CN",
+  onContextLanguageChange = async () => undefined,
   projects = [],
 }: {
   ownerUserId: string;
@@ -71,6 +74,8 @@ export function AgentManagementView({
   runtimeSettingsPort?: ConversationRuntimeSettingsPort;
   runInspectorPort?: RunInspectorPort;
   askUserPort?: AskUserPort;
+  contextLanguage?: ChatOSLanguage;
+  onContextLanguageChange?(language: ChatOSLanguage): Promise<void> | void;
   projects?: Array<{ id: string; title: string }>;
 }) {
   const profiles = useAgentManagementStore((state) => state.profiles);
@@ -441,9 +446,11 @@ export function AgentManagementView({
       )}
       {showsSkillManagement && (
         <AgentSkillManagementSheet
+          initialLanguage={contextLanguage}
           ownerUserId={ownerUserId}
           port={port}
           onClose={() => setShowsSkillManagement(false)}
+          onLanguageChange={onContextLanguageChange}
         />
       )}
       {showsTeamCreator && (

@@ -24,6 +24,7 @@ import { useWorkspaceIndexStore } from "../features/workspace-index/application/
 import type { WorkspaceSelection } from "../features/workspace-index/domain/workspaceIndex";
 import type { WorkspaceIndexPort } from "../features/workspace-index/ports/WorkspaceIndexPort";
 import { WorkspaceSidebar } from "../features/workspace-index/ui/WorkspaceSidebar";
+import { interfaceText } from "../shared/interfaceLocale";
 
 const LocalTerminalWorkspace = lazy(async () => {
   const [adapterModule, viewModule] = await Promise.all([
@@ -277,6 +278,10 @@ export function AppShell({
 }: AppShellProps) {
   const snapshot = useHostLifecycleStore((state) => state.snapshot);
   const activateGeneralSettings = useGeneralSettingsStore((state) => state.activate);
+  const interfaceLanguage = useGeneralSettingsStore((state) => state.settings.interfaceLanguage);
+  const contextLanguage = useGeneralSettingsStore((state) => state.settings.contextLanguage);
+  const updateGeneralSettingsDraft = useGeneralSettingsStore((state) => state.updateDraft);
+  const saveGeneralSettings = useGeneralSettingsStore((state) => state.save);
   const diagnostics = useHostLifecycleStore((state) => state.diagnostics);
   const start = useHostLifecycleStore((state) => state.start);
   const retry = useHostLifecycleStore((state) => state.retry);
@@ -297,6 +302,7 @@ export function AppShell({
   const [activeSurface, setActiveSurface] = useState<"workspace" | "general-settings" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [remoteEditorTarget, setRemoteEditorTarget] = useState<"create" | string | null>(null);
+  const text = (key: Parameters<typeof interfaceText>[1]) => interfaceText(interfaceLanguage, key);
 
   useEffect(() => {
     void start(hostLifecycle, session.user.id);
@@ -363,28 +369,28 @@ export function AppShell({
     : null;
   const defaultContactReady = workspaceSnapshot.contacts.some((contact) => contact.id === "jiguli");
   const title = activeSurface === "general-settings"
-    ? "常规与账号"
+    ? text("generalAccount")
     : activeSurface === "tool-approval"
-    ? "命令审批"
+    ? text("commandApproval")
     : activeSurface === "runtime-permissions"
-      ? "运行与权限"
+      ? text("runtimePermissions")
       : activeSurface === "access-control"
-        ? "访问控制"
+        ? text("accessControl")
       : selection.kind === "terminal"
-        ? "本机终端"
+        ? text("localTerminal")
       : selection.kind === "agentManagement"
-        ? "Agent 管理"
+        ? text("agentManagement")
       : selection.kind === "requirementSurveys"
-        ? "需求调研"
+        ? text("requirementSurveys")
       : selection.kind === "notepad"
-        ? "记事本"
+        ? text("notepad")
       : selection.kind === "mediaStudio"
-        ? "AI 创作"
+        ? text("mediaStudio")
       : selection.kind === "applications"
-        ? "应用"
+        ? text("applications")
       : selection.kind === "application"
-        ? selectedPluginApplication?.displayName ?? "应用"
-      : selectedProject?.title ?? selectedContact?.title ?? selectedRemoteConnection?.name ?? "工作台";
+        ? selectedPluginApplication?.displayName ?? text("applications")
+      : selectedProject?.title ?? selectedContact?.title ?? selectedRemoteConnection?.name ?? text("workbench");
   const selectWorkspace = (nextSelection: WorkspaceSelection) => {
     setSelection(nextSelection);
     setActiveSurface("workspace");
@@ -392,7 +398,7 @@ export function AppShell({
 
   return (
     <>
-      <aside className="sidebar" aria-label="主导航">
+      <aside className="sidebar" aria-label={text("mainNavigation")}>
         <div className="brand">
           <span className="brand-mark">C</span>
           <span>ChatOS</span>
@@ -408,7 +414,7 @@ export function AppShell({
           onCreateRemoteConnection={() => setRemoteEditorTarget("create")}
         />
         <div className="sidebar-settings-group">
-          <p>设置</p>
+          <p>{text("settings")}</p>
           <button
             aria-current={activeSurface === "general-settings" ? "page" : undefined}
             className={`sidebar-settings-button ${activeSurface === "general-settings" ? "sidebar-settings-button--active" : ""}`}
@@ -416,7 +422,7 @@ export function AppShell({
             type="button"
           >
             <span aria-hidden="true">⚙</span>
-            <span><strong>常规与账号</strong><small>语言、显示与账号</small></span>
+            <span><strong>{text("generalAccount")}</strong><small>{text("generalAccountDetail")}</small></span>
           </button>
           <button
             aria-current={activeSurface === "tool-approval" ? "page" : undefined}
@@ -425,7 +431,7 @@ export function AppShell({
             type="button"
           >
             <span aria-hidden="true">✓</span>
-            <span><strong>命令审批</strong><small>本机安全策略</small></span>
+            <span><strong>{text("commandApproval")}</strong><small>{text("commandApprovalDetail")}</small></span>
           </button>
           <button
             aria-current={activeSurface === "runtime-permissions" ? "page" : undefined}
@@ -434,7 +440,7 @@ export function AppShell({
             type="button"
           >
             <span aria-hidden="true">⌁</span>
-            <span><strong>运行与权限</strong><small>Windows 系统能力</small></span>
+            <span><strong>{text("runtimePermissions")}</strong><small>{text("runtimePermissionsDetail")}</small></span>
           </button>
           <button
             aria-current={activeSurface === "access-control" ? "page" : undefined}
@@ -443,7 +449,7 @@ export function AppShell({
             type="button"
           >
             <span aria-hidden="true">▣</span>
-            <span><strong>访问控制</strong><small>任务执行边界</small></span>
+            <span><strong>{text("accessControl")}</strong><small>{text("accessControlDetail")}</small></span>
           </button>
         </div>
         <div className="sidebar-status">
@@ -454,7 +460,7 @@ export function AppShell({
           <span className="account-avatar">{(session.user.displayName ?? session.user.username).slice(0, 1).toUpperCase()}</span>
           <span className="account-copy">
             <strong>{session.user.displayName ?? session.user.username}</strong>
-            <small>退出登录</small>
+            <small>{text("signOut")}</small>
           </span>
         </button>
       </aside>
@@ -486,7 +492,7 @@ export function AppShell({
           </div>
           <span className="protocol-badge">Host v{snapshot.protocolVersion}</span>
         </header>
-        <Suspense fallback={<div className="workspace-loading"><span className="mini-spinner" />正在载入工作区…</div>}>
+        <Suspense fallback={<div className="workspace-loading"><span className="mini-spinner" />{text("loadingWorkspace")}</div>}>
           {activeSurface === "general-settings" ? (
           <GeneralSettingsWorkspace
             displayName={session.user.displayName}
@@ -524,6 +530,11 @@ export function AppShell({
             attachmentPort={conversationAttachments}
             historyPort={conversationHistory}
             ownerUserId={session.user.id}
+            contextLanguage={contextLanguage}
+            onContextLanguageChange={async (language) => {
+              updateGeneralSettingsDraft({ contextLanguage: language });
+              await saveGeneralSettings(generalSettings);
+            }}
             projects={workspaceSnapshot.projects}
             realtimePort={conversationRealtime}
             runInspectorPort={runInspector}

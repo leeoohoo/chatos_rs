@@ -221,6 +221,7 @@ impl AgentSkillStore {
         &self,
         owner_user_id: &str,
         profession_key: &str,
+        context_language: &str,
     ) -> Result<AgentProfessionRuntimeSnapshot, String> {
         let definition = self
             .catalog(owner_user_id)?
@@ -229,13 +230,23 @@ impl AgentSkillStore {
                 definition.kind == AgentSkillKind::Profession && definition.key == profession_key
             })
             .ok_or_else(|| "Agent 职业 Skill 不可用，请刷新后重试。".to_owned())?;
-        Ok(AgentProfessionRuntimeSnapshot {
-            key: definition.key,
-            label: definition.label,
-            skill_ref: definition.skill_ref,
-            instructions_sha256: definition.instructions_sha256,
-            markdown: definition.markdown,
-        })
+        match context_language {
+            "zh-CN" => Ok(AgentProfessionRuntimeSnapshot {
+                key: definition.key,
+                label: definition.label,
+                skill_ref: definition.skill_ref,
+                instructions_sha256: definition.instructions_sha256,
+                markdown: definition.markdown,
+            }),
+            "en-US" => Ok(AgentProfessionRuntimeSnapshot {
+                key: definition.key,
+                label: definition.label_en,
+                skill_ref: definition.skill_ref_en,
+                instructions_sha256: definition.instructions_sha256_en,
+                markdown: definition.markdown_en,
+            }),
+            _ => Err("内部上下文语言无效。".into()),
+        }
     }
 
     fn save(
@@ -1054,6 +1065,29 @@ mod tests {
             .unwrap();
         assert_eq!(reset.label, "项目经理");
         assert!(!reset.customized);
+    }
+
+    #[test]
+    fn runtime_snapshot_uses_the_trusted_context_language() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = AgentSkillStore::new(directory.path().join("overrides.json")).unwrap();
+        store.save("alice", mutation("自定义职业")).unwrap();
+
+        let chinese = store
+            .profession_runtime_snapshot("alice", "project_manager", "zh-CN")
+            .unwrap();
+        let english = store
+            .profession_runtime_snapshot("alice", "project_manager", "en-US")
+            .unwrap();
+
+        assert_eq!(chinese.label, "自定义职业");
+        assert_eq!(chinese.markdown, "# 自定义正文");
+        assert_eq!(english.label, "Custom role");
+        assert_eq!(english.markdown, "# Custom instructions");
+        assert_ne!(chinese.skill_ref, english.skill_ref);
+        assert!(store
+            .profession_runtime_snapshot("alice", "project_manager", "fr-FR")
+            .is_err());
     }
 
     #[test]

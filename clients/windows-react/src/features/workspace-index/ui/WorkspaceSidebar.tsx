@@ -4,6 +4,8 @@ import type { WorkspaceSelection } from "../domain/workspaceIndex";
 import type { WorkspaceIndexPort } from "../ports/WorkspaceIndexPort";
 import { useRemoteConnectionStore } from "../../remote-connection/application/remoteConnectionStore";
 import type { RemoteConnectionPort } from "../../remote-connection/ports/RemoteConnectionPort";
+import { useGeneralSettingsStore } from "../../general-settings/application/generalSettingsStore";
+import { interfaceText } from "../../../shared/interfaceLocale";
 
 interface WorkspaceSidebarProps {
   ownerUserId: string;
@@ -26,6 +28,8 @@ export function WorkspaceSidebar({
   onCreateProject,
   onCreateRemoteConnection,
 }: WorkspaceSidebarProps) {
+  const language = useGeneralSettingsStore((state) => state.settings.interfaceLanguage);
+  const text = (key: Parameters<typeof interfaceText>[1]) => interfaceText(language, key);
   const snapshot = useWorkspaceIndexStore((state) => state.snapshot);
   const isLoading = useWorkspaceIndexStore((state) => state.isLoading);
   const errorMessage = useWorkspaceIndexStore((state) => state.errorMessage);
@@ -60,14 +64,14 @@ export function WorkspaceSidebar({
   ]);
 
   return (
-    <nav className="workspace-navigation" aria-label="资源导航">
+    <nav className="workspace-navigation" aria-label={text("resourceNavigation")}>
       <button
         className={`nav-item ${selection.kind === "workbench" ? "nav-item--active" : ""}`}
         onClick={() => onSelectionChange({ kind: "workbench" })}
         type="button"
       >
         <span aria-hidden="true" className="nav-symbol">⌂</span>
-        工作台
+        {text("workbench")}
       </button>
       <button
         className={`nav-item ${selection.kind === "agentManagement" ? "nav-item--active" : ""}`}
@@ -75,7 +79,7 @@ export function WorkspaceSidebar({
         type="button"
       >
         <span aria-hidden="true" className="nav-symbol">◎</span>
-        Agent 管理
+        {text("agentManagement")}
       </button>
       <button
         className={`nav-item ${selection.kind === "requirementSurveys" ? "nav-item--active" : ""}`}
@@ -84,7 +88,7 @@ export function WorkspaceSidebar({
         type="button"
       >
         <span aria-hidden="true" className="nav-symbol">☷</span>
-        需求调研
+        {text("requirementSurveys")}
       </button>
       <button
         className={`nav-item ${selection.kind === "notepad" ? "nav-item--active" : ""}`}
@@ -93,7 +97,7 @@ export function WorkspaceSidebar({
         type="button"
       >
         <span aria-hidden="true" className="nav-symbol">▤</span>
-        记事本
+        {text("notepad")}
       </button>
       <button
         className={`nav-item ${selection.kind === "terminal" ? "nav-item--active" : ""}`}
@@ -102,7 +106,7 @@ export function WorkspaceSidebar({
         type="button"
       >
         <span aria-hidden="true" className="nav-symbol">⌘</span>
-        本机终端
+        {text("localTerminal")}
       </button>
       <button
         className={`nav-item ${selection.kind === "mediaStudio" ? "nav-item--active" : ""}`}
@@ -110,7 +114,7 @@ export function WorkspaceSidebar({
         type="button"
       >
         <span aria-hidden="true" className="nav-symbol">✦</span>
-        AI 创作
+        {text("mediaStudio")}
       </button>
       <button
         className={`nav-item ${selection.kind === "applications" || selection.kind === "application" ? "nav-item--active" : ""}`}
@@ -119,11 +123,11 @@ export function WorkspaceSidebar({
         type="button"
       >
         <span aria-hidden="true" className="nav-symbol">▦</span>
-        应用
+        {text("applications")}
       </button>
 
-      <SidebarSection title="联系人">
-        {isLoading && snapshot.contacts.length === 0 && <LoadingRow title="正在加载联系人…" />}
+      <SidebarSection title={text("contacts")}>
+        {isLoading && snapshot.contacts.length === 0 && <LoadingRow title={text("loadingContacts")} />}
         {snapshot.contacts.map((contact) => (
           <ResourceButton
             key={contact.id}
@@ -136,22 +140,22 @@ export function WorkspaceSidebar({
       </SidebarSection>
 
       <SidebarSection
-        title="远程连接"
+        title={text("remoteConnections")}
         action={(
           <button
-            aria-label="新建远程连接"
+            aria-label={text("newRemoteConnection")}
             className="sidebar-section__action"
             disabled={!hostReady}
             onClick={onCreateRemoteConnection}
-            title="新建远程连接"
+            title={text("newRemoteConnection")}
             type="button"
           >＋</button>
         )}
       >
         {remoteIsLoading && remoteConnections.length === 0 ? (
-          <LoadingRow title="正在加载远程连接…" />
+          <LoadingRow title={text("loadingRemoteConnections")} />
         ) : remoteConnections.length === 0 ? (
-          <p className="sidebar-empty">远程连接凭据只保存在本机。点击“＋”添加 SSH 连接。</p>
+          <p className="sidebar-empty">{text("emptyRemoteConnections")}</p>
         ) : remoteConnections.map((connection) => (
           <ResourceButton
             key={connection.id}
@@ -167,15 +171,15 @@ export function WorkspaceSidebar({
       </SidebarSection>
 
       <SidebarSection
-        title="项目"
+        title={text("projects")}
         action={(
-          <button aria-label="新建项目" className="sidebar-section__action" onClick={onCreateProject} title="新建项目" type="button">＋</button>
+          <button aria-label={text("newProject")} className="sidebar-section__action" onClick={onCreateProject} title={text("newProject")} type="button">＋</button>
         )}
       >
         {isLoading && snapshot.projects.length === 0 ? (
-          <LoadingRow title="正在加载项目…" />
+          <LoadingRow title={text("loadingProjects")} />
         ) : snapshot.projects.length === 0 ? (
-          <p className="sidebar-empty">项目保存在本机。点击“＋”选择文件夹并创建项目。</p>
+          <p className="sidebar-empty">{text("emptyProjects")}</p>
         ) : (
           snapshot.projects.map((project) => (
             <ResourceButton
@@ -191,19 +195,19 @@ export function WorkspaceSidebar({
 
       {errorMessage && (
         <div className="sidebar-error" role="status">
-          <strong>资源同步失败</strong>
+          <strong>{text("resourceSyncFailed")}</strong>
           <span>{errorMessage}</span>
           <button onClick={() => void load(workspaceIndex, ownerUserId, hostReady)} type="button">
-            重试
+            {text("retry")}
           </button>
         </div>
       )}
       {remoteError && (
         <div className="sidebar-error" role="status">
-          <strong>远程连接加载失败</strong>
+          <strong>{text("remoteLoadFailed")}</strong>
           <span>{remoteError}</span>
           <button onClick={() => void refreshRemoteConnections(remoteConnection)} type="button">
-            重试
+            {text("retry")}
           </button>
         </div>
       )}

@@ -3,6 +3,8 @@ import { useAuthenticationStore } from "../application/authenticationStore";
 import type { AuthSession } from "../domain/authentication";
 import type { AuthenticationPort } from "../ports/AuthenticationPort";
 import { LoginView } from "./LoginView";
+import { useGeneralSettingsStore } from "../../general-settings/application/generalSettingsStore";
+import { interfaceText } from "../../../shared/interfaceLocale";
 
 interface AuthenticationGateProps {
   authentication: AuthenticationPort;
@@ -19,6 +21,7 @@ export function AuthenticationGate({
   const retrySessionRestoreIfNeeded = useAuthenticationStore(
     (state) => state.retrySessionRestoreIfNeeded,
   );
+  const language = useGeneralSettingsStore((state) => state.settings.interfaceLanguage);
 
   useEffect(() => {
     void start(authentication);
@@ -35,7 +38,7 @@ export function AuthenticationGate({
       <section className="authentication-restoring" aria-live="polite">
         <span className="auth-sparkle" aria-hidden="true">✦</span>
         <span className="spinner" aria-hidden="true" />
-        <p>正在恢复登录状态…</p>
+        <p>{interfaceText(language, "restoringSession")}</p>
       </section>
     );
   }

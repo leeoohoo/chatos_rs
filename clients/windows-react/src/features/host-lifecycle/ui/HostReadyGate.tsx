@@ -2,6 +2,8 @@ import type {
   HostDiagnosticEntry,
   HostLifecycleSnapshot,
 } from "../domain/hostLifecycle";
+import { useGeneralSettingsStore } from "../../general-settings/application/generalSettingsStore";
+import { interfaceText } from "../../../shared/interfaceLocale";
 
 interface HostReadyGateProps {
   snapshot: HostLifecycleSnapshot;
@@ -21,13 +23,15 @@ export function HostReadyGate({
   diagnostics = [],
   onRetry,
 }: HostReadyGateProps) {
+  const language = useGeneralSettingsStore((state) => state.settings.interfaceLanguage);
+  const text = (key: Parameters<typeof interfaceText>[1]) => interfaceText(language, key);
   if (snapshot.ready) {
     return (
       <div className="ready-gate">
         <section className="gate-card">
           <div className="gate-icon" aria-hidden="true">✓</div>
-          <h2>本地服务已就绪</h2>
-          <p>Host 生命周期切片已经通过协议验证。业务页面将按源码事实矩阵逐项开放。</p>
+          <h2>{text("localServiceReady")}</h2>
+          <p>{text("localServiceReadyDetail")}</p>
         </section>
       </div>
     );
@@ -40,16 +44,16 @@ export function HostReadyGate({
         <div className="gate-icon" aria-hidden="true">
           {working ? <span className="spinner" /> : "⌁"}
         </div>
-        <h2>{working ? "正在准备本地服务" : "本地服务尚未就绪"}</h2>
+        <h2>{working ? text("preparingLocalService") : text("localServiceUnavailable")}</h2>
         <p>{snapshot.detail}</p>
         {snapshot.retryable && !working ? (
           <div className="gate-actions">
-            <button className="primary-button" type="button" onClick={onRetry}>重新检查</button>
+            <button className="primary-button" type="button" onClick={onRetry}>{text("checkAgain")}</button>
           </div>
         ) : null}
         {diagnostics.length > 0 && !working ? (
           <details className="diagnostics-panel">
-            <summary>诊断记录</summary>
+            <summary>{text("diagnostics")}</summary>
             <ol>
               {diagnostics.slice(-5).map((entry) => (
                 <li key={entry.sequence}>

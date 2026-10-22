@@ -23,6 +23,7 @@ use crate::{
     attachment_tool_worker::AttachmentToolWorker,
     authentication::AuthenticationManager,
     conversation_attachments::{AttachmentManager, AttachmentScope},
+    general_settings::GeneralSettingsStore,
     host_lifecycle::{validate_owner, HostManager},
     terminal_tool_worker::TerminalToolWorker,
 };
@@ -4365,6 +4366,7 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
     authentication: State<'_, AuthenticationManager>,
     conversations: State<'_, AgentConversationStore>,
     skills: State<'_, AgentSkillStore>,
+    general_settings: State<'_, GeneralSettingsStore>,
     manager: State<'_, HostManager>,
     attachment_manager: State<'_, AttachmentManager>,
     attachment_worker: State<'_, AttachmentToolWorker>,
@@ -4399,10 +4401,12 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
         .require_session_generation(&owner_user_id, generation)
         .await?;
     let skill_store = skills.inner().clone();
+    let settings_store = general_settings.inner().clone();
     let skill_owner = owner_user_id.clone();
     let profession_key = pending.binding.agent.profession_key.clone();
     let profession = tauri::async_runtime::spawn_blocking(move || {
-        skill_store.profession_runtime_snapshot(&skill_owner, &profession_key)
+        let language = settings_store.context_language(&skill_owner)?;
+        skill_store.profession_runtime_snapshot(&skill_owner, &profession_key, &language)
     })
     .await
     .map_err(|_| "Agent Skill 快照任务异常退出。".to_owned())??;
@@ -4574,6 +4578,7 @@ pub(crate) async fn dispatch_next_agent_communication_delivery(
     authentication: State<'_, AuthenticationManager>,
     conversations: State<'_, AgentConversationStore>,
     skills: State<'_, AgentSkillStore>,
+    general_settings: State<'_, GeneralSettingsStore>,
     manager: State<'_, HostManager>,
     attachment_worker: State<'_, AttachmentToolWorker>,
     terminal_worker: State<'_, TerminalToolWorker>,
@@ -4598,10 +4603,12 @@ pub(crate) async fn dispatch_next_agent_communication_delivery(
         .require_session_generation(&owner_user_id, generation)
         .await?;
     let skill_store = skills.inner().clone();
+    let settings_store = general_settings.inner().clone();
     let skill_owner = owner_user_id.clone();
     let profession_key = pending.binding.profession_key.clone();
     let profession = tauri::async_runtime::spawn_blocking(move || {
-        skill_store.profession_runtime_snapshot(&skill_owner, &profession_key)
+        let language = settings_store.context_language(&skill_owner)?;
+        skill_store.profession_runtime_snapshot(&skill_owner, &profession_key, &language)
     })
     .await
     .map_err(|_| "Agent Skill 快照任务异常退出。".to_owned())??;
@@ -4728,6 +4735,7 @@ pub(crate) async fn send_agent_conversation_draft(
     authentication: State<'_, AuthenticationManager>,
     conversations: State<'_, AgentConversationStore>,
     skills: State<'_, AgentSkillStore>,
+    general_settings: State<'_, GeneralSettingsStore>,
     manager: State<'_, HostManager>,
     attachment_manager: State<'_, AttachmentManager>,
     attachment_worker: State<'_, AttachmentToolWorker>,
@@ -4753,10 +4761,12 @@ pub(crate) async fn send_agent_conversation_draft(
         .require_session_generation(&input.owner_user_id, generation)
         .await?;
     let skill_store = skills.inner().clone();
+    let settings_store = general_settings.inner().clone();
     let skill_owner = input.owner_user_id.clone();
     let profession_key = binding.profession_key.clone();
     let profession = tauri::async_runtime::spawn_blocking(move || {
-        skill_store.profession_runtime_snapshot(&skill_owner, &profession_key)
+        let language = settings_store.context_language(&skill_owner)?;
+        skill_store.profession_runtime_snapshot(&skill_owner, &profession_key, &language)
     })
     .await
     .map_err(|_| "Agent Skill 快照任务异常退出。".to_owned())??;

@@ -6,6 +6,7 @@ import type {
   AgentSkillMutationInput,
 } from "../domain/agentSkillManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
+import type { ChatOSLanguage } from "../../general-settings/domain/generalSettings";
 
 type Language = "zh" | "en";
 type Disclosure = "overview" | "instructions" | "references";
@@ -14,10 +15,14 @@ type ContentMode = "preview" | "edit" | "split";
 export function AgentSkillManagementSheet({
   ownerUserId,
   port,
+  initialLanguage,
+  onLanguageChange,
   onClose,
 }: {
   ownerUserId: string;
   port: AgentManagementPort;
+  initialLanguage: ChatOSLanguage;
+  onLanguageChange(language: ChatOSLanguage): Promise<void> | void;
   onClose(): void;
 }) {
   const items = useAgentSkillManagementStore((state) => state.items);
@@ -30,7 +35,7 @@ export function AgentSkillManagementSheet({
   const clearError = useAgentSkillManagementStore((state) => state.clearError);
   const reset = useAgentSkillManagementStore((state) => state.reset);
   const [kind, setKind] = useState<AgentSkillKind>("profession");
-  const [language, setLanguage] = useState<Language>("zh");
+  const [language, setLanguage] = useState<Language>(initialLanguage === "en-US" ? "en" : "zh");
   const [query, setQuery] = useState("");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [disclosure, setDisclosure] = useState<Disclosure>("overview");
@@ -42,6 +47,10 @@ export function AgentSkillManagementSheet({
     void activate(port, ownerUserId);
     return reset;
   }, [activate, ownerUserId, port, reset]);
+
+  useEffect(() => {
+    setLanguage(initialLanguage === "en-US" ? "en" : "zh");
+  }, [initialLanguage]);
 
   const visibleItems = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -120,7 +129,10 @@ export function AgentSkillManagementSheet({
             label="Skill 语言"
             options={[["zh", "中文"], ["en", "English"]]}
             value={language}
-            onChange={setLanguage}
+            onChange={(value) => {
+              setLanguage(value);
+              void onLanguageChange(value === "en" ? "en-US" : "zh-CN");
+            }}
           />
           <button aria-label="关闭 Skill 管理" disabled={isSaving} onClick={onClose} type="button">×</button>
         </header>

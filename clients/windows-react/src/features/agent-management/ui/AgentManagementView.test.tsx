@@ -898,7 +898,15 @@ describe("AgentManagementView", () => {
       saveSkillOverride: vi.fn(async (_owner, input) => ({ ...item, ...input, customized: true })),
       resetSkillOverride: vi.fn(async () => item),
     });
-    renderView(port);
+    const onContextLanguageChange = vi.fn();
+    render(
+      <AgentManagementView
+        contextLanguage="zh-CN"
+        onContextLanguageChange={onContextLanguageChange}
+        ownerUserId="owner-1"
+        port={port}
+      />,
+    );
     await screen.findByText("界面设计师");
     fireEvent.click(screen.getByRole("button", { name: "Skill 管理" }));
     expect(await screen.findByRole("dialog", { name: "Skill 管理" })).toBeVisible();
@@ -907,6 +915,7 @@ describe("AgentManagementView", () => {
     expect(screen.getByRole("listbox", { name: "Skill 参考资料" })).toBeVisible();
     expect(screen.getByText("4 bytes")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "English" }));
+    expect(onContextLanguageChange).toHaveBeenCalledWith("en-US");
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "Delivery Lead" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(port.saveSkillOverride).toHaveBeenCalledWith("owner-1", expect.objectContaining({
