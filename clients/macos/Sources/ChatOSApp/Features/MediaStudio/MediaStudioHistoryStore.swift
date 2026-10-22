@@ -53,6 +53,45 @@ actor MediaStudioHistoryStore:
         try loadPage(owner: owner, after: cursor, limit: requestedLimit)
     }
 
+    /// A generic durable video uses the same UUID for its job and committed history folder.
+    /// Missing records are unreferenced; malformed or symlinked records fail closed.
+    func referencesDurableVideoJob(id: UUID, owner: String) throws -> Bool {
+        let folder = ownerDirectory(owner).appendingPathComponent(
+            id.uuidString.lowercased(),
+            isDirectory: true
+        )
+        guard FileManager.default.fileExists(atPath: folder.path) else { return false }
+        let values = try folder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true else {
+            throw HistoryError.invalidRecord
+        }
+        let entry = try JSONDecoder().decode(
+            Entry.self,
+            from: AppBoundedFileReader.read(
+                folder.appendingPathComponent("record.json"),
+                maximumBytes: Self.maximumManifestBytes
+            )
+        )
+        let asset = entry.assets.first
+        guard entry.version == 1,
+              entry.id == id.uuidString.lowercased(),
+              entry.kind == "video",
+              entry.assets.count == 1,
+              let asset,
+              asset.filename == URL(
+                  fileURLWithPath: asset.filename
+              ).lastPathComponent,
+              !asset.filename.hasPrefix(".") else {
+            throw HistoryError.invalidRecord
+        }
+        let assetValues = try folder.appendingPathComponent(asset.filename)
+            .resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard assetValues.isRegularFile == true, assetValues.isSymbolicLink != true else {
+            throw HistoryError.invalidRecord
+        }
+        return true
+    }
+
     private func loadPage(owner: String, after cursor: Cursor?,
                           limit requestedLimit: Int) throws -> Snapshot {
         let directory = ownerDirectory(owner)

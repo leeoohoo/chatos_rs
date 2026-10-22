@@ -133,6 +133,36 @@ actor MediaStudioVideoJobStore {
         fileprivate var lease: ExecutionLease?
     }
 
+    struct TerminalMaintenancePolicy: Sendable, Equatable {
+        var maximumRecords: Int
+        var maximumBytes: Int64
+        var minimumAge: TimeInterval
+        var maximumRemovals: Int
+
+        init(
+            maximumRecords: Int = 512,
+            maximumBytes: Int64 = 16 * 1_024 * 1_024,
+            minimumAge: TimeInterval = 30 * 24 * 60 * 60,
+            maximumRemovals: Int = 64
+        ) {
+            self.maximumRecords = maximumRecords
+            self.maximumBytes = maximumBytes
+            self.minimumAge = minimumAge
+            self.maximumRemovals = maximumRemovals
+        }
+    }
+
+    struct TerminalMaintenanceReport: Sendable, Equatable {
+        var remainingRecords: Int
+        var remainingBytes: Int64
+        var removedRecords: Int
+        var removedBytes: Int64
+        var referencedRecords: Int
+        var unreadableRecords: Int
+        var referenceFailures: Int
+        var resumedTombstones: Int
+    }
+
     fileprivate final class ExecutionLease: @unchecked Sendable {
         private var descriptor: Int32?
 
@@ -212,6 +242,11 @@ actor MediaStudioVideoJobStore {
         var record: Record
         var folder: URL
         var leaseDescriptor: Int32
+    }
+
+    private struct TerminalCandidate {
+        var record: Record
+        var byteCount: Int64
     }
 
     private static let formatVersion = 3
@@ -760,6 +795,90 @@ actor MediaStudioVideoJobStore {
         return removed
     }
 
+    /// Enforces an owner-scoped budget only for completed/cancelled records that have no
+    /// business reference. Reference checks are exact and supplied by the composition layer;
+    /// failures preserve the candidate. Deletion first renames to a hidden tombstone so a
+    /// process death during filesystem removal is replayable on the next pass.
+    func enforceTerminalBudget(
+        owner ownerInput: String,
+        policy: TerminalMaintenancePolicy = .init(),
+        isReferenced: @escaping @Sendable (Snapshot) async throws -> Bool
+    ) async throws -> TerminalMaintenanceReport {
+        let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !owner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
+        guard policy.maximumRecords >= 0,
+              policy.maximumBytes >= 0,
+              policy.minimumAge >= 0,
+              policy.maximumRemovals >= 0 else {
+            throw MediaStudioVideoJobStoreError.invalidMaintenancePolicy
+        }
+        let resumedTombstones = try resumeTerminalTombstones(
+            owner: owner,
+            limit: policy.maximumRemovals
+        )
+        let writer = try acquireStoreLock()
+        let scan: (candidates: [TerminalCandidate], unreadable: Int)
+        do {
+            scan = try terminalCandidates(owner: owner)
+            releaseStoreLock(writer)
+        } catch {
+            releaseStoreLock(writer)
+            throw error
+        }
+        var remainingRecords = scan.candidates.count
+        var remainingBytes = scan.candidates.reduce(Int64(0)) { $0 + $1.byteCount }
+        var removedRecords = 0
+        var removedBytes: Int64 = 0
+        var referencedRecords = 0
+        var referenceFailures = 0
+        let removalLimit = max(policy.maximumRemovals - resumedTombstones, 0)
+        let cutoff = Date().addingTimeInterval(-policy.minimumAge)
+        let candidates = scan.candidates.sorted {
+            if $0.record.updatedAt != $1.record.updatedAt {
+                return $0.record.updatedAt < $1.record.updatedAt
+            }
+            return $0.record.id.uuidString < $1.record.id.uuidString
+        }
+        for candidate in candidates {
+            try Task.checkCancellation()
+            guard removedRecords < removalLimit,
+                  remainingRecords > policy.maximumRecords
+                    || remainingBytes > policy.maximumBytes else { break }
+            guard candidate.record.updatedAt <= cutoff else { continue }
+            do {
+                if try await isReferenced(snapshot(candidate.record)) {
+                    referencedRecords += 1
+                    continue
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                referenceFailures += 1
+                continue
+            }
+            do {
+                if try removeTerminalCandidate(candidate, owner: owner) {
+                    removedRecords += 1
+                    removedBytes += candidate.byteCount
+                    remainingRecords -= 1
+                    remainingBytes -= candidate.byteCount
+                }
+            } catch MediaStudioVideoJobStoreError.jobBusy {
+                continue
+            }
+        }
+        return .init(
+            remainingRecords: remainingRecords,
+            remainingBytes: remainingBytes,
+            removedRecords: removedRecords,
+            removedBytes: removedBytes,
+            referencedRecords: referencedRecords,
+            unreadableRecords: scan.unreadable,
+            referenceFailures: referenceFailures,
+            resumedTombstones: resumedTombstones
+        )
+    }
+
     private func maintainStaging(owner: String) {
         guard !maintainedStagingOwners.contains(owner) else { return }
         let cutoff = Date().addingTimeInterval(-Self.stagingRetention)
@@ -958,8 +1077,11 @@ actor MediaStudioVideoJobStore {
     }
 
     private func acquireExecutionLease(id: UUID, owner: String) throws -> ExecutionLease {
-        let lease = jobFolder(id: id, owner: owner)
-            .appendingPathComponent(Self.executionLeaseFilename)
+        try acquireExecutionLease(in: jobFolder(id: id, owner: owner))
+    }
+
+    private func acquireExecutionLease(in folder: URL) throws -> ExecutionLease {
+        let lease = folder.appendingPathComponent(Self.executionLeaseFilename)
         let descriptor = lease.withUnsafeFileSystemRepresentation { path -> Int32 in
             guard let path else { return -1 }
             return Darwin.open(
@@ -1175,20 +1297,177 @@ actor MediaStudioVideoJobStore {
         guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
         let children = try FileManager.default.contentsOfDirectory(
             at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey],
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         )
         var records: [Record] = []
         for folder in children {
-            guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-            else { continue }
+            let values = try folder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true,
+                  values.isSymbolicLink != true,
+                  let folderID = UUID(uuidString: folder.lastPathComponent) else { continue }
             let manifest = folder.appendingPathComponent("job.json")
             // A process death before the first atomic manifest commit leaves only an
             // uncommitted artifact folder and therefore cannot have reached the provider.
             guard FileManager.default.fileExists(atPath: manifest.path) else { continue }
-            records.append(try decode(manifest))
+            let record = try decode(manifest)
+            guard record.id == folderID, record.ownerUserID == owner else {
+                throw MediaStudioVideoJobStoreError.invalidRecord
+            }
+            records.append(record)
         }
         return records
+    }
+
+    private func terminalCandidates(
+        owner: String
+    ) throws -> (candidates: [TerminalCandidate], unreadable: Int) {
+        let directory = ownerDirectory(owner)
+        guard FileManager.default.fileExists(atPath: directory.path) else { return ([], 0) }
+        let children = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        )
+        var candidates: [TerminalCandidate] = []
+        var unreadable = 0
+        for folder in children {
+            try Task.checkCancellation()
+            do {
+                let values = try folder.resourceValues(forKeys: [
+                    .isDirectoryKey,
+                    .isSymbolicLinkKey,
+                ])
+                guard values.isDirectory == true,
+                      values.isSymbolicLink != true,
+                      let folderID = UUID(uuidString: folder.lastPathComponent) else { continue }
+                let record = try decode(folder.appendingPathComponent("job.json"))
+                guard record.id == folderID,
+                      record.ownerUserID == owner,
+                      record.status.isTerminal else { continue }
+                candidates.append(.init(
+                    record: record,
+                    byteCount: try safeTerminalJobByteCount(record, folder: folder)
+                ))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                unreadable += 1
+            }
+        }
+        return (candidates, unreadable)
+    }
+
+    private func safeTerminalJobByteCount(_ record: Record, folder: URL) throws -> Int64 {
+        guard record.status.isTerminal, record.request.inputs.isEmpty else {
+            throw MediaStudioVideoJobStoreError.invalidRecord
+        }
+        let folderStatus = try secureStatus(folder, expectedType: S_IFDIR, requiresSingleLink: false)
+        guard folderStatus.st_uid == geteuid() else {
+            throw MediaStudioVideoJobStoreError.invalidRecord
+        }
+        var children = try FileManager.default.contentsOfDirectory(
+            at: folder,
+            includingPropertiesForKeys: [.isSymbolicLinkKey],
+            options: []
+        )
+        if let legacyInputs = children.first(where: { $0.lastPathComponent == "inputs" }) {
+            let status = try secureStatus(
+                legacyInputs,
+                expectedType: S_IFDIR,
+                requiresSingleLink: false
+            )
+            guard status.st_uid == geteuid(),
+                  try FileManager.default.contentsOfDirectory(atPath: legacyInputs.path).isEmpty else {
+                throw MediaStudioVideoJobStoreError.invalidRecord
+            }
+            children.removeAll { $0 == legacyInputs }
+        }
+        let allowed = Set(["job.json", Self.executionLeaseFilename])
+        guard Set(children.map(\.lastPathComponent)).isSubset(of: allowed),
+              children.contains(where: { $0.lastPathComponent == "job.json" }) else {
+            throw MediaStudioVideoJobStoreError.invalidRecord
+        }
+        return try children.reduce(Int64(0)) { total, child in
+            let status = try secureStatus(child, expectedType: S_IFREG, requiresSingleLink: true)
+            guard status.st_uid == geteuid() else {
+                throw MediaStudioVideoJobStoreError.invalidRecord
+            }
+            return total + Int64(status.st_size)
+        }
+    }
+
+    private func secureStatus(
+        _ url: URL,
+        expectedType: mode_t,
+        requiresSingleLink: Bool
+    ) throws -> stat {
+        var status = stat()
+        let result = url.withUnsafeFileSystemRepresentation { path in
+            path.map { Darwin.lstat($0, &status) } ?? -1
+        }
+        guard result == 0,
+              (status.st_mode & S_IFMT) == expectedType,
+              !requiresSingleLink || status.st_nlink == 1 else {
+            throw MediaStudioVideoJobStoreError.invalidRecord
+        }
+        return status
+    }
+
+    private func removeTerminalCandidate(_ candidate: TerminalCandidate, owner: String) throws -> Bool {
+        let writer = try acquireStoreLock()
+        defer { releaseStoreLock(writer) }
+        let current = try load(id: candidate.record.id, owner: owner)
+        guard current.status.isTerminal,
+              current.stateVersion == candidate.record.stateVersion,
+              current.updatedAt == candidate.record.updatedAt else { return false }
+        let folder = jobFolder(id: current.id, owner: owner)
+        _ = try safeTerminalJobByteCount(current, folder: folder)
+        let lease = try acquireExecutionLease(in: folder)
+        let tombstone = ownerDirectory(owner).appendingPathComponent(
+            ".terminal-trash-\(current.id.uuidString.lowercased())",
+            isDirectory: true
+        )
+        guard !FileManager.default.fileExists(atPath: tombstone.path) else { return false }
+        try FileManager.default.moveItem(at: folder, to: tombstone)
+        try? FileManager.default.removeItem(at: tombstone)
+        withExtendedLifetime(lease) {}
+        return true
+    }
+
+    private func resumeTerminalTombstones(owner: String, limit: Int) throws -> Int {
+        guard limit > 0 else { return 0 }
+        let directory = ownerDirectory(owner)
+        guard FileManager.default.fileExists(atPath: directory.path) else { return 0 }
+        let writer = try acquireStoreLock()
+        defer { releaseStoreLock(writer) }
+        let children = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: []
+        )
+        let prefix = ".terminal-trash-"
+        var removed = 0
+        for folder in children where removed < limit && folder.lastPathComponent.hasPrefix(prefix) {
+            guard let id = UUID(uuidString: String(folder.lastPathComponent.dropFirst(prefix.count)))
+            else { continue }
+            do {
+                let record = try decode(folder.appendingPathComponent("job.json"))
+                guard record.id == id,
+                      record.ownerUserID == owner,
+                      record.status.isTerminal else { continue }
+                _ = try safeTerminalJobByteCount(record, folder: folder)
+                let lease = try acquireExecutionLease(in: folder)
+                try FileManager.default.removeItem(at: folder)
+                withExtendedLifetime(lease) {}
+                removed += 1
+            } catch MediaStudioVideoJobStoreError.jobBusy {
+                continue
+            } catch {
+                continue
+            }
+        }
+        return removed
     }
 
     private func load(id: UUID, owner: String) throws -> Record {
@@ -1258,7 +1537,6 @@ actor MediaStudioVideoJobStore {
     }
 
     private func removeInputs(for record: inout Record) throws {
-        guard !record.request.inputs.isEmpty else { return }
         try? FileManager.default.removeItem(
             at: jobFolder(id: record.id, owner: record.ownerUserID)
                 .appendingPathComponent("inputs", isDirectory: true)
@@ -1415,6 +1693,7 @@ enum MediaStudioVideoJobStoreError: LocalizedError {
     case activationRequired
     case jobConflict
     case jobBusy
+    case invalidMaintenancePolicy
 
     var errorDescription: String? {
         switch self {
@@ -1429,6 +1708,7 @@ enum MediaStudioVideoJobStoreError: LocalizedError {
         case .activationRequired: "视频任务尚未完成业务所有权切换。"
         case .jobConflict: "视频任务 ID 已关联到不同的请求，已拒绝覆盖。"
         case .jobBusy: "视频任务正在另一个客户端进程中执行，请稍后再试。"
+        case .invalidMaintenancePolicy: "视频任务清理预算无效。"
         }
     }
 }

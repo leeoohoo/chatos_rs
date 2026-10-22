@@ -766,6 +766,58 @@ actor StoryProjectStore {
     }
 }
 
+extension StoryProjectStore {
+    /// Resolves only the exact project/segment/batch carried by a durable workload. A damaged
+    /// referenced manifest throws so maintenance preserves the job instead of guessing.
+    func referencesVideoJob(
+        id: UUID,
+        owner: String,
+        projectID: UUID,
+        segmentID: String,
+        batchID: UUID?
+    ) throws -> Bool {
+        let folder = directory(owner: owner, projectID: projectID)
+        guard FileManager.default.fileExists(atPath: folder.path) else { return false }
+        let folderValues = try folder.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+        ])
+        guard folderValues.isDirectory == true, folderValues.isSymbolicLink != true else {
+            throw StoryError.invalidProject
+        }
+        let projectManifest = folder.appendingPathComponent("project.json")
+        var projectReferences = false
+        if FileManager.default.fileExists(atPath: projectManifest.path) {
+            let manifestValues = try projectManifest.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isSymbolicLinkKey,
+            ])
+            guard manifestValues.isRegularFile == true,
+                  manifestValues.isSymbolicLink != true else {
+                throw StoryError.invalidProject
+            }
+            let project = try loadProject(projectID: projectID, owner: owner)
+            projectReferences = project.segments.first(where: { $0.id == segmentID })?
+                .videoJobRecordID == id
+        }
+        guard let batchID else { return projectReferences }
+        let batchManifest = folder.appendingPathComponent("media-batch-\(batchID).json")
+        guard FileManager.default.fileExists(atPath: batchManifest.path) else {
+            return projectReferences
+        }
+        let batchValues = try batchManifest.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+        ])
+        guard batchValues.isRegularFile == true, batchValues.isSymbolicLink != true else {
+            throw StoryError.invalidProject
+        }
+        let batch = try loadMediaBatch(owner: owner, projectID: projectID, batchID: batchID)
+        let batchReferences = batch.jobs["videos:\(segmentID)"]?.videoJobRecordID == id
+        return projectReferences || batchReferences
+    }
+}
+
 extension StoryProjectStore: StoryProjectCatalogLoading {
     func loadStoryProjects(
         ownerUserID: String,

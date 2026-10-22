@@ -1278,6 +1278,23 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：分页读取只完成 durable ownership 迁移，不自动恢复 provider 工作，也不迁移已完成历史任务。durable terminal job 的 Story/Batch 引用对账、owner 数量/字节配额与安全清理、App→Worker lease 显式交接、真实双 App/`SIGKILL`/睡眠/断网矩阵及 Media Worker 仍待完成，P0-E 不能标记完成。
 
+### 12.34 第三十四批实施记录：durable video 终态引用对账与有界保留（2026-10-23）
+
+本批补齐 12.31 明确禁止提前实现的正式 durable job 回收。清理不扫描全部历史或全部 Story 项目，而是使用 workload 内已经持久化的精确 owner/project/segment/batch 标识定位业务 manifest；只有 completed/cancelled、超过 owner 预算、达到最短保留期、确认没有业务引用且未被执行 lease 占用的记录才可进入删除。
+
+已实施：
+
+- 每个 owner 默认最多保留 512 条终态记录和 16 MiB 终态 manifest/lease 字节，最短保留 30 天，每轮删除（包括上轮 tombstone 续删）最多 64 条。数量或字节任一超限即按 `updatedAt + UUID` 最老优先回收；未超限不因年龄单独删除，failed、submission-uncertain、prepared/running 等非完成审计态不在候选集合。
+- Generic Studio 只核对同 UUID 的 history folder/`record.json` 与单一视频资源；Story 只核对 workload 指向的 project/segment，并在 Batch workload 下额外核对精确 batch/segment job，覆盖“Batch 已提交 handoff、canonical project 尚未切换”的崩溃窗口。缺失表示未引用，畸形、路径逃逸、symlink、解码/校验失败一律抛错并保留，不把损坏数据猜成无引用。
+- 候选正式删除前重新取得全局 writer lock，核对 owner、终态、stateVersion 与 updatedAt，再非阻塞取得该 job 的 `.execution.lock`；维护在引用查询 await 期间允许 actor 重入，但并发恢复/状态变化会被二次核对或 lease 阻止。正在 create/resume/finalize 的终态收尾对象不能被另一 App 的维护任务移走。
+- 删除先在同一 owner 目录原子 rename 为 `.terminal-trash-<UUID>`，再移除目录。进程死在 rename 后时，下次维护会校验 owner、终态、允许文件集合与 lease 后继续删除；tombstone 续删和新候选共享每轮上限。删除意图已经由 rename 持久化，因此续删不重新依赖业务 manifest。
+- 正式 job 仅接受真实 UUID 目录、当前 owner/id 匹配的有界 manifest、当前 euid 的普通单硬链接 `job.json`/`.execution.lock`，以及兼容旧版本的空 `inputs/`。未知文件、非空残留输入、symlink、硬链接、损坏 manifest 或引用解析失败全部保留并计数。终态收尾现在即使 request 本来没有输入，也会删除旧的空 `inputs/`，避免正常记录永久被误判为残留。
+- Media Studio 可见工作区每个登录 session 只启动一次 best-effort 后台维护，不阻塞页面、不向用户发布维护噪声；退出账号和 ViewModel 销毁会取消任务。维护与 Story ViewModel 共享同一个显式 `StoryProjectStore`，避免引用解析读取另一份默认实例。
+
+验证：覆盖数量与字节预算、最短保留期、最老优先、引用保留与解析失败保守策略、completed/cancelled 与非终态边界、owner 隔离、每轮上限、活跃 execution lease、未知文件/残留输入/硬链接、tombstone 崩溃续删，以及 Generic 精确历史引用、Story canonical project 与 Batch-first 崩溃窗口引用。Debug 与 arm64 Release 各选择性运行 MediaJobStore 39 项、History 10 项、Story 92 项，共 141 项 XCTest 全部通过；Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
+
+边界：本批只管理 App 内现有 MediaJobStore 的本地终态审计记录，不删除视频历史成片或 Story 业务文件，不把本地删除解释为 provider cancel，也不引入 TTL 抢占。App→Worker 必须显式交接 execution lease；真实双 App/`SIGKILL`/睡眠/断网矩阵、Media Worker、高风险媒体解码隔离和发布级 soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

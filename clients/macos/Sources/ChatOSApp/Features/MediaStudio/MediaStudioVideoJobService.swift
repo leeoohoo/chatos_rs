@@ -283,3 +283,38 @@ enum MediaStudioVideoJobServiceError: LocalizedError, Equatable {
         }
     }
 }
+
+/// Resolves terminal-job references without scanning unrelated history. Every workload carries
+/// the exact identifiers needed to query its canonical business manifests.
+struct MediaStudioVideoJobMaintenance: Sendable {
+    let jobs: MediaStudioVideoJobStore
+    let history: MediaStudioHistoryStore
+    let stories: StoryProjectStore
+
+    func run(
+        owner: String,
+        policy: MediaStudioVideoJobStore.TerminalMaintenancePolicy = .init()
+    ) async throws -> MediaStudioVideoJobStore.TerminalMaintenanceReport {
+        try await jobs.enforceTerminalBudget(owner: owner, policy: policy) { snapshot in
+            switch snapshot.workload.kind {
+            case .genericStudio:
+                return try await history.referencesDurableVideoJob(
+                    id: snapshot.id,
+                    owner: owner
+                )
+            case .storyVideo, .storyBatchVideo:
+                guard let projectID = snapshot.workload.projectID,
+                      let segmentID = snapshot.workload.segmentID else {
+                    throw MediaStudioVideoJobStoreError.invalidWorkload
+                }
+                return try await stories.referencesVideoJob(
+                    id: snapshot.id,
+                    owner: owner,
+                    projectID: projectID,
+                    segmentID: segmentID,
+                    batchID: snapshot.workload.batchID
+                )
+            }
+        }
+    }
+}

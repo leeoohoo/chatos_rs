@@ -40,6 +40,53 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         return root.appendingPathComponent("Accounts/\(key)", isDirectory: true)
     }
 
+    private func jobDirectory(root: URL, owner: String, id: UUID) -> URL {
+        ownerDirectory(root: root, owner: owner).appendingPathComponent(
+            id.uuidString.lowercased(),
+            isDirectory: true
+        )
+    }
+
+    private func makeCompletedJob(
+        store: MediaStudioVideoJobStore,
+        owner: String = "alice",
+        prompt: String
+    ) async throws -> UUID {
+        let epoch = UUID()
+        var execution: MediaStudioVideoJobStore.Execution? = try await store.prepare(
+            request: request(prompt: prompt),
+            owner: owner,
+            sessionEpoch: epoch
+        )
+        let id = try XCTUnwrap(execution).snapshot.id
+        execution = try await store.markSubmitting(
+            try XCTUnwrap(execution),
+            owner: owner,
+            sessionEpoch: epoch
+        )
+        let providerID = "provider-\(id.uuidString.lowercased())"
+        try await store.recordProgress(
+            id: id,
+            owner: owner,
+            sessionEpoch: epoch,
+            progress: .init(status: "completed", jobID: providerID)
+        )
+        try await store.markFinalizing(
+            id: id,
+            owner: owner,
+            sessionEpoch: epoch,
+            providerJobID: providerID
+        )
+        try await store.markCompleted(
+            id: id,
+            owner: owner,
+            sessionEpoch: epoch,
+            providerJobID: providerID
+        )
+        execution = nil
+        return id
+    }
+
     @discardableResult
     private func makeStagingDirectory(
         root: URL,
@@ -1332,6 +1379,304 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         let snapshot = try await store.snapshot(id: prepared.snapshot.id, owner: "alice")
         XCTAssertEqual(snapshot.sessionEpoch, newEpoch)
         XCTAssertNotEqual(snapshot.status, .failed)
+    }
+
+    func testTerminalBudgetPreservesReferenceAndRemovesOldestUnreferencedJob() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        let referenced = try await makeCompletedJob(
+            store: store,
+            prompt: "referenced oldest"
+        )
+        try await Task.sleep(for: .milliseconds(5))
+        let removable = try await makeCompletedJob(
+            store: store,
+            prompt: "unreferenced middle"
+        )
+        try await Task.sleep(for: .milliseconds(5))
+        let newest = try await makeCompletedJob(
+            store: store,
+            prompt: "unreferenced newest"
+        )
+
+        let report = try await store.enforceTerminalBudget(
+            owner: "alice",
+            policy: .init(
+                maximumRecords: 2,
+                maximumBytes: .max,
+                minimumAge: 0,
+                maximumRemovals: 10
+            )
+        ) { snapshot in
+            snapshot.id == referenced
+        }
+
+        XCTAssertEqual(report.removedRecords, 1)
+        XCTAssertEqual(report.referencedRecords, 1)
+        XCTAssertEqual(report.remainingRecords, 2)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: jobDirectory(root: root, owner: "alice", id: referenced).path
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: jobDirectory(root: root, owner: "alice", id: removable).path
+        ))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: jobDirectory(root: root, owner: "alice", id: newest).path
+        ))
+    }
+
+    func testTerminalBudgetHonorsAgeAndReferenceFailureFailClosed() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        let preserved = try await makeCompletedJob(store: store, prompt: "resolver fails")
+        try await Task.sleep(for: .milliseconds(5))
+        let removable = try await makeCompletedJob(store: store, prompt: "resolver succeeds")
+
+        let ageReport = try await store.enforceTerminalBudget(
+            owner: "alice",
+            policy: .init(
+                maximumRecords: 0,
+                maximumBytes: 0,
+                minimumAge: 60,
+                maximumRemovals: 10
+            )
+        ) { _ in false }
+        XCTAssertEqual(ageReport.removedRecords, 0)
+
+        enum ExpectedResolverFailure: Error { case unavailable }
+        let report = try await store.enforceTerminalBudget(
+            owner: "alice",
+            policy: .init(
+                maximumRecords: 1,
+                maximumBytes: .max,
+                minimumAge: 0,
+                maximumRemovals: 10
+            )
+        ) { snapshot in
+            if snapshot.id == preserved { throw ExpectedResolverFailure.unavailable }
+            return false
+        }
+
+        XCTAssertEqual(report.referenceFailures, 1)
+        XCTAssertEqual(report.removedRecords, 1)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: jobDirectory(root: root, owner: "alice", id: preserved).path
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: jobDirectory(root: root, owner: "alice", id: removable).path
+        ))
+    }
+
+    func testTerminalBudgetDoesNotDeleteThroughActiveExecutionLease() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let ownerStore = MediaStudioVideoJobStore(root: root)
+        let epoch = UUID()
+        var execution: MediaStudioVideoJobStore.Execution? = try await ownerStore.prepare(
+            request: request(prompt: "lease protected terminal"),
+            owner: "alice",
+            sessionEpoch: epoch
+        )
+        let id = try XCTUnwrap(execution).snapshot.id
+        execution = try await ownerStore.markSubmitting(
+            try XCTUnwrap(execution),
+            owner: "alice",
+            sessionEpoch: epoch
+        )
+        let providerID = "provider-lease"
+        try await ownerStore.recordProgress(
+            id: id,
+            owner: "alice",
+            sessionEpoch: epoch,
+            progress: .init(status: "completed", jobID: providerID)
+        )
+        try await ownerStore.markCompleted(
+            id: id,
+            owner: "alice",
+            sessionEpoch: epoch,
+            providerJobID: providerID
+        )
+
+        let maintenance = MediaStudioVideoJobStore(root: root)
+        let busyReport = try await maintenance.enforceTerminalBudget(
+            owner: "alice",
+            policy: .init(
+                maximumRecords: 0,
+                maximumBytes: 0,
+                minimumAge: 0,
+                maximumRemovals: 1
+            )
+        ) { _ in false }
+        XCTAssertEqual(busyReport.removedRecords, 0)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: jobDirectory(root: root, owner: "alice", id: id).path
+        ))
+
+        execution = nil
+        let releasedReport = try await maintenance.enforceTerminalBudget(
+            owner: "alice",
+            policy: .init(
+                maximumRecords: 0,
+                maximumBytes: 0,
+                minimumAge: 0,
+                maximumRemovals: 1
+            )
+        ) { _ in false }
+        XCTAssertEqual(releasedReport.removedRecords, 1)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: jobDirectory(root: root, owner: "alice", id: id).path
+        ))
+    }
+
+    func testTerminalBudgetPreservesUnsafeAndNonterminalRecords() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        let unsafeID = try await makeCompletedJob(store: store, prompt: "unsafe terminal")
+        try Data("unexpected".utf8).write(
+            to: jobDirectory(root: root, owner: "alice", id: unsafeID)
+                .appendingPathComponent("unexpected.data")
+        )
+        let residualInputID = try await makeCompletedJob(
+            store: store,
+            prompt: "residual input"
+        )
+        let residualInputs = jobDirectory(
+            root: root,
+            owner: "alice",
+            id: residualInputID
+        ).appendingPathComponent("inputs", isDirectory: true)
+        try FileManager.default.createDirectory(at: residualInputs, withIntermediateDirectories: false)
+        try Data("input".utf8).write(to: residualInputs.appendingPathComponent("firstFrame.artifact"))
+        let hardLinkedID = try await makeCompletedJob(
+            store: store,
+            prompt: "hard-linked manifest"
+        )
+        let hardLinkedManifest = jobDirectory(
+            root: root,
+            owner: "alice",
+            id: hardLinkedID
+        ).appendingPathComponent("job.json")
+        try FileManager.default.linkItem(
+            at: hardLinkedManifest,
+            to: ownerDirectory(root: root, owner: "alice")
+                .appendingPathComponent("hard-linked-job.json")
+        )
+        let prepared = try await store.prepare(
+            request: request(prompt: "still active"),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        let failed = try await store.prepare(
+            request: request(prompt: "failed but recoverable"),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        try await store.markFailure(
+            id: failed.snapshot.id,
+            owner: "alice",
+            phase: "provider",
+            message: "failure evidence",
+            requestMayHaveBeenSubmitted: false,
+            retryable: false
+        )
+
+        let report = try await store.enforceTerminalBudget(
+            owner: "alice",
+            policy: .init(
+                maximumRecords: 0,
+                maximumBytes: 0,
+                minimumAge: 0,
+                maximumRemovals: 10
+            )
+        ) { _ in false }
+
+        XCTAssertEqual(report.removedRecords, 0)
+        XCTAssertEqual(report.unreadableRecords, 3)
+        for id in [
+            unsafeID,
+            residualInputID,
+            hardLinkedID,
+            prepared.snapshot.id,
+            failed.snapshot.id,
+        ] {
+            XCTAssertTrue(FileManager.default.fileExists(
+                atPath: jobDirectory(root: root, owner: "alice", id: id).path
+            ))
+        }
+    }
+
+    func testTerminalByteBudgetIncludesCancelledJobsAndBoundsEachPass() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        var cancelledExecution: MediaStudioVideoJobStore.Execution? = try await store.prepare(
+            request: request(prompt: "cancelled audit"),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        let cancelledID = try XCTUnwrap(cancelledExecution).snapshot.id
+        try await store.markCancellation(id: cancelledID, owner: "alice")
+        cancelledExecution = nil
+        try await Task.sleep(for: .milliseconds(5))
+        let completedID = try await makeCompletedJob(store: store, prompt: "completed audit")
+
+        let policy = MediaStudioVideoJobStore.TerminalMaintenancePolicy(
+            maximumRecords: 10,
+            maximumBytes: 0,
+            minimumAge: 0,
+            maximumRemovals: 1
+        )
+        let first = try await store.enforceTerminalBudget(
+            owner: "alice",
+            policy: policy
+        ) { _ in false }
+        XCTAssertEqual(first.removedRecords, 1)
+        XCTAssertEqual(first.remainingRecords, 1)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: jobDirectory(root: root, owner: "alice", id: cancelledID).path
+        ))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: jobDirectory(root: root, owner: "alice", id: completedID).path
+        ))
+
+        let second = try await store.enforceTerminalBudget(
+            owner: "alice",
+            policy: policy
+        ) { _ in false }
+        XCTAssertEqual(second.removedRecords, 1)
+        XCTAssertEqual(second.remainingRecords, 0)
+    }
+
+    func testTerminalTombstoneReplaySharesRemovalCapAndStaysOwnerScoped() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        let tombstoned = try await makeCompletedJob(store: store, prompt: "crash tombstone")
+        let stillPublished = try await makeCompletedJob(store: store, prompt: "next candidate")
+        let bob = try await makeCompletedJob(store: store, owner: "bob", prompt: "other owner")
+        let source = jobDirectory(root: root, owner: "alice", id: tombstoned)
+        let tombstone = ownerDirectory(root: root, owner: "alice").appendingPathComponent(
+            ".terminal-trash-\(tombstoned.uuidString.lowercased())",
+            isDirectory: true
+        )
+        try FileManager.default.moveItem(at: source, to: tombstone)
+
+        let report = try await store.enforceTerminalBudget(
+            owner: "alice",
+            policy: .init(
+                maximumRecords: 0,
+                maximumBytes: 0,
+                minimumAge: 0,
+                maximumRemovals: 1
+            )
+        ) { _ in false }
+
+        XCTAssertEqual(report.resumedTombstones, 1)
+        XCTAssertEqual(report.removedRecords, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tombstone.path))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: jobDirectory(root: root, owner: "alice", id: stillPublished).path
+        ))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: jobDirectory(root: root, owner: "bob", id: bob).path
+        ))
     }
 
     func testServiceNeverSubmitsAnUncertainRecoveredJob() async throws {

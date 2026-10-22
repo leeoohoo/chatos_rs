@@ -71,6 +71,7 @@ final class MediaStudioViewModel: ObservableObject {
     private let service: any MediaGenerationServicing
     private let imageGenerationUseCase: MediaStudioImageGenerationUseCase
     private let videoJobService: MediaStudioVideoJobService
+    private let videoJobMaintenance: MediaStudioVideoJobMaintenance
     private let modelCatalogUseCase: MediaStudioModelCatalogUseCase
     private let historyUseCase: MediaStudioHistoryUseCase
     private let imageReferenceUseCase: MediaStudioImageReferenceUseCase
@@ -92,6 +93,8 @@ final class MediaStudioViewModel: ObservableObject {
     private var imageGenerationState = MediaStudioImageGenerationState()
     private var videoGenerationState = MediaStudioVideoGenerationState()
     private var hasAttemptedVideoRecovery = false
+    private var hasAttemptedVideoJobMaintenance = false
+    private var videoJobMaintenanceTask: Task<Void, Never>?
     private var videoInputSelectionID = UUID()
     private var videoInputTask: Task<Void, Never>?
     private var videoAudioSelectionID = UUID()
@@ -107,6 +110,7 @@ final class MediaStudioViewModel: ObservableObject {
         storyPlanner: (any StoryPlanningServicing)? = nil
     ) {
         let inputArtifacts = MediaStudioInputArtifactStore()
+        let storyStore = StoryProjectStore()
         self.service = service
         self.inputArtifacts = inputArtifacts
         self.imageGenerationUseCase = MediaStudioImageGenerationUseCase(
@@ -117,6 +121,11 @@ final class MediaStudioViewModel: ObservableObject {
             generator: service,
             history: historyStore,
             store: videoJobStore
+        )
+        self.videoJobMaintenance = MediaStudioVideoJobMaintenance(
+            jobs: videoJobStore,
+            history: historyStore,
+            stories: storyStore
         )
         self.modelCatalogUseCase = MediaStudioModelCatalogUseCase(provider: service)
         self.historyUseCase = MediaStudioHistoryUseCase(history: historyStore)
@@ -131,6 +140,7 @@ final class MediaStudioViewModel: ObservableObject {
         self.stories = StoryStudioViewModel(
             media: service,
             planner: storyPlanner,
+            store: storyStore,
             videoJobStore: videoJobStore
         )
     }
@@ -140,6 +150,7 @@ final class MediaStudioViewModel: ObservableObject {
         historyLoadTask?.cancel()
         imageGenerationTask?.cancel()
         videoGenerationTask?.cancel()
+        videoJobMaintenanceTask?.cancel()
         inputImagesTask?.cancel()
         videoInputTask?.cancel()
         videoAudioTask?.cancel()
@@ -163,6 +174,7 @@ final class MediaStudioViewModel: ObservableObject {
     func activate(userID: String) {
         bindAccount(userID: userID)
         loadHistoryIfNeeded()
+        maintainVideoJobsIfNeeded()
         if !isLoadingHistory { recoverVideoJobIfNeeded() }
         loadSelectedSectionIfNeeded()
     }
@@ -486,6 +498,15 @@ final class MediaStudioViewModel: ObservableObject {
             } catch {
                 self?.finishVideoGeneration(.failure(error), token: token)
             }
+        }
+    }
+
+    private func maintainVideoJobsIfNeeded() {
+        guard !hasAttemptedVideoJobMaintenance, let ownerID else { return }
+        hasAttemptedVideoJobMaintenance = true
+        let maintenance = videoJobMaintenance
+        videoJobMaintenanceTask = Task {
+            _ = try? await maintenance.run(owner: ownerID)
         }
     }
 
@@ -860,9 +881,12 @@ final class MediaStudioViewModel: ObservableObject {
         modelsLoadTask = nil
         videoGenerationTask?.cancel()
         videoGenerationTask = nil
+        videoJobMaintenanceTask?.cancel()
+        videoJobMaintenanceTask = nil
         hasLoaded = false
         hasLoadedHistory = false
         hasAttemptedVideoRecovery = false
+        hasAttemptedVideoJobMaintenance = false
         prompt = ""
         selectedModelID = nil
         inputImages = []

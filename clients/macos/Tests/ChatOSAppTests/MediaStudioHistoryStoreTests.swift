@@ -58,6 +58,40 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: manifest.path))
     }
 
+    func testDurableVideoReferenceLookupIsExactAndRejectsEscapingAssetName() async throws {
+        let root = try directory()
+        let store = MediaStudioHistoryStore(root: root)
+        let id = UUID()
+        let saved = try await store.saveVideo(
+            Self.video(),
+            prompt: "durable reference",
+            owner: "alice",
+            durableRecordID: id.uuidString.lowercased()
+        )
+
+        let exactReference = try await store.referencesDurableVideoJob(id: id, owner: "alice")
+        let missingReference = try await store.referencesDurableVideoJob(id: UUID(), owner: "alice")
+        let foreignOwnerReference = try await store.referencesDurableVideoJob(id: id, owner: "bob")
+        XCTAssertTrue(exactReference)
+        XCTAssertFalse(missingReference)
+        XCTAssertFalse(foreignOwnerReference)
+
+        let manifest = saved.fileURL.deletingLastPathComponent()
+            .appendingPathComponent("record.json")
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any]
+        )
+        var assets = try XCTUnwrap(object["assets"] as? [[String: Any]])
+        assets[0]["filename"] = "../foreign.mp4"
+        object["assets"] = assets
+        try JSONSerialization.data(withJSONObject: object).write(to: manifest, options: .atomic)
+
+        do {
+            _ = try await store.referencesDurableVideoJob(id: id, owner: "alice")
+            XCTFail("An escaping history asset must fail closed")
+        } catch {}
+    }
+
     func testURLImagesAreDownloadedOnceAndRestoreOffline() async throws {
         let root = try directory()
         let transport = HistoryImageTransport()

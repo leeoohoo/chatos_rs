@@ -930,6 +930,86 @@ extension StoryStudioTests {
         XCTAssertEqual(repaired.segments[0].videoJobRecordID, job.intentID)
     }
 
+    func testVideoJobReferenceLookupCoversProjectAndBatchFirstCrashWindow() async throws {
+        let (_, store, _) = try await fixture()
+        var project = try await readyProject(store)
+        let directID = UUID()
+        project.version = 3
+        project.segments[0].videoJobRecordID = directID
+        try await store.save(project, owner: "alice")
+
+        let directReference = try await store.referencesVideoJob(
+            id: directID,
+            owner: "alice",
+            projectID: project.id,
+            segmentID: "s1",
+            batchID: nil
+        )
+        let missingReference = try await store.referencesVideoJob(
+            id: UUID(),
+            owner: "alice",
+            projectID: project.id,
+            segmentID: "s1",
+            batchID: nil
+        )
+        XCTAssertTrue(directReference)
+        XCTAssertFalse(missingReference)
+
+        project.segments[0].videoJobRecordID = nil
+        try await store.save(project, owner: "alice")
+        var legacy = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        let job = StoryMediaBatch.Job()
+        legacy.jobs["videos:s1"] = job
+        legacy.draft.segments[0].attempt = .init(
+            modelConfigID: "video",
+            prompt: "batch crash window",
+            size: "768P",
+            ratio: "16:9",
+            seconds: 15
+        )
+        try await store.commitMediaBatch(legacy)
+
+        var batchFirst = legacy
+        batchFirst.expectedProjectDigest = try StoryAgentRun.digest(legacy.draft)
+        batchFirst.jobs["videos:s1"]?.videoJobRecordID = job.intentID
+        batchFirst.draft.version = 3
+        batchFirst.draft.segments[0].attempt = nil
+        batchFirst.draft.segments[0].videoJobRecordID = job.intentID
+        try batchFirst.validate(owner: "alice", projectID: project.id)
+        let batchManifest = try store.fileURL(
+            "media-batch-\(legacy.id).json",
+            projectID: project.id,
+            owner: "alice"
+        )
+        try JSONEncoder().encode(batchFirst).write(to: batchManifest, options: .atomic)
+
+        let batchReference = try await store.referencesVideoJob(
+            id: job.intentID,
+            owner: "alice",
+            projectID: project.id,
+            segmentID: "s1",
+            batchID: legacy.id
+        )
+        XCTAssertTrue(batchReference)
+        try Data("broken batch".utf8).write(to: batchManifest, options: .atomic)
+        do {
+            _ = try await store.referencesVideoJob(
+                id: job.intentID,
+                owner: "alice",
+                projectID: project.id,
+                segmentID: "s1",
+                batchID: legacy.id
+            )
+            XCTFail("A damaged batch reference must fail closed")
+        } catch {}
+    }
+
     func testMediaBatchesLoadInBoundedPagesAndRemainDirectlyAddressable() async throws {
         let (_, store, _) = try await fixture()
         let project = try await readyProject(store)
