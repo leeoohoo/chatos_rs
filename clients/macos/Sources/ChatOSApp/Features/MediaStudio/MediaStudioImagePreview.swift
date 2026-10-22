@@ -88,17 +88,10 @@ struct MediaStudioImagePreview: View {
             scale = nil
             guard request.images.indices.contains(index) else { return }
             do {
-                let data = try await MediaStudioImageLoader.data(for: request.images[index])
-                try Task.checkCancellation()
-                guard let prepared = try await AppCancellableDetachedWork.run(operation: {
-                    AppImageThumbnailLoader.decode(
-                        data,
-                        maximumSourcePixelCount: 64_000_000,
-                        maximumDisplayPixelSize: 8_192
-                    )
-                }) else {
-                    throw MediaStudioImageLoader.ImageError.invalidImage
-                }
+                let prepared = try await MediaStudioImageLoader.thumbnail(
+                    for: request.images[index],
+                    maximumDisplayPixelSize: 8_192
+                )
                 try Task.checkCancellation()
                 image = prepared.makeNSImage()
             } catch {

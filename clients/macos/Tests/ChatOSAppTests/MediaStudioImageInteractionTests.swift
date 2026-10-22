@@ -207,6 +207,44 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
     }
 
+    func testFileBackedThumbnailCacheKeepsOwnerThroughDirectDecode() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MediaStudioFileThumbnailTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 96, pixelsHigh: 48,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let source = root.appendingPathComponent("response.tmp")
+        let sourcePNG = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        try sourcePNG.write(to: source)
+        var asset: GeneratedMediaAsset? = .init(
+            id: "file-backed-thumbnail-\(UUID().uuidString)",
+            mimeType: "image/png",
+            mediaFile: GeneratedMediaFile(
+                url: source,
+                byteCount: sourcePNG.count,
+                deleteWhenReleased: true
+            )
+        )
+
+        let image = await GeneratedMediaAssetImageCache.image(
+            for: try XCTUnwrap(asset),
+            maximumDisplayPixelSize: 24
+        )
+        let representation = try XCTUnwrap(image?.representations.first)
+        XCTAssertLessThanOrEqual(representation.pixelsWide, 24)
+        XCTAssertLessThanOrEqual(representation.pixelsHigh, 24)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+
+        asset = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+    }
+
     func testNormalizedPNGConversionRejectsInvalidImageData() async {
         do {
             _ = try await MediaStudioImageLoader.normalizedPNGData(from: Data("not-an-image".utf8))

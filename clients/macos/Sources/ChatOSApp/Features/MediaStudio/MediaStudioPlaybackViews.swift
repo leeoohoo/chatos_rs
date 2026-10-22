@@ -55,7 +55,6 @@ struct GeneratedMediaAssetView: View {
 
 @MainActor
 enum GeneratedMediaAssetImageCache {
-    nonisolated private static let maximumSourcePixelCount = 64_000_000
     private static let cache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 96
@@ -74,13 +73,8 @@ enum GeneratedMediaAssetImageCache {
         }
 
         let decoded = await taskPool.value(for: key) {
-            guard let data = try? await MediaStudioImageLoader.data(for: asset) else {
-                return nil
-            }
-            guard !Task.isCancelled else { return nil }
-            return AppImageThumbnailLoader.decode(
-                data,
-                maximumSourcePixelCount: maximumSourcePixelCount,
+            try? await MediaStudioImageLoader.thumbnail(
+                for: asset,
                 maximumDisplayPixelSize: maximumDisplayPixelSize
             )
         }

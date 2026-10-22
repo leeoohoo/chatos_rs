@@ -1462,6 +1462,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：security-scoped 授权覆盖异步文件打开、解码和 PNG 编码，归一化结束后即释放，不延伸到项目 Store 提交；未来 Worker 文件授权协议仍需定义 descriptor/lease 成功交接点。本批仍在 App 进程内持有解码像素面和 PNG 输出 `Data`，没有实现跨进程图片解码、文件式 Store 提交或真实内存压力/签名 Release soak，P0-E 不能标记完成。
 
+### 12.46 第四十六批实施记录：file-backed 图片预览直接解码（2026-10-23）
+
+本批补齐 12.44 后仍绕回整文件读取的两个高频 UI 消费点。媒体卡片/Story 缩略图缓存与全屏图片预览此前统一调用 `MediaStudioImageLoader.data(for:)`，导致 file-backed provider 响应和本地历史图片仍会先复制为最多 20 MiB 的完整 `Data`，再进行下采样解码。
+
+已实施：
+
+- `MediaStudioImageLoader` 新增统一 thumbnail 入口：file URL 直接调用 12.44 的 `O_NOFOLLOW`/`fstat`/`/dev/fd` 解码路径，Base64 与 HTTPS 资产继续通过既有有界下载/解码兼容路径；64 MP 源像素预算和调用方显示像素上限保持不变。
+- file-backed asset 在异步缩略解码期间显式保留 `GeneratedMediaFile` owner，避免响应 artifact 在 ImageIO 仍读取 descriptor 时提前释放；解码完成后缓存只持有有界像素表示，不延长源文件生命周期。
+- 媒体卡片共享缩略图缓存与全屏预览改用同一入口，删除各自“整文件 Data + 再次 detached decode”的重复实现；既有 waiter-aware 取消、NSCache 数量/成本限制和 Retina 像素边界保持不变。
+- 新回归使用 lease-owned file-backed 图片通过真实共享缓存下采样，确认 owner 在解码期间存活、输出不超过目标 24 px，调用方释放 asset 后源文件立即删除；旧 Base64、历史文件和远端无凭据下载回归继续通过。
+
+验证：Debug 与 arm64 Release 各运行 `MediaStudioImageInteractionTests` 13 项和 `AppThumbnailPixelRepresentationTests` 3 项，共 16 项，全部通过。Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁；未启动/安装正式 App，未访问活动用户数据库。
+
+边界：本批消除的是预览/缩略图 file-backed 输入的完整压缩源 `Data`；ImageIO 解码工作集和缓存的有界位图仍属于 App 进程，Base64/HTTPS 兼容输入仍需要源 `Data`。Story PNG 输出到 Store 的文件式提交、Media Worker 解码隔离、真实滚动/快速切图 memory trace 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

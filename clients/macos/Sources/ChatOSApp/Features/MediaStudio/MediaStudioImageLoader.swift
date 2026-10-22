@@ -75,6 +75,35 @@ enum MediaStudioImageLoader {
         }
     }
 
+    static func thumbnail(
+        for asset: GeneratedMediaAsset,
+        maximumDisplayPixelSize: Int,
+        transport: any HTTPTransport = URLSessionHTTPTransport()
+    ) async throws -> AppDecodedThumbnail {
+        guard maximumDisplayPixelSize > 0 else { throw ImageError.invalidImage }
+        if let url = asset.url, url.isFileURL {
+            let owner = asset.mediaFile
+            defer { withExtendedLifetime(owner) {} }
+            return try await AppImageThumbnailLoader.loadLocalFile(
+                url,
+                maximumBytes: maximumImageBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumDisplayPixelSize: maximumDisplayPixelSize
+            )
+        }
+        let bytes = try await data(for: asset, transport: transport)
+        return try await AppCancellableDetachedWork.run {
+            guard let decoded = AppImageThumbnailLoader.decode(
+                bytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumDisplayPixelSize: maximumDisplayPixelSize
+            ) else {
+                throw ImageError.invalidImage
+            }
+            return decoded
+        }
+    }
+
     /// Normalizes a generated image without first materializing a file-backed response as Data.
     static func normalizedPNGData(
         for asset: GeneratedMediaAsset,
