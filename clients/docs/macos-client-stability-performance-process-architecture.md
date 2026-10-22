@@ -1295,6 +1295,23 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批只管理 App 内现有 MediaJobStore 的本地终态审计记录，不删除视频历史成片或 Story 业务文件，不把本地删除解释为 provider cancel，也不引入 TTL 抢占。App→Worker 必须显式交接 execution lease；真实双 App/`SIGKILL`/睡眠/断网矩阵、Media Worker、高风险媒体解码隔离和发布级 soak 仍待完成，P0-E 不能标记完成。
 
+### 12.35 第三十五批实施记录：MediaJobStore 真实 SIGKILL 状态矩阵（2026-10-23）
+
+本批把 12.20～12.34 的 durable 状态与 execution lease 语义提升为真实进程死亡回归。测试父进程启动独立 xctest 子进程，子进程运行生产 `MediaStudioVideoJobStore` 路径并持有真实文件锁；到达持久化停点后用 checkpoint 文件通知父进程，父进程发送 `SIGKILL`（signal 9），再由全新的 Store 实例恢复。没有在生产代码中加入测试环境变量、暂停点或模拟崩溃分支，也没有启动/安装 ChatOS App。
+
+已验证：
+
+- `prepared` 在 provider 提交边界之前被强杀，重启仍以相同 stable job ID 和 idempotency key 返回 create mode；该状态按协议尚未长期持 execution lease，不能把可接管误写成 busy。
+- `submitting` 尚未持久化 provider ID 时被强杀，重启先进入 `submission_uncertain`/needs-review，绝不退回 create；这直接覆盖最危险的“服务商可能已接单但本地未记 ID”窗口。
+- provider ID 已持久化后被强杀，重启只返回同一 provider ID 的 resume mode；`finalizing` 被强杀也保留 provider identity 并进入既有恢复/业务 manifest 对账路径，不生成新 provider task。
+- `completed` 被强杀后仍是不可恢复终态，普通 recover 返回 nil，不会因为进程死亡重新开放 provider 工作。
+- 从 submitting 开始，子进程存活期间父进程的竞争 recover 明确得到 `jobBusy`，不能先改写 session epoch；signal 9 后内核释放 lease，新 Store 随即按上述状态恢复。每个场景使用独立临时 owner root，退出后删除，不触碰活动用户数据。
+- 子进程启动、checkpoint 等待和 SIGKILL 后退出观察均有明确超时；Release 验证发现 Foundation 的同步 `Process.waitUntilExit()` 可在异步 XCTest worker 上无界等待，因此门禁改为有界异步 `isRunning` 观察，避免测试驱动自身制造假挂死。
+
+验证：Debug 与 arm64 Release 均运行 5 个真实 SIGKILL 场景和 1 个仅供显式子进程选择的 probe 入口，共 6 项 XCTest，全部通过；子进程提前退出会回传 stdout/stderr，未到 checkpoint 或 kill 后未及时退出都会明确失败。`git diff --check` 同步作为本批提交门禁。
+
+边界：这是独立 xctest 子进程上的真实内核强杀与生产 Store 文件协议，不是签名后的完整 App/Media Worker 组合验收，也不发真实 provider 请求。它不覆盖 POST 正在内核/网络栈传输、下载 partial、Story/History 文件 rename 任意指令窗口、睡眠/唤醒、断网、ENOSPC、断电或两份正式 App 包并存；这些仍需固定 Release 场景和 Worker 进程矩阵。App→Worker lease 所有权交接与 Media Worker 尚未实现，P0-E 仍不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
