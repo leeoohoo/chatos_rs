@@ -111,8 +111,10 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         let images = try payload.data.enumerated().map { index, item -> GeneratedMediaAsset in
             let assetID = item.id ?? "\(resultID):image:\(index)"
             if let base64Data = item.b64JSON ?? item.base64Data {
-                guard let decoded = Data(base64Encoded: base64Data),
-                      decoded.count <= 20 * 1024 * 1024 else {
+                guard ChatOSBase64PayloadValidator.decodedByteCount(
+                    base64Data,
+                    maximumBytes: 20 * 1024 * 1024
+                ) != nil else {
                     throw MediaGenerationClientError.invalidProviderResponse
                 }
                 return GeneratedMediaAsset(

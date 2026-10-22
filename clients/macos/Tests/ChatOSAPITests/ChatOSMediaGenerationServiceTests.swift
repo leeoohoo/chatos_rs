@@ -5,6 +5,44 @@ import XCTest
 @testable import ChatOSAPI
 
 final class ChatOSMediaGenerationServiceTests: XCTestCase {
+    func testProviderBase64ValidationDoesNotRequireDecodedData() {
+        XCTAssertEqual(
+            ChatOSBase64PayloadValidator.decodedByteCount("aW1hZ2U=", maximumBytes: 5),
+            5
+        )
+        XCTAssertNil(ChatOSBase64PayloadValidator.decodedByteCount("", maximumBytes: 20))
+        XCTAssertNil(ChatOSBase64PayloadValidator.decodedByteCount("aW1hZ2U", maximumBytes: 20))
+        XCTAssertNil(ChatOSBase64PayloadValidator.decodedByteCount("aW1h=2U=", maximumBytes: 20))
+        XCTAssertNil(ChatOSBase64PayloadValidator.decodedByteCount("aW1hZ2U*", maximumBytes: 20))
+        XCTAssertNil(ChatOSBase64PayloadValidator.decodedByteCount("aW1hZ2U=", maximumBytes: 4))
+    }
+
+    func testGenerateImageRejectsMalformedProviderBase64AtAPIBoundary() async throws {
+        let transport = InvalidImageBase64Transport()
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
+            accessToken: "token",
+            transport: transport
+        )
+
+        do {
+            _ = try await ChatOSMediaGenerationService(
+                client: client,
+                providerTransport: transport
+            ).generateImage(.init(
+                modelConfigID: "image-model",
+                prompt: "test",
+                size: nil,
+                count: 1
+            ))
+            XCTFail("Malformed provider Base64 must be rejected")
+        } catch MediaGenerationClientError.invalidProviderResponse {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testResumeVideoOnlyQueriesExistingNewAPITask() async throws {
         let transport = NewAPIVideoTransport()
         let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://example.com")!), accessToken: "token", transport: transport)
@@ -1031,6 +1069,23 @@ private actor MediaGenerationTransport: HTTPTransport {
         materialized.body = try Data(contentsOf: bodyFile.url)
         materialized.bodyFile = nil
         return try await send(materialized)
+    }
+}
+
+private actor InvalidImageBase64Transport: HTTPTransport {
+    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        if request.url.path.hasSuffix("/model-configs/image-model") {
+            return .init(
+                statusCode: 200,
+                headers: [:],
+                body: Data(#"{"id":"image-model","name":"Image","provider":"gpt","model":"gpt-image-1","api_key":"secret","base_url":"https://provider.example/v1","enabled":true}"#.utf8)
+            )
+        }
+        return .init(
+            statusCode: 200,
+            headers: [:],
+            body: Data(#"{"id":"invalid-image","data":[{"b64_json":"aW1hZ2U*"}]}"#.utf8)
+        )
     }
 }
 

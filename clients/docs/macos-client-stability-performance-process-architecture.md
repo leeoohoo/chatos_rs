@@ -1388,6 +1388,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批只消除 Story 图片生成**输入参考图**的 `Data + Base64` 峰值；provider 返回图片目前仍可能是完整 JSON/Base64，输出解码、AppKit 归一化和项目落盘仍在主进程。真实大图 memory/physical-footprint trace、响应侧流式协议、恶意/超大像素解码隔离、网络/睡眠/ENOSPC 故障矩阵、App→Worker lease 交接、Media Worker 和签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.41 第四十一批实施记录：图片响应 Base64 零输出分配校验（2026-10-23）
+
+本批继续收敛 12.40 明确保留的图片响应峰值。`generateImage` 在 JSON 解码得到 Base64 字符串后，此前会先调用 `Data(base64Encoded:)` 生成最多 20 MiB 的完整图片副本，只用它检查字节数便立即丢弃；Story 或历史持久化随后还会再解码同一个字符串。这是与图片大小线性增长、且对每次 Base64 图片响应必然发生的一份冗余缓冲。
+
+已实施：
+
+- API 层新增只遍历 `String.UTF8View` 的严格 Base64 校验器，不构造解码输出；校验标准字母表、四字符分组、只允许末尾一至两个 padding，并通过编码长度和 padding 精确计算解码字节数。
+- `generateImage` 仍在返回 Core DTO 之前拒绝空内容、畸形 Base64 和解码后超过 20 MiB 的图片，既有错误类型、provider 身份、MIME、revised prompt 与后续消费协议不变；合法响应不再为预校验额外分配最多 20 MiB 的 `Data`。
+- 新回归覆盖精确字节数、空值、缺失 padding、中间 padding、非法字符和上限越界，并通过完整 service 调用确认畸形 provider 响应仍在 API boundary 返回 `invalidProviderResponse`；原有合法 `b64_json` 路径继续通过。
+
+验证：Debug 与 arm64 Release 各运行 `ChatOSMediaGenerationServiceTests` 31 项，全部通过；Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。测试使用受控 transport，不启动/安装正式 App、不请求真实 provider、不读取活动用户数据。
+
+边界：本批只删除“预校验后丢弃”的重复解码副本；HTTP 响应 `Data`、JSONDecoder 产生的 Base64 `String` 和业务消费者真正需要的单次图片解码仍同时存在，尚未实现 JSON/Base64 流式落盘。图片像素解码与 PNG 归一化仍在主进程；真实大响应 memory trace、响应 artifact/崩溃对账、Media Worker、睡眠/断网/ENOSPC 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
