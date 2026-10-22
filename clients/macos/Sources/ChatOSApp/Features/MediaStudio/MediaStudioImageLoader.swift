@@ -66,31 +66,66 @@ enum MediaStudioImageLoader {
             ) else {
                 throw ImageError.invalidImage
             }
-            let destinationData = NSMutableData()
-            guard let destination = CGImageDestinationCreateWithData(
-                destinationData,
-                UTType.png.identifier as CFString,
-                1,
-                nil
-            ) else {
-                throw ImageError.invalidImage
-            }
-            CGImageDestinationAddImage(destination, decoded.image, nil)
-            guard CGImageDestinationFinalize(destination) else {
-                throw ImageError.invalidImage
-            }
-            try Task.checkCancellation()
-            let png = destinationData as Data
-            guard !png.isEmpty, png.count <= 64 * 1_024 * 1_024 else {
-                throw ImageError.invalidImage
-            }
-            return png
+            return try encodedPNG(decoded)
         }
         return try await withTaskCancellationHandler {
             try await task.value
         } onCancel: {
             task.cancel()
         }
+    }
+
+    /// Normalizes a generated image without first materializing a file-backed response as Data.
+    static func normalizedPNGData(
+        for asset: GeneratedMediaAsset,
+        transport: any HTTPTransport = URLSessionHTTPTransport()
+    ) async throws -> Data {
+        if let url = asset.url, url.isFileURL {
+            let owner = asset.mediaFile
+            let task = Task.detached(priority: .userInitiated) {
+                try withExtendedLifetime(owner) {
+                    try Task.checkCancellation()
+                    guard let decoded = try AppImageThumbnailLoader.decodeFile(
+                        url,
+                        maximumBytes: maximumImageBytes,
+                        maximumSourcePixelCount: maximumSourcePixelCount,
+                        maximumDisplayPixelSize: maximumNormalizedPixelSize
+                    ) else {
+                        throw ImageError.invalidImage
+                    }
+                    return try encodedPNG(decoded)
+                }
+            }
+            return try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+        }
+        let bytes = try await data(for: asset, transport: transport)
+        return try await normalizedPNGData(from: bytes)
+    }
+
+    private nonisolated static func encodedPNG(_ decoded: AppDecodedThumbnail) throws -> Data {
+        let destinationData = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            destinationData,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw ImageError.invalidImage
+        }
+        CGImageDestinationAddImage(destination, decoded.image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw ImageError.invalidImage
+        }
+        try Task.checkCancellation()
+        let png = destinationData as Data
+        guard !png.isEmpty, png.count <= 64 * 1_024 * 1_024 else {
+            throw ImageError.invalidImage
+        }
+        return png
     }
 
     enum ImageError: LocalizedError {

@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import ImageIO
 import SwiftUI
@@ -34,10 +35,9 @@ enum AppImageThumbnailLoader {
         guard url.isFileURL else { throw AppImageThumbnailError.unsupportedURL }
         let task = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
-            let data = try AppBoundedFileReader.read(url, maximumBytes: maximumBytes)
-            try Task.checkCancellation()
-            guard let decoded = decode(
-                data,
+            guard let decoded = try decodeFile(
+                url,
+                maximumBytes: maximumBytes,
                 maximumSourcePixelCount: maximumSourcePixelCount,
                 maximumDisplayPixelSize: maximumDisplayPixelSize
             ) else {
@@ -52,6 +52,44 @@ enum AppImageThumbnailLoader {
         }
     }
 
+    nonisolated static func decodeFile(
+        _ url: URL,
+        maximumBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumDisplayPixelSize: Int
+    ) throws -> AppDecodedThumbnail? {
+        guard url.isFileURL else { throw AppImageThumbnailError.unsupportedURL }
+        guard maximumBytes > 0 else { throw AppBoundedFileReadError.invalidLimit }
+        try Task.checkCancellation()
+        let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else { throw AppBoundedFileReadError.notRegularFile }
+        defer { Darwin.close(descriptor) }
+
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFREG,
+              status.st_size > 0 else {
+            throw AppBoundedFileReadError.notRegularFile
+        }
+        guard status.st_size <= maximumBytes else {
+            throw AppBoundedFileReadError.fileTooLarge(maximumBytes: maximumBytes)
+        }
+        let descriptorURL = URL(fileURLWithPath: "/dev/fd/\(descriptor)")
+        guard let source = CGImageSourceCreateWithURL(descriptorURL as CFURL, [
+            kCGImageSourceShouldCache: false,
+        ] as CFDictionary) else {
+            return nil
+        }
+        return decode(
+            source,
+            maximumSourcePixelCount: maximumSourcePixelCount,
+            maximumDisplayPixelSize: maximumDisplayPixelSize
+        )
+    }
+
     nonisolated static func decode(
         _ data: Data,
         maximumSourcePixelCount: Int,
@@ -63,7 +101,24 @@ enum AppImageThumbnailLoader {
               maximumDisplayPixelSize > 0,
               let source = CGImageSourceCreateWithData(data as CFData, [
                 kCGImageSourceShouldCache: false,
-              ] as CFDictionary),
+              ] as CFDictionary) else {
+            return nil
+        }
+        return decode(
+            source,
+            maximumSourcePixelCount: maximumSourcePixelCount,
+            maximumDisplayPixelSize: maximumDisplayPixelSize
+        )
+    }
+
+    private nonisolated static func decode(
+        _ source: CGImageSource,
+        maximumSourcePixelCount: Int,
+        maximumDisplayPixelSize: Int
+    ) -> AppDecodedThumbnail? {
+        guard !Task.isCancelled,
+              maximumSourcePixelCount > 0,
+              maximumDisplayPixelSize > 0,
               CGImageSourceGetCount(source) > 0,
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
                 as? [CFString: Any],

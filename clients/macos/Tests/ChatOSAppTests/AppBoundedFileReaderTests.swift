@@ -227,6 +227,27 @@ struct AppBoundedFileReaderTests {
         }
     }
 
+    @Test("local image thumbnail loader rejects symbolic links before ImageIO decode")
+    func rejectsSymlinkedImageBeforeDecode() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("app-image-symlink-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("target.png")
+        let link = root.appendingPathComponent("link.png")
+        try png(width: 64, height: 32).write(to: target)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        await #expect(throws: AppBoundedFileReadError.self) {
+            _ = try await AppImageThumbnailLoader.loadLocalFile(
+                link,
+                maximumBytes: 1_024 * 1_024,
+                maximumSourcePixelCount: 64 * 32,
+                maximumDisplayPixelSize: 16
+            )
+        }
+    }
+
     @MainActor
     @Test("base64 image cache decodes and bounds an inline image asynchronously")
     func decodesBase64ImageThroughSharedCache() async throws {

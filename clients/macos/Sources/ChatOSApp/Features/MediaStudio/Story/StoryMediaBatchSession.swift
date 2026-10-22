@@ -139,8 +139,7 @@ actor StoryMediaBatchSession {
               result.projectID == nil || result.projectID == request.projectID,
               result.resourceID == nil || result.resourceID == request.resourceID else { throw StoryError.invalidPlan }
         guard let image = result.images.first else { throw StoryError.unsafeFile }
-        let bytes = try await MediaStudioImageLoader.data(for: image)
-        let png = try await MediaStudioImageLoader.normalizedPNGData(from: bytes)
+        let png = try await MediaStudioImageLoader.normalizedPNGData(for: image)
         let stored = try await store.saveImage(png, mimeType: "image/png", projectID: project.id, owner: state.owner,
                                                sourceResourceID: id, generationAttemptID: job.intentID,
                                                providerResultID: result.id, providerAssetID: image.id)

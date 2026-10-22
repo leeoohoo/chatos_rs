@@ -170,6 +170,43 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         XCTAssertFalse(png.isEmpty)
     }
 
+    func testFileBackedNormalizationKeepsOwnerAliveAndProducesBoundedPNG() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MediaStudioFileNormalizationTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 128, pixelsHigh: 64,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let source = root.appendingPathComponent("response.tmp")
+        let sourcePNG = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        try sourcePNG.write(to: source)
+        var asset: GeneratedMediaAsset? = .init(
+            id: "file-backed-normalization",
+            mimeType: "image/png",
+            mediaFile: GeneratedMediaFile(
+                url: source,
+                byteCount: sourcePNG.count,
+                deleteWhenReleased: true
+            )
+        )
+
+        let normalized = try await MediaStudioImageLoader.normalizedPNGData(
+            for: try XCTUnwrap(asset)
+        )
+        let representation = try XCTUnwrap(NSBitmapImageRep(data: normalized))
+        XCTAssertEqual(representation.pixelsWide, 128)
+        XCTAssertEqual(representation.pixelsHigh, 64)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+
+        asset = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+    }
+
     func testNormalizedPNGConversionRejectsInvalidImageData() async {
         do {
             _ = try await MediaStudioImageLoader.normalizedPNGData(from: Data("not-an-image".utf8))

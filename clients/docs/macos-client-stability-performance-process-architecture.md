@@ -1432,6 +1432,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：图片 probe 的强杀点位于增量解码完成、结果 owner 正在使用的窗口；本批没有向 Base64 writer 每个 chunk 注入停点，因此不单独证明图片 partial 写入的每个指令窗口，但底层通用 response writer 的视频 mode 已覆盖“payload 写入中”强杀与同一清理协议。真实 App/Worker 启动接线、断电、写入中 ENOSPC、HTTP/JSON 流式解析、主进程像素解码隔离和签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.44 第四十四批实施记录：Story 文件图片直接解码（2026-10-23）
+
+本批继续消除 12.42 文件化之后残留的应用层源文件副本。此前 Story 的资源图、首尾帧和 Batch 收到 file-backed provider 结果后，仍先把最多 20 MiB 的临时文件完整读成 `Data`，随后才交给 ImageIO 解码和 PNG 归一化；因此响应文件与同尺寸源 `Data` 会在 App 进程内并存。
+
+已实施：
+
+- 本地图片解码器改为以 `O_NOFOLLOW | O_CLOEXEC` 打开文件，对已打开 descriptor 执行 `fstat`，只接受非空、未超过 20 MiB 的普通文件，再通过 `/dev/fd/<descriptor>` 直接交给 ImageIO；不再为 file-backed 输入先创建完整源 `Data`，符号链接在解码前拒绝。
+- Data 与文件两种入口复用同一像素预算和缩略解码核心：源像素仍限制为 64 MP，归一化最长边仍限制为 8,192 px，ImageIO 立即生成有界像素面后再编码 PNG；本地缩略图加载也同步复用文件入口，避免预览路径重新引入整文件副本。
+- 新增 `normalizedPNGData(for:)`，file-backed `GeneratedMediaAsset` 在 detached 工作中直接解码，并用显式 owner lifetime 保证 lease-owned 临时文件直到 ImageIO 和 PNG 编码结束才可释放。旧 Base64 与 HTTPS 结果继续走有界兼容路径。
+- Story 单次资源图、单次首尾帧、持久 Media Batch 图片步骤和生成图片导入统一使用 asset 级归一化入口；既有 attempt fencing、账户 continuation check、provider identity 和 Store 完成提交协议保持不变。
+- 回归覆盖 file-backed owner 在归一化期间存活、输出尺寸正确、完成后源文件随 owner 释放，以及 symlink 在 ImageIO 前被拒绝；完整 Story、图片交互和缩略图回归继续验证旧 Base64/本地历史兼容。
+
+验证：Debug 与 arm64 Release 各选择性运行 `StoryStudioTests` 93 项、`MediaStudioImageInteractionTests` 12 项、`AppThumbnailPixelRepresentationTests` 3 项和 `AppBoundedFileReaderTests` 16 项，共 124 项，全部通过。Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁；未启动/安装正式 App，未请求 provider，未读取活动用户数据。
+
+边界：本批删除的是 file-backed 输入的完整**压缩源字节**副本；ImageIO 的有界解码像素面和最终 PNG `Data` 仍位于 App 进程，Store 也仍以 `Data` 接收归一化结果。HTTPS/旧 Base64 兼容资产仍会产生源 `Data`。将恶意图片解码、PNG 编码和最终文件提交整体迁入 Media Worker，真实 20 MiB/64 MP physical-footprint trace、内存压力、取消风暴和签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
