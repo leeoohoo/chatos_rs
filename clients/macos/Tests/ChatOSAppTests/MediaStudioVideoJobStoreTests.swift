@@ -413,6 +413,66 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         XCTAssertEqual(released.failurePhase, "verified_retry_release")
     }
 
+    func testLegacyBatchSubmissionWithoutProviderIDImportsAsReviewOnly() async throws {
+        let directory = try directory()
+        let root = directory.appendingPathComponent("jobs")
+        let source = directory.appendingPathComponent("legacy-reference.mov")
+        try Data(repeating: 0x42, count: 2_048).write(to: source)
+        let store = MediaStudioVideoJobStore(root: root)
+        let intentID = UUID()
+        let workload = MediaStudioVideoJobStore.Workload.storyBatchVideo(
+            projectID: UUID(),
+            batchID: UUID(),
+            segmentID: "segment-batch",
+            attemptID: intentID
+        )
+        let legacyRequest = VideoGenerationRequest(
+            modelConfigID: "video-model",
+            prompt: "ambiguous legacy batch submission",
+            size: "768P",
+            seconds: 4,
+            referenceVideo: .init(
+                name: "legacy-reference.mov",
+                mimeType: "video/quicktime",
+                fileURL: source
+            )
+        )
+
+        let staged = try await store.stageSubmissionUncertain(
+            request: legacyRequest,
+            id: intentID,
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        let repeated = try await MediaStudioVideoJobStore(root: root).stageSubmissionUncertain(
+            request: legacyRequest,
+            id: intentID,
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        XCTAssertEqual(repeated.id, staged.id)
+        XCTAssertEqual(repeated.status, .submissionUncertain)
+        XCTAssertFalse(repeated.isActive)
+        XCTAssertTrue(files(named: "referenceVideo.artifact", under: root).isEmpty)
+        let inactive = try await store.recover(
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        XCTAssertNil(inactive)
+
+        let activated = try await store.activate(
+            id: intentID,
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        XCTAssertEqual(activated.mode, .needsReview)
+        XCTAssertNil(activated.snapshot.providerJobID)
+    }
+
     func testProviderIdentityCannotChangeAfterFirstDurableObservation() async throws {
         let root = try directory().appendingPathComponent("jobs")
         let store = MediaStudioVideoJobStore(root: root)

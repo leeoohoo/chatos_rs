@@ -13,6 +13,7 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
     struct Job: Codable, Equatable, Sendable {
         var intentID = UUID()
         var jobID: String?
+        var videoJobRecordID: UUID?
         var completed = false
     }
     struct Event: Codable, Equatable, Identifiable, Sendable {
@@ -125,9 +126,23 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
         self.userIdeas = normalizedIdeas.isEmpty ? nil : normalizedIdeas
     }
     func validate(owner: String, projectID: UUID) throws {
+        let hasValidJobs = Set(jobs.values.map(\.intentID)).count == jobs.count
+            && jobs.allSatisfy { key, job in
+                guard job.jobID.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+                    ?? true else { return false }
+                guard let recordID = job.videoJobRecordID else { return true }
+                guard recordID == job.intentID,
+                      let step = steps.first(where: { $0.id == key }),
+                      step.kind == .videos,
+                      let segment = draft.segments.first(where: { $0.id == step.targetID }) else {
+                    return false
+                }
+                return segment.videoJobRecordID == recordID && segment.attempt == nil
+            }
         guard self.owner == owner, draft.id == projectID, !steps.isEmpty, steps.count <= 500,
               Set(steps.map(\.id)).count == steps.count, steps.allSatisfy({ $0.kind != .pipeline }),
-              jobs.keys.allSatisfy(Set(steps.map(\.id)).contains), events.count <= 20_000,
+              jobs.keys.allSatisfy(Set(steps.map(\.id)).contains), hasValidJobs,
+              events.count <= 20_000,
               (userIdeas?.count ?? 0) <= StoryGenerationContext.maximumUserIdeasLength else { throw StoryAgentError.invalidRun }
         try draft.validate()
     }
@@ -237,6 +252,53 @@ extension StoryProjectStore {
         guard data.count <= Self.maximumMediaBatchBytes else { throw StoryAgentError.invalidRun }
         try data.write(to: try fileURL("media-batch-\(batch.id).json", projectID: batch.draft.id, owner: batch.owner), options: .atomic)
         if digest != draftDigest { try save(batch.draft, owner: batch.owner) }
+    }
+
+    /// Switches one legacy Batch video intent to MediaJobStore ownership. The batch manifest is
+    /// the write-ahead record and the canonical Story project is the second commit. Replaying
+    /// this method repairs a crash between those two files without restoring the legacy writer.
+    func handoffMediaBatchVideoGenerationToMediaJob(
+        owner: String,
+        projectID: UUID,
+        batchID: UUID,
+        stepID: String,
+        expectedIntentID: UUID
+    ) throws -> StoryMediaBatch {
+        var batch = try loadMediaBatch(owner: owner, projectID: projectID, batchID: batchID)
+        guard let step = batch.steps.first(where: { $0.id == stepID }),
+              step.kind == .videos,
+              var job = batch.jobs[stepID],
+              job.intentID == expectedIntentID,
+              let index = batch.draft.segments.firstIndex(where: { $0.id == step.targetID }),
+              batch.draft.segments[index].video == nil else {
+            throw StoryError.unresolvedSubmission
+        }
+        if job.videoJobRecordID == expectedIntentID {
+            guard batch.draft.segments[index].videoJobRecordID == expectedIntentID,
+                  batch.draft.segments[index].attempt == nil else {
+                throw StoryError.unresolvedSubmission
+            }
+            try commitMediaBatch(batch)
+            return batch
+        }
+        guard !job.completed,
+              job.videoJobRecordID == nil,
+              batch.draft.segments[index].videoJobRecordID == nil,
+              let attempt = batch.draft.segments[index].attempt,
+              attempt.jobID == job.jobID else {
+            throw StoryError.unresolvedSubmission
+        }
+        batch.expectedProjectDigest = try StoryAgentRun.digest(batch.draft)
+        job.videoJobRecordID = expectedIntentID
+        batch.jobs[stepID] = job
+        batch.draft.version = 3
+        batch.draft.segments[index].attempt = nil
+        batch.draft.segments[index].videoJobRecordID = expectedIntentID
+        batch.draft.segments[index].error = nil
+        batch.events.append(.init(detail: "视频任务已切换到持久任务记录：\(step.targetID)"))
+        batch.updatedAt = Date()
+        try commitMediaBatch(batch)
+        return batch
     }
 
     /// Older video queues could finish writing the generated clip to the canonical project

@@ -1201,6 +1201,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：这是人工解锁闭环，不是 provider cancel/退款协议；用户确认前仍不会自动重发不确定任务，确认后也无法证明服务商没有继续执行旧任务。durable terminal job 的长期保留/配额清理、旧持久 Batch 分页导入、隐藏 staging 限龄清理、长期 lease/App→Worker 独占交接、真实逐状态强杀/睡眠/断网矩阵与 Media Worker 仍待完成，P0-E 不能标记完成。
 
+### 12.29 第二十九批实施记录：Story Media Batch durable handoff 协议（2026-10-22）
+
+本批先建立旧持久 Batch 视频任务切换唯一写入者所需的 schema 与可恢复提交协议，尚不让生产 Batch session 同时写旧字段和 MediaJobStore。审计确认旧路径会把 provider ID/status 同时推进到 `StoryMediaBatch.jobs` 与 `segment.attempt`；如果在没有 handoff 的情况下直接旁路写 Store，会违反 6.4 的单一事实源约束。
+
+已实施：
+
+- `StoryMediaBatch.Job` 新增可选 `videoJobRecordID`，旧 JSON 缺失字段继续解码为 nil。非空关联必须等于稳定 `intentID`、只属于对应 videos step，并与 Batch draft 中同 segment 的 `videoJobRecordID` 精确一致；关联后 legacy attempt 必须为空，损坏或交叉绑定的 batch 拒绝加载。
+- StoryProjectStore 新增 Batch 视频 handoff：校验 owner/project/batch/step/intent、旧 job 与 attempt 的 provider ID 一致后，在 Batch draft 内以 `intentID` 替换 legacy attempt，并把 project schema 升到 v3。相同 handoff 可重复执行，不同 intent 不能接管。
+- 两文件顺序继续采用 Batch manifest write-ahead、canonical Story project second。handoff 前把旧 draft digest 固化为 expected digest；若进程在 Batch 文件提交后、Story 文件提交前退出，重放会接受精确旧 canonical 状态并补第二次写入，而不会恢复旧 attempt writer。
+- MediaJobStore 新增 `stageSubmissionUncertain`，用于导入没有 provider ID、但不能证明 POST 未发生的旧 Batch intent。该记录不复制 create 输入、激活后只能返回 `needsReview`，重复 stage 幂等，绝不会被恢复成 create；已有 provider ID 继续使用只-resume 的 imported-provider 路径。
+
+验证：覆盖 Batch workload 的无 provider ID 不确定态导入、无输入副本、激活后只人工核对、legacy provider identity 保留、Batch/draft/canonical 三方关联切换、重复 handoff、外来 intent 拒绝，以及 Batch-first 崩溃窗口重放修复。Debug 与 arm64 Release 选择性运行 MediaJobStore/Story，各 108 项 XCTest 全部通过；Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
+
+边界：本批只交付下一阶段接管所需的持久格式与 handoff 原语，生产 `StoryMediaBatchSession` 仍是 legacy 唯一 writer，没有旁路双写，也不会扫描或改写用户现有 batch。下一批必须把 account session epoch、stage/import → Batch handoff → activate、progress/finalize/recovery 全部在同一切换中接入后，才能停止写 `batch.jobs.jobID` 与 `segment.attempt`。分页迁移协调器、终态清理、staging 限龄、长期 lease、真实强杀矩阵与 Media Worker 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

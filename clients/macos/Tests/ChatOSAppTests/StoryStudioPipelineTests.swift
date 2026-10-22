@@ -115,6 +115,118 @@ extension StoryStudioTests {
         XCTAssertNil(recovered.error)
     }
 
+    func testMediaBatchVideoHandoffReplacesLegacyWritersAndIsIdempotent() async throws {
+        let (_, store, _) = try await fixture()
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        var batch = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        var job = StoryMediaBatch.Job()
+        job.jobID = "provider-existing"
+        batch.jobs["videos:s1"] = job
+        batch.draft.segments[0].attempt = .init(
+            modelConfigID: "video",
+            prompt: "legacy batch prompt",
+            size: "768P",
+            ratio: "16:9",
+            seconds: 15
+        )
+        batch.draft.segments[0].attempt?.jobID = "provider-existing"
+        try await store.commitMediaBatch(batch)
+
+        let handedOff = try await store.handoffMediaBatchVideoGenerationToMediaJob(
+            owner: "alice",
+            projectID: project.id,
+            batchID: batch.id,
+            stepID: "videos:s1",
+            expectedIntentID: job.intentID
+        )
+        XCTAssertEqual(handedOff.jobs["videos:s1"]?.videoJobRecordID, job.intentID)
+        XCTAssertEqual(handedOff.jobs["videos:s1"]?.jobID, "provider-existing")
+        XCTAssertEqual(handedOff.draft.segments[0].videoJobRecordID, job.intentID)
+        XCTAssertNil(handedOff.draft.segments[0].attempt)
+        let canonical = try await store.load(owner: "alice").projects[0]
+        XCTAssertEqual(canonical.segments[0].videoJobRecordID, job.intentID)
+        XCTAssertNil(canonical.segments[0].attempt)
+
+        let repeated = try await store.handoffMediaBatchVideoGenerationToMediaJob(
+            owner: "alice",
+            projectID: project.id,
+            batchID: batch.id,
+            stepID: "videos:s1",
+            expectedIntentID: job.intentID
+        )
+        XCTAssertEqual(repeated, handedOff)
+        do {
+            _ = try await store.handoffMediaBatchVideoGenerationToMediaJob(
+                owner: "alice",
+                projectID: project.id,
+                batchID: batch.id,
+                stepID: "videos:s1",
+                expectedIntentID: UUID()
+            )
+            XCTFail("A different Batch intent must not claim this durable association")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, StoryError.unresolvedSubmission.localizedDescription)
+        }
+    }
+
+    func testMediaBatchHandoffReplayRepairsBatchFirstCrashWindow() async throws {
+        let (_, store, _) = try await fixture()
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        var legacy = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        let job = StoryMediaBatch.Job()
+        legacy.jobs["videos:s1"] = job
+        legacy.draft.segments[0].attempt = .init(
+            modelConfigID: "video",
+            prompt: "legacy batch prompt",
+            size: "768P",
+            ratio: "16:9",
+            seconds: 15
+        )
+        try await store.commitMediaBatch(legacy)
+
+        var batchFirst = legacy
+        batchFirst.expectedProjectDigest = try StoryAgentRun.digest(legacy.draft)
+        batchFirst.jobs["videos:s1"]?.videoJobRecordID = job.intentID
+        batchFirst.draft.version = 3
+        batchFirst.draft.segments[0].attempt = nil
+        batchFirst.draft.segments[0].videoJobRecordID = job.intentID
+        try batchFirst.validate(owner: "alice", projectID: project.id)
+        let batchManifest = try store.fileURL(
+            "media-batch-\(legacy.id).json",
+            projectID: project.id,
+            owner: "alice"
+        )
+        try JSONEncoder().encode(batchFirst).write(to: batchManifest, options: .atomic)
+        let beforeReplay = try await store.load(owner: "alice").projects[0]
+        XCTAssertNotNil(beforeReplay.segments[0].attempt)
+        XCTAssertNil(beforeReplay.segments[0].videoJobRecordID)
+
+        _ = try await store.handoffMediaBatchVideoGenerationToMediaJob(
+            owner: "alice",
+            projectID: project.id,
+            batchID: legacy.id,
+            stepID: "videos:s1",
+            expectedIntentID: job.intentID
+        )
+        let repaired = try await store.load(owner: "alice").projects[0]
+        XCTAssertNil(repaired.segments[0].attempt)
+        XCTAssertEqual(repaired.segments[0].videoJobRecordID, job.intentID)
+    }
+
     func testMediaBatchesLoadInBoundedPagesAndRemainDirectlyAddressable() async throws {
         let (_, store, _) = try await fixture()
         let project = try await readyProject(store)

@@ -294,6 +294,33 @@ actor MediaStudioVideoJobStore {
         return snapshot(try publish(staged.record, from: staged.folder))
     }
 
+    /// Imports a legacy intent that may already have crossed the provider submission boundary
+    /// without returning an identity. It contains no create inputs and can only enter manual
+    /// review after activation; recovery must never turn it into a new provider request.
+    func stageSubmissionUncertain(
+        request: VideoGenerationRequest,
+        id: UUID,
+        owner ownerInput: String,
+        sessionEpoch: UUID,
+        workload: Workload
+    ) throws -> Snapshot {
+        let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        try validateStagedIdentity(id: id, owner: owner, workload: workload)
+        let staged = try makeStagedRecord(
+            request: request,
+            id: id,
+            owner: owner,
+            sessionEpoch: sessionEpoch,
+            workload: workload,
+            activation: .staged,
+            providerJobID: nil,
+            status: .submissionUncertain,
+            persistsInputs: false
+        )
+        defer { try? FileManager.default.removeItem(at: staged.folder) }
+        return snapshot(try publish(staged.record, from: staged.folder))
+    }
+
     /// Completes the second half of the ownership handoff after the Story manifest points at
     /// this local job ID. Activation is idempotent and is the only operation that makes a
     /// staged Story job visible to recovery or state transitions.
@@ -668,10 +695,8 @@ actor MediaStudioVideoJobStore {
               resolvedWorkload(existing) == resolvedWorkload(expected),
               existing.idempotencyKey == expected.idempotencyKey,
               existing.providerJobID == expected.providerJobID else { return false }
-        if expected.providerJobID != nil {
-            return existing.request == expected.request
-        }
-        return existing.status == .prepared && existing.request == expected.request
+        if expected.providerJobID != nil { return existing.request == expected.request }
+        return existing.status == expected.status && existing.request == expected.request
     }
 
     private func requestMetadata(_ request: VideoGenerationRequest) -> StoredRequest {
