@@ -3,6 +3,23 @@ import Foundation
 
 /// Creates a lease-owned media artifact through a securely pre-opened file descriptor.
 public enum ChatOSMediaArtifactFileWriter {
+    public static func writeDownloadedImage(
+        _ body: AsyncThrowingStream<Data, Error>,
+        maximumBytes: Int,
+        expectedBytes: Int? = nil,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        availableCapacityOverride: Int64? = nil
+    ) async throws -> GeneratedMediaFile {
+        try await ChatOSResponseBodyFileWriter.write(
+            body,
+            maximumBytes: maximumBytes,
+            expectedBytes: expectedBytes,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride,
+            artifactKind: .imageResponse
+        )
+    }
+
     public static func writeNormalizedImage(
         maximumBytes: Int,
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,

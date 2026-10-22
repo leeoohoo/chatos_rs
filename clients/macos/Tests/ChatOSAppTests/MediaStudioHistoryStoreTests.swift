@@ -137,8 +137,12 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         XCTAssertEqual(restored.images, [item])
         XCTAssertEqual(try Data(contentsOf: XCTUnwrap(restored.images[0].images[0].url)), Self.png)
         let requests = await transport.requests
+        let streamRequestCount = await transport.streamRequestCount
+        let dataRequestCount = await transport.dataRequestCount
         XCTAssertEqual(requests.count, 1)
         XCTAssertNil(requests[0].headers["Authorization"])
+        XCTAssertEqual(streamRequestCount, 1)
+        XCTAssertEqual(dataRequestCount, 0)
     }
 
     func testHistoryLoadsInBoundedPagesWithoutDroppingOlderRecords() async throws {
@@ -295,9 +299,32 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
 
 private actor HistoryImageTransport: HTTPTransport {
     var requests: [HTTPRequest] = []
+    var streamRequestCount = 0
+    var dataRequestCount = 0
+
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        dataRequestCount += 1
         requests.append(request)
         return .init(statusCode: 200, headers: ["content-type": "image/png"], body: MediaStudioHistoryStoreTests.png)
+    }
+
+    func stream(_ request: HTTPRequest) async throws -> HTTPStreamResponse {
+        streamRequestCount += 1
+        requests.append(request)
+        let payload = MediaStudioHistoryStoreTests.png
+        let midpoint = payload.count / 2
+        return .init(
+            statusCode: 200,
+            headers: [
+                "content-type": "image/png",
+                "content-length": String(payload.count),
+            ],
+            body: AsyncThrowingStream { continuation in
+                continuation.yield(Data(payload.prefix(midpoint)))
+                continuation.yield(Data(payload.suffix(from: midpoint)))
+                continuation.finish()
+            }
+        )
     }
 }
 

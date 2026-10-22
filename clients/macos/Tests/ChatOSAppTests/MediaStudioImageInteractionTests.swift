@@ -139,6 +139,44 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         }
     }
 
+    func testGeneratedRemoteReferenceStreamsIntoManagedFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MediaStudioRemoteReferenceTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 32,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        bitmap.bitmapData?.initialize(repeating: 90, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let transport = StreamingImageTransport(data: png)
+        let importer = MediaStudioImageReferenceImporter(
+            transport: transport,
+            artifacts: .init(root: root)
+        )
+
+        let imported = try await importer.importGeneratedAssets([.init(
+            id: "remote-reference",
+            mimeType: "image/png",
+            url: URL(string: "https://cdn.example/reference.png")!
+        )])
+
+        XCTAssertEqual(imported.count, 1)
+        XCTAssertEqual(imported[0].name, "generated-remote-reference.png")
+        XCTAssertTrue(imported[0].base64Data.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(imported[0].fileURL)), png)
+        let streamRequestCount = await transport.streamRequestCount
+        let dataRequestCount = await transport.dataRequestCount
+        XCTAssertEqual(streamRequestCount, 1)
+        XCTAssertEqual(dataRequestCount, 0)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertNil(requests[0].headers["Authorization"])
+    }
+
     func testPreviewLoaderRejectsOversizedBase64BeforeDecode() async {
         let asset = GeneratedMediaAsset(
             id: "oversized-inline",
@@ -374,5 +412,35 @@ private actor ImagePreviewTransport: HTTPTransport {
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         requests.append(request)
         return .init(statusCode: 200, headers: ["content-type": "image/png"], body: data)
+    }
+}
+
+private actor StreamingImageTransport: HTTPTransport {
+    let data: Data
+    var requests: [HTTPRequest] = []
+    var streamRequestCount = 0
+    var dataRequestCount = 0
+
+    init(data: Data) { self.data = data }
+
+    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        dataRequestCount += 1
+        requests.append(request)
+        return .init(statusCode: 200, headers: [:], body: data)
+    }
+
+    func stream(_ request: HTTPRequest) async throws -> HTTPStreamResponse {
+        streamRequestCount += 1
+        requests.append(request)
+        let midpoint = data.count / 2
+        return .init(
+            statusCode: 200,
+            headers: ["content-length": String(data.count)],
+            body: AsyncThrowingStream { continuation in
+                continuation.yield(Data(data.prefix(midpoint)))
+                continuation.yield(Data(data.suffix(from: midpoint)))
+                continuation.finish()
+            }
+        )
     }
 }

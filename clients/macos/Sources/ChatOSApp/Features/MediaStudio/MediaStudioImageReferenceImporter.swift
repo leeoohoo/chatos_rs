@@ -51,6 +51,18 @@ struct MediaStudioImageReferenceImporter: MediaStudioImageReferenceImporting {
                         name: name,
                         mimeType: asset.mimeType
                     ))
+                } else if let url = asset.url,
+                          url.scheme?.lowercased() == "https" {
+                    let downloaded = try await MediaStudioImageLoader.downloadedFile(
+                        from: url,
+                        transport: transport
+                    )
+                    defer { withExtendedLifetime(downloaded) {} }
+                    imported.append(try await artifacts.importImage(
+                        from: downloaded.url,
+                        name: name,
+                        mimeType: asset.mimeType
+                    ))
                 } else {
                     let data = try await MediaStudioImageLoader.data(
                         for: asset,

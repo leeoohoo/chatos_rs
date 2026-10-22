@@ -218,15 +218,23 @@ actor MediaStudioHistoryStore:
                     )
                 }
             } else if let url = image.url, url.scheme?.lowercased() == "https" {
-                let response = try await transport.send(.init(
-                    url: url, method: "GET", headers: ["Accept": "image/*"], timeoutInterval: 120,
-                    maximumResponseBytes: 20 * 1_024 * 1_024
-                ))
-                guard (200..<300).contains(response.statusCode) else { throw HistoryError.imageDownloadFailed }
-                guard !response.body.isEmpty, response.body.count <= 20 * 1024 * 1024 else {
-                    throw HistoryError.invalidRecord
+                do {
+                    let downloaded = try await MediaStudioImageLoader.downloadedFile(
+                        from: url,
+                        transport: transport
+                    )
+                    defer { withExtendedLifetime(downloaded) {} }
+                    try await AppCancellableDetachedWork.run {
+                        try AppBoundedFileReader.copy(
+                            downloaded.url,
+                            to: destination,
+                            expectedBytes: downloaded.byteCount,
+                            maximumBytes: 20 * 1_024 * 1_024
+                        )
+                    }
+                } catch MediaStudioImageLoader.ImageError.downloadFailed {
+                    throw HistoryError.imageDownloadFailed
                 }
-                try response.body.write(to: destination, options: .atomic)
             } else {
                 throw HistoryError.invalidRecord
             }

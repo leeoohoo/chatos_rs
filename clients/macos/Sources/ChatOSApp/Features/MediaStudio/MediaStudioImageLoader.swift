@@ -83,6 +83,52 @@ enum MediaStudioImageLoader {
         }
     }
 
+    static func downloadedFile(
+        from url: URL,
+        transport: any HTTPTransport = URLSessionHTTPTransport(),
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        availableCapacityOverride: Int64? = nil
+    ) async throws -> GeneratedMediaFile {
+        guard url.scheme?.lowercased() == "https", url.host != nil,
+              url.user == nil, url.password == nil else {
+            throw ImageError.invalidImage
+        }
+        let response = try await transport.stream(.init(
+            url: url,
+            method: "GET",
+            headers: ["Accept": "image/*"],
+            timeoutInterval: 120,
+            maximumResponseBytes: maximumImageBytes
+        ))
+        guard (200..<300).contains(response.statusCode) else {
+            throw ImageError.downloadFailed
+        }
+        let contentEncoding = response.headers.first(where: {
+            $0.key.lowercased() == "content-encoding"
+        })?.value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let expectedBytes: Int?
+        if contentEncoding == nil || contentEncoding == "identity",
+           let rawLength = response.headers.first(where: {
+               $0.key.lowercased() == "content-length"
+           })?.value {
+            guard let length = Int(rawLength.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  length > 0,
+                  length <= maximumImageBytes else {
+                throw ImageError.invalidImage
+            }
+            expectedBytes = length
+        } else {
+            expectedBytes = nil
+        }
+        return try await ChatOSMediaArtifactFileWriter.writeDownloadedImage(
+            response.body,
+            maximumBytes: maximumImageBytes,
+            expectedBytes: expectedBytes,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride
+        )
+    }
+
     static func normalizedPNGFile(
         for asset: GeneratedMediaAsset,
         transport: any HTTPTransport = URLSessionHTTPTransport(),

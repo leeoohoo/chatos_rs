@@ -1522,6 +1522,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：Base64/HTTPS 兼容资产在输入阶段仍可能形成最多 20 MiB 的压缩源 `Data`，预览 API 也按调用契约返回 `Data`；本批不把所有小图片 API 一刀切成文件。像素面仍在主进程，Media Worker、真实大图 physical-footprint、内存压力/取消风暴和签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.50 第五十批实施记录：HTTPS 图片消费流式文件化（2026-10-23）
+
+本批继续收紧 12.49 保留的 HTTPS 兼容边界。审计确认 provider/CDN 以 URL 返回图片时，Media History 持久化和“把生成图加入参考图”仍调用 `transport.send`，先在 App 内聚合最多 20 MiB `Data`，随后再写入 History 或输入 artifact；这两条路径的最终消费者本来就是文件，不需要中间完整响应缓冲。
+
+已实施：
+
+- `ChatOSMediaArtifactFileWriter` 新增公开的下载图片入口，复用生产 `ChatOSResponseBodyFileWriter` 的 pull stream、20 MiB 上限、磁盘预算、`.chatos-image-response-<UUID>` lease artifact、取消/失败清理和 24 小时孤儿对账协议。
+- `MediaStudioImageLoader.downloadedFile` 只接受无凭据的 HTTPS URL，不发送模型 Authorization；生产 `URLSessionHTTPTransport.stream` 的块直接写入临时 artifact。若响应提供 `Content-Length`，先验证其为 1...20 MiB，并在流结束后要求实际字节精确一致；无长度响应仍由累计写入上限约束。
+- Media History 的 URL 图片保存改为“网络流 → lease artifact → `O_NOFOLLOW`/`fstat` 有界复制 → manifest”，不再把完整远端图片响应保存为 `Data`。HTTP 非成功状态继续映射为历史下载失败，磁盘不足等 writer 错误保留原始诊断。
+- 生成图片作为通用参考图时，HTTPS 资产同样先流式落 lease artifact，再经现有像素/格式验证复制到 ViewModel 独占的 `0600` 输入文件；复制完成后响应 owner 立即释放。file-backed、Base64 和本地 security-scoped 兼容路径保持原行为。
+- 回归 transport 把 payload 拆成两段，并分别记录 `stream` 与 `send` 调用；History 离线恢复和远端参考图测试均确认只走一次 stream、从未调用聚合 `send`、不携带 Authorization，最终文件字节与输入一致。
+
+验证：Debug 与 arm64 Release 各选择性运行 `HTTPTransportTests` 13 项、`Base64PayloadFileWriterTests` 1 项、`MediaStudioHistoryStoreTests` 11 项和 `MediaStudioImageInteractionTests` 14 项，共 39 项，全部通过；Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。未启动/安装正式 App，未请求真实 provider，未访问活动用户数据库。
+
+边界：全屏/缩略预览仍按 UI 解码契约使用有界 `Data` 或像素面，旧 Base64-only 资产仍需一次源解码；本批只移除最终消费者为文件的 HTTPS 聚合。非 identity `Content-Encoding` 不把传输长度误当解码后长度，仍由 20 MiB 累计写入约束最终字节。URLSession 真实断网/睡眠、响应中途 ENOSPC、CDN 重定向策略、真实 20 MiB physical-footprint 与 Media Worker 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
