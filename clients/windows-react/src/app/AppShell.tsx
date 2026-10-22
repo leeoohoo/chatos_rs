@@ -167,6 +167,18 @@ const AiModelSettingsWorkspace = lazy(async () => {
   };
 });
 
+const DeviceGatewayWorkspace = lazy(async () => {
+  const [adapterModule, viewModule] = await Promise.all([
+    import("../features/device-gateway/adapters/TauriDeviceGatewayAdapter"),
+    import("../features/device-gateway/ui/DeviceGatewayView"),
+  ]);
+  const port = new adapterModule.TauriDeviceGatewayAdapter();
+  type Props = Omit<ComponentProps<typeof viewModule.DeviceGatewayView>, "port">;
+  return {
+    default: (props: Props) => <viewModule.DeviceGatewayView {...props} port={port} />,
+  };
+});
+
 const SystemPermissionsWorkspace = lazy(async () => {
   const [adapterModule, viewModule] = await Promise.all([
     import("../features/runtime-permissions/adapters/TauriSystemPermissionsAdapter"),
@@ -353,7 +365,7 @@ export function AppShell({
   const pluginApplications = usePluginApplicationStore((state) => state.applications);
   const resetPluginApplications = usePluginApplicationStore((state) => state.reset);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
-  const [activeSurface, setActiveSurface] = useState<"workspace" | "general-settings" | "wechat-companion" | "pet-settings" | "global-utilities" | "ai-models" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
+  const [activeSurface, setActiveSurface] = useState<"workspace" | "general-settings" | "wechat-companion" | "pet-settings" | "global-utilities" | "ai-models" | "device-gateway" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [remoteEditorTarget, setRemoteEditorTarget] = useState<"create" | string | null>(null);
   const text = (key: Parameters<typeof interfaceText>[1]) => interfaceText(interfaceLanguage, key);
@@ -474,6 +486,8 @@ export function AppShell({
     ? text("globalUtilities")
     : activeSurface === "ai-models"
       ? text("aiModels")
+    : activeSurface === "device-gateway"
+      ? text("deviceGateway")
     : activeSurface === "tool-approval"
     ? text("commandApproval")
     : activeSurface === "runtime-permissions"
@@ -570,6 +584,15 @@ export function AppShell({
             <span><strong>{text("aiModels")}</strong><small>{text("aiModelsDetail")}</small></span>
           </button>
           <button
+            aria-current={activeSurface === "device-gateway" ? "page" : undefined}
+            className={`sidebar-settings-button ${activeSurface === "device-gateway" ? "sidebar-settings-button--active" : ""}`}
+            onClick={() => setActiveSurface("device-gateway")}
+            type="button"
+          >
+            <span aria-hidden="true">⌁</span>
+            <span><strong>{text("deviceGateway")}</strong><small>{text("deviceGatewayDetail")}</small></span>
+          </button>
+          <button
             aria-current={activeSurface === "tool-approval" ? "page" : undefined}
             className={`sidebar-settings-button ${activeSurface === "tool-approval" ? "sidebar-settings-button--active" : ""}`}
             onClick={() => setActiveSurface("tool-approval")}
@@ -623,6 +646,8 @@ export function AppShell({
                 ? "GLOBAL UTILITIES"
                 : activeSurface === "ai-models"
                 ? "AI MODELS"
+                : activeSurface === "device-gateway"
+                ? "DEVICE & GATEWAY"
                 : activeSurface === "tool-approval"
                 ? "LOCAL SECURITY"
                 : activeSurface === "runtime-permissions"
@@ -663,6 +688,12 @@ export function AppShell({
           <GlobalUtilitiesSettingsWorkspace ownerUserId={session.user.id} port={globalUtilities} />
         ) : activeSurface === "ai-models" ? (
           <AiModelSettingsWorkspace ownerUserId={session.user.id} />
+        ) : activeSurface === "device-gateway" ? (
+          <DeviceGatewayWorkspace
+            hostPort={hostLifecycle}
+            ownerUserId={session.user.id}
+            username={session.user.username}
+          />
         ) : activeSurface === "tool-approval" ? (
           <ToolApprovalSettingsView
             approvalPort={toolApproval}
