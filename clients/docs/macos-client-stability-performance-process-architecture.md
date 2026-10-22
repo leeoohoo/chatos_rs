@@ -1493,6 +1493,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批消除的是 Story 归一化阶段的完整 PNG `Data`，不是解码像素面；ImageIO 解码/编码仍在 App 进程，旧 Base64/HTTPS 输入仍可能有完整压缩源 `Data`。归一化 artifact 尚未补独立真实 `SIGKILL` probe，当前复用同一 lease/对账实现并由普通回归验证；Media Worker、恶意图片进程隔离、真实 20 MiB/64 MP physical-footprint trace、内存压力/取消风暴、写入中强杀与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.48 第四十八批实施记录：归一化图片写入中 SIGKILL 对账（2026-10-23）
+
+本批补齐 12.47 明确保留的进程死亡门禁。普通成功/失败回归只能证明 Swift 正常析构会删除临时 artifact，不能证明 ImageIO/未来 Media Worker 正在向预打开 descriptor 写入时遭遇 `SIGKILL`，内核会释放 lease 且下次启动式对账能安全回收 partial。
+
+已实施：
+
+- 扩展既有 response-body crash harness，新增独立 `normalizedImage` mode，并继续使用 disposable xctest 子进程、独立临时根目录和生产 `ChatOSMediaArtifactFileWriter`。
+- probe 在 writer 的同步 populate 窗口内写入并同步 128,000 字节 payload，建立 checkpoint 后停在尚未返回 `GeneratedMediaFile` 的真实写入栈上；该停点同时持有预打开 payload descriptor 与跨进程 `flock` lease。
+- 父进程把 artifact 目录时间改为 48 小时前，先验证活跃子进程仍阻止归一化图片专属对账；随后发送真实 `SIGKILL`，确认进程无 Swift defer/deinit 机会、lease 由内核释放，`.normalizedImage` 对账恰好回收一个过期 partial 且 payload/目录均不再残留。
+- 视频下载写入中强杀和 provider 图片结果 owner 强杀继续在同一枚举式 harness 中运行，防止新增 artifact kind 破坏既有前缀隔离与清理行为。
+
+验证：Debug 与 arm64 Release 各运行 `ResponseBodyFileWriterCrashTests` 3 项；每项内部精确选择同一个 probe 入口并启动独立 xctest 子进程，全部通过。Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁；未启动/安装正式 App，未访问活动用户数据库。
+
+边界：本批证明的是进程级 `SIGKILL` 与 lease/orphan 协议，不模拟断电后文件系统持久化顺序，也不验证真实 ENOSPC 发生在 ImageIO callback 的每个短写位置。Media Worker 尚未建立，主进程仍承担像素解码/编码；真实大图 physical-footprint、睡眠/唤醒、断电、磁盘耗尽矩阵和签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

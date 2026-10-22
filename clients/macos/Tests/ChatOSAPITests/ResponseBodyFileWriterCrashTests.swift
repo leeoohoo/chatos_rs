@@ -8,14 +8,16 @@ private struct ResponseBodyFileWriterCrashCheckpoint: Codable {
     var payloadByteCount: Int
 }
 
-private enum ResponseBodyFileWriterCrashMode: String, CaseIterable {
+private enum ResponseBodyFileWriterCrashMode: String, CaseIterable, Sendable {
     case videoDownload
     case imageResponse
+    case normalizedImage
 
     var artifactKind: ChatOSResponseBodyFileWriter.ArtifactKind {
         switch self {
         case .videoDownload: .videoDownload
         case .imageResponse: .imageResponse
+        case .normalizedImage: .normalizedImage
         }
     }
 
@@ -23,6 +25,7 @@ private enum ResponseBodyFileWriterCrashMode: String, CaseIterable {
         switch self {
         case .videoDownload: ".chatos-video-download-"
         case .imageResponse: ".chatos-image-response-"
+        case .normalizedImage: ".chatos-image-normalized-"
         }
     }
 }
@@ -47,6 +50,8 @@ final class ResponseBodyFileWriterCrashProbeTests: XCTestCase {
             try await runVideoDownloadProbe(root: root, marker: marker, mode: mode)
         case .imageResponse:
             try await runImageResponseProbe(root: root, marker: marker)
+        case .normalizedImage:
+            try await runNormalizedImageProbe(root: root, marker: marker, mode: mode)
         }
     }
 
@@ -112,6 +117,34 @@ final class ResponseBodyFileWriterCrashProbeTests: XCTestCase {
             while true { _ = Darwin.pause() }
         }
     }
+
+    private func runNormalizedImageProbe(
+        root: URL,
+        marker: URL,
+        mode: ResponseBodyFileWriterCrashMode
+    ) async throws {
+        let payload = Data((0..<128_000).map { UInt8($0 % 251) })
+        _ = try await ChatOSMediaArtifactFileWriter.writeNormalizedImage(
+            maximumBytes: 1_024 * 1_024,
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max
+        ) { handle in
+            try handle.write(contentsOf: payload)
+            try handle.synchronize()
+            let artifactURL = try XCTUnwrap(
+                FileManager.default.contentsOfDirectory(
+                    at: root,
+                    includingPropertiesForKeys: nil
+                ).first(where: { $0.lastPathComponent.hasPrefix(mode.artifactPrefix) })
+            )
+            let checkpoint = ResponseBodyFileWriterCrashCheckpoint(
+                artifactName: artifactURL.lastPathComponent,
+                payloadByteCount: payload.count
+            )
+            try JSONEncoder().encode(checkpoint).write(to: marker, options: .atomic)
+            while true { _ = Darwin.pause() }
+        }
+    }
 }
 
 final class ResponseBodyFileWriterCrashTests: XCTestCase {
@@ -121,6 +154,10 @@ final class ResponseBodyFileWriterCrashTests: XCTestCase {
 
     func testImageResponseSIGKILLReleasesLeaseAndExpiredArtifactIsReconciled() async throws {
         try await verifySIGKILLRecovery(mode: .imageResponse)
+    }
+
+    func testNormalizedImageSIGKILLReleasesLeaseAndExpiredArtifactIsReconciled() async throws {
+        try await verifySIGKILLRecovery(mode: .normalizedImage)
     }
 
     private func verifySIGKILLRecovery(mode: ResponseBodyFileWriterCrashMode) async throws {
