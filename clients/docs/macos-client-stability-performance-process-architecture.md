@@ -1508,6 +1508,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批证明的是进程级 `SIGKILL` 与 lease/orphan 协议，不模拟断电后文件系统持久化顺序，也不验证真实 ENOSPC 发生在 ImageIO callback 的每个短写位置。Media Worker 尚未建立，主进程仍承担像素解码/编码；真实大图 physical-footprint、睡眠/唤醒、断电、磁盘耗尽矩阵和签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.49 第四十九批实施记录：内存 PNG 归一化入口退役（2026-10-23）
+
+本批在 12.47/12.48 文件链路稳定后收紧代码边界。审计确认生产 Story 已全部使用 `normalizedPNGFile`，但 `MediaStudioImageLoader` 仍保留三组无生产调用者的 `normalizedPNGData` 方法和 `CGImageDestinationCreateWithData` 编码器；未来维护者仍可能绕过文件协议，重新引入完整 PNG 内存副本。
+
+已实施：
+
+- 删除 Data 输入、asset 输入和 file URL 输入三组归一化 `Data` 返回入口，以及基于 `NSMutableData` 的 PNG 编码实现；Media Studio 归一化现在只有 lease-owned 文件输出这一条应用层路径。
+- file-backed owner 生命周期、坏图片拒绝和尺寸正确性测试全部切到 `normalizedPNGFile`，继续验证源 owner 在直接解码期间存活、输出 artifact 可解码、源/输出 owner 分别释放后各自清理。
+- 保留 `MediaStudioImageLoader.data(for:)` 作为预览及 Base64/HTTPS 兼容输入边界，也保留 `StoryProjectStore` 的旧 `Data` overload 供既有非生产测试和小型兼容调用；本批只移除已经无调用者的“完整归一化 PNG 输出”能力，不扩大行为变更。
+
+验证：Debug 与 arm64 Release 各运行 `MediaStudioImageInteractionTests` 13 项，全部通过；源码检索确认 Media Studio 生产目录与该测试文件均不再出现 `normalizedPNGData` 或 `CGImageDestinationCreateWithData`。Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁；未启动/安装正式 App，未访问活动用户数据库。
+
+边界：Base64/HTTPS 兼容资产在输入阶段仍可能形成最多 20 MiB 的压缩源 `Data`，预览 API 也按调用契约返回 `Data`；本批不把所有小图片 API 一刀切成文件。像素面仍在主进程，Media Worker、真实大图 physical-footprint、内存压力/取消风暴和签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

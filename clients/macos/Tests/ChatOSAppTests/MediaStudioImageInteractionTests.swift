@@ -159,17 +159,6 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         }
     }
 
-    func testNormalizedPNGConversionRunsThroughBoundedImageDecoder() async throws {
-        let (vm, _, _) = try await fixture()
-        let source = try await MediaStudioImageLoader.data(for: vm.history[0].images[0])
-        let png = try await MediaStudioImageLoader.normalizedPNGData(from: source)
-        let representation = try XCTUnwrap(NSBitmapImageRep(data: png))
-
-        XCTAssertEqual(representation.pixelsWide, 256)
-        XCTAssertEqual(representation.pixelsHigh, 256)
-        XCTAssertFalse(png.isEmpty)
-    }
-
     func testFileBackedNormalizationKeepsOwnerAliveAndProducesBoundedPNG() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "MediaStudioFileNormalizationTests-\(UUID().uuidString)",
@@ -195,16 +184,22 @@ final class MediaStudioImageInteractionTests: XCTestCase {
             )
         )
 
-        let normalized = try await MediaStudioImageLoader.normalizedPNGData(
-            for: try XCTUnwrap(asset)
+        var normalized: GeneratedMediaFile? = try await MediaStudioImageLoader.normalizedPNGFile(
+            for: try XCTUnwrap(asset),
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max
         )
-        let representation = try XCTUnwrap(NSBitmapImageRep(data: normalized))
+        let outputURL = try XCTUnwrap(normalized?.url)
+        let outputArtifact = outputURL.deletingLastPathComponent()
+        let representation = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: outputURL)))
         XCTAssertEqual(representation.pixelsWide, 128)
         XCTAssertEqual(representation.pixelsHigh, 64)
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
 
         asset = nil
         XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        normalized = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputArtifact.path))
     }
 
     func testNormalizedPNGFileWritesValidLeaseOwnedArtifact() async throws {
@@ -283,7 +278,11 @@ final class MediaStudioImageInteractionTests: XCTestCase {
 
     func testNormalizedPNGConversionRejectsInvalidImageData() async {
         do {
-            _ = try await MediaStudioImageLoader.normalizedPNGData(from: Data("not-an-image".utf8))
+            _ = try await MediaStudioImageLoader.normalizedPNGFile(for: .init(
+                id: "invalid-image",
+                mimeType: "image/png",
+                base64Data: Data("not-an-image".utf8).base64EncodedString()
+            ))
             XCTFail("Invalid image data was accepted")
         } catch is MediaStudioImageLoader.ImageError {
             // Expected.
