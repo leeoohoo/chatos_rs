@@ -8,18 +8,53 @@ private struct ResponseBodyFileWriterCrashCheckpoint: Codable {
     var payloadByteCount: Int
 }
 
+private enum ResponseBodyFileWriterCrashMode: String, CaseIterable {
+    case videoDownload
+    case imageResponse
+
+    var artifactKind: ChatOSResponseBodyFileWriter.ArtifactKind {
+        switch self {
+        case .videoDownload: .videoDownload
+        case .imageResponse: .imageResponse
+        }
+    }
+
+    var artifactPrefix: String {
+        switch self {
+        case .videoDownload: ".chatos-video-download-"
+        case .imageResponse: ".chatos-image-response-"
+        }
+    }
+}
+
 /// Selected explicitly in a disposable child xctest process. The normal suite has no probe
-/// environment and returns immediately. The child keeps the production writer suspended in
-/// its response stream until the parent sends SIGKILL, so no Swift cleanup path can run.
+/// environment and returns immediately. The child keeps either an in-progress stream writer or
+/// a completed file owner alive until the parent sends SIGKILL, so no Swift cleanup path can run.
 final class ResponseBodyFileWriterCrashProbeTests: XCTestCase {
     func testCrashProbe() async throws {
         let environment = ProcessInfo.processInfo.environment
-        guard let rootPath = environment["CHATOS_VIDEO_DOWNLOAD_CRASH_ROOT"],
-              let markerPath = environment["CHATOS_VIDEO_DOWNLOAD_CRASH_MARKER"] else {
+        guard let rootPath = environment["CHATOS_RESPONSE_BODY_CRASH_ROOT"],
+              let markerPath = environment["CHATOS_RESPONSE_BODY_CRASH_MARKER"],
+              let modeValue = environment["CHATOS_RESPONSE_BODY_CRASH_MODE"],
+              let mode = ResponseBodyFileWriterCrashMode(rawValue: modeValue) else {
             return
         }
         let root = URL(fileURLWithPath: rootPath, isDirectory: true)
         let marker = URL(fileURLWithPath: markerPath)
+
+        switch mode {
+        case .videoDownload:
+            try await runVideoDownloadProbe(root: root, marker: marker, mode: mode)
+        case .imageResponse:
+            try await runImageResponseProbe(root: root, marker: marker)
+        }
+    }
+
+    private func runVideoDownloadProbe(
+        root: URL,
+        marker: URL,
+        mode: ResponseBodyFileWriterCrashMode
+    ) async throws {
         let payload = Data("partial-video-before-sigkill".utf8)
         var continuation: AsyncThrowingStream<Data, Error>.Continuation!
         let stream = AsyncThrowingStream<Data, Error> { continuation = $0 }
@@ -37,7 +72,7 @@ final class ResponseBodyFileWriterCrashProbeTests: XCTestCase {
         for _ in 0..<1_000 {
             if let candidate = try FileManager.default.contentsOfDirectory(
                 at: root, includingPropertiesForKeys: nil
-            ).first(where: { $0.lastPathComponent.hasPrefix(".chatos-video-download-") }) {
+            ).first(where: { $0.lastPathComponent.hasPrefix(mode.artifactPrefix) }) {
                 let payloadURL = candidate.appendingPathComponent("payload.tmp")
                 let size = try? payloadURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
                 if size == payload.count {
@@ -58,15 +93,42 @@ final class ResponseBodyFileWriterCrashProbeTests: XCTestCase {
             while true { _ = Darwin.pause() }
         }
     }
+
+    private func runImageResponseProbe(root: URL, marker: URL) async throws {
+        let payload = Data((0..<400_000).map { UInt8($0 % 251) })
+        let file = try await ChatOSBase64PayloadFileWriter.write(
+            payload.base64EncodedString(),
+            maximumBytes: payload.count,
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max
+        )
+        let checkpoint = ResponseBodyFileWriterCrashCheckpoint(
+            artifactName: file.url.deletingLastPathComponent().lastPathComponent,
+            payloadByteCount: payload.count
+        )
+        try JSONEncoder().encode(checkpoint).write(to: marker, options: .atomic)
+
+        withExtendedLifetime(file) {
+            while true { _ = Darwin.pause() }
+        }
+    }
 }
 
 final class ResponseBodyFileWriterCrashTests: XCTestCase {
-    func testSIGKILLReleasesLeaseAndExpiredArtifactIsReconciled() async throws {
+    func testVideoDownloadSIGKILLReleasesLeaseAndExpiredArtifactIsReconciled() async throws {
+        try await verifySIGKILLRecovery(mode: .videoDownload)
+    }
+
+    func testImageResponseSIGKILLReleasesLeaseAndExpiredArtifactIsReconciled() async throws {
+        try await verifySIGKILLRecovery(mode: .imageResponse)
+    }
+
+    private func verifySIGKILLRecovery(mode: ResponseBodyFileWriterCrashMode) async throws {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "ResponseBodyFileWriterCrashTests-\(UUID().uuidString)",
+            "ResponseBodyFileWriterCrashTests-\(mode.rawValue)-\(UUID().uuidString)",
             isDirectory: true
         )
-        let root = base.appendingPathComponent("downloads", isDirectory: true)
+        let root = base.appendingPathComponent("responses", isDirectory: true)
         let marker = base.appendingPathComponent("checkpoint.json")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: base) }
@@ -80,8 +142,9 @@ final class ResponseBodyFileWriterCrashTests: XCTestCase {
             Bundle(for: ResponseBodyFileWriterCrashProbeTests.self).bundleURL.path,
         ]
         var environment = ProcessInfo.processInfo.environment
-        environment["CHATOS_VIDEO_DOWNLOAD_CRASH_ROOT"] = root.path
-        environment["CHATOS_VIDEO_DOWNLOAD_CRASH_MARKER"] = marker.path
+        environment["CHATOS_RESPONSE_BODY_CRASH_ROOT"] = root.path
+        environment["CHATOS_RESPONSE_BODY_CRASH_MARKER"] = marker.path
+        environment["CHATOS_RESPONSE_BODY_CRASH_MODE"] = mode.rawValue
         process.environment = environment
         let output = Pipe()
         let errors = Pipe()
@@ -124,7 +187,10 @@ final class ResponseBodyFileWriterCrashTests: XCTestCase {
         )
         XCTAssertEqual(
             ChatOSResponseBodyFileWriter.reconcileOrphanedArtifacts(
-                in: root, olderThan: Date(), maximumCandidates: 64
+                in: root,
+                olderThan: Date(),
+                maximumCandidates: 64,
+                artifactKind: mode.artifactKind
             ),
             0
         )
@@ -147,7 +213,10 @@ final class ResponseBodyFileWriterCrashTests: XCTestCase {
 
         XCTAssertEqual(
             ChatOSResponseBodyFileWriter.reconcileOrphanedArtifacts(
-                in: root, olderThan: Date(), maximumCandidates: 64
+                in: root,
+                olderThan: Date(),
+                maximumCandidates: 64,
+                artifactKind: mode.artifactKind
             ),
             1
         )

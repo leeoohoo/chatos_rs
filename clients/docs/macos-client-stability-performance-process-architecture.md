@@ -1418,6 +1418,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：provider 当前仍以单个 JSON body 返回 Base64，因此 URLSession 的 HTTP response `Data` 和 JSONDecoder 产生的完整 Base64 `String` 会存在到 API 解析结束；本批消除的是完整 decoded `Data` 常驻和解析后的跨层 Base64 传递，不是网络层 JSON 流式解析。Story/AppKit 的图片像素解码与 PNG 归一化仍在主进程；真实大响应 physical-footprint trace、writer 中途 SIGKILL、ENOSPC/睡眠/断网故障矩阵、Media Worker 文件授权和签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.43 第四十三批实施记录：图片响应 artifact 真实 SIGKILL 对账（2026-10-23）
+
+本批为 12.42 的图片响应文件所有权补真实进程死亡门禁。普通单元测试释放 Swift owner 只能覆盖正常析构，不能证明 App/未来 Worker 被 `SIGKILL` 时内核会释放 lease，也不能证明下一次启动式对账会回收孤儿而不误删另一个仍在使用文件的进程。
+
+已实施：
+
+- 扩展既有 response-body crash harness，以显式 mode 分别运行视频下载和图片响应生产 writer；每个 mode 使用独立临时根目录和独立 xctest 子进程。
+- 图片 probe 通过真实 `ChatOSBase64PayloadFileWriter` 解码跨多个 chunk 的 400,000 字节 payload，保留返回的 `GeneratedMediaFile` owner 并写出 checkpoint；父进程把 artifact 时间改为 48 小时前，确认跨进程 `flock` 仍阻止清理。
+- 父进程向 probe 发送真实 `SIGKILL`，等待内核终止后调用图片专属 `.imageResponse` 对账；验证 lease 随进程死亡释放，过期 artifact 恰好回收一次，payload 不再残留。既有视频“写入中被强杀”场景继续作为同一 harness 的回归。
+
+验证：Debug 与 arm64 Release 各运行 2 项父进程 XCTest；每项内部精确选择同一个 probe 入口并运行独立 xctest 子进程，全部通过。Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。测试不启动/安装正式 App、不请求 provider、不读取活动用户数据。
+
+边界：图片 probe 的强杀点位于增量解码完成、结果 owner 正在使用的窗口；本批没有向 Base64 writer 每个 chunk 注入停点，因此不单独证明图片 partial 写入的每个指令窗口，但底层通用 response writer 的视频 mode 已覆盖“payload 写入中”强杀与同一清理协议。真实 App/Worker 启动接线、断电、写入中 ENOSPC、HTTP/JSON 流式解析、主进程像素解码隔离和签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
