@@ -11,21 +11,13 @@
       "type": "stdio",
       "bin": "chatos-solution-studio",
       "args": ["mcp-authoring"],
-      "env": {},
-      "agent": {
-        "displayName": "方案创建器",
-        "description": "创建总体设计、功能模块与依赖清晰的实施计划"
-      }
+      "env": {}
     },
     "solution-executor-mcp": {
       "type": "stdio",
       "bin": "chatos-solution-studio",
       "args": ["mcp-executor"],
-      "env": {},
-      "agent": {
-        "displayName": "任务执行器",
-        "description": "领取可执行任务并回写进行中、阻塞、完成或取消状态"
-      }
+      "env": {}
     }
   },
   "skills": [

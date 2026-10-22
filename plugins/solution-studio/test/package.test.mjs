@@ -18,6 +18,11 @@ test('package contains manifests, built UI, runtime entries, and finished skills
   assert.equal(chatosManifest.version, packageManifest.version);
   assert.equal(lockManifest.version, packageManifest.version);
   assert.equal(lockManifest.packages[''].version, packageManifest.version);
+  // Keep the release manifest within the platform SDK's RawMcpServer contract.
+  // Client-only presentation extensions previously made platform uploads fail with HTTP 400.
+  for (const server of Object.values(chatosManifest.mcpServers)) {
+    assert.deepEqual(Object.keys(server).sort(), ['args', 'bin', 'env', 'type']);
+  }
   assert.deepEqual(chatosManifest.dependencies.supportedPlatforms, ['macos', 'linux']);
   assert.ok(packageManifest.files.includes('!dist/chatos-artifacts/'), 'release packages must not embed previous plugin tarballs');
   assert.deepEqual(chatosManifest.runtimeContext.optional, ['project.id', 'workspace.id', 'workspace.root']);
