@@ -90,6 +90,7 @@ enum ChatOSImageMultipartBodyFileWriter {
             throw MediaGenerationClientError.mediaUploadFailed("图片请求不能超过 161 MiB。")
         }
 
+        ChatOSUploadBodyArtifact.performMaintenance(in: temporaryDirectory)
         do {
             if let availableCapacityOverride {
                 try MediaDiskCapacityPolicy.ensureCapacity(
@@ -110,7 +111,7 @@ enum ChatOSImageMultipartBodyFileWriter {
         var completed = false
         defer {
             try? destination.handle.close()
-            if !completed { try? FileManager.default.removeItem(at: destination.url) }
+            if !completed { destination.owner.removeArtifact() }
         }
         do {
             try destination.handle.write(contentsOf: prelude)
@@ -135,12 +136,14 @@ enum ChatOSImageMultipartBodyFileWriter {
             try destination.handle.synchronize()
             try destination.handle.close()
             completed = true
+            let owner = destination.owner
             return (
                 boundary,
                 HTTPRequestBodyFile(
-                    url: destination.url,
+                    url: owner.payloadURL,
                     byteCount: requestBytes,
-                    deleteWhenDone: true
+                    deleteWhenDone: true,
+                    cleanup: { owner.removeArtifact() }
                 )
             )
         } catch is CancellationError {
@@ -172,21 +175,16 @@ enum ChatOSImageMultipartBodyFileWriter {
         )
     }
 
-    private static func makeDestination(in directory: URL) throws -> (url: URL, handle: FileHandle) {
-        let url = directory.appendingPathComponent(
-            "chatos-image-request-\(UUID().uuidString.lowercased()).multipart"
-        )
-        let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return Darwin.open(
-                path,
-                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
-                mode_t(S_IRUSR | S_IWUSR)
+    private static func makeDestination(
+        in directory: URL
+    ) throws -> ChatOSUploadBodyArtifact.Destination {
+        do {
+            return try ChatOSUploadBodyArtifact.makeDestination(
+                kind: .imageMultipart,
+                in: directory
             )
-        }
-        guard descriptor >= 0 else {
+        } catch {
             throw MediaGenerationClientError.mediaUploadFailed("无法创建图片请求临时文件。")
         }
-        return (url, FileHandle(fileDescriptor: descriptor, closeOnDealloc: true))
     }
 }

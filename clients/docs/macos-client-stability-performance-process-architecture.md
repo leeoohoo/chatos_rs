@@ -2,7 +2,7 @@
 
 更新时间：2026-10-22
 
-状态：强化版方案，P0 部分实施中；阶段记录见 12.1—12.37，完整 Release 验收待完成
+状态：强化版方案，P0 部分实施中；阶段记录见 12.1—12.38，完整 Release 验收待完成
 
 适用范围：`clients/macos`、`clients/local_agent_host` 以及 macOS 客户端启动的 Plugin/Companion 进程
 
@@ -1342,6 +1342,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 验证：Debug 与 arm64 Release 各选择性运行 1 项父进程 XCTest；该测试内部再精确选择 1 项 probe 入口运行独立 xctest 子进程，均通过。Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
 
 边界：本批验证的是生产 writer、真实文件锁和真实 signal 9，但响应源仍是受控内存 stream，不覆盖 URLSession 正在接收内核网络数据、真实断网/睡眠、写入中 ENOSPC、断电或文件系统损坏。上传 request body 临时文件对账、App→Worker lease 所有权交接、Media Worker、完整签名 App 强杀及 Release soak 仍待完成，P0-E 不能标记完成。
+
+### 12.38 第三十八批实施记录：上传 request body 临时 artifact 对账（2026-10-23）
+
+本批补齐 12.36/12.37 明确保留的上传侧临时文件缺口。视频参考输入生成的 JSON request body 和图片编辑生成的 multipart body 此前都是 `/tmp` 下的单文件，正常 provider 请求结束会删除，但 writer 或 App 被 SIGKILL 后无法证明文件是否仍被另一上传使用；现在两条生产 writer 共用同一个 lease-aware artifact 协议。
+
+已实施：
+
+- 视频请求写入 `.chatos-video-request-<UUID>/request.json`，图片 multipart 写入 `.chatos-image-request-<UUID>/request.multipart`；目录强制 `0700`，`.lease` 与 payload 强制 `0600`，创建使用 `O_EXCL | O_NOFOLLOW | O_CLOEXEC` 并校验当前 euid、普通文件和单硬链接。
+- writer 从目录创建到请求消费完成持续持有 `.lease` 的独占 `flock`。`HTTPRequestBodyFile` 增加共享、线程安全、幂等的清理所有者；值在 request、service 与测试 transport 之间复制时共享同一 owner，任一显式完成清理或最后一份副本释放只执行一次目录删除，并在删除后释放 descriptor。
+- `sendProviderRequest` 不再只删除 payload URL，而是调用 body file 的所有权清理，从而同时删除目录并关闭 lease。写入失败、取消、provider 拒绝、账户 session 校验失败和正常完成沿用同一清理路径；现有不带自定义 owner 的 `HTTPRequestBodyFile` 仍保留原单文件删除兼容语义。
+- 每次新建上传 body 前执行 best-effort 维护，跨视频 JSON 与图片 multipart 共用每轮 64 个、24 小时的上限。只有严格 UUID、真实目录、当前 euid、内容集合精确匹配、lease/payload 均为普通单硬链接并能非阻塞取得 lease 的候选才删除；锁后再次核验 inode、文件身份和内容集合。
+- 新鲜或活跃 artifact、畸形名称、symlink 目录/payload、硬链接 payload、未知文件和无 lease 的非空旧结构全部保留；维护失败不阻断新请求，上传仍按既有 chunk 流式生成、磁盘准入与 64/161 MiB request 上限执行。
+
+验证：新增 4 项 `UploadBodyArtifactTests`，覆盖两种 writer 的实际目录/文件权限、payload 名称与显式清理，过期但活跃的 lease 保护，视频/图片混合 65 个 orphan 的每轮 64 上限，以及畸形 UUID、symlink、硬链接、未知文件和 lease-less 非空目录的保守策略。既有 `ChatOSMediaGenerationServiceTests` 29 项继续验证视频/音频/首尾帧增量 Base64、图片 multipart、多输入、低磁盘、provider 拒绝和正常请求后删除。Debug 与 arm64 Release 选择性运行上述 33 项测试，Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
+
+边界：本批只管理新版目录化 request body，不猜测或删除旧版 lease-less 的 `chatos-video-request-*.json` 与 `chatos-image-request-*.multipart`。尚未用独立 writer/上传子进程对 request body 执行真实 SIGKILL，也不覆盖 URLSession 正在从文件读取时的睡眠/断网、真实 ENOSPC、断电或文件系统损坏。App→Worker lease 所有权交接、Media Worker、图片/音频响应侧的大对象治理和签名 Release soak 仍待完成，P0-E 不能标记完成。
 
 ## 十三、验证矩阵
 

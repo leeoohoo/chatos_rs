@@ -2,14 +2,66 @@ import ChatOSNetworking
 import Foundation
 
 public struct HTTPRequestBodyFile: Sendable, Equatable {
-    public var url: URL
-    public var byteCount: Int
-    public var deleteWhenDone: Bool
+    public let url: URL
+    public let byteCount: Int
+    public let deleteWhenDone: Bool
+
+    private let cleanupOwner: CleanupOwner?
+
+    private final class CleanupOwner: @unchecked Sendable {
+        private let lock = NSLock()
+        private let cleanup: @Sendable () -> Void
+        private var removed = false
+
+        init(cleanup: @escaping @Sendable () -> Void) {
+            self.cleanup = cleanup
+        }
+
+        deinit {
+            removeIfNeeded()
+        }
+
+        func removeIfNeeded() {
+            lock.lock()
+            guard !removed else {
+                lock.unlock()
+                return
+            }
+            removed = true
+            lock.unlock()
+            cleanup()
+        }
+    }
 
     public init(url: URL, byteCount: Int, deleteWhenDone: Bool = false) {
         self.url = url
         self.byteCount = byteCount
         self.deleteWhenDone = deleteWhenDone
+        cleanupOwner = deleteWhenDone
+            ? CleanupOwner { try? FileManager.default.removeItem(at: url) }
+            : nil
+    }
+
+    init(
+        url: URL,
+        byteCount: Int,
+        deleteWhenDone: Bool,
+        cleanup: @escaping @Sendable () -> Void
+    ) {
+        self.url = url
+        self.byteCount = byteCount
+        self.deleteWhenDone = deleteWhenDone
+        cleanupOwner = deleteWhenDone ? CleanupOwner(cleanup: cleanup) : nil
+    }
+
+    public func removeIfNeeded() {
+        cleanupOwner?.removeIfNeeded()
+    }
+
+    public static func == (lhs: HTTPRequestBodyFile, rhs: HTTPRequestBodyFile) -> Bool {
+        lhs.url == rhs.url
+            && lhs.byteCount == rhs.byteCount
+            && lhs.deleteWhenDone == rhs.deleteWhenDone
     }
 }
 

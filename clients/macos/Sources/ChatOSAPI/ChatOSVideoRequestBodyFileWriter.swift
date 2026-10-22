@@ -113,6 +113,7 @@ enum ChatOSVideoRequestBodyFileWriter {
             )
         }
 
+        ChatOSUploadBodyArtifact.performMaintenance(in: temporaryDirectory)
         do {
             if let availableCapacityOverride {
                 try MediaDiskCapacityPolicy.ensureCapacity(
@@ -135,7 +136,7 @@ enum ChatOSVideoRequestBodyFileWriter {
         var completed = false
         defer {
             try? destination.handle.close()
-            if !completed { try? FileManager.default.removeItem(at: destination.url) }
+            if !completed { destination.owner.removeArtifact() }
         }
 
         do {
@@ -166,10 +167,12 @@ enum ChatOSVideoRequestBodyFileWriter {
             try destination.handle.synchronize()
             try destination.handle.close()
             completed = true
+            let owner = destination.owner
             return HTTPRequestBodyFile(
-                url: destination.url,
+                url: owner.payloadURL,
                 byteCount: requestByteCount,
-                deleteWhenDone: true
+                deleteWhenDone: true,
+                cleanup: { owner.removeArtifact() }
             )
         } catch is CancellationError {
             throw CancellationError()
@@ -211,22 +214,16 @@ enum ChatOSVideoRequestBodyFileWriter {
         )
     }
 
-    private static func makeDestination(in temporaryDirectory: URL) throws -> (url: URL, handle: FileHandle) {
-        let url = temporaryDirectory.appendingPathComponent(
-            "chatos-video-request-\(UUID().uuidString.lowercased()).json",
-            isDirectory: false
-        )
-        let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return Darwin.open(
-                path,
-                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
-                mode_t(S_IRUSR | S_IWUSR)
+    private static func makeDestination(
+        in temporaryDirectory: URL
+    ) throws -> ChatOSUploadBodyArtifact.Destination {
+        do {
+            return try ChatOSUploadBodyArtifact.makeDestination(
+                kind: .videoJSON,
+                in: temporaryDirectory
             )
-        }
-        guard descriptor >= 0 else {
+        } catch {
             throw MediaGenerationClientError.mediaUploadFailed("无法创建临时请求文件。")
         }
-        return (url, FileHandle(fileDescriptor: descriptor, closeOnDealloc: true))
     }
 }

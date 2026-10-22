@@ -17,11 +17,9 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
     }
 
     private func sendProviderRequest(_ request: HTTPRequest) async throws -> HTTPResponse {
-        let disposableBodyURL = request.bodyFile.flatMap { $0.deleteWhenDone ? $0.url : nil }
+        let disposableBodyFile = request.bodyFile.flatMap { $0.deleteWhenDone ? $0 : nil }
         defer {
-            if let disposableBodyURL {
-                try? FileManager.default.removeItem(at: disposableBodyURL)
-            }
+            disposableBodyFile?.removeIfNeeded()
         }
         try Task.checkCancellation()
         if let authenticationSessionID {
