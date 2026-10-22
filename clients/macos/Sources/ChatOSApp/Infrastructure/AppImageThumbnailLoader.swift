@@ -77,6 +77,22 @@ enum AppImageThumbnailLoader {
         guard status.st_size <= maximumBytes else {
             throw AppBoundedFileReadError.fileTooLarge(maximumBytes: maximumBytes)
         }
+        return decodeOpenFileDescriptor(
+            descriptor,
+            maximumSourcePixelCount: maximumSourcePixelCount,
+            maximumDisplayPixelSize: maximumDisplayPixelSize
+        )
+    }
+
+    nonisolated static func decodeOpenFileDescriptor(
+        _ descriptor: Int32,
+        maximumSourcePixelCount: Int,
+        maximumDisplayPixelSize: Int
+    ) -> AppDecodedThumbnail? {
+        guard descriptor >= 0,
+              lseek(descriptor, 0, SEEK_SET) == 0 else {
+            return nil
+        }
         let descriptorURL = URL(fileURLWithPath: "/dev/fd/\(descriptor)")
         guard let source = CGImageSourceCreateWithURL(descriptorURL as CFURL, [
             kCGImageSourceShouldCache: false,

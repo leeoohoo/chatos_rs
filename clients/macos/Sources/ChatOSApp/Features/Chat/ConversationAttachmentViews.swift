@@ -1,6 +1,5 @@
 import AppKit
 import ChatOSCore
-import CryptoKit
 import SwiftUI
 
 struct ComposerAttachmentChip: View {
@@ -226,30 +225,11 @@ private struct LocalAttachmentImage: View {
                 return
             }
             do {
-                let decoded = try await AppCancellableDetachedWork.run {
-                    guard expectedBytes > 0, expectedBytes <= 20 * 1_024 * 1_024 else {
-                        throw CocoaError(.fileReadTooLarge)
-                    }
-                    let data = try AppBoundedFileReader.read(
-                        url,
-                        maximumBytes: expectedBytes
-                    )
-                    guard data.count == expectedBytes,
-                          let sha256,
-                          SHA256.hash(data: data).map({
-                              String(format: "%02x", $0)
-                          }).joined() == sha256.lowercased() else {
-                        throw CocoaError(.fileReadCorruptFile)
-                    }
-                    guard let decoded = AppImageThumbnailLoader.decode(
-                        data,
-                        maximumSourcePixelCount: 64_000_000,
-                        maximumDisplayPixelSize: 2_048
-                    ) else {
-                        throw CocoaError(.fileReadCorruptFile)
-                    }
-                    return decoded
-                }
+                let decoded = try await ConversationAttachmentImageLoader.load(
+                    url: url,
+                    sha256: sha256,
+                    expectedBytes: expectedBytes
+                )
                 guard !Task.isCancelled else { return }
                 image = decoded.makeNSImage()
             } catch {

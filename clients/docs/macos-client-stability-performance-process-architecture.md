@@ -1584,6 +1584,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：旧 Base64-only 头像仍需一次源 `Data`，最终 512 KiB JPEG 按 UI/持久化契约返回 `Data`；ImageIO 解码与 JPEG 编码仍在主进程。本批没有改变头像存储格式或账户模型；真实大图 physical-footprint、内存压力/取消风暴、恶意图片进程隔离、断网/睡眠/ENOSPC、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.54 第五十四批实施记录：聊天附件图片校验与预览文件原生化（2026-10-23）
+
+本批扩展文件原生图片消费到普通聊天附件。此前打开已持久化的本地图片附件时，会先读取最多 20 MiB 完整 `Data`，对该副本计算 SHA-256，再从同一 `Data` 创建最多 2048 像素的 ImageIO 位图；压缩源与解码面会同时驻留。
+
+已实施：
+
+- `ConversationAttachmentImageLoader` 以 `O_NOFOLLOW | O_CLOEXEC` 打开附件并对同一 descriptor 执行 `fstat`，要求普通文件、记录尺寸精确一致且不超过 20 MiB；64 KiB 分块增量计算 SHA-256，不再保留完整压缩源 `Data`。
+- `AppImageThumbnailLoader` 提取预打开 descriptor 解码入口；摘要通过后将同一 descriptor rewind，经 `/dev/fd` 创建 ImageIO source，继续执行 64 MP 源像素和 2048 显示像素上限。
+- 解码完成后再次检查同一 descriptor 的 device、inode、尺寸与 mtime，检测校验和解码窗口内的替换或改写；取消在摘要分块、解码前后均传播，不能被误报成损坏。
+- `LocalAttachmentImage` 直接消费有界位图，不再读取完整附件 `Data`；附件文件与持久化引用格式保持不变。
+- 新增 3 项回归，覆盖正确摘要的 128×64 → 64×32 文件解码、摘要不匹配拒绝以及 `O_NOFOLLOW` 拒绝符号链接，失败均不删除原附件。
+
+验证：Debug 与 arm64 Release 各选择性运行既有图片/HTTP 门禁 45 项和 `ConversationAttachmentImageLoaderTests` 3 项，共 48 项，全部通过；Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。未启动/安装正式 App，未访问活动用户数据库。
+
+边界：本批只优化已持久化聊天附件的图片预览，不改变发送前 `ConversationAttachmentDraft` 的内存 DTO，也不处理 Markdown/文本附件按契约读取正文的路径。ImageIO 仍在主进程；真实 20 MiB/64 MP physical-footprint、快速开关预览取消风暴、进程隔离、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
