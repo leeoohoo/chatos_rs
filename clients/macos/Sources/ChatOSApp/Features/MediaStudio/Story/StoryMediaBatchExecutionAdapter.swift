@@ -8,6 +8,7 @@ import Foundation
 struct StoryMediaBatchExecutionAdapter: StoryMediaBatchExecuting {
     let store: StoryProjectStore
     let media: any MediaGenerationServicing
+    let videoJobStore: MediaStudioVideoJobStore
 
     func prepareStoryMediaBatch(
         ownerUserID: String,
@@ -39,6 +40,7 @@ struct StoryMediaBatchExecutionAdapter: StoryMediaBatchExecuting {
 
     func executeStoryMediaBatch(
         ownerUserID: String,
+        accountSessionID: UUID,
         command: StoryMediaBatchCommand,
         continuationCheck: @escaping @Sendable () async throws -> Void,
         shouldPause: @escaping @Sendable () async -> Bool,
@@ -69,6 +71,7 @@ struct StoryMediaBatchExecutionAdapter: StoryMediaBatchExecuting {
             }
             return try await execute(
                 batch,
+                accountSessionID: accountSessionID,
                 continuationCheck: continuationCheck,
                 shouldPause: shouldPause,
                 onEvent: onEvent
@@ -82,6 +85,7 @@ struct StoryMediaBatchExecutionAdapter: StoryMediaBatchExecuting {
             guard !batch.finished else { throw StoryAgentError.invalidRun }
             return try await execute(
                 batch,
+                accountSessionID: accountSessionID,
                 continuationCheck: continuationCheck,
                 shouldPause: shouldPause,
                 onEvent: onEvent
@@ -96,6 +100,52 @@ struct StoryMediaBatchExecutionAdapter: StoryMediaBatchExecuting {
             try await continuationCheck()
             batch.draft = project
             batch.expectedProjectDigest = try StoryAgentRun.digest(project)
+            for step in batch.steps where step.kind == .videos {
+                guard var job = batch.jobs[step.id],
+                      !job.completed,
+                      let localJobID = job.videoJobRecordID,
+                      let index = batch.draft.segments.firstIndex(where: {
+                          $0.id == step.targetID
+                      }),
+                      batch.draft.segments[index].video == nil,
+                      batch.draft.segments[index].attempt == nil,
+                      (batch.draft.segments[index].videoJobRecordID == localJobID
+                        || batch.draft.segments[index].videoJobRecordID == nil) else {
+                    continue
+                }
+                let workload = MediaStudioVideoJobStore.Workload.storyBatchVideo(
+                    projectID: batch.draft.id,
+                    batchID: batch.id,
+                    segmentID: step.targetID,
+                    attemptID: localJobID
+                )
+                let snapshot = try await videoJobStore.snapshot(
+                    id: localJobID,
+                    owner: ownerUserID
+                )
+                guard snapshot.workload == workload else {
+                    throw MediaStudioVideoJobStoreError.jobConflict
+                }
+                _ = try await videoJobStore.activate(
+                    id: localJobID,
+                    owner: ownerUserID,
+                    sessionEpoch: accountSessionID,
+                    workload: workload
+                )
+                try await continuationCheck()
+                _ = try await videoJobStore.releaseAfterVerifiedRetry(
+                    id: localJobID,
+                    owner: ownerUserID,
+                    sessionEpoch: accountSessionID,
+                    workload: workload
+                )
+                try await continuationCheck()
+                job.videoJobRecordID = nil
+                batch.jobs[step.id] = job
+                batch.draft.segments[index].videoJobRecordID = nil
+                batch.draft.segments[index].error = nil
+                batch.events.append(.init(detail: "已核对并释放视频任务：\(step.targetID)"))
+            }
             let intents = Set(batch.jobs.values.map(\.intentID))
             for var resource in batch.draft.resources
                 where resource.imageGenerationAttemptID.map(intents.contains) == true {
@@ -121,6 +171,7 @@ struct StoryMediaBatchExecutionAdapter: StoryMediaBatchExecuting {
 
     private func execute(
         _ batch: StoryMediaBatch,
+        accountSessionID: UUID,
         continuationCheck: @escaping @Sendable () async throws -> Void,
         shouldPause: @escaping @Sendable () async -> Bool,
         onEvent: @escaping @Sendable (StoryMediaBatchExecutionEvent) async -> Void
@@ -137,10 +188,19 @@ struct StoryMediaBatchExecutionAdapter: StoryMediaBatchExecuting {
             batch: batch,
             store: store,
             media: service,
+            videoJobStore: videoJobStore,
+            accountSessionID: accountSessionID,
             check: continuationCheck,
             shouldPause: shouldPause,
             publish: { value in
                 await onEvent(.init(batch: value.historySnapshot, project: value.draft))
+            },
+            publishVideoProgress: { value, stepID, progress in
+                var snapshot = value.historySnapshot
+                if let index = snapshot.steps.firstIndex(where: { $0.id == stepID }) {
+                    snapshot.steps[index].progressStatus = progress.status
+                }
+                await onEvent(.init(batch: snapshot, project: value.draft))
             }
         )
         let result = try await session.run()

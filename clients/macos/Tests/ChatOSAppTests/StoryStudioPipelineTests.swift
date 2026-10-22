@@ -6,7 +6,7 @@ import XCTest
 @testable import ChatOSApp
 
 extension StoryStudioTests {
-    func testPersistentMediaBatchCoalescesRepeatedVideoProgress() async throws {
+    func testPersistentMediaBatchUsesDurableVideoProgressAsItsOnlyWriter() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "StoryBatchProgressTests-\(UUID().uuidString)",
             isDirectory: true
@@ -26,18 +26,398 @@ extension StoryStudioTests {
             targets: ["s1"],
             models: models
         )
+        let videoJobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("jobs", isDirectory: true)
+        )
+        let progressCollector = StoryBatchProgressCollector()
         let session = StoryMediaBatchSession(
             batch: batch,
             store: store,
-            media: RepeatedStoryVideoProgressService()
+            media: RepeatedStoryVideoProgressService(),
+            videoJobStore: videoJobStore,
+            accountSessionID: UUID(),
+            publishVideoProgress: { _, _, progress in
+                await progressCollector.append(progress.status)
+            }
         )
 
         let completed = try await session.run()
+        let progressStatuses = await progressCollector.statuses()
 
         XCTAssertEqual(completed.status, .completed)
-        XCTAssertEqual(completed.events.filter { $0.detail.contains("：queued，") }.count, 1)
-        XCTAssertEqual(completed.events.filter { $0.detail.contains("：in_progress，") }.count, 1)
+        XCTAssertTrue(completed.events.allSatisfy { !$0.detail.contains("任务 ID") })
+        XCTAssertNil(completed.jobs["videos:s1"]?.jobID)
+        XCTAssertNil(completed.draft.segments[0].attempt)
+        let recordID = try XCTUnwrap(completed.jobs["videos:s1"]?.videoJobRecordID)
+        XCTAssertEqual(completed.draft.segments[0].videoJobRecordID, recordID)
         XCTAssertEqual(completed.draft.segments[0].video?.jobID, "repeated-progress-job")
+        let snapshot = try await videoJobStore.snapshot(id: recordID, owner: "alice")
+        XCTAssertEqual(snapshot.status, .completed)
+        XCTAssertEqual(snapshot.providerJobID, "repeated-progress-job")
+        XCTAssertEqual(snapshot.stateVersion, 7, "Repeated provider phases must be coalesced")
+        XCTAssertEqual(progressStatuses, ["submitting", "queued", "in_progress"])
+    }
+
+    func testLegacyMediaBatchProviderJobMigratesAndOnlyResumes() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryBatchLegacyProviderTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        let videoJobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("jobs", isDirectory: true)
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        var batch = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        var job = StoryMediaBatch.Job()
+        job.jobID = "legacy-provider-job"
+        batch.jobs["videos:s1"] = job
+        batch.draft.segments[0].attempt = .init(
+            modelConfigID: "video",
+            prompt: "legacy prompt",
+            size: "768P",
+            ratio: "16:9",
+            seconds: 15
+        )
+        batch.draft.segments[0].attempt?.jobID = "legacy-provider-job"
+        try await store.commitMediaBatch(batch)
+        let service = StoryTestService()
+        let session = StoryMediaBatchSession(
+            batch: batch,
+            store: store,
+            media: service,
+            videoJobStore: videoJobStore,
+            accountSessionID: UUID()
+        )
+
+        let completed = try await session.run()
+        let serviceEvents = await service.events()
+
+        XCTAssertEqual(serviceEvents, ["resume"])
+        XCTAssertEqual(completed.status, .completed)
+        XCTAssertEqual(completed.jobs["videos:s1"]?.jobID, "legacy-provider-job")
+        let recordID = try XCTUnwrap(completed.jobs["videos:s1"]?.videoJobRecordID)
+        XCTAssertNil(completed.draft.segments[0].attempt)
+        XCTAssertEqual(completed.draft.segments[0].video?.jobID, "legacy-provider-job")
+        let snapshot = try await videoJobStore.snapshot(id: recordID, owner: "alice")
+        XCTAssertEqual(snapshot.status, .completed)
+        XCTAssertEqual(snapshot.providerJobID, "legacy-provider-job")
+    }
+
+    func testPreparedMediaBatchRecordSurvivesCrashBeforeHandoffAndCreatesOnce() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryBatchPreparedReplayTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        let videoJobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("jobs", isDirectory: true)
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        var batch = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        let job = StoryMediaBatch.Job()
+        let workload = MediaStudioVideoJobStore.Workload.storyBatchVideo(
+            projectID: project.id,
+            batchID: batch.id,
+            segmentID: "s1",
+            attemptID: job.intentID
+        )
+        let firstFrame = try XCTUnwrap(project.segments[0].firstFrame)
+        let firstFrameURL = try store.fileURL(
+            firstFrame.filename,
+            projectID: project.id,
+            owner: "alice"
+        )
+        let request = VideoGenerationRequest(
+            modelConfigID: "video",
+            prompt: "prepared prompt",
+            size: "768P",
+            seconds: 15,
+            inputImage: .init(
+                name: "first-frame.png",
+                mimeType: firstFrame.mimeType,
+                fileURL: firstFrameURL
+            ),
+            ratio: "16:9"
+        )
+        let epoch = UUID()
+        _ = try await videoJobStore.stagePrepared(
+            request: request,
+            id: job.intentID,
+            owner: "alice",
+            sessionEpoch: epoch,
+            workload: workload
+        )
+        batch.jobs["videos:s1"] = job
+        batch.draft.segments[0].attempt = .init(
+            modelConfigID: "video",
+            prompt: "prepared prompt",
+            size: "768P",
+            ratio: "16:9",
+            seconds: 15
+        )
+        batch.draft.segments[0].attempt?.id = job.intentID
+        try await store.commitMediaBatch(batch)
+        let service = StoryTestService()
+        let session = StoryMediaBatchSession(
+            batch: batch,
+            store: store,
+            media: service,
+            videoJobStore: videoJobStore,
+            accountSessionID: UUID()
+        )
+
+        let completed = try await session.run()
+        let serviceEvents = await service.events()
+
+        XCTAssertEqual(serviceEvents, ["video"])
+        XCTAssertEqual(completed.status, .completed)
+        XCTAssertEqual(completed.jobs["videos:s1"]?.videoJobRecordID, job.intentID)
+        XCTAssertNil(completed.draft.segments[0].attempt)
+        let snapshot = try await videoJobStore.snapshot(id: job.intentID, owner: "alice")
+        XCTAssertEqual(snapshot.status, .completed)
+        XCTAssertEqual(snapshot.providerJobID, "remote-job")
+    }
+
+    func testLegacyMediaBatchWithoutProviderIdentityNeverCreatesAgain() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryBatchUncertainTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        let videoJobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("jobs", isDirectory: true)
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        var batch = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        let job = StoryMediaBatch.Job()
+        batch.jobs["videos:s1"] = job
+        batch.draft.segments[0].attempt = .init(
+            modelConfigID: "video",
+            prompt: "ambiguous legacy prompt",
+            size: "768P",
+            ratio: "16:9",
+            seconds: 15
+        )
+        try await store.commitMediaBatch(batch)
+        let service = StoryTestService()
+        let session = StoryMediaBatchSession(
+            batch: batch,
+            store: store,
+            media: service,
+            videoJobStore: videoJobStore,
+            accountSessionID: UUID()
+        )
+
+        let stopped = try await session.run()
+        let serviceEvents = await service.events()
+
+        XCTAssertEqual(serviceEvents, [])
+        XCTAssertEqual(stopped.status, .needsReview)
+        XCTAssertEqual(stopped.jobs["videos:s1"]?.videoJobRecordID, job.intentID)
+        XCTAssertNil(stopped.draft.segments[0].attempt)
+        let snapshot = try await videoJobStore.snapshot(id: job.intentID, owner: "alice")
+        XCTAssertEqual(snapshot.status, .submissionUncertain)
+        XCTAssertNil(snapshot.providerJobID)
+    }
+
+    func testVerifiedMediaBatchAbandonTerminalizesJobBeforeClearingAssociation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryBatchVerifiedReleaseTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        let videoJobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("jobs", isDirectory: true)
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        var batch = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        let job = StoryMediaBatch.Job()
+        batch.jobs["videos:s1"] = job
+        batch.draft.segments[0].attempt = .init(
+            modelConfigID: "video",
+            prompt: "ambiguous legacy prompt",
+            size: "768P",
+            ratio: "16:9",
+            seconds: 15
+        )
+        try await store.commitMediaBatch(batch)
+        let service = StoryTestService()
+        let stopped = try await StoryMediaBatchSession(
+            batch: batch,
+            store: store,
+            media: service,
+            videoJobStore: videoJobStore,
+            accountSessionID: UUID()
+        ).run()
+        XCTAssertEqual(stopped.status, .needsReview)
+        let canonical = try await store.load(owner: "alice").projects[0]
+        let adapter = StoryMediaBatchExecutionAdapter(
+            store: store,
+            media: service,
+            videoJobStore: videoJobStore
+        )
+
+        let abandoned = try await adapter.executeStoryMediaBatch(
+            ownerUserID: "alice",
+            accountSessionID: UUID(),
+            command: .abandon(project: canonical, batchID: batch.id),
+            continuationCheck: {},
+            shouldPause: { false },
+            onEvent: { _ in }
+        )
+
+        XCTAssertEqual(abandoned.batch.status, .abandoned)
+        XCTAssertNil(abandoned.project.segments[0].videoJobRecordID)
+        let reloaded = try await store.loadMediaBatch(
+            owner: "alice",
+            projectID: project.id,
+            batchID: batch.id
+        )
+        XCTAssertNil(reloaded.jobs["videos:s1"]?.videoJobRecordID)
+        let snapshot = try await videoJobStore.snapshot(id: job.intentID, owner: "alice")
+        XCTAssertEqual(snapshot.status, .cancelled)
+        XCTAssertEqual(snapshot.failurePhase, "verified_retry_release")
+    }
+
+    func testCompletedMediaBatchResultReconcilesFinalizingJobWithoutProviderCall() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryBatchFinalizeReplayTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        let videoJobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("jobs", isDirectory: true)
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        var batch = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        var job = StoryMediaBatch.Job()
+        job.jobID = "finalizing-provider-job"
+        batch.jobs["videos:s1"] = job
+        batch.draft.segments[0].attempt = .init(
+            modelConfigID: "video",
+            prompt: "legacy prompt",
+            size: "768P",
+            ratio: "16:9",
+            seconds: 15
+        )
+        batch.draft.segments[0].attempt?.jobID = "finalizing-provider-job"
+        try await store.commitMediaBatch(batch)
+        let workload = MediaStudioVideoJobStore.Workload.storyBatchVideo(
+            projectID: project.id,
+            batchID: batch.id,
+            segmentID: "s1",
+            attemptID: job.intentID
+        )
+        let request = VideoGenerationRequest(
+            modelConfigID: "video",
+            prompt: "legacy prompt",
+            size: "768P",
+            seconds: 15,
+            ratio: "16:9"
+        )
+        let epoch = UUID()
+        _ = try await videoJobStore.stageImportedProviderJob(
+            request: request,
+            id: job.intentID,
+            providerJobID: "finalizing-provider-job",
+            owner: "alice",
+            sessionEpoch: epoch,
+            workload: workload
+        )
+        var handedOff = try await store.handoffMediaBatchVideoGenerationToMediaJob(
+            owner: "alice",
+            projectID: project.id,
+            batchID: batch.id,
+            stepID: "videos:s1",
+            expectedIntentID: job.intentID
+        )
+        _ = try await videoJobStore.activate(
+            id: job.intentID,
+            owner: "alice",
+            sessionEpoch: epoch,
+            workload: workload
+        )
+        try await videoJobStore.markFinalizing(
+            id: job.intentID,
+            owner: "alice",
+            sessionEpoch: epoch,
+            providerJobID: "finalizing-provider-job"
+        )
+        let video = try await store.saveVideo(
+            .init(
+                id: "finalizing-provider-job",
+                modelConfigID: "video",
+                modelName: "MiniMax-H3",
+                createdAt: "",
+                mimeType: "video/mp4",
+                videoData: Data("video".utf8)
+            ),
+            projectID: project.id,
+            owner: "alice"
+        )
+        handedOff.expectedProjectDigest = try StoryAgentRun.digest(handedOff.draft)
+        handedOff.jobs["videos:s1"]?.completed = true
+        handedOff.draft.segments[0].video = video
+        try await store.commitMediaBatch(handedOff)
+        let service = StoryTestService()
+        let recoveryEpoch = UUID()
+        let session = StoryMediaBatchSession(
+            batch: handedOff,
+            store: store,
+            media: service,
+            videoJobStore: videoJobStore,
+            accountSessionID: recoveryEpoch
+        )
+
+        let completed = try await session.run()
+        let serviceEvents = await service.events()
+
+        XCTAssertEqual(serviceEvents, [])
+        XCTAssertEqual(completed.status, .completed)
+        let snapshot = try await videoJobStore.snapshot(id: job.intentID, owner: "alice")
+        XCTAssertEqual(snapshot.status, .completed)
+        XCTAssertEqual(snapshot.sessionEpoch, recoveryEpoch)
     }
 
     func testPendingVideoConfigurationCannotBeChanged() async throws {
@@ -261,7 +641,13 @@ extension StoryStudioTests {
             .init(id: "hero", name: "Hero", description: "Hero portrait"),
         ]
         try await store.save(project, owner: "alice")
-        let adapter = StoryMediaBatchExecutionAdapter(store: store, media: service)
+        let adapter = StoryMediaBatchExecutionAdapter(
+            store: store,
+            media: service,
+            videoJobStore: MediaStudioVideoJobStore(
+                root: store.root.appendingPathComponent("MediaJobs", isDirectory: true)
+            )
+        )
         let preparation = try adapter.prepareStoryMediaBatch(
             ownerUserID: "alice",
             project: project,
@@ -290,6 +676,7 @@ extension StoryStudioTests {
 
         let outcome = try await adapter.executeStoryMediaBatch(
             ownerUserID: "alice",
+            accountSessionID: UUID(),
             command: .abandon(project: current, batchID: preparation.batchID),
             continuationCheck: {},
             shouldPause: { false },

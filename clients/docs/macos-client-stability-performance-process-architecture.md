@@ -1216,6 +1216,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批只交付下一阶段接管所需的持久格式与 handoff 原语，生产 `StoryMediaBatchSession` 仍是 legacy 唯一 writer，没有旁路双写，也不会扫描或改写用户现有 batch。下一批必须把 account session epoch、stage/import → Batch handoff → activate、progress/finalize/recovery 全部在同一切换中接入后，才能停止写 `batch.jobs.jobID` 与 `segment.attempt`。分页迁移协调器、终态清理、staging 限龄、长期 lease、真实强杀矩阵与 Media Worker 仍待完成，P0-E 不能标记完成。
 
+### 12.30 第三十批实施记录：生产 Story Media Batch 切换 durable 单写（2026-10-22）
+
+本批完成 12.29 预备协议的生产接管。`StoryMediaBatchUseCase`、macOS adapter、ViewModel 与 session 现在贯穿同一个 account session epoch；Story composition 与直接视频队列共享同一 `MediaStudioVideoJobStore`，不再由 Batch session 自行维护另一套 provider 状态机。
+
+已实施：
+
+- 新 Batch 视频严格执行 `stagePrepared → 临时 intent checkpoint → Batch handoff → activate → markSubmitting`，provider POST 只能发生在 handoff 与激活之后；输入素材先复制并校验到 durable record，账号切换后的旧 epoch 无法继续写 progress/finalize/completed。
+- 生产 progress callback 只写 MediaJobStore。`batch.jobs.jobID` 与 `segment.attempt.jobID/status` 不再随轮询推进，重复 provider phase 在 Store 前合并；UI 进度通过非持久 event projection 发布，不把瞬态百分比重新写回 Story/Batch manifest。
+- 旧 Batch 有 provider ID 时导入为 resume-only；没有 provider ID 时导入 `submission_uncertain` 并只进入人工核对，绝不 create。若进程死在 durable stage 已提交、Batch handoff 尚未提交之间，恢复会先核对原 staged request/workload，再沿用 prepared 记录 create 一次，不会误降级或覆盖成另一生命周期。
+- 成片结果采用 `MediaJobStore.finalizing → Batch/Story write-ahead commit → MediaJobStore.completed`。恢复会在不调用 provider 的情况下对账“成片已提交、job 仍 finalizing”的窗口；尾帧提取继续是成片终态后的可失败增强。
+- “核对后结束批次”先把每个未完成 durable 视频记录写成带 `verified_retry_release` 的 `cancelled` 审计终态，再清除 Batch 与 Story 关联。两步可重放，不能因中途崩溃重新开放旧任务。
+
+验证：覆盖新任务 durable-only progress 与重复 phase 合并、legacy provider resume-only、无 provider identity review-only、prepared-before-handoff 崩溃重放、finalizing-after-Story-commit 对账，以及 verified abandon 的 terminal-first 顺序；同时保留原有 Story 账号隔离、直接视频恢复和 Batch write-ahead 回归。Debug 与 arm64 Release 选择性运行 MediaJobStore/Story/Core，各 113 项 XCTest 与 5 项 Swift Testing 全部通过；Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
+
+边界：本批迁移的是用户显式启动/恢复的生产 Batch session，不会启动应用、扫描或批量改写静态历史。全量历史 Batch 分页迁移协调器、durable terminal job 配额/清理、隐藏 staging 限龄、App→Worker 长期 lease 交接、真实逐状态强杀/睡眠/断网矩阵与 Media Worker 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

@@ -52,6 +52,7 @@ extension StoryStudioViewModel {
             defer { _ = self.storyMediaBatchExecutionState.finish(request) }
             let result = try await storyMediaBatch.execute(
                 ownerUserID: owner,
+                accountSessionID: token,
                 command: .start(
                     project: project,
                     preparation: preparation,
@@ -83,6 +84,7 @@ extension StoryStudioViewModel {
             defer { _ = self.storyMediaBatchExecutionState.finish(request) }
             let result = try await storyMediaBatch.execute(
                 ownerUserID: owner,
+                accountSessionID: token,
                 command: .resume(projectID: project.id, batchID: id),
                 continuationCheck: { [weak self] in
                     guard let self else { throw CancellationError() }
@@ -111,6 +113,7 @@ extension StoryStudioViewModel {
             defer { _ = self.storyMediaBatchExecutionState.finish(request) }
             let result = try await storyMediaBatch.execute(
                 ownerUserID: owner,
+                accountSessionID: token,
                 command: .abandon(project: project, batchID: id),
                 continuationCheck: { [weak self] in
                     guard let self else { throw CancellationError() }

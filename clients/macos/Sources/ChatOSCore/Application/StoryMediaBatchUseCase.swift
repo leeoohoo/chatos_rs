@@ -97,6 +97,7 @@ public protocol StoryMediaBatchExecuting: Sendable {
 
     func executeStoryMediaBatch(
         ownerUserID: String,
+        accountSessionID: UUID,
         command: StoryMediaBatchCommand,
         continuationCheck: @escaping @Sendable () async throws -> Void,
         shouldPause: @escaping @Sendable () async -> Bool,
@@ -192,6 +193,7 @@ public struct StoryMediaBatchUseCase: Sendable {
 
     public func execute(
         ownerUserID ownerInput: String,
+        accountSessionID: UUID,
         command: StoryMediaBatchCommand,
         continuationCheck: @escaping @Sendable () async throws -> Void,
         shouldPause: @escaping @Sendable () async -> Bool,
@@ -202,6 +204,7 @@ public struct StoryMediaBatchUseCase: Sendable {
         try await continuationCheck()
         let outcome = try await executor.executeStoryMediaBatch(
             ownerUserID: owner,
+            accountSessionID: accountSessionID,
             command: normalized,
             continuationCheck: continuationCheck,
             shouldPause: shouldPause,

@@ -107,6 +107,7 @@ struct StoryMediaBatchUseCaseTests {
         let collector = BatchEventCollector()
         let outcome = try await StoryMediaBatchUseCase(executor: executor).execute(
             ownerUserID: "alice",
+            accountSessionID: UUID(),
             command: .start(
                 project: project,
                 preparation: preparation,
@@ -149,6 +150,7 @@ struct StoryMediaBatchUseCaseTests {
         await #expect(throws: StoryMediaBatchUseCaseError.directVideosRequireSeparateExecution) {
             _ = try await useCase.execute(
                 ownerUserID: "alice",
+                accountSessionID: UUID(),
                 command: .start(
                     project: project,
                     preparation: preparation,
@@ -278,6 +280,7 @@ private struct StubStoryMediaBatchExecutor: StoryMediaBatchExecuting {
 
     func executeStoryMediaBatch(
         ownerUserID: String,
+        accountSessionID: UUID,
         command: StoryMediaBatchCommand,
         continuationCheck: @escaping @Sendable () async throws -> Void,
         shouldPause: @escaping @Sendable () async -> Bool,

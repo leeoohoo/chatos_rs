@@ -1459,6 +1459,7 @@ private actor DeferredStoryMediaBatchExecutor: StoryMediaBatchExecuting {
 
     func executeStoryMediaBatch(
         ownerUserID: String,
+        accountSessionID: UUID,
         command: StoryMediaBatchCommand,
         continuationCheck: @escaping @Sendable () async throws -> Void,
         shouldPause: @escaping @Sendable () async -> Bool,

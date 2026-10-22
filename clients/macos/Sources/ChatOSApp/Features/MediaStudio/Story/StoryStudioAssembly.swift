@@ -56,7 +56,8 @@ extension StoryStudioViewModel {
             storyMediaBatch: StoryMediaBatchUseCase(
                 executor: storyMediaBatch ?? StoryMediaBatchExecutionAdapter(
                     store: store,
-                    media: media
+                    media: media,
+                    videoJobStore: resolvedVideoJobStore
                 )
             ),
             storyMediaAccess: StoryMediaAccessUseCase(

@@ -5,6 +5,13 @@ import Foundation
 import XCTest
 @testable import ChatOSApp
 
+actor StoryBatchProgressCollector {
+    private var values: [String] = []
+
+    func append(_ value: String) { values.append(value) }
+    func statuses() -> [String] { values }
+}
+
 actor RepeatedStoryVideoProgressService: MediaGenerationServicing {
     func fetchModels() async throws -> [MediaGenerationModel] { [] }
 

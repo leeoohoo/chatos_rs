@@ -597,6 +597,17 @@ actor MediaStudioVideoJobStore {
         return snapshot(try load(id: id, owner: owner))
     }
 
+    /// Distinguishes an unpublished legacy Batch intent from a staged durable record left by
+    /// a crash before the Batch handoff. Corrupt records still fail closed instead of being
+    /// treated as absent and imported as a different lifecycle.
+    func snapshotIfPresent(id: UUID, owner: String) throws -> Snapshot? {
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
+        let manifest = jobFolder(id: id, owner: owner).appendingPathComponent("job.json")
+        guard FileManager.default.fileExists(atPath: manifest.path) else { return nil }
+        return snapshot(try load(id: id, owner: owner))
+    }
+
     private func validateStagedIdentity(id: UUID, owner: String, workload: Workload) throws {
         guard !owner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
         guard workload.isValid, workload != .genericStudio else {
