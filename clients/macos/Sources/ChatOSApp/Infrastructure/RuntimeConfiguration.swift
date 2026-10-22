@@ -20,13 +20,29 @@ enum RuntimeConfiguration {
     static var localConnectorCloudBaseURL: URL { deployment.connectorBaseURL }
 
     static var localAgentMaximumConcurrentWorkItems: Int {
-        let configured = nonEmptyEnvironmentValue("CHATOS_LOCAL_AGENT_MAX_CONCURRENCY")
+        clientResourceBudget.localAgentHostWorkItems
+    }
+
+    static var swiftAgentMaximumConcurrentRuns: Int {
+        clientResourceBudget.swiftAgentRuns
+    }
+
+    static var clientResourceBudget: NativeClientResourceBudget {
+        let configuredHost = nonEmptyEnvironmentValue("CHATOS_LOCAL_AGENT_MAX_CONCURRENCY")
             .flatMap(Int.init)
             ?? (Bundle.main.object(
                 forInfoDictionaryKey: "ChatOSLocalAgentMaxConcurrency"
             ) as? NSNumber)?.intValue
-        return configured.flatMap(NativeLocalAgentConcurrencyPolicy.validated)
-            ?? NativeLocalAgentConcurrencyPolicy.adaptiveDefault
+        let configuredTotal = nonEmptyEnvironmentValue("CHATOS_BACKGROUND_JOB_BUDGET")
+            .flatMap(Int.init)
+            ?? (Bundle.main.object(
+                forInfoDictionaryKey: "ChatOSBackgroundJobBudget"
+            ) as? NSNumber)?.intValue
+        return NativeClientResourceBudgetPolicy.recommended(
+            logicalProcessorCount: ProcessInfo.processInfo.activeProcessorCount,
+            configuredTotalLogicalJobs: configuredTotal,
+            configuredHostWorkItems: configuredHost
+        )
     }
 
     static var nativeConnectorStateURL: URL {

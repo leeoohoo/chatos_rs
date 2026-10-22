@@ -22,7 +22,7 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
         command: &IdempotentCommand,
         write: &LocalAgentArtifactWrite,
     ) -> Result<LocalAgentArtifact, ClientStorageError> {
-        let mut database = self.pool.acquire().await.db()?;
+        let mut database = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut database).await?;
         let mut created_path = None;
         let result = async {
@@ -191,7 +191,7 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
         artifact_id: &str,
         now_unix_ms: i64,
     ) -> Result<(), ClientStorageError> {
-        let mut database = self.pool.acquire().await.db()?;
+        let mut database = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut database).await?;
         let result = async {
             if Self::replay::<()>(&mut database, command).await?.is_some() {

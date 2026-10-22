@@ -12,7 +12,7 @@ async fn file_database_reads_remain_available_during_a_write_transaction() {
         .expect("storage");
     assert_eq!(storage.pool.options().get_max_connections(), 4);
 
-    let mut writer = storage.pool.acquire().await.expect("writer connection");
+    let mut writer = storage.acquire_write().await.expect("writer connection");
     SqliteClientStorage::begin_immediate(&mut writer)
         .await
         .expect("write transaction");
@@ -24,10 +24,9 @@ async fn file_database_reads_remain_available_during_a_write_transaction() {
     .expect("WAL reader must not wait for the writer")
     .expect("reader query");
     assert_eq!(value, 1);
-    sqlx::query("ROLLBACK")
-        .execute(&mut *writer)
+    SqliteClientStorage::finish_write(&mut writer, Ok(()))
         .await
-        .expect("rollback");
+        .expect("release write reservation");
 }
 
 #[tokio::test]

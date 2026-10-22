@@ -5,6 +5,35 @@ import Foundation
 import XCTest
 @testable import ChatOSApp
 
+actor RepeatedStoryVideoProgressService: MediaGenerationServicing {
+    func fetchModels() async throws -> [MediaGenerationModel] { [] }
+
+    func generateImage(_ request: ImageGenerationRequest) async throws -> ImageGenerationResult {
+        throw StoryError.unavailable
+    }
+
+    func generateVideo(
+        _ request: VideoGenerationRequest,
+        progress: @escaping @Sendable (VideoGenerationProgress) async -> Void
+    ) async throws -> VideoGenerationResult {
+        for percent in 0..<100 {
+            await progress(.init(
+                status: percent < 50 ? "queued" : "in_progress",
+                percent: Double(percent),
+                jobID: "repeated-progress-job"
+            ))
+        }
+        return .init(
+            id: "repeated-progress-job",
+            modelConfigID: request.modelConfigID,
+            modelName: "MiniMax-H3",
+            createdAt: "",
+            mimeType: "video/mp4",
+            videoData: Data("video".utf8)
+        )
+    }
+}
+
 actor ConcurrentStoryImageService: MediaGenerationServicing {
     private let imageData: Data
     private var activeCalls = 0

@@ -30,7 +30,7 @@ impl LocalPluginInstallationStore for SqliteClientStorage {
         installation
             .validate()
             .map_err(ClientStorageError::InvalidState)?;
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
@@ -125,7 +125,7 @@ impl LocalPluginInstallationStore for SqliteClientStorage {
         expected_version: u64,
         now_unix_ms: i64,
     ) -> Result<LocalPluginInstallationRecord, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {

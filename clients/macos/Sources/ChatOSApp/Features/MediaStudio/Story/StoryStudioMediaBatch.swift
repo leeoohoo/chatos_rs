@@ -201,7 +201,7 @@ extension StoryStudioViewModel {
         }
         let token = session
         isBusy = true; operation = label; errorMessage = nil; pauseRequested = false; progress = nil; activeSegmentID = nil
-        streamingModelText = ""; streamingToolName = nil
+        planningActivity.reset()
         activeProjectID = selectedProjectID
         task = Task { [weak self] in
             let result: Result<Void, Error>

@@ -5,6 +5,82 @@ import XCTest
 
 @MainActor
 final class MediaStudioViewModelTests: XCTestCase {
+    func testAccountBindingDefersCatalogHistoryAndStoryActivation() async throws {
+        let service = DelayedMediaStudioModelService()
+        let viewModel = MediaStudioViewModel(service: service)
+        viewModel.bindAccount(userID: "lazy-media-test")
+        await Task.yield()
+
+        let initialFetches = await service.numberOfFetches()
+        XCTAssertEqual(initialFetches, 0)
+        XCTAssertFalse(viewModel.isLoadingModels)
+        XCTAssertFalse(viewModel.isLoadingHistory)
+        XCTAssertNil(viewModel.stories.owner)
+        XCTAssertFalse(viewModel.stories.isLoading)
+
+        viewModel.loadIfNeeded()
+        XCTAssertTrue(viewModel.isLoadingHistory)
+        try await waitUntil { await service.hasDelayedFetch() }
+        XCTAssertNil(viewModel.stories.owner)
+        await service.resumeDelayedFetch()
+        try await waitUntil { !viewModel.isLoadingModels && !viewModel.isLoadingHistory }
+        viewModel.loadIfNeeded()
+        await Task.yield()
+        let loadedFetches = await service.numberOfFetches()
+        XCTAssertEqual(loadedFetches, 1)
+    }
+
+    func testLoadingBeforeAuthenticationDoesNotConsumeFirstActivation() async throws {
+        let service = DelayedMediaStudioModelService()
+        let viewModel = MediaStudioViewModel(service: service)
+        viewModel.loadIfNeeded()
+        viewModel.reloadModels()
+        viewModel.bindAccount(userID: "lazy-media-test")
+        viewModel.loadIfNeeded()
+
+        try await waitUntil { await service.hasDelayedFetch() }
+        await service.resumeDelayedFetch()
+        try await waitUntil { !viewModel.isLoadingModels }
+        XCTAssertEqual(viewModel.models.map(\.id), ["old-model"])
+    }
+
+    func testStoryCatalogActivatesOnlyForStoryOrHistorySection() {
+        for section in [MediaStudioViewModel.Section.story, .history] {
+            let viewModel = MediaStudioViewModel(service: MediaStudioFailureService())
+            viewModel.bindAccount(userID: "lazy-story-test")
+            viewModel.section = .video
+            viewModel.loadSelectedSectionIfNeeded()
+            XCTAssertNil(viewModel.stories.owner)
+
+            viewModel.section = section
+            viewModel.loadSelectedSectionIfNeeded()
+            XCTAssertEqual(viewModel.stories.owner, "lazy-story-test")
+            XCTAssertTrue(viewModel.stories.isLoading)
+            viewModel.resetForSignedOut()
+            XCTAssertNil(viewModel.stories.owner)
+        }
+    }
+
+    func testBindingAnotherAccountDiscardsLoadedStateWithoutStartingItsLoads() async throws {
+        let service = DelayedMediaStudioModelService()
+        let viewModel = MediaStudioViewModel(service: service)
+        viewModel.bindAccount(userID: "alice")
+        viewModel.loadIfNeeded()
+        try await waitUntil { await service.hasDelayedFetch() }
+        viewModel.bindAccount(userID: "bob")
+        await service.resumeDelayedFetch()
+        await Task.yield()
+
+        XCTAssertTrue(viewModel.models.isEmpty)
+        XCTAssertFalse(viewModel.isLoadingModels)
+        XCTAssertFalse(viewModel.isLoadingHistory)
+        XCTAssertNil(viewModel.stories.owner)
+        let beforeActivation = await service.numberOfFetches()
+        XCTAssertEqual(beforeActivation, 1)
+        viewModel.loadIfNeeded()
+        try await waitUntil { viewModel.models.map(\.id) == ["new-model"] }
+    }
+
     func testOnlyMiniMaxH3IsExposedForVideoGeneration() async throws {
         let viewModel = MediaStudioViewModel(service: MediaStudioFailureService())
         viewModel.activate(userID: "media-studio-test")
@@ -189,6 +265,8 @@ private actor DelayedMediaStudioModelService: MediaGenerationServicing {
     }
 
     func hasDelayedFetch() -> Bool { delayedFetchContinuation != nil }
+
+    func numberOfFetches() -> Int { fetchCount }
 
     func resumeDelayedFetch() {
         delayedFetchContinuation?.resume()

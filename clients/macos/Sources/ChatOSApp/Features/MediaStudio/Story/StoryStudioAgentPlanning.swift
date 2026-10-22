@@ -369,15 +369,18 @@ extension StoryStudioViewModel {
         case .activity:
             break
         case .responseCreated:
-            streamingModelText = ""; streamingToolName = nil
+            planningActivity.beginResponse()
             operation = "文本模型正在流式分析…"
         case let .textDelta(delta):
-            streamingModelText += delta
-            if streamingModelText.count > 12_000 { streamingModelText.removeFirst(streamingModelText.count - 12_000) }
-            operation = "文本模型正在流式输出…"
+            planningActivity.appendModelText(delta)
+            if operation != "文本模型正在流式输出…" {
+                operation = "文本模型正在流式输出…"
+            }
         case let .toolCallDelta(name):
-            if let name, !name.isEmpty { streamingToolName = (streamingToolName ?? "") + name }
-            operation = "正在组装工具调用：\(streamingToolName ?? "参数")"
+            planningActivity.appendToolName(name)
+            if operation != "正在组装工具调用…" {
+                operation = "正在组装工具调用…"
+            }
         case .completed:
             operation = streamingToolName.map { "已接收完整工具调用：\($0)" } ?? "本轮流式响应已完成"
         }

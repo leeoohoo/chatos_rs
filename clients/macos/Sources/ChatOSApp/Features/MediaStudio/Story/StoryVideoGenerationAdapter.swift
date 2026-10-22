@@ -2,6 +2,32 @@ import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
+private actor StoryVideoProgressPersistenceGate {
+    private var project: StoryProject
+    private var persistedStatus: String?
+    private var persistedJobID: String?
+
+    init(project: StoryProject, segmentID: String) {
+        self.project = project
+        let attempt = project.segments.first(where: { $0.id == segmentID })?.attempt
+        persistedStatus = attempt?.status
+        persistedJobID = attempt?.jobID
+    }
+
+    func project(
+        for progress: VideoGenerationProgress,
+        persist: @Sendable () async throws -> StoryProject
+    ) async throws -> StoryProject {
+        let introducesJobID = progress.jobID.map { $0 != persistedJobID } ?? false
+        guard progress.status != persistedStatus || introducesJobID else { return project }
+        let saved = try await persist()
+        project = saved
+        persistedStatus = progress.status
+        if let jobID = progress.jobID { persistedJobID = jobID }
+        return saved
+    }
+}
+
 /// macOS adapter for one Story video attempt. Provider requests/results, job identity,
 /// local media bytes, filenames, Store intents and tail-frame extraction remain private.
 struct StoryVideoGenerationAdapter: StoryVideoGenerating {
@@ -120,6 +146,7 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
                 attemptID: command.attempt.id,
                 owner: ownerUserID
             )
+            result.videoFile?.removeIfNeeded()
             var finalProject = completed.0
             do {
                 let videoURL = try store.fileURL(
@@ -190,16 +217,11 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
                 projectID: command.projectID,
                 owner: ownerUserID
             )
-            let data = try await MediaStudioImageLoader.data(for: .init(
-                id: frame.id.uuidString,
-                mimeType: frame.mimeType,
-                url: url
-            ))
             try await continuationCheck()
             firstFrameInput = .init(
                 name: "first-frame.png",
                 mimeType: frame.mimeType,
-                base64Data: data.base64EncodedString()
+                fileURL: url
             )
         case .previousVideo, .sourceVideo:
             guard model.supportsVideoReference,
@@ -215,15 +237,12 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
                 projectID: command.projectID,
                 owner: ownerUserID
             )
-            let data = try await AppCancellableDetachedWork.run {
-                try AppBoundedFileReader.read(url, maximumBytes: 512 * 1_024 * 1_024)
-            }
             try await continuationCheck()
             referenceVideoInput = .init(
                 name: intent.segment.videoGuidanceMode == .previousVideo
                     ? "previous-segment.mp4" : "source-video.mp4",
                 mimeType: "video/mp4",
-                base64Data: data.base64EncodedString()
+                fileURL: url
             )
             referencePurpose = intent.segment.videoGuidanceMode == .previousVideo
                 ? .extend : .edit
@@ -236,16 +255,11 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
                 projectID: command.projectID,
                 owner: ownerUserID
             )
-            let data = try await MediaStudioImageLoader.data(for: .init(
-                id: lastFrame.id.uuidString,
-                mimeType: lastFrame.mimeType,
-                url: url
-            ))
             try await continuationCheck()
             lastFrameInput = .init(
                 name: "last-frame.png",
                 mimeType: lastFrame.mimeType,
-                base64Data: data.base64EncodedString()
+                fileURL: url
             )
         }
         return .init(
@@ -267,15 +281,21 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
         fallbackProject: StoryProject,
         onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
     ) -> @Sendable (VideoGenerationProgress) async -> Void {
-        { value in
+        let persistenceGate = StoryVideoProgressPersistenceGate(
+            project: fallbackProject,
+            segmentID: command.segmentID
+        )
+        return { value in
             do {
-                let project = try await store.updateVideoGenerationProgress(
-                    value,
-                    projectID: command.projectID,
-                    segmentID: command.segmentID,
-                    attemptID: command.attempt.id,
-                    owner: ownerUserID
-                )
+                let project = try await persistenceGate.project(for: value) {
+                    try await store.updateVideoGenerationProgress(
+                        value,
+                        projectID: command.projectID,
+                        segmentID: command.segmentID,
+                        attemptID: command.attempt.id,
+                        owner: ownerUserID
+                    )
+                }
                 await onEvent(.init(
                     project: project,
                     progress: .init(status: value.status, percent: value.percent)

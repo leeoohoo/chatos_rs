@@ -81,7 +81,7 @@ actor StoryMediaBatchSession {
                 switch project.segments[index].videoGuidanceMode {
                 case .firstFrame, .firstAndLastFrames:
                     guard let frame = project.segments[index].firstFrame else { throw StoryError.invalidPlan }
-                    image = try await input(frame, name: "first-frame.png")
+                    image = try videoInput(frame, name: "first-frame.png")
                 case .previousVideo:
                     guard model.supportsVideoReference, index > 0,
                           let previousVideo = project.segments[index - 1].video else {
@@ -100,7 +100,7 @@ actor StoryMediaBatchSession {
                 if model.supportsVideoLastFrame,
                    project.segments[index].videoGuidanceMode == .firstAndLastFrames,
                    let tail = project.segments[index].lastFrame {
-                    lastFrameImage = try await input(tail, name: "last-frame.png")
+                    lastFrameImage = try videoInput(tail, name: "last-frame.png")
                 }
             }
             let request = VideoGenerationRequest(modelConfigID: model.id, prompt: prompt, size: profile.sizes[0],
@@ -126,6 +126,7 @@ actor StoryMediaBatchSession {
             if let progressError { throw progressError }
             try await check()
             let video = try await store.saveVideo(result, projectID: project.id, owner: state.owner)
+            result.videoFile?.removeIfNeeded()
             var actualLastFrame: StoryImage?
             do {
                 let videoURL = try store.fileURL(video.filename, projectID: project.id, owner: state.owner)
@@ -236,21 +237,31 @@ actor StoryMediaBatchSession {
         let bytes = try await MediaStudioImageLoader.data(for: .init(id: image.id.uuidString, mimeType: image.mimeType, url: url))
         return .init(name: name, mimeType: image.mimeType, base64Data: bytes.base64EncodedString())
     }
+    private func videoInput(_ image: StoryImage, name: String) throws -> ImageGenerationInputImage {
+        let url = try store.fileURL(
+            image.filename,
+            projectID: state.draft.id,
+            owner: state.owner
+        )
+        return .init(name: name, mimeType: image.mimeType, fileURL: url)
+    }
     private func input(_ video: StoryVideo, name: String) async throws -> VideoGenerationInputVideo {
         let url = try store.fileURL(video.filename, projectID: state.draft.id, owner: state.owner)
-        let bytes = try AppBoundedFileReader.read(
-            url,
-            maximumBytes: 512 * 1_024 * 1_024
-        )
-        return .init(name: name, mimeType: "video/mp4", base64Data: bytes.base64EncodedString())
+        return .init(name: name, mimeType: "video/mp4", fileURL: url)
     }
     private func progress(_ value: VideoGenerationProgress, step: StoryMediaBatch.Step) async {
         do {
             try await check()
             guard progressError == nil, let index = state.draft.segments.firstIndex(where: { $0.id == step.targetID }) else { return }
             var next = state
+            let currentJobID = next.jobs[step.id]?.jobID
+            let changesJobID = value.jobID.map { $0 != currentJobID } ?? false
+            let changesStatus = next.draft.segments[index].attempt?.status != value.status
+            // Percent is transient UI state. Persisting identical provider phases would append
+            // unbounded history and rewrite both the batch and project manifests for every poll.
+            guard changesJobID || changesStatus else { return }
             if let id = value.jobID {
-                guard next.jobs[step.id]?.jobID == nil || next.jobs[step.id]?.jobID == id else { throw StoryAgentError.invalidRun }
+                guard currentJobID == nil || currentJobID == id else { throw StoryAgentError.invalidRun }
                 next.jobs[step.id]?.jobID = id; next.draft.segments[index].attempt?.jobID = id
             }
             next.draft.segments[index].attempt?.status = value.status

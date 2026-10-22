@@ -2,7 +2,7 @@
 
 更新时间：2026-10-22
 
-状态：强化版提案，待架构决策冻结、分阶段实施与 Release 验收
+状态：强化版方案，P0 部分实施中；阶段记录见 12.1—12.13，完整 Release 验收待完成
 
 适用范围：`clients/macos`、`clients/local_agent_host` 以及 macOS 客户端启动的 Plugin/Companion 进程
 
@@ -90,7 +90,7 @@ ChatOSSwift（主进程）
 - Host 由 `NativeLocalAgentHostLifecycle` 管理；
 - Swift 使用 `ManagedLocalAgentHostProcess` 通过 stdio 请求/响应；
 - 单帧最大 4 MiB，单消息最大 64 MiB；
-- App 启动 Host 时传入 Swift 自适应并发：逻辑处理器数量的一半，限制在 1–16；独立运行 Rust Host 且未指定参数时，其默认值限制在 2–8。两者必须分别记录，不能混称一个默认值；
+- App 启动 Host 时使用 12.12 的进程组逻辑 job 预算：默认总额为 3（两核及以下为 2），在常规机器上分为 Rust Host 1、Swift Agent 2；可通过 `CHATOS_BACKGROUND_JOB_BUDGET` 配置 2–16 的总额，旧 Host 单项覆盖也会被总额和 Swift 保留位约束。独立运行 Rust Host 且未指定参数时，其 Rust 默认值仍限制在 2–8；两者必须分别记录，不能混称一个默认值；
 - `local-agent.sqlite3` 保存 Run、Event、Tool Invocation、Command Receipt 等数据。
 
 页面离开时，`ConversationSessionViewModel.deactivate()` 会取消 Realtime、历史刷新、分页和视口任务，但不会取消已经持久化并提交给 Host 的后台 Run。这符合“切页不丢任务”的产品语义，却要求后台任务降低优先级并受资源预算约束。
@@ -105,7 +105,7 @@ ChatOSSwift（主进程）
 - `NativeAgentGroupChatService.changes()` 只是进程内有界失效通知，SQLite 才是事实源；
 - Agent 团队 UI 进入页面后创建 Workspace ViewModel，并订阅变化后重新读取 Store。
 
-另外，`AppModelAgentRuntime` 的 Communication recovery 使用 `batchSize = 64`，`LocalAgentGroupChatSchedulerDrain.runClaimedWork()` 对已 claim 的 work 分别创建 `Task`。批次大小不能充当执行并发上限：必须另设全局 in-flight 限额，并限制提前 claim 数量，防止任务等待 permit 时 lease 已过期。只降低 Rust Host 并发无法约束这条 Swift 执行链路。
+另外，`AppModelAgentRuntime` 的 Communication recovery 使用 `batchSize = 64`，该值只表示单次 drain 的吞吐上限。12.12 已增加 Scheduler 共享的执行 Governor：room/account/communication/recovery 路径在 durable claim 前取得 permit，同一轮最多 claim 当前可执行的数量，不能让任务持有数据库 lease 等待额度；`batchSize = 64` 不再等于并发 64。动态前台降额、账户公平、热状态与 Media/Plugin 接入仍未完成。
 
 这部分虽然不一定运行在 MainActor，但 CPU、内存、数据库页缓存和崩溃边界仍与主 App 共享。另一方面，它依赖 Swift `AgentRuntime`、Memory、Local Projects、Plugin Capability Provider 和 Local Connector。直接迁入 Rust Host 会形成高成本重写，不适合作为第一阶段修复。
 
@@ -114,11 +114,11 @@ ChatOSSwift（主进程）
 当前媒体服务具有以下特点：
 
 - `AppModel` 构造时立即创建 `MediaStudioViewModel` 和 `StoryStudioViewModel`；
-- 登录成功时调用 `mediaStudio.activate(userID:)`，而不是进入 AI 创作页面时才激活；
+- 实施前登录成功会立即调用 `mediaStudio.activate(userID:)`；首批改为只绑定账户，进入媒体页面才加载模型与历史，Story 目录延后至故事/历史 section；
 - `StoryStudioViewModel` 同时管理项目目录、规划、历史、图片、首尾帧、视频、批处理和帧提取；
 - Story Studio 当前有 30 余个 `@Published` 状态和多组 Task 字典；
-- 视频下载上限为 512 MiB，结果以 `VideoGenerationResult.videoData: Data` 返回主进程后再落盘；
-- 上传侧 `StoryVideoGenerationAdapter` 也会读取最大 512 MiB 的完整参考视频，并调用 `base64EncodedString()`；`MediaGenerationModels` 的参考媒体 DTO 持有 Base64 字符串，服务层还会解码和组装请求。512 MiB 输入仅 Base64 就约 683 MiB，与原始 `Data` 并存已超过 1 GiB，尚未计入 JSON 和网络缓冲；
+- 基线审计时视频下载上限为 512 MiB，结果以 `VideoGenerationResult.videoData: Data` 返回主进程后再落盘；12.15 已将生产下载改成有界流写临时文件，兼容 Data 初始化器仅留给旧调用和测试；
+- 基线审计时上传侧 `StoryVideoGenerationAdapter` 会读取最大 512 MiB 的完整参考视频并调用 `base64EncodedString()`；512 MiB 输入仅 Base64 就约 683 MiB，与原始 `Data` 并存超过 1 GiB。12.14 已将 Story 参考视频按 provider 的 47 MiB 实际上限改为文件引用和增量请求文件；图片/音频 Base64 仍待治理；
 - 图片 provider 响应、Base64 解码、媒体历史和多个文件 Store 也位于当前 App 生命周期内；
 - 部分图片解码、导入和帧提取已经使用 detached work，这是正确方向，但仍不能提供进程级内存回收和故障隔离。
 
@@ -170,9 +170,9 @@ AppModel.applyAuthenticationPhase
 | 最近 24 小时 Command Receipt JSON | 2,211 条、约 751.5 MiB |
 | 大于 1 MiB 的 Receipt | 302 条 |
 
-`LocalAgentApplication::try_handle()` 默认使用 `persist_receipt = true`。`record_receipt()` 会再次把完整响应序列化为 JSON 写入 SQLite。相同业务数据还可能存在于 Run checkpoint/outcome、Event payload 和 Tool result 中。
+审查基线中，`LocalAgentRuntime::try_handle()` 默认构造 `persist_receipt = true` 的命令上下文；纯查询实际上未调用 `record_receipt()`，不能把所有查询算作 Receipt 写入。对持久化写命令，`record_receipt()` 会再次把完整响应序列化为 JSON 写入 SQLite，相同业务数据还可能存在于 Run checkpoint/outcome、Event payload 和 Tool result 中。已实施的指纹与服务端分类优化见 12.1、12.2，完整写响应去重仍待完成。
 
-现有保留策略只按 24 小时和 5,000 条裁剪，没有总字节预算；`VACUUM` 只在要求压缩的 Schema migration 后执行，不是日常维护策略。
+响应正文按插入时的 24 小时业务时间窗口和 5,000 条裁剪；12.4 已将长期防重身份独立保存，12.5 再增加全库 128 MiB 正文预算，不再随正文裁剪防重身份。该预算不限制数据库/WAL 文件大小或长期身份总量，也尚未实现 owner 公平配额。`VACUUM` 只在要求压缩的 Schema migration 后执行，不是日常维护策略。
 
 因此卡顿链路不是“SQLite 文件大”这一句，而是：
 
@@ -323,6 +323,8 @@ lease 过期或 IPC 断连不证明旧执行已结束：回收前需确认进程
 ### 6.4 Media durable job 与应用生命周期
 
 新增 `MediaJobStore` 作为媒体 job 状态的唯一写入者：进程内阶段由 Media Service 拥有，Worker 启用后整体交接，UI 只通过服务访问。job 保存 owner、session epoch、稳定 job/idempotency key、输入 artifact 引用、provider ID、重试次数和状态版本；密钥不落 job 表。
+
+迁移不能以旁路双写开始。当前 Story `segment.attempt`、持久化 Media Batch `jobs` 和通用 Media Studio 内存 token 是三套不同生命周期：前两套已经保存 provider 身份和防重意图，后一套没有 durable 状态。实施顺序固定为：先让通用 Studio 的新视频任务由 `MediaJobStore` 独占写入；再用可重复的导入迁移把 Story/Batch 非终态 job 搬入同一 Store，并在同一次项目/Batch 原子提交中只保留业务关联 ID；读路径完成切换并验证恢复后，才停止旧字段写入。迁移期间允许旧格式只读兼容，不允许 Store 与旧字段各自推进状态。若任一步无法提供原子切换或稳定关联 ID，则停止迁移，不能新增第四套可运行任务源。
 
 ```text
 prepared → submitting → submitted(provider_job_id) → running
@@ -595,6 +597,7 @@ SQLite 事务只覆盖本地事实，不覆盖 Plugin、文件系统和 provider
 - 不能让清理任务与活跃写事务竞争导致启动或发送路径长暂停；
 - 压缩失败必须保留原库和可恢复备份；
 - Schema migration、数据清理、物理压缩是三个不同阶段，分别记录结果。
+- 写连接必须覆盖 BEGIN 派发前、业务执行与事务收尾的完整生命周期；调用方取消不代表 SQLite 后台语句已停止。未确认清理完成的连接不能回池，不能只在业务成功/失败的显式返回路径回滚。当前实现与验证见 12.9、12.10。
 
 ### 10.4 维护执行协议
 
@@ -603,6 +606,8 @@ SQLite 事务只覆盖本地事实，不覆盖 Plugin、文件系统和 provider
 preflight 按备份输出、重写后的数据库、WAL 峰值和安全余量估算所需空间，并核对实际目标卷容量；不得只用“剩余空间大于原库大小”作为保证。空间不足只做已证明安全的有界清理或延期，不能先删除唯一备份换空间。批量清理分事务限时执行，支持阶段间取消；单次不可安全中断的操作不承诺即时取消。
 
 维护中止、磁盘满或 `kill -9` 后恢复必须能识别完整旧库、完成的新库及不完整临时文件，不能仅按文件修改时间选库。备份采用 SQLite backup/`VACUUM INTO`，不能裸复制活跃的 `.sqlite3` 而忽略 WAL。备份保留数量、校验状态、保留时长和删除条件进入策略，至少保留最后一个验证通过的可恢复版本，覆盖新版本的回滚窗口。
+
+当前已落地启动迁移的备份保护与最低空间准入（12.3），以及新版 Host 从打开数据库前直到进程退出的 OS 独占锁（12.7）；后者只约束遵守同一协议的新 Host，旧版进程仍须在升级前停止。v34 → v37 的备份发布、回填与版本提交前后已增加临时库 SIGKILL 回归（12.8），不代表 COMMIT 内部写窗口、旧版本压缩、掉电或真实磁盘耗尽已验收。尚未实现上述完整在线维护协议，不能据此启用活动数据库治理。
 
 ## 十一、Agent Runtime 是否独立进程的门槛
 
@@ -719,6 +724,344 @@ P0 依赖：A 是所有验收前提；B、C、D、E 可按模块推进，但 P2 
 - 灰度启用 Media Worker，保留单版本回滚开关；
 - 明确当前/前一版本兼容矩阵与 Schema 回滚路径；不兼容允许明确拒绝，不承诺旧版本可读取已升级数据库。
 
+### 12.1 首批实施记录（2026-10-22）
+
+基于分支 `3.0.9.3`、实施前 HEAD `763f5f399eaa` 的工作区修改，尚未完成正式打包与发布级性能基线；下述固定数据量工程基准不替代交互延迟、组合负载和长时间稳定性验收：
+
+| 项目 | 已实现 | 边界/仍待完成 |
+| --- | --- | --- |
+| P0-B 媒体生命周期 | 登录只 `bindAccount`；进入页面加载媒体模型/历史；Story 仅在故事/历史 section 激活；账户变化触发可见页面重新加载 | 未完成 Story 状态域拆分、sanitizer 定位及 200 次导航/账户循环，不能宣称崩溃根因已修复 |
+| P0-C 请求指纹 | Host 使用流式 JSON → `sha256:v1:` 摘要，持久化指纹固定 74 字节；可信 ephemeral 调用跳过指纹序列化；后续全命令分类见 12.2 | 完整响应仍按原策略保存；响应引用/tombstone、总字节预算与维护协议尚未实施；不缩小已有数据库 |
+| 旧回执兼容 | 新 Runtime 可重放已有完整 JSON 指纹的 Receipt，同 ID 不同内容仍拒绝；新回执防重仍有效 | 无 Schema 迁移；旧版整包不认识新指纹时可能明确报 command mismatch，禁止用清空 Receipt 处理回滚 |
+
+修复后验证（未排除下述两个 Rust 失败用例）：
+
+- Rust：`cargo test -p chatos_client_storage -p chatos_local_agent_runtime`，存储层全套 121 项、Runtime 全套 53 项通过。
+- Swift Debug：相关回归 97 项通过，包括媒体 31 项、验收分类 3 项、Agent 存储 61 项、显式启用的存储基准与 UI 刷新诊断各 1 项。
+- Swift Release：媒体 31 项、验收分类 3 项、Agent 存储 61 项和显式启用的存储基准 1 项通过；此前独立的 `swift build -c release --product ChatOSSwift` 也成功。这里只覆盖相关测试，不宣称整个 Swift 测试集已全量运行。
+- 固定存储基准包含 20 Agent、10 房间、500 消息、500 Run、100 Todo，重复 3 轮。Debug 仍验证原有 SQL 数量；Debug/Release 均验证实际返回数据、附件内容，以及空闲心跳/调度零数据库写入。耗时仅是工程测量，不据此宣称发布 SLO 已达标。
+
+失败成因与修复：
+
+- `failed_task_display_distinguishes_execution_from_unverified_acceptance`：Rust `task_writeback_summary::task_display_status` 的 succeeded 分支先把报告总状态 failed 映射为 acceptance_failed，后面的 not_verified 检查不可达；Swift 则先检查逐项 failed/not_verified。已将 Rust 展示优先级对齐为 blocked → 逐项 failed → 逐项 not_verified → 总状态 failed 兜底，并补充新字段 `result_status` 优先于兼容字段、混合检查结果及空检查列表的回归；不改 Task 调度状态。问题实现来自 `904d136fa`，暴露该问题的断言在 `bdb37d1cb` 增补。
+- `failed_branch_reports_partial_success_and_blocked_dependents_then_retry_generation`：`904d136fa` 将成功任务的展示标签改为 completed，测试仍断言旧标签 succeeded。已同步展示断言，保留执行成功/失败/依赖阻塞与重试的业务校验，不更改任务执行结果。
+- Release 编译阻塞：多个测试无条件引用 `#if DEBUG` 中才定义的 SQL 计数 API，`--filter` 不会免除其他测试 target 的编译。已仅条件化计数采样与断言，功能校验仍在 Release 运行；存储基准保留 Release 耗时和 SQLite 写入检查，JSON 标明构建配置与计数能力，未测量的计数字段省略而非伪造为 0。仅按需读取的 SQLite 累计写入指标不增加逐查询计数开销。UI 刷新诊断依赖 Debug 计数器判断稳定状态，因此在 Release 显式跳过，不能视为 Release UI 性能验收通过。
+
+复现 Swift 回归可使用下面的命令；Release 时增加 `-c release` 并去掉 UI 诊断过滤项，避免把预期跳过计入通过数量：
+
+```sh
+CHATOS_RUN_AGENT_STORE_BASELINE=1 CHATOS_RUN_AGENT_UI_BASELINE=1 \
+swift test --package-path clients/macos \
+  --filter 'MediaStudio(ViewModel|HistoryStore|ImageInteraction|VideoCanvas)Tests|MessageTaskAcceptanceTests|SQLiteAgentGroupChatStoreTests|AgentGroupChat(Store|ViewModel)PerformanceBaselineTests'
+```
+
+上述首批改动不代表 P0 或整个多进程方案已完成。全 enum 分类的后续实施见 12.2；响应去重、Host/Swift Agent 总准入预算与文件原生媒体传输仍需推进。
+
+### 12.2 第二批实施记录：服务端命令分类（2026-10-22）
+
+在 application 层新增 `command_receipt_policy.rs`，穷尽匹配当前全部 78 个 `HostCommand`，无默认分支；新增命令未选择策略时编译失败。策略不依赖命令名字前缀，也不接受 IPC 调用方传入的 `persist_receipt` 选项。
+
+| 当前实现类别 | 数量 | 普通请求入口 | 内部一次性入口 |
+| --- | ---: | --- | --- |
+| `ReadEphemeral` | 38 | 不计算指纹，不保存 Receipt，返回最新查询结果 | 同左 |
+| `ReplayableWrite` | 36 | 计算有界摘要，保留原精确重放 | 分发前拒绝，不允许创建/取消/审批等任意写绕过回执 |
+| `SchedulerReplayableWrite` | 4 | `ClaimNextRun`、`ClaimNextTool`、`CommitStep`、`CommitTool` 仍保留原精确重放 | 仅现有可信进程内调度器可免回执；仍受 claim token、版本与对账约束 |
+
+`InitializeNotepad` 名称虽像初始化写操作，当前存储实现仅执行现有笔记数量的 SELECT，因此按只读处理；若将来增加导入/修复写入，必须重新审计分类。`RenewToolClaim` 仍走普通持久化写策略；内部心跳现有专用方法未改变。
+
+本批的直接优化是省去只读请求原有的无用 JSON 指纹计算，不是减少此前不存在的查询 Receipt。与此同时收紧内部 `try_handle_ephemeral` 的适用范围，不能将创建 Run/Task 等普通写命令交给这个入口免除防重。
+
+验证：`cargo test -p chatos_local_agent_runtime -p chatos_client_storage -p chatos_local_agent_protocol -p chatos_local_agent_host`，Runtime 61 项、存储层 121 项、协议 37 项、Host 库 112 项和可执行入口 5 项，共 336 项全部通过，无忽略或排除。新增 8 项测试覆盖读取免指纹、内部白名单、拒绝后无状态变化、伪造 wire 字段不能关闭防重、读取返回新状态、写重放不重复事件、Run 已完成后旧 claim 重试不领取下一份 work，以及内部 claim/commit/对账仍可运行。
+
+附加严格静态检查 `cargo clippy -p chatos_local_agent_runtime --all-targets -- -D warnings` 通过。检查发现的两处阻塞已作等价整理：`LocalTaskGraphNotificationPolicy` 改为派生 `Default`，默认值仍为 `ProgressSummary`；`skill_runtime.rs` 的测试模块原样移至文件末尾，未改技能运行实现和测试内容。
+
+本批未改 Swift、IPC 协议版本或数据库 Schema，也未安装/重启 App 或清理活动数据库。当前三类是读取/写入/内部例外的入口治理，**不是** 10.1 中 compact/reference 结果存储的全部实现：普通写仍保存完整响应，旧 24 小时/5,000 条裁剪及防重期限问题仍存在。后续需将不可变结果与长期防重 tombstone 分离，配合明确的重放过期行为和字节预算再迁移；不能删除回执或读取当前实体状态来冒充历史响应。
+
+### 12.3 第三批实施记录：迁移恢复点保护（2026-10-22）
+
+推进回执结果/tombstone 分离前，审计发现原迁移流程会在创建新备份前删除所有匹配文件，并在迁移成功或再次打开当前数据库时删除备份。首次迁移失败虽然留下备份，下一次启动却会先删掉它；随后若备份失败或空间耗尽，已有恢复点也丢失。因此本批先修补迁移安全前置条件，不引入新 Schema。
+
+已实施：
+
+- 移除三处启动路径的备份自动删除；成功迁移、失败重试和当前 Schema 重启都保留原恢复点，不自动恢复或覆盖主库。
+- 新快照在同目录以 `.backup.sqlite.incomplete` 创建，Unix 从创建起即使用 `0600`；通过 SQLite `VACUUM INTO` 纳入 WAL 中已提交的数据，执行完整 `integrity_check(1)` 和来源 Schema 版本校验，再同步文件、同目录 rename，Unix 同步目录。通过后才使用 `.backup.sqlite` 名称。旧版本遗留的同名后缀不自动认定有效，也不自动清理。
+- 空间预检使用目标目录所在卷的实际可用空间，数据库估算取文件尺寸与 `page_count × page_size` 的较大者；最低空闲门槛为 `3 × 数据库估算 + 当前 WAL 文件尺寸 + 64 MiB`，覆盖备份、一次重写、数据库量级 WAL 增长和安全余量，计算溢出拒绝。
+- 每个数据库累计 8 个恢复/未完成文件时，暂停创建新备份与新迁移，返回非自动重试的 `storage_maintenance_required`，要求先验证并归档恢复文件；不为腾空间自动删除。当前 Schema 的正常重启不消耗槽位，也不受该迁移门槛阻塞。
+
+验证：新增 7 项测试，加固原迁移回归，覆盖空间边界与溢出、槽位耗尽时 Schema 不变、显式释放测试槽位后可重试、WAL 已提交数据进入快照、恢复点跨重启及失败重试保留、来源版本不符拒绝、无迁移表旧库的恢复快照。存储层 128 项、Runtime 61 项、协议 37 项、Host 库 112 项与可执行入口 5 项，共 343 项全量通过；存储层与 Runtime 的全目标严格 Clippy 检查通过。
+
+边界：这是启动迁移保护，不是 10.4 的完整维护协议。最低空间估算不等于空间预留或任意迁移增长的上界；尚无跨进程独占维护 lease、迁移专用容量估算、自动归档/保留时长策略及 `kill -9`/真实磁盘耗尽故障注入。旧 `<33` 迁移仍有既有清理/压缩行为，本批未改变；回执长期防重、不可变结果引用和正文总字节预算仍未落地，不宣称 P0-C 已完成。本批新增 `fs2` 仅用于跨平台查询可用空间；未升级 Schema、安装/重启 App 或触碰活动用户库。
+
+### 12.4 第四批实施记录：防重身份与历史响应分离（2026-10-22）
+
+Schema 升至 v35，新增 `local_agent_command_tombstones`，保存全局 command ID、请求指纹和本地事务完成时间；表中存在记录即表示该本地写事务已完成，不附着实体外键，也不设置自动 TTL。历史响应正文仍在 `local_agent_command_receipts`，原插入触发的时间/数量淘汰仅作用于该正文表。
+
+已实施的行为：
+
+- `record_receipt` 的 BEFORE INSERT trigger 在同一业务事务内先写防重身份，即使新正文因旧时间戳立即被淘汰，身份仍保留；业务写/事件/回执失败则一并回滚。
+- 重试先查询身份并校验指纹，通过后才加载可能较大的历史响应；同 ID 不同输入始终返回 `command_mismatch`，不因正文已过期而放宽。正文仍在时精确重放，正文已淘汰时返回 `command_replay_expired`、`retryable=false`，要求对账，不自动换新 ID 重做，不拿当前实体状态伪造历史响应。
+- v35 在单个迁移事务内按主键游标逐条回填尚存身份，不加载历史响应正文；旧完整 JSON 指纹转换为兼容的 `sha256:v1:` 摘要，回执表的同份旧指纹同步收紧；新版 Host 指纹仍固定 74 字节，可信端口历史 opaque 指纹不擅自改变含义。回填失败时 Schema、身份和指纹更新整体回滚，保留迁移前恢复点。
+- 修正尚未执行的 v33 迁移路径：不再 DROP/重建回执表，保证从 `<33` 升级时尚存的身份能到达 v35 回填。已经由旧版本删除的回执无法凭空恢复；不扫描活动用户库或假定存在可恢复记录。
+
+验证：新增 12 项回归。存储层 139 项、Runtime 62 项、协议 37 项、Host 库 112 项与可执行入口 5 项，共 355 项全量通过，无忽略或排除；存储层与 Runtime 全目标严格 Clippy 通过。覆盖时间/数量淘汰、相同时间戳排序、立即淘汰、不同指纹拒绝、跨数据库重启保留、业务实体删除后不能重建、两个独立连接并发同 key 只写一次、回执写入失败回滚业务/事件/身份、可信 ephemeral 零身份且不序列化、v34 新旧指纹精确重放、回填中途失败与重试，以及 IPC 旧 claim 过期后不回收/领取其他 work、错误码与非重试标记。
+
+边界：本批是本地 SQLite 写防重，不保证 Plugin/文件/provider 的外部副作用恰好一次；内部可信调度器一次性入口仍按 token/version/对账协议运行，未改为持久化回执。正文保留仍是基于写入时间高水位的机会式清理，不承诺空闲时满 24 小时立即过期。长期身份不受正文配额驱逐，会持续增长，独立容量统计/准入与归档策略待完成；128 MiB 正文预算、512 KiB inline 目标和不可变大结果引用也仍未实现。旧 `<33` 大库的迁移耗时、空间峰值、既有压缩、跨进程独占维护和强杀恢复仍是发布前门禁，不能把 v35 单事务回归当成这些验收已通过。本批没有安装/重启 App 或升级活动用户库；未改 wire DTO 或协议版本，旧包按原版本上限检查明确拒绝 Schema v35，不能用旧快照自动覆盖新业务数据。具体子决策与回滚语义见 16.2。
+
+### 12.5 第五批实施记录：响应正文总字节预算（2026-10-22）
+
+Schema 升至 v36，在防重身份保持独立的基础上，新增 `local_agent_receipt_sizes` 和单行 `local_agent_receipt_cache_usage`。预算默认且最多为全库共享的 **128 MiB UTF-8 JSON 正文字节**；内部数据库策略可下调，IPC 调用方没有预算或关闭防重的选项。
+
+已实施：
+
+- 每份正文的真实字节数使用 `length(CAST(response_json AS BLOB))` 计量，不能用 SQLite 文本字符数代替。插入/更新/删除、外键级联、时间/数量淘汰和事务回滚均同步维护总字节与条数；`receipt_cache_usage()` 只读单行计数，不在诊断时汇总全部正文。
+- 超预算时按 `(created_at_unix_ms DESC, command_id DESC)` 保留最新可容纳的连续前缀，淘汰较旧正文；单份超预算正文先排除。淘汰扫描尺寸/排序元数据，不反复读取大正文。数量与总字节淘汰的扫描均由单行用量先行判断，未超限不做该轮扫描。
+- `record_receipt` 改用有界序列化缓冲，不先构造超大完整 JSON String。单份响应超过整个缓存预算时释放缓冲，继续序列化验证剩余内容但不再保留正文，仅在原业务事务中保存防重身份；正常首次调用仍返回业务结果，重试明确得到 `command_replay_expired`。序列化错误即使出现在超过预算之后也仍使整个写事务失败，不把错误结果当作成功身份。
+- v36 迁移在同一事务内由 SQLite 回填尺寸并执行字节裁剪，不将历史响应加载到 Rust；v35 已先保全身份。元数据回填失败回滚 v36 表、触发器与尺寸变更，保留原响应和迁移前快照。v35 → v36 不新增自动 `VACUUM`；正文删除仅释放逻辑空间，不承诺主库/WAL 立即缩小。
+
+验证：新增 16 项测试。存储层 155 项、Runtime 62 项、协议 37 项、Host 库 112 项及可执行入口 5 项，共 371 项全量通过，无忽略或排除；存储层与 Runtime 全目标严格 Clippy 通过。新增覆盖 UTF-8/转义的真实字节计量、预算恰好等于边界、缓冲增长上限与溢出释放、相同时间戳排序、超额淘汰后的身份与 mismatch、更新/删除/级联计数、回滚恢复被淘汰正文、溢出后的序列化错误、下调内部配额、迁移回填/中途失败/重新打开、两个独立连接共享同一预算，以及真实 Run 在超大响应时只执行一次、计数写失败时业务/事件/身份/计数整体回滚。淘汰行为使用缩小的测试配额验证同一 SQL/序列化路径，另校验生产默认值为 128 MiB；这不是 128 MiB 真实磁盘耗尽或性能压测。
+
+边界：这是全库正文总量硬限制，不是每 owner 公平配额；长期 tombstone、请求摘要、SQLite 页/索引、WAL 与其他业务表不计入该正文预算。本批时尚未实现 512 KiB inline 目标与不可变大结果引用，后续由 12.6 补齐存储边界；整个 IPC/业务 DTO 的内存与单帧大小仍不由此得到保证。预算淘汰意味着历史结果可能更早不可重放，调用方必须保留原 key 并对账，不能自动换 key 重做。启动迁移的空间/耗时与独占维护、实际大库故障注入、物理回收、长期身份容量规划仍未验收。本批未改 Swift、wire DTO/协议版本，未安装或重启 App，也未迁移、压缩或清理活动用户库。v36 子决策见 16.3。
+
+### 12.6 第六批实施记录：512 KiB inline 边界与不可变结果引用（2026-10-22）
+
+Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等号）** 时仍内联；超过此边界且能装入整个缓存预算时，回执的 `response_json` 为空，仅用独立的 `result_digest` 列引用 `local_agent_receipt_results` 中的不可变原始 JSON。引用为固定 74 字节的 `sha256:v1:` 摘要，不借用业务实体的当前状态重建历史响应，也不通过猜测普通 JSON 字段来区分引用。
+
+已实施：
+
+- 相同序列化字节在不同命令间共享一份结果正文；复用既有摘要时在 SQLite 内比较原始正文和长度，发现损坏/碰撞使整个业务事务失败。结果表拒绝 UPDATE；回执引用发布后也不允许改指向。每次重放先验证命令身份/指纹，再读取并校验引用正文的长度和 SHA-256，缺失或损坏返回不可重试的 `storage_corrupt`，绝不按“未执行”继续业务写入。
+- 引用结果与 inline 共用 v36 的 128 MiB 正文预算、时间高水位与 5,000 条限制。即使共享一份物理正文，也按每个命令的完整响应字节保守计费，不能只计 74 字节引用。触发器用尺寸元数据维护计数；只有最后一个引用被删除才回收正文，引用索引避免按正文扫描所有者。时间/数量/字节淘汰、下调配额与立即淘汰均在同一事务内回收，tombstone 不删除；结果超过整个预算时仍只记身份，不创建结果正文。
+- 正文、引用、身份、业务与事件全部写在同一个 SQLite 事务中，迁移快照也包含正文，不引入跨文件/数据库的原子性假设。业务或计数写失败时，连同新正文和本事务内的旧正文淘汰一起回滚，不留下孤儿结果或悬空引用。
+- v37 利用 v36 尺寸元数据筛选旧大回执，按主键逐条转存原始字节；不解析重排 JSON，不改变逻辑用量，也不同时把全部结果加载到 Rust。转换与新表/列/触发器/版本标记同一迁移事务，失败整体恢复 v36，已有迁移前恢复快照保留；重试可继续完成升级，不自动降级或覆盖新数据。
+
+验证：新增 14 项回归。存储层 169 项、Runtime 62 项、协议 37 项、Host 库 112 项及可执行入口 5 项，共 385 项全量通过，无忽略或排除；存储层与 Runtime 全目标严格 Clippy 通过。覆盖真实 512 KiB 边界（含 UTF-8/转义）、原始字节迁移、普通 JSON 不误识别为引用、SQL inline 限制、正文/引用不可变与外键、相同结果共享与最后引用回收、混合正文配额/下调/超限、时间/数量/立即淘汰、缺失/摘要损坏与 mismatch 优先、回滚恢复已回收正文、跨连接并发/重启、v36 快照及迁移中途失败重试，以及真实大 Run 更新后精确重放、损坏时不再产生事件、同 key 并发只提交一份业务/事件/结果、计数失败时全部回滚。此处是临时库正确性验证，不是生产数据迁移或性能压测。
+
+边界：这是数据库内的不可变结果引用，不是 wire 文件句柄或分页协议。首次不同的大结果仍需完整序列化、计算摘要并落库；仅相同结果之间减少重复的缓存正文，不消除 Run/Event/Tool 等业务表中的重复数据，也没有证明 WAL、RSS 或实际延迟已下降。缓冲仍受整个缓存预算而非 512 KiB 限制，IPC 返回值/业务 DTO 仍可能很大；引用重放还增加摘要校验成本。128 MiB 约束提交后保留的逻辑正文，不是插入后淘汰前的事务瞬时空间、主库/WAL 或迁移峰值限制；旧正文转存会产生迁移写入，不自动物理缩库。公平配额、长期身份容量、独占维护、真实大库/磁盘满/强杀和发布性能门禁仍待完成，不能将 P0-C 标为全部完成。本批未改 Swift、wire DTO 或协议版本，未安装/重启 App，未访问或修改活动用户数据库。v37 子决策见 16.4。
+
+### 12.7 第七批实施记录：Host 数据库进程级独占所有权（2026-10-22）
+
+审查生产调用路径后，Local Agent 数据库的实际打开入口是 Host `main.rs`；Swift Agent 团队、记忆及项目注册使用其他存储。此前 `BEGIN IMMEDIATE` 只能串行化单个 SQLite 写事务，不能阻止两份 Host 分别进行启动备份、迁移、压缩和调度。本批在 Host 创建 SQLite 连接池之前取得数据库专属 OS 非阻塞独占锁，并覆盖整个进程生命周期。
+
+已实施：
+
+- 按实际数据库路径派生持久的 `<database>.owner.lock`。已有数据库文件和父目录的 symlink 别名先解析为同一锁身份；数据库尚不存在时也先解析父目录，不能让两份首次启动分别建库。Unix 拒绝数据库硬链接、悬空数据库 symlink、锁文件 symlink/硬链接与非普通文件，并在获取锁后再次核对锁文件 inode；锁文件权限为 `0600`。锁身份与诊断使用解析后的路径，SQLite 与 `.artifacts` 继续沿用配置路径，避免悄悄改变旧 artifact 根目录。
+- 获取锁失败直接从启动入口退出，stderr 明确要求先停旧 Host，不污染 IPC stdout；此时不打开 SQLite、不创建业务库/连接池/备份或执行迁移，也不截断当前所有者的诊断内容。不同账户仍不能对同一库各开一份 Host；不同数据库各有独立锁。
+- 锁句柄由进程级 `OnceLock` 持有，不在备份或迁移后提前释放，也不依赖异步 `main` 栈帧的析构顺序；Tokio/SQLite 后台线程关闭期间仍持锁，由操作系统在进程真正退出或被强杀后释放。退出不 unlink 锁文件，防止旧 inode 仍被持有时，新进程锁住另一个 inode。
+- 成功取得内核锁后才覆盖诊断，记录格式版本、随机 `owner_epoch`、PID 和解析后的数据库路径。残留/损坏 JSON、过时 PID 或 epoch 不决定所有权，不设置“超时后抢锁”，也不通过删除锁文件强行接管。epoch 目前只是此次持锁进程的诊断身份，不是已经接入事务/IPC 的 fencing token。
+
+排查记录：首轮路径断言因 macOS `/var` → `/private/var` 别名失败；明确区分解析后的锁身份与必须保留的配置/Artifact 路径后补齐断言。扩大严格 Clippy 范围后，`planner.rs` 的 `!Option::is_some_and(...)` 触发 `nonminimal_bool`，改为等价的 `Option::is_none_or(...)`，不改变 pending-review 阻止异步交接收尾的条件。随之纳入的 Profiles 全量测试又暴露 `structured_final_delivers_checked_text_not_a_later_model_rewrite` 的旧断言与当前协议矛盾：协议/Host 已允许执行正常结束并独立报告 `failed`/`not_verified` 验收发现，旧断言却要求 `not_verified` 变成执行错误。未改生产验收语义；将该断言补成保留原 final_response 与两类验收发现的验证，并保留未知 verdict 必须拒绝的负例，不排除失败项或放宽警告。
+
+验证：新增 6 项锁/路径单测和 4 项真实 Host 子进程回归。存储层 169 项、Runtime 62 项、协议 37 项、Host 库 112 项、Host 可执行入口 11 项、子进程集成 4 项及 Profiles 59 项，共 454 项全量通过，无忽略或排除。存储层、Runtime、Host 与 Profiles 全目标严格 Clippy 通过；本批修改文件格式检查及 `git diff --check` 通过。覆盖同库/跨账户互斥、不同数据库独立、未建库先持锁、活 owner 诊断不被截断、残留诊断可重获锁、symlink 别名/硬链接/不安全路径/权限/inode、锁竞争时不打开数据库或创建备份、第二 Host 被拒后首个仍健康、正常 EOF 退出/空闲 SIGKILL/启动失败后的新进程与新 epoch。所有真实进程均使用本次构建的开发 Host 和临时库，非已安装 App，也非 Release 压力验收。
+
+边界：这是生产 Host 入口的协作式进程锁，不是强制阻止所有 SQLite 工具写入的安全沙箱；存储适配器低层 `connect_file()` 仍允许工程测试/受信内部代码建立多个连接，任何未来独立维护工具都必须先加入同一所有权协议。不认识此锁的旧包、绕过协议的进程，以及持锁后恶意替换锁文件或数据库路径，都不由它自动防住；路径及父目录必须受信且稳定，锁文件不得手工删除，发布升级仍需停旧 Host 并确认退出。未实现在线维护的 quiesce/排空/取消/恢复状态机、epoch fencing、跨版本受控交接、迁移各提交窗口强杀或真实磁盘耗尽验收；本批真实强杀只覆盖临时测试库中已启动且空闲的 Host。未升级 Schema（仍为 v37）或 wire 协议，未改 Swift、未安装/重启 App、未访问活动用户数据库；不能据此宣称 P0-C 生产迁移门禁已通过。子决策见 16.5。
+
+### 12.8 第八批实施记录：迁移期间 SIGKILL 与恢复回归（2026-10-22）
+
+本批补齐迁移异常退出的可重复验证，不新增 Schema 或生产暂停开关。所有停点及故障驱动均限定在 `#[cfg(all(test, unix))]`：正常库、Host 及 Release 构建不包含这些分支，也不读取测试暂停环境变量。测试启动存储包自身的单测可执行文件，在子进程内调用真实 `connect_file()`；父进程等待带 PID/停点身份的标记，再发送真实 SIGKILL 并检查退出信号为 9，不以普通报错或 Rust 析构模拟强杀。等待有超时，子进程提前退出或未到停点时报告 stdout/stderr，且丢弃子进程句柄会终止它。
+
+临时 v34 测试库含一份真实已提交的 Run/事件，以及两份各约 1 MiB、内容不同且带原始空白的历史 JSON 回执；预先保留一份校验通过的恢复快照。新增 12 个强杀场景：
+
+| 停点 | 强杀后必须保留的已提交状态 |
+| --- | --- |
+| 私有备份文件占位；备份已写入但尚未校验；备份已校验、同步并发布 | 源库仍为 v34；前两种只有 `.incomplete`，第三种为完整 v34 快照 |
+| 第一条防重身份回填后；v35 COMMIT 前；v35 COMMIT 后 | 前两种恢复 v34，不留部分身份/版本标记；提交后完整保留 v35 |
+| v36 尺寸回填后；v36 COMMIT 前；v36 COMMIT 后 | 前两种恢复 v35，不留部分尺寸/计数表；提交后完整保留 v36 |
+| 第一条大结果转存后；v37 COMMIT 前；v37 COMMIT 后 | 前两种恢复 v36，不留部分结果表/引用；提交后完整保留 v37 |
+
+每次强杀后先直接只读检查源库，再允许正常重试迁移：完整 `integrity_check`、`foreign_key_check`、连续版本标记、业务/事件/回执数量、防重指纹与身份一致、原始 JSON 字节、对应版本的尺寸计数/预算及结果表必须正确。重试到 v37 后精确重放原业务及两个大结果，确认 Run/事件没有重复，逻辑响应字节与数量精确。原已验证快照、当次已发布或未完成文件都做 SHA-256 前后比较，重试不能改写它们；重试新建的快照也按重启时最后已提交的 v34/v35/v36 状态做完整检查。已完成 v37 后重开不额外制造迁移快照。
+
+排查记录：存储包单独编译首先暴露 Tokio 未声明 `process` 测试特性，已在该包 dev-dependencies 显式增加 `process`/`time`，不依赖与 Host 一起构建时的特性合并；另修正测试中两处弃用 API 警告，没有跳过失败项或放宽警告。
+
+验证：新增 12 项强杀回归和 1 项子进程辅助入口测试。存储层 182 项、Runtime 62 项、协议 37 项、Host 库 112 项、Host 可执行入口 11 项、Host 子进程集成 4 项及 Profiles 59 项，共 467 项全量通过，无忽略或排除。存储层、Runtime、Host 与 Profiles 全目标严格 Clippy、正常非测试 Host `cargo check`、本批文件格式检查及 `git diff --check` 通过。独立复验可执行 `cargo test --locked -p chatos_client_storage migration_crash_tests`；全量仍使用 12.7 所列七组测试对应的五个包，不将辅助入口算作第 13 个强杀场景。
+
+边界：本批强杀的是执行真实存储路径的测试子进程，不是实际 Host；12.7 的真实 Host 锁生命周期回归与本批迁移回归是两组证据，尚未证明两者组合的所有窗口。停点覆盖备份前后、部分回填及 COMMIT 调用前后，不覆盖 `VACUUM INTO` 执行内部、SQLite COMMIT 内部任意 I/O 窗口、断电/系统崩溃、真实 ENOSPC、旧 `<33` 路径的自动压缩、生产大库空间/耗时、旧 Host 升级交接、在线维护状态机或 Release 性能。测试进程 SIGKILL 不等于断电持久性证明。未安装/重启 App，未访问或修改活动用户数据库；P0-C 生产迁移门禁仍未全部通过。
+
+### 12.9 第九批实施记录：COMMIT 失败回滚与连接收尾隔离（2026-10-22）
+
+本批发现并修复真实事务泄漏，不是单纯增加测试。原 `finish_write()` 在业务语句成功后执行 `COMMIT`，提交报错即直接返回；但 SQLite 的延迟外键等提交错误会保留事务。当前使用裸 SQL `BEGIN IMMEDIATE`，未建立 SQLx `Transaction` RAII 对象，不能假设池连接归还时会自动回滚。新增三个回归首先在原实现上失败：提交被拒后，同一个池连接仍能读到未提交的 Run；事务内已经淘汰的旧大结果也暂时不可重放。这证明失败请求的中间状态可能泄漏给后续请求。
+
+已实施：
+
+- 将写事务辅助逻辑集中到 `transaction.rs`。业务成功且 COMMIT 确认成功才返回结果；COMMIT 失败与业务失败都执行 ROLLBACK，始终返回原始业务/提交错误，不用清理错误覆盖原错误分类与信息。不自动换 key、不自动重新执行外部副作用，也不将提交失败当作确定的“未执行”。
+- 收尾函数显式接收池连接，并以同步析构守卫保护 COMMIT/ROLLBACK 的异步等待。只有确认提交或回滚完成才允许该句柄继续回池；回滚失败或收尾 future 被取消时标记 `close_on_drop`，连接释放后关闭而非复用，由连接池按原上限补建。正常提交/回滚不关闭健康句柄，避免给普通业务拒绝增加连接重建开销。
+- 守卫不伪造取消的事务语义：SQLite 后台线程可能在调用方取消后继续完成 COMMIT。测试用真实 SQLite commit hook 暂停后台线程，先取消 Rust future，再允许 SQLite 提交，确认提交数据保留但原句柄不被复用。调用方仍须使用原命令 key 重试/对账，不能因取消另起一次操作。
+
+验证：新增 7 项回归，覆盖 inline/引用大结果在真实 COMMIT 失败时的 Run/事件/正文/身份/计数整体回滚、用原 key 成功重试且只产生一份事件、恢复被淘汰的大结果与用量、健康提交/回滚保留同一连接、真实 SQLite progress interruption 导致清理失败时保留原业务错误并更换连接，以及 COMMIT/ROLLBACK 执行期间取消等待。单连接内存池证明读到的是原句柄的状态；单连接临时文件池配合 TEMP 表证明失败/取消后的物理句柄确实被替换，并确认已提交基线仍在、下一事务能启动。
+
+全量结果：存储层 189 项、Runtime 62 项、协议 37 项、Host 库 112 项、Host 可执行入口 11 项、Host 子进程集成 4 项及 Profiles 59 项，共 474 项通过，无忽略或排除；存储层、Runtime、Host 与 Profiles 全目标严格 Clippy、正常非测试 Host `cargo check`、本批文件格式检查和 `git diff --check` 通过。定向复验：`cargo test --locked -p chatos_client_storage transaction_tests`。
+
+边界：守卫从进入 `finish_write()` 才开始保护；BEGIN 等待或业务 future 在调用收尾前被取消的完整事务生命周期治理仍待补齐，不能宣称所有取消路径都已安全。关闭不确定句柄不等于回滚已提交数据，也不保证外部文件/provider 副作用回滚。本批使用延迟外键与 SQLite 回调在临时库中制造真实错误/等待，不等于真实 ENOSPC、掉电或生产大库验收；异步关闭与补建的压力/资源指标仍需 Release 测量。未改 Schema v37、wire 协议或 Swift，未安装/重启 App、未访问活动用户数据库，P0-C 生产门禁仍未全部通过。
+
+### 12.10 第十批实施记录：写事务全生命周期取消保护（2026-10-22）
+
+本批补齐 12.9 明确保留的 BEGIN/业务阶段缺口。四个新回归先在旧实现上失败：BEGIN 执行中取消、业务 SQL 执行中取消、业务已写完但未进入收尾时取消，以及业务 panic unwind，都会让原池连接未经清理就复用。此前收尾守卫尚未创建，不能保护这些窗口；SQLite 工作线程还可能在 Rust future 消失后继续执行语句。
+
+已实施：
+
+- 引入拥有池连接的 `WriteConnection`，所有现有生产写入口和逐版本迁移统一经 `acquire_write()` 获取。`begin_immediate()` 与 `finish_write()` 的参数类型要求该守卫，裸池连接无法直接传给这两个入口；普通只读路径仍沿用原连接池。BEGIN 派发之前就标记待清理，不能等到 BEGIN 返回成功后再开始保护。
+- BEGIN/业务阶段取消、panic unwind 或提前返回时，守卫将连接连同原 pool permit 交给独立回滚任务；permit 在回滚确认前保持占用。回滚排在同一 SQLite 线程已经派发的语句之后，确认成功才允许句柄回池，不向后来请求暴露待清理状态。不靠立即关闭健康的单连接内存库来通过测试，正常取消回滚后其既有 Schema 与已提交数据仍保留。
+- 回滚任务进入执行前就持有失败即关闭的所有权守卫，且由消费整个守卫的 future 承载；即使 future 从未轮询便被丢弃、执行中被取消或真实回滚报错，也关闭句柄而非回池。保存原 Tokio runtime handle，析构发生在 runtime enter 范围外时仍能正确调度清理/释放；显式声明 `rt` 依赖，不靠其他包合并特性。
+- 正常显式提交/回滚仍直接完成，不为每次业务写新增后台任务。12.9 的更严格收尾策略保留：COMMIT/ROLLBACK 等待被取消或清理失败时直接退休句柄，不能因为 SQLite 最终可能提交成功就猜测结果。调用方仍使用原 key 重试/对账，不把取消转成另一份副作用。
+
+验证：新增 10 项回归，覆盖上述四个复现窗口、内存库取消后的已提交基线、绕过显式收尾的提前错误、后台回滚实际中断、清理 future 未轮询被丢弃、清理执行中取消，以及 runtime enter 范围外析构。单连接临时库用 TEMP 表验证成功回滚后健康句柄可复用、异常清理后确实换句柄；SQLite 回调在真实执行期间阻塞，先等待 Rust 任务取消完成再释放后台线程，并检查清理期间 permit 不可重新领取。业务取消还验证 Run 版本、Event、长期身份、大正文、用量共同回滚，未提交的原 key 可以正常重试。原迁移 SIGKILL、提交失败及收尾取消回归继续保留。
+
+全量结果：存储层 199 项、Runtime 62 项、协议 37 项、Host 库 112 项、Host 可执行入口 11 项、Host 子进程集成 4 项及 Profiles 59 项，共 484 项通过，无忽略或排除。存储层、Runtime、Host 与 Profiles 全目标严格 Clippy、非测试存储包/Host `cargo check`、本批文件格式检查及 `git diff --check` 通过。可执行 `cargo test --locked -p chatos_client_storage transaction` 复验事务相关场景；该筛选也包含两项原有事务/并发读取回归，不将筛选总数当新增测试数。
+
+边界：这是本地 SQLite 写连接状态隔离与回收，不是立即中断 SQLite 工作线程的硬时限；慢语句仍可能延迟回滚和释放 permit，取消风暴、长查询、关闭时资源回收及 Release 指标仍需测量。panic 用例为 unwind，不是 panic=abort、系统掉电或实际 App 退出验收。测试覆盖的是清理任务被丢弃的机制，不声称所有真实 Host 关闭窗口已验证。若清理失败必须关闭唯一 `:memory:` 连接，内存库本身不具备跨连接恢复能力；本批验证其成功回滚路径，生产 Host 使用文件库。SQLite 回滚不撤销已发生的文件/provider 副作用，外部一致性仍按 outbox/对账协议治理。新增手写裸事务若绕过这两个受类型约束的入口，仍须另行审查。未改 Schema v37、wire 或 Swift，未安装/重启 App、未访问活动用户库；真实 ENOSPC、生产大库、掉电、在线维护与 Release 门禁仍待完成。
+
+### 12.11 第十一批实施记录：Release 构建证据与固定工程基准入口（2026-10-22）
+
+本批回到 P0-A，补构建与测量的可追溯性，不继续扩展存储 Schema。新增 `clients/macos/scripts/build_evidence.py` 与 `run_performance_baseline.py`，使用 Python 标准库；具体用法和证据边界见 `clients/macos/scripts/README-performance.md`。
+
+- 打包前记录源码清单、内容/可执行位/symlink/缺失文件摘要、Git index、Swift/Rust profile、工具链/SDK、协议/Schema 源码版本、UTC 与硬件/供电/原始热状态；收尾再次校验输入未改变。Swift 固定 resolved 依赖，Cargo 使用 `--locked`。现有 dirty Release 门禁保留；允许的 dirty 诊断包不能被分类为干净 Release。
+- Release 显式保留调试信息并生成 App、Host、ps 的 dSYM，要求 UUID/架构对应唯一成品；签名后记录完整 bundle 与符号清单。外置 manifest 不修改已签名 bundle；验证入口检查签名、成品和符号，防止旧 manifest 配新二进制或资源。此为本机诊断证据，不是供应链签名、可移植符号归档或公证验收。
+- 提供三轮 Release 合成存储工程基准，每轮沿用现有三次重复；保留原始数据、测试二进制哈希/UUID、日志、环境和合并样本分位数。未测量指标不补零；未运行 Rust 的 profile 为 null。夹具规则/源码哈希不冒充数据库逐字节哈希，正式数据集冻结仍待完成。跳过、缺失/重复输出、样本异常、执行失败、超时或输入/产物变化均拒绝通过，保留失败证据。
+- 首次真实执行暴露运行器架构问题：`/usr/local/bin/python3` 是 x86_64，经 Rosetta 拉起要求 x86_64 的 XCTest，但 Swift 已生成 arm64 bundle，导致 dlopen 架构不兼容，尚未运行测试。这不是功能用例断言失败，也不是有效性能样本。已显式选择本机 Swift/XCTest 架构，并区分本机与采集器架构；保留首轮 failed manifest/日志，不将其算作基准通过。
+
+架构约束纠正：本项目 macOS 已明确只支持 arm64。首轮运行器错误选择 Intel Python 后，曾加入 Intel 兼容选择，属于本批实现偏离约束，现已撤掉；统一入口固定系统原生 Python 与 arm64 Swift/XCTest，不支持 Intel/universal 或 x86_64 回退。打包和验证拒绝非原生 arm64 shell，成品四个可执行均须 arm64-only。架构修正后另暴露 Release XCTest 资源定位错误，尚未取得有效三轮测量，不与 Windows 打包混为一谈。
+
+此前脚本回归 23 项通过，覆盖源码/index/资源变化、dirty 分类、元数据不符、dSYM UUID 对应、缺失/重复/畸形测量、原始样本分位数和失败/超时留证；收紧 arm64-only 后补充拒绝 Intel/未知硬件及三个 shell 入口提前拒绝的回归，统一用系统原生 Python 复验。实际三轮基准及完整打包链路尚未通过；不能用这些工具回归宣称 P0-A 已验收。
+
+剩余 P0-A：固定干净实施提交、正式数据集与导航脚本、页面/IPC/SQLite/内存 signpost/trace、同机基线与候选对照。当前工作区未提交，不自动提交、清理或安装 App；正式发布基线仍不能建立。后续依次推进 Story 崩溃/状态域、统一 Governor 与媒体文件化，再按前置门槛决定 Worker；其余阶段和生产数据库门禁未因本批工具落地而完成。
+
+### 12.12 第十二批实施记录：Host/Swift Agent 共享预算与 claim 前准入（2026-10-22）
+
+本批纠正实施重心长期停留在 SQLite 边界的问题，开始推进 P0-D。此前 App 为 Rust Host 单独按逻辑处理器一半配置 1–16 个 work item，而 Swift Agent 的 `batchSize = 64` 会先 claim 一轮 work、再为每项创建无独立上限的 Task；两个局部默认值可能相乘争抢 CPU、内存带宽和磁盘，且提前 claim 的工作可能在等待执行时消耗 lease。
+
+已实施：
+
+- 新增进程组逻辑 job 预算策略。未配置时严格采用第 6.3 节的保守起始总额：常规机器总额 3，默认 Rust Host 1、Swift Agent 2；两核及以下总额 2，各 1。保留两条 Swift lane 是为了让 manager 通讯能与长 executor Run 并行。`CHATOS_BACKGROUND_JOB_BUDGET`/`ChatOSBackgroundJobBudget` 可将总额配置为 2–16；旧 `CHATOS_LOCAL_AGENT_MAX_CONCURRENCY`/Info.plist Host 覆盖被夹在总额内，至少给 Swift Agent 保留 1 个额度，不能再独立放大两套默认值。
+- `LocalAgentGroupChatScheduler` 新增实例级共享执行 Governor，覆盖 project、conversation、account、communication fast lane 与 interrupted-run recovery。所有 drain 副本共享同一 actor，不因窗口或入口不同复制额度。
+- permit 在 `claimNextDelivery` 之前取得；一轮已有可运行 work 时只尝试立即取得剩余额度，额度已满便立刻启动现有 work，不持 permit 等待更多 permit。某 Agent 没有第二 lane work、claim 报错、取消、注册冲突及正常完成都会归还额度；异常析构保留幂等兜底。
+- 首轮回归暴露“空 claim 异步归还导致同轮并行度从 2 降到 1”，已改为正常路径确认后同步归还，再启动下一个 Agent。测试证明上限为 2 时四个 Agent 全部完成且模型调用峰值精确为 2，并继续保留 manager/executor fast lane。
+
+边界：本批是 P0-D 的第一段，不是完整 `ResourceGovernor`。额度目前只约束 Rust Host 启动配置与 Swift Agent 执行；Media、Plugin、数据库维护、大文件 I/O 尚未接入同一动态 Governor。没有实现前台交互时从 3 降到 2、热状态/低电量迟滞、跨账户公平、permit 指标/诊断页、进程间动态 lease 或嵌套 Plugin 借用协议。Host 配额只在进程启动时固定，修改配置需重启；外部独立启动的 Host 仍使用 Rust 自身默认。不能据此宣称组合负载和切页 SLO 已通过。
+
+验证：Debug 下 Scheduler 调度、恢复、取消和 fast-lane 20 项，加预算/取消回收 4 项，共 24 项通过；arm64 Release 将上述 24 项与资源定位 7 项合并复验，共 31 项通过。此前 P0-C 所涉 Rust 五个包全量复验：Profiles 59、Storage 199、Host lib 112、Host main 11、真实 Host 子进程 4、Protocol 37、Runtime 62，共 484 项通过，无失败、忽略或排除。严格 Clippy 首轮在 Protocol 的既有测试代码发现 `items_after_test_module` 与单元素 `useless_vec` 两项当前工具链警告；等价移动 helper、改用数组后，五包 `--all-targets -D warnings` 通过，Protocol 37 项复验通过。构建/基准工具 25 项 Python 回归、三个 shell 语法检查、Rust 全量格式检查和 `git diff --check` 通过。
+
+同时关闭 12.11 留下的 Release XCTest 资源定位阻塞：SwiftPM XCTest 能从产品目录兄弟 bundle 加载资源，打包 App 仍只允许密封的 `Contents/Resources`，不回退到构建机路径。基准 shell 首次直接执行又暴露未设置 executable bit，已补齐；随后第一次真实采集期间本共享工作区的 `plugins/browser` 被另一条工作流修改，输入门禁正确将整轮标为 failed，未混入结果。输入稳定后完成三轮 arm64 Release 合成存储基准，每轮内部重复 3 次、测试二进制 SHA-256/UUID 一致；合并 9 个原始样本结果如下：
+
+| 工程测量 | p50 | p95 / 最大值 |
+| --- | ---: | ---: |
+| Workspace snapshot | 10.363 ms | 12.251 ms |
+| 500 次空闲 heartbeat poll | 13.520 ms | 19.022 ms |
+| 500 次 Run change 发布 | 0.618 ms | 1.350 ms |
+| 最近消息查询 | 0.366 ms | 0.822 ms |
+| 128 KiB 图片附件读取 | 0.649 ms | 1.585 ms |
+| Store 打开 | 1.356 ms | 4.410 ms |
+| 空闲 account drain | 0.224 ms | 0.562 ms |
+
+三轮空闲 heartbeat/account drain 的 SQLite change 数均为 0。证据位于本地 ignored 目录 `clients/macos/.build/performance/store-release-9zb5yb7d/`，manifest 状态为 `completed`、`performance_acceptance` 为 `not-evaluated`，`source_input_sha256` 为 `5802dfb6c50b001bf5760d272e5723c5b6b05fdcb7c11f8b45ae9522d0f1e027`；该路径可用于本工作区复核，不是应提交或长期归档的位置。采集完成后的本文记录和两处 Protocol Clippy 清理不属于该输入摘要。以上只证明合成存储热路径，不替代同机候选/基线对照、真实 App 导航、Host + Agent + Media 组合负载、内存/能耗 trace、干净打包或发布 SLO。
+
+### 12.13 第十三批实施记录：Story 高频状态域与进度写放大收敛（2026-10-22）
+
+本批回到 P0-B/P1 的 Story Studio。此前 `StoryStudioViewModel` 在显式稳定 `objectWillChange` 之外仍直接发布视频百分比、批处理进度和模型 token 流；一次 provider 轮询会更新大项目数组，模型每个 token 又会重复发布相同的 `operation`。一键制作路径还会把相同 `queued`/`in_progress` 阶段下的每个百分比回调追加为历史事件，并通过批次/项目清单产生写放大。
+
+已实施：
+
+- 新增独立的 `StoryGenerationActivityState` 与 `StoryPlanningActivityState`。视频百分比、批处理瞬时进度、模型文本流和工具名不再是根 ViewModel 的 `@Published`；根模型保留兼容只读访问和业务方法，但不会转发子状态的 `objectWillChange`。账户 reset 同时清理两个状态域。
+- Agent 实时输出面板直接观察 planning 状态；视频百分比由分段详情中的小型叶子 View 直接观察 generation 状态。根 Story 工作台不观察这两个对象，不能把嵌套对象换个名字后继续让整棵树随 token/percent 重算。
+- 文本 token 流仅在“分析/文本输出/工具组装/完成”阶段真实切换时更新根 `operation`，不再为连续 token 重复发布同一个字符串。回归用 200 个连续 token 证明局部状态发布 200 次而根 ViewModel 发布 0 次。
+- 单段视频适配器增加 attempt 内的持久化门：只有 provider 状态阶段或 job ID 改变才进入 Story store；百分比变化仍实时送到局部 UI。Store 自身继续做第二层幂等检查，相同 status/job ID 不更新 `updatedAt`、不重写项目清单。
+- 收到单段视频事件时，只有 attempt 身份、job ID、最终视频或错误等项目结构变化才发布大项目数组；纯 status/percent 走 activity 状态。任务开始/结束、durable claim、恢复与导航锁定语义未改变。
+- 持久化 Media Batch 同样只在状态阶段或 job ID 改变时追加事件和提交清单。100 个模拟回调（前 50 个 `queued`、后 50 个 `in_progress`）最终只产生各 1 条阶段事件，不再形成 100 轮批次/项目写入。
+
+验证：Debug 与 arm64 Release 分别运行 Story Studio 71 项，均全部通过；其中新增 5 项覆盖根/局部 publisher 隔离、重复 activity 合并、reset 清理、相同视频状态不重写项目清单，以及 100 次 Batch 进度风暴收敛为两个持久化阶段。`git diff --check` 继续作为最终工作区门禁。
+
+边界：本批没有把开始/结束才变化的 asset/frame/video active 集合搬出根模型，以免为低频状态扩大编辑锁定与跨页面导航重构；后续应基于 Instruments 的失效图决定是否继续拆分。Provider 状态字符串变化仍会持久化，这是崩溃恢复所需的低频事实；没有新增丢进度定时器。尚未完成真实 App 的 200 次导航、进度风暴 signpost、内存/能耗 trace 或 Combine 崩溃设备复现，因此不能据单元测试宣称 P0-B/SLO 已全部验收。媒体 `Data`/Base64 文件化和 Worker 仍属后续 P0-E；本批未安装/重启 App、未访问活动用户数据库，也未清理共享工作区的既有改动。
+
+### 12.14 第十四批实施记录：Story 参考视频文件原生上传（2026-10-22）
+
+本批推进 P0-E 的第一段，消除 Story 续写/重绘参考视频在提交阶段同时驻留“完整视频 `Data` + 约 4/3 大小 Base64 `String` + 完整 JSON `Data`”的确定性内存放大。单段适配器和持久化 Media Batch 现在只传递受控项目文件 URL，不再以 512 MiB 上限整段读取后编码。
+
+已实施：
+
+- `VideoGenerationInputVideo` 增加文件引用模式；原 Base64 初始化器保留给已有调用和测试。文件模式要求 Base64 为空，禁止两种所有权同时存在。
+- 新增请求文件写入器：以 `O_NOFOLLOW` 打开源文件并对已打开描述符执行 `fstat`，只接受普通文件；源文件限制为 1–47 MiB，临时请求文件以 `O_EXCL` 和 `0600` 创建。视频按 48 KiB（三的倍数）分块 Base64 编码并直接写入 JSON 请求文件，过程中检查取消，最终请求严格限制在 64 MiB 内；失败或取消会删除未完成文件。
+- `HTTPRequest`/`HTTPTransport` 增加显式 file-backed body。生产 `URLSessionHTTPTransport` 使用 `uploadTask(...fromFile:)`/`upload(for:fromFile:)`，并继续通过有界 delegate 接收响应，不把请求文件重新物化为 `Data`。测试和旧 transport 的默认实现保留兼容性内存 fallback，但它不属于生产 URLSession 路径。
+- Media Service 在提交前后继续校验绑定的认证 session；临时请求文件在成功、provider 拒绝、网络错误、取消和账户切换错误路径上均由统一 `defer` 回收。普通 Base64 视频调用保持原协议行为。
+- Story 的 previous-video 续写和 source-video 重绘两条路径均改为文件引用；现有测试同时验证 URL 指向的字节仍是预期视频，避免仅验证字段形态而漏掉业务内容。
+
+验证：Debug 下 Media Service 24 项、HTTP transport 7 项、Story Studio 71 项通过；arm64 Release 合并运行同一组 102 项，全部通过。覆盖增量请求内容与 data URL 完整性、发送时请求文件可读、成功/失败后清理、symlink 拒绝、47 MiB 超限在 POST 前拒绝，以及 file upload 响应继续受上限约束。测试 transport 为验证内容会物化临时 JSON；生产 URLSession 路径另有 `fromFile` 回归，不能把测试 fallback 描述成生产内存行为。
+
+边界：这是 P0-E 的 Story 参考视频上传切片，不是整个媒体管线文件化完成。视频下载结果仍以 `VideoGenerationResult.videoData` 返回，图片和参考音频输入仍可能保留 Base64，Provider 真实 47 MiB 边界、取消风暴、磁盘满、长时间网络上传、主进程 physical footprint 与能耗仍需在固定 Release 场景实测。尚未新增 Media Worker、durable 下载 sidecar、断点续传或跨进程文件授权；未安装/重启 App、未访问活动用户数据库，也未宣称 P0-E 或客户端 SLO 已全部验收。
+
+### 12.15 第十五批实施记录：视频结果流式下载与文件化落盘（2026-10-22）
+
+本批继续 P0-E，关闭 12.14 明确保留的下载峰值。生产 Media Service 不再通过 `send` 接收完整视频 `Data`，而是消费 `HTTPTransport.stream`，将响应块直接写入权限 `0600` 的临时文件；`URLSessionHTTPTransport.stream` 基于 `URLSession.AsyncBytes` 的 pull reader，每块最多 4 KiB，不使用会丢字节的 eager push 队列。
+
+已实施：
+
+- `VideoGenerationResult` 增加 `GeneratedMediaFile` 结果形态，生产返回的 `videoData` 为空。文件记录精确字节数并共享一个线程安全的清理所有者；显式消费完成、取消/失败退出或最后一个结果引用释放时均幂等删除临时下载。原 Data 初始化器保留，避免一次性破坏测试和旧 service adapter，但生产 NewAPI 下载不再走该路径。
+- 下载先检查 HTTP 状态和可用的 `Content-Length`，响应流累计硬限制为 512 MiB；空响应、越界、流错误、取消和账户 session 改变都会关闭句柄并删除 partial。非 2xx 正文只收集最多 2 MiB 用于脱敏错误，不能借错误页绕开视频上限。
+- Story Store 与 Media History Store 同时接受 Data/file 两种结果且要求二选一。文件结果通过 `O_NOFOLLOW` + `fstat` 校验源描述符、核对精确长度，再以 256 KiB 固定缓冲复制到 `O_EXCL`/`0600` 的最终媒体文件；复制在可取消 detached work 中执行，不在 Store actor 或主线程物化完整视频。Story 仍保持“媒体复制完成后才提交项目 manifest”，History 仍保持“媒体完成后才写 record manifest”。
+- 单段 Story、持久化 Batch 和通用 Media Studio use case 都在落盘后主动释放临时结果；RAII 清理作为遗漏/异常路径的第二层保障。测试/legacy transport 的默认 `stream` fallback 仍可能先完整 `send`，文档和测试均不把它冒充生产 URLSession 行为。
+
+验证：Debug 针对性运行 API/transport 33 项、Story/History/ViewModel 90 项、Core Media use case 4 项和文件 I/O 14 项，共 141 项通过；arm64 Release 运行同一组 141 项也全部通过。新增覆盖分块内容完整性、超限 partial 清理、结果释放清理、History/Story 文件复制、symlink 拒绝、固定长度核验，以及原 Story 69 项和高频状态 3 项回归。`git diff --check` 通过。
+
+全量 Debug 也已执行，用于审计非媒体回归，但当前共享工作区并非全绿：`ToolSkillCoverageCatalogTests.testProductCatalogCoversRegisteredFamiliesWithProviderScopedOverlap` 的固定数量比实际少 1，`TaskReplyInspectorViewModelTests.testStalledToolTaskCanBeRestartedFromProcessInspector` 的策略/夹具不一致，认证恢复与 Memory Engine 的两个用例仍期待 401/403 不触发当前刷新/重试行为。四项单独重跑均稳定失败，相关测试及业务源码不在本批改动范围内；因此不能把针对性 141 项通过描述为整个 Swift package 全绿，后续需单独核对这些既有契约漂移。
+
+边界：大视频上传和下载的确定性全文件内存往返已从生产 Story/NewAPI 路径移除，但 P0-E 仍未完成。图片/音频 DTO 仍可能持有 Base64，临时文件在进程被 SIGKILL 后尚无 durable reconciliation，提交接受后未记 job ID 的不确定态、MediaJobStore、磁盘空间预检、真实 512 MiB trace、断点续传和 Worker 文件授权仍待实施。当前结果文件仍在主 App 进程内写入；这降低峰值内存，不提供进程级故障隔离。
+
+### 12.16 第十六批实施记录：媒体文件磁盘预算准入（2026-10-22）
+
+本批关闭 12.15 留下的磁盘空间预检缺口。新增共享 `MediaDiskCapacityPolicy`，按目标目录所在文件系统的可用字节执行溢出安全的准入计算；大媒体写入完成后必须至少保留 **256 MiB**。容量无法确认时停止新写入，不把未知容量当作无限空间。
+
+已实施：
+
+- 参考视频的 Base64 JSON 临时请求在创建目标文件前，按已经精确计算的完整请求字节数加 256 MiB 余量准入；空间不足属于 provider POST 前的确定性失败，保持 `requestMayHaveBeenSubmitted=false`，目录中不会留下 partial 请求文件。
+- 视频流式下载优先采用合法 `Content-Length` 作为计划大小；缺失时按 512 MiB 硬上限预算。下载临时文件通常还要与 Story/History 最终副本短时共存，因此准入同时保留一份同等大小的后续副本空间和 256 MiB 余量：未知长度响应的保守门槛为 1.25 GiB。声明了长度的响应在流结束时必须与该长度精确相等，截断响应删除 partial 并拒绝交付。
+- Story/History 从临时结果复制到最终目录前，在目标卷按精确文件大小再次准入；检查发生在 `O_EXCL` 创建目标之前，空间不足不会留下 partial 媒体。History 的唯一未提交记录目录在复制或 manifest 提交失败时一并回收，不再留下无 `record.json` 的空目录。
+- 统一错误保留提交阶段语义：请求文件空间不足是提交前失败；provider 已完成后的下载空间不足标记为“请求可能已经提交”，调用方不得因此自动换 key 再生成并重复计费。
+
+验证：Debug 与 arm64 Release 分别运行 Media Service/HTTP transport 35 项、磁盘策略 3 项、文件 I/O 15 项、History 9 项及 Story 文件结果落盘 1 项，共 63 项，全部通过。新增故障注入覆盖精确容量边界、少 1 字节、整数溢出、请求/下载/最终复制空间不足时零 partial，以及 `Content-Length` 截断清理；Swift 6 编译与并发检查随 Release 构建通过。
+
+边界：这是准入检查，不是空间预留。检查后其他进程或第二个媒体任务仍可能消耗容量，真实写入继续依赖 ENOSPC 错误和 partial 清理；尚未完成并发媒体任务的账户/项目配额或容量 lease。测试通过注入容量值验证同一决策和清理路径，没有真的填满用户磁盘，也不替代只读卷、跨卷、APFS purgeable 空间和 512 MiB Release trace。12.15 中记录的 SIGKILL 临时文件对账、MediaJobStore、提交不确定态、图片/音频文件化、断点续传及 Worker 文件授权仍未完成，因此 P0-E 仍不能标记完成。
+
+### 12.17 第十七批实施记录：Story 视频首尾帧文件原生化（2026-10-22）
+
+本批继续收敛 P0-E 的请求侧峰值。此前 Story 的上一段视频已经是文件引用，但首帧/尾帧仍先读取完整图片 `Data`，再生成 Base64 `String`，最后与 JSON `Data` 同时驻留。单段生成和持久化 Media Batch 现均只把受控项目图片 URL 交给 API 层。
+
+已实施：
+
+- `ImageGenerationInputImage` 增加进程内 `fileURL` 形态，继续保留原 Base64 初始化器与 Codable wire 兼容；本地文件 URL 不进入旧 JSON DTO。Story 单段视频和 Batch 的视频步骤使用文件形态，图片生成 multipart 的既有调用暂不改变。
+- 原单视频占位写入器扩展为多媒体占位写入：可在同一个 64 MiB JSON 请求中按出现顺序替换首帧、尾帧和参考视频。每个源以 `O_NOFOLLOW` 打开并对 descriptor 执行 `fstat`，图片各限制 20 MiB、视频限制 47 MiB；所有源和 Base64 膨胀后的总请求在创建目标文件前统一计算并执行 12.16 的磁盘准入。
+- 每个源仍以 48 KiB（三的倍数）分块编码，整个请求直接写入权限 `0600` 的临时文件，再由生产 URLSession `fromFile` 上传。取消、校验失败、总请求超限、provider 拒绝和成功路径继续统一清理；不会为两个帧图分别构造完整 Base64 字符串。
+- 文件帧的像素范围与宽高比校验通过 `O_NOFOLLOW` 打开的描述符和 `/dev/fd` 交给 ImageIO，在已验证 descriptor 仍打开时取得属性；随后真正编码阶段再次以相同文件安全规则打开。旧 Base64 帧仍走原校验与协议，未被静默改写。
+
+验证：Debug 与 arm64 Release 分别运行 Story 69 项、Media History/ViewModel 18 项、Media Service/HTTP transport 36 项、Core 视频用例与磁盘策略及 wire 兼容 8 项、文件 I/O 15 项，共 **146 项**，全部通过。新增端到端回归确认两个文件帧进入同一请求、data URL 字节与原文件完全一致、临时请求上传后删除；Story 回归确认捕获到的生产请求 `base64Data` 为空且文件内容正确；Core wire 回归确认文件 URL 不会进入旧 Codable DTO。Swift 6 编译与并发检查、`git diff --check` 同步作为门禁。
+
+边界：这一批仅消除 Story 视频首/尾帧的 Base64 峰值。通用 Media Studio 用户选择的图片和参考音频、Story 图片生成 multipart、provider 返回图片及旧兼容调用仍可能持有完整 Data/Base64；不能据此宣称所有图片/音频 DTO 已文件化。文件内容在属性校验与编码之间仍可能被同一账户下有写权限的外部进程替换，编码阶段会重新检查普通文件与大小，但尚未实现不可变 artifact hash/descriptor 跨阶段传递。MediaJobStore 的全局唯一事实源仍需先迁移 Story/Batch 现有 intent，不能旁路新增第四套 job 状态；SIGKILL 对账、真实内存 trace 和 Worker 仍未完成。
+
+### 12.18 第十八批实施记录：通用视频图片与参考音频文件原生化（2026-10-22）
+
+本批继续 P0-E，但不旁路创建 MediaJobStore。审计确认 Story attempt 与 Media Batch 已经是 durable provider 状态源，通用 Media Studio 仍只有内存 token；因此先在 6.4 冻结接管顺序和禁止双写规则，再推进不改变任务事实源的输入文件化。
+
+已实施：
+
+- 通用 Media Studio 选择视频首帧或历史图片时，不再长期持有完整图片 `Data` 与 Base64 字符串。新增每个 ViewModel 独占的临时 artifact 目录；在 security-scoped 访问仍有效时完成格式、像素和 20 MiB 上限校验，并以 `O_NOFOLLOW` 有界复制成权限 `0600` 的 App 控制文件。替换、移除、账户重置和 ViewModel 释放都会清理受管文件。
+- `VideoGenerationInputAudio` 增加文件引用形态，旧 Base64 初始化器继续兼容。参考音频选择不再读取完整文件后执行 `base64EncodedString()`，而是复制为受管文件；模型只保存 URL、名称与 MIME。
+- NewAPI 请求构造将文件图片、首尾帧、参考视频和参考音频统一放入同一个多源临时 JSON。音频沿用 20 MiB 源上限，所有媒体 Base64 膨胀后的合计仍受 64 MiB 请求上限和 12.16 磁盘预算约束；writer 在编码时重新执行 `O_NOFOLLOW`/`fstat`，成功、拒绝、取消和失败路径继续删除请求临时文件。
+- 视频首帧预览改为从本地 artifact 异步下采样，使用现有有界缩略图缓存，不为预览重新生成 Base64 或全尺寸 `NSImage`。
+
+验证：新增 App artifact 回归覆盖图片/音频私有复制、原文件删除后仍可用、无 Base64、`0600` 权限和显式清理；API 端到端回归覆盖视频与音频两个文件进入同一请求、data URL 字节一致及上传后临时请求删除。Debug 与 arm64 Release 相关 Core/App/API 分别运行 56 项，全部通过；Swift 6 编译与并发检查及 `git diff --check` 同步作为门禁。
+
+边界：通用图片创作的最多 8 张参考图仍沿用 Base64 DTO，Story 图片生成 multipart 和 provider 图片结果也尚未文件化。本批 artifact 目录是短生命周期输入缓存，正常退出路径会清理，但进程被 SIGKILL 后仍需启动 reconciliation；不能把它当作 durable job 输入仓库。MediaJobStore、提交不确定态、重启恢复和 Worker 仍未实现，P0-E 不能标记完成。
+
+### 12.19 第十九批实施记录：通用图片参考图与 multipart 文件原生化（2026-10-22）
+
+本批关闭 12.18 明确保留的通用图片创作参考图峰值。此前本机图片和历史图片进入通用图片创作时，会读取完整 `Data`、转换为 Base64 字符串，再由 API 层同时解码最多 8 份图片并拼接完整 multipart `Data`；峰值随图片总大小线性放大且存在多份并存。
+
+已实施：
+
+- 通用图片参考图与视频输入共用 ViewModel 独占的受控 artifact 目录。本机图片在 security-scoped 访问期间完成校验和有界复制；历史中的本地文件直接流式复制，远端/Base64 兼容资产只在确实没有本地文件时才落一份受控副本。生产请求中的 `ImageGenerationInputImage` 只持有文件 URL，不再持有 Base64。
+- 新增图片 multipart 文件 writer：最多 8 张、单张 20 MiB，总请求硬上限 161 MiB；创建目标前计算精确 Content-Length 并执行 12.16 磁盘准入。每个源通过 `O_NOFOLLOW` 与 `fstat` 验证为受限普通文件，按 256 KiB 分块复制到权限 `0600` 的临时 multipart，再由生产 URLSession `fromFile` 上传。
+- 上传成功、provider 拒绝、取消和本地写失败都会删除临时 multipart；旧 Base64 请求继续走兼容内存路径，避免静默改变 Story 图片生成协议。本批没有把测试 transport 的内存 fallback 当作生产流式实现。
+- 通用图片参考图缩略图改为从 artifact 异步有界下采样；移除单张、全部清除、账户重置与 ViewModel 释放会回收受管文件。生成期间 UI 与 ViewModel 均阻止删除正在上传的输入。
+
+验证：Debug 与 arm64 Release 相关 Core/App/API 分别运行 54 项，全部通过。新增端到端回归确认两张文件参考图进入同一 multipart、字段数量和原始字节一致、上传完成后临时文件删除；App 回归确认选择后 `base64Data` 为空且文件 URL 有效。Swift 6 编译与并发检查及 `git diff --check` 同步作为门禁。
+
+边界：Story 图片生成 multipart 仍沿用 Base64，provider 返回的图片结果仍可能是完整 Base64 响应；远端历史资产首次下载不可避免需要受响应上限约束的一份 `Data`，但不再二次编码为 Base64 输入。短生命周期 artifact 的 SIGKILL 启动清理、MediaJobStore、提交不确定态、真实多图峰值 trace 与 Worker 仍待完成，P0-E 仍不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
@@ -740,9 +1083,10 @@ P0 依赖：A 是所有验收前提；B、C、D、E 可按模块推进，但 P2 
 | 同机伪造命令/越权路径 | 未认证进程、旧 epoch、其他账户、symlink/路径逃逸均拒绝 |
 | 同时启动两份 App/升级交接 | OS 锁与 epoch 保证单一写入者；不抢占仍存活所有者 |
 | SQLite 维护 | 先备份与 integrity check；失败可恢复；活跃任务不被长时间阻塞 |
-| 维护阶段 kill -9/备份盘空间耗尽 | 能恢复已验证数据库；不丢 WAL；不删除唯一可恢复备份 |
+| 维护阶段 kill -9/备份盘空间耗尽 | 能恢复已验证数据库；不丢 WAL；不删除唯一可恢复备份。12.8 已覆盖临时 v34 → v37 库的 12 个备份/迁移停点；COMMIT/VACUUM 内部、旧路径压缩、掉电、真实空间耗尽及实际 Host 组合验收仍待完成 |
 | Receipt 保留策略 | 字节预算有效；必要幂等结果仍可重放 |
 | Receipt 淘汰后离线重试/并发同 key | 同 key 不同 fingerprint 拒绝；副作用不重复；过期行为明确 |
+| COMMIT 报错/写事务生命周期取消 | 原始错误保留；失败提交的业务/回执/淘汰回滚，不能复用状态不明的句柄；取消不能推断未提交。12.9 覆盖收尾，12.10 覆盖 BEGIN/业务与后台清理；真实 I/O、关闭压力及慢语句仍待验收 |
 | Host + Agent + Media 组合负载 | 总准入限制生效，无嵌套 permit 死锁；前台切页仍达标 |
 | 8 小时 soak 与 Helper 连续崩溃 | Task/observer/FD/临时文件不单调泄漏；达到阈值后熔断，不无限重启 |
 
@@ -783,6 +1127,8 @@ Release 验收建议记录：
 
 主要现状与后续改造入口：
 
+- 启动迁移备份保护：`clients/local_agent_host/layers/infrastructure/database/src/maintenance.rs`、`migration_backup_policy.rs`、`maintenance_backup_tests.rs`、`migration_tests.rs`
+
 - App/进程入口：`clients/macos/Sources/ChatOSApp/ChatOSApp.swift`
 - 全局生命周期：`clients/macos/Sources/ChatOSApp/AppModel.swift`
 - 登录激活：`clients/macos/Sources/ChatOSApp/AppModelAuthentication.swift`
@@ -794,17 +1140,35 @@ Release 验收建议记录：
 - Local Agent Host 生命周期：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostLifecycle.swift`
 - Local Agent Host IPC：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostProcess.swift`
 - Media API：`clients/macos/Sources/ChatOSAPI/ChatOSMediaGenerationService.swift`
-- 流式下载与上传接口缺口：`clients/macos/Sources/ChatOSAPI/HTTPTransport.swift`
+- 文件请求上传与有界响应：`clients/macos/Sources/ChatOSAPI/HTTPTransport.swift`、`clients/macos/Sources/ChatOSNetworking/BoundedURLSessionDataLoader.swift`
+- 参考视频增量 JSON/Base64 请求文件：`clients/macos/Sources/ChatOSAPI/ChatOSVideoRequestBodyFileWriter.swift`
+- 视频响应流式临时文件：`clients/macos/Sources/ChatOSAPI/ChatOSResponseBodyFileWriter.swift`
 - 参考媒体 DTO：`clients/macos/Sources/ChatOSCore/MediaGenerationModels.swift`
-- Story 参考视频读取/Base64：`clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryVideoGenerationAdapter.swift`
+- Story 参考视频文件引用：`clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryVideoGenerationAdapter.swift`、`StoryMediaBatchSession.swift`
 - Media Studio 状态：`clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioViewModel.swift`
 - Story Studio 状态：`clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryStudioViewModel.swift`
 - Global Utilities Companion：`clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/GlobalUtilityCompanion.swift`
 - Plugin 进程监督：`clients/macos/Sources/ChatOSConnector/NativePluginApplicationProcessRegistry.swift`
-- Receipt 默认策略：`clients/local_agent_host/layers/application/src/lib.rs`
-- Receipt 持久化：`clients/local_agent_host/layers/infrastructure/database/src/lib.rs`
+- Receipt 策略入口：`clients/local_agent_host/layers/application/src/lib.rs`
+- 全命令穷尽分类与内部一次性白名单：`clients/local_agent_host/layers/application/src/command_receipt_policy.rs`
+- 分类/重放/防绕过回归：`clients/local_agent_host/layers/application/src/command_receipt_policy_tests.rs`
+- 流式请求指纹：`clients/local_agent_host/layers/application/src/command_fingerprint.rs`
+- 新旧指纹重放兼容：`clients/local_agent_host/layers/infrastructure/database/src/receipt_fingerprint.rs`
+- Receipt 持久化、重放与 v35 回填：`clients/local_agent_host/layers/infrastructure/database/src/receipt_store.rs`
+- Receipt 淘汰/重启/迁移回滚回归：`clients/local_agent_host/layers/infrastructure/database/src/receipt_store_tests.rs`
+- 正文尺寸计数、预算淘汰、有界序列化与 v36：`clients/local_agent_host/layers/infrastructure/database/src/receipt_cache.rs`
+- 正文预算/计数/回滚/共享配额回归：`clients/local_agent_host/layers/infrastructure/database/src/receipt_cache_tests.rs`
+- 不可变结果引用、共享回收、摘要校验与 v37：`clients/local_agent_host/layers/infrastructure/database/src/receipt_result.rs`
+- inline 边界/引用完整性/事务回收/迁移回滚回归：`clients/local_agent_host/layers/infrastructure/database/src/receipt_result_tests.rs`
 - Receipt 保留策略：`clients/local_agent_host/layers/infrastructure/database/src/schema.rs`
 - SQLite 维护：`clients/local_agent_host/layers/infrastructure/database/src/maintenance.rs`
+- 写事务提交/回滚与连接收尾隔离：`clients/local_agent_host/layers/infrastructure/database/src/transaction.rs`
+- 提交失败/清理中断/收尾取消与连接复用回归：`clients/local_agent_host/layers/infrastructure/database/src/transaction_tests.rs`
+- BEGIN/业务取消、panic/提前退出与异步回滚回归：`clients/local_agent_host/layers/infrastructure/database/src/transaction_cancellation_tests.rs`；清理 future 的所有权边界回归另见 `transaction.rs` 的测试模块。
+- 迁移停点强杀/快照不改写/重启与业务防重回归（仅 Unix 单测）：`clients/local_agent_host/layers/infrastructure/database/src/migration_crash_tests.rs`
+- Host 进程级数据库所有权与路径校验：`clients/local_agent_host/src/database_owner.rs`
+- 锁竞争/路径别名/诊断不覆盖回归：`clients/local_agent_host/src/database_owner/tests.rs`
+- 真实 Host 重复启动/退出/强杀/失败重开回归：`clients/local_agent_host/tests/database_owner_process.rs`
 - Host 协议事实源：`clients/local_agent_host/layers/interface/src/lib.rs`
 - Swift Host 版本与并发：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostLifecycle.swift`
 - Rust 独立启动并发：`clients/local_agent_host/src/main.rs`
@@ -821,7 +1185,7 @@ Release 验收建议记录：
 | Worker IPC 与沙箱 | App 生命周期优先评估 XPC，按真实签名/文件/网络约束选定一种传输 | P2 前；macOS runtime/打包 |
 | 凭据 | 长期 secret 留在代理，任务授权/流式代理且限制目标与操作 | P0-E/P2 前；API/凭据 |
 | 并发预算 | Host + Swift Agent 后台总额度起始 3；媒体重任务 1；大传输 2 | P0-D 验收；runtime/性能 |
-| 防重与维护 | 全 enum 命令策略、重放期限、tombstone 保留和自动压缩模式 | P0-C migration 前；Host/存储 |
+| 防重与维护 | v35 防重见 16.2，v36 正文预算见 16.3，v37 不可变引用见 16.4，新版 Host 进程锁见 16.5；owner 配额、旧 Host 交接及在线维护仍待完成 | P0-C 生产迁移前；Host/存储 |
 | 分发与升级 | 定义内部测试签名和正式外部分发两条验收路径、旧版本兼容范围 | P2 打包前、P4 发布前；发布工程 |
 
 每份 ADR 必须记录问题、证据、选项、选择理由、失败/回滚行为和验证方式。未冻结的决策不阻止其他独立阶段推进，但不能跨过对应生产启用门禁。
@@ -830,7 +1194,41 @@ Release 验收建议记录：
 
 - 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift Host 常量为 v44，而 `clients/local_agent_host/ARCHITECTURE.md` 仍有“validate protocol v28”陈述，属于待修的文档漂移；本方案引用版本不能替代实际握手。
 - CI 比较 Swift/Rust 协议版本、payload 边界、支持能力和打包后的真实可执行版本；Schema 兼容矩阵、进程布局及 ADR 随实现更新。
-- 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。本次仅强化方案，新增 Governor、Worker、job 状态机与门禁均为待实施项。
+- 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；新增 Governor、Worker、job 状态机与门禁仍为待实施项。
+
+### 16.2 ADR：v35 本地命令防重身份（实现范围冻结，生产迁移门禁未通过）
+
+- 问题/证据：原回执行兼任历史正文与副作用防重；24 小时/5,000 条淘汰后 `replay` 返回未见过该命令。对 `ClaimNextRun`，原响应被淘汰可能变成领取另一份 work。v33 的 DROP TABLE 也会在升级时删除尚存身份。
+- 备选：永久保留完整响应会延续大 JSON 写放大；淘汰后读取当前实体不等于历史响应；仅依赖实体 ID/版本不能覆盖 claim、删除等所有写命令。本批选择独立长期身份 + 可淘汰历史响应，尚不选择大结果引用形态。
+- 权威 key/账户：兼容当前全局 `command_id` 命名空间，不在本次将同 ID 变为“每 owner 可各执行一次”；Host 指纹包含完整命令及 owner，其他账户同 ID 不同内容仍拒绝。旧回执无独立 owner 列，不从摘要猜 owner，也不假称已实现按 owner 的正文预算。完成标记由同一本地事务提交产生，不需要靠实体当前版本重建。
+- 保留/过期：防重身份在数据库生命周期内保留，不随正文的时间、条数或未来字节配额删除；尚无业务安全证明前不自动归档。历史响应在缓存中则精确重放，淘汰则 `command_replay_expired`，不得把换新 key 当自动恢复方法。成功且无业务变化的特殊路径（如空 claim 轮询）沿用原先不记回执的行为，不承诺永久缓存空查询结果。
+- 迁移/失败：v35 表与逐条回填同一事务，迁移失败不能留下半套身份；迁移前保留已验证快照，未来经过 v33 的路径保留尚存回执。已被旧版清掉的身份无法恢复，需依赖业务约束/对账，不能宣称历史上全部写命令都已获得长期防重。
+- 回滚：旧 Host 的 Schema 上限检查拒绝 v35；不通过清空身份表或降低迁移标记使其强行读取。回滚二进制须先明确数据恢复窗口；恢复旧快照会丢失之后的新写入，只能通过明确的数据恢复流程执行。生产迁移前仍需停旧 Host、独占所有者/维护协议和大库/磁盘耗尽/强杀验收，本批源码与临时测试库验证不等于已启用该生产迁移。
+- 验证：12.4 的事务、并发、过期 claim、旧指纹与回填失败测试是本 ADR 的最小正确性证据；不替代整套 P0-C 性能及迁移门禁。
+
+### 16.3 ADR：v36 全库响应缓存预算（实现范围冻结，生产迁移门禁未通过）
+
+- 问题/证据：只有 24 小时/5,000 条不能限制大 JSON 总量；每次 `SUM(length(response_json))` 则会把容量控制本身变成正文全扫描。v35 已保留独立防重身份，允许仅淘汰正文而不重新放行写副作用。
+- 备选与选择：不采用每次写入扫描全部正文或超限后先完整序列化再丢弃。选择独立尺寸元数据 + 同事务增量计数 + 超限时排序淘汰，全库默认/上限为 128 MiB；现有回执没有 owner 列，暂不伪造按 owner 预算，公平份额与结果引用另行决定。该上限保护逻辑正文，不是整个数据库的容量承诺。
+- 单份超限：不写入巨量正文/WAL 后立即删除；有界缓冲超限后仅落成功身份，首次返回业务结果，之后重试按过期处理。继续序列化剩余内容以保留错误/回滚语义。它不等于 512 KiB 以上转不可变引用，不保证超大 IPC 结果能交付。
+- 迁移/失败：v36 尺寸回填与新计数/触发器在一个事务内，字节裁剪永不删除 tombstone。v35 若已作为前序迁移提交，不因 v36 失败而被偷偷降级；保留快照并允许再次完成 v36，不自动恢复旧库覆盖业务数据。
+- 回滚/门禁：旧包按 Schema 上限拒绝 v36，不能仅改版本号绕过。独占所有者、生产大库空间峰值与耗时、强杀/真实磁盘耗尽和维护恢复仍是生产启用前置条件；暂未交付自动归档或物理压缩。验证证据见 12.5，不能以逻辑字节限额替代进程 RSS、WAL 或发布性能验收。
+
+### 16.4 ADR：v37 数据库内不可变结果引用（实现范围冻结，生产迁移门禁未通过）
+
+- 问题/证据：v36 虽然限制总正文，但单条回执仍可能携带接近 128 MiB 的 JSON；引用可变 Run 的当前值无法满足精确重放。固定摘要应指向原始历史字节，而不能把返回实体最新状态冒充原响应。
+- 备选与选择：选择同一 SQLite 中的内容寻址结果表与显式外键列，超过 512 KiB 才引用，相同字节共享。暂不新增文件 sidecar，以免在尚无 durable 文件所有权/孤儿对账协议时引入跨存储提交窗口；也不把普通业务 JSON 中看似引用的字段当存储格式。该选择提供回执正文隔离和相同结果缓存去重，不承诺已解决不同业务表的重复写入。
+- 所有权/预算：回执持有强引用，最后一个引用删除时同事务回收正文。全库配额按每命令完整逻辑字节保守计费，物理共享不扩大可重放集合。tombstone 继续独立保留；正常淘汰为 `command_replay_expired`，仍被引用但正文缺失或校验失败为不可重试 `storage_corrupt`，两者均不能重新放行副作用。
+- 迁移/失败：v36 → v37 在单事务内逐条转换原始大结果，逻辑字节数保持不变；失败回滚本版本，前序已提交版本不倒退，保留恢复快照。新正文与业务事实同事务，避免文件 rename/数据库提交之间的悬空引用；这不扩展为外部 provider 或文件操作的恰好一次保证。
+- 回滚/门禁：旧包按 Schema 上限拒绝 v37，禁止通过清版本标记、删引用或清身份强行降级。引用格式未改变 wire 协议，但并不代表旧 Host 能读新 Schema；生产迁移仍须独占维护与大库空间/耗时/故障验收。首次大结果写入及重放都需实测，不能用小型正确性回归替代性能结果；证据和限制见 12.6。
+
+### 16.5 ADR：Host 数据库协作式进程所有权（实现范围冻结，生产迁移门禁未通过）
+
+- 问题/证据：SQLite 写事务锁不覆盖启动备份/迁移/压缩之间的间隙，也不赋予唯一业务调度所有权。生产入口当前仅 Host `main.rs` 打开这份数据库，因而在这里先取得锁可同时保护启动阶段和正常运行，而不把测试用的多连接能力伪装成多 Host 所有权。
+- 选择：采用数据库专属持久 sidecar 上的 OS 非阻塞独占锁，先加锁再创建池，持锁至操作系统销毁进程。获取失败不等待、不接管、不改当前所有者诊断；新 owner 的随机 epoch 在取得锁后产生，仅用于诊断。不以 PID/修改时间/TTL 推断旧执行已经终止，不允许 unlink 锁文件来“解锁”。
+- 路径与生命周期：解析数据库/父目录别名形成共同锁身份，Unix 拒绝硬链接与不安全锁路径；保留 SQLite 配置路径与 Artifact 根目录兼容。进程级静态持有避免异步入口返回时早于后台资源销毁释放所有权，崩溃或 SIGKILL 交给内核释放，不把残留文件当成仍持锁。
+- 兼容/失败：不改变 Schema/wire。新版与新版互斥，旧版与新版不保证互斥；旧 Host 未确认停止就禁止生产升级。持锁路径必须受信且稳定，绕过协议/替换 inode 的写入者不受 advisory lock 强制隔离；当前 epoch 未实现提交 fencing，未来独立维护入口和跨版本交接需遵守同一协议。
+- 门禁：macOS 临时库上的真实子进程测试证明重复启动拒绝、原所有者健康、正常退出/启动失败/空闲强杀后可重开，不证明迁移中途强杀、跨版本 App 双开、磁盘满、Windows 行为或在线维护完成。验证与边界见 12.7；不得据此启用无人值守的活动库治理。
 
 ## 十七、最终决策摘要
 

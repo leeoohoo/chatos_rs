@@ -50,7 +50,7 @@ impl LocalNotepadStore for SqliteClientStorage {
         folder: &str,
         now_unix_ms: i64,
     ) -> Result<String, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
@@ -73,7 +73,7 @@ impl LocalNotepadStore for SqliteClientStorage {
         to: &str,
         now_unix_ms: i64,
     ) -> Result<u64, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
@@ -151,7 +151,7 @@ impl LocalNotepadStore for SqliteClientStorage {
         recursive: bool,
         now_unix_ms: i64,
     ) -> Result<u64, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
@@ -270,7 +270,7 @@ impl LocalNotepadStore for SqliteClientStorage {
         tags: &[String],
         now_unix_ms: i64,
     ) -> Result<LocalNotepadNoteDetail, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
@@ -326,7 +326,7 @@ impl LocalNotepadStore for SqliteClientStorage {
         update: &UpdateNotepadNoteCommand,
         now_unix_ms: i64,
     ) -> Result<LocalNotepadNoteDetail, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
@@ -389,7 +389,7 @@ impl LocalNotepadStore for SqliteClientStorage {
         expected_version: u64,
         now_unix_ms: i64,
     ) -> Result<(), ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if Self::replay::<String>(&mut connection, command).await?.is_some() {
@@ -436,7 +436,7 @@ impl LocalNotepadStore for SqliteClientStorage {
         write: &LocalNotepadImageWrite,
     ) -> Result<LocalNotepadImage, ClientStorageError> {
         let image = &write.image;
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {

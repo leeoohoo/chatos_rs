@@ -98,15 +98,21 @@ extension SQLiteAgentGroupChatStoreTests {
             limit: 10
         )
         XCTAssertEqual(listedForAgent, [run])
+#if DEBUG
         let interruptedBefore = await reopened.preparedStatementCountForTesting()
+#endif
         let interrupted = try await reopened.listInterruptedRuns(
             ownerUserID: "alice",
             limit: 500
         )
+#if DEBUG
         let interruptedQueryCount = await reopened.preparedStatementCountForTesting()
             - interruptedBefore
+#endif
         XCTAssertEqual(interrupted, [run])
+#if DEBUG
         XCTAssertEqual(interruptedQueryCount, 1)
+#endif
         let runningDeliveryRuns = try await reopened.listRunsWithRunningDeliveries(
             ownerUserID: "alice",
             projectID: "project-1",

@@ -34,6 +34,7 @@ public struct MediaStudioVideoGenerationUseCase: Sendable {
         guard !owner.isEmpty else { throw MediaStudioVideoGenerationError.invalidOwner }
 
         let result = try await generator.generateVideo(request, progress: progress)
+        defer { result.videoFile?.removeIfNeeded() }
         // A provider may finish after cancellation without throwing. Never persist that result.
         try Task.checkCancellation()
         await progress(.init(status: "saving"))

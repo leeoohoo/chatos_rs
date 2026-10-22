@@ -53,7 +53,8 @@ extension LocalAgentGroupChatSchedulerTests {
         let scheduler = LocalAgentGroupChatScheduler(
             service: nativeService,
             services: ParallelSchedulerTestServices(probe: probe),
-            settings: .init(suiteName: settingsSuite)
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2
         )
         let results = try await scheduler.drainProject(
             ownerUserID: "alice",
@@ -66,6 +67,76 @@ extension LocalAgentGroupChatSchedulerTests {
         XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })
         let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
         XCTAssertGreaterThanOrEqual(maximumConcurrentCalls, 2)
+        for delivery in post.deliveries {
+            let stored = try await store.delivery(
+                ownerUserID: "alice",
+                deliveryID: delivery.id
+            )
+            XCTAssertEqual(stored?.status, .completed)
+        }
+    }
+
+    func testSchedulerNeverExecutesOrClaimsBeyondSharedExecutionBudget() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-execution-budget-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let room = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "budget-project",
+            draft: .init(name: "预算项目群")
+        )
+        var agents: [LocalAgentProfile] = []
+        for index in 0..<4 {
+            let agent = try await store.createAgent(
+                ownerUserID: "alice",
+                draft: .init(
+                    name: "Agent \(index)",
+                    rolePrompt: "执行预算测试。",
+                    modelConfigID: "parallel-model"
+                )
+            )
+            agents.append(agent)
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(role: agent.draft.name)
+            )
+        }
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "按预算执行",
+                mentionedAgentIDs: agents.map(\.id)
+            ),
+            limits: .init()
+        )
+        let probe = SchedulerConcurrencyProbe()
+        let settingsSuite = "local-agent-execution-budget-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: ParallelSchedulerTestServices(probe: probe),
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2
+        )
+
+        let results = try await scheduler.drainProject(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            maximumRuns: 64
+        )
+
+        XCTAssertEqual(results.count, post.deliveries.count)
+        let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
+        XCTAssertEqual(maximumConcurrentCalls, 2)
         for delivery in post.deliveries {
             let stored = try await store.delivery(
                 ownerUserID: "alice",
@@ -145,6 +216,7 @@ extension LocalAgentGroupChatSchedulerTests {
             service: nativeService,
             services: LaneSchedulerTestServices(probe: probe),
             settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2,
             now: { source.createdAtUnixMs + 10_000 }
         )
         let results = try await scheduler.drainAccount(
@@ -263,6 +335,7 @@ extension LocalAgentGroupChatSchedulerTests {
             service: service,
             services: CommunicationFastLaneServices(probe: probe),
             settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2,
             now: { 200 }
         )
 

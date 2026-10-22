@@ -6,6 +6,38 @@ import XCTest
 @testable import ChatOSApp
 
 extension StoryStudioTests {
+    func testStoryStoreCopiesFileBackedVideoIntoProject() async throws {
+        let (_, store, _) = try await fixture()
+        let project = makeProject()
+        let sourceURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "story-video-download-\(UUID().uuidString).tmp"
+        )
+        let expected = Data((0..<300_000).map { UInt8($0 % 251) })
+        try expected.write(to: sourceURL)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let result = VideoGenerationResult(
+            id: "file-video",
+            modelConfigID: "video",
+            modelName: "MiniMax-H3",
+            createdAt: "",
+            mimeType: "video/mp4",
+            videoFile: .init(url: sourceURL, byteCount: expected.count)
+        )
+
+        let video = try await store.saveVideo(
+            result,
+            projectID: project.id,
+            owner: "alice"
+        )
+        let savedURL = try store.fileURL(
+            video.filename,
+            projectID: project.id,
+            owner: "alice"
+        )
+        XCTAssertEqual(try Data(contentsOf: savedURL), expected)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.path))
+    }
+
     func testGeneratedStoryImageImportNormalizesPersistsAndConfirmsResource() async throws {
         let (vm, store, _) = try await fixture()
         var draft = makeProject()

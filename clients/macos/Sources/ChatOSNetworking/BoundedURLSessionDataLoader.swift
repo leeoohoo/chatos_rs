@@ -20,7 +20,25 @@ public enum BoundedURLSessionDataLoader {
         let loader = Loader(maximumBytes: maximumBytes)
         return try await loader.load(
             request: request,
-            configuration: session.configuration
+            configuration: session.configuration,
+            uploadFileURL: nil
+        )
+    }
+
+    public static func upload(
+        request: URLRequest,
+        fileURL: URL,
+        session: URLSession = .shared,
+        maximumBytes: Int
+    ) async throws -> (data: Data, response: URLResponse) {
+        guard maximumBytes > 0, fileURL.isFileURL else {
+            throw BoundedURLSessionDataLoaderError.invalidResponse
+        }
+        let loader = Loader(maximumBytes: maximumBytes)
+        return try await loader.load(
+            request: request,
+            configuration: session.configuration,
+            uploadFileURL: fileURL
         )
     }
 }
@@ -41,13 +59,15 @@ private final class Loader: NSObject, URLSessionDataDelegate, @unchecked Sendabl
 
     func load(
         request: URLRequest,
-        configuration: URLSessionConfiguration
+        configuration: URLSessionConfiguration,
+        uploadFileURL: URL?
     ) async throws -> (Data, URLResponse) {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 start(
                     request: request,
                     configuration: configuration,
+                    uploadFileURL: uploadFileURL,
                     continuation: continuation
                 )
             }
@@ -59,6 +79,7 @@ private final class Loader: NSObject, URLSessionDataDelegate, @unchecked Sendabl
     private func start(
         request: URLRequest,
         configuration: URLSessionConfiguration,
+        uploadFileURL: URL?,
         continuation: CheckedContinuation<(Data, URLResponse), any Error>
     ) {
         lock.lock()
@@ -73,7 +94,11 @@ private final class Loader: NSObject, URLSessionDataDelegate, @unchecked Sendabl
             delegate: self,
             delegateQueue: nil
         )
-        let task = session.dataTask(with: request)
+        let task: URLSessionDataTask = if let uploadFileURL {
+            session.uploadTask(with: request, fromFile: uploadFileURL)
+        } else {
+            session.dataTask(with: request)
+        }
         self.session = session
         self.task = task
         lock.unlock()

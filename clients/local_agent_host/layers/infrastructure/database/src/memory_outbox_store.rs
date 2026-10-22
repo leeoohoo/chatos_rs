@@ -30,7 +30,7 @@ impl LocalMemoryOutboxStore for SqliteClientStorage {
         now_unix_ms: i64,
     ) -> Result<(), ClientStorageError> {
         validate_enqueue(record_id, tenant_id, source_id, thread_id, payload)?;
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             let owned: bool = sqlx::query_scalar(
@@ -106,7 +106,7 @@ impl LocalMemoryOutboxStore for SqliteClientStorage {
         now_unix_ms: i64,
     ) -> Result<LocalMemoryOutboxRecord, ClientStorageError> {
         validate_enqueue(record_id, tenant_id, source_id, thread_id, payload)?;
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = enqueue_on(
             &mut connection,
@@ -134,7 +134,7 @@ impl LocalMemoryOutboxStore for SqliteClientStorage {
                 "Memory outbox claim requires a token and future lease".to_string(),
             ));
         }
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             sqlx::query(
@@ -425,7 +425,7 @@ async fn transition_claim(
     error: Option<String>,
     now_unix_ms: i64,
 ) -> Result<LocalMemoryOutboxRecord, ClientStorageError> {
-    let mut connection = storage.pool.acquire().await.db()?;
+    let mut connection = storage.acquire_write().await.db()?;
     SqliteClientStorage::begin_immediate(&mut connection).await?;
     let result = async {
         let row = sqlx::query(

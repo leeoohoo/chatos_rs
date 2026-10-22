@@ -84,6 +84,7 @@ enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailur
     case mixedFrameAndReferenceVideoInputs
     case missingReferenceVideo
     case mediaUploadFailed(String)
+    case insufficientDiskSpace(String)
     case videoEndpointReturnedHTML(String)
 
     var errorDescription: String? {
@@ -122,6 +123,8 @@ enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailur
             "视频编辑或延续需要先提供一段原视频。"
         case let .mediaUploadFailed(detail):
             "上传视频生成素材失败：\(detail)"
+        case let .insufficientDiskSpace(detail):
+            "无法保存生成的视频：\(detail)"
         case let .videoEndpointReturnedHTML(endpoint):
             "视频接口 \(endpoint) 返回了网页而非任务数据，请检查客户端协议与接口路径是否匹配。"
         case .invalidVideoContent:
@@ -144,7 +147,8 @@ enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailur
              .missingReferenceVideo, .mediaUploadFailed:
             false
         case .invalidProviderResponse, .responseTooLarge, .providerRejected,
-             .invalidVideoContent, .videoTimedOut, .videoFailed, .videoEndpointReturnedHTML:
+             .invalidVideoContent, .videoTimedOut, .videoFailed, .insufficientDiskSpace,
+             .videoEndpointReturnedHTML:
             true
         }
     }

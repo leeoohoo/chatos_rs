@@ -32,18 +32,24 @@ extension SQLiteAgentGroupChatStoreTests {
             )
         }
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let page = try await store.pageRecentMessages(
             ownerUserID: "alice",
             roomID: room.id,
             beforeMessageID: nil,
             limit: 50
         )
+#if DEBUG
         let queryCount = await store.preparedStatementCountForTesting() - before
+#endif
 
         XCTAssertEqual(page.messages.count, 50)
         XCTAssertTrue(page.messages.allSatisfy { $0.mentionedAgentIDs == [agent.id] })
+#if DEBUG
         XCTAssertEqual(queryCount, 4)
+#endif
     }
 
     func testActiveConversationListSnapshotUsesConstantQueryCount() async throws {
@@ -101,9 +107,13 @@ extension SQLiteAgentGroupChatStoreTests {
         )
         let expectedFirstRoomLatest = try XCTUnwrap(expectedFirstRoomPage.messages.last)
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let snapshot = try await store.activeConversationListSnapshot(ownerUserID: "alice")
+#if DEBUG
         let queryCount = await store.preparedStatementCountForTesting() - before
+#endif
 
         XCTAssertEqual(snapshot.activeMemberCountByRoomID[firstRoom.id], 1)
         XCTAssertEqual(snapshot.activeMemberCountByRoomID[secondRoom.id], 1)
@@ -116,7 +126,9 @@ extension SQLiteAgentGroupChatStoreTests {
             [agent.id]
         )
         XCTAssertEqual(snapshot.latestMessageByRoomID[secondRoom.id]?.content, "第二间最新消息")
+#if DEBUG
         XCTAssertEqual(queryCount, 4)
+#endif
     }
 
     func testActiveAccountMembershipSnapshotUsesOneQuery() async throws {
@@ -140,13 +152,19 @@ extension SQLiteAgentGroupChatStoreTests {
             draft: .init(role: "测试")
         )
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let members = try await store.listActiveMembers(ownerUserID: "alice")
+#if DEBUG
         let queryCount = await store.preparedStatementCountForTesting() - before
+#endif
 
         XCTAssertEqual(Set(members.map(\.roomID)), Set([firstRoom.id, secondRoom.id]))
         XCTAssertEqual(Set(members.map(\.agentID)), Set([firstAgent.id, secondAgent.id]))
+#if DEBUG
         XCTAssertEqual(queryCount, 1)
+#endif
     }
 
     func testMessageBatchHydratesRelationsWithConstantQueryCount() async throws {
@@ -183,17 +201,23 @@ extension SQLiteAgentGroupChatStoreTests {
             limits: .init()
         ).message
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let messages = try await store.messages(
             ownerUserID: "alice",
             messageIDs: [second.id, first.id, first.id]
         )
+#if DEBUG
         let queryCount = await store.preparedStatementCountForTesting() - before
+#endif
 
         XCTAssertEqual(messages.count, 2)
         XCTAssertEqual(messages[first.id]?.mentionedAgentIDs, [agent.id])
         XCTAssertEqual(messages[second.id]?.content, "第二条来源")
+#if DEBUG
         XCTAssertEqual(queryCount, 3)
+#endif
     }
 
     func testVisibleTodoPresentationBatchesUseConstantQueryCount() async throws {
@@ -248,7 +272,9 @@ extension SQLiteAgentGroupChatStoreTests {
             nowUnixMs: 101
         )
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let visible = try await store.listVisibleTeamTodos(
             ownerUserID: "alice",
             agentID: secondAgent.id,
@@ -267,13 +293,17 @@ extension SQLiteAgentGroupChatStoreTests {
             ownerUserID: "alice",
             todoIDs: dependencies.map(\.prerequisiteTodoID)
         )
+#if DEBUG
         let queryCount = await store.preparedStatementCountForTesting() - before
+#endif
 
         XCTAssertEqual(Set(todoIDs), Set([prerequisite.id, dependent.id]))
         XCTAssertEqual(sources.map(\.messageID), [source.id])
         XCTAssertEqual(dependencies.map(\.prerequisiteTodoID), [prerequisite.id])
         XCTAssertEqual(prerequisites[prerequisite.id], prerequisite)
+#if DEBUG
         XCTAssertEqual(queryCount, 4)
+#endif
     }
 
     func testLinkTodoSourcesValidatesAllMessageRoomsWithOneQuery() async throws {
@@ -310,7 +340,9 @@ extension SQLiteAgentGroupChatStoreTests {
             sourceDrafts.append(.init(roomID: room.id, messageID: message.id))
         }
 
+#if DEBUG
         let countBefore = await store.preparedStatementCountForTesting()
+#endif
         let links = try await store.linkAgentTodoSources(
             ownerUserID: "alice",
             agentID: agent.id,
@@ -318,10 +350,14 @@ extension SQLiteAgentGroupChatStoreTests {
             sources: sourceDrafts,
             nowUnixMs: 101
         )
+#if DEBUG
         let queryCount = await store.preparedStatementCountForTesting() - countBefore
+#endif
 
         // BEGIN + Todo + one message-room batch + one source batch + result list + COMMIT.
+#if DEBUG
         XCTAssertEqual(queryCount, 6)
+#endif
         XCTAssertEqual(Set(links.map(\.messageID)), Set(sourceDrafts.map(\.messageID)))
     }
 
@@ -359,7 +395,9 @@ extension SQLiteAgentGroupChatStoreTests {
             nowUnixMs: 200
         )
 
+#if DEBUG
         let countBefore = await store.preparedStatementCountForTesting()
+#endif
         let dependencies = try await store.setAgentTodoDependencies(
             ownerUserID: "alice",
             agentID: agent.id,
@@ -367,11 +405,15 @@ extension SQLiteAgentGroupChatStoreTests {
             dependencies: dependencyDrafts,
             nowUnixMs: 201
         )
+#if DEBUG
         let queryCount = await store.preparedStatementCountForTesting() - countBefore
+#endif
 
         // BEGIN + Todo + DELETE + prerequisite batch + cycle batch + one dependency batch
         // + result list + COMMIT.
+#if DEBUG
         XCTAssertEqual(queryCount, 8)
+#endif
         XCTAssertEqual(
             Set(dependencies.map(\.prerequisiteTodoID)),
             Set(dependencyDrafts.map(\.prerequisiteTodoID))
@@ -408,17 +450,23 @@ extension SQLiteAgentGroupChatStoreTests {
             )
         }
 
+#if DEBUG
         let countBefore = await store.preparedStatementCountForTesting()
+#endif
         let unread = try await store.readAllUnreadMessagesAndMarkRead(
             ownerUserID: "alice",
             agentID: agent.id,
             limit: 200,
             nowUnixMs: 1_000
         )
+#if DEBUG
         let queryCount = await store.preparedStatementCountForTesting() - countBefore
+#endif
 
         // BEGIN + Agent + messages + two relation batches + one cursor batch + rooms + COMMIT.
+#if DEBUG
         XCTAssertEqual(queryCount, 8)
+#endif
         XCTAssertEqual(Set(unread.map(\.room.id)), expectedRoomIDs)
         XCTAssertEqual(unread.reduce(0) { $0 + $1.messages.count }, 12)
     }

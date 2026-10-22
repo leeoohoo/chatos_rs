@@ -19,11 +19,30 @@ extension ChatOSMediaGenerationService {
             "Accept": "application/json",
             "Authorization": "Bearer \(apiKey)",
         ]
-        let body: Data
+        let body: Data?
+        let bodyFile: HTTPRequestBodyFile?
         if let inputImage = request.inputImage ?? request.referenceImages.first {
-            let multipart = try multipartBody(runtime: runtime, request: request, image: inputImage)
-            headers["Content-Type"] = "multipart/form-data; boundary=\(multipart.boundary)"
-            body = multipart.body
+            let images = request.referenceImages.isEmpty ? [inputImage]
+                : (request.inputImage.map { [$0] } ?? []) + request.referenceImages
+            if images.allSatisfy({ $0.fileURL != nil && $0.base64Data.isEmpty }) {
+                let multipart = try ChatOSImageMultipartBodyFileWriter.write(
+                    runtime: runtime,
+                    request: request,
+                    images: images
+                )
+                headers["Content-Type"] = "multipart/form-data; boundary=\(multipart.boundary)"
+                body = nil
+                bodyFile = multipart.bodyFile
+            } else {
+                let multipart = try multipartBody(
+                    runtime: runtime,
+                    request: request,
+                    image: inputImage
+                )
+                headers["Content-Type"] = "multipart/form-data; boundary=\(multipart.boundary)"
+                body = multipart.body
+                bodyFile = nil
+            }
         } else {
             headers["Content-Type"] = "application/json"
             var payload: [String: Any] = [
@@ -35,12 +54,14 @@ extension ChatOSMediaGenerationService {
                 payload["size"] = size
             }
             body = try JSONSerialization.data(withJSONObject: payload)
+            bodyFile = nil
         }
         return HTTPRequest(
             url: endpoint,
             method: "POST",
             headers: headers,
             body: body,
+            bodyFile: bodyFile,
             timeoutInterval: 10 * 60,
             maximumResponseBytes: 48 * 1_024 * 1_024
         )

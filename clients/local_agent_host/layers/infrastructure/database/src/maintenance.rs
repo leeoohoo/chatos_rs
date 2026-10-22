@@ -70,12 +70,33 @@ pub(super) async fn create_migration_backup(
     from_version: i64,
     to_version: i64,
 ) -> Result<PathBuf, ClientStorageError> {
+    super::migration_backup_policy::preflight(pool, database_path).await?;
     let backup_path = backup_path(database_path, from_version, to_version)?;
-    let backup_text = backup_path.to_str().ok_or_else(|| {
+    // Only verified, synced snapshots receive the recovery-file suffix. A crash
+    // during VACUUM leaves an explicitly incomplete file for later maintenance.
+    let mut staging_name = backup_path.as_os_str().to_os_string();
+    staging_name.push(".incomplete");
+    let staging_path = PathBuf::from(staging_name);
+    let backup_text = staging_path.to_str().ok_or_else(|| {
         ClientStorageError::InvalidState(
             "client storage backup path must be valid UTF-8".to_string(),
         )
     })?;
+    let mut file_options = std::fs::OpenOptions::new();
+    file_options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        file_options.mode(0o600);
+    }
+    // VACUUM INTO accepts an existing empty file. Reserve it privately first,
+    // avoiding the interval where SQLite's default umask could expose data.
+    let reserved_file = file_options
+        .open(&staging_path)
+        .map_err(ClientStorageError::database)?;
+    drop(reserved_file);
+    #[cfg(all(test, unix))]
+    super::migration_crash_tests::checkpoint("backup_reserved").await;
     let mut connection = pool.acquire().await.db()?;
     let backup_result = sqlx::query("VACUUM INTO ?")
         .bind(backup_text)
@@ -84,31 +105,89 @@ pub(super) async fn create_migration_backup(
         .db();
     drop(connection);
     if let Err(error) = backup_result {
-        remove_incomplete_backup(&backup_path);
+        remove_incomplete_backup(&staging_path);
         return Err(error);
     }
-    if let Err(error) = restrict_file_permissions(&backup_path) {
-        remove_incomplete_backup(&backup_path);
+    #[cfg(all(test, unix))]
+    super::migration_crash_tests::checkpoint("backup_written").await;
+    if let Err(error) = restrict_file_permissions(&staging_path) {
+        remove_incomplete_backup(&staging_path);
         return Err(error);
     }
 
     let options = SqliteConnectOptions::new()
-        .filename(&backup_path)
+        .filename(&staging_path)
         .read_only(true)
         .foreign_keys(true);
     let mut backup = match SqliteConnection::connect_with(&options).await.db() {
         Ok(connection) => connection,
         Err(error) => {
-            remove_incomplete_backup(&backup_path);
+            remove_incomplete_backup(&staging_path);
             return Err(error);
         }
     };
-    if let Err(error) = verify_connection(&mut backup).await {
+    let verification = async {
+        // Recovery snapshots are infrequent; validate indexes as well as pages
+        // before publishing, instead of relying on startup's quicker check.
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check(1)")
+            .fetch_one(&mut backup)
+            .await
+            .db()?;
+        if integrity != "ok" {
+            return Err(ClientStorageError::InvalidState(format!(
+                "SQLite recovery snapshot integrity_check failed: {integrity}"
+            )));
+        }
+        let has_migrations: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type = 'table' AND name = 'client_schema_migrations'",
+        )
+        .fetch_one(&mut backup)
+        .await
+        .db()?;
+        let snapshot_version: i64 = if has_migrations == 0 {
+            0
+        } else {
+            sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM client_schema_migrations")
+                .fetch_one(&mut backup)
+                .await
+                .db()?
+        };
+        if snapshot_version != from_version {
+            return Err(ClientStorageError::MaintenanceRequired(format!(
+                "database schema changed during backup: expected {from_version}, \
+                 found {snapshot_version}; migration deferred"
+            )));
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(error) = verification {
         let _ = backup.close().await;
-        remove_incomplete_backup(&backup_path);
+        remove_incomplete_backup(&staging_path);
         return Err(error);
     }
     backup.close().await.db()?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&staging_path)
+        .and_then(|file| file.sync_all())
+        .map_err(ClientStorageError::database)?;
+    std::fs::rename(&staging_path, &backup_path).map_err(ClientStorageError::database)?;
+    #[cfg(unix)]
+    {
+        let parent = backup_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(ClientStorageError::database)?;
+    }
+    // Do not remove this backup on migration success, failure, or future opens.
+    // Verified recovery points need an explicit retention/rollback policy.
+    #[cfg(all(test, unix))]
+    super::migration_crash_tests::checkpoint("backup_published").await;
     Ok(backup_path)
 }
 
@@ -123,33 +202,6 @@ pub(super) async fn compact_database(pool: &SqlitePool) -> Result<(), ClientStor
         .execute(&mut *connection)
         .await
         .db()?;
-    Ok(())
-}
-
-pub(super) fn remove_migration_backups(database_path: &Path) -> Result<(), ClientStorageError> {
-    let parent = database_path.parent().ok_or_else(|| {
-        ClientStorageError::InvalidState("database path has no parent directory".to_string())
-    })?;
-    let file_name = database_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| {
-            ClientStorageError::InvalidState(
-                "client storage path must have a valid UTF-8 file name".to_string(),
-            )
-        })?;
-    let prefix = format!("{file_name}.pre-migration-");
-    for entry in std::fs::read_dir(parent).map_err(ClientStorageError::database)? {
-        let entry = entry.map_err(ClientStorageError::database)?;
-        let path = entry.path();
-        let is_migration_backup = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".backup.sqlite"));
-        if is_migration_backup {
-            std::fs::remove_file(path).map_err(ClientStorageError::database)?;
-        }
-    }
     Ok(())
 }
 

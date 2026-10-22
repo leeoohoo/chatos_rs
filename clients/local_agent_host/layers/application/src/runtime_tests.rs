@@ -3,6 +3,7 @@
 
 use super::*;
 use chatos_client_storage::SqliteClientStorage;
+use chatos_local_agent_ports::{IdempotentCommand, LocalAgentRunStore};
 use chatos_local_agent_protocol::{
     ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CommitToolCommand,
     CreateRunCommand, CreateTaskGraphCommand, GetTaskGraphCommand, LocalAgentToolCall,
@@ -31,6 +32,51 @@ fn create_command() -> HostCommand {
         input: json!({"message": "hello"}),
         max_iterations: 4,
     })
+}
+
+#[tokio::test]
+async fn runtime_replays_pre_upgrade_json_fingerprint_without_repeating_the_write() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let command = create_command();
+    let legacy_fingerprint = serde_json::to_string(&command).expect("legacy fingerprint");
+    let HostCommand::CreateRun(create) = command.clone() else {
+        unreachable!()
+    };
+    let original = storage
+        .create_run(
+            &IdempotentCommand {
+                command_id: "legacy-create".into(),
+                request_fingerprint: legacy_fingerprint,
+                persist_receipt: true,
+            },
+            &create_run_record(create, 10_000),
+            "legacy-event",
+        )
+        .await
+        .expect("pre-upgrade write");
+    let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(20_000)));
+    let replay = runtime
+        .try_handle(envelope("legacy-create", command.clone()))
+        .await
+        .expect("upgraded runtime replay");
+    assert_eq!(replay, HostResult::Run { run: original });
+
+    let HostCommand::CreateRun(mut changed) = command else {
+        unreachable!()
+    };
+    changed.input = json!({"message": "different content"});
+    let error = runtime
+        .try_handle(envelope("legacy-create", HostCommand::CreateRun(changed)))
+        .await
+        .expect_err("changed command must be rejected");
+    assert!(matches!(
+        error,
+        LocalAgentRuntimeError::Storage(ClientStorageError::CommandMismatch(_))
+    ));
 }
 
 #[tokio::test]

@@ -183,27 +183,46 @@ extension LocalAgentGroupChatScheduler {
             }
             var claimedWork: [ClaimedWork] = []
             claimedWork.reserveCapacity(remainingCapacity)
-            for agentID in agentIDs where claimedWork.count < remainingCapacity {
+            claimingAgents: for agentID in agentIDs where claimedWork.count < remainingCapacity {
                 // A full drain may claim both independent lanes for one Agent. A lane-specific
                 // drain claims once so the same manager or executor lane remains serialized.
                 let claimsPerAgent = lane == nil ? 2 : 1
                 for _ in 0..<claimsPerAgent where claimedWork.count < remainingCapacity {
-                    let delivery: ProjectAgentDelivery?
-                    if let lane {
-                        delivery = try await store.claimNextDelivery(
-                            ownerUserID: ownerUserID,
-                            agentID: agentID,
-                            lane: lane,
-                            nowUnixMs: now()
-                        )
+                    let executionPermit: LocalAgentExecutionPermit?
+                    if claimedWork.isEmpty {
+                        executionPermit = await executionGovernor.acquire()
                     } else {
-                        delivery = try await store.claimNextDelivery(
-                            ownerUserID: ownerUserID,
-                            agentID: agentID,
-                            nowUnixMs: now()
-                        )
+                        executionPermit = await executionGovernor.tryAcquire()
                     }
-                    guard let delivery else { break }
+                    guard let executionPermit else { break claimingAgents }
+                    if Task.isCancelled {
+                        await executionPermit.releaseAndWait()
+                        break claimingAgents
+                    }
+                    let delivery: ProjectAgentDelivery?
+                    do {
+                        if let lane {
+                            delivery = try await store.claimNextDelivery(
+                                ownerUserID: ownerUserID,
+                                agentID: agentID,
+                                lane: lane,
+                                nowUnixMs: now()
+                            )
+                        } else {
+                            delivery = try await store.claimNextDelivery(
+                                ownerUserID: ownerUserID,
+                                agentID: agentID,
+                                nowUnixMs: now()
+                            )
+                        }
+                    } catch {
+                        await executionPermit.releaseAndWait()
+                        throw error
+                    }
+                    guard let delivery else {
+                        await executionPermit.releaseAndWait()
+                        break
+                    }
                     let room: ProjectAgentRoom
                     if let known = roomByID[delivery.roomID] {
                         room = known
@@ -233,7 +252,8 @@ extension LocalAgentGroupChatScheduler {
                         order: claimedWork.count,
                         room: room,
                         member: member,
-                        delivery: delivery
+                        delivery: delivery,
+                        executionPermit: executionPermit
                     ))
                 }
             }
@@ -262,6 +282,8 @@ extension LocalAgentGroupChatScheduler {
         let runs = try await store.listInterruptedRuns(ownerUserID: ownerUserID, limit: 500)
         var results: [DeliveryAttemptReceipt] = []
         for run in runs where results.count < maximumRuns {
+            guard let executionPermit = await executionGovernor.acquire() else { break }
+            defer { executionPermit.release() }
             let deliveryID = run.context.deliveryID
             guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else { continue }
             do {
@@ -374,32 +396,52 @@ extension LocalAgentGroupChatScheduler {
             let remainingCapacity = maximumRuns - results.count
             var claimedWork: [ClaimedWork] = []
             claimedWork.reserveCapacity(min(remainingCapacity, members.count * 2))
-            for member in members where claimedWork.count < remainingCapacity {
+            claimingMembers: for member in members where claimedWork.count < remainingCapacity {
                 for _ in 0..<2 where claimedWork.count < remainingCapacity {
                     if Task.isCancelled { break }
-                    let delivery: ProjectAgentDelivery?
-                    if let lane {
-                        delivery = try await store.claimNextDelivery(
-                            ownerUserID: ownerUserID,
-                            roomID: room.id,
-                            agentID: member.agentID,
-                            lane: lane,
-                            nowUnixMs: now()
-                        )
+                    let executionPermit: LocalAgentExecutionPermit?
+                    if claimedWork.isEmpty {
+                        executionPermit = await executionGovernor.acquire()
                     } else {
-                        delivery = try await store.claimNextDelivery(
-                            ownerUserID: ownerUserID,
-                            roomID: room.id,
-                            agentID: member.agentID,
-                            nowUnixMs: now()
-                        )
+                        executionPermit = await executionGovernor.tryAcquire()
                     }
-                    guard let delivery else { break }
+                    guard let executionPermit else { break claimingMembers }
+                    if Task.isCancelled {
+                        await executionPermit.releaseAndWait()
+                        break claimingMembers
+                    }
+                    let delivery: ProjectAgentDelivery?
+                    do {
+                        if let lane {
+                            delivery = try await store.claimNextDelivery(
+                                ownerUserID: ownerUserID,
+                                roomID: room.id,
+                                agentID: member.agentID,
+                                lane: lane,
+                                nowUnixMs: now()
+                            )
+                        } else {
+                            delivery = try await store.claimNextDelivery(
+                                ownerUserID: ownerUserID,
+                                roomID: room.id,
+                                agentID: member.agentID,
+                                nowUnixMs: now()
+                            )
+                        }
+                    } catch {
+                        await executionPermit.releaseAndWait()
+                        throw error
+                    }
+                    guard let delivery else {
+                        await executionPermit.releaseAndWait()
+                        break
+                    }
                     claimedWork.append(.init(
                         order: claimedWork.count,
                         room: room,
                         member: member,
-                        delivery: delivery
+                        delivery: delivery,
+                        executionPermit: executionPermit
                     ))
                 }
             }
@@ -446,6 +488,7 @@ extension LocalAgentGroupChatScheduler {
             }
             let handle = todoID == nil ? nil : LocalAgentExecutorCancellationHandle()
             guard await activeDeliveryRegistry.acquire(deliveryID: work.delivery.id) else {
+                await work.executionPermit.releaseAndWait()
                 continue
             }
             let task: Task<OrderedDeliveryAttemptReceipt, Never> = Task {
@@ -476,6 +519,7 @@ extension LocalAgentGroupChatScheduler {
                     agentID: work.delivery.targetAgentID,
                     kind: .roomUpdated
                 ))
+                await work.executionPermit.releaseAndWait()
                 return OrderedDeliveryAttemptReceipt(order: work.order, receipt: receipt)
             }
             handle?.install { task.cancel() }

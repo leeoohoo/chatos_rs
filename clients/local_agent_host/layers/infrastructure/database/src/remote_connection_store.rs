@@ -61,7 +61,7 @@ impl LocalRemoteConnectionStore for SqliteClientStorage {
         command: &IdempotentCommand,
         connection: &LocalRemoteConnection,
     ) -> Result<LocalRemoteConnection, ClientStorageError> {
-        let mut database = self.pool.acquire().await.db()?;
+        let mut database = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut database).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut database, command).await? {
@@ -119,7 +119,7 @@ impl LocalRemoteConnectionStore for SqliteClientStorage {
         connection: &LocalRemoteConnection,
         expected_version: u64,
     ) -> Result<LocalRemoteConnection, ClientStorageError> {
-        let mut database = self.pool.acquire().await.db()?;
+        let mut database = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut database).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut database, command).await? {
@@ -189,7 +189,7 @@ impl LocalRemoteConnectionStore for SqliteClientStorage {
         expected_version: u64,
         now_unix_ms: i64,
     ) -> Result<(), ClientStorageError> {
-        let mut database = self.pool.acquire().await.db()?;
+        let mut database = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut database).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut database, command).await? {

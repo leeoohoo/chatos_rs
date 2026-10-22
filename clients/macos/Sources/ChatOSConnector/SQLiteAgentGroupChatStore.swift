@@ -50,11 +50,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     func preparedStatementCountForTesting() -> Int {
         debugPreparedStatementCount
     }
+#endif
 
+    /// On-demand SQLite metric; unlike statement instrumentation, this adds no per-query work.
     func totalDatabaseChangesForTesting() -> Int64 {
         Int64(sqlite3_total_changes(database))
     }
-#endif
 
     /// Creates a Run-scoped staging directory beneath the existing protected attachment root.
     /// The opaque directory name is never exposed to the model and is removed with the Run vault.

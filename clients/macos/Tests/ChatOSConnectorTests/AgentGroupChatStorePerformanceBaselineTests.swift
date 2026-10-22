@@ -10,6 +10,8 @@ import XCTest
 /// `CHATOS_RUN_AGENT_STORE_BASELINE=1 swift test --package-path clients/macos \
 ///   --filter AgentGroupChatStorePerformanceBaselineTests`
 ///
+/// Add `-c release` for optimized timings. Prepared-statement counts are Debug-only:
+/// Release JSON omits those unavailable fields, but still checks database writes and results.
 /// The default suite skips this test so routine correctness checks do not absorb the fixture cost.
 final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
     private static let ownerUserID = "performance-owner"
@@ -22,6 +24,8 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
     }
 
     private struct Measurements: Codable {
+        let buildConfiguration: String
+        let preparedStatementCountingEnabled: Bool
         let fixtureAgents: Int
         let fixtureRooms: Int
         let fixtureMessages: Int
@@ -32,15 +36,15 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         let workspaceSnapshotMilliseconds: [Double]
         let recentMessagesMilliseconds: [Double]
         let imageAttachmentReadMilliseconds: [Double]
-        let workspaceSnapshotPreparedStatements: [Int]
-        let recentMessagesPreparedStatements: [Int]
-        let imageAttachmentReadPreparedStatements: [Int]
+        let workspaceSnapshotPreparedStatements: [Int]?
+        let recentMessagesPreparedStatements: [Int]?
+        let imageAttachmentReadPreparedStatements: [Int]?
         let publish500RunChangesMilliseconds: [Double]
         let idleHeartbeatPoll500Milliseconds: [Double]
-        let idleHeartbeatPollPreparedStatements: [Int]
+        let idleHeartbeatPollPreparedStatements: [Int]?
         let idleHeartbeatPollDatabaseChanges: [Int64]
         let idleAccountDrainMilliseconds: [Double]
-        let idleAccountDrainPreparedStatements: [Int]
+        let idleAccountDrainPreparedStatements: [Int]?
         let idleAccountDrainDatabaseChanges: [Int64]
     }
 
@@ -207,16 +211,26 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         var workspaceSnapshotMilliseconds: [Double] = []
         var recentMessagesMilliseconds: [Double] = []
         var imageAttachmentReadMilliseconds: [Double] = []
-        var workspaceSnapshotPreparedStatements: [Int] = []
-        var recentMessagesPreparedStatements: [Int] = []
-        var imageAttachmentReadPreparedStatements: [Int] = []
+        var workspaceSnapshotPreparedStatements: [Int]?
+        var recentMessagesPreparedStatements: [Int]?
+        var imageAttachmentReadPreparedStatements: [Int]?
         var publish500RunChangesMilliseconds: [Double] = []
         var idleHeartbeatPoll500Milliseconds: [Double] = []
-        var idleHeartbeatPollPreparedStatements: [Int] = []
+        var idleHeartbeatPollPreparedStatements: [Int]?
         var idleHeartbeatPollDatabaseChanges: [Int64] = []
         var idleAccountDrainMilliseconds: [Double] = []
-        var idleAccountDrainPreparedStatements: [Int] = []
+        var idleAccountDrainPreparedStatements: [Int]?
         var idleAccountDrainDatabaseChanges: [Int64] = []
+#if DEBUG
+        let buildConfiguration = "debug"
+        workspaceSnapshotPreparedStatements = []
+        recentMessagesPreparedStatements = []
+        imageAttachmentReadPreparedStatements = []
+        idleHeartbeatPollPreparedStatements = []
+        idleAccountDrainPreparedStatements = []
+#else
+        let buildConfiguration = "release"
+#endif
 
         for _ in 0..<repetitions {
             let (store, openDuration) = try await elapsedMilliseconds {
@@ -224,8 +238,10 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
             }
             openStoreMilliseconds.append(openDuration)
 
+#if DEBUG
             let snapshotCountBefore = await store.preparedStatementCountForTesting()
-            let (_, snapshotDuration) = try await elapsedMilliseconds {
+#endif
+            let (snapshot, snapshotDuration) = try await elapsedMilliseconds {
                 async let room = store.room(
                     ownerUserID: Self.ownerUserID,
                     roomID: fixture.primaryRoomID
@@ -250,15 +266,22 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
                     teamRoomID: fixture.primaryRoomID,
                     includeTerminal: true
                 )
-                _ = try await (room, members, messages, runs, todos)
+                return try await (room, members, messages, runs, todos)
             }
+            XCTAssertEqual(snapshot.0?.id, fixture.primaryRoomID)
+            XCTAssertEqual(snapshot.1.count, 20)
+            XCTAssertEqual(snapshot.2.count, 500)
+            XCTAssertEqual(snapshot.3.count, 500)
+            XCTAssertEqual(snapshot.4.count, 10)
             workspaceSnapshotMilliseconds.append(snapshotDuration)
-            workspaceSnapshotPreparedStatements.append(
+#if DEBUG
+            workspaceSnapshotPreparedStatements?.append(
                 await store.preparedStatementCountForTesting() - snapshotCountBefore
             )
 
             let recentCountBefore = await store.preparedStatementCountForTesting()
-            let (_, recentDuration) = try await elapsedMilliseconds {
+#endif
+            let (recentMessages, recentDuration) = try await elapsedMilliseconds {
                 try await store.listMessages(
                     ownerUserID: Self.ownerUserID,
                     roomID: fixture.primaryRoomID,
@@ -266,25 +289,31 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
                     limit: 20
                 )
             }
+            XCTAssertEqual(recentMessages.count, 20)
             recentMessagesMilliseconds.append(recentDuration)
-            recentMessagesPreparedStatements.append(
+#if DEBUG
+            recentMessagesPreparedStatements?.append(
                 await store.preparedStatementCountForTesting() - recentCountBefore
             )
 
             let attachmentCountBefore = await store.preparedStatementCountForTesting()
-            let (_, attachmentDuration) = try await elapsedMilliseconds {
+#endif
+            let (attachmentData, attachmentDuration) = try await elapsedMilliseconds {
                 let payload = try await store.messageAttachment(
                     ownerUserID: Self.ownerUserID,
                     roomID: fixture.primaryRoomID,
                     messageID: fixture.imageMessageID,
                     attachmentID: fixture.imageAttachmentID
                 )
-                _ = try Data(contentsOf: XCTUnwrap(payload).localFileURL)
+                return try Data(contentsOf: XCTUnwrap(payload).localFileURL)
             }
+            XCTAssertEqual(attachmentData, Data(repeating: 0x5A, count: 128 * 1_024))
             imageAttachmentReadMilliseconds.append(attachmentDuration)
-            imageAttachmentReadPreparedStatements.append(
+#if DEBUG
+            imageAttachmentReadPreparedStatements?.append(
                 await store.preparedStatementCountForTesting() - attachmentCountBefore
             )
+#endif
 
             let changeService = NativeAgentGroupChatService(databaseURL: fixture.databaseURL)
             let changes = await changeService.changes(
@@ -314,7 +343,9 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
             XCTAssertEqual(bufferedChanges.count, 64)
             XCTAssertEqual(bufferedChanges.last?.runID, lastRunID)
 
+#if DEBUG
             let heartbeatStatementCountBefore = await store.preparedStatementCountForTesting()
+#endif
             let heartbeatDatabaseChangesBefore = await store.totalDatabaseChangesForTesting()
             let (_, heartbeatPollDuration) = try await elapsedMilliseconds {
                 for _ in 0..<500 {
@@ -325,9 +356,11 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
                 }
             }
             idleHeartbeatPoll500Milliseconds.append(heartbeatPollDuration)
-            idleHeartbeatPollPreparedStatements.append(
+#if DEBUG
+            idleHeartbeatPollPreparedStatements?.append(
                 await store.preparedStatementCountForTesting() - heartbeatStatementCountBefore
             )
+#endif
             idleHeartbeatPollDatabaseChanges.append(
                 await store.totalDatabaseChangesForTesting() - heartbeatDatabaseChangesBefore
             )
@@ -338,16 +371,20 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
                 service: idleService,
                 services: IdleSchedulerServices()
             )
+#if DEBUG
             let drainStatementCountBefore = await idleStore.preparedStatementCountForTesting()
+#endif
             let drainDatabaseChangesBefore = await idleStore.totalDatabaseChangesForTesting()
             let (drainResults, drainDuration) = try await elapsedMilliseconds {
                 try await idleScheduler.drainAccount(ownerUserID: Self.ownerUserID)
             }
             XCTAssertTrue(drainResults.isEmpty)
             idleAccountDrainMilliseconds.append(drainDuration)
-            idleAccountDrainPreparedStatements.append(
+#if DEBUG
+            idleAccountDrainPreparedStatements?.append(
                 await idleStore.preparedStatementCountForTesting() - drainStatementCountBefore
             )
+#endif
             idleAccountDrainDatabaseChanges.append(
                 await idleStore.totalDatabaseChangesForTesting() - drainDatabaseChangesBefore
             )
@@ -355,15 +392,19 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
 
         // These assertions intentionally freeze the current N+1 baseline. Lower counts are welcome,
         // but must be accompanied by an evidence-backed performance change and an updated snapshot.
+#if DEBUG
         XCTAssertEqual(workspaceSnapshotPreparedStatements, [10, 10, 10])
         XCTAssertEqual(recentMessagesPreparedStatements, [4, 4, 4])
         XCTAssertEqual(imageAttachmentReadPreparedStatements, [1, 1, 1])
         XCTAssertEqual(idleHeartbeatPollPreparedStatements, [500, 500, 500])
-        XCTAssertEqual(idleHeartbeatPollDatabaseChanges, [0, 0, 0])
         XCTAssertEqual(idleAccountDrainPreparedStatements, [1, 1, 1])
+#endif
+        XCTAssertEqual(idleHeartbeatPollDatabaseChanges, [0, 0, 0])
         XCTAssertEqual(idleAccountDrainDatabaseChanges, [0, 0, 0])
 
         let measurements = Measurements(
+            buildConfiguration: buildConfiguration,
+            preparedStatementCountingEnabled: workspaceSnapshotPreparedStatements != nil,
             fixtureAgents: 20,
             fixtureRooms: 10,
             fixtureMessages: 500,

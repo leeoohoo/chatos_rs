@@ -84,7 +84,8 @@ final class StoryStudioViewModel: ObservableObject {
     @Published var isBusy = false
     @Published var operation = ""
     @Published var errorMessage: String?
-    @Published var progress: VideoGenerationProgress?
+    let generationActivity = StoryGenerationActivityState()
+    let planningActivity = StoryPlanningActivityState()
     @Published var activeSegmentID: String?
     @Published var activeProjectID: UUID?
     @Published var activeAgentRunID: UUID?
@@ -98,14 +99,11 @@ final class StoryStudioViewModel: ObservableObject {
     @Published var hasMoreMediaBatches = false
     @Published var optimizationSuggestion: StoryPlanningTools.OptimizationSuggestion?
     @Published var optimizationTarget: StoryPlanningTools.OptimizationTarget?
-    @Published var streamingModelText = ""
-    @Published var streamingToolName: String?
     @Published var activeAssetGenerations: Set<AssetGenerationKey> = []
     @Published var assetGenerationErrors: [AssetGenerationKey: String] = [:]
     @Published var activeFrameGenerations: Set<FrameGenerationKey> = []
     @Published var frameGenerationErrors: [FrameGenerationKey: String] = [:]
     @Published var activeVideoGenerations: Set<VideoGenerationKey> = []
-    @Published var videoGenerationProgress: [VideoGenerationKey: VideoGenerationProgress] = [:]
     @Published var activeVideoFrameExtractions: Set<VideoGenerationKey> = []
     let projectCatalog: StoryProjectCatalogUseCase
     let projectMutation: StoryProjectMutationUseCase
@@ -179,6 +177,15 @@ final class StoryStudioViewModel: ObservableObject {
 
     var project: StoryProject? { projects.first { $0.id == selectedProjectID } }
     var segment: StorySegment? { project?.segments.first { $0.id == selectedSegmentID } }
+    var progress: VideoGenerationProgress? {
+        get { generationActivity.batchProgress }
+        set { generationActivity.setBatchProgress(newValue) }
+    }
+    var videoGenerationProgress: [VideoGenerationKey: VideoGenerationProgress] {
+        generationActivity.videoProgress
+    }
+    var streamingModelText: String { planningActivity.modelText }
+    var streamingToolName: String? { planningActivity.toolName }
     var canCreate: Bool {
         owner != nil && !isLoading && !isBusy
             && activeAssetGenerations.isEmpty && activeFrameGenerations.isEmpty
@@ -482,7 +489,7 @@ final class StoryStudioViewModel: ObservableObject {
         frameGenerationTasks = [:]; activeFrameGenerations = []; frameGenerationErrors = [:]
         for generationTask in videoGenerationTasks.values { generationTask.cancel() }
         videoBatchTask?.cancel(); videoBatchTask = nil
-        videoGenerationTasks = [:]; activeVideoGenerations = []; videoGenerationProgress = [:]
+        videoGenerationTasks = [:]; activeVideoGenerations = []
         for extractionTask in videoFrameExtractionTasks.values { extractionTask.cancel() }
         videoFrameExtractionTasks = [:]; activeVideoFrameExtractions = []
         historyTask?.cancel(); historyTask = nil
@@ -494,8 +501,9 @@ final class StoryStudioViewModel: ObservableObject {
         isLoadingMoreProjects = false; hasMoreProjects = false; projectCursor = nil
         projects = []; selectedProjectID = nil; selectedSegmentID = nil; selectedSegments = []
         sourceDrafts = [:]; optimizationSuggestion = nil; optimizationTarget = nil
-        isBusy = false; isLoading = false; operation = ""; errorMessage = nil; progress = nil; activeSegmentID = nil; activeProjectID = nil; activeAgentRunID = nil; pauseRequested = false
-        streamingModelText = ""; streamingToolName = nil
+        isBusy = false; isLoading = false; operation = ""; errorMessage = nil; activeSegmentID = nil; activeProjectID = nil; activeAgentRunID = nil; pauseRequested = false
+        generationActivity.reset()
+        planningActivity.reset()
     }
 
     func open(_ id: UUID) {

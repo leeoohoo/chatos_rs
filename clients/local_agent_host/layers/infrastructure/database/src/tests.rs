@@ -6,7 +6,7 @@ use sqlx::Connection;
 use std::time::Duration;
 use uuid::Uuid;
 
-fn run(now: i64) -> LocalAgentRunRecord {
+pub(super) fn run(now: i64) -> LocalAgentRunRecord {
     LocalAgentRunRecord {
         run_id: "run-1".to_string(),
         owner_user_id: "user-1".to_string(),

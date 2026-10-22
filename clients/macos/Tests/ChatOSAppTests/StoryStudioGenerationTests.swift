@@ -6,6 +6,44 @@ import XCTest
 @testable import ChatOSApp
 
 extension StoryStudioTests {
+    func testRepeatedVideoProgressDoesNotRewriteTheStoryManifest() async throws {
+        let (_, store, _) = try await fixture()
+        var project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        let attempt = StoryVideoAttempt(
+            modelConfigID: project.models.videoModelID,
+            prompt: "prompt",
+            size: "1920x1080",
+            ratio: project.ratio,
+            seconds: project.segments[0].seconds
+        )
+        let intent = try await store.beginVideoGeneration(
+            projectID: project.id,
+            segmentID: project.segments[0].id,
+            attempt: attempt,
+            owner: "alice"
+        )
+        project = intent.project
+        let first = try await store.updateVideoGenerationProgress(
+            .init(status: "queued", jobID: "job-1"),
+            projectID: project.id,
+            segmentID: project.segments[0].id,
+            attemptID: attempt.id,
+            owner: "alice"
+        )
+        let repeated = try await store.updateVideoGenerationProgress(
+            .init(status: "queued", jobID: "job-1"),
+            projectID: project.id,
+            segmentID: project.segments[0].id,
+            attemptID: attempt.id,
+            owner: "alice"
+        )
+
+        XCTAssertEqual(repeated.updatedAt, first.updatedAt)
+        XCTAssertEqual(repeated.segments[0].attempt?.jobID, "job-1")
+        XCTAssertEqual(repeated.segments[0].attempt?.status, "queued")
+    }
+
     func testConfirmLatestFramesMakesGeneratedSegmentReadyWithoutAnotherProviderCall() async throws {
         let (vm, store, service) = try await fixture()
         var project = makeProject()

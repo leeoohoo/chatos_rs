@@ -145,6 +145,58 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         XCTAssertNotNil(body.range(of: Data("Content-Type: image/png\r\n\r\nimage".utf8)))
     }
 
+    func testGenerateImageStreamsMultipleFileReferencesAndDeletesTemporaryMultipart() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-image-multipart-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let firstURL = root.appendingPathComponent("first.png")
+        let secondURL = root.appendingPathComponent("second.webp")
+        let firstBytes = Data("first-file-image".utf8)
+        let secondBytes = Data("second-file-image".utf8)
+        try firstBytes.write(to: firstURL)
+        try secondBytes.write(to: secondURL)
+        let transport = MediaGenerationTransport()
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
+            accessToken: "token",
+            transport: transport
+        )
+
+        _ = try await ChatOSMediaGenerationService(
+            client: client,
+            providerTransport: transport
+        ).generateImage(.init(
+            modelConfigID: "image-model",
+            prompt: "combine them",
+            size: "1024x1024",
+            count: 1,
+            referenceImages: [
+                .init(name: "first.png", mimeType: "image/png", fileURL: firstURL),
+                .init(name: "second.webp", mimeType: "image/webp", fileURL: secondURL),
+            ]
+        ))
+
+        let bodyFiles = await transport.allFileBackedBodies()
+        let bodyFile = try XCTUnwrap(bodyFiles.only)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: bodyFile.url.path))
+        let requests = await transport.allRequests()
+        let providerRequest = try XCTUnwrap(
+            requests.first { $0.url.host == "provider.example" }
+        )
+        XCTAssertNil(providerRequest.bodyFile)
+        let body = try XCTUnwrap(providerRequest.body)
+        XCTAssertNotNil(body.range(of: firstBytes))
+        XCTAssertNotNil(body.range(of: secondBytes))
+        XCTAssertEqual(
+            String(decoding: body, as: UTF8.self)
+                .components(separatedBy: "name=\"image[]\"").count - 1,
+            2
+        )
+    }
+
     func testGenerateVideoCreatesPollsAndDownloadsDirectlyFromProvider() async throws {
         let transport = MediaGenerationTransport()
         let progress = VideoProgressRecorder()
@@ -171,7 +223,8 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
 
         XCTAssertEqual(result.id, "video-1")
         XCTAssertEqual(result.modelName, "MiniMax-H3")
-        XCTAssertEqual(result.videoData, Data("mp4-data".utf8))
+        XCTAssertTrue(result.videoData.isEmpty)
+        XCTAssertEqual(try downloadedVideoData(result), Data("mp4-data".utf8))
         XCTAssertEqual(result.mimeType, "video/mp4")
         let progressValues = await progress.values()
         XCTAssertEqual(progressValues.map(\.status), ["queued", "completed", "downloading"])
@@ -253,6 +306,48 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         XCTAssertFalse(requests.contains { $0.url.host == "storage.example" })
     }
 
+    func testUnifiedH3StreamsFileBackedFirstAndLastFramesIntoTemporaryRequest() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-frame-request-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let firstURL = root.appendingPathComponent("first.png")
+        let lastURL = root.appendingPathComponent("last.png")
+        try png.write(to: firstURL)
+        try png.write(to: lastURL)
+        let transport = NewAPIVideoTransport()
+
+        _ = try await unifiedVideoService(transport).generateVideo(.init(
+            modelConfigID: "h3",
+            prompt: "Move",
+            size: "768P",
+            seconds: 4,
+            inputImage: .init(name: "first.png", mimeType: "image/png", fileURL: firstURL),
+            lastFrameImage: .init(name: "last.png", mimeType: "image/png", fileURL: lastURL)
+        )) { _ in }
+
+        let bodyFiles = await transport.allFileBackedBodies()
+        let bodyFile = try XCTUnwrap(bodyFiles.only)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: bodyFile.url.path))
+        let requests = await transport.allRequests()
+        let create = try XCTUnwrap(requests.first { $0.url.path == "/v1/videos" })
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try XCTUnwrap(create.body)) as? [String: Any]
+        )
+        let metadata = try XCTUnwrap(payload["metadata"] as? [String: Any])
+        let expectedDataURL = "data:image/png;base64,\(png.base64EncodedString())"
+        XCTAssertEqual(metadata["first_frame_image"] as? String, expectedDataURL)
+        XCTAssertEqual(metadata["last_frame_image"] as? String, expectedDataURL)
+    }
+
     func testNonH3VideoModelIsRejectedBeforeSubmission() async throws {
         let transport = NewAPIVideoTransport(model: "doubao-seedance-2-5-260628")
         do {
@@ -323,7 +418,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             let result = try await service.generateVideo(.init(
                 modelConfigID: "h3", prompt: "A running dog", size: "768P", seconds: 4, ratio: "9:16"
             )) { await progress.append($0) }
-            XCTAssertEqual(result.videoData, Data("mp4-data".utf8))
+            XCTAssertEqual(try downloadedVideoData(result), Data("mp4-data".utf8))
             let requests = await transport.allRequests()
             XCTAssertEqual(requests.map(\.url.path), [
                 "/api/user/model-configs/h3", "/v1/videos",
@@ -405,6 +500,207 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         XCTAssertEqual(metadata["audio_url"] as? String, "data:audio/mpeg;base64,YXVkaW8tYnl0ZXM=")
     }
 
+    func testH3StreamsFileBackedReferenceVideoAndDeletesTemporaryRequest() async throws {
+        let sourceURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-reference-\(UUID().uuidString).mp4"
+        )
+        let sourceBytes = Data((0..<150_000).map { UInt8($0 % 251) })
+        try sourceBytes.write(to: sourceURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let input = VideoGenerationInputVideo(
+            name: "previous.mp4",
+            mimeType: "video/mp4",
+            fileURL: sourceURL
+        )
+        XCTAssertTrue(input.base64Data.isEmpty)
+
+        let transport = NewAPIVideoTransport()
+        _ = try await unifiedVideoService(transport).generateVideo(.init(
+            modelConfigID: "h3",
+            prompt: "继续这个镜头",
+            size: "768P",
+            seconds: 8,
+            referenceVideo: input,
+            referencePurpose: .extend,
+            ratio: "16:9"
+        )) { _ in }
+
+        let bodyFiles = await transport.allFileBackedBodies()
+        let bodyFile = try XCTUnwrap(bodyFiles.only)
+        XCTAssertNotEqual(bodyFile.url, sourceURL)
+        XCTAssertGreaterThan(bodyFile.byteCount, sourceBytes.count)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: bodyFile.url.path))
+
+        let requests = await transport.allRequests()
+        let create = try XCTUnwrap(requests.first { $0.url.path == "/v1/videos" })
+        XCTAssertNil(create.bodyFile)
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try XCTUnwrap(create.body)) as? [String: Any]
+        )
+        let metadata = try XCTUnwrap(payload["metadata"] as? [String: Any])
+        XCTAssertEqual(
+            metadata["video_url"] as? String,
+            "data:video/mp4;base64,\(sourceBytes.base64EncodedString())"
+        )
+    }
+
+    func testH3StreamsFileBackedVideoAndAudioIntoOneTemporaryRequest() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-reference-media-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let videoURL = root.appendingPathComponent("previous.mp4")
+        let audioURL = root.appendingPathComponent("rhythm.mp3")
+        let videoBytes = Data((0..<120_000).map { UInt8($0 % 251) })
+        let audioBytes = Data((0..<80_000).map { UInt8(($0 * 3) % 253) })
+        try videoBytes.write(to: videoURL)
+        try audioBytes.write(to: audioURL)
+
+        let transport = NewAPIVideoTransport()
+        _ = try await unifiedVideoService(transport).generateVideo(.init(
+            modelConfigID: "h3",
+            prompt: "跟随参考节奏",
+            size: "768P",
+            seconds: 8,
+            referenceVideo: .init(
+                name: "previous.mp4",
+                mimeType: "video/mp4",
+                fileURL: videoURL
+            ),
+            referenceAudio: .init(
+                name: "rhythm.mp3",
+                mimeType: "audio/mpeg",
+                fileURL: audioURL
+            ),
+            ratio: "16:9"
+        )) { _ in }
+
+        let bodyFiles = await transport.allFileBackedBodies()
+        let bodyFile = try XCTUnwrap(bodyFiles.only)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: bodyFile.url.path))
+        let requests = await transport.allRequests()
+        let create = try XCTUnwrap(requests.first { $0.url.path == "/v1/videos" })
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try XCTUnwrap(create.body)) as? [String: Any]
+        )
+        let metadata = try XCTUnwrap(payload["metadata"] as? [String: Any])
+        XCTAssertEqual(
+            metadata["video_url"] as? String,
+            "data:video/mp4;base64,\(videoBytes.base64EncodedString())"
+        )
+        XCTAssertEqual(
+            metadata["audio_url"] as? String,
+            "data:audio/mpeg;base64,\(audioBytes.base64EncodedString())"
+        )
+    }
+
+    func testFileBackedVideoTemporaryRequestIsDeletedWhenProviderRejectsCreation() async throws {
+        let sourceURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-reference-failure-\(UUID().uuidString).mp4"
+        )
+        try Data("video-on-disk".utf8).write(to: sourceURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let transport = NewAPIVideoTransport(failAt: "create")
+
+        do {
+            _ = try await unifiedVideoService(transport).generateVideo(.init(
+                modelConfigID: "h3",
+                prompt: "继续这个镜头",
+                size: "768P",
+                seconds: 8,
+                referenceVideo: .init(
+                    name: "previous.mp4",
+                    mimeType: "video/mp4",
+                    fileURL: sourceURL
+                ),
+                referencePurpose: .extend,
+                ratio: "16:9"
+            )) { _ in }
+            XCTFail("Provider rejection unexpectedly succeeded")
+        } catch {
+            let bodyFiles = await transport.allFileBackedBodies()
+            let bodyFile = try XCTUnwrap(bodyFiles.only)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: bodyFile.url.path))
+        }
+    }
+
+    func testFileBackedVideoRejectsLowDiskBeforeCreatingTemporaryRequest() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-reference-low-disk-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("source.mp4")
+        try Data("video-on-disk".utf8).write(to: sourceURL)
+        let placeholder = "__VIDEO_PLACEHOLDER__"
+
+        do {
+            _ = try ChatOSVideoRequestBodyFileWriter.write(
+                payload: ["metadata": ["video_url": placeholder]],
+                placeholder: placeholder,
+                sourceURL: sourceURL,
+                mimeType: "video/mp4",
+                temporaryDirectory: root,
+                availableCapacityOverride: 0
+            )
+            XCTFail("Low disk capacity unexpectedly created an upload request")
+        } catch MediaGenerationClientError.mediaUploadFailed {
+            XCTAssertEqual(
+                try FileManager.default.contentsOfDirectory(atPath: root.path),
+                ["source.mp4"]
+            )
+        }
+    }
+
+    func testFileBackedVideoRejectsSymlinkAndOversizedRegularFileBeforePOST() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-reference-validation-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let realURL = root.appendingPathComponent("real.mp4")
+        let linkURL = root.appendingPathComponent("link.mp4")
+        try Data("video".utf8).write(to: realURL)
+        try FileManager.default.createSymbolicLink(at: linkURL, withDestinationURL: realURL)
+        let oversizedURL = root.appendingPathComponent("oversized.mp4")
+        XCTAssertTrue(FileManager.default.createFile(atPath: oversizedURL.path, contents: Data([0])))
+        let oversizedHandle = try FileHandle(forWritingTo: oversizedURL)
+        try oversizedHandle.truncate(atOffset: UInt64(47 * 1_024 * 1_024 + 1))
+        try oversizedHandle.close()
+
+        for sourceURL in [linkURL, oversizedURL] {
+            let transport = NewAPIVideoTransport()
+            do {
+                _ = try await unifiedVideoService(transport).generateVideo(.init(
+                    modelConfigID: "h3",
+                    prompt: "continue",
+                    size: "768P",
+                    seconds: 8,
+                    referenceVideo: .init(
+                        name: sourceURL.lastPathComponent,
+                        mimeType: "video/mp4",
+                        fileURL: sourceURL
+                    ),
+                    referencePurpose: .extend,
+                    ratio: "16:9"
+                )) { _ in }
+                XCTFail("Invalid file-backed video unexpectedly succeeded")
+            } catch {
+                let requests = await transport.allRequests()
+                let bodyFiles = await transport.allFileBackedBodies()
+                XCTAssertEqual(requests.map(\.url.path), [
+                    "/api/user/model-configs/h3",
+                ])
+                XCTAssertTrue(bodyFiles.isEmpty)
+            }
+        }
+    }
+
     func testCompletedTaskWithoutMetadataURLFallsBackToContentEndpoint() async throws {
         for result in [NewAPIVideoResult.missingURL, .legacyContentURL] {
             let transport = NewAPIVideoTransport(result: result)
@@ -412,7 +708,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
                 modelConfigID: "h3", prompt: "dog", size: "768P", seconds: 4
             )) { _ in }
 
-            XCTAssertEqual(generated.videoData, Data("mp4-data".utf8))
+            XCTAssertEqual(try downloadedVideoData(generated), Data("mp4-data".utf8))
             let requests = await transport.allRequests()
             let contentRequest = try XCTUnwrap(
                 requests.first { $0.url.path == "/v1/videos/video-h3/content" }
@@ -434,7 +730,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             modelConfigID: "h3", prompt: "dog", size: "768P", seconds: 4
         )) { await progress.append($0) }
 
-        XCTAssertEqual(generated.videoData, Data("mp4-data".utf8))
+        XCTAssertEqual(try downloadedVideoData(generated), Data("mp4-data".utf8))
         let updates = await progress.values()
         XCTAssertEqual(
             updates.map(\.status),
@@ -445,6 +741,22 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             requests.filter { $0.url.path == "/v1/videos/video-h3" }.count,
             3
         )
+    }
+
+    func testDownloadedTemporaryVideoIsDeletedWhenResultIsReleased() async throws {
+        let transport = NewAPIVideoTransport()
+        var result: VideoGenerationResult? = try await unifiedVideoService(transport).generateVideo(.init(
+            modelConfigID: "h3",
+            prompt: "dog",
+            size: "768P",
+            seconds: 4
+        )) { _ in }
+        let fileURL = try XCTUnwrap(result?.videoFile?.url)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+
+        result = nil
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
     }
 
     func testExplicitVideoErrorFailsEvenWhenStatusIsQueued() async throws {
@@ -541,6 +853,15 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             providerTransport: transport, videoPollIntervalNanoseconds: 0
         )
     }
+
+    private func downloadedVideoData(_ result: VideoGenerationResult) throws -> Data {
+        if !result.videoData.isEmpty { return result.videoData }
+        let file = try XCTUnwrap(result.videoFile)
+        let values = try file.url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        XCTAssertEqual(values.isRegularFile, true)
+        XCTAssertEqual(values.fileSize, file.byteCount)
+        return try Data(contentsOf: file.url)
+    }
 }
 
 private enum NewAPIVideoResult: Sendable {
@@ -552,6 +873,7 @@ private enum NewAPIVideoResult: Sendable {
 /// Independent fixture for the single NewAPI client-facing contract.
 private actor NewAPIVideoTransport: HTTPTransport {
     private var requests: [HTTPRequest] = []
+    private var fileBackedBodies: [HTTPRequestBodyFile] = []
     private var pollResponseIndex = 0
     let provider: String
     let base: String
@@ -637,16 +959,33 @@ private actor NewAPIVideoTransport: HTTPTransport {
         return .init(statusCode: 200, headers: ["content-type": "application/json"], body: try JSONSerialization.data(withJSONObject: payload))
     }
 
+    func sendFileBacked(_ request: HTTPRequest) async throws -> HTTPResponse {
+        guard let bodyFile = request.bodyFile, request.body == nil else {
+            return try await send(request)
+        }
+        fileBackedBodies.append(bodyFile)
+        var materialized = request
+        materialized.body = try Data(contentsOf: bodyFile.url)
+        materialized.bodyFile = nil
+        return try await send(materialized)
+    }
+
     private func failure() -> HTTPResponse {
         .init(statusCode: 502, headers: htmlError ? ["content-type": "text/html"] : [:],
               body: htmlError ? Data("<html>Bad Gateway</html>".utf8) : Data())
     }
 
     func allRequests() -> [HTTPRequest] { requests }
+    func allFileBackedBodies() -> [HTTPRequestBodyFile] { fileBackedBodies }
+}
+
+private extension Collection {
+    var only: Element? { count == 1 ? first : nil }
 }
 
 private actor MediaGenerationTransport: HTTPTransport {
     private var requests: [HTTPRequest] = []
+    private var fileBackedBodies: [HTTPRequestBodyFile] = []
 
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         requests.append(request)
@@ -679,6 +1018,18 @@ private actor MediaGenerationTransport: HTTPTransport {
 
     func firstRequest() -> HTTPRequest? { requests.first }
     func allRequests() -> [HTTPRequest] { requests }
+    func allFileBackedBodies() -> [HTTPRequestBodyFile] { fileBackedBodies }
+
+    func sendFileBacked(_ request: HTTPRequest) async throws -> HTTPResponse {
+        guard let bodyFile = request.bodyFile, request.body == nil else {
+            return try await send(request)
+        }
+        fileBackedBodies.append(bodyFile)
+        var materialized = request
+        materialized.body = try Data(contentsOf: bodyFile.url)
+        materialized.bodyFile = nil
+        return try await send(materialized)
+    }
 }
 
 private actor VideoProgressRecorder {

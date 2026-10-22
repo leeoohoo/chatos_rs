@@ -177,14 +177,37 @@ actor MediaStudioHistoryStore:
         prompt: String,
         owner: String
     ) async throws -> MediaStudioVideoHistoryItem {
-        guard !result.videoData.isEmpty else { throw HistoryError.invalidRecord }
+        let maximumBytes = 512 * 1_024 * 1_024
+        guard (result.videoFile != nil) != (!result.videoData.isEmpty) else {
+            throw HistoryError.invalidRecord
+        }
         let folder = try newFolder(owner: owner)
+        var committed = false
+        defer {
+            if !committed { try? FileManager.default.removeItem(at: folder) }
+        }
         let filename = "video.\(result.mimeType == "video/quicktime" ? "mov" : "mp4")"
-        try result.videoData.write(to: folder.appendingPathComponent(filename), options: .atomic)
+        let destinationURL = folder.appendingPathComponent(filename)
+        if let videoFile = result.videoFile {
+            try await AppCancellableDetachedWork.run {
+                try AppBoundedFileReader.copy(
+                    videoFile.url,
+                    to: destinationURL,
+                    expectedBytes: videoFile.byteCount,
+                    maximumBytes: maximumBytes
+                )
+            }
+        } else {
+            guard result.videoData.count <= maximumBytes else { throw HistoryError.invalidRecord }
+            try await AppCancellableDetachedWork.run {
+                try result.videoData.write(to: destinationURL, options: .atomic)
+            }
+        }
         let entry = Entry(id: folder.lastPathComponent, kind: "video", prompt: prompt,
                           modelName: result.modelName, createdAt: date(result.createdAt),
                           assets: [Asset(id: result.id, mimeType: result.mimeType, filename: filename)])
         try commit(entry, folder: folder)
+        committed = true
         return videoItem(entry, folder: folder)
     }
 

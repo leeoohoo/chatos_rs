@@ -11,14 +11,28 @@ enum MediaStudioInputImagePolicy {
 
 struct MediaStudioImageReferenceImporter: MediaStudioImageReferenceImporting {
     private let transport: any HTTPTransport
+    private let artifacts: MediaStudioInputArtifactStore
 
-    init(transport: any HTTPTransport = URLSessionHTTPTransport()) {
+    init(
+        transport: any HTTPTransport = URLSessionHTTPTransport(),
+        artifacts: MediaStudioInputArtifactStore = MediaStudioInputArtifactStore()
+    ) {
         self.transport = transport
+        self.artifacts = artifacts
     }
 
     func importLocalFiles(_ urls: [URL]) async throws -> [ImageGenerationInputImage] {
-        try await AppCancellableDetachedWork.run {
-            try urls.map { try Self.loadInputImage(from: $0) }
+        var imported: [ImageGenerationInputImage] = []
+        imported.reserveCapacity(urls.count)
+        do {
+            for url in urls {
+                try Task.checkCancellation()
+                imported.append(try await artifacts.importImage(from: url))
+            }
+            return imported
+        } catch {
+            for image in imported { artifacts.removeIfManaged(image.fileURL) }
+            throw error
         }
     }
 
@@ -29,90 +43,31 @@ struct MediaStudioImageReferenceImporter: MediaStudioImageReferenceImporting {
         imported.reserveCapacity(assets.count)
         for asset in assets {
             try Task.checkCancellation()
-            let data = try await MediaStudioImageLoader.data(for: asset, transport: transport)
-            let input = try await AppCancellableDetachedWork.run {
-                try Self.makeInputImage(
-                    data: data,
-                    name: "generated-\(asset.id).\(Self.fileExtension(for: asset.mimeType))",
-                    mimeType: asset.mimeType
-                )
+            do {
+                let name = "generated-\(asset.id).\(Self.fileExtension(for: asset.mimeType))"
+                if let url = asset.url, url.isFileURL {
+                    imported.append(try await artifacts.importImage(
+                        from: url,
+                        name: name,
+                        mimeType: asset.mimeType
+                    ))
+                } else {
+                    let data = try await MediaStudioImageLoader.data(
+                        for: asset,
+                        transport: transport
+                    )
+                    imported.append(try await artifacts.importImage(
+                        data: data,
+                        name: name,
+                        mimeType: asset.mimeType
+                    ))
+                }
+            } catch {
+                for image in imported { artifacts.removeIfManaged(image.fileURL) }
+                throw error
             }
-            imported.append(input)
         }
         return imported
-    }
-
-    private static func loadInputImage(from url: URL) throws -> ImageGenerationInputImage {
-        try Task.checkCancellation()
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentTypeKey])
-        guard values.isRegularFile == true,
-              values.contentType?.conforms(to: .image) == true else {
-            throw MediaStudioInputImageError.notAnImage
-        }
-        if let fileSize = values.fileSize,
-           fileSize > MediaStudioInputImagePolicy.maximumBytes {
-            throw MediaStudioInputImageError.tooLarge
-        }
-
-        let sourceData = try AppBoundedFileReader.read(
-            url,
-            maximumBytes: MediaStudioInputImagePolicy.maximumBytes
-        )
-        try Task.checkCancellation()
-        return try makeInputImage(
-            data: sourceData,
-            name: url.lastPathComponent,
-            mimeType: values.contentType?.preferredMIMEType
-        )
-    }
-
-    private static func makeInputImage(
-        data: Data,
-        name: String,
-        mimeType: String? = nil
-    ) throws -> ImageGenerationInputImage {
-        try Task.checkCancellation()
-        guard !data.isEmpty,
-              data.count <= MediaStudioInputImagePolicy.maximumBytes else {
-            throw MediaStudioInputImageError.tooLarge
-        }
-        guard let source = CGImageSourceCreateWithData(data as CFData, [
-                kCGImageSourceShouldCache: false,
-              ] as CFDictionary),
-              CGImageSourceGetCount(source) > 0,
-              CGImageSourceGetStatus(source) == .statusComplete,
-              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
-                as? [CFString: Any],
-              let widthValue = properties[kCGImagePropertyPixelWidth] as? NSNumber,
-              let heightValue = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
-            throw MediaStudioInputImageError.cannotDecode
-        }
-        let width = widthValue.doubleValue
-        let height = heightValue.doubleValue
-        guard width.isFinite, height.isFinite,
-              width > 0, height > 0,
-              width * height <= Double(MediaStudioInputImagePolicy.maximumSourcePixelCount) else {
-            throw MediaStudioInputImageError.cannotDecode
-        }
-        try Task.checkCancellation()
-        let base64Data = data.base64EncodedString()
-        try Task.checkCancellation()
-        return ImageGenerationInputImage(
-            name: name,
-            mimeType: normalizedImageMIMEType(mimeType),
-            base64Data: base64Data
-        )
-    }
-
-    private static func normalizedImageMIMEType(_ value: String?) -> String {
-        guard let value, let type = UTType(mimeType: value), type.conforms(to: .image) else {
-            return "image/png"
-        }
-        return type.preferredMIMEType ?? value
     }
 
     private static func fileExtension(for mimeType: String) -> String {

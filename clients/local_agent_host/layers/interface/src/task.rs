@@ -13,19 +13,14 @@ pub const LOCAL_TASK_GRAPH_MAX_DEPENDENCIES: usize = 512;
 pub const LOCAL_TASK_MAX_OWNED_PATHS: usize = 200;
 pub const LOCAL_TASK_MAX_OWNED_PATH_BYTES: usize = 4_096;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalTaskGraphNotificationPolicy {
+    #[default]
     ProgressSummary,
     AllTasks,
     Milestones,
     GraphSummary,
-}
-
-impl Default for LocalTaskGraphNotificationPolicy {
-    fn default() -> Self {
-        Self::ProgressSummary
-    }
 }
 
 impl LocalTaskGraphNotificationPolicy {

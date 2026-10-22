@@ -71,7 +71,7 @@ pub(super) async fn save(
     now: i64,
 ) -> Result<LocalRequirementPlan, ClientStorageError> {
     save.validate().map_err(ClientStorageError::InvalidState)?;
-    let mut connection = store.pool.acquire().await.db()?;
+    let mut connection = store.acquire_write().await.db()?;
     SqliteClientStorage::begin_immediate(&mut connection).await?;
     let result = async {
         if let Some(replay) = SqliteClientStorage::replay(&mut connection, command).await? { return Ok(replay); }
@@ -136,7 +136,7 @@ pub(super) async fn confirm(
     confirm
         .validate()
         .map_err(ClientStorageError::InvalidState)?;
-    let mut connection = store.pool.acquire().await.db()?;
+    let mut connection = store.acquire_write().await.db()?;
     SqliteClientStorage::begin_immediate(&mut connection).await?;
     let result = async {
         if let Some(replay) = SqliteClientStorage::replay(&mut connection, command).await? { return Ok(replay); }

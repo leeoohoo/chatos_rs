@@ -48,6 +48,13 @@ pub enum ClientStorageError {
     InvalidState(String),
     #[error("command id was reused with different input: {0}")]
     CommandMismatch(String),
+    #[error("storage maintenance required: {0}")]
+    MaintenanceRequired(String),
+    #[error(
+        "command completed but its original response is no longer retained; reconcile the \
+             original operation instead of resubmitting it with a new command id: {0}"
+    )]
+    ReplayExpired(String),
 }
 
 impl ClientStorageError {
@@ -64,6 +71,8 @@ impl ClientStorageError {
             Self::NotFound(_) => "not_found",
             Self::Conflict(_) => "conflict",
             Self::CommandMismatch(_) => "command_mismatch",
+            Self::MaintenanceRequired(_) => "storage_maintenance_required",
+            Self::ReplayExpired(_) => "command_replay_expired",
         }
     }
 

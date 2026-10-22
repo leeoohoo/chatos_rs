@@ -220,15 +220,21 @@ extension SQLiteAgentGroupChatStoreTests {
             nowUnixMs: 103
         )
         let firstDelivery = try XCTUnwrap(startedDelivery)
+#if DEBUG
         let todoLookupCountBefore = await store.preparedStatementCountForTesting()
+#endif
         let selected = try await store.todoForDelivery(
             ownerUserID: "alice",
             deliveryID: firstDelivery.id
         )
+#if DEBUG
         let todoLookupCount = await store.preparedStatementCountForTesting()
             - todoLookupCountBefore
+#endif
         XCTAssertEqual(selected?.id, ready.id)
+#if DEBUG
         XCTAssertEqual(todoLookupCount, 1)
+#endif
         let stillBlocked = try await store.agentTodo(
             ownerUserID: "alice",
             agentID: assignee.id,

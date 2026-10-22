@@ -10,6 +10,14 @@ use chatos_local_agent_host::{
 use std::{env, error::Error, future::Future, io, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::watch;
 
+mod database_owner;
+
+// A process-lifetime owner, rather than a stack guard in the async main future.
+// Keep the lock while Tokio and SQLite background workers are shutting down;
+// the OS releases it on normal exit or kill -9, without a stale-PID timeout.
+static DATABASE_OWNER: std::sync::OnceLock<database_owner::DatabaseOwner> =
+    std::sync::OnceLock::new();
+
 const COORDINATOR_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 enum IpcMode {
@@ -51,7 +59,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
             std::process::exit(2);
         }
     };
-    let storage = Arc::new(SqliteClientStorage::connect_file(&options.database).await?);
+    let owner = database_owner::DatabaseOwner::acquire(&options.database)?;
+    let database = owner.database().to_path_buf();
+    DATABASE_OWNER.set(owner).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "database owner already initialized",
+        )
+    })?;
+    let storage = Arc::new(SqliteClientStorage::connect_file(&database).await?);
     let runtime = Arc::new(LocalAgentRuntime::new(storage.clone()));
     let recovered = runtime.initialize(&options.owner_user_id).await?;
     if recovered > 0 {

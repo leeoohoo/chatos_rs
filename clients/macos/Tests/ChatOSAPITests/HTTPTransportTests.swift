@@ -31,6 +31,126 @@ final class HTTPTransportTests: XCTestCase {
         }
     }
 
+    func testFileBackedUploadKeepsResponseBounded() async throws {
+        let bodyURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "http-upload-\(UUID().uuidString).json"
+        )
+        let uploadBody = Data(#"{"payload":"from-file"}"#.utf8)
+        try uploadBody.write(to: bodyURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: bodyURL) }
+
+        BoundedResponseURLProtocol.setBody(Data(repeating: 0x63, count: 512))
+        let response = try await transport().sendFileBacked(.init(
+            url: URL(string: "https://bounded-response.test/upload")!,
+            method: "POST",
+            headers: ["Content-Type": "application/json"],
+            bodyFile: .init(url: bodyURL, byteCount: uploadBody.count),
+            maximumResponseBytes: 1_024
+        ))
+        XCTAssertEqual(response.statusCode, 200)
+        XCTAssertEqual(response.body.count, 512)
+
+        BoundedResponseURLProtocol.setBody(Data(repeating: 0x64, count: 2_048))
+        do {
+            _ = try await transport().sendFileBacked(.init(
+                url: URL(string: "https://bounded-response.test/upload-oversized")!,
+                method: "POST",
+                bodyFile: .init(url: bodyURL, byteCount: uploadBody.count),
+                maximumResponseBytes: 1_024
+            ))
+            XCTFail("Oversized upload response unexpectedly succeeded")
+        } catch ChatOSAPIError.invalidResponse {
+            // Expected: upload and response buffering share the same response cap.
+        }
+    }
+
+    func testResponseBodyFileWriterStreamsAndRemovesOversizedPartialFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "response-writer-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let expected = Data((0..<150_000).map { UInt8($0 % 251) })
+        let stream = AsyncThrowingStream<Data, Error> { continuation in
+            continuation.yield(expected.prefix(75_000))
+            continuation.yield(expected.suffix(75_000))
+            continuation.finish()
+        }
+        let file = try await ChatOSResponseBodyFileWriter.write(
+            stream,
+            maximumBytes: expected.count,
+            temporaryDirectory: root
+        )
+        let fileURL = file.url
+        XCTAssertEqual(file.byteCount, expected.count)
+        XCTAssertEqual(try Data(contentsOf: fileURL), expected)
+        file.removeIfNeeded()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+
+        let oversized = AsyncThrowingStream<Data, Error> { continuation in
+            continuation.yield(Data(repeating: 0x61, count: 6))
+            continuation.yield(Data(repeating: 0x62, count: 6))
+            continuation.finish()
+        }
+        do {
+            _ = try await ChatOSResponseBodyFileWriter.write(
+                oversized,
+                maximumBytes: 10,
+                temporaryDirectory: root
+            )
+            XCTFail("Oversized streamed body unexpectedly succeeded")
+        } catch {
+            XCTAssertEqual(
+                try FileManager.default.contentsOfDirectory(atPath: root.path),
+                []
+            )
+        }
+    }
+
+    func testResponseBodyFileWriterRejectsLowDiskBeforeCreatingOrConsumingFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "response-writer-low-disk-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stream = AsyncThrowingStream<Data, Error> { continuation in
+            continuation.yield(Data("video".utf8))
+            continuation.finish()
+        }
+
+        do {
+            _ = try await ChatOSResponseBodyFileWriter.write(
+                stream,
+                maximumBytes: 64,
+                expectedBytes: 5,
+                temporaryDirectory: root,
+                availableCapacityOverride: 0
+            )
+            XCTFail("Low disk capacity unexpectedly admitted a media download")
+        } catch MediaGenerationClientError.insufficientDiskSpace {
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+        }
+
+        let truncated = AsyncThrowingStream<Data, Error> { continuation in
+            continuation.yield(Data("four".utf8))
+            continuation.finish()
+        }
+        do {
+            _ = try await ChatOSResponseBodyFileWriter.write(
+                truncated,
+                maximumBytes: 64,
+                expectedBytes: 5,
+                temporaryDirectory: root,
+                availableCapacityOverride: Int64.max
+            )
+            XCTFail("A truncated Content-Length body unexpectedly succeeded")
+        } catch MediaGenerationClientError.invalidVideoContent {
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+        }
+    }
+
     func testBurstStreamSurvivesDelayedAndSlowConsumerWithoutLosingBytes() async throws {
         // Far more than the former 64-chunk queue; each SSE line is a chunk.
         let payload = Data((0..<512).map { "data: 第\($0)条\n\n" }.joined().utf8)
@@ -135,6 +255,7 @@ final class HTTPTransportTests: XCTestCase {
         configuration.protocolClasses = [BoundedResponseURLProtocol.self]
         return URLSessionHTTPTransport(session: URLSession(configuration: configuration))
     }
+
 }
 
 private final class BoundedResponseURLProtocol: URLProtocol, @unchecked Sendable {

@@ -32,6 +32,32 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         XCTAssertTrue(other.videos.isEmpty)
     }
 
+    func testFileBackedVideoIsCopiedBeforeHistoryManifestCommits() async throws {
+        let root = try directory()
+        let sourceURL = root.appendingPathComponent("download.tmp")
+        let expected = Data((0..<300_000).map { UInt8($0 % 251) })
+        try expected.write(to: sourceURL)
+        let result = VideoGenerationResult(
+            id: "file-video",
+            modelConfigID: "video",
+            modelName: "MiniMax-H3",
+            createdAt: "2026-09-09T00:00:00Z",
+            mimeType: "video/mp4",
+            videoFile: .init(url: sourceURL, byteCount: expected.count)
+        )
+
+        let saved = try await MediaStudioHistoryStore(root: root).saveVideo(
+            result,
+            prompt: "file-backed",
+            owner: "alice"
+        )
+
+        XCTAssertEqual(try Data(contentsOf: saved.fileURL), expected)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.path))
+        let manifest = saved.fileURL.deletingLastPathComponent().appendingPathComponent("record.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: manifest.path))
+    }
+
     func testURLImagesAreDownloadedOnceAndRestoreOffline() async throws {
         let root = try directory()
         let transport = HistoryImageTransport()

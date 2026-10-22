@@ -128,11 +128,20 @@ public struct ImageGenerationInputImage: Codable, Sendable, Equatable {
     public var name: String
     public var mimeType: String
     public var base64Data: String
+    public var fileURL: URL? = nil
 
     public init(name: String, mimeType: String, base64Data: String) {
         self.name = name
         self.mimeType = mimeType
         self.base64Data = base64Data
+        self.fileURL = nil
+    }
+
+    public init(name: String, mimeType: String, fileURL: URL) {
+        self.name = name
+        self.mimeType = mimeType
+        self.base64Data = ""
+        self.fileURL = fileURL
     }
 
     enum CodingKeys: String, CodingKey {
@@ -264,11 +273,20 @@ public struct VideoGenerationInputVideo: Sendable, Equatable {
     public var name: String
     public var mimeType: String
     public var base64Data: String
+    public var fileURL: URL?
 
     public init(name: String, mimeType: String, base64Data: String) {
         self.name = name
         self.mimeType = mimeType
         self.base64Data = base64Data
+        self.fileURL = nil
+    }
+
+    public init(name: String, mimeType: String, fileURL: URL) {
+        self.name = name
+        self.mimeType = mimeType
+        self.base64Data = ""
+        self.fileURL = fileURL
     }
 }
 
@@ -276,11 +294,20 @@ public struct VideoGenerationInputAudio: Sendable, Equatable {
     public var name: String
     public var mimeType: String
     public var base64Data: String
+    public var fileURL: URL?
 
     public init(name: String, mimeType: String, base64Data: String) {
         self.name = name
         self.mimeType = mimeType
         self.base64Data = base64Data
+        self.fileURL = nil
+    }
+
+    public init(name: String, mimeType: String, fileURL: URL) {
+        self.name = name
+        self.mimeType = mimeType
+        self.base64Data = ""
+        self.fileURL = fileURL
     }
 }
 
@@ -365,6 +392,43 @@ public struct VideoGenerationProgress: Sendable, Equatable {
     }
 }
 
+public final class GeneratedMediaFile: @unchecked Sendable, Equatable {
+    public let url: URL
+    public let byteCount: Int
+    public let deleteWhenReleased: Bool
+
+    private let lock = NSLock()
+    private var removed = false
+
+    public init(url: URL, byteCount: Int, deleteWhenReleased: Bool = false) {
+        self.url = url
+        self.byteCount = byteCount
+        self.deleteWhenReleased = deleteWhenReleased
+    }
+
+    deinit {
+        removeIfNeeded()
+    }
+
+    public func removeIfNeeded() {
+        guard deleteWhenReleased else { return }
+        lock.lock()
+        guard !removed else {
+            lock.unlock()
+            return
+        }
+        removed = true
+        lock.unlock()
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    public static func == (lhs: GeneratedMediaFile, rhs: GeneratedMediaFile) -> Bool {
+        lhs.url == rhs.url
+            && lhs.byteCount == rhs.byteCount
+            && lhs.deleteWhenReleased == rhs.deleteWhenReleased
+    }
+}
+
 public struct VideoGenerationResult: Sendable, Equatable {
     public var id: String
     public var modelConfigID: String
@@ -372,6 +436,7 @@ public struct VideoGenerationResult: Sendable, Equatable {
     public var createdAt: String
     public var mimeType: String
     public var videoData: Data
+    public var videoFile: GeneratedMediaFile?
 
     public init(
         id: String,
@@ -387,6 +452,24 @@ public struct VideoGenerationResult: Sendable, Equatable {
         self.createdAt = createdAt
         self.mimeType = mimeType
         self.videoData = videoData
+        self.videoFile = nil
+    }
+
+    public init(
+        id: String,
+        modelConfigID: String,
+        modelName: String,
+        createdAt: String,
+        mimeType: String,
+        videoFile: GeneratedMediaFile
+    ) {
+        self.id = id
+        self.modelConfigID = modelConfigID
+        self.modelName = modelName
+        self.createdAt = createdAt
+        self.mimeType = mimeType
+        self.videoData = Data()
+        self.videoFile = videoFile
     }
 }
 

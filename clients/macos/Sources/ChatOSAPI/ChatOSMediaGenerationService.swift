@@ -1,4 +1,5 @@
 import ChatOSCore
+import Darwin
 import Foundation
 import ImageIO
 
@@ -16,15 +17,41 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
     }
 
     private func sendProviderRequest(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let disposableBodyURL = request.bodyFile.flatMap { $0.deleteWhenDone ? $0.url : nil }
+        defer {
+            if let disposableBodyURL {
+                try? FileManager.default.removeItem(at: disposableBodyURL)
+            }
+        }
         try Task.checkCancellation()
         if let authenticationSessionID {
             guard try await client.currentAuthenticationSessionID() == authenticationSessionID else { throw ChatOSAPIError.unauthorized }
         }
-        let response = try await providerTransport.send(request)
+        let response = if request.bodyFile != nil {
+            try await providerTransport.sendFileBacked(request)
+        } else {
+            try await providerTransport.send(request)
+        }
         // A completed submission still belongs to the original account. Never make any
         // further provider request after a switch; the caller retains its durable intent.
         if let authenticationSessionID {
             guard try await client.currentAuthenticationSessionID() == authenticationSessionID else { throw ChatOSAPIError.unauthorized }
+        }
+        return response
+    }
+
+    private func streamProviderRequest(_ request: HTTPRequest) async throws -> HTTPStreamResponse {
+        try Task.checkCancellation()
+        if let authenticationSessionID {
+            guard try await client.currentAuthenticationSessionID() == authenticationSessionID else {
+                throw ChatOSAPIError.unauthorized
+            }
+        }
+        let response = try await providerTransport.stream(request)
+        if let authenticationSessionID {
+            guard try await client.currentAuthenticationSessionID() == authenticationSessionID else {
+                throw ChatOSAPIError.unauthorized
+            }
         }
         return response
     }
@@ -226,29 +253,67 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             )
         }
         await progress(.init(status: "downloading"))
-        let contentResponse = try await sendProviderRequest(contentRequest)
+        let contentResponse = try await streamProviderRequest(contentRequest)
         guard (200..<300).contains(contentResponse.statusCode) else {
+            let errorBody = try await Self.collect(
+                contentResponse.body,
+                maximumBytes: 2 * 1_024 * 1_024
+            )
             throw MediaGenerationClientError.providerRejected(
                 statusCode: contentResponse.statusCode,
-                detail: "下载视频内容（\(contentRequest.url.host ?? "")\(contentRequest.url.path)）：\(Self.providerErrorDetail(contentResponse.body))"
+                detail: "下载视频内容（\(contentRequest.url.host ?? "")\(contentRequest.url.path)）：\(Self.providerErrorDetail(errorBody))"
             )
         }
-        guard !contentResponse.body.isEmpty,
-              contentResponse.body.count <= 512 * 1024 * 1024 else {
+        let maximumVideoBytes = 512 * 1_024 * 1_024
+        let contentLength = contentResponse.headers["content-length"].flatMap(Int.init)
+        if let contentLength,
+           contentLength <= 0 || contentLength > maximumVideoBytes {
             throw MediaGenerationClientError.invalidVideoContent
         }
         let mimeType = contentResponse.headers["content-type"]?
             .split(separator: ";")
             .first
             .map(String.init) ?? "video/mp4"
+        let videoFile = try await ChatOSResponseBodyFileWriter.write(
+            contentResponse.body,
+            maximumBytes: maximumVideoBytes,
+            expectedBytes: contentLength
+        )
+        do {
+            try Task.checkCancellation()
+            if let authenticationSessionID {
+                guard try await client.currentAuthenticationSessionID() == authenticationSessionID else {
+                    throw ChatOSAPIError.unauthorized
+                }
+            }
+        } catch {
+            videoFile.removeIfNeeded()
+            throw error
+        }
         return VideoGenerationResult(
             id: job.id,
             modelConfigID: request.modelConfigID,
             modelName: job.model ?? runtime.model,
             createdAt: ISO8601DateFormatter().string(from: Date()),
             mimeType: mimeType,
-            videoData: contentResponse.body
+            videoFile: videoFile
         )
+    }
+
+    private static func collect(
+        _ stream: AsyncThrowingStream<Data, Error>,
+        maximumBytes: Int
+    ) async throws -> Data {
+        var body = Data()
+        for try await chunk in stream {
+            try Task.checkCancellation()
+            guard chunk.count <= maximumBytes,
+                  body.count <= maximumBytes - chunk.count else {
+                throw MediaGenerationClientError.responseTooLarge
+            }
+            body.append(chunk)
+        }
+        return body
     }
 
     private func sendVideoJobRequest(
@@ -301,14 +366,82 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         let endpoint = try videoCreateEndpoint(baseURL: runtime.baseURL ?? "")
         var headers = providerHeaders(runtime: runtime)
         headers["Content-Type"] = "application/json"
+        let inputImagePlaceholder = request.inputImage?.fileURL.map { _ in
+            "__CHATOS_FIRST_FRAME_DATA_URL_\(UUID().uuidString)__"
+        }
+        let lastFramePlaceholder = request.lastFrameImage?.fileURL.map { _ in
+            "__CHATOS_LAST_FRAME_DATA_URL_\(UUID().uuidString)__"
+        }
+        let referenceVideoPlaceholder = request.referenceVideo?.fileURL.map { _ in
+            "__CHATOS_VIDEO_DATA_URL_\(UUID().uuidString)__"
+        }
+        let referenceAudioPlaceholder = request.referenceAudio?.fileURL.map { _ in
+            "__CHATOS_AUDIO_DATA_URL_\(UUID().uuidString)__"
+        }
         let payload = try unifiedVideoPayload(
-            runtime: runtime, request: request, profile: profile
+            runtime: runtime,
+            request: request,
+            profile: profile,
+            inputImagePlaceholder: inputImagePlaceholder,
+            lastFramePlaceholder: lastFramePlaceholder,
+            referenceVideoPlaceholder: referenceVideoPlaceholder,
+            referenceAudioPlaceholder: referenceAudioPlaceholder
         )
+        var fileBackedSources: [ChatOSVideoRequestBodyFileWriter.Source] = []
+        if let input = request.inputImage, let fileURL = input.fileURL,
+           let inputImagePlaceholder {
+            fileBackedSources.append(.init(
+                placeholder: inputImagePlaceholder,
+                url: fileURL,
+                mimeType: input.mimeType,
+                maximumBytes: ChatOSVideoRequestBodyFileWriter.maximumImageSourceBytes
+            ))
+        }
+        if let input = request.lastFrameImage, let fileURL = input.fileURL,
+           let lastFramePlaceholder {
+            fileBackedSources.append(.init(
+                placeholder: lastFramePlaceholder,
+                url: fileURL,
+                mimeType: input.mimeType,
+                maximumBytes: ChatOSVideoRequestBodyFileWriter.maximumImageSourceBytes
+            ))
+        }
+        if let input = request.referenceVideo, let fileURL = input.fileURL,
+           let referenceVideoPlaceholder {
+            fileBackedSources.append(.init(
+                placeholder: referenceVideoPlaceholder,
+                url: fileURL,
+                mimeType: input.mimeType,
+                maximumBytes: ChatOSVideoRequestBodyFileWriter.maximumSourceBytes
+            ))
+        }
+        if let input = request.referenceAudio, let fileURL = input.fileURL,
+           let referenceAudioPlaceholder {
+            fileBackedSources.append(.init(
+                placeholder: referenceAudioPlaceholder,
+                url: fileURL,
+                mimeType: input.mimeType,
+                maximumBytes: ChatOSVideoRequestBodyFileWriter.maximumAudioSourceBytes
+            ))
+        }
+        let bodyFile: HTTPRequestBodyFile?
+        let body: Data?
+        if !fileBackedSources.isEmpty {
+            bodyFile = try ChatOSVideoRequestBodyFileWriter.write(
+                payload: payload,
+                sources: fileBackedSources
+            )
+            body = nil
+        } else {
+            bodyFile = nil
+            body = try JSONSerialization.data(withJSONObject: payload)
+        }
         return HTTPRequest(
             url: endpoint,
             method: "POST",
             headers: headers,
-            body: try JSONSerialization.data(withJSONObject: payload),
+            body: body,
+            bodyFile: bodyFile,
             timeoutInterval: 10 * 60,
             maximumResponseBytes: 2 * 1_024 * 1_024
         )
@@ -317,7 +450,11 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
     private static func unifiedVideoPayload(
         runtime: RuntimeModelConfig,
         request: VideoGenerationRequest,
-        profile: VideoGenerationProfile
+        profile: VideoGenerationProfile,
+        inputImagePlaceholder: String? = nil,
+        lastFramePlaceholder: String? = nil,
+        referenceVideoPlaceholder: String? = nil,
+        referenceAudioPlaceholder: String? = nil
     ) throws -> [String: Any] {
         try validateUnifiedVideoRequest(request, profile: profile)
         var metadata: [String: Any] = [
@@ -325,22 +462,23 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
                 ? (request.inputImage == nil ? request.ratio : "adaptive") : "adaptive",
         ]
         if let value = request.inputImage {
-            metadata["first_frame_image"] = dataURL(
+            metadata["first_frame_image"] = inputImagePlaceholder ?? dataURL(
                 mimeType: value.mimeType, base64Data: value.base64Data
             )
         }
         if let value = request.lastFrameImage {
-            metadata["last_frame_image"] = dataURL(
+            metadata["last_frame_image"] = lastFramePlaceholder ?? dataURL(
                 mimeType: value.mimeType, base64Data: value.base64Data
             )
         }
         if let value = request.referenceVideo {
-            metadata["video_url"] = dataURL(
-                mimeType: value.mimeType, base64Data: value.base64Data
+            metadata["video_url"] = referenceVideoPlaceholder ?? dataURL(
+                mimeType: value.mimeType,
+                base64Data: value.base64Data
             )
         }
         if let value = request.referenceAudio {
-            metadata["audio_url"] = dataURL(
+            metadata["audio_url"] = referenceAudioPlaceholder ?? dataURL(
                 mimeType: value.mimeType, base64Data: value.base64Data
             )
         }
@@ -405,14 +543,27 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
 
     private static func validateMiniMaxImage(_ image: ImageGenerationInputImage) throws {
         let mimeType = image.mimeType.lowercased()
-        guard ["image/png", "image/jpeg", "image/webp"].contains(mimeType),
-              let data = Data(base64Encoded: image.base64Data), !data.isEmpty,
-              data.count <= 20 * 1024 * 1024 else {
+        guard ["image/png", "image/jpeg", "image/webp"].contains(mimeType) else {
             throw MediaGenerationClientError.invalidInputImage
         }
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+        let properties: [CFString: Any]
+        if let fileURL = image.fileURL {
+            guard image.base64Data.isEmpty, fileURL.isFileURL else {
+                throw MediaGenerationClientError.invalidInputImage
+            }
+            properties = try imageProperties(for: fileURL)
+        } else {
+            guard let data = Data(base64Encoded: image.base64Data), !data.isEmpty,
+                  data.count <= ChatOSVideoRequestBodyFileWriter.maximumImageSourceBytes,
+                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let decodedProperties = CGImageSourceCopyPropertiesAtIndex(
+                    source, 0, nil
+                  ) as? [CFString: Any] else {
+                throw MediaGenerationClientError.invalidInputImage
+            }
+            properties = decodedProperties
+        }
+        guard let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
               (256...5760).contains(width), (256...5760).contains(height),
               (0.4...2.5).contains(Double(width) / Double(height)) else {
@@ -420,12 +571,49 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         }
     }
 
+    private static func imageProperties(for url: URL) throws -> [CFString: Any] {
+        let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else { throw MediaGenerationClientError.invalidInputImage }
+        defer { Darwin.close(descriptor) }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFREG,
+              status.st_size > 0,
+              status.st_size <= ChatOSVideoRequestBodyFileWriter.maximumImageSourceBytes else {
+            throw MediaGenerationClientError.invalidInputImage
+        }
+        let descriptorURL = URL(fileURLWithPath: "/dev/fd/\(descriptor)")
+        guard let source = CGImageSourceCreateWithURL(descriptorURL as CFURL, nil) else {
+            throw MediaGenerationClientError.invalidInputImage
+        }
+        guard CGImageSourceGetCount(source) > 0,
+              let properties = CGImageSourceCopyPropertiesAtIndex(
+                source, 0, nil
+              ) as? [CFString: Any] else {
+            throw MediaGenerationClientError.invalidInputImage
+        }
+        return properties
+    }
+
     /// Base64 adds roughly one third to the request size. Keep the local source below
     /// 47 MiB so the complete JSON body remains under MiniMax's 64 MiB request limit.
     private static func validateMiniMaxReferenceVideo(_ video: VideoGenerationInputVideo) throws {
-        guard ["video/mp4", "video/quicktime"].contains(video.mimeType.lowercased()),
-              let data = Data(base64Encoded: video.base64Data), !data.isEmpty,
-              data.count <= 47 * 1024 * 1024 else {
+        guard ["video/mp4", "video/quicktime"].contains(video.mimeType.lowercased()) else {
+            throw MediaGenerationClientError.invalidReferenceVideo
+        }
+        if let fileURL = video.fileURL {
+            guard video.base64Data.isEmpty, fileURL.isFileURL else {
+                throw MediaGenerationClientError.invalidReferenceVideo
+            }
+            // The writer opens with O_NOFOLLOW and validates the descriptor with fstat,
+            // closing the check/use race before any bytes are encoded.
+            return
+        }
+        guard let data = Data(base64Encoded: video.base64Data), !data.isEmpty,
+              data.count <= ChatOSVideoRequestBodyFileWriter.maximumSourceBytes else {
             throw MediaGenerationClientError.invalidReferenceVideo
         }
     }
@@ -434,9 +622,19 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         guard [
             "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/vnd.wave",
             "audio/mp4", "audio/x-m4a", "audio/aac",
-        ].contains(audio.mimeType.lowercased()),
-              let data = Data(base64Encoded: audio.base64Data), !data.isEmpty,
-              data.count <= 20 * 1024 * 1024 else {
+        ].contains(audio.mimeType.lowercased()) else {
+            throw MediaGenerationClientError.invalidReferenceAudio
+        }
+        if let fileURL = audio.fileURL {
+            guard audio.base64Data.isEmpty, fileURL.isFileURL else {
+                throw MediaGenerationClientError.invalidReferenceAudio
+            }
+            // The request writer opens the file with O_NOFOLLOW and verifies the
+            // descriptor immediately before encoding it.
+            return
+        }
+        guard let data = Data(base64Encoded: audio.base64Data), !data.isEmpty,
+              data.count <= ChatOSVideoRequestBodyFileWriter.maximumAudioSourceBytes else {
             throw MediaGenerationClientError.invalidReferenceAudio
         }
     }

@@ -2,18 +2,20 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
+    receipt_cache::SCHEMA_V36,
+    receipt_result::{FINISH_SCHEMA_V37, SCHEMA_V37},
     schema::{
         SCHEMA_V1, SCHEMA_V10, SCHEMA_V11, SCHEMA_V12, SCHEMA_V13, SCHEMA_V14, SCHEMA_V15,
         SCHEMA_V16, SCHEMA_V17, SCHEMA_V18, SCHEMA_V19, SCHEMA_V2, SCHEMA_V20, SCHEMA_V21,
         SCHEMA_V22, SCHEMA_V23, SCHEMA_V24, SCHEMA_V25, SCHEMA_V26, SCHEMA_V27, SCHEMA_V28,
         SCHEMA_V29, SCHEMA_V3, SCHEMA_V30, SCHEMA_V31, SCHEMA_V32, SCHEMA_V33, SCHEMA_V34,
-        SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9,
+        SCHEMA_V35, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9,
     },
     ClientStorageError, SqliteClientStorage, SqliteResultExt,
 };
 use sqlx::SqliteConnection;
 
-pub(super) const SCHEMA_VERSION: i64 = 34;
+pub(super) const SCHEMA_VERSION: i64 = 37;
 
 pub(super) const fn requires_compaction(previous_version: i64) -> bool {
     previous_version < 33
@@ -42,7 +44,7 @@ impl SqliteClientStorage {
     }
 
     pub(super) async fn migrate(&self) -> Result<(), ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await?;
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS client_schema_migrations (\
              version INTEGER PRIMARY KEY NOT NULL, applied_at_unix_ms INTEGER NOT NULL)",
@@ -97,11 +99,26 @@ impl SqliteClientStorage {
             (32, SCHEMA_V32),
             (33, SCHEMA_V33),
             (34, SCHEMA_V34),
+            (35, SCHEMA_V35),
+            (36, SCHEMA_V36),
+            (37, SCHEMA_V37),
         ] {
             if version < next_version {
                 Self::begin_immediate(&mut connection).await.db()?;
                 let result = apply_schema(&mut connection, next_version, statements).await;
+                #[cfg(all(test, unix))]
+                if result.is_ok() {
+                    super::migration_crash_tests::checkpoint(&format!(
+                        "schema_v{next_version}_before_commit"
+                    ))
+                    .await;
+                }
                 Self::finish_write(&mut connection, result).await.db()?;
+                #[cfg(all(test, unix))]
+                super::migration_crash_tests::checkpoint(&format!(
+                    "schema_v{next_version}_after_commit"
+                ))
+                .await;
             }
         }
         Ok(())
@@ -122,6 +139,21 @@ async fn apply_schema(
                 "schema migration v{version} statement {} failed: {error}; SQL: {statement}",
                 statement_index + 1
             )));
+        }
+    }
+    if version == 35 {
+        super::receipt_store::backfill_tombstones(connection).await?;
+    }
+    if version == 36 {
+        super::receipt_cache::backfill_sizes(connection).await?;
+    }
+    if version == 37 {
+        super::receipt_result::backfill_results(connection).await?;
+        for statement in FINISH_SCHEMA_V37 {
+            sqlx::query(sqlx::AssertSqlSafe(*statement))
+                .execute(&mut *connection)
+                .await
+                .db()?;
         }
     }
     sqlx::query(

@@ -289,7 +289,7 @@ impl LocalAgentToolStore for SqliteClientStorage {
         owner_user_id: &str,
         now_unix_ms: i64,
     ) -> Result<u64, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
         let result = recover_expired_on(&mut connection, owner_user_id, now_unix_ms).await;
         Self::finish_write(&mut connection, result).await
@@ -337,7 +337,7 @@ impl LocalAgentToolStore for SqliteClientStorage {
         exclude_tool_names: &[String],
         execution_route: Option<LocalAgentToolExecutionRoute>,
     ) -> Result<Option<LocalAgentToolClaim>, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
@@ -454,7 +454,7 @@ impl LocalAgentToolStore for SqliteClientStorage {
         batch_event_id: &str,
         now_unix_ms: i64,
     ) -> Result<LocalAgentToolCommitResult, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {

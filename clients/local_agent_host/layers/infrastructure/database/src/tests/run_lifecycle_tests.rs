@@ -4,6 +4,396 @@
 use super::*;
 
 #[tokio::test]
+async fn large_create_replays_original_run_after_business_state_changes_and_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client.sqlite");
+    let storage = SqliteClientStorage::connect_file(&path).await.unwrap();
+    let create = command("large-create", "input");
+    let mut original = run(1000);
+    original.input = serde_json::json!({"message": "你".repeat(200_000)});
+    storage
+        .create_run(&create, &original, "created-event")
+        .await
+        .unwrap();
+    let reference: Option<String> = sqlx::query_scalar(
+        "SELECT result_digest FROM local_agent_command_receipts WHERE command_id = 'large-create'",
+    )
+    .fetch_one(&storage.pool)
+    .await
+    .unwrap();
+    assert!(reference.is_some());
+    sqlx::query("UPDATE local_agent_runs SET input_json = '{}', status = 'cancelled', version = 2")
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    storage.pool.close().await;
+    let reopened = SqliteClientStorage::connect_file(&path).await.unwrap();
+    assert_eq!(
+        reopened
+            .create_run(&create, &original, "repeated-event")
+            .await
+            .unwrap(),
+        original
+    );
+    assert_eq!(
+        reopened
+            .get_run(&original.run_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .version,
+        2
+    );
+    let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_events")
+        .fetch_one(&reopened.pool)
+        .await
+        .unwrap();
+    assert_eq!(events, 1);
+    // A damaged retained body must not be treated as cache expiry or a new write.
+    sqlx::query("DROP TRIGGER local_agent_receipt_results_immutable")
+        .execute(&reopened.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE local_agent_receipt_results SET response_json = replace(response_json, '你', '他')",
+    )
+    .execute(&reopened.pool)
+    .await
+    .unwrap();
+    let error = reopened
+        .create_run(&create, &original, "corrupt-retry-event")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "storage_corrupt");
+    assert!(!error.retryable());
+    let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_events")
+        .fetch_one(&reopened.pool)
+        .await
+        .unwrap();
+    assert_eq!(events, 1);
+    reopened.pool.close().await;
+}
+
+#[tokio::test]
+async fn large_result_accounting_failure_rolls_back_business_and_blob_without_orphans() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    sqlx::query("CREATE TRIGGER injected_result_accounting_failure AFTER INSERT ON local_agent_receipt_sizes BEGIN SELECT RAISE(ABORT, 'injected result accounting failure'); END")
+        .execute(&storage.pool).await.unwrap();
+    let create = command("large-create", "input");
+    let mut original = run(1000);
+    original.input = serde_json::json!({"message": "x".repeat(600_000)});
+    assert!(storage
+        .create_run(&create, &original, "created-event")
+        .await
+        .is_err());
+    for table in [
+        "local_agent_runs",
+        "local_agent_events",
+        "local_agent_command_receipts",
+        "local_agent_command_tombstones",
+        "local_agent_receipt_sizes",
+        "local_agent_receipt_results",
+    ] {
+        let count: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                .fetch_one(&storage.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "{table} must roll back with the business write");
+    }
+    assert_eq!(
+        storage.receipt_cache_usage().await.unwrap().response_bytes,
+        0
+    );
+    sqlx::query("DROP TRIGGER injected_result_accounting_failure")
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        storage
+            .create_run(&create, &original, "created-event")
+            .await
+            .unwrap(),
+        original
+    );
+}
+
+#[tokio::test]
+async fn concurrent_large_create_with_same_key_commits_one_run_event_and_result() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client.sqlite");
+    let first = SqliteClientStorage::connect_file(&path).await.unwrap();
+    let second = SqliteClientStorage::connect_file(&path).await.unwrap();
+    let create = command("large-create", "input");
+    let mut original = run(1000);
+    original.input = serde_json::json!({"message": "x".repeat(600_000)});
+    let (a, b) = tokio::join!(
+        first.create_run(&create, &original, "first-event"),
+        second.create_run(&create, &original, "second-event")
+    );
+    assert_eq!(a.unwrap(), original);
+    assert_eq!(b.unwrap(), original);
+    for table in [
+        "local_agent_runs",
+        "local_agent_events",
+        "local_agent_command_tombstones",
+        "local_agent_receipt_results",
+    ] {
+        let count: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                .fetch_one(&first.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1, "{table} must be written once");
+    }
+    first.pool.close().await;
+    second.pool.close().await;
+}
+
+#[tokio::test]
+async fn response_larger_than_cache_budget_keeps_business_success_and_prevents_repeat() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    sqlx::query("UPDATE local_agent_receipt_cache_usage SET budget_bytes = 16 WHERE singleton = 1")
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    let create = command("oversized-create", "input");
+    let original = run(1000);
+    let created = storage
+        .create_run(&create, &original, "created-event")
+        .await
+        .unwrap();
+    assert_eq!(
+        created, original,
+        "the initial successful operation still returns its result"
+    );
+    let usage = storage.receipt_cache_usage().await.unwrap();
+    assert_eq!(usage.response_bytes, 0);
+    assert_eq!(usage.response_count, 0);
+    assert!(matches!(
+        storage
+            .create_run(&create, &original, "repeated-event")
+            .await,
+        Err(ClientStorageError::ReplayExpired(_))
+    ));
+    assert_eq!(
+        storage.get_run(&original.run_id).await.unwrap(),
+        Some(original)
+    );
+    let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_events")
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap();
+    assert_eq!(events, 1);
+}
+
+#[tokio::test]
+async fn cache_accounting_failure_rolls_back_run_event_identity_and_usage() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    sqlx::query("CREATE TRIGGER injected_accounting_failure AFTER INSERT ON local_agent_receipt_sizes BEGIN SELECT RAISE(ABORT, 'injected accounting failure'); END")
+        .execute(&storage.pool).await.unwrap();
+    let create = command("accounted-create", "input");
+    let original = run(1000);
+    assert!(storage
+        .create_run(&create, &original, "created-event")
+        .await
+        .is_err());
+    assert!(storage.get_run(&original.run_id).await.unwrap().is_none());
+    for table in [
+        "local_agent_events",
+        "local_agent_command_receipts",
+        "local_agent_command_tombstones",
+        "local_agent_receipt_sizes",
+    ] {
+        let count: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                .fetch_one(&storage.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+    }
+    assert_eq!(
+        storage.receipt_cache_usage().await.unwrap().response_bytes,
+        0
+    );
+    assert_eq!(
+        storage.receipt_cache_usage().await.unwrap().response_count,
+        0
+    );
+    sqlx::query("DROP TRIGGER injected_accounting_failure")
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    storage
+        .create_run(&create, &original, "created-event")
+        .await
+        .unwrap();
+    assert_eq!(
+        storage.receipt_cache_usage().await.unwrap().response_count,
+        1
+    );
+}
+
+#[tokio::test]
+async fn expired_create_cannot_recreate_a_deleted_run_or_repeat_its_event() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    let original = run(1000);
+    let original_command = command("original-create", "original-input");
+    storage
+        .create_run(&original_command, &original, "original-event")
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM local_agent_runs WHERE run_id = ?")
+        .bind(&original.run_id)
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    let newer = owned_run("newer-run", "user-1", 86_401_001);
+    storage
+        .create_run(
+            &command("newer-create", "newer-input"),
+            &newer,
+            "newer-event",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        storage
+            .create_run(&original_command, &original, "repeated-event")
+            .await,
+        Err(ClientStorageError::ReplayExpired(_))
+    ));
+    assert!(storage.get_run(&original.run_id).await.unwrap().is_none());
+    let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_events")
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap();
+    assert_eq!(events, 1, "only the newer Run's event remains");
+}
+
+#[tokio::test]
+async fn receipt_failure_rolls_back_business_write_event_and_identity() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    sqlx::query("CREATE TRIGGER injected_receipt_failure BEFORE INSERT ON local_agent_command_tombstones BEGIN SELECT RAISE(ABORT, 'injected receipt failure'); END")
+        .execute(&storage.pool).await.unwrap();
+    let create = command("retryable-create", "input");
+    let original = run(1000);
+    assert!(storage
+        .create_run(&create, &original, "created-event")
+        .await
+        .is_err());
+    assert!(storage.get_run(&original.run_id).await.unwrap().is_none());
+    for table in [
+        "local_agent_events",
+        "local_agent_command_receipts",
+        "local_agent_command_tombstones",
+    ] {
+        let count: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                .fetch_one(&storage.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "{table} must roll back");
+    }
+    sqlx::query("DROP TRIGGER injected_receipt_failure")
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+    storage
+        .create_run(&create, &original, "created-event")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_same_key_writes_share_one_response_and_one_side_effect() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client.sqlite");
+    let storage = SqliteClientStorage::connect_file(&path).await.unwrap();
+    let second_connection = SqliteClientStorage::connect_file(&path).await.unwrap();
+    let create = command("concurrent-create", "identical-input");
+    let original = run(1000);
+    let (first, second) = tokio::join!(
+        storage.create_run(&create, &original, "first-event"),
+        second_connection.create_run(&create, &original, "second-event"),
+    );
+    assert_eq!(first.unwrap(), second.unwrap());
+    let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_events")
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap();
+    assert_eq!(events, 1);
+    let identities: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_command_tombstones")
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap();
+    assert_eq!(identities, 1);
+    storage.pool.close().await;
+    second_connection.pool.close().await;
+}
+
+#[tokio::test]
+async fn compact_fingerprint_replays_legacy_receipt_and_rejects_changed_request() {
+    use sha2::{Digest, Sha256};
+
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    let legacy = r#"{"type":"create_run","owner_user_id":"user-1","input":"original"}"#;
+    let fingerprint = format!("sha256:v1:{:x}", Sha256::digest(legacy.as_bytes()));
+    let original = run(1_000);
+    let created = storage
+        .create_run(
+            &command("legacy-create", legacy),
+            &original,
+            "created-event",
+        )
+        .await
+        .expect("legacy create");
+    let replay = storage
+        .create_run(
+            &command("legacy-create", &fingerprint),
+            &original,
+            "unused-event",
+        )
+        .await
+        .expect("replay after upgrade");
+    assert_eq!(created, replay);
+
+    let changed = format!("sha256:v1:{:x}", Sha256::digest(b"changed request"));
+    let error = storage
+        .create_run(
+            &command("legacy-create", &changed),
+            &original,
+            "unused-event",
+        )
+        .await
+        .expect_err("same command ID with changed input must fail");
+    assert!(matches!(error, ClientStorageError::CommandMismatch(_)));
+    let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_events")
+        .fetch_one(&storage.pool)
+        .await
+        .expect("event count");
+    assert_eq!(events, 1);
+
+    let compact_run = owned_run("run-compact", "user-1", 2_000);
+    let compact_command = command("compact-create", &fingerprint);
+    storage
+        .create_run(&compact_command, &compact_run, "compact-event")
+        .await
+        .expect("compact create");
+    storage
+        .create_run(&compact_command, &compact_run, "unused-compact-event")
+        .await
+        .expect("compact replay");
+    let stored: String = sqlx::query_scalar(
+        "SELECT request_fingerprint FROM local_agent_command_receipts WHERE command_id = 'compact-create'"
+    ).fetch_one(&storage.pool).await.expect("stored fingerprint");
+    assert_eq!(stored.len(), 74);
+    assert_eq!(stored, fingerprint);
+}
+
+#[tokio::test]
 async fn create_and_claim_are_atomic_and_idempotent() {
     let storage = SqliteClientStorage::connect_memory()
         .await

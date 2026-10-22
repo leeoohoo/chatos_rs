@@ -9,7 +9,10 @@ use serde_json::Value;
 pub struct IdempotentCommand {
     pub command_id: String,
     pub request_fingerprint: String,
-    /// Durable IPC commands keep a replay receipt; trusted in-process schedulers can opt out.
+    /// Selected by application policy, never by a wire-level caller option.
+    /// Writes keep durable identities and evictable historical responses; reads
+    /// and allowlisted one-shot scheduler operations do not. Missing response
+    /// after eviction is an explicit replay-expired error, never a fresh write.
     pub persist_receipt: bool,
 }
 

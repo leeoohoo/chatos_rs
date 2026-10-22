@@ -2,6 +2,27 @@ import XCTest
 @testable import ChatOSCore
 
 final class MediaGenerationModelsTests: XCTestCase {
+    func testFileBackedImageReferenceDoesNotPersistLocalURLInLegacyWireShape() throws {
+        let input = ImageGenerationInputImage(
+            name: "first.png",
+            mimeType: "image/png",
+            fileURL: URL(fileURLWithPath: "/private/tmp/first.png")
+        )
+
+        let data = try JSONEncoder().encode(input)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        XCTAssertEqual(object["name"] as? String, "first.png")
+        XCTAssertEqual(object["mime_type"] as? String, "image/png")
+        XCTAssertEqual(object["base64_data"] as? String, "")
+        XCTAssertNil(object["file_url"])
+
+        let decoded = try JSONDecoder().decode(ImageGenerationInputImage.self, from: data)
+        XCTAssertNil(decoded.fileURL)
+        XCTAssertTrue(decoded.base64Data.isEmpty)
+    }
+
     func testH3TailFrameCapabilityIsAvailableThroughUnifiedNewAPIProtocol() {
         let compatible = MediaGenerationModel(
             id: "new-api-h3", name: "MiniMax H3", provider: "gpt", modelName: "MiniMax-H3",

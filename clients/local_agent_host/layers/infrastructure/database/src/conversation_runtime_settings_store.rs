@@ -42,7 +42,7 @@ impl LocalConversationRuntimeSettingsStore for SqliteClientStorage {
                 "conversation runtime settings timestamp must not be negative".to_string(),
             ));
         }
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {

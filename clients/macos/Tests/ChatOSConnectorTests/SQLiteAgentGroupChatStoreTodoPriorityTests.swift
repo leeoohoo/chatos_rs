@@ -131,29 +131,41 @@ extension SQLiteAgentGroupChatStoreTests {
         }
 
         let reversed = Array(todoIDs.reversed())
+#if DEBUG
         let agentBefore = await store.preparedStatementCountForTesting()
+#endif
         let agentTodos = try await store.reorderAgentTodos(
             ownerUserID: "alice",
             agentID: agent.id,
             todoIDs: reversed,
             nowUnixMs: 1_000
         )
+#if DEBUG
         let agentStatementCount = await store.preparedStatementCountForTesting() - agentBefore
+#endif
 
         XCTAssertEqual(agentTodos.map(\.id), reversed)
+#if DEBUG
         XCTAssertEqual(agentStatementCount, 5)
+#endif
 
+#if DEBUG
         let teamBefore = await store.preparedStatementCountForTesting()
+#endif
         let teamTodos = try await store.reorderTeamTodos(
             ownerUserID: "alice",
             teamRoomID: room.id,
             todoIDs: todoIDs,
             nowUnixMs: 1_001
         )
+#if DEBUG
         let teamStatementCount = await store.preparedStatementCountForTesting() - teamBefore
+#endif
 
         XCTAssertEqual(teamTodos.map(\.id), todoIDs)
+#if DEBUG
         XCTAssertEqual(teamStatementCount, 7)
+#endif
     }
 
     func testTodoListsSortActiveWorkBeforeTerminalHistory() async throws {
@@ -263,14 +275,18 @@ extension SQLiteAgentGroupChatStoreTests {
             nowUnixMs: 100
         )
 
+#if DEBUG
         let firstCountBefore = await store.preparedStatementCountForTesting()
+#endif
         let firstPendingValue = try await store.startNextReadyAgentTodo(
             ownerUserID: "alice",
             agentID: agent.id,
             nowUnixMs: 101
         )
+#if DEBUG
         let firstStatementCount = await store.preparedStatementCountForTesting()
             - firstCountBefore
+#endif
         let firstPending = try XCTUnwrap(firstPendingValue)
         let firstClaimValue = try await store.claimNextDelivery(
             ownerUserID: "alice",
@@ -294,14 +310,18 @@ extension SQLiteAgentGroupChatStoreTests {
             nowUnixMs: 104
         )
 
+#if DEBUG
         let retryCountBefore = await store.preparedStatementCountForTesting()
+#endif
         let retriedPendingValue = try await store.startNextReadyAgentTodo(
             ownerUserID: "alice",
             agentID: agent.id,
             nowUnixMs: 105
         )
+#if DEBUG
         let retryStatementCount = await store.preparedStatementCountForTesting()
             - retryCountBefore
+#endif
         let retriedPending = try XCTUnwrap(retriedPendingValue)
         XCTAssertEqual(retriedPending.id, firstPending.id)
         XCTAssertEqual(retriedPending.status, .pending)
@@ -309,8 +329,12 @@ extension SQLiteAgentGroupChatStoreTests {
         XCTAssertNil(retriedPending.lastError)
         XCTAssertNil(retriedPending.claimedAtUnixMs)
         XCTAssertNil(retriedPending.completedAtUnixMs)
+#if DEBUG
         XCTAssertEqual(firstStatementCount, 8)
+#endif
+#if DEBUG
         XCTAssertEqual(retryStatementCount, 8)
+#endif
         XCTAssertEqual(try sqliteInt(
             url,
             sql: "SELECT COUNT(*) FROM project_agent_deliveries WHERE deduplication_key = 'todo:\(todo.id)'"

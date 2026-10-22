@@ -3,7 +3,7 @@
 
 //! Durable, client-owned Local Agent state machine for runs, leases, transitions, and events.
 
-use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand, LocalAgentStore};
+use chatos_local_agent_ports::{ClientStorageError, LocalAgentStore};
 #[cfg(test)]
 use chatos_local_agent_protocol::LocalAgentRunStatus;
 use chatos_local_agent_protocol::{
@@ -22,6 +22,10 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod artifact_runtime;
+mod command_fingerprint;
+mod command_receipt_policy;
+#[cfg(test)]
+mod command_receipt_policy_tests;
 mod control_plane_runtime;
 #[cfg(test)]
 mod conversation_query_tests;
@@ -47,6 +51,7 @@ mod skill_runtime;
 mod task_query_tests;
 mod task_runtime;
 
+use command_receipt_policy::{prepare_idempotency, CommandExecutionMode};
 pub use profile::{LocalAgentProfile, LocalAgentProfileRegistry};
 use run_factory::create_run_record;
 use run_transition::transition_for_outcome;
@@ -197,32 +202,30 @@ impl LocalAgentRuntime {
         &self,
         request: HostRequestEnvelope,
     ) -> Result<HostResult, LocalAgentRuntimeError> {
-        self.try_handle_with_receipt_policy(request, true).await
+        self.try_handle_with_mode(request, CommandExecutionMode::Ipc)
+            .await
     }
 
-    /// Executes a trusted, one-shot in-process scheduler command without storing
-    /// a replay receipt. IPC callers must continue to use `try_handle`.
+    /// Executes a read or one of the four trusted, one-shot scheduler claim/commit
+    /// operations without a replay receipt. Other writes are rejected before dispatch.
+    /// IPC callers must continue to use `try_handle`, including for claim/commit retries.
     pub async fn try_handle_ephemeral(
         &self,
         request: HostRequestEnvelope,
     ) -> Result<HostResult, LocalAgentRuntimeError> {
-        self.try_handle_with_receipt_policy(request, false).await
+        self.try_handle_with_mode(request, CommandExecutionMode::TrustedOneShot)
+            .await
     }
 
-    async fn try_handle_with_receipt_policy(
+    async fn try_handle_with_mode(
         &self,
         request: HostRequestEnvelope,
-        persist_receipt: bool,
+        mode: CommandExecutionMode,
     ) -> Result<HostResult, LocalAgentRuntimeError> {
         request
             .validate()
             .map_err(LocalAgentRuntimeError::InvalidRequest)?;
-        let idempotency = IdempotentCommand {
-            command_id: request.command_id,
-            request_fingerprint: serde_json::to_string(&request.command)
-                .map_err(|error| LocalAgentRuntimeError::InvalidRequest(error.to_string()))?,
-            persist_receipt,
-        };
+        let idempotency = prepare_idempotency(request.command_id, &request.command, mode)?;
         match request.command {
             HostCommand::Health => {
                 self.store.health_check().await?;

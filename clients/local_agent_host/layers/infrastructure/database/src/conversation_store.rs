@@ -28,7 +28,7 @@ impl LocalConversationStore for SqliteClientStorage {
         conversation
             .validate()
             .map_err(ClientStorageError::InvalidState)?;
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
@@ -175,7 +175,7 @@ impl LocalConversationStore for SqliteClientStorage {
         now_unix_ms: i64,
     ) -> Result<LocalConversationTurnStart, ClientStorageError> {
         turn.validate().map_err(ClientStorageError::InvalidState)?;
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {

@@ -2,6 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR=${0:A:h}
+if [[ "$(uname -m)" != "arm64" ]]; then
+  echo "ChatOS macOS supports arm64 only. Run from a native Apple Silicon shell." >&2
+  exit 2
+fi
+native_python() {
+  /usr/bin/arch -arm64 /usr/bin/python3 -B "$@"
+}
 PROJECT_DIR=${SCRIPT_DIR:h}
 REPOSITORY_DIR=${PROJECT_DIR:h:h}
 APP_DIR="$PROJECT_DIR/.build/ChatOS.app"
@@ -40,10 +47,31 @@ fi
 BUILD_GIT_COMMIT=${CHATOS_BUILD_GIT_COMMIT:-$(git -C "$PROJECT_DIR" rev-parse HEAD)}
 BUILD_DATE_UTC=${CHATOS_BUILD_DATE_UTC:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 
+# Evidence is kept outside the signed bundle (hashing a manifest into itself or
+# modifying a bundle after signing would invalidate its provenance/signature).
+mkdir -p "$PROJECT_DIR/.build"
+EVIDENCE_DIR=$(mktemp -d "$PROJECT_DIR/.build/build-evidence.XXXXXXXX")
+EVIDENCE_MANIFEST="$APP_DIR.build-manifest.json"
+SWIFT_DEBUG_ARGUMENTS=()
+SYMBOL_ARGUMENTS=()
+if [[ "$BUILD_CONFIGURATION" == "release" ]]; then
+  SWIFT_DEBUG_ARGUMENTS=(-Xswiftc -g)
+  export CARGO_PROFILE_RELEASE_DEBUG=1
+fi
+native_python "$SCRIPT_DIR/build_evidence.py" capture \
+  --repository "$REPOSITORY_DIR" --configuration "$BUILD_CONFIGURATION" \
+  --swift-build-system "$SWIFT_BUILD_SYSTEM" --output "$EVIDENCE_DIR/inputs.json"
+
+record_command() {
+  native_python "$SCRIPT_DIR/build_evidence.py" record-command \
+    --output "$EVIDENCE_DIR/commands.json" -- "$@"
+}
+
 # The native build path is intentionally retained because SwiftBuild currently links
 # this AppKit executable with an obsolete SDK load command. SwiftPM also prints a
 # deprecation notice for that required workaround; filter only that known notice.
 swiftpm() {
+  record_command swift "$@"
   command swift "$@" 2> >(sed '/warning: .--build-system native. has been deprecated and will be removed in a future release/d' >&2)
 }
 
@@ -57,16 +85,24 @@ set_plist_string() {
 cd "$PROJECT_DIR"
 "$PROJECT_DIR/scripts/audit-interface-localization.sh"
 swiftpm build \
+  --arch arm64 \
+  --force-resolved-versions \
   --build-system "$SWIFT_BUILD_SYSTEM" \
   --scratch-path "$SWIFT_SCRATCH_PATH" \
   --configuration "$BUILD_CONFIGURATION" \
+  "${SWIFT_DEBUG_ARGUMENTS[@]}" \
   --product ChatOSSwift
 swiftpm build \
+  --arch arm64 \
+  --force-resolved-versions \
   --build-system "$SWIFT_BUILD_SYSTEM" \
   --scratch-path "$SWIFT_SCRATCH_PATH" \
   --configuration "$BUILD_CONFIGURATION" \
+  "${SWIFT_DEBUG_ARGUMENTS[@]}" \
   --product chatos_plugin_ps
 BIN_DIR=$(swiftpm build \
+  --arch arm64 \
+  --force-resolved-versions \
   --build-system "$SWIFT_BUILD_SYSTEM" \
   --scratch-path "$SWIFT_SCRATCH_PATH" \
   --configuration "$BUILD_CONFIGURATION" \
@@ -88,7 +124,10 @@ if [[ "$BUILD_CONFIGURATION" == "release" ]]; then
   CARGO_PROFILE_ARGUMENTS=(--release)
   RUST_PROFILE=release
 fi
-cargo build \
+record_command cargo build --locked \
+  --manifest-path "$REPOSITORY_DIR/Cargo.toml" \
+  -p chatos_local_agent_host "${CARGO_PROFILE_ARGUMENTS[@]}"
+cargo build --locked \
   --manifest-path "$REPOSITORY_DIR/Cargo.toml" \
   -p chatos_local_agent_host \
   "${CARGO_PROFILE_ARGUMENTS[@]}"
@@ -100,6 +139,15 @@ LOCAL_AGENT_HOST="$CARGO_TARGET_ROOT/$RUST_PROFILE/chatos_local_agent_host"
 if [[ ! -x "$LOCAL_AGENT_HOST" ]]; then
   echo "Local Agent Host executable not found at $LOCAL_AGENT_HOST" >&2
   exit 1
+fi
+
+if [[ "$BUILD_CONFIGURATION" == "release" ]]; then
+  for SYMBOL_BINARY in "$EXECUTABLE" "$LOCAL_AGENT_HOST" "$PLUGIN_PROCESS_LIST"; do
+    SYMBOL_PATH="$EVIDENCE_DIR/${SYMBOL_BINARY:t}.dSYM"
+    record_command dsymutil "$SYMBOL_BINARY" -o "$SYMBOL_PATH"
+    dsymutil "$SYMBOL_BINARY" -o "$SYMBOL_PATH"
+    SYMBOL_ARGUMENTS+=(--symbols "$SYMBOL_PATH")
+  done
 fi
 
 # A binary produced by SwiftPM's alternate build path can compile and launch
@@ -170,6 +218,11 @@ else
     --requirements '=designated => identifier "com.chatos.swift-client"' \
     "$APP_DIR"
 fi
+
+native_python "$SCRIPT_DIR/build_evidence.py" finish \
+  --repository "$REPOSITORY_DIR" --app "$APP_DIR" \
+  --capture "$EVIDENCE_DIR/inputs.json" --commands "$EVIDENCE_DIR/commands.json" \
+  "${SYMBOL_ARGUMENTS[@]}" --output "$EVIDENCE_MANIFEST"
 
 "$SCRIPT_DIR/verify-app-build.sh" \
   "$APP_DIR" \

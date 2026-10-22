@@ -6,6 +6,40 @@ import XCTest
 @testable import ChatOSApp
 
 extension StoryStudioTests {
+    func testPersistentMediaBatchCoalescesRepeatedVideoProgress() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryBatchProgressTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        let batch = try StoryMediaBatch(
+            project: project,
+            owner: "alice",
+            kind: .videos,
+            targets: ["s1"],
+            models: models
+        )
+        let session = StoryMediaBatchSession(
+            batch: batch,
+            store: store,
+            media: RepeatedStoryVideoProgressService()
+        )
+
+        let completed = try await session.run()
+
+        XCTAssertEqual(completed.status, .completed)
+        XCTAssertEqual(completed.events.filter { $0.detail.contains("：queued，") }.count, 1)
+        XCTAssertEqual(completed.events.filter { $0.detail.contains("：in_progress，") }.count, 1)
+        XCTAssertEqual(completed.draft.segments[0].video?.jobID, "repeated-progress-job")
+    }
+
     func testPendingVideoConfigurationCannotBeChanged() async throws {
         let (vm, _, _) = try await fixture()
         var draft = makeProject()

@@ -13,6 +13,8 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         vm.addInputImages(from: [upload])
         try await wait { !vm.isLoadingInputImages }
         XCTAssertEqual(vm.inputImages.map(\.name), ["upload.png"])
+        XCTAssertTrue(vm.inputImages[0].base64Data.isEmpty)
+        XCTAssertNotNil(vm.inputImages[0].fileURL)
         XCTAssertNil(vm.errorMessage)
 
         vm.addInputImages(from: Array(repeating: upload, count: 8))
@@ -34,6 +36,8 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         let input = try XCTUnwrap(vm.videoInputImage)
         XCTAssertEqual(input.name, "generated-second.png")
         XCTAssertEqual(input.mimeType, "image/png")
+        XCTAssertTrue(input.base64Data.isEmpty)
+        XCTAssertNotNil(input.fileURL)
         XCTAssertEqual(vm.prompt, "keep image prompt")
         XCTAssertEqual(vm.videoPrompt, "keep video prompt")
         XCTAssertEqual(vm.history[0].images.count, 2)

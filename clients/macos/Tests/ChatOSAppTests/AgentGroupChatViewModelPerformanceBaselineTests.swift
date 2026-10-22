@@ -6,7 +6,10 @@ import Combine
 import Foundation
 import XCTest
 
+#if DEBUG
 /// Opt-in UI refresh baseline for the fixed-size Agent workspace fixture.
+/// This diagnostic requires Debug statement instrumentation to detect quiescence;
+/// it is not a Release UI latency acceptance test.
 ///
 /// Run explicitly with:
 /// `CHATOS_RUN_AGENT_UI_BASELINE=1 swift test --package-path clients/macos \
@@ -287,3 +290,10 @@ private struct RejectingAgentServices: AgentServiceProviding {
         throw BaselineDependencyError.unexpectedRequest
     }
 }
+#else
+final class AgentGroupChatViewModelPerformanceBaselineTests: XCTestCase {
+    func testRepeatableWorkspaceRefreshBaseline() throws {
+        throw XCTSkip("This diagnostic uses Debug statement counters to detect quiescence; run it in Debug. Release UI latency requires a separate interaction benchmark.")
+    }
+}
+#endif

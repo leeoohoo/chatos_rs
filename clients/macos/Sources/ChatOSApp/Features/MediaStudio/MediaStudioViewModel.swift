@@ -71,8 +71,10 @@ final class MediaStudioViewModel: ObservableObject {
     private let historyUseCase: MediaStudioHistoryUseCase
     private let imageReferenceUseCase: MediaStudioImageReferenceUseCase
     private let imageReferenceImporter: any MediaStudioImageReferenceImporting
+    private let inputArtifacts: MediaStudioInputArtifactStore
     let stories: StoryStudioViewModel
     private var hasLoaded = false
+    private var hasLoadedHistory = false
     private var videoGenerationTask: Task<Void, Never>?
     private var imageGenerationTask: Task<Void, Never>?
     private var historyLoadTask: Task<Void, Never>?
@@ -93,7 +95,9 @@ final class MediaStudioViewModel: ObservableObject {
     private var imageReferenceState = MediaStudioImageReferenceState()
 
     init(service: any MediaGenerationServicing, historyStore: MediaStudioHistoryStore = MediaStudioHistoryStore(), imageTransport: any HTTPTransport = URLSessionHTTPTransport(), storyPlanner: (any StoryPlanningServicing)? = nil) {
+        let inputArtifacts = MediaStudioInputArtifactStore()
         self.service = service
+        self.inputArtifacts = inputArtifacts
         self.imageGenerationUseCase = MediaStudioImageGenerationUseCase(
             generator: service,
             history: historyStore
@@ -104,7 +108,10 @@ final class MediaStudioViewModel: ObservableObject {
         )
         self.modelCatalogUseCase = MediaStudioModelCatalogUseCase(provider: service)
         self.historyUseCase = MediaStudioHistoryUseCase(history: historyStore)
-        let imageReferenceImporter = MediaStudioImageReferenceImporter(transport: imageTransport)
+        let imageReferenceImporter = MediaStudioImageReferenceImporter(
+            transport: imageTransport,
+            artifacts: inputArtifacts
+        )
         self.imageReferenceImporter = imageReferenceImporter
         self.imageReferenceUseCase = MediaStudioImageReferenceUseCase(
             importer: imageReferenceImporter
@@ -120,9 +127,12 @@ final class MediaStudioViewModel: ObservableObject {
         inputImagesTask?.cancel()
         videoInputTask?.cancel()
         videoAudioTask?.cancel()
+        inputArtifacts.removeAll()
     }
 
-    func activate(userID: String) {
+    /// Authentication only establishes ownership. Catalogs and disk history are
+    /// loaded by the visible workspace, not by the account bootstrap path.
+    func bindAccount(userID: String) {
         guard ownerID != userID else { return }
         // A newly constructed studio is already in its signed-out baseline. Avoid
         // publishing dozens of redundant resets during authentication bootstrap;
@@ -132,7 +142,17 @@ final class MediaStudioViewModel: ObservableObject {
             resetForSignedOut()
         }
         ownerID = userID
-        stories.activate(userID: userID)
+    }
+
+    func activate(userID: String) {
+        bindAccount(userID: userID)
+        loadHistoryIfNeeded()
+        loadSelectedSectionIfNeeded()
+    }
+
+    private func loadHistoryIfNeeded() {
+        guard let userID = ownerID, !hasLoadedHistory else { return }
+        hasLoadedHistory = true
         isLoadingHistory = true
         let token = historyLoadState.begin(
             ownerUserID: userID,
@@ -271,12 +291,26 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     func loadIfNeeded() {
+        guard ownerID != nil else { return }
+        loadHistoryIfNeeded()
+        loadSelectedSectionIfNeeded()
         guard !hasLoaded else { return }
         hasLoaded = true
         loadModels()
     }
 
+    func loadSelectedSectionIfNeeded() {
+        guard let ownerID else { return }
+        switch section {
+        case .story, .history:
+            stories.activate(userID: ownerID)
+        case .image, .video:
+            break
+        }
+    }
+
     func reloadModels() {
+        guard ownerID != nil else { return }
         hasLoaded = true
         loadModels()
     }
@@ -537,7 +571,14 @@ final class MediaStudioViewModel: ObservableObject {
             token,
             ownerUserID: ownerID,
             accountSessionID: sessionID
-        ) else { return }
+        ) else {
+            if case let .success(images) = result {
+                for image in images where !inputImages.contains(image) {
+                    inputArtifacts.removeIfManaged(image.fileURL)
+                }
+            }
+            return
+        }
         switch result {
         case let .success(images): inputImages = images
         case let .failure(error): errorMessage = error.localizedDescription
@@ -548,11 +589,14 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     func removeInputImage() {
+        guard !isGenerating else { return }
         imageReferenceState.reset()
         inputImagesTask?.cancel()
         inputImagesTask = nil
         isLoadingInputImages = false
+        let fileURLs = inputImages.compactMap(\.fileURL)
         inputImages = []
+        for fileURL in fileURLs { inputArtifacts.removeIfManaged(fileURL) }
     }
 
     func removeInputImage(at index: Int) {
@@ -563,29 +607,31 @@ final class MediaStudioViewModel: ObservableObject {
             inputImagesTask = nil
             isLoadingInputImages = false
         }
-        inputImages.remove(at: index)
+        let removed = inputImages.remove(at: index)
+        inputArtifacts.removeIfManaged(removed.fileURL)
     }
 
     func selectVideoInputImage(from url: URL) {
-        let importer = imageReferenceImporter
+        let artifacts = inputArtifacts
         loadVideoInputImage {
-            guard let image = try await importer.importLocalFiles([url]).first else {
-                throw MediaStudioInputImageError.cannotDecode
-            }
-            return image
+            try await artifacts.importImage(from: url)
         }
     }
 
     func useGeneratedImageForVideo(_ asset: GeneratedMediaAsset) {
         // A dismissed picker from a previous account must not import that account's media.
-        guard ownerID != nil, history.contains(where: { $0.images.contains(asset) }) else { return }
+        guard ownerID != nil,
+              history.contains(where: { $0.images.contains(asset) }),
+              let url = asset.url,
+              url.isFileURL else { return }
         section = .video
-        let importer = imageReferenceImporter
+        let artifacts = inputArtifacts
         loadVideoInputImage {
-            guard let image = try await importer.importGeneratedAssets([asset]).first else {
-                throw MediaStudioInputImageError.cannotDecode
-            }
-            return image
+            try await artifacts.importImage(
+                from: url,
+                name: "generated-\(asset.id).\(url.pathExtension)",
+                mimeType: asset.mimeType
+            )
         }
     }
 
@@ -606,9 +652,17 @@ final class MediaStudioViewModel: ObservableObject {
             guard !Task.isCancelled,
                   let self,
                   self.sessionID == session,
-                  self.videoInputSelectionID == selection else { return }
+                  self.videoInputSelectionID == selection else {
+                if case let .success(image) = result {
+                    self?.inputArtifacts.removeIfManaged(image.fileURL)
+                }
+                return
+            }
             switch result {
-            case let .success(image): self.videoInputImage = image
+            case let .success(image):
+                let previousURL = self.videoInputImage?.fileURL
+                self.videoInputImage = image
+                self.inputArtifacts.removeIfManaged(previousURL)
             case let .failure(error): self.errorMessage = error.localizedDescription
             }
             self.isLoadingVideoInputImage = false
@@ -621,7 +675,9 @@ final class MediaStudioViewModel: ObservableObject {
         videoInputTask?.cancel()
         videoInputTask = nil
         isLoadingVideoInputImage = false
+        let fileURL = videoInputImage?.fileURL
         videoInputImage = nil
+        inputArtifacts.removeIfManaged(fileURL)
     }
 
     func selectVideoReferenceAudio(from url: URL) {
@@ -631,21 +687,28 @@ final class MediaStudioViewModel: ObservableObject {
         let session = sessionID
         errorMessage = nil
         isLoadingVideoReferenceAudio = true
+        let artifacts = inputArtifacts
         videoAudioTask = Task { [weak self] in
             let result: Result<VideoGenerationInputAudio, Error>
             do {
-                result = .success(try await AppCancellableDetachedWork.run {
-                    try Self.loadReferenceAudio(from: url)
-                })
+                result = .success(try await artifacts.importAudio(from: url))
             } catch {
                 result = .failure(error)
             }
             guard !Task.isCancelled,
                   let self,
                   self.sessionID == session,
-                  self.videoAudioSelectionID == selection else { return }
+                  self.videoAudioSelectionID == selection else {
+                if case let .success(audio) = result {
+                    self?.inputArtifacts.removeIfManaged(audio.fileURL)
+                }
+                return
+            }
             switch result {
-            case let .success(audio): self.videoReferenceAudio = audio
+            case let .success(audio):
+                let previousURL = self.videoReferenceAudio?.fileURL
+                self.videoReferenceAudio = audio
+                self.inputArtifacts.removeIfManaged(previousURL)
             case let .failure(error): self.errorMessage = error.localizedDescription
             }
             self.isLoadingVideoReferenceAudio = false
@@ -658,7 +721,9 @@ final class MediaStudioViewModel: ObservableObject {
         videoAudioTask?.cancel()
         videoAudioTask = nil
         isLoadingVideoReferenceAudio = false
+        let fileURL = videoReferenceAudio?.fileURL
         videoReferenceAudio = nil
+        inputArtifacts.removeIfManaged(fileURL)
     }
 
     func reportInputImageError(_ error: Error) {
@@ -666,7 +731,7 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     func resetForSignedOut() {
-        if ownerID != nil {
+        if stories.owner != nil {
             stories.reset()
         }
         sessionID = UUID()
@@ -694,6 +759,7 @@ final class MediaStudioViewModel: ObservableObject {
         videoGenerationTask?.cancel()
         videoGenerationTask = nil
         hasLoaded = false
+        hasLoadedHistory = false
         prompt = ""
         selectedModelID = nil
         inputImages = []
@@ -710,6 +776,7 @@ final class MediaStudioViewModel: ObservableObject {
         isGeneratingVideo = false
         videoProgress = nil
         errorMessage = nil
+        inputArtifacts.removeAll()
     }
 
     private func loadModels() {
@@ -762,52 +829,4 @@ final class MediaStudioViewModel: ObservableObject {
         modelsLoadTask = nil
     }
 
-    nonisolated private static func loadReferenceAudio(from url: URL) throws -> VideoGenerationInputAudio {
-        try Task.checkCancellation()
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentTypeKey])
-        let supportedMIMETypes = [
-            "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/vnd.wave",
-            "audio/mp4", "audio/x-m4a", "audio/aac",
-        ]
-        guard values.isRegularFile == true,
-              let mimeType = values.contentType?.preferredMIMEType,
-              supportedMIMETypes.contains(mimeType.lowercased()) else {
-            throw MediaStudioReferenceAudioError.unsupported
-        }
-        if let fileSize = values.fileSize, fileSize > 20 * 1024 * 1024 {
-            throw MediaStudioReferenceAudioError.tooLarge
-        }
-        let data = try AppBoundedFileReader.read(
-            url,
-            maximumBytes: 20 * 1_024 * 1_024
-        )
-        guard !data.isEmpty, data.count <= 20 * 1024 * 1024 else {
-            throw MediaStudioReferenceAudioError.tooLarge
-        }
-        try Task.checkCancellation()
-        let base64Data = data.base64EncodedString()
-        try Task.checkCancellation()
-        return .init(
-            name: url.lastPathComponent, mimeType: mimeType,
-            base64Data: base64Data
-        )
-    }
-
-}
-
-private enum MediaStudioReferenceAudioError: LocalizedError {
-    case unsupported
-    case tooLarge
-
-    var errorDescription: String? {
-        switch self {
-        case .unsupported:
-            "请选择 MP3、WAV、M4A 或 AAC 音频文件。"
-        case .tooLarge:
-            "参考音频不能超过 20 MB。"
-        }
-    }
 }

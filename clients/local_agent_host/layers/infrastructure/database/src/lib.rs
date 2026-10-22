@@ -8,7 +8,6 @@ use chatos_local_agent_protocol::{
     LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunListScope, LocalAgentRunPage,
     LocalAgentRunRecord, LocalAgentRunStatus,
 };
-use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -26,9 +25,14 @@ mod conversation_query_store;
 mod conversation_runtime_settings_store;
 mod conversation_store;
 mod maintenance;
+#[cfg(test)]
+mod maintenance_backup_tests;
 mod memory_cache_store;
 mod memory_outbox_store;
 mod migration;
+mod migration_backup_policy;
+#[cfg(all(test, unix))]
+mod migration_crash_tests;
 #[cfg(test)]
 mod migration_tests;
 mod model_snapshot_store;
@@ -36,6 +40,16 @@ mod notepad_store;
 mod notepad_support;
 mod plugin_query_store;
 mod plugin_store;
+mod receipt_cache;
+#[cfg(test)]
+mod receipt_cache_tests;
+mod receipt_fingerprint;
+mod receipt_result;
+#[cfg(test)]
+mod receipt_result_tests;
+mod receipt_store;
+#[cfg(test)]
+mod receipt_store_tests;
 mod remote_connection_store;
 mod requirement_plan_store;
 mod requirement_survey_store;
@@ -66,6 +80,11 @@ mod tool_approval_store;
 mod tool_store;
 mod tool_store_execution;
 mod tool_store_record;
+mod transaction;
+#[cfg(test)]
+mod transaction_cancellation_tests;
+#[cfg(test)]
+mod transaction_tests;
 
 pub use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentArtifactStore, LocalAgentArtifactWrite,
@@ -78,6 +97,7 @@ pub use chatos_local_agent_ports::{
     LocalPluginInstallationStore, LocalRemoteConnectionStore, LocalRequirementSurveyStore,
     RunTransition,
 };
+pub use receipt_cache::ReceiptCacheUsage;
 use run_record::{decode_run, decode_run_summary};
 use schema::RUN_SELECT;
 
@@ -189,7 +209,6 @@ impl SqliteClientStorage {
             && file_context.is_some_and(|(_, existed)| existed);
         if requires_migration {
             if let Some((path, true)) = file_context {
-                maintenance::remove_migration_backups(path)?;
                 maintenance::create_migration_backup(
                     &storage.pool,
                     path,
@@ -206,89 +225,8 @@ impl SqliteClientStorage {
                 maintenance::compact_database(&storage.pool).await?;
                 maintenance::verify_integrity(&storage.pool).await?;
             }
-            if let Some((path, _)) = file_context {
-                maintenance::remove_migration_backups(path)?;
-            }
-        } else if let Some((path, _)) = file_context {
-            maintenance::remove_migration_backups(path)?;
         }
         Ok(storage)
-    }
-
-    pub(crate) async fn begin_immediate(
-        connection: &mut SqliteConnection,
-    ) -> Result<(), ClientStorageError> {
-        sqlx::query("BEGIN IMMEDIATE")
-            .execute(&mut *connection)
-            .await
-            .db()?;
-        Ok(())
-    }
-
-    pub(crate) async fn finish_write<T>(
-        connection: &mut SqliteConnection,
-        result: Result<T, ClientStorageError>,
-    ) -> Result<T, ClientStorageError> {
-        match result {
-            Ok(value) => {
-                sqlx::query("COMMIT").execute(&mut *connection).await.db()?;
-                Ok(value)
-            }
-            Err(error) => {
-                let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
-                Err(error)
-            }
-        }
-    }
-
-    pub(crate) async fn replay<T: DeserializeOwned>(
-        connection: &mut SqliteConnection,
-        command: &IdempotentCommand,
-    ) -> Result<Option<T>, ClientStorageError> {
-        if !command.persist_receipt {
-            return Ok(None);
-        }
-        let row = sqlx::query(
-            "SELECT request_fingerprint, response_json FROM local_agent_command_receipts \
-             WHERE command_id = ?",
-        )
-        .bind(&command.command_id)
-        .fetch_optional(&mut *connection)
-        .await
-        .db()?;
-        let Some(row) = row else { return Ok(None) };
-        let fingerprint: String = row.try_get("request_fingerprint").db()?;
-        if fingerprint != command.request_fingerprint {
-            return Err(ClientStorageError::CommandMismatch(
-                command.command_id.clone(),
-            ));
-        }
-        let response: String = row.try_get("response_json").db()?;
-        Ok(Some(serde_json::from_str(&response)?))
-    }
-
-    pub(crate) async fn record_receipt<T: Serialize>(
-        connection: &mut SqliteConnection,
-        command: &IdempotentCommand,
-        response: &T,
-        now_unix_ms: i64,
-    ) -> Result<(), ClientStorageError> {
-        if !command.persist_receipt {
-            return Ok(());
-        }
-        sqlx::query(
-            "INSERT INTO local_agent_command_receipts(\
-             command_id, request_fingerprint, response_json, created_at_unix_ms) \
-             VALUES(?, ?, ?, ?)",
-        )
-        .bind(&command.command_id)
-        .bind(&command.request_fingerprint)
-        .bind(serde_json::to_string(response)?)
-        .bind(now_unix_ms)
-        .execute(&mut *connection)
-        .await
-        .db()?;
-        Ok(())
     }
 
     pub(crate) async fn insert_event(

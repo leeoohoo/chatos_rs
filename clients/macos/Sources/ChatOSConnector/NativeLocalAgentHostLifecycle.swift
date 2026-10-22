@@ -21,12 +21,64 @@ public enum NativeLocalAgentConcurrencyPolicy {
     public static let maximum = 16
 
     public static var adaptiveDefault: Int {
-        let processorBased = max(1, ProcessInfo.processInfo.activeProcessorCount / 2)
-        return min(maximum, processorBased)
+        NativeClientResourceBudgetPolicy.adaptiveDefault.localAgentHostWorkItems
     }
 
     public static func validated(_ value: Int) -> Int? {
         (minimum...maximum).contains(value) ? value : nil
+    }
+}
+
+/// A process-wide logical-job budget shared by the two client runtimes that can
+/// currently create model/tool work. Media remains outside this first governor
+/// slice and must not be reported as governed yet.
+public struct NativeClientResourceBudget: Sendable, Equatable {
+    public let totalLogicalJobs: Int
+    public let localAgentHostWorkItems: Int
+    public let swiftAgentRuns: Int
+
+    public init(totalLogicalJobs: Int, localAgentHostWorkItems: Int) {
+        precondition(totalLogicalJobs >= 2)
+        precondition((1..<totalLogicalJobs).contains(localAgentHostWorkItems))
+        self.totalLogicalJobs = totalLogicalJobs
+        self.localAgentHostWorkItems = localAgentHostWorkItems
+        self.swiftAgentRuns = totalLogicalJobs - localAgentHostWorkItems
+    }
+}
+
+public enum NativeClientResourceBudgetPolicy {
+    public static let minimumTotalLogicalJobs = 2
+    public static let maximumTotalLogicalJobs = 16
+
+    public static var adaptiveDefault: NativeClientResourceBudget {
+        recommended(logicalProcessorCount: ProcessInfo.processInfo.activeProcessorCount)
+    }
+
+    public static func recommended(
+        logicalProcessorCount: Int,
+        configuredTotalLogicalJobs: Int? = nil,
+        configuredHostWorkItems: Int? = nil
+    ) -> NativeClientResourceBudget {
+        // Start with the architecture plan's conservative process-group limit. Very small
+        // machines use two jobs; larger machines stay at three until a fixed Release baseline
+        // justifies raising it. Processor count alone is not evidence that memory/I/O scale too.
+        let conservativeDefault = logicalProcessorCount <= 2 ? 2 : 3
+        let total = configuredTotalLogicalJobs.flatMap(validatedTotal) ?? conservativeDefault
+        // Keep one slot for the Swift Agent runtime. A legacy Host override remains useful,
+        // but it no longer permits the two runtimes to multiply their independent defaults.
+        // The default also preserves two Swift lanes where possible so a manager reply is not
+        // blocked behind one long executor Run.
+        let recommendedHost = max(1, total - 2)
+        let requestedHost = configuredHostWorkItems
+            .flatMap(NativeLocalAgentConcurrencyPolicy.validated) ?? recommendedHost
+        return .init(
+            totalLogicalJobs: total,
+            localAgentHostWorkItems: min(total - 1, requestedHost)
+        )
+    }
+
+    public static func validatedTotal(_ value: Int) -> Int? {
+        (minimumTotalLogicalJobs...maximumTotalLogicalJobs).contains(value) ? value : nil
     }
 }
 

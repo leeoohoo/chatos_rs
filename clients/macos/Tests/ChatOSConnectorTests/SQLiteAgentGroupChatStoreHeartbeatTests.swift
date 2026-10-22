@@ -113,16 +113,22 @@ extension SQLiteAgentGroupChatStoreTests {
             )
         }
 
+#if DEBUG
         let countBefore = await store.preparedStatementCountForTesting()
+#endif
         let deliveries = try await store.enqueueDueAgentHeartbeats(
             ownerUserID: "alice",
             nowUnixMs: dueAt,
             agentLimit: 16
         )
+#if DEBUG
         let queryCount = await store.preparedStatementCountForTesting() - countBefore
+#endif
 
         // BEGIN + one candidate query + three batch writes + COMMIT.
+#if DEBUG
         XCTAssertEqual(queryCount, 6)
+#endif
         XCTAssertEqual(Set(deliveries.map(\.targetAgentID)), Set(agents.map(\.id)))
         XCTAssertTrue(deliveries.allSatisfy { $0.status == .pending && $0.triggerKind == .heartbeat })
     }
@@ -149,16 +155,22 @@ extension SQLiteAgentGroupChatStoreTests {
             dueAt = max(dueAt, try XCTUnwrap(agent.nextHeartbeatAtUnixMs))
         }
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let deliveries = try await store.enqueueDueAgentHeartbeats(
             ownerUserID: "alice",
             nowUnixMs: dueAt,
             agentLimit: 16
         )
+#if DEBUG
         let statementCount = await store.preparedStatementCountForTesting() - before
+#endif
 
         // BEGIN + candidates + rooms + members + messages + deliveries + schedules + COMMIT.
+#if DEBUG
         XCTAssertEqual(statementCount, 8)
+#endif
         XCTAssertEqual(Set(deliveries.map(\.targetAgentID)), Set(agents.map(\.id)))
         let rooms = try await store.listDirectConversations(ownerUserID: "alice")
         XCTAssertEqual(rooms.count, 12)
@@ -189,19 +201,25 @@ extension SQLiteAgentGroupChatStoreTests {
             todoIDs.insert(todo.id)
         }
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let deliveries = try await store.enqueuePendingAgentTodos(
             ownerUserID: "alice",
             nowUnixMs: 1_000,
             agentLimit: 12
         )
+#if DEBUG
         let statementCount = await store.preparedStatementCountForTesting() - before
+#endif
 
         XCTAssertEqual(deliveries.count, 12)
         XCTAssertEqual(Set(deliveries.map(\.targetAgentID)).count, 12)
         XCTAssertEqual(Set(deliveries.map { String($0.deduplicationKey.dropFirst("todo:".count)) }), todoIDs)
         // BEGIN + one candidate query + one Delivery read + three batch writes + COMMIT.
+#if DEBUG
         XCTAssertEqual(statementCount, 7)
+#endif
     }
 
     func testPendingTodoBatchReactivatesFailedDeliveryWithoutDuplicateRows() async throws {
@@ -248,19 +266,25 @@ extension SQLiteAgentGroupChatStoreTests {
             nowUnixMs: 104
         )
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let retryBatch = try await store.enqueuePendingAgentTodos(
             ownerUserID: "alice",
             nowUnixMs: 105
         )
         let retried = try XCTUnwrap(retryBatch.first)
+#if DEBUG
         let statementCount = await store.preparedStatementCountForTesting() - before
+#endif
 
         XCTAssertEqual(retried.id, first.id)
         XCTAssertEqual(retried.messageID, first.messageID)
         XCTAssertEqual(retried.attempt, 1)
         XCTAssertEqual(retried.status, .pending)
+#if DEBUG
         XCTAssertEqual(statementCount, 7)
+#endif
         XCTAssertEqual(try sqliteInt(
             url,
             sql: "SELECT COUNT(*) FROM project_agent_deliveries WHERE deduplication_key = 'todo:\(todo.id)'"
@@ -299,7 +323,9 @@ extension SQLiteAgentGroupChatStoreTests {
             sources.append(.init(roomID: room.id, messageID: post.message.id))
         }
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let todo = try await store.createAgentTodo(
             ownerUserID: "alice",
             agentID: agent.id,
@@ -311,9 +337,13 @@ extension SQLiteAgentGroupChatStoreTests {
             ),
             nowUnixMs: 1_000
         )
+#if DEBUG
         let statementCount = await store.preparedStatementCountForTesting() - before
+#endif
 
+#if DEBUG
         XCTAssertEqual(statementCount, 15)
+#endif
         let links = try await store.listAgentTodoSources(
             ownerUserID: "alice",
             agentID: agent.id,

@@ -45,8 +45,9 @@ struct MediaStudioView: View {
             content
         }
         .background(studioBackground)
-        .task { viewModel.loadIfNeeded() }
+        .task(id: appModel.authentication.phase) { viewModel.loadIfNeeded() }
         .onChange(of: viewModel.section) { _, section in
+            viewModel.loadSelectedSectionIfNeeded()
             if section == .story { viewModel.stories.backToList() }
         }
         .sheet(item: $imagePreview) { request in

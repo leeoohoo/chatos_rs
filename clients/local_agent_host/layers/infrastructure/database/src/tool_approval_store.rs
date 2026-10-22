@@ -62,7 +62,7 @@ pub(super) async fn decide(
     batch_event_id: &str,
     now_unix_ms: i64,
 ) -> Result<LocalAgentToolApprovalResult, ClientStorageError> {
-    let mut connection = storage.pool.acquire().await.db()?;
+    let mut connection = storage.acquire_write().await.db()?;
     SqliteClientStorage::begin_immediate(&mut connection).await?;
     let result = async {
         if let Some(replay) = SqliteClientStorage::replay(&mut connection, command).await? {

@@ -28,9 +28,6 @@ pub(super) fn task_display_status(
             if result_status == Some("blocked") {
                 return "result_blocked";
             }
-            if result_status == Some("failed") {
-                return "acceptance_failed";
-            }
             let checks = report
                 .and_then(|report| report.get("acceptance_checks"))
                 .and_then(Value::as_array);
@@ -49,6 +46,9 @@ pub(super) fn task_display_status(
                 {
                     "evidence_incomplete"
                 }
+                // Match the Swift presentation order: an aggregate failure can mean
+                // missing evidence, not necessarily a rejected acceptance check.
+                _ if result_status == Some("failed") => "acceptance_failed",
                 _ => "completed",
             }
         }

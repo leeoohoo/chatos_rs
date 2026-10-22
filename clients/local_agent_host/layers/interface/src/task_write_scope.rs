@@ -206,6 +206,12 @@ pub fn local_task_write_scope_overlap(left: &[String], right: &[String]) -> Opti
     None
 }
 
+fn is_path_ancestor(ancestor: &str, descendant: &str) -> bool {
+    descendant
+        .strip_prefix(ancestor)
+        .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
 #[cfg(test)]
 mod ownership_alias_tests {
     use super::local_task_write_scope_overlap;
@@ -220,10 +226,4 @@ mod ownership_alias_tests {
         }
         assert!(local_task_write_scope_overlap(&["src".into()], &["src-other".into()]).is_none());
     }
-}
-
-fn is_path_ancestor(ancestor: &str, descendant: &str) -> bool {
-    descendant
-        .strip_prefix(ancestor)
-        .is_some_and(|suffix| suffix.starts_with('/'))
 }

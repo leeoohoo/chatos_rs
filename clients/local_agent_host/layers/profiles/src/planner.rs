@@ -564,8 +564,8 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
         }
         let async_handoff_confirmed = self.profile_key == MAIN_CHAT_PROFILE_KEY
             && completed_async_task_handoff(claim.run.continuation_input.as_ref())
-            && !pending_review
-                .is_some_and(|review| review.get("pending").and_then(Value::as_bool) == Some(true))
+            && pending_review
+                .is_none_or(|review| review.get("pending").and_then(Value::as_bool) != Some(true))
             && !claim.run.continuation_input.as_ref().is_some_and(|value| {
                 value
                     .get("guidance")

@@ -173,8 +173,14 @@ struct StoryAgentStartView: View {
 struct StoryAgentRunPanel: View {
     @EnvironmentObject private var appModel: AppModel
     @ObservedObject var viewModel: StoryStudioViewModel
+    @ObservedObject private var planningActivity: StoryPlanningActivityState
     @State private var showsHistory = false
     @State private var resumeID: UUID?
+
+    init(viewModel: StoryStudioViewModel) {
+        self.viewModel = viewModel
+        planningActivity = viewModel.planningActivity
+    }
 
     var body: some View {
         if let run = viewModel.latestAgentRun {
@@ -186,12 +192,12 @@ struct StoryAgentRunPanel: View {
                 Text(label(run)).font(.caption).foregroundStyle(run.applied ? Color.green : .secondary)
                 if let event = run.events.last { Text(event.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                 if viewModel.isBusy, viewModel.activeProjectID == run.projectID,
-                   !viewModel.streamingModelText.isEmpty {
+                   !planningActivity.modelText.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         Label(appModel.localized("模型实时输出", english: "Live Model Output"), systemImage: "waveform")
                             .font(.caption.weight(.semibold)).foregroundStyle(.purple)
                         ScrollView {
-                            Text(viewModel.streamingModelText)
+                            Text(planningActivity.modelText)
                                 .font(.caption.monospaced()).textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }.frame(maxHeight: 110)

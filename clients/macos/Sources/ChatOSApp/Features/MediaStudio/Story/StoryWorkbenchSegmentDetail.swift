@@ -113,30 +113,12 @@ extension StoryWorkbenchView {
                     } else if let attempt = segment.attempt {
                         let isGeneratingVideo = viewModel.isGeneratingVideo(segment.id, projectID: project.id)
                         if isGeneratingVideo {
-                            VStack(alignment: .leading, spacing: 9) {
-                                HStack(spacing: 8) {
-                                    ProgressView().controlSize(.small)
-                                    Text(appModel.localized("视频任务正在提交和生成", english: "Submitting and generating video"))
-                                        .font(.callout.weight(.medium))
-                                    Spacer()
-                                    if let percent = viewModel.videoProgress(segment.id, projectID: project.id)?.percent {
-                                        Text("\(Int(min(100, max(0, percent))))%")
-                                            .font(.caption.monospacedDigit())
-                                    }
-                                }
-                                if let percent = viewModel.videoProgress(segment.id, projectID: project.id)?.percent {
-                                    ProgressView(value: min(100, max(0, percent)), total: 100)
-                                }
-                                if attempt.jobID == nil {
-                                    Text(appModel.localized(
-                                        "正在等待生成服务确认，请稍候。",
-                                        english: "Waiting for the generation service to confirm."
-                                    ))
-                                    .font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                            .padding(12)
-                            .background(Color.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                            StoryVideoGenerationProgressView(
+                                activity: viewModel.generationActivity,
+                                key: .init(projectID: project.id, segmentID: segment.id),
+                                isAwaitingJobID: attempt.jobID == nil
+                            )
+                            .environmentObject(appModel)
                         } else {
                             if attempt.jobID != nil {
                                 Button(appModel.localized("查询原任务 / 恢复下载", english: "Check Task / Resume Download")) {
@@ -464,4 +446,39 @@ extension StoryWorkbenchView {
         }
     }
 
+}
+
+private struct StoryVideoGenerationProgressView: View {
+    @EnvironmentObject private var appModel: AppModel
+    @ObservedObject var activity: StoryGenerationActivityState
+    let key: StoryStudioViewModel.VideoGenerationKey
+    let isAwaitingJobID: Bool
+
+    var body: some View {
+        let percent = activity.videoProgress[key]?.percent
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(appModel.localized("视频任务正在提交和生成", english: "Submitting and generating video"))
+                    .font(.callout.weight(.medium))
+                Spacer()
+                if let percent {
+                    Text("\(Int(min(100, max(0, percent))))%")
+                        .font(.caption.monospacedDigit())
+                }
+            }
+            if let percent {
+                ProgressView(value: min(100, max(0, percent)), total: 100)
+            }
+            if isAwaitingJobID {
+                Text(appModel.localized(
+                    "正在等待生成服务确认，请稍候。",
+                    english: "Waiting for the generation service to confirm."
+                ))
+                .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .background(Color.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
 }

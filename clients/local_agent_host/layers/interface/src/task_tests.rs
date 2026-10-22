@@ -298,7 +298,7 @@ fn notification_policy_defaults_by_graph_shape_and_requires_consistency() {
             .as_str(),
         "progress_summary"
     );
-    let single = vec![task("only")];
+    let single = [task("only")];
     assert_eq!(
         resolve_local_task_graph_notification_policy(
             single.iter().map(|task| &task.input),

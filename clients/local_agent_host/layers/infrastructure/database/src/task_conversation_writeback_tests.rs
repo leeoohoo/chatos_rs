@@ -191,6 +191,41 @@ fn failed_task_display_distinguishes_execution_from_unverified_acceptance() {
 }
 
 #[test]
+fn completed_task_acceptance_display_preserves_result_and_check_precedence() {
+    for (result_status, checks, expected) in [
+        ("blocked", vec!["failed", "not_verified"], "result_blocked"),
+        (
+            "failed",
+            vec!["passed", "not_verified"],
+            "evidence_incomplete",
+        ),
+        (
+            "failed",
+            vec!["not_verified", "failed"],
+            "acceptance_failed",
+        ),
+        ("failed", vec!["passed"], "acceptance_failed"),
+        ("failed", vec![], "acceptance_failed"),
+        ("succeeded", vec!["passed"], "completed"),
+    ] {
+        let outcome = json!({"task_acceptance": {
+            "result_status": result_status,
+            // The new field must take precedence over the compatibility field.
+            "status": "succeeded",
+            "reason": "Acceptance result",
+            "acceptance_checks": checks.iter().enumerate().map(|(index, status)| {
+                json!({"criterion_index": index, "status": status, "evidence": "Check result"})
+            }).collect::<Vec<_>>()
+        }});
+        assert_eq!(
+            super::task_display_status("succeeded", Some("succeeded"), Some(&outcome)),
+            expected,
+            "result_status={result_status}, checks={checks:?}"
+        );
+    }
+}
+
+#[test]
 fn progress_delivery_without_synthesis_includes_all_full_reports_in_one_text() {
     let first = format!("# 第一份\n{}\nFIRST_REPORT_END", "财务依据\n".repeat(2000));
     let second = "# 第二份\n完整独立结论\nSECOND_REPORT_END";
@@ -2156,7 +2191,10 @@ async fn failed_branch_reports_partial_success_and_blocked_dependents_then_retry
     let text = summary.content["summary"].as_str().expect("summary text");
     assert!(text
         .contains("The work finished with partial results: 1 succeeded, 1 failed, and 1 blocked."));
-    assert!(text.contains("- Independent deliverable [succeeded]:"));
+    assert!(
+        text.contains("- Independent deliverable [completed]:"),
+        "{text}"
+    );
     assert!(text.contains("- Required foundation [execution failed]:"));
     assert!(text.contains("- Dependent integration [blocked]"));
     assert!(!text.contains('：'));

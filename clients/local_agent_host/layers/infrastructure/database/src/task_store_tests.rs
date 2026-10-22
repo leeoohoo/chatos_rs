@@ -222,7 +222,7 @@ async fn idle_task_materialization_does_not_wait_for_the_sqlite_writer() {
     let storage = SqliteClientStorage::connect_file(&root.path().join("agent.sqlite3"))
         .await
         .expect("storage");
-    let mut writer = storage.pool.acquire().await.expect("writer connection");
+    let mut writer = storage.acquire_write().await.expect("writer connection");
     SqliteClientStorage::begin_immediate(&mut writer)
         .await
         .expect("hold write reservation");
@@ -236,8 +236,7 @@ async fn idle_task_materialization_does_not_wait_for_the_sqlite_writer() {
     .expect("idle task lookup");
     assert!(result.is_none());
 
-    sqlx::query("ROLLBACK")
-        .execute(&mut *writer)
+    SqliteClientStorage::finish_write(&mut writer, Ok(()))
         .await
         .expect("release writer");
 }

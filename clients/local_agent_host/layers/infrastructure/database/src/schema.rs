@@ -733,17 +733,12 @@ pub(super) const SCHEMA_V34: &[&str] = &[
        END",
 ];
 
-/// Bounds transient replay and delivery bookkeeping. Command receipts only protect short-lived
-/// IPC retries; retaining complete Run responses indefinitely duplicated most of the database.
-/// Synced Memory rows are likewise delivery receipts, not the authoritative Memory store.
+/// The response cache remains transient, but v35 retains write identities separately.
+/// Preserve existing receipts on future upgrades through v33: deleting them here
+/// would destroy the identities before v35 can backfill them. Already deleted
+/// receipts in databases previously migrated by older binaries cannot be recovered.
+/// Synced Memory rows are delivery receipts, not the authoritative Memory store.
 pub(super) const SCHEMA_V33: &[&str] = &[
-    "DROP TABLE local_agent_command_receipts",
-    "CREATE TABLE local_agent_command_receipts (\
-       command_id TEXT PRIMARY KEY NOT NULL,\
-       request_fingerprint TEXT NOT NULL,\
-       response_json TEXT NOT NULL,\
-       created_at_unix_ms INTEGER NOT NULL\
-     )",
     "CREATE INDEX local_agent_command_receipts_retention ON \
        local_agent_command_receipts(created_at_unix_ms DESC, command_id DESC)",
     "CREATE TRIGGER local_agent_command_receipts_prune AFTER INSERT ON \
@@ -769,5 +764,24 @@ pub(super) const SCHEMA_V33: &[&str] = &[
              SELECT source_id, record_id FROM local_memory_outbox WHERE status = 'synced' \
                ORDER BY updated_at_unix_ms DESC, source_id, record_id LIMIT -1 OFFSET 1000\
            ); \
+       END",
+];
+
+/// Durable write identity is independent of the evictable historical response.
+/// A tombstone means the local transaction completed, not that an external tool
+/// or provider executed exactly once. Deliberately no entity foreign key or TTL.
+pub(super) const SCHEMA_V35: &[&str] = &[
+    "CREATE TABLE local_agent_command_tombstones (\
+       command_id TEXT PRIMARY KEY NOT NULL,\
+       request_fingerprint TEXT NOT NULL,\
+       completed_at_unix_ms INTEGER NOT NULL\
+     )",
+    // BEFORE INSERT is essential: the existing AFTER INSERT pruning trigger
+    // can immediately evict an old-timestamp response, but not its identity.
+    "CREATE TRIGGER local_agent_command_receipts_dedupe BEFORE INSERT ON \
+       local_agent_command_receipts BEGIN \
+         INSERT INTO local_agent_command_tombstones(\
+           command_id, request_fingerprint, completed_at_unix_ms\
+         ) VALUES(NEW.command_id, NEW.request_fingerprint, NEW.created_at_unix_ms); \
        END",
 ];

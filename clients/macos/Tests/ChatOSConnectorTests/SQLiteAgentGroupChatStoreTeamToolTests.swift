@@ -358,7 +358,9 @@ extension SQLiteAgentGroupChatStoreTests {
         let outsider = try await makeAgent(store, name: "批量校验外部成员")
         mentionedAgentIDs.append(outsider.id)
 
+#if DEBUG
         let countBefore = await store.preparedStatementCountForTesting()
+#endif
         do {
             _ = try await store.postMessage(
                 ownerUserID: "alice",
@@ -375,7 +377,9 @@ extension SQLiteAgentGroupChatStoreTests {
         } catch {
             XCTAssertEqual(error as? AgentGroupChatError, .notMember)
         }
+#if DEBUG
         let queryCount = await store.preparedStatementCountForTesting() - countBefore
+#endif
         let messages = try await store.listMessages(
             ownerUserID: "alice",
             roomID: room.id,
@@ -385,11 +389,15 @@ extension SQLiteAgentGroupChatStoreTests {
 
         // BEGIN + room + active-members snapshot + ROLLBACK. The count is independent of the
         // number of mentioned Agents; the old path added one SELECT for every identifier.
+#if DEBUG
         XCTAssertEqual(queryCount, 4)
+#endif
         XCTAssertTrue(messages.isEmpty)
 
         let validMentionIDs = Array(mentionedAgentIDs.dropLast())
+#if DEBUG
         let validCountBefore = await store.preparedStatementCountForTesting()
+#endif
         let post = try await store.postMessage(
             ownerUserID: "alice",
             roomID: room.id,
@@ -401,11 +409,15 @@ extension SQLiteAgentGroupChatStoreTests {
             ),
             limits: .init(maximumAgentRunsPerRootMessage: 32)
         )
+#if DEBUG
         let validQueryCount = await store.preparedStatementCountForTesting() - validCountBefore
+#endif
 
         // BEGIN + room + active-members snapshot + message + batched mentions + delivery count
         // + batched deliveries + COMMIT. The write count no longer grows with recipients.
+#if DEBUG
         XCTAssertEqual(validQueryCount, 8)
+#endif
         XCTAssertEqual(post.deliveries.count, validMentionIDs.count)
         XCTAssertEqual(post.deliveries.map(\.targetAgentID), validMentionIDs)
         XCTAssertTrue(post.deliveries.allSatisfy { $0.status == .pending && $0.attempt == 0 })

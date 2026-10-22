@@ -25,16 +25,22 @@ extension SQLiteAgentGroupChatStoreTests {
             draft: .init(title: "已有执行占位的任务", teamRoomID: room.id),
             nowUnixMs: 100
         )
+#if DEBUG
         let readyStateCountBefore = await store.preparedStatementCountForTesting()
+#endif
         let readyState = try await store.agentTodoScheduleState(
             ownerUserID: "alice",
             agentID: agent.id
         )
+#if DEBUG
         let readyStateStatementCount = await store.preparedStatementCountForTesting()
             - readyStateCountBefore
+#endif
         XCTAssertNil(readyState.runningTodo)
         XCTAssertEqual(readyState.readyTodo?.id, todo.id)
+#if DEBUG
         XCTAssertEqual(readyStateStatementCount, 4)
+#endif
 
         let pendingDelivery = try await store.startNextReadyAgentTodo(
             ownerUserID: "alice",
@@ -255,7 +261,9 @@ extension SQLiteAgentGroupChatStoreTests {
         _ = try await store.openHumanAgentDirect(ownerUserID: "alice", agentID: worker.id)
         _ = try await store.openHumanAgentDirect(ownerUserID: "alice", agentID: manager.id)
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let deliveries = try await store.enqueueAgentTodoStatus(
             ownerUserID: "alice",
             agentID: worker.id,
@@ -263,9 +271,13 @@ extension SQLiteAgentGroupChatStoreTests {
             excludingAgentID: nil,
             nowUnixMs: 102
         )
+#if DEBUG
         let statementCount = await store.preparedStatementCountForTesting() - before
+#endif
 
+#if DEBUG
         let repeatedBefore = await store.preparedStatementCountForTesting()
+#endif
         let repeated = try await store.enqueueAgentTodoStatus(
             ownerUserID: "alice",
             agentID: worker.id,
@@ -273,14 +285,20 @@ extension SQLiteAgentGroupChatStoreTests {
             excludingAgentID: nil,
             nowUnixMs: 103
         )
+#if DEBUG
         let repeatedStatementCount = await store.preparedStatementCountForTesting()
             - repeatedBefore
+#endif
 
         XCTAssertEqual(deliveries.count, 2)
         XCTAssertEqual(Set(deliveries.map(\.targetAgentID)), Set([worker.id, manager.id]))
         XCTAssertEqual(Set(deliveries.map(\.id)), Set(repeated.map(\.id)))
+#if DEBUG
         XCTAssertEqual(statementCount, 11)
+#endif
+#if DEBUG
         XCTAssertEqual(repeatedStatementCount, 9)
+#endif
     }
 
     func testTodoReadyUsesOneReadinessQueryAndNoDeliveryReadback() async throws {
@@ -304,28 +322,40 @@ extension SQLiteAgentGroupChatStoreTests {
         )
         _ = try await store.openHumanAgentDirect(ownerUserID: "alice", agentID: agent.id)
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let first = try await store.enqueueAgentTodoReady(
             ownerUserID: "alice",
             agentID: agent.id,
             todoID: todo.id,
             nowUnixMs: 101
         )
+#if DEBUG
         let firstStatementCount = await store.preparedStatementCountForTesting() - before
+#endif
 
+#if DEBUG
         let repeatedBefore = await store.preparedStatementCountForTesting()
+#endif
         let repeated = try await store.enqueueAgentTodoReady(
             ownerUserID: "alice",
             agentID: agent.id,
             todoID: todo.id,
             nowUnixMs: 102
         )
+#if DEBUG
         let repeatedStatementCount = await store.preparedStatementCountForTesting()
             - repeatedBefore
+#endif
 
         XCTAssertEqual(first?.id, repeated?.id)
+#if DEBUG
         XCTAssertEqual(firstStatementCount, 9)
+#endif
+#if DEBUG
         XCTAssertEqual(repeatedStatementCount, 7)
+#endif
     }
 
     func testReadyDependentTodoNotificationsBatchReadsAndWritesAtomically() async throws {
@@ -387,30 +417,42 @@ extension SQLiteAgentGroupChatStoreTests {
             nowUnixMs: 201
         )
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let first = try await store.enqueueReadyDependentAgentTodos(
             ownerUserID: "alice",
             prerequisiteTodoID: prerequisite.id,
             nowUnixMs: 202
         )
+#if DEBUG
         let firstStatementCount = await store.preparedStatementCountForTesting() - before
+#endif
 
+#if DEBUG
         let repeatedBefore = await store.preparedStatementCountForTesting()
+#endif
         let repeated = try await store.enqueueReadyDependentAgentTodos(
             ownerUserID: "alice",
             prerequisiteTodoID: prerequisite.id,
             nowUnixMs: 203
         )
+#if DEBUG
         let repeatedStatementCount = await store.preparedStatementCountForTesting()
             - repeatedBefore
+#endif
 
         XCTAssertEqual(first.count, 12)
         XCTAssertEqual(Set(first.map(\.targetAgentID)), dependentAgentIDs)
         XCTAssertEqual(Set(first.map(\.id)), Set(repeated.map(\.id)))
         // The first call creates all twelve missing direct rooms and members in two batch writes;
         // the previous per-Agent open path required about 93 statements for the whole operation.
+#if DEBUG
         XCTAssertEqual(firstStatementCount, 15)
+#endif
+#if DEBUG
         XCTAssertEqual(repeatedStatementCount, 7)
+#endif
     }
 
 }

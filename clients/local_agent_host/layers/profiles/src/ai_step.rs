@@ -703,14 +703,37 @@ mod tests {
         };
         assert_eq!(output["content"], report["final_response"]);
         assert_eq!(output["task_acceptance"]["status"], "succeeded");
+        // A review can finish normally while finding failed or unverified
+        // criteria. Preserve those findings; do not turn them into execution
+        // errors or allow the model to replace the accepted final text.
+        for verdict in ["failed", "not_verified"] {
+            claim.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
+                ["acceptance_checks"][0]["status"] = json!(verdict);
+            let LocalAgentStepOutcome::Succeed { output } = reduce_ai_step_outcome_for_claim(
+                AiSingleStepOutcome::Final(response(None)),
+                &claim,
+                10000,
+                &ConservativeToolSafetyPolicy,
+            )
+            .expect("valid review finding must not become an execution failure") else {
+                panic!("expected completed review with independent acceptance finding")
+            };
+            assert_eq!(output["content"], report["final_response"]);
+            assert_eq!(
+                output["task_acceptance"]["acceptance_checks"][0]["status"],
+                verdict
+            );
+        }
+        // Malformed reports still fail validation rather than bypassing it.
         claim.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
-            ["acceptance_checks"][0]["status"] = json!("not_verified");
-        assert!(reduce_ai_step_outcome_for_claim(
+            ["acceptance_checks"][0]["status"] = json!("unknown-verdict");
+        let error = reduce_ai_step_outcome_for_claim(
             AiSingleStepOutcome::Final(response(None)),
             &claim,
             10000,
-            &ConservativeToolSafetyPolicy
+            &ConservativeToolSafetyPolicy,
         )
-        .is_err());
+        .unwrap_err();
+        assert!(error.contains("acceptance check status must be passed, failed, or not_verified"));
     }
 }

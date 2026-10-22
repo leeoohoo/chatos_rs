@@ -18,7 +18,7 @@ pub(super) async fn resolve(
     review
         .validate()
         .map_err(ClientStorageError::InvalidState)?;
-    let mut connection = storage.pool.acquire().await.db()?;
+    let mut connection = storage.acquire_write().await.db()?;
     SqliteClientStorage::begin_immediate(&mut connection).await?;
     let result = async {
         if let Some(replay) = SqliteClientStorage::replay(&mut connection, command).await? { return Ok(replay); }

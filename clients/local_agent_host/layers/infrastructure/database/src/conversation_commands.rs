@@ -24,7 +24,7 @@ pub(super) async fn resume_conversation_turn(
     now_unix_ms: i64,
 ) -> Result<LocalConversationTurnUpdate, ClientStorageError> {
     turn.validate().map_err(ClientStorageError::InvalidState)?;
-    let mut connection = storage.pool.acquire().await.db()?;
+    let mut connection = storage.acquire_write().await.db()?;
     SqliteClientStorage::begin_immediate(&mut connection).await?;
     let result = async {
         if let Some(replay) = SqliteClientStorage::replay(&mut connection, command).await? {
@@ -134,7 +134,7 @@ pub(super) async fn cancel_conversation_turn(
     now_unix_ms: i64,
 ) -> Result<LocalConversationTurnUpdate, ClientStorageError> {
     turn.validate().map_err(ClientStorageError::InvalidState)?;
-    let mut connection = storage.pool.acquire().await.db()?;
+    let mut connection = storage.acquire_write().await.db()?;
     SqliteClientStorage::begin_immediate(&mut connection).await?;
     let result = async {
         if let Some(replay) = SqliteClientStorage::replay(&mut connection, command).await? {
@@ -186,7 +186,7 @@ pub(super) async fn guide_conversation_turn(
     now_unix_ms: i64,
 ) -> Result<LocalConversationTurnUpdate, ClientStorageError> {
     turn.validate().map_err(ClientStorageError::InvalidState)?;
-    let mut connection = storage.pool.acquire().await.db()?;
+    let mut connection = storage.acquire_write().await.db()?;
     SqliteClientStorage::begin_immediate(&mut connection).await?;
     let result = async {
         if let Some(replay) = SqliteClientStorage::replay(&mut connection, command).await? {

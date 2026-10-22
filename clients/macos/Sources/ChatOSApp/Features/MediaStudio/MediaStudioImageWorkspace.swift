@@ -501,14 +501,25 @@ extension MediaStudioView {
         VStack(alignment: .leading, spacing: 5) {
             ZStack(alignment: .topTrailing) {
                 Group {
-                    AppAsyncBase64Image(
-                        base64: input.base64Data,
-                        identity: "image-input|\(index)|\(input.name)",
-                        maximumDisplayPixelSize: 256
-                    ) { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
-                        Color.primary.opacity(0.04)
+                    if let fileURL = input.fileURL {
+                        AppAsyncLocalFileImage(
+                            url: fileURL,
+                            maximumDisplayPixelSize: 256
+                        ) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: {
+                            Color.primary.opacity(0.04)
+                        }
+                    } else {
+                        AppAsyncBase64Image(
+                            base64: input.base64Data,
+                            identity: "image-input|\(index)|\(input.name)",
+                            maximumDisplayPixelSize: 256
+                        ) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: {
+                            Color.primary.opacity(0.04)
+                        }
                     }
                 }
                 .frame(height: 68).clipped().clipShape(RoundedRectangle(cornerRadius: 7))

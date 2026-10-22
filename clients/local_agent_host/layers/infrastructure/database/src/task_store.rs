@@ -73,7 +73,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError> {
         graph.validate().map_err(ClientStorageError::InvalidState)?;
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
@@ -319,7 +319,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         if !has_ready_task {
             return Ok(None);
         }
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
         let result = super::task_lifecycle::start_next_task_run(
             &mut connection,
@@ -363,7 +363,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         if !has_ready_task {
             return Ok(None);
         }
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
         let result = super::task_lifecycle::start_next_task_run(
             &mut connection,
@@ -388,7 +388,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         run_event_id: &str,
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
         let result = super::task_commands::cancel_task(
             &mut connection,
@@ -414,7 +414,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         retry_instruction: Option<&str>,
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
         let result = super::task_commands::retry_task(
             &mut connection,
@@ -439,7 +439,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         run_event_prefix: &str,
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
+        let mut connection = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
         let result = super::task_commands::restart_task(
             &mut connection,

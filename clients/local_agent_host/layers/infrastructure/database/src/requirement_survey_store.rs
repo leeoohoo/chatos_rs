@@ -95,7 +95,7 @@ impl LocalRequirementSurveyStore for SqliteClientStorage {
         command: &IdempotentCommand,
         survey: &LocalRequirementSurvey,
     ) -> Result<LocalRequirementSurvey, ClientStorageError> {
-        let mut database = self.pool.acquire().await.db()?;
+        let mut database = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut database).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut database, command).await? {
@@ -200,7 +200,7 @@ impl LocalRequirementSurveyStore for SqliteClientStorage {
         expected_version: u64,
         run_event_id: &str,
     ) -> Result<LocalRequirementSurveyResolution, ClientStorageError> {
-        let mut database = self.pool.acquire().await.db()?;
+        let mut database = self.acquire_write().await.db()?;
         Self::begin_immediate(&mut database).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut database, command).await? {

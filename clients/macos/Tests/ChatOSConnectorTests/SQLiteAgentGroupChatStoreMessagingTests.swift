@@ -173,7 +173,9 @@ extension SQLiteAgentGroupChatStoreTests {
             )
         }
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let post = try await store.postMessage(
             ownerUserID: "alice",
             roomID: conversation.id,
@@ -185,9 +187,13 @@ extension SQLiteAgentGroupChatStoreTests {
             ),
             limits: .init()
         )
+#if DEBUG
         let statementCount = await store.preparedStatementCountForTesting() - before
+#endif
 
+#if DEBUG
         XCTAssertEqual(statementCount, 8)
+#endif
         XCTAssertEqual(post.message.attachmentItems.map(\.name), drafts.map(\.name))
         XCTAssertEqual(try sqliteInt(
             url,

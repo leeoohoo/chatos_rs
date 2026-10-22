@@ -94,7 +94,9 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
     let storage = SqliteClientStorage::connect_file(&database_path)
         .await
         .expect("migrate storage");
-    assert!(migration_backups(&database_path).is_empty());
+    let backups = migration_backups(&database_path);
+    assert_eq!(backups.len(), 1);
+    assert_recovery_snapshot(&backups[0], 18).await;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -136,7 +138,10 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
     .fetch_one(&storage.pool)
     .await
     .expect("unrelated receipt");
-    assert_eq!(receipt_count, 0);
+    assert_eq!(
+        receipt_count, 1,
+        "future upgrades must preserve write identities"
+    );
     let schema_version: i64 =
         sqlx::query_scalar("SELECT MAX(version) FROM client_schema_migrations")
             .fetch_one(&storage.pool)
@@ -150,7 +155,10 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
         database_path.clone(),
         database_path.with_extension("sqlite-wal"),
         database_path.with_extension("sqlite-shm"),
-    ] {
+    ]
+    .into_iter()
+    .chain(backups)
+    {
         if let Err(error) = std::fs::remove_file(path) {
             assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
         }
@@ -158,7 +166,7 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
 }
 
 #[tokio::test]
-async fn current_database_reopen_does_not_create_redundant_backup() {
+async fn current_database_reopen_preserves_existing_backups_without_creating_more() {
     let database_path = std::env::temp_dir().join(format!(
         "chatos-local-current-schema-{}.sqlite",
         Uuid::new_v4()
@@ -181,14 +189,21 @@ async fn current_database_reopen_does_not_create_redundant_backup() {
     let reopened = SqliteClientStorage::connect_file(&database_path)
         .await
         .expect("reopen current database");
-    assert!(migration_backups(&database_path).is_empty());
-    assert!(!stale_backup.exists());
+    assert_eq!(
+        migration_backups(&database_path),
+        vec![stale_backup.clone()]
+    );
+    assert_eq!(
+        std::fs::read(&stale_backup).expect("read retained backup"),
+        b"stale migration backup"
+    );
     reopened.pool.close().await;
     drop(reopened);
     for path in [
         database_path.clone(),
         database_path.with_extension("sqlite-wal"),
         database_path.with_extension("sqlite-shm"),
+        stale_backup,
     ] {
         if let Err(error) = std::fs::remove_file(path) {
             assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
@@ -197,7 +212,7 @@ async fn current_database_reopen_does_not_create_redundant_backup() {
 }
 
 #[tokio::test]
-async fn version_thirty_three_discards_transient_history_and_bounds_new_rows() {
+async fn upgrade_through_version_thirty_three_preserves_receipts_and_bounds_response_rows() {
     let database_path = std::env::temp_dir().join(format!(
         "chatos-transient-history-migration-{}.sqlite",
         Uuid::new_v4()
@@ -214,6 +229,7 @@ async fn version_thirty_three_discards_transient_history_and_bounds_new_rows() {
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("open version 32 database");
+    rewind_receipt_v35(&mut connection).await;
     for statement in [
         "DROP TRIGGER local_agent_step_memory_discard",
         "DROP TABLE local_agent_step_memory",
@@ -259,14 +275,19 @@ async fn version_thirty_three_discards_transient_history_and_bounds_new_rows() {
             .fetch_one(&migrated.pool)
             .await
             .expect("count migrated receipts");
-    assert_eq!(receipt_count, 0);
+    assert_eq!(
+        receipt_count, 1,
+        "legacy responses and identities survive upgrade"
+    );
     let outbox_statuses: Vec<String> =
         sqlx::query_scalar("SELECT status FROM local_memory_outbox ORDER BY status")
             .fetch_all(&migrated.pool)
             .await
             .expect("read migrated outbox");
     assert_eq!(outbox_statuses, vec!["pending"]);
-    assert!(migration_backups(&database_path).is_empty());
+    let backups = migration_backups(&database_path);
+    assert_eq!(backups.len(), 1);
+    assert_recovery_snapshot(&backups[0], 32).await;
 
     sqlx::query(
         "INSERT INTO local_agent_command_receipts(\
@@ -335,6 +356,9 @@ async fn version_thirty_three_discards_transient_history_and_bounds_new_rows() {
     migrated.pool.close().await;
     drop(migrated);
     remove_database_files(&database_path);
+    for backup in backups {
+        std::fs::remove_file(backup).expect("remove test recovery snapshot");
+    }
 }
 
 #[tokio::test]
@@ -355,6 +379,7 @@ async fn failed_migration_preserves_recovery_backup() {
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("open database to damage migration source");
+    rewind_receipt_v35(&mut connection).await;
     sqlx::query("DELETE FROM client_schema_migrations WHERE version >= 33")
         .execute(&mut connection)
         .await
@@ -370,6 +395,18 @@ async fn failed_migration_preserves_recovery_backup() {
         .is_err());
     let backups = migration_backups(&database_path);
     assert_eq!(backups.len(), 1);
+    let first_backup = backups[0].clone();
+    let first_bytes = std::fs::read(&first_backup).expect("read first recovery snapshot");
+    assert_recovery_snapshot(&first_backup, 32).await;
+    assert!(SqliteClientStorage::connect_file(&database_path)
+        .await
+        .is_err());
+    let backups = migration_backups(&database_path);
+    assert_eq!(backups.len(), 2);
+    assert_eq!(
+        std::fs::read(&first_backup).expect("first recovery snapshot survives retry"),
+        first_bytes
+    );
 
     for backup in backups {
         std::fs::remove_file(backup).expect("remove test migration backup");
@@ -395,6 +432,7 @@ async fn version_twenty_nine_backfills_failed_conversation_messages() {
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("open version 28 database");
+    rewind_receipt_v35(&mut connection).await;
     sqlx::query("DROP TRIGGER local_agent_command_receipts_prune")
         .execute(&mut connection)
         .await
@@ -558,7 +596,99 @@ async fn primary_key_columns(storage: &SqliteClientStorage, table: &str) -> Vec<
     columns.into_iter().map(|(_, name)| name).collect()
 }
 
-fn migration_backups(database_path: &std::path::Path) -> Vec<std::path::PathBuf> {
+pub(super) async fn rewind_receipt_v35(connection: &mut SqliteConnection) {
+    rewind_receipt_v36(connection).await;
+    for statement in [
+        "DROP TRIGGER local_agent_command_receipts_dedupe",
+        "DROP TABLE local_agent_command_tombstones",
+        "DELETE FROM client_schema_migrations WHERE version = 35",
+    ] {
+        sqlx::query(statement)
+            .execute(&mut *connection)
+            .await
+            .expect("rewind v35 receipt schema for legacy fixture");
+    }
+}
+
+pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
+    rewind_receipt_v37(connection).await;
+    for statement in [
+        "DROP TRIGGER local_agent_command_receipts_prune",
+        "DROP TRIGGER local_agent_command_receipts_resize",
+        "DROP TRIGGER local_agent_receipt_cache_rebudget",
+        "DROP TABLE local_agent_receipt_sizes",
+        "DROP TABLE local_agent_receipt_cache_usage",
+        "DELETE FROM client_schema_migrations WHERE version = 36",
+        "CREATE TRIGGER local_agent_command_receipts_prune AFTER INSERT ON local_agent_command_receipts BEGIN \
+           DELETE FROM local_agent_command_receipts WHERE created_at_unix_ms < (\
+             SELECT MAX(created_at_unix_ms) - 86400000 FROM local_agent_command_receipts); \
+           DELETE FROM local_agent_command_receipts WHERE command_id IN (\
+             SELECT command_id FROM local_agent_command_receipts \
+             ORDER BY created_at_unix_ms DESC, command_id DESC LIMIT -1 OFFSET 5000); END",
+    ] {
+        sqlx::query(statement)
+            .execute(&mut *connection)
+            .await
+            .expect("rewind v36 receipt cache for legacy fixture");
+    }
+}
+
+pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
+    for statement in [
+        "DROP TRIGGER local_agent_command_receipts_validate",
+        "DROP TRIGGER local_agent_command_receipts_validate_update",
+        "DROP TRIGGER local_agent_command_receipts_collect",
+        "DROP TRIGGER local_agent_receipt_results_immutable",
+        "DROP TRIGGER local_agent_command_receipts_prune",
+        "DROP TRIGGER local_agent_command_receipts_resize",
+        "DROP INDEX local_agent_command_receipts_result",
+        "ALTER TABLE local_agent_command_receipts DROP COLUMN result_digest",
+        "DROP TABLE local_agent_receipt_results",
+        "DELETE FROM client_schema_migrations WHERE version = 37",
+    ] {
+        sqlx::query(statement)
+            .execute(&mut *connection)
+            .await
+            .expect("rewind v37 receipt results for legacy fixture");
+    }
+    for statement in super::receipt_cache::SCHEMA_V36.iter().filter(|statement| {
+        statement.starts_with("CREATE TRIGGER local_agent_command_receipts_prune")
+            || statement.starts_with("CREATE TRIGGER local_agent_command_receipts_resize")
+    }) {
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
+            .execute(&mut *connection)
+            .await
+            .unwrap();
+    }
+}
+
+async fn assert_recovery_snapshot(path: &std::path::Path, expected_version: i64) {
+    let options = SqliteConnectOptions::new().filename(path).read_only(true);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("open retained recovery snapshot");
+    let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+        .fetch_one(&mut connection)
+        .await
+        .expect("verify recovery snapshot");
+    assert_eq!(integrity, "ok");
+    let version: i64 = sqlx::query_scalar("SELECT MAX(version) FROM client_schema_migrations")
+        .fetch_one(&mut connection)
+        .await
+        .expect("recovery schema version");
+    assert_eq!(version, expected_version);
+    connection.close().await.expect("close recovery snapshot");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+}
+
+pub(super) fn migration_backups(database_path: &std::path::Path) -> Vec<std::path::PathBuf> {
     let backup_prefix = format!(
         "{}.pre-migration-",
         database_path

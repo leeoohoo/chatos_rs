@@ -5,6 +5,11 @@ APP_PATH=${1:-}
 EXPECTED_CONFIGURATION=${2:-}
 EXPECTED_GIT_COMMIT=${3:-}
 RUN_LAUNCH_SMOKE=${4:-0}
+SCRIPT_DIR=${0:A:h}
+if [[ "$(uname -m)" != "arm64" ]]; then
+  echo "ChatOS macOS verification requires a native arm64 shell; Intel is unsupported." >&2
+  exit 2
+fi
 
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   echo "Usage: verify-app-build.sh APP_PATH [debug|release] [GIT_COMMIT]" >&2
@@ -19,6 +24,14 @@ if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" || ! -x "$LOCAL_AGENT_HOST" || ! 
   echo "Invalid ChatOS app bundle: $APP_PATH" >&2
   exit 1
 fi
+
+for BINARY in "$EXECUTABLE" "$LOCAL_AGENT_HOST" "$PLUGIN_PROCESS_LIST" \
+    "$APP_PATH/Contents/Resources/Tools/darwin-arm64/rg"; do
+  if [[ "$(/usr/bin/lipo -archs "$BINARY")" != "arm64" ]]; then
+    echo "Expected arm64-only macOS executable: $BINARY" >&2
+    exit 1
+  fi
+done
 
 CONFIGURATION=$(plutil -extract ChatOSBuildConfiguration raw "$INFO_PLIST")
 GIT_COMMIT=$(plutil -extract ChatOSBuildGitCommit raw "$INFO_PLIST")
@@ -68,6 +81,11 @@ fi
 codesign --verify --strict "$LOCAL_AGENT_HOST"
 codesign --verify --strict "$PLUGIN_PROCESS_LIST"
 codesign --verify --deep --strict "$APP_PATH"
+
+# A signed binary alone does not establish which source/toolchain produced it.
+# This also catches a stale manifest or replacement resource/helper after packaging.
+/usr/bin/arch -arm64 /usr/bin/python3 -B "$SCRIPT_DIR/build_evidence.py" verify \
+  --app "$APP_PATH" --manifest "$APP_PATH.build-manifest.json"
 
 if [[ "$RUN_LAUNCH_SMOKE" == "1" ]]; then
   SMOKE_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/chatos-app-smoke.XXXXXXXX")

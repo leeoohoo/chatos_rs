@@ -117,6 +117,94 @@ actor LocalAgentAccountDrainCoordinator {
     }
 }
 
+final class LocalAgentExecutionPermit: @unchecked Sendable {
+    private let lock = NSLock()
+    private var governor: LocalAgentExecutionGovernor?
+
+    init(governor: LocalAgentExecutionGovernor) {
+        self.governor = governor
+    }
+
+    private func takeGovernor() -> LocalAgentExecutionGovernor? {
+        lock.lock()
+        let governor = governor
+        self.governor = nil
+        lock.unlock()
+        return governor
+    }
+
+    func release() {
+        guard let governor = takeGovernor() else { return }
+        Task { await governor.release() }
+    }
+
+    func releaseAndWait() async {
+        guard let governor = takeGovernor() else { return }
+        await governor.release()
+    }
+
+    deinit {
+        release()
+    }
+}
+
+/// Bounds execution across account, room, communication and recovery drains. A permit is
+/// acquired before a durable delivery is claimed, so work never waits for capacity while its
+/// database lease is already aging.
+actor LocalAgentExecutionGovernor {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<LocalAgentExecutionPermit?, Never>
+    }
+
+    let limit: Int
+    private var active = 0
+    private var waiters: [Waiter] = []
+
+    init(limit: Int) {
+        precondition(limit > 0)
+        self.limit = limit
+    }
+
+    func acquire() async -> LocalAgentExecutionPermit? {
+        guard !Task.isCancelled else { return nil }
+        if active < limit {
+            active += 1
+            return .init(governor: self)
+        }
+        let waiterID = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                waiters.append(.init(id: waiterID, continuation: continuation))
+            }
+        } onCancel: {
+            Task { await self.cancel(waiterID: waiterID) }
+        }
+    }
+
+    func tryAcquire() -> LocalAgentExecutionPermit? {
+        guard active < limit else { return nil }
+        active += 1
+        return .init(governor: self)
+    }
+
+    fileprivate func release() {
+        while !waiters.isEmpty {
+            let waiter = waiters.removeFirst()
+            waiter.continuation.resume(returning: .init(governor: self))
+            return
+        }
+        precondition(active > 0)
+        active -= 1
+    }
+
+    private func cancel(waiterID: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == waiterID }) else { return }
+        let waiter = waiters.remove(at: index)
+        waiter.continuation.resume(returning: nil)
+    }
+}
+
 /// Consumes the durable room delivery queue entirely in the macOS client. The server is used
 /// only through `AgentServiceProviding` for account-owned model credentials and Memory Engine;
 /// it never selects an Agent, routes a message, or owns a run checkpoint.
@@ -153,6 +241,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         let room: ProjectAgentRoom
         let member: ProjectAgentRoomMember
         let delivery: ProjectAgentDelivery
+        let executionPermit: LocalAgentExecutionPermit
     }
 
     struct OrderedDeliveryAttemptReceipt: Sendable {
@@ -197,6 +286,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     let executorTaskRegistry: LocalAgentExecutorTaskRegistry
     let activeDeliveryRegistry: LocalAgentActiveDeliveryRegistry
     let accountDrainCoordinator: LocalAgentAccountDrainCoordinator
+    let executionGovernor: LocalAgentExecutionGovernor
     let additionalToolProviders: AdditionalToolProviderFactory
     let projectTypeKeyProvider: ProjectTypeKeyProvider
     let professionProvider: ProfessionProvider
@@ -212,6 +302,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         settings: AgentSettingsStore = .init(),
         runtime: AgentRuntime = .init(),
         limits: AgentGroupChatRoutingLimits = .init(),
+        maximumConcurrentExecutions: Int = NativeClientResourceBudgetPolicy.adaptiveDefault.swiftAgentRuns,
         projectTypeKeyProvider: @escaping ProjectTypeKeyProvider = { _, _ in nil },
         professionProvider: @escaping ProfessionProvider = { _, key in
             LocalAgentSkillCatalog.profession(key: key)
@@ -238,6 +329,9 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.executorTaskRegistry = executorTaskRegistry
         self.activeDeliveryRegistry = LocalAgentActiveDeliveryRegistry()
         self.accountDrainCoordinator = LocalAgentAccountDrainCoordinator()
+        self.executionGovernor = LocalAgentExecutionGovernor(
+            limit: max(1, maximumConcurrentExecutions)
+        )
         self.relayMCP = LocalAgentRelayMCPServer(
             service: service,
             limits: limits,

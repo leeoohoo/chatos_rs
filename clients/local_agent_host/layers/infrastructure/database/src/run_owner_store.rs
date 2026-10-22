@@ -76,7 +76,7 @@ pub(super) async fn resume_run(
     event_id: &str,
     now_unix_ms: i64,
 ) -> Result<LocalAgentRunRecord, ClientStorageError> {
-    let mut connection = storage.pool.acquire().await.db()?;
+    let mut connection = storage.acquire_write().await.db()?;
     SqliteClientStorage::begin_immediate(&mut connection)
         .await
         .db()?;
@@ -149,7 +149,7 @@ pub(super) async fn cancel_run(
     event_id: &str,
     now_unix_ms: i64,
 ) -> Result<LocalAgentRunRecord, ClientStorageError> {
-    let mut connection = storage.pool.acquire().await.db()?;
+    let mut connection = storage.acquire_write().await.db()?;
     SqliteClientStorage::begin_immediate(&mut connection)
         .await
         .db()?;

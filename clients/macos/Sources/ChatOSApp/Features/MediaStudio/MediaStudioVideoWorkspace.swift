@@ -303,14 +303,27 @@ extension MediaStudioView {
             }
             if let input = viewModel.videoInputImage {
                 HStack(spacing: 10) {
-                    AppAsyncBase64Image(
-                        base64: input.base64Data,
-                        identity: "video-input|\(input.name)",
-                        maximumDisplayPixelSize: 256
-                    ) { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
-                        Color.primary.opacity(0.04)
+                    Group {
+                        if let fileURL = input.fileURL {
+                            AppAsyncLocalFileImage(
+                                url: fileURL,
+                                maximumDisplayPixelSize: 256
+                            ) { image in
+                                image.resizable().scaledToFill()
+                            } placeholder: {
+                                Color.primary.opacity(0.04)
+                            }
+                        } else {
+                            AppAsyncBase64Image(
+                                base64: input.base64Data,
+                                identity: "video-input|\(input.name)",
+                                maximumDisplayPixelSize: 256
+                            ) { image in
+                                image.resizable().scaledToFill()
+                            } placeholder: {
+                                Color.primary.opacity(0.04)
+                            }
+                        }
                     }
                         .frame(width: 72, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: 8))

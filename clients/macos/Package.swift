@@ -94,7 +94,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ChatOSCoreTests",
-            dependencies: ["ChatOSCore"]
+            dependencies: ["ChatOSCore", "ChatOSModelCapabilities"]
         ),
         .testTarget(
             name: "ChatOSAPITests",

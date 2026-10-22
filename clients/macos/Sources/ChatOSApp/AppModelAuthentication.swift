@@ -43,7 +43,7 @@ extension AppModel {
             )
             restartAgentHeartbeatCoordinator()
             restartAgentArtifactStorageCoordinator()
-            mediaStudio.activate(userID: session.user.id)
+            mediaStudio.bindAccount(userID: session.user.id)
             loadLanguagePreferences()
             localConnectorControl.activate(
                 pairIfNeeded: true,

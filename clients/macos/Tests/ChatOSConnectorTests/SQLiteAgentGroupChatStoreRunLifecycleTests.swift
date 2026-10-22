@@ -231,17 +231,23 @@ extension SQLiteAgentGroupChatStoreTests {
             ))
         }
 
+#if DEBUG
         let before = await store.preparedStatementCountForTesting()
+#endif
         let stopped = try await store.stopOutstandingDeliveries(
             ownerUserID: "alice",
             roomID: room.id,
             reason: "用户批量停止全部 Agent。",
             nowUnixMs: post.message.createdAtUnixMs + 2
         )
+#if DEBUG
         let statementCount = await store.preparedStatementCountForTesting() - before
+#endif
 
         XCTAssertEqual(stopped, 12)
+#if DEBUG
         XCTAssertEqual(statementCount, 7)
+#endif
         let runs = try await store.listRoomRuns(
             ownerUserID: "alice",
             roomID: room.id,

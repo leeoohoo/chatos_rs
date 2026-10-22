@@ -571,6 +571,14 @@ final class StoryStudioTests: XCTestCase {
         let persisted = try await store.load(owner: "alice")
         XCTAssertEqual(persisted.projects[0].segments[0].attempt?.jobID, "remote-job")
         XCTAssertEqual(persisted.projects[0].segments[1].attempt?.jobID, "remote-job")
+        let capturedSubmittedRequest = await service.lastVideoRequest()
+        let submittedRequest = try XCTUnwrap(capturedSubmittedRequest)
+        let submittedFrame = try XCTUnwrap(submittedRequest.inputImage)
+        XCTAssertTrue(submittedFrame.base64Data.isEmpty)
+        XCTAssertEqual(
+            try Data(contentsOf: XCTUnwrap(submittedFrame.fileURL)),
+            Data("test-image".utf8)
+        )
         vm.generateBatch(availableModels: models); try await idle(vm)
         // Both segments remain locked to their original provider jobs.
         var events = await service.events()
@@ -705,7 +713,9 @@ final class StoryStudioTests: XCTestCase {
         let request = try XCTUnwrap(capturedRequest)
         XCTAssertNil(request.inputImage)
         XCTAssertNil(request.lastFrameImage)
-        XCTAssertEqual(Data(base64Encoded: try XCTUnwrap(request.referenceVideo?.base64Data)), previousBytes)
+        let referenceVideo = try XCTUnwrap(request.referenceVideo)
+        XCTAssertTrue(referenceVideo.base64Data.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(referenceVideo.fileURL)), previousBytes)
         XCTAssertEqual(request.referencePurpose, .extend)
         XCTAssertTrue(request.prompt.contains("参考视频1就是紧邻本段之前的完整成片"))
     }
@@ -790,10 +800,9 @@ final class StoryStudioTests: XCTestCase {
         let request = try XCTUnwrap(capturedRequest)
         XCTAssertNil(request.inputImage)
         XCTAssertNil(request.lastFrameImage)
-        XCTAssertEqual(
-            Data(base64Encoded: try XCTUnwrap(request.referenceVideo?.base64Data)),
-            Data("old-video".utf8)
-        )
+        let referenceVideo = try XCTUnwrap(request.referenceVideo)
+        XCTAssertTrue(referenceVideo.base64Data.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(referenceVideo.fileURL)), Data("old-video".utf8))
         XCTAssertEqual(request.referencePurpose, .edit)
         XCTAssertTrue(request.prompt.contains("参考视频1就是本段需要修改的原视频"))
         XCTAssertTrue(request.prompt.contains("节奏更舒缓"))

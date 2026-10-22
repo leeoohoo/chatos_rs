@@ -17,6 +17,72 @@ struct AppBoundedFileReaderTests {
         #expect(try AppBoundedFileReader.read(url, maximumBytes: 64) == expected)
     }
 
+    @Test("copies a regular file without materializing the whole source")
+    func copiesBoundedFile() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("app-bounded-copy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.bin")
+        let destination = root.appendingPathComponent("destination.bin")
+        let expected = Data((0..<300_000).map { UInt8($0 % 251) })
+        try expected.write(to: source)
+
+        try AppBoundedFileReader.copy(
+            source,
+            to: destination,
+            expectedBytes: expected.count,
+            maximumBytes: expected.count
+        )
+
+        #expect(try Data(contentsOf: destination) == expected)
+    }
+
+    @Test("bounded copy rejects low disk before creating a partial destination")
+    func copyRejectsLowDisk() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("app-bounded-copy-low-disk-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.bin")
+        let destination = root.appendingPathComponent("destination.bin")
+        try Data("source".utf8).write(to: source)
+
+        #expect(throws: MediaDiskCapacityError.self) {
+            try AppBoundedFileReader.copy(
+                source,
+                to: destination,
+                expectedBytes: 6,
+                maximumBytes: 64,
+                availableCapacityOverride: 0
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    @Test("bounded copy rejects a symlink source and leaves no partial destination")
+    func copyRejectsSymlink() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("app-bounded-copy-link-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.bin")
+        let link = root.appendingPathComponent("link.bin")
+        let destination = root.appendingPathComponent("destination.bin")
+        try Data("source".utf8).write(to: source)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
+
+        #expect(throws: AppBoundedFileReadError.self) {
+            try AppBoundedFileReader.copy(
+                link,
+                to: destination,
+                expectedBytes: 6,
+                maximumBytes: 64
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+
     @Test("rejects an oversized sparse file before loading contents")
     func rejectsOversizedFile() throws {
         let url = FileManager.default.temporaryDirectory

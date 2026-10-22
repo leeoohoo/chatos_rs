@@ -328,12 +328,20 @@ actor StoryProjectStore {
               project.segments[index].attempt?.id == attemptID else {
             throw StoryError.unresolvedSubmission
         }
+        var changed = false
         if let jobID = progress.jobID {
             let existing = project.segments[index].attempt?.jobID
             guard existing == nil || existing == jobID else { throw StoryError.invalidPlan }
-            project.segments[index].attempt?.jobID = jobID
+            if existing != jobID {
+                project.segments[index].attempt?.jobID = jobID
+                changed = true
+            }
         }
-        project.segments[index].attempt?.status = progress.status
+        if project.segments[index].attempt?.status != progress.status {
+            project.segments[index].attempt?.status = progress.status
+            changed = true
+        }
+        guard changed else { return project }
         project.updatedAt = Date()
         try save(project, owner: owner)
         return project
@@ -341,13 +349,13 @@ actor StoryProjectStore {
 
     func completeVideoGeneration(_ result: VideoGenerationResult, projectID: UUID,
                                  segmentID: String, attemptID: UUID,
-                                 owner: String) throws -> (StoryProject, StoryVideo) {
+                                 owner: String) async throws -> (StoryProject, StoryVideo) {
         var project = try loadProject(projectID: projectID, owner: owner)
         guard let index = project.segments.firstIndex(where: { $0.id == segmentID }),
               project.segments[index].attempt?.id == attemptID else {
             throw StoryError.unresolvedSubmission
         }
-        let video = try saveVideo(result, projectID: projectID, owner: owner)
+        let video = try await saveVideo(result, projectID: projectID, owner: owner)
         project.segments[index].video = video
         project.segments[index].attempt?.status = "completed"
         project.segments[index].error = nil
@@ -544,10 +552,34 @@ actor StoryProjectStore {
         return image
     }
 
-    func saveVideo(_ result: VideoGenerationResult, projectID: UUID, owner: String) throws -> StoryVideo {
-        guard !result.videoData.isEmpty, result.videoData.count <= 512 * 1024 * 1024 else { throw StoryError.unsafeFile }
+    func saveVideo(_ result: VideoGenerationResult, projectID: UUID, owner: String) async throws -> StoryVideo {
+        let maximumBytes = 512 * 1_024 * 1_024
+        guard (result.videoFile != nil) != (!result.videoData.isEmpty) else {
+            throw StoryError.unsafeFile
+        }
         let video = StoryVideo(filename: "\(UUID().uuidString).mp4", jobID: result.id, modelName: result.modelName)
-        try saveFile(result.videoData, filename: video.filename, projectID: projectID, owner: owner)
+        let folder = directory(owner: owner, projectID: projectID)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let destinationURL = try fileURL(
+            video.filename,
+            projectID: projectID,
+            owner: owner
+        )
+        if let videoFile = result.videoFile {
+            try await AppCancellableDetachedWork.run {
+                try AppBoundedFileReader.copy(
+                    videoFile.url,
+                    to: destinationURL,
+                    expectedBytes: videoFile.byteCount,
+                    maximumBytes: maximumBytes
+                )
+            }
+        } else {
+            guard result.videoData.count <= maximumBytes else { throw StoryError.unsafeFile }
+            try await AppCancellableDetachedWork.run {
+                try result.videoData.write(to: destinationURL, options: .atomic)
+            }
+        }
         return video
     }
 

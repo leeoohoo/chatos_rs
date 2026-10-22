@@ -10,12 +10,8 @@ enum ChatOSModelCapabilitiesResourceBundle {
         #else
         let bundleName = "ChatOSSwift_ChatOSModelCapabilities.bundle"
         let containers = [Bundle.main, Bundle(for: BundleAnchor.self)]
-        for container in containers {
-            guard let resourceURL = container.resourceURL else { continue }
-            let bundleURL = resourceURL.appendingPathComponent(bundleName, isDirectory: true)
-            if let bundle = Bundle(url: bundleURL) {
-                return bundle
-            }
+        if let bundle = ChatOSPackageResourceBundleLocator.locate(named: bundleName, in: containers) {
+            return bundle
         }
         fatalError("Unable to locate packaged model capability resources")
         #endif

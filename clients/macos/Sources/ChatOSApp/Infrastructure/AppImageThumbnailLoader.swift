@@ -313,6 +313,53 @@ enum AppImageDataThumbnailCache {
     }
 }
 
+struct AppAsyncLocalFileImage<Content: View, Placeholder: View>: View {
+    let url: URL
+    let maximumBytes: Int
+    let maximumSourcePixelCount: Int
+    let maximumDisplayPixelSize: Int
+    @ViewBuilder let content: (Image) -> Content
+    @ViewBuilder let placeholder: () -> Placeholder
+    @State private var image: NSImage?
+
+    init(
+        url: URL,
+        maximumBytes: Int = 20 * 1_024 * 1_024,
+        maximumSourcePixelCount: Int = 64_000_000,
+        maximumDisplayPixelSize: Int,
+        @ViewBuilder content: @escaping (Image) -> Content,
+        @ViewBuilder placeholder: @escaping () -> Placeholder
+    ) {
+        self.url = url
+        self.maximumBytes = maximumBytes
+        self.maximumSourcePixelCount = maximumSourcePixelCount
+        self.maximumDisplayPixelSize = maximumDisplayPixelSize
+        self.content = content
+        self.placeholder = placeholder
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                content(Image(nsImage: image))
+            } else {
+                placeholder()
+            }
+        }
+        .task(id: url.standardizedFileURL) {
+            image = nil
+            let loaded = await AppLocalImageThumbnailCache.image(
+                for: url,
+                maximumBytes: maximumBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumDisplayPixelSize: maximumDisplayPixelSize
+            )
+            guard !Task.isCancelled else { return }
+            image = loaded
+        }
+    }
+}
+
 struct AppAsyncDataImage<Content: View, Placeholder: View>: View {
     let data: Data
     let identity: String

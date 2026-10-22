@@ -283,7 +283,7 @@ extension StoryStudioViewModel {
             command: command
         ) else { return }
         activeVideoGenerations.insert(key)
-        videoGenerationProgress[key] = .init(status: "preparing")
+        generationActivity.setVideoProgress(.init(status: "preparing"), for: key)
         let storyVideoGeneration = storyVideoGeneration
         videoGenerationTasks[key] = Task { [weak self, storyVideoGeneration] in
             let result: Result<StoryVideoGenerationOutcome, Error>
@@ -315,7 +315,7 @@ extension StoryStudioViewModel {
                   ),
                   self.storyVideoGenerationState.finish(request) else { return }
             self.activeVideoGenerations.remove(key)
-            self.videoGenerationProgress[key] = nil
+            self.generationActivity.setVideoProgress(nil, for: key)
             self.videoGenerationTasks[key] = nil
             switch result {
             case .success(let outcome):
@@ -353,12 +353,32 @@ extension StoryStudioViewModel {
             ownerUserID: owner,
             accountSessionID: token
         ) else { return }
-        publishProject(event.project, token: token)
-        videoGenerationProgress[key] = .init(
+        if shouldPublishVideoGenerationProject(event.project, key: key) {
+            publishProject(event.project, token: token)
+        }
+        generationActivity.setVideoProgress(.init(
             status: event.progress.status,
             percent: event.progress.percent
-        )
+        ), for: key)
         if let error = event.error { errorMessage = error }
+    }
+
+    /// Status and percentage callbacks are already durable in the Story store and rendered
+    /// by `generationActivity`. Only publish identity-bearing transitions to the large project
+    /// graph; otherwise every provider poll would invalidate the entire workbench.
+    private func shouldPublishVideoGenerationProject(
+        _ incoming: StoryProject,
+        key: VideoGenerationKey
+    ) -> Bool {
+        guard let current = projects.first(where: { $0.id == key.projectID }),
+              let currentSegment = current.segments.first(where: { $0.id == key.segmentID }),
+              let incomingSegment = incoming.segments.first(where: { $0.id == key.segmentID }) else {
+            return true
+        }
+        return currentSegment.attempt?.id != incomingSegment.attempt?.id
+            || currentSegment.attempt?.jobID != incomingSegment.attempt?.jobID
+            || currentSegment.video != incomingSegment.video
+            || currentSegment.error != incomingSegment.error
     }
 
     func resumeVideo(_ id: String) {
