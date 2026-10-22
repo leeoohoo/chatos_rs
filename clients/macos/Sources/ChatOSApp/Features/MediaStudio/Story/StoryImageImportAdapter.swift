@@ -9,30 +9,34 @@ struct StoryImageImportAdapter: StoryImageImporting {
         command: StoryImageImportCommand,
         asset: GeneratedMediaAsset
     ) async throws -> StoryProject {
-        let png = try await MediaStudioImageLoader.normalizedPNGData(for: asset)
-        return try await persistNormalizedImage(png, command: command)
+        let pngFile = try await MediaStudioImageLoader.normalizedPNGFile(for: asset)
+        return try await persistNormalizedImage(pngFile, command: command)
     }
 
     func importLocalStoryImage(
         command: StoryImageImportCommand,
         fileURL: URL
     ) async throws -> StoryProject {
-        let png: Data
+        let pngFile: GeneratedMediaFile
         do {
             let access = fileURL.startAccessingSecurityScopedResource()
             defer { if access { fileURL.stopAccessingSecurityScopedResource() } }
-            png = try await MediaStudioImageLoader.normalizedPNGData(fromFile: fileURL)
+            pngFile = try await MediaStudioImageLoader.normalizedPNGFile(for: .init(
+                id: UUID().uuidString,
+                mimeType: "image/png",
+                url: fileURL
+            ))
         }
-        return try await persistNormalizedImage(png, command: command)
+        return try await persistNormalizedImage(pngFile, command: command)
     }
 
     private func persistNormalizedImage(
-        _ png: Data,
+        _ pngFile: GeneratedMediaFile,
         command: StoryImageImportCommand
     ) async throws -> StoryProject {
         try Task.checkCancellation()
         let stored = try await store.saveImage(
-            png,
+            pngFile,
             mimeType: "image/png",
             projectID: command.project.id,
             owner: command.ownerUserID

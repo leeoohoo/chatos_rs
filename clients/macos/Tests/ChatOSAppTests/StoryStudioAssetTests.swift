@@ -6,6 +6,139 @@ import XCTest
 @testable import ChatOSApp
 
 extension StoryStudioTests {
+    func testStoryStoreCopiesFileBackedImagesBeforeReleasingTemporaryOwner() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryFileBackedImageStoreTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let project = makeProject()
+        let expected = Data((0..<128_000).map { UInt8($0 % 251) })
+        let source = root.appendingPathComponent("normalized-source.tmp")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try expected.write(to: source)
+        var temporary: GeneratedMediaFile? = .init(
+            url: source,
+            byteCount: expected.count,
+            deleteWhenReleased: true
+        )
+
+        let image = try await store.saveImage(
+            try XCTUnwrap(temporary),
+            mimeType: "image/png",
+            projectID: project.id,
+            owner: "alice"
+        )
+        let saved = try store.fileURL(
+            image.filename,
+            projectID: project.id,
+            owner: "alice"
+        )
+        temporary = nil
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertEqual(try Data(contentsOf: saved), expected)
+    }
+
+    func testStoryStoreCompletesFileBackedAssetAndFrameAttempts() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryFileBackedImageCompletionTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        var project = makeProject()
+        project.props = [.init(id: "key", name: "钥匙", description: "一把旧铜钥匙")]
+        var segment = StorySegment(
+            id: "s1",
+            title: "开场",
+            synopsis: "开场",
+            sourceRange: .init(start: 0, end: 1),
+            propIDs: ["key"]
+        )
+        segment.detail = makeDetail()
+        project.segments = [segment]
+        try await store.save(project, owner: "alice")
+
+        let assetBytes = Data("file-backed-asset".utf8)
+        let assetSource = root.appendingPathComponent("asset-normalized.tmp")
+        try assetBytes.write(to: assetSource)
+        var assetFile: GeneratedMediaFile? = .init(
+            url: assetSource,
+            byteCount: assetBytes.count,
+            deleteWhenReleased: true
+        )
+        let assetAttempt = UUID()
+        _ = try await store.beginAssetImageGeneration(
+            projectID: project.id,
+            resourceID: "key",
+            attemptID: assetAttempt,
+            owner: "alice"
+        )
+        let (_, assetImage) = try await store.completeAssetImageGeneration(
+            try XCTUnwrap(assetFile),
+            mimeType: "image/png",
+            projectID: project.id,
+            resourceID: "key",
+            attemptID: assetAttempt,
+            providerResultID: "asset-result",
+            providerAssetID: "asset-output",
+            owner: "alice"
+        )
+        assetFile = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: assetSource.path))
+        XCTAssertEqual(
+            try Data(contentsOf: store.fileURL(
+                assetImage.filename,
+                projectID: project.id,
+                owner: "alice"
+            )),
+            assetBytes
+        )
+
+        let frameBytes = Data("file-backed-frame".utf8)
+        let frameSource = root.appendingPathComponent("frame-normalized.tmp")
+        try frameBytes.write(to: frameSource)
+        var frameFile: GeneratedMediaFile? = .init(
+            url: frameSource,
+            byteCount: frameBytes.count,
+            deleteWhenReleased: true
+        )
+        let frameAttempt = UUID()
+        _ = try await store.beginFrameImageGeneration(
+            projectID: project.id,
+            segmentID: "s1",
+            role: .first,
+            attemptID: frameAttempt,
+            owner: "alice"
+        )
+        let (completed, frameImage) = try await store.completeFrameImageGeneration(
+            try XCTUnwrap(frameFile),
+            mimeType: "image/png",
+            projectID: project.id,
+            segmentID: "s1",
+            role: .first,
+            attemptID: frameAttempt,
+            providerResultID: "frame-result",
+            providerAssetID: "frame-output",
+            owner: "alice"
+        )
+        frameFile = nil
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: frameSource.path))
+        XCTAssertEqual(completed.resource(id: "key")?.images.last?.id, assetImage.id)
+        XCTAssertEqual(completed.segments.first?.firstFrames.images.last?.id, frameImage.id)
+        XCTAssertEqual(
+            try Data(contentsOf: store.fileURL(
+                frameImage.filename,
+                projectID: project.id,
+                owner: "alice"
+            )),
+            frameBytes
+        )
+    }
+
     func testStoryStoreCopiesFileBackedVideoIntoProject() async throws {
         let (_, store, _) = try await fixture()
         let project = makeProject()

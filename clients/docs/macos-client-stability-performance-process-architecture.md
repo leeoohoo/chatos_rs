@@ -1477,6 +1477,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批消除的是预览/缩略图 file-backed 输入的完整压缩源 `Data`；ImageIO 解码工作集和缓存的有界位图仍属于 App 进程，Base64/HTTPS 兼容输入仍需要源 `Data`。Story PNG 输出到 Store 的文件式提交、Media Worker 解码隔离、真实滚动/快速切图 memory trace 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.47 第四十七批实施记录：Story 归一化 PNG 输出文件化（2026-10-23）
+
+本批关闭 12.44–12.46 仍保留的最终 PNG 内存副本。此前 Story 即使已经从文件直接解码，ImageIO 仍先把归一化 PNG 完整编码进 `NSMutableData`，随后 Store 再把该 `Data` 写入项目目录；高分辨率图片会让有界像素面、完整 PNG 内存和磁盘源/目标在主进程内同时存在。
+
+已实施：
+
+- 新增归一化图片 artifact writer，复用 response writer 的安全目录、预打开文件、`0700/0600` 权限、lease、磁盘预算、失败清理和 24 小时孤儿对账协议，并用独立 `.chatos-image-normalized-<UUID>` 前缀隔离视频下载和 provider 图片响应。
+- ImageIO 改由 `CGDataConsumer` 回调直接向 writer 持有的文件 descriptor 增量写入，不再创建完整 PNG `Data`。consumer 在每次写入前执行 20 MiB 累计上限，正确处理短写、`EINTR` 和 `ENOSPC`；writer 完成后再次用 `fstat` 校验同一个已打开普通文件的 owner、link count、非空和最终大小。
+- Story 的资源图生成、首尾帧生成、持久 Batch 图片步骤、生成图片导入和 security-scoped 本地图片导入全部改为接收 lease-owned `GeneratedMediaFile`。本地授权只覆盖源文件解码和输出 artifact 建立，随后项目复制不再依赖原始授权。
+- `StoryProjectStore` 新增 20 MiB file-backed 图片保存入口，通过 `O_NOFOLLOW`/`fstat` 的有界后台复制写入项目目录；复制期间显式保留临时 owner。资源图与帧完成路径在 actor 跨 `await` 前后都核对 attempt ID，manifest 合并失败或 attempt 已变化时删除刚建立的项目副本，避免悬空文件和迟到结果串位。
+- 保留原 `Data` overload 作为旧调用与既有回归兼容边界，生产 Story 路径不再调用它。新增回归覆盖 artifact 前缀、权限、lease 防误删、低磁盘/超限无残留、真实 PNG 可解码及 owner 释放删除，以及 Store 复制后临时源删除而项目副本仍可读取、file-backed 资源图/帧 attempt 正确完成。
+
+验证：Debug 与 arm64 Release 各选择性运行 `Base64PayloadFileWriterTests` 1 项、`ResponseBodyFileWriterCrashTests` 2 项、`NormalizedImageArtifactWriterTests` 2 项、`MediaStudioImageInteractionTests` 14 项和 `StoryStudioTests` 96 项，共 115 项，全部通过；Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。测试只使用独立临时目录和内存生成图片，不启动/安装正式 App、不读取活动用户数据库。
+
+边界：本批消除的是 Story 归一化阶段的完整 PNG `Data`，不是解码像素面；ImageIO 解码/编码仍在 App 进程，旧 Base64/HTTPS 输入仍可能有完整压缩源 `Data`。归一化 artifact 尚未补独立真实 `SIGKILL` probe，当前复用同一 lease/对账实现并由普通回归验证；Media Worker、恶意图片进程隔离、真实 20 MiB/64 MP physical-footprint trace、内存压力/取消风暴、写入中强杀与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

@@ -1,5 +1,6 @@
 import ChatOSAPI
 import ChatOSCore
+import Darwin
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -116,6 +117,30 @@ enum MediaStudioImageLoader {
         return try await normalizedPNGData(from: bytes)
     }
 
+    static func normalizedPNGFile(
+        for asset: GeneratedMediaAsset,
+        transport: any HTTPTransport = URLSessionHTTPTransport(),
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        availableCapacityOverride: Int64? = nil
+    ) async throws -> GeneratedMediaFile {
+        let decoded = try await thumbnail(
+            for: asset,
+            maximumDisplayPixelSize: maximumNormalizedPixelSize,
+            transport: transport
+        )
+        return try await ChatOSMediaArtifactFileWriter.writeNormalizedImage(
+            maximumBytes: maximumImageBytes,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride
+        ) { destinationHandle in
+            try encodedPNG(
+                decoded,
+                to: destinationHandle,
+                maximumBytes: maximumImageBytes
+            )
+        }
+    }
+
     static func normalizedPNGData(
         fromFile url: URL,
         retaining owner: GeneratedMediaFile? = nil
@@ -161,6 +186,86 @@ enum MediaStudioImageLoader {
             throw ImageError.invalidImage
         }
         return png
+    }
+
+    private nonisolated static func encodedPNG(
+        _ decoded: AppDecodedThumbnail,
+        to destinationHandle: FileHandle,
+        maximumBytes: Int
+    ) throws {
+        let state = ImageDataConsumerState(
+            descriptor: destinationHandle.fileDescriptor,
+            maximumBytes: maximumBytes
+        )
+        var callbacks = CGDataConsumerCallbacks(
+            putBytes: { info, buffer, count in
+                guard let info else { return 0 }
+                return Unmanaged<ImageDataConsumerState>
+                    .fromOpaque(info)
+                    .takeUnretainedValue()
+                    .write(buffer, count: count)
+            },
+            releaseConsumer: nil
+        )
+        guard let consumer = CGDataConsumer(
+            info: Unmanaged.passUnretained(state).toOpaque(),
+            cbks: &callbacks
+        ), let destination = CGImageDestinationCreateWithDataConsumer(
+            consumer,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw ImageError.invalidImage
+        }
+        CGImageDestinationAddImage(destination, decoded.image, nil)
+        let finalized = CGImageDestinationFinalize(destination)
+        try withExtendedLifetime(state) {
+            if let error = state.error { throw error }
+        }
+        guard finalized else {
+            throw ImageError.invalidImage
+        }
+        try Task.checkCancellation()
+    }
+
+    private final class ImageDataConsumerState {
+        let descriptor: Int32
+        let maximumBytes: Int
+        private(set) var error: Error?
+        private var bytesWritten = 0
+
+        init(descriptor: Int32, maximumBytes: Int) {
+            self.descriptor = descriptor
+            self.maximumBytes = maximumBytes
+        }
+
+        func write(_ buffer: UnsafeRawPointer, count: Int) -> Int {
+            guard error == nil else { return 0 }
+            guard count > 0 else { return 0 }
+            guard count <= maximumBytes - bytesWritten else {
+                error = MediaStudioImageLoader.ImageError.invalidImage
+                return 0
+            }
+            var written = 0
+            while written < count {
+                let result = Darwin.write(
+                    descriptor,
+                    buffer.advanced(by: written),
+                    count - written
+                )
+                if result > 0 {
+                    written += result
+                    bytesWritten += result
+                } else if result < 0, errno == EINTR {
+                    continue
+                } else {
+                    error = NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                    return written
+                }
+            }
+            return written
+        }
     }
 
     enum ImageError: LocalizedError {

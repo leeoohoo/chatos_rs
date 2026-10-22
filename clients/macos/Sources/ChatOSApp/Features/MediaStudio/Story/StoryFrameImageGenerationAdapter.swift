@@ -112,10 +112,10 @@ struct StoryFrameImageGenerationAdapter: StoryFrameImageGenerating {
               result.resourceID == nil
                 || result.resourceID == "\(command.segmentID):\(command.role.rawValue)",
               let generated = result.images.first else { throw StoryError.invalidPlan }
-        let png = try await MediaStudioImageLoader.normalizedPNGData(for: generated)
+        let pngFile = try await MediaStudioImageLoader.normalizedPNGFile(for: generated)
         try await continuationCheck()
         let completed = try await store.completeFrameImageGeneration(
-            png,
+            pngFile,
             mimeType: "image/png",
             projectID: command.projectID,
             segmentID: command.segmentID,

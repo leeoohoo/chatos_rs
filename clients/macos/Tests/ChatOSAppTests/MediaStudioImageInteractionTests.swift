@@ -207,6 +207,42 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
     }
 
+    func testNormalizedPNGFileWritesValidLeaseOwnedArtifact() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MediaStudioNormalizedPNGFileTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 80, pixelsHigh: 40,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        bitmap.bitmapData?.initialize(repeating: 120, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+        let sourcePNG = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        var normalized: GeneratedMediaFile? = try await MediaStudioImageLoader.normalizedPNGFile(
+            for: .init(
+                id: "normalized-file",
+                mimeType: "image/png",
+                base64Data: sourcePNG.base64EncodedString()
+            ),
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max
+        )
+
+        let outputURL = try XCTUnwrap(normalized?.url)
+        let artifact = outputURL.deletingLastPathComponent()
+        let representation = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: outputURL)))
+        XCTAssertEqual(representation.pixelsWide, 80)
+        XCTAssertEqual(representation.pixelsHigh, 40)
+        XCTAssertEqual(normalized?.byteCount, try Data(contentsOf: outputURL).count)
+        XCTAssertTrue(artifact.lastPathComponent.hasPrefix(".chatos-image-normalized-"))
+
+        normalized = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: artifact.path))
+    }
+
     func testFileBackedThumbnailCacheKeepsOwnerThroughDirectDecode() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "MediaStudioFileThumbnailTests-\(UUID().uuidString)",

@@ -265,6 +265,54 @@ actor StoryProjectStore {
         return (project, image)
     }
 
+    func completeAssetImageGeneration(_ file: GeneratedMediaFile, mimeType: String,
+                                      projectID: UUID, resourceID: String, attemptID: UUID,
+                                      providerResultID: String?, providerAssetID: String?,
+                                      owner: String) async throws -> (StoryProject, StoryImage) {
+        let current = try loadProject(projectID: projectID, owner: owner)
+        guard current.resource(id: resourceID)?.media.generationAttemptID == attemptID else {
+            throw StoryError.unresolvedSubmission
+        }
+        let image = try await saveImage(
+            file,
+            mimeType: mimeType,
+            projectID: projectID,
+            owner: owner,
+            sourceResourceID: resourceID,
+            generationAttemptID: attemptID,
+            providerResultID: providerResultID,
+            providerAssetID: providerAssetID
+        )
+        do {
+            var project = try loadProject(projectID: projectID, owner: owner)
+            guard var resource = project.resource(id: resourceID),
+                  resource.media.generationAttemptID == attemptID else {
+                throw StoryError.unresolvedSubmission
+            }
+            resource.media.images.append(image)
+            resource.media.generationAttemptID = nil
+            let automaticallyConfirmed = resource.media.confirmedImageID == nil
+            if automaticallyConfirmed { resource.media.confirmedImageID = image.id }
+            try project.replaceResource(resource)
+            if automaticallyConfirmed {
+                for index in project.segments.indices
+                    where project.segments[index].resourceIDs.contains(resourceID)
+                        && !project.segments[index].hasVideoJob {
+                    project.segments[index].confirmedFrameID = nil
+                    project.segments[index].confirmedLastFrameID = nil
+                }
+            }
+            project.updatedAt = Date()
+            try save(project, owner: owner)
+            return (project, image)
+        } catch {
+            try? FileManager.default.removeItem(at: fileURL(
+                image.filename, projectID: projectID, owner: owner
+            ))
+            throw error
+        }
+    }
+
     func beginFrameImageGeneration(projectID: UUID, segmentID: String, role: StoryFrameRole,
                                    attemptID: UUID, owner: String) throws -> FrameImageGenerationIntent {
         var project = try loadProject(projectID: projectID, owner: owner)
@@ -316,6 +364,65 @@ actor StoryProjectStore {
         project.updatedAt = Date()
         try save(project, owner: owner)
         return (project, image)
+    }
+
+    func completeFrameImageGeneration(_ file: GeneratedMediaFile, mimeType: String,
+                                      projectID: UUID, segmentID: String, role: StoryFrameRole,
+                                      attemptID: UUID, providerResultID: String?,
+                                      providerAssetID: String?, owner: String) async throws
+        -> (StoryProject, StoryImage) {
+        let current = try loadProject(projectID: projectID, owner: owner)
+        guard let currentIndex = current.segments.firstIndex(where: { $0.id == segmentID })
+        else { throw StoryError.invalidPlan }
+        let currentMatches = role == .first
+            ? current.segments[currentIndex].firstFrames.generationAttemptID == attemptID
+            : current.segments[currentIndex].lastFrames.generationAttemptID == attemptID
+        guard currentMatches else { throw StoryError.unresolvedSubmission }
+
+        let image = try await saveImage(
+            file,
+            mimeType: mimeType,
+            projectID: projectID,
+            owner: owner,
+            sourceResourceID: segmentID,
+            generationAttemptID: attemptID,
+            providerResultID: providerResultID,
+            providerAssetID: providerAssetID
+        )
+        do {
+            var project = try loadProject(projectID: projectID, owner: owner)
+            guard let index = project.segments.firstIndex(where: { $0.id == segmentID }) else {
+                throw StoryError.invalidPlan
+            }
+            let matchesAttempt = role == .first
+                ? project.segments[index].firstFrames.generationAttemptID == attemptID
+                : project.segments[index].lastFrames.generationAttemptID == attemptID
+            guard matchesAttempt else { throw StoryError.unresolvedSubmission }
+            switch role {
+            case .first:
+                project.segments[index].firstFrames.images.append(image)
+                project.segments[index].firstFrames.generationAttemptID = nil
+                if project.segments[index].firstFrames.confirmedImageID == nil {
+                    project.segments[index].firstFrames.confirmedImageID = image.id
+                    project.segments[index].inheritedFirstFrameSourceSegmentID = nil
+                }
+            case .last:
+                project.segments[index].lastFrames.images.append(image)
+                project.segments[index].lastFrames.generationAttemptID = nil
+                if project.segments[index].lastFrames.confirmedImageID == nil {
+                    project.segments[index].lastFrames.confirmedImageID = image.id
+                }
+            }
+            StoryContinuityContext.reconcileInheritedFirstFrames(&project)
+            project.updatedAt = Date()
+            try save(project, owner: owner)
+            return (project, image)
+        } catch {
+            try? FileManager.default.removeItem(at: fileURL(
+                image.filename, projectID: projectID, owner: owner
+            ))
+            throw error
+        }
     }
 
     /// Persists the per-segment video intent against the latest project manifest. Other
@@ -692,6 +799,41 @@ actor StoryProjectStore {
                                providerResultID: providerResultID, providerAssetID: providerAssetID,
                                derivedFromVideoJobID: derivedFromVideoJobID)
         try saveFile(data, filename: image.filename, projectID: projectID, owner: owner)
+        return image
+    }
+
+    func saveImage(_ file: GeneratedMediaFile, mimeType: String, projectID: UUID, owner: String,
+                   sourceResourceID: String? = nil, generationAttemptID: UUID? = nil,
+                   providerResultID: String? = nil, providerAssetID: String? = nil,
+                   derivedFromVideoJobID: String? = nil) async throws -> StoryImage {
+        let maximumBytes = 20 * 1_024 * 1_024
+        guard file.byteCount > 0, file.byteCount <= maximumBytes,
+              ["image/png", "image/jpeg", "image/webp"].contains(mimeType) else {
+            throw StoryError.unsafeFile
+        }
+        let ext = mimeType == "image/jpeg" ? "jpg" : mimeType == "image/webp" ? "webp" : "png"
+        let image = StoryImage(filename: "\(UUID().uuidString).\(ext)", mimeType: mimeType,
+                               sourceResourceID: sourceResourceID,
+                               generationAttemptID: generationAttemptID,
+                               providerResultID: providerResultID,
+                               providerAssetID: providerAssetID,
+                               derivedFromVideoJobID: derivedFromVideoJobID)
+        let folder = directory(owner: owner, projectID: projectID)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let destinationURL = try fileURL(
+            image.filename,
+            projectID: projectID,
+            owner: owner
+        )
+        defer { withExtendedLifetime(file) {} }
+        try await AppCancellableDetachedWork.run {
+            try AppBoundedFileReader.copy(
+                file.url,
+                to: destinationURL,
+                expectedBytes: file.byteCount,
+                maximumBytes: maximumBytes
+            )
+        }
         return image
     }
 
