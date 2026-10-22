@@ -112,7 +112,7 @@ actor MediaStudioVideoJobService {
             switch execution.mode {
             case .create:
                 execution = try await store.markSubmitting(
-                    id: execution.snapshot.id,
+                    execution,
                     owner: owner,
                     sessionEpoch: sessionEpoch
                 )

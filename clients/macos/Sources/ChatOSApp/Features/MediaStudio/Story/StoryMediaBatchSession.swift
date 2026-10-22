@@ -332,7 +332,7 @@ actor StoryMediaBatchSession {
             case .create:
                 phase = "submitting"
                 execution = try await videoJobStore.markSubmitting(
-                    id: localJobID,
+                    execution,
                     owner: state.owner,
                     sessionEpoch: accountSessionID
                 )

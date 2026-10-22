@@ -205,7 +205,7 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
             case .create:
                 phase = "submitting"
                 execution = try await videoJobStore.markSubmitting(
-                    id: localJobID,
+                    execution,
                     owner: ownerUserID,
                     sessionEpoch: accountSessionID
                 )
@@ -515,7 +515,7 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
             case .create:
                 phase = "submitting"
                 running = try await videoJobStore.markSubmitting(
-                    id: localJobID,
+                    running,
                     owner: ownerUserID,
                     sessionEpoch: accountSessionID
                 )

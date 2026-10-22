@@ -130,6 +130,21 @@ actor MediaStudioVideoJobStore {
         var snapshot: Snapshot
         var request: VideoGenerationRequest
         var mode: RecoveryMode
+        fileprivate var lease: ExecutionLease?
+    }
+
+    fileprivate final class ExecutionLease: @unchecked Sendable {
+        private var descriptor: Int32?
+
+        init(descriptor: Int32) {
+            self.descriptor = descriptor
+        }
+
+        deinit {
+            guard let descriptor else { return }
+            _ = flock(descriptor, LOCK_UN)
+            _ = Darwin.close(descriptor)
+        }
     }
 
     private enum InputKind: String, Codable, Hashable {
@@ -202,6 +217,7 @@ actor MediaStudioVideoJobStore {
     private static let formatVersion = 3
     private static let maximumManifestBytes = 1 * 1_024 * 1_024
     private static let stagingLeaseFilename = ".staging.lease"
+    private static let executionLeaseFilename = ".execution.lock"
     private static let stagingRetention: TimeInterval = 24 * 60 * 60
     private static let maximumStagingCleanupCandidates = 64
     private let root: URL
@@ -347,6 +363,12 @@ actor MediaStudioVideoJobStore {
         guard resolvedWorkload(record) == workload else {
             throw MediaStudioVideoJobStoreError.jobConflict
         }
+        let mode = recoveryMode(record)
+        let executionLease = try acquireExecutionLeaseIfNeeded(
+            id: record.id,
+            owner: owner,
+            mode: mode
+        )
         if resolvedActivation(record) == .staged {
             record.sessionEpoch = sessionEpoch
             record.activation = .active
@@ -358,20 +380,55 @@ actor MediaStudioVideoJobStore {
             record.updatedAt = Date()
             try save(record)
         }
-        return try execution(record, mode: recoveryMode(record))
+        return try execution(record, mode: mode, lease: executionLease)
     }
 
     func markSubmitting(id: UUID, owner: String, sessionEpoch: UUID) throws -> Execution {
+        try markSubmitting(
+            id: id,
+            owner: owner,
+            sessionEpoch: sessionEpoch,
+            executionLease: nil
+        )
+    }
+
+    func markSubmitting(
+        _ execution: Execution,
+        owner: String,
+        sessionEpoch: UUID
+    ) throws -> Execution {
+        guard execution.snapshot.ownerUserID == owner,
+              execution.snapshot.sessionEpoch == sessionEpoch,
+              execution.mode == .create else {
+            throw MediaStudioVideoJobStoreError.invalidTransition
+        }
+        return try markSubmitting(
+            id: execution.snapshot.id,
+            owner: owner,
+            sessionEpoch: sessionEpoch,
+            executionLease: execution.lease
+        )
+    }
+
+    private func markSubmitting(
+        id: UUID,
+        owner: String,
+        sessionEpoch: UUID,
+        executionLease: ExecutionLease?
+    ) throws -> Execution {
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
         var record = try loadActive(id: id, owner: owner)
+        try verify(sessionEpoch: sessionEpoch, record: record)
         guard record.status == .prepared else {
             throw MediaStudioVideoJobStoreError.invalidTransition
         }
+        let lease = try executionLease
+            ?? acquireExecutionLease(id: record.id, owner: record.ownerUserID)
         record.sessionEpoch = sessionEpoch
         transition(&record, to: .submitting)
         try save(record)
-        return try execution(record, mode: .create)
+        return try execution(record, mode: .create, lease: lease)
     }
 
     func recordProgress(
@@ -574,31 +631,44 @@ actor MediaStudioVideoJobStore {
             .filter(Self.requiresRecovery)
             .sorted { $0.updatedAt > $1.updatedAt }
         guard var record = records.first else { return nil }
-        record.sessionEpoch = sessionEpoch
+        let executionLease = record.status == .submissionUncertain
+            ? nil
+            : try acquireExecutionLease(id: record.id, owner: normalizedOwner)
 
         if record.providerJobID == nil && Self.mayHaveCrossedSubmissionBoundary(record.status) {
+            record.sessionEpoch = sessionEpoch
             record.failurePhase = "submitting"
             record.failureMessage = "上次提交结果尚未确认。为避免重复计费，客户端不会自动重发。"
             record.retryable = false
             transition(&record, to: .submissionUncertain)
             try save(record)
+            return try execution(record, mode: .needsReview)
         }
 
-        let mode: RecoveryMode
         if record.status == .prepared {
-            mode = .create
-        } else if let providerJobID = record.providerJobID,
-                  record.status != .submissionUncertain,
-                  record.status != .cancelled {
+            if record.sessionEpoch != sessionEpoch {
+                record.sessionEpoch = sessionEpoch
+                record.stateVersion += 1
+                record.updatedAt = Date()
+                try save(record)
+            }
+            return try execution(record, mode: .create, lease: executionLease)
+        }
+        if let providerJobID = record.providerJobID,
+           record.status != .submissionUncertain,
+           record.status != .cancelled {
+            record.sessionEpoch = sessionEpoch
             record.retryCount += 1
             record.stateVersion += 1
             record.updatedAt = Date()
             try save(record)
-            mode = .resume(providerJobID: providerJobID)
-        } else {
-            mode = .needsReview
+            return try execution(
+                record,
+                mode: .resume(providerJobID: providerJobID),
+                lease: executionLease
+            )
         }
-        return try execution(record, mode: mode)
+        return try execution(record, mode: .needsReview)
     }
 
     func snapshot(id: UUID, owner: String) throws -> Snapshot {
@@ -780,6 +850,10 @@ actor MediaStudioVideoJobStore {
     private func publish(_ expected: Record, from stagingFolder: URL) throws -> Record {
         let lockDescriptor = try acquireStoreLock()
         defer { releaseStoreLock(lockDescriptor) }
+        return try publishUnlocked(expected, from: stagingFolder)
+    }
+
+    private func publishUnlocked(_ expected: Record, from stagingFolder: URL) throws -> Record {
         let finalFolder = jobFolder(id: expected.id, owner: expected.ownerUserID)
         let finalManifest = finalFolder.appendingPathComponent("job.json")
         if FileManager.default.fileExists(atPath: finalManifest.path) {
@@ -868,6 +942,56 @@ actor MediaStudioVideoJobStore {
     private func releaseStagingLease(_ descriptor: Int32) {
         _ = flock(descriptor, LOCK_UN)
         _ = Darwin.close(descriptor)
+    }
+
+    private func acquireExecutionLeaseIfNeeded(
+        id: UUID,
+        owner: String,
+        mode: RecoveryMode
+    ) throws -> ExecutionLease? {
+        switch mode {
+        case .create, .resume:
+            try acquireExecutionLease(id: id, owner: owner)
+        case .needsReview:
+            nil
+        }
+    }
+
+    private func acquireExecutionLease(id: UUID, owner: String) throws -> ExecutionLease {
+        let lease = jobFolder(id: id, owner: owner)
+            .appendingPathComponent(Self.executionLeaseFilename)
+        let descriptor = lease.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(
+                path,
+                O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,
+                mode_t(0o600)
+            )
+        }
+        guard descriptor >= 0 else {
+            throw MediaStudioVideoJobStoreError.invalidWriterLock
+        }
+        var shouldClose = true
+        defer {
+            if shouldClose { _ = Darwin.close(descriptor) }
+        }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFREG,
+              status.st_nlink == 1,
+              status.st_uid == geteuid(),
+              fchmod(descriptor, mode_t(0o600)) == 0 else {
+            throw MediaStudioVideoJobStoreError.invalidWriterLock
+        }
+        while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
+            if errno == EINTR { continue }
+            if errno == EWOULDBLOCK || errno == EAGAIN {
+                throw MediaStudioVideoJobStoreError.jobBusy
+            }
+            throw MediaStudioVideoJobStoreError.invalidWriterLock
+        }
+        shouldClose = false
+        return ExecutionLease(descriptor: descriptor)
     }
 
     /// Serializes a complete read/verify/transition/write operation across independent
@@ -1003,7 +1127,8 @@ actor MediaStudioVideoJobStore {
     private func execution(
         _ record: Record,
         mode: RecoveryMode,
-        validatesInputs: Bool = true
+        validatesInputs: Bool = true,
+        lease: ExecutionLease? = nil
     ) throws -> Execution {
         let folder = jobFolder(id: record.id, owner: record.ownerUserID)
             .appendingPathComponent("inputs", isDirectory: true)
@@ -1042,7 +1167,7 @@ actor MediaStudioVideoJobStore {
                 )
             }
         }
-        return .init(snapshot: snapshot(record), request: request, mode: mode)
+        return .init(snapshot: snapshot(record), request: request, mode: mode, lease: lease)
     }
 
     private func loadRecords(owner: String) throws -> [Record] {
@@ -1289,6 +1414,7 @@ enum MediaStudioVideoJobStoreError: LocalizedError {
     case invalidProviderJob
     case activationRequired
     case jobConflict
+    case jobBusy
 
     var errorDescription: String? {
         switch self {
@@ -1302,6 +1428,7 @@ enum MediaStudioVideoJobStoreError: LocalizedError {
         case .invalidProviderJob: "视频任务缺少有效的服务商任务 ID。"
         case .activationRequired: "视频任务尚未完成业务所有权切换。"
         case .jobConflict: "视频任务 ID 已关联到不同的请求，已拒绝覆盖。"
+        case .jobBusy: "视频任务正在另一个客户端进程中执行，请稍后再试。"
         }
     }
 }

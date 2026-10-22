@@ -233,14 +233,15 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         XCTAssertNil(inactiveStory)
 
         let activationEpoch = UUID()
-        let activated = try await store.activate(
+        var activated: MediaStudioVideoJobStore.Execution? = try await store.activate(
             id: attemptID,
             owner: "alice",
             sessionEpoch: activationEpoch,
             workload: workload
         )
-        XCTAssertTrue(activated.snapshot.isActive)
-        XCTAssertEqual(activated.mode, .create)
+        XCTAssertTrue(try XCTUnwrap(activated).snapshot.isActive)
+        XCTAssertEqual(try XCTUnwrap(activated).mode, .create)
+        activated = nil
 
         let recovered = try await store.recover(
             owner: "alice",
@@ -382,14 +383,19 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         XCTAssertNil(inactive)
 
         let activationEpoch = UUID()
-        let activated = try await store.activate(
+        var activated: MediaStudioVideoJobStore.Execution? = try await store.activate(
             id: attemptID,
             owner: "alice",
             sessionEpoch: activationEpoch,
             workload: workload
         )
-        XCTAssertEqual(activated.mode, .resume(providerJobID: "provider-existing"))
-        XCTAssertNil(activated.request.referenceVideo)
+        XCTAssertEqual(
+            try XCTUnwrap(activated).mode,
+            .resume(providerJobID: "provider-existing")
+        )
+        XCTAssertNil(try XCTUnwrap(activated).request.referenceVideo)
+        let activatedStateVersion = try XCTUnwrap(activated).snapshot.stateVersion
+        activated = nil
 
         let repeatedActivation = try await store.activate(
             id: attemptID,
@@ -398,7 +404,7 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
             workload: workload
         )
         XCTAssertEqual(repeatedActivation.mode, .resume(providerJobID: "provider-existing"))
-        XCTAssertEqual(repeatedActivation.snapshot.stateVersion, activated.snapshot.stateVersion)
+        XCTAssertEqual(repeatedActivation.snapshot.stateVersion, activatedStateVersion)
     }
 
     func testVerifiedRetryReleaseTerminalizesStagedJobAndIsIdempotent() async throws {
@@ -768,8 +774,8 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         )
         let first = MediaStudioVideoJobStore(root: root)
         let second = MediaStudioVideoJobStore(root: root)
-        let firstEpoch = UUID()
-        let secondEpoch = UUID()
+        let firstEpoch = prepared.snapshot.sessionEpoch
+        let secondEpoch = prepared.snapshot.sessionEpoch
 
         let firstAttempt = Task { () -> String in
             do {
@@ -806,7 +812,7 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         )
     }
 
-    func testConcurrentRecoveryLeavesOneEpochAndFencesOtherWriter() async throws {
+    func testConcurrentRecoveryAllowsOneExecutionOwnerAndDoesNotStealItsEpoch() async throws {
         let root = try directory().appendingPathComponent("jobs")
         let initial = MediaStudioVideoJobStore(root: root)
         let prepared = try await initial.prepare(
@@ -829,17 +835,40 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         let firstEpoch = UUID()
         let secondEpoch = UUID()
 
-        async let firstRecovery = first.recover(owner: "alice", sessionEpoch: firstEpoch)
-        async let secondRecovery = second.recover(owner: "alice", sessionEpoch: secondEpoch)
-        let recoveries = try await [firstRecovery, secondRecovery]
-        XCTAssertEqual(recoveries.compactMap(\.self).count, 2)
-        XCTAssertTrue(recoveries.compactMap(\.self).allSatisfy {
-            $0.mode == .resume(providerJobID: "provider-concurrent")
-        })
+        let firstTask = Task {
+            try await first.recover(owner: "alice", sessionEpoch: firstEpoch)
+        }
+        let secondTask = Task {
+            try await second.recover(owner: "alice", sessionEpoch: secondEpoch)
+        }
+        var recoveries: [(epoch: UUID, execution: MediaStudioVideoJobStore.Execution)] = []
+        var errors: [any Error] = []
+        do {
+            if let value = try await firstTask.value {
+                recoveries.append((firstEpoch, value))
+            }
+        } catch {
+            errors.append(error)
+        }
+        do {
+            if let value = try await secondTask.value {
+                recoveries.append((secondEpoch, value))
+            }
+        } catch {
+            errors.append(error)
+        }
+        XCTAssertEqual(recoveries.count, 1)
+        XCTAssertEqual(errors.count, 1)
+        XCTAssertEqual(
+            errors.first?.localizedDescription,
+            MediaStudioVideoJobStoreError.jobBusy.localizedDescription
+        )
+        XCTAssertEqual(recoveries.first?.execution.mode, .resume(providerJobID: "provider-concurrent"))
 
         let snapshot = try await initial.snapshot(id: prepared.snapshot.id, owner: "alice")
-        XCTAssertTrue(snapshot.sessionEpoch == firstEpoch || snapshot.sessionEpoch == secondEpoch)
-        let staleEpoch = snapshot.sessionEpoch == firstEpoch ? secondEpoch : firstEpoch
+        let winningEpoch = try XCTUnwrap(recoveries.first?.epoch)
+        XCTAssertEqual(snapshot.sessionEpoch, winningEpoch)
+        let staleEpoch = winningEpoch == firstEpoch ? secondEpoch : firstEpoch
         do {
             try await initial.recordProgress(
                 id: prepared.snapshot.id,
@@ -854,6 +883,121 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
                 MediaStudioVideoJobStoreError.staleSession.localizedDescription
             )
         }
+        withExtendedLifetime(recoveries) {}
+    }
+
+    func testExecutionLeaseSurvivesSubmittingTransitionAndReleasesWithExecution() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let epoch = UUID()
+        let owner = MediaStudioVideoJobStore(root: root)
+        var execution: MediaStudioVideoJobStore.Execution? = try await owner.prepare(
+            request: request(prompt: "exclusive execution"),
+            owner: "alice",
+            sessionEpoch: epoch
+        )
+        let id = try XCTUnwrap(execution).snapshot.id
+        let contender = MediaStudioVideoJobStore(root: root)
+
+        execution = try await owner.markSubmitting(
+            try XCTUnwrap(execution),
+            owner: "alice",
+            sessionEpoch: epoch
+        )
+        let executionLock = ownerDirectory(root: root, owner: "alice")
+            .appendingPathComponent(id.uuidString.lowercased(), isDirectory: true)
+            .appendingPathComponent(".execution.lock")
+        let lockValues = try executionLock.resourceValues(forKeys: [.isRegularFileKey])
+        let lockAttributes = try FileManager.default.attributesOfItem(
+            atPath: executionLock.path
+        )
+        XCTAssertEqual(lockValues.isRegularFile, true)
+        XCTAssertEqual(
+            (lockAttributes[.posixPermissions] as? NSNumber)?.intValue,
+            0o600
+        )
+        do {
+            _ = try await contender.recover(owner: "alice", sessionEpoch: UUID())
+            XCTFail("markSubmitting must transfer, not drop, the execution lease")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                MediaStudioVideoJobStoreError.jobBusy.localizedDescription
+            )
+        }
+        let snapshotWhileBusy = try await owner.snapshot(id: id, owner: "alice")
+        XCTAssertEqual(snapshotWhileBusy.sessionEpoch, epoch)
+
+        execution = nil
+        let reviewed = try await contender.recover(owner: "alice", sessionEpoch: UUID())
+        XCTAssertEqual(reviewed?.mode, .needsReview)
+        XCTAssertEqual(reviewed?.snapshot.status, .submissionUncertain)
+    }
+
+    func testSymlinkExecutionLeaseIsRejectedBeforeSubmitting() async throws {
+        let directory = try directory()
+        let root = directory.appendingPathComponent("jobs")
+        let epoch = UUID()
+        let store = MediaStudioVideoJobStore(root: root)
+        let prepared = try await store.prepare(
+            request: request(prompt: "reject execution symlink"),
+            owner: "alice",
+            sessionEpoch: epoch
+        )
+        let jobFolder = ownerDirectory(root: root, owner: "alice").appendingPathComponent(
+            prepared.snapshot.id.uuidString.lowercased(),
+            isDirectory: true
+        )
+        let target = directory.appendingPathComponent("foreign-lock")
+        try Data().write(to: target)
+        try FileManager.default.createSymbolicLink(
+            at: jobFolder.appendingPathComponent(".execution.lock"),
+            withDestinationURL: target
+        )
+
+        do {
+            _ = try await store.markSubmitting(
+                prepared,
+                owner: "alice",
+                sessionEpoch: epoch
+            )
+            XCTFail("A symlink must not become the execution lease inode")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                MediaStudioVideoJobStoreError.invalidWriterLock.localizedDescription
+            )
+        }
+        let snapshot = try await store.snapshot(id: prepared.snapshot.id, owner: "alice")
+        XCTAssertEqual(snapshot.status, .prepared)
+    }
+
+    func testPreparedRecoveryPersistsTakeoverEpochForSubmittingWriter() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let initial = MediaStudioVideoJobStore(root: root)
+        var prepared: MediaStudioVideoJobStore.Execution? = try await initial.prepare(
+            request: request(prompt: "prepared takeover"),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        let id = try XCTUnwrap(prepared).snapshot.id
+        prepared = nil
+        let takeoverEpoch = UUID()
+        let restarted = MediaStudioVideoJobStore(root: root)
+        let recoveredValue = try await restarted.recover(
+            owner: "alice",
+            sessionEpoch: takeoverEpoch
+        )
+        let recovered = try XCTUnwrap(recoveredValue)
+
+        let submitting = try await restarted.markSubmitting(
+            recovered,
+            owner: "alice",
+            sessionEpoch: takeoverEpoch
+        )
+
+        XCTAssertEqual(submitting.snapshot.id, id)
+        XCTAssertEqual(submitting.snapshot.sessionEpoch, takeoverEpoch)
+        XCTAssertEqual(submitting.snapshot.status, .submitting)
     }
 
     func testClosingWriterLockAllowsWaitingStoreToContinue() async throws {
@@ -1012,7 +1156,7 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         _ = try await first.markSubmitting(
             id: prepared.snapshot.id,
             owner: "alice",
-            sessionEpoch: UUID()
+            sessionEpoch: prepared.snapshot.sessionEpoch
         )
 
         let restarted = MediaStudioVideoJobStore(root: root)
@@ -1123,7 +1267,7 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         _ = try await first.markSubmitting(
             id: prepared.snapshot.id,
             owner: "alice",
-            sessionEpoch: UUID()
+            sessionEpoch: prepared.snapshot.sessionEpoch
         )
         try await first.recordProgress(
             id: prepared.snapshot.id,
@@ -1206,7 +1350,7 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         _ = try await store.markSubmitting(
             id: prepared.snapshot.id,
             owner: "alice",
-            sessionEpoch: UUID()
+            sessionEpoch: prepared.snapshot.sessionEpoch
         )
         let generator = DurableVideoTestService()
         let history = DurableVideoTestHistory(root: root.appendingPathComponent("history"))
@@ -1247,7 +1391,7 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         _ = try await store.markSubmitting(
             id: prepared.snapshot.id,
             owner: "alice",
-            sessionEpoch: UUID()
+            sessionEpoch: prepared.snapshot.sessionEpoch
         )
         try await store.recordProgress(
             id: prepared.snapshot.id,
@@ -1354,7 +1498,7 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         _ = try await store.markSubmitting(
             id: prepared.snapshot.id,
             owner: "alice",
-            sessionEpoch: UUID()
+            sessionEpoch: prepared.snapshot.sessionEpoch
         )
         try await store.recordProgress(
             id: prepared.snapshot.id,

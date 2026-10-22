@@ -1247,6 +1247,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批不删除正式 durable job。终态记录仍可能被 Story/Batch manifest 引用，在交付引用对账、owner 字节/数量配额和可重放保留协议前，不能仅凭年龄删除。旧版本遗留的无 lease staging 也不会被自动猜测为孤儿；需要后续显式迁移/核对工具处理。全量历史 Batch 分页迁移、终态 job 配额/清理、App→Worker 长期 lease 交接、真实逐状态强杀/睡眠/断网矩阵与 Media Worker 仍待完成，P0-E 不能标记完成。
 
+### 12.32 第三十二批实施记录：durable video 跨 App 执行 lease（2026-10-22）
+
+本批关闭 12.21 epoch fencing 仍允许的并发执行窗口。单次 writer lock 只能串行化 manifest 读写；两份同时存活的 App 此前仍可依次 recover 同一个 job、后者覆盖 session epoch，而前者已经在查询或下载同一个 provider 任务。现在 runnable execution 额外持有 job 级内核 lease，竞争者在改写 epoch 前失败关闭。
+
+已实施：
+
+- 每个 job 使用持久 `.execution.lock`，按 `O_NOFOLLOW | O_CLOEXEC` 打开，校验当前 euid、regular file、单硬链接并强制 `0600`。锁文件不 unlink；`Execution` 持有非阻塞 `flock(LOCK_EX)` descriptor，整个 create/resume、progress、finalize 和失败收尾期间保持存活，正常释放或进程退出时由内核解锁。
+- 通用 Studio 的 lease 在 `markSubmitting` 与状态提交的同一个 writer-lock 临界区取得；纯 `prepared` intent 不长期占锁。Story/Batch 在 `activate` 时取得，恢复路径在更新 session epoch/retry 计数之前取得。竞争进程收到明确 busy，不会先抢 epoch 再让原执行者的 progress/finalize 变成 stale。
+- `markSubmitting` 新增 execution-preserving 路径，状态从 prepared 切到 submitting 时转移同一个 lease，不因替换 `Execution` 值提前 close。生产通用 Studio、Story 单段/直连与持久 Batch 全部使用该路径。
+- recovery 先验证活跃 lease，再把“submitting 且无 provider ID”归入 `submission_uncertain`；仍存活的 POST 不会被第二份 App 误判为崩溃残留。另修正 prepared recovery 只在内存替换 session epoch、未保存便返回的问题，接管 epoch 现在先 durable 提交，随后 submitting writer 才能通过 fencing。
+
+验证：覆盖两个独立 Store 同时 recover 只能有一个 execution owner、失败方不能改写胜方 epoch、lease 穿过 submitting 转换、释放后可恢复、prepared 接管 epoch 可继续提交，以及 execution lock 类型/权限与 symlink 拒绝；原有 staging、provider resume、submission-uncertain、Story workload 和 ViewModel 恢复回归继续通过。Debug 与 arm64 Release 选择性运行 MediaJobStore/Story 测试，Swift 6 编译与 `git diff --check` 同步作为本批门禁。
+
+边界：这是同一文件系统上协作式 App/App 互斥，不是 provider cancel、heartbeat、超时抢占或“lease 过期即证明旧副作用结束”。不遵守锁协议的旧客户端仍无法被 advisory lock 强制隔离；升级前仍需停止旧版本。App→Worker 必须显式完成 lease 所有权交接，不能先释放再靠 TTL 猜测；真实双 App `SIGKILL`、睡眠/断网及 Worker 组合矩阵仍待执行。全量历史 Batch 分页迁移、终态 job 引用对账/配额清理和 Media Worker 也仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
