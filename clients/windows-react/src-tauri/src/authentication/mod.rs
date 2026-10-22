@@ -9,13 +9,13 @@ pub(crate) use credentials::model_credential_environment_variable;
 use credentials::{CredentialStore, PlatformCredentialStore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
 use crate::{
     agent_management::AgentProfileStore, host_lifecycle::HostManager,
-    local_terminal::LocalTerminalRegistry, media_studio::MediaStudioManager,
+    local_terminal::LocalTerminalRegistry, media_studio::MediaStudioManager, pet::hide_pet_overlay,
     plugin_application::PluginApplicationManager, project_run::ProjectRunManager,
     remote_connection::RemoteConnectionManager, story_studio::StoryStudioManager,
     wechat_companion::WeChatCompanionManager,
@@ -329,6 +329,7 @@ fn api_message(error: ApiError) -> String {
 
 #[tauri::command]
 pub async fn restore_authentication_session(
+    app: AppHandle,
     manager: State<'_, AuthenticationManager>,
     project_runs: State<'_, ProjectRunManager>,
     remote_connections: State<'_, RemoteConnectionManager>,
@@ -351,12 +352,14 @@ pub async fn restore_authentication_session(
         project_runs.retain_owner(&session.user.id).await;
     } else {
         project_runs.reset().await;
+        hide_pet_overlay(&app);
     }
     Ok(session)
 }
 
 #[tauri::command]
 pub async fn login(
+    app: AppHandle,
     username: String,
     password: String,
     manager: State<'_, AuthenticationManager>,
@@ -368,6 +371,7 @@ pub async fn login(
     story_studio: State<'_, StoryStudioManager>,
     agent_profiles: State<'_, AgentProfileStore>,
 ) -> Result<AuthSession, String> {
+    hide_pet_overlay(&app);
     agent_profiles.reset();
     story_studio.reset();
     media_studio.reset();
@@ -422,6 +426,7 @@ pub async fn register(
 
 #[tauri::command]
 pub async fn logout(
+    app: AppHandle,
     manager: State<'_, AuthenticationManager>,
     host_manager: State<'_, HostManager>,
     project_runs: State<'_, ProjectRunManager>,
@@ -433,6 +438,7 @@ pub async fn logout(
     agent_profiles: State<'_, AgentProfileStore>,
     wechat_companion: State<'_, WeChatCompanionManager>,
 ) -> Result<(), String> {
+    hide_pet_overlay(&app);
     wechat_companion.reset();
     agent_profiles.reset();
     story_studio.reset();

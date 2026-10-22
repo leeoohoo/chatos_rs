@@ -14,6 +14,8 @@ import { TauriToolApprovalAdapter } from "../features/tool-approval/adapters/Tau
 import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/TauriHostLifecycleAdapter";
 import { TauriPluginApplicationAdapter } from "../features/plugin-applications/adapters/TauriPluginApplicationAdapter";
 import { TauriGeneralSettingsAdapter } from "../features/general-settings/adapters/TauriGeneralSettingsAdapter";
+import { TauriPetPreferencesAdapter } from "../features/pet/adapters/TauriPetPreferencesAdapter";
+import { PetOverlaySurface } from "../features/pet/ui/PetOverlaySurface";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import { TauriWindowChromeAdapter } from "../platform/window/adapters/TauriWindowChromeAdapter";
 import { WindowControls } from "../platform/window/ui/WindowControls";
@@ -25,6 +27,7 @@ const askUser = new TauriAskUserAdapter();
 const hostLifecycle = new TauriHostLifecycleAdapter();
 const pluginApplication = new TauriPluginApplicationAdapter();
 const generalSettings = new TauriGeneralSettingsAdapter();
+const petPreferences = new TauriPetPreferencesAdapter();
 const windowChrome = new TauriWindowChromeAdapter();
 const workspaceIndex = new TauriWorkspaceIndexAdapter();
 const conversationHistory = new TauriConversationHistoryAdapter();
@@ -37,6 +40,9 @@ const remoteConnection = new TauriRemoteConnectionAdapter();
 const toolApproval = new TauriToolApprovalAdapter();
 
 export function App() {
+  if (new URLSearchParams(window.location.search).get("surface") === "pet-overlay") {
+    return <PetOverlaySurface />;
+  }
   return (
     <Routes>
       <Route path="*" element={<ApplicationRoot />} />
@@ -64,6 +70,7 @@ function ApplicationRoot() {
           <AppShell
             hostLifecycle={hostLifecycle}
             generalSettings={generalSettings}
+            petPreferences={petPreferences}
             pluginApplication={pluginApplication}
             workspaceIndex={workspaceIndex}
             remoteConnection={remoteConnection}

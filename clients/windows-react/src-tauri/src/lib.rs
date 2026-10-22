@@ -18,6 +18,7 @@ mod host_lifecycle;
 mod local_terminal;
 mod media_studio;
 mod notepad;
+mod pet;
 mod platform_execution_context;
 mod plugin_application;
 mod product_skill_runtime;
@@ -111,6 +112,10 @@ use notepad::{
     create_notepad_folder, create_notepad_note, delete_notepad_folder, delete_notepad_note,
     get_notepad_note, import_notepad_image, load_notepad, rename_notepad_folder,
     update_notepad_note,
+};
+use pet::{
+    load_pet_preferences, pet_asset_protocol, reset_pet_position, update_pet_preferences,
+    PetAssetStore, PetPreferencesStore,
 };
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
@@ -211,6 +216,8 @@ pub fn run() {
     let protocol_agent_profile_store = agent_profile_store.clone();
     let wechat_companion_manager = WeChatCompanionManager::default();
     let protocol_wechat_companion_manager = wechat_companion_manager.clone();
+    let pet_asset_store = PetAssetStore::default();
+    let protocol_pet_asset_store = pet_asset_store.clone();
     let drop_attachment_manager = attachment_manager.clone();
     let app = tauri::Builder::default()
         .manage(authentication)
@@ -221,6 +228,7 @@ pub fn run() {
         .manage(agent_conversation_store)
         .manage(agent_skill_store)
         .manage(wechat_companion_manager)
+        .manage(pet_asset_store)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
@@ -243,7 +251,15 @@ pub fn run() {
             app.manage(RemoteConnectionManager::new(data_dir.clone()));
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
             app.manage(GeneralSettingsStore::new(data_dir.clone()));
+            app.manage(PetPreferencesStore::new(data_dir.clone()));
             app.manage(PluginApplicationManager::new(data_dir));
+            let resource_directory = app
+                .path()
+                .resource_dir()
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            app.state::<PetAssetStore>()
+                .load(&resource_directory)
+                .map_err(std::io::Error::other)?;
             #[cfg(target_os = "windows")]
             if std::env::var_os("CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP").as_deref()
                 == Some(std::ffi::OsStr::new("1"))
@@ -270,6 +286,9 @@ pub fn run() {
         })
         .register_uri_scheme_protocol("chatos-wechat", move |_context, request| {
             wechat_qr_protocol(protocol_wechat_companion_manager.clone(), request)
+        })
+        .register_uri_scheme_protocol("chatos-pet", move |_context, request| {
+            pet_asset_protocol(protocol_pet_asset_store.clone(), request)
         })
         .on_webview_event(move |webview, event| {
             let emit_drag_state = |targeted| {
@@ -403,6 +422,9 @@ pub fn run() {
             adopt_requirement_survey_plan,
             load_general_settings,
             update_general_settings,
+            load_pet_preferences,
+            update_pet_preferences,
+            reset_pet_position,
             load_wechat_companion,
             issue_wechat_bind_ticket,
             poll_wechat_bind_ticket,

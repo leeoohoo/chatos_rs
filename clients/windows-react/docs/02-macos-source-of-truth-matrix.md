@@ -1245,7 +1245,7 @@ Windows React 已完成对应独立切片：
 | 21 | 项目 Git | macOS View/ViewModel/Core Port/Native service/parser、命令边界和异步 lifecycle 已映射并完成准入；Windows owner/project/workspace、Git 进程树、输出/超时、路径成员、Secret 安全投影、typed Port/Store lifecycle 与 Apple 风格工作面已完成 | 已进入 React |
 | 22 | 设置 / 通用 | macOS 界面/上下文语言、显示、休眠和账号语义已映射；Windows owner-scoped 原子偏好、共享界面 locale、可信 Agent Skill 语言消费与 Apple 主题设置页已完成 | 已进入 React；内部上下文语言只由 Rust 当前账号偏好进入新 Run，消息输入不得覆盖 |
 | 23 | 设置 / 微信 | macOS 绑定、二维码二次确认、session 撤销与解绑语义已映射；Windows User Service 原生适配、opaque 二维码预览、typed Store lifecycle 与 Apple 主题页面已完成 | 已进入 React；token/ticket/scene/二维码字节不跨 Rust 边界，页面与账号 teardown 后预览失败关闭 |
-| 24 | 设置 / 宠物 | 未映射 | 禁止 |
+| 24 | 设置 / 宠物 | macOS 设备级偏好、透明浮窗、资源、尺寸与位置恢复语义已映射；Windows 原子偏好、可信资源协议、真实 Tauri overlay、typed Store lifecycle 与 Apple 主题页面已完成 | 已进入 React；Windows 公开 API 不支持把单一窗口固定到所有虚拟桌面，当前以置顶浮窗实现并在页面明确说明平台差异；任务事件卡片继续按现有 Host 投影接入 |
 | 25 | 设置 / 全局工具 | 未映射 | 禁止 |
 | 26 | 设置 / AI 模型 | 未映射 | 禁止 |
 | 27 | 设置 / 设备网关 | 未映射 | 禁止 |

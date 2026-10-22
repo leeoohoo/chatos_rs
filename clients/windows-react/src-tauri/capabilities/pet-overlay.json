@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pet-overlay",
+  "description": "Minimal capability for dragging the trusted pet overlay window",
+  "windows": ["pet-overlay"],
+  "permissions": ["core:window:allow-start-dragging"]
+}

@@ -23,14 +23,15 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: https: chatos-attachment: http://chatos-attachment.localhost chatos-media: http://chatos-media.localhost chatos-story: http://chatos-story.localhost chatos-agent: http://chatos-agent.localhost chatos-wechat: http://chatos-wechat.localhost; media-src 'self' chatos-story: http://chatos-story.localhost; connect-src ipc: http://ipc.localhost; frame-src http://127.0.0.1:*"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: https: chatos-attachment: http://chatos-attachment.localhost chatos-media: http://chatos-media.localhost chatos-story: http://chatos-story.localhost chatos-agent: http://chatos-agent.localhost chatos-wechat: http://chatos-wechat.localhost chatos-pet: http://chatos-pet.localhost; media-src 'self' chatos-story: http://chatos-story.localhost; connect-src ipc: http://ipc.localhost; frame-src http://127.0.0.1:*"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "resources": {
-      "resources/": ""
+      "resources/": "",
+      "../../macos/Support/Pets/fengtuan/spritesheet.webp": "Pets/fengtuan/spritesheet.webp"
     }
   }
 }
