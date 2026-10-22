@@ -1079,6 +1079,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：当前 Store 只替换通用 Media Studio 视频的任务事实源，Story/Media Batch 的非终态任务尚未执行 6.4 的原子导入；图片任务仍没有进入 MediaJobStore。App 内由单个 service actor 写入并有 epoch fencing，但尚未增加两份 App/未来 Worker 之间的 OS 文件锁与交接协议。`Idempotency-Key` 已发送但没有真实 provider 沙箱对账证据；没有 provider ID 的不确定提交仍需人工核对。取消没有 provider cancel/退款契约，只能保留 `cancellation_requested` 后继续查询最终事实。terminal job 的保留/清理策略、真实逐状态强杀矩阵、睡眠/断网恢复、下载断点续传、Worker 文件授权与独立 Media Worker 仍待完成，因此 P0-E 仍不能标记完成。
 
+### 12.21 第二十一批实施记录：MediaJobStore 跨进程操作锁与 epoch fencing（2026-10-22）
+
+本批补齐 12.20 明确保留的跨 Store/跨进程写竞态。单个 Swift actor 只能串行化自身调用，两份 App 或未来 App/Worker 若同时打开同一 root，仍可在 `load → epoch 校验 → transition → save` 之间覆盖对方。
+
+已实施：
+
+- Store root 下新增持久 `.writer.lock`，以 `O_NOFOLLOW | O_CLOEXEC` 打开，校验为当前用户拥有、单硬链接的普通文件，并强制权限 `0600`；symlink、非普通文件或无法安全打开时拒绝继续操作。锁文件不通过 unlink “解锁”，崩溃/强杀后由内核随 descriptor 释放 `flock`。
+- `prepare`、`markSubmitting`、进度/终态/失败/取消写入、`recover` 和 `snapshot` 都在一次独占操作锁内完成读取、epoch 校验、状态转换与原子 manifest 写入。两个独立 Store 竞争同一 prepared job 时只有一个可以进入 submitting，另一个看到已提交的状态后失败，不再基于旧 snapshot 重复创建。
+- 并发恢复会在锁内串行接管 epoch；持久记录只保留最后一个 epoch，前一个恢复会话的迟到进度写入会被 `staleSession` 拒绝。这一 fencing 跨越不同 Store actor，不再只是单进程内的约定。
+
+验证：新增锁文件类型/权限、symlink 拒绝、descriptor 释放后等待方继续、双 Store 并发 submitting 单成功，以及双 Store 并发 recovery 后旧 epoch 被 fencing 的回归。Debug 与 arm64 Release 按 History/Video Job/Video Canvas/Image Interaction/ViewModel/API 各选择性运行 76 项，全部通过；Swift 6 编译与并发检查、`git diff --check` 同步作为门禁。
+
+边界：这是单次 Store 操作锁，不是跨进程的长期 lease、heartbeat 或 App → Worker 升级交接协议；两份同时存活的客户端可以依次接管 epoch，只有最后接管者能提交后续状态，但本批未阻止前一个进程已发起的 provider 查询/下载。为先保证正确性，`prepare` 最多 47 MiB 的 artifact 复制与 SHA-256 仍在锁内；Story/Batch 迁移前应改为锁外私有 staging、短锁内 rename + manifest commit，并补齐长期所有者/交接协议。Story/Media Batch 仍未迁移，图片 job、终态清理和真实多进程强杀矩阵仍待完成，P0-E 仍不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

@@ -1,4 +1,5 @@
 import ChatOSCore
+import Darwin
 import Foundation
 import XCTest
 @testable import ChatOSApp
@@ -12,6 +13,193 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         return url
+    }
+
+    private func request(prompt: String = "durable") -> VideoGenerationRequest {
+        .init(
+            modelConfigID: "video-model",
+            prompt: prompt,
+            size: "768P",
+            seconds: 4
+        )
+    }
+
+    func testWriterLockIsPrivateRegularFile() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+
+        _ = try await store.prepare(
+            request: request(),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+
+        let lockURL = root.appendingPathComponent(".writer.lock")
+        let values = try lockURL.resourceValues(forKeys: [.isRegularFileKey])
+        let attributes = try FileManager.default.attributesOfItem(atPath: lockURL.path)
+        XCTAssertEqual(values.isRegularFile, true)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
+    func testSymlinkWriterLockIsRejected() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let target = root.appendingPathComponent("target")
+        try Data().write(to: target)
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent(".writer.lock"),
+            withDestinationURL: target
+        )
+
+        do {
+            _ = try await MediaStudioVideoJobStore(root: root).recover(
+                owner: "alice",
+                sessionEpoch: UUID()
+            )
+            XCTFail("A symlink must never be accepted as the shared writer lock")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                MediaStudioVideoJobStoreError.invalidWriterLock.localizedDescription
+            )
+        }
+    }
+
+    func testIndependentStoresSerializeSubmittingTransition() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let initial = MediaStudioVideoJobStore(root: root)
+        let prepared = try await initial.prepare(
+            request: request(prompt: "submit once"),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        let first = MediaStudioVideoJobStore(root: root)
+        let second = MediaStudioVideoJobStore(root: root)
+        let firstEpoch = UUID()
+        let secondEpoch = UUID()
+
+        let firstAttempt = Task { () -> String in
+            do {
+                _ = try await first.markSubmitting(
+                    id: prepared.snapshot.id,
+                    owner: "alice",
+                    sessionEpoch: firstEpoch
+                )
+                return "success"
+            } catch {
+                return error.localizedDescription
+            }
+        }
+        let secondAttempt = Task { () -> String in
+            do {
+                _ = try await second.markSubmitting(
+                    id: prepared.snapshot.id,
+                    owner: "alice",
+                    sessionEpoch: secondEpoch
+                )
+                return "success"
+            } catch {
+                return error.localizedDescription
+            }
+        }
+
+        let outcomes = await [firstAttempt.value, secondAttempt.value]
+        XCTAssertEqual(outcomes.filter { $0 == "success" }.count, 1)
+        XCTAssertEqual(
+            outcomes.filter {
+                $0 == MediaStudioVideoJobStoreError.invalidTransition.localizedDescription
+            }.count,
+            1
+        )
+    }
+
+    func testConcurrentRecoveryLeavesOneEpochAndFencesOtherWriter() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let initial = MediaStudioVideoJobStore(root: root)
+        let prepared = try await initial.prepare(
+            request: request(prompt: "single recovery owner"),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        _ = try await initial.markSubmitting(
+            id: prepared.snapshot.id,
+            owner: "alice",
+            sessionEpoch: prepared.snapshot.sessionEpoch
+        )
+        try await initial.recordProgress(
+            id: prepared.snapshot.id,
+            owner: "alice",
+            progress: .init(status: "queued", jobID: "provider-concurrent")
+        )
+        let first = MediaStudioVideoJobStore(root: root)
+        let second = MediaStudioVideoJobStore(root: root)
+        let firstEpoch = UUID()
+        let secondEpoch = UUID()
+
+        async let firstRecovery = first.recover(owner: "alice", sessionEpoch: firstEpoch)
+        async let secondRecovery = second.recover(owner: "alice", sessionEpoch: secondEpoch)
+        let recoveries = try await [firstRecovery, secondRecovery]
+        XCTAssertEqual(recoveries.compactMap(\.self).count, 2)
+        XCTAssertTrue(recoveries.compactMap(\.self).allSatisfy {
+            $0.mode == .resume(providerJobID: "provider-concurrent")
+        })
+
+        let snapshot = try await initial.snapshot(id: prepared.snapshot.id, owner: "alice")
+        XCTAssertTrue(snapshot.sessionEpoch == firstEpoch || snapshot.sessionEpoch == secondEpoch)
+        let staleEpoch = snapshot.sessionEpoch == firstEpoch ? secondEpoch : firstEpoch
+        do {
+            try await initial.recordProgress(
+                id: prepared.snapshot.id,
+                owner: "alice",
+                sessionEpoch: staleEpoch,
+                progress: .init(status: "running", jobID: "provider-concurrent")
+            )
+            XCTFail("The recovery epoch that lost ownership must be fenced")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                MediaStudioVideoJobStoreError.staleSession.localizedDescription
+            )
+        }
+    }
+
+    func testClosingWriterLockAllowsWaitingStoreToContinue() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let initial = MediaStudioVideoJobStore(root: root)
+        let prepared = try await initial.prepare(
+            request: request(prompt: "release lock"),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        let lockURL = root.appendingPathComponent(".writer.lock")
+        let descriptor = lockURL.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        }
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        guard descriptor >= 0 else { return }
+        var descriptorIsOpen = true
+        defer {
+            if descriptorIsOpen {
+                _ = flock(descriptor, LOCK_UN)
+                _ = Darwin.close(descriptor)
+            }
+        }
+        XCTAssertEqual(flock(descriptor, LOCK_EX), 0)
+        let attempted = expectation(description: "second store attempts locked operation")
+        let waiting = MediaStudioVideoJobStore(root: root)
+        let operation = Task {
+            attempted.fulfill()
+            return try await waiting.snapshot(id: prepared.snapshot.id, owner: "alice")
+        }
+        await fulfillment(of: [attempted], timeout: 1)
+        try await Task.sleep(for: .milliseconds(25))
+
+        XCTAssertEqual(flock(descriptor, LOCK_UN), 0)
+        XCTAssertEqual(Darwin.close(descriptor), 0)
+        descriptorIsOpen = false
+        let snapshot = try await operation.value
+        XCTAssertEqual(snapshot.id, prepared.snapshot.id)
     }
 
     func testPreparedIntentCopiesInputAndKeepsStableSubmissionIdentityAcrossRestart() async throws {

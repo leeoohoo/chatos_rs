@@ -125,6 +125,8 @@ actor MediaStudioVideoJobStore {
         owner ownerInput: String,
         sessionEpoch: UUID
     ) throws -> Execution {
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
         let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !owner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
         let id = UUID()
@@ -161,6 +163,8 @@ actor MediaStudioVideoJobStore {
     }
 
     func markSubmitting(id: UUID, owner: String, sessionEpoch: UUID) throws -> Execution {
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
         var record = try load(id: id, owner: owner)
         guard record.status == .prepared else {
             throw MediaStudioVideoJobStoreError.invalidTransition
@@ -177,6 +181,8 @@ actor MediaStudioVideoJobStore {
         sessionEpoch: UUID? = nil,
         progress: VideoGenerationProgress
     ) throws {
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
         var record = try load(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
         guard !record.status.isTerminal else { return }
@@ -211,6 +217,8 @@ actor MediaStudioVideoJobStore {
         sessionEpoch: UUID? = nil,
         providerJobID: String
     ) throws {
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
         var record = try load(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
         record.providerJobID = providerJobID
@@ -225,6 +233,8 @@ actor MediaStudioVideoJobStore {
         sessionEpoch: UUID? = nil,
         providerJobID: String
     ) throws {
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
         var record = try load(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
         record.providerJobID = providerJobID
@@ -245,6 +255,8 @@ actor MediaStudioVideoJobStore {
         requestMayHaveBeenSubmitted: Bool,
         retryable: Bool
     ) throws {
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
         var record = try load(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
         guard !record.status.isTerminal else { return }
@@ -261,6 +273,8 @@ actor MediaStudioVideoJobStore {
     }
 
     func markCancellation(id: UUID, owner: String, sessionEpoch: UUID? = nil) throws {
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
         var record = try load(id: id, owner: owner)
         try verify(sessionEpoch: sessionEpoch, record: record)
         guard !record.status.isTerminal else { return }
@@ -283,6 +297,8 @@ actor MediaStudioVideoJobStore {
     /// `submitting` record without provider identity is reconciled to an explicit uncertain
     /// state and is never converted back to a create request.
     func recover(owner: String, sessionEpoch: UUID) throws -> Execution? {
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
         let normalizedOwner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedOwner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
         let records = try loadRecords(owner: normalizedOwner)
@@ -317,7 +333,52 @@ actor MediaStudioVideoJobStore {
     }
 
     func snapshot(id: UUID, owner: String) throws -> Snapshot {
-        snapshot(try load(id: id, owner: owner))
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
+        return snapshot(try load(id: id, owner: owner))
+    }
+
+    /// Serializes a complete read/verify/transition/write operation across independent
+    /// Store actors and processes. The persistent inode must never be unlinked to unlock;
+    /// `flock` ownership is tied to this descriptor and the kernel releases it on crash.
+    private func acquireStoreLock() throws -> Int32 {
+        try createPrivateDirectory(root)
+        let lockURL = root.appendingPathComponent(".writer.lock", isDirectory: false)
+        let descriptor = lockURL.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(
+                path,
+                O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,
+                mode_t(0o600)
+            )
+        }
+        guard descriptor >= 0 else {
+            throw MediaStudioVideoJobStoreError.invalidWriterLock
+        }
+        var shouldClose = true
+        defer {
+            if shouldClose { Darwin.close(descriptor) }
+        }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFREG,
+              status.st_nlink == 1,
+              status.st_uid == geteuid(),
+              fchmod(descriptor, mode_t(0o600)) == 0 else {
+            throw MediaStudioVideoJobStoreError.invalidWriterLock
+        }
+        while flock(descriptor, LOCK_EX) != 0 {
+            guard errno == EINTR else {
+                throw MediaStudioVideoJobStoreError.invalidWriterLock
+            }
+        }
+        shouldClose = false
+        return descriptor
+    }
+
+    private func releaseStoreLock(_ descriptor: Int32) {
+        _ = flock(descriptor, LOCK_UN)
+        _ = Darwin.close(descriptor)
     }
 
     private func persist(request: VideoGenerationRequest, in folder: URL) throws -> StoredRequest {
@@ -644,6 +705,7 @@ enum MediaStudioVideoJobStoreError: LocalizedError {
     case invalidRecord
     case invalidTransition
     case staleSession
+    case invalidWriterLock
 
     var errorDescription: String? {
         switch self {
@@ -652,6 +714,7 @@ enum MediaStudioVideoJobStoreError: LocalizedError {
         case .invalidRecord: "视频任务记录损坏，无法安全恢复。"
         case .invalidTransition: "视频任务状态已变化，请刷新后重试。"
         case .staleSession: "视频任务已由新的账号会话接管。"
+        case .invalidWriterLock: "视频任务写入锁无效，已拒绝继续操作。"
         }
     }
 }
