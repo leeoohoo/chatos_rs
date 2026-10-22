@@ -3,6 +3,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 
 use super::{AuthSession, AuthUser, RegistrationCodeDelivery};
+use chatos_plugin_management_sdk::{PluginInstallSourceList, UpdateUserPluginPreferenceResponse};
 
 const MAXIMUM_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
@@ -175,6 +176,12 @@ pub(crate) struct GatewayModelSettingsMutation<'a> {
 
 #[derive(Debug, Serialize)]
 struct EmptyControlPlaneRequest {}
+
+#[derive(Debug, Serialize)]
+struct GatewayPluginPreferenceMutation<'a> {
+    device_id: &'a str,
+    enabled: bool,
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct GatewayAgentCapability {
@@ -483,6 +490,35 @@ impl AuthenticationApiClient {
         self.control_plane_request(
             "api/plugin-management/agent-capabilities",
             Some(("local_agent_execution_agent", "")),
+            access_token,
+        )
+        .await
+    }
+
+    pub(crate) async fn plugin_install_sources(
+        &self,
+        access_token: &str,
+    ) -> Result<PluginInstallSourceList, ApiError> {
+        self.control_plane_request(
+            "api/plugin-management/plugins/install-sources",
+            None,
+            access_token,
+        )
+        .await
+    }
+
+    pub(crate) async fn update_plugin_preference(
+        &self,
+        access_token: &str,
+        plugin_id: &str,
+        device_id: &str,
+        enabled: bool,
+    ) -> Result<UpdateUserPluginPreferenceResponse, ApiError> {
+        self.control_plane_mutation(
+            "api/plugin-management/plugins",
+            Some((plugin_id, "preference")),
+            "PUT",
+            &GatewayPluginPreferenceMutation { device_id, enabled },
             access_token,
         )
         .await

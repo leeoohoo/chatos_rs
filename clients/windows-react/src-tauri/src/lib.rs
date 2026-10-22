@@ -25,6 +25,7 @@ mod notepad;
 mod pet;
 mod platform_execution_context;
 mod plugin_application;
+mod plugin_settings;
 mod product_skill_runtime;
 mod project_conversation;
 mod project_creation;
@@ -137,6 +138,9 @@ use pet::{
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
     launch_plugin_application, list_plugin_applications, PluginApplicationManager,
+};
+use plugin_settings::{
+    load_plugin_settings, uninstall_plugin, update_plugin_enabled, PluginSettingsManager,
 };
 use project_conversation::prepare_project_conversation;
 use project_creation::{
@@ -282,6 +286,7 @@ pub fn run() {
                 .open(data_dir.join("clipboard-history"))
                 .map_err(std::io::Error::other)?;
             app.manage(PetPreferencesStore::new(data_dir.clone()));
+            app.manage(PluginSettingsManager::new(data_dir.clone()));
             app.manage(PluginApplicationManager::new(data_dir));
             let resource_directory = app
                 .path()
@@ -550,6 +555,9 @@ pub fn run() {
             close_local_terminal,
             discard_local_terminal_presentation,
             list_plugin_applications,
+            load_plugin_settings,
+            update_plugin_enabled,
+            uninstall_plugin,
             list_media_studio_models,
             load_media_studio_image_history,
             load_media_studio_video_history,

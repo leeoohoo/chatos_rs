@@ -3,6 +3,8 @@ mod credentials;
 
 use std::sync::Arc;
 
+use chatos_plugin_management_sdk::{PluginInstallSourceList, UpdateUserPluginPreferenceResponse};
+
 pub(crate) use client::{
     runtime_api_base_url, GatewayAgentCapability, GatewayManagedModelConfig, GatewayModelConfig,
     GatewayModelConfigMutation, GatewayModelProvider, GatewayModelProviderMutation,
@@ -418,6 +420,33 @@ impl AuthenticationManager {
                 unauthorized: true,
             })?;
         self.client.local_agent_capability(&token).await
+    }
+
+    pub(crate) async fn plugin_install_sources_for_owner(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<PluginInstallSourceList, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client.plugin_install_sources(&token).await
+    }
+
+    pub(crate) async fn update_plugin_preference_for_owner(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        device_id: &str,
+        enabled: bool,
+    ) -> Result<UpdateUserPluginPreferenceResponse, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client
+            .update_plugin_preference(&token, plugin_id, device_id, enabled)
+            .await
     }
 
     pub(crate) fn load_model_credential(
