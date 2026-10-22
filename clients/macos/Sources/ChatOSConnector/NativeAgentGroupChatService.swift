@@ -177,6 +177,19 @@ public actor NativeAgentGroupChatService {
         )
     }
 
+    public func localAgentArtifactFile(
+        ownerUserID: String,
+        artifactID: String
+    ) async throws -> AgentArtifactFileReference {
+        guard let store = agentArtifactStore as? any AgentArtifactFileServing else {
+            throw AgentGroupChatError.storage("Agent artifact file access is unavailable")
+        }
+        return try await store.fileReference(
+            ownerUserID: ownerUserID,
+            artifactID: artifactID
+        )
+    }
+
     /// Emits process-local invalidations after the durable SQLite write has completed. Consumers
     /// always re-read SQLite, so this stream is only a wake-up signal and never a second source of
     /// truth. A small bounded buffer preserves a lower-frequency `roomUpdated` invalidation among

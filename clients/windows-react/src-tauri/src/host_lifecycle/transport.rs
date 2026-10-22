@@ -77,7 +77,7 @@ pub(super) async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
             max_message_bytes: LOCAL_AGENT_MAX_MESSAGE_BYTES,
             ..
         } if service == "chatos-local-agent-host" => Ok(()),
-        _ => Err("Host health response does not match protocol v44.".to_string()),
+        _ => Err("Host health response does not match protocol v45.".to_string()),
     }
 }
 

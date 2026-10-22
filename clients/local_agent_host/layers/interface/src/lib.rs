@@ -37,9 +37,9 @@ pub use task_acceptance::{
 };
 
 pub use artifact::{
-    CreateArtifactCommand, DeleteArtifactCommand, GetArtifactDataCommand, ListArtifactsCommand,
-    LocalAgentArtifact, LocalAgentArtifactPage, LOCAL_AGENT_ARTIFACT_MAX_BYTES,
-    LOCAL_AGENT_ARTIFACT_MAX_PAGE_SIZE,
+    CreateArtifactCommand, DeleteArtifactCommand, GetArtifactDataCommand, GetArtifactFileCommand,
+    ListArtifactsCommand, LocalAgentArtifact, LocalAgentArtifactFile, LocalAgentArtifactPage,
+    LOCAL_AGENT_ARTIFACT_MAX_BYTES, LOCAL_AGENT_ARTIFACT_MAX_PAGE_SIZE,
 };
 pub use control_plane::{
     GetCapabilityPolicySnapshotCommand, GetLatestCapabilityPolicySnapshotCommand,
@@ -126,7 +126,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 44;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 45;
 /// Maximum bytes in one physical IPC frame. The high bit of the frame prefix is reserved
 /// as the continuation flag, so this limit must stay below `i32::MAX`.
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
@@ -232,6 +232,7 @@ pub enum HostCommand {
     CreateArtifact(CreateArtifactCommand),
     ListArtifacts(ListArtifactsCommand),
     GetArtifactData(GetArtifactDataCommand),
+    GetArtifactFile(GetArtifactFileCommand),
     DeleteArtifact(DeleteArtifactCommand),
     CreateRequirementSurvey(CreateRequirementSurveyCommand),
     ListRequirementSurveys(ListRequirementSurveysCommand),
@@ -315,6 +316,7 @@ impl HostCommand {
             Self::CreateArtifact(command) => command.validate(),
             Self::ListArtifacts(command) => command.validate(),
             Self::GetArtifactData(command) => command.validate(),
+            Self::GetArtifactFile(command) => command.validate(),
             Self::DeleteArtifact(command) => command.validate(),
             Self::CreateRequirementSurvey(command) => command.validate(),
             Self::ListRequirementSurveys(command) => command.validate(),

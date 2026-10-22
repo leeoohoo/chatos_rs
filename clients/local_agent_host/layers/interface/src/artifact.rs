@@ -31,6 +31,12 @@ pub struct GetArtifactDataCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetArtifactFileCommand {
+    pub owner_user_id: String,
+    pub artifact_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeleteArtifactCommand {
     pub owner_user_id: String,
     pub artifact_id: String,
@@ -52,6 +58,14 @@ pub struct LocalAgentArtifact {
 pub struct LocalAgentArtifactPage {
     pub artifacts: Vec<LocalAgentArtifact>,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalAgentArtifactFile {
+    pub artifact_id: String,
+    pub relative_path: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 impl CreateArtifactCommand {
@@ -87,6 +101,12 @@ impl ListArtifactsCommand {
 }
 
 impl GetArtifactDataCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_owner_and_artifact(&self.owner_user_id, &self.artifact_id)
+    }
+}
+
+impl GetArtifactFileCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_owner_and_artifact(&self.owner_user_id, &self.artifact_id)
     }

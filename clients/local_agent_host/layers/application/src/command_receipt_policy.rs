@@ -63,6 +63,7 @@ impl CommandReceiptPolicy {
             | HostCommand::GetRemoteConnection(_)
             | HostCommand::ListArtifacts(_)
             | HostCommand::GetArtifactData(_)
+            | HostCommand::GetArtifactFile(_)
             | HostCommand::ListRequirementSurveys(_)
             | HostCommand::GetRequirementSurvey(_)
             | HostCommand::GetRequirementPlan(_) => Self::ReadEphemeral,

@@ -95,6 +95,18 @@ public struct AgentArtifactPage: Sendable, Equatable {
     }
 }
 
+public struct AgentArtifactFileReference: Sendable, Equatable {
+    public let fileURL: URL
+    public let size: Int
+    public let sha256: String
+
+    public init(fileURL: URL, size: Int, sha256: String) {
+        self.fileURL = fileURL
+        self.size = size
+        self.sha256 = sha256
+    }
+}
+
 /// Account-scoped local persistence for Agent-authored Markdown artifacts.
 public protocol AgentArtifactServing: Sendable {
     func store(
@@ -104,4 +116,13 @@ public protocol AgentArtifactServing: Sendable {
     func list(ownerUserID: String, limit: Int, cursor: String?) async throws -> AgentArtifactPage
     func read(ownerUserID: String, artifactID: String) async throws -> Data
     func remove(ownerUserID: String, artifactID: String) async throws
+}
+
+/// File-native access implemented only by stores whose content directory is owned by the client.
+/// Callers must still open the returned file without following links and verify size and digest.
+public protocol AgentArtifactFileServing: AgentArtifactServing {
+    func fileReference(
+        ownerUserID: String,
+        artifactID: String
+    ) async throws -> AgentArtifactFileReference
 }

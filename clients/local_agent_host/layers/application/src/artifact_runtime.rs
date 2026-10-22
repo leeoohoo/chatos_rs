@@ -53,6 +53,14 @@ impl LocalAgentRuntime {
                     data_base64: STANDARD.encode(data),
                 })
             }
+            HostCommand::GetArtifactFile(command) => {
+                let file = self
+                    .store
+                    .read_artifact_file(&command.owner_user_id, &command.artifact_id)
+                    .await?
+                    .ok_or_else(|| ClientStorageError::NotFound(command.artifact_id.clone()))?;
+                Ok(HostResult::ArtifactFile { file })
+            }
             HostCommand::DeleteArtifact(command) => {
                 self.store
                     .delete_artifact(
@@ -141,8 +149,8 @@ mod tests {
     use super::*;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        DeleteArtifactCommand, GetArtifactDataCommand, HostRequestEnvelope, ListArtifactsCommand,
-        LOCAL_AGENT_PROTOCOL_VERSION,
+        DeleteArtifactCommand, GetArtifactDataCommand, GetArtifactFileCommand, HostRequestEnvelope,
+        ListArtifactsCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use std::sync::Arc;
 
@@ -228,6 +236,35 @@ mod tests {
                 data_base64: STANDARD.encode("# hi"),
             }
         );
+
+        let file = runtime
+            .try_handle(request(
+                "file",
+                HostCommand::GetArtifactFile(GetArtifactFileCommand {
+                    owner_user_id: "owner-1".to_string(),
+                    artifact_id: artifact.artifact_id.clone(),
+                }),
+            ))
+            .await
+            .expect("read artifact file reference");
+        let HostResult::ArtifactFile { file } = file else {
+            panic!("expected artifact file reference")
+        };
+        assert_eq!(file.artifact_id, artifact.artifact_id);
+        assert_eq!(file.relative_path, format!("{}.artifact", file.artifact_id));
+        assert_eq!(file.size, 4);
+        assert_eq!(file.sha256, format!("{:x}", Sha256::digest(b"# hi")));
+
+        let hidden_file = runtime
+            .try_handle(request(
+                "hidden-file",
+                HostCommand::GetArtifactFile(GetArtifactFileCommand {
+                    owner_user_id: "owner-2".to_string(),
+                    artifact_id: artifact.artifact_id.clone(),
+                }),
+            ))
+            .await;
+        assert!(hidden_file.is_err());
 
         let page = runtime
             .try_handle(request(

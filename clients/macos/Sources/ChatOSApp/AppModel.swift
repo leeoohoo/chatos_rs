@@ -201,7 +201,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             configuration: .init(baseURL: RuntimeConfiguration.apiBaseURL),
             credentialStore: credentialStore
         )
-        let localAgentHost = RuntimeConfiguration.localAgentHostConfiguration.map {
+        let localAgentHostConfiguration = RuntimeConfiguration.localAgentHostConfiguration
+        let localAgentHost = localAgentHostConfiguration.map {
             NativeLocalAgentHostLifecycle(configuration: $0)
         }
         let authenticationService = ChatOSAuthenticationService(
@@ -241,7 +242,16 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         let agentGroupChatService = NativeAgentGroupChatService(
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("AgentGroupChat.sqlite3"),
-            agentArtifactStore: localAgentHost.map(NativeLocalAgentArtifactClient.init(host:))
+            agentArtifactStore: localAgentHost.flatMap { host in
+                localAgentHostConfiguration.map { configuration in
+                    NativeLocalAgentArtifactClient(
+                        host: host,
+                        artifactDirectoryURL: configuration.databaseURL
+                            .deletingPathExtension()
+                            .appendingPathExtension("artifacts")
+                    )
+                }
+            }
         )
 
         self.historyStore = historyStore

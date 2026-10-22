@@ -6,7 +6,8 @@ import XCTest
 final class NativeLocalAgentArtifactClientTests: XCTestCase {
     func testCRUDCommandsRemainOwnerScopedAndCarryContent() async throws {
         let host = ArtifactHostStub()
-        let client = NativeLocalAgentArtifactClient(host: host)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("artifacts")
+        let client = NativeLocalAgentArtifactClient(host: host, artifactDirectoryURL: root)
         let data = Data("# Local\n".utf8)
         let metadata = try await client.store(
             ownerUserID: "owner-1",
@@ -31,16 +32,46 @@ final class NativeLocalAgentArtifactClientTests: XCTestCase {
             artifactID: "artifact-1"
         )
         XCTAssertEqual(downloaded, data)
+        let reference = try await client.fileReference(
+            ownerUserID: "owner-1",
+            artifactID: "artifact-1"
+        )
+        XCTAssertEqual(reference.fileURL, root.appendingPathComponent("artifact-1.artifact"))
+        XCTAssertEqual(reference.size, data.count)
+        command = try await host.lastCommand()
+        XCTAssertEqual(command.type, "get_artifact_file")
+        XCTAssertEqual(command.ownerUserID, "owner-1")
         try await client.remove(ownerUserID: "owner-1", artifactID: "artifact-1")
         command = try await host.lastCommand()
         XCTAssertEqual(command.type, "delete_artifact")
         XCTAssertEqual(command.ownerUserID, "owner-1")
     }
+
+    func testFileReferenceRejectsHostPathEscape() async throws {
+        let host = ArtifactHostStub(relativePath: "../artifact-1.artifact")
+        let client = NativeLocalAgentArtifactClient(
+            host: host,
+            artifactDirectoryURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("artifacts")
+        )
+        do {
+            _ = try await client.fileReference(
+                ownerUserID: "owner-1",
+                artifactID: "artifact-1"
+            )
+            XCTFail("Escaping artifact path was accepted")
+        } catch NativeLocalAgentHostError.invalidResponse {}
+    }
 }
 
 private actor ArtifactHostStub: LocalAgentHostClientServicing {
     private let data = Data("# Local\n".utf8)
+    private let relativePath: String
     private var commands: [Data] = []
+
+    init(relativePath: String = "artifact-1.artifact") {
+        self.relativePath = relativePath
+    }
 
     func start(ownerUserID _: String) async throws {}
     func stop() async {}
@@ -61,6 +92,16 @@ private actor ArtifactHostStub: LocalAgentHostClientServicing {
                 "type": "artifact_data",
                 "artifact_id": "artifact-1",
                 "data_base64": data.base64EncodedString(),
+            ])
+        case "get_artifact_file":
+            return try json([
+                "type": "artifact_file",
+                "file": [
+                    "artifact_id": "artifact-1",
+                    "relative_path": relativePath,
+                    "size": data.count,
+                    "sha256": String(repeating: "a", count: 64),
+                ],
             ])
         case "delete_artifact":
             return try json(["type": "artifact_deleted", "artifact_id": "artifact-1"])

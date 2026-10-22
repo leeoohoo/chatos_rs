@@ -658,6 +658,7 @@ impl LocalAgentRuntime {
             command @ (HostCommand::CreateArtifact(_)
             | HostCommand::ListArtifacts(_)
             | HostCommand::GetArtifactData(_)
+            | HostCommand::GetArtifactFile(_)
             | HostCommand::DeleteArtifact(_)) => {
                 self.handle_artifact_command(&idempotency, command).await
             }

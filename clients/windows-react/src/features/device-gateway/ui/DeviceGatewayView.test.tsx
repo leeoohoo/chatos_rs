@@ -11,7 +11,7 @@ describe("DeviceGatewayView", () => {
     useDeviceGatewayStore.getState().reset();
     useHostLifecycleStore.setState({
       ownerUserId: "owner-1",
-      snapshot: { phase: "ready", ready: true, protocolVersion: 44, detail: "ready", retryable: false, label: "本地服务已就绪" },
+      snapshot: { phase: "ready", ready: true, protocolVersion: 45, detail: "ready", retryable: false, label: "本地服务已就绪" },
     });
   });
 
@@ -26,7 +26,7 @@ describe("DeviceGatewayView", () => {
 });
 
 function hostPort(): HostLifecyclePort {
-  const ready = { phase: "ready" as const, ready: true, protocolVersion: 44, detail: "ready", retryable: false };
+  const ready = { phase: "ready" as const, ready: true, protocolVersion: 45, detail: "ready", retryable: false };
   return {
     snapshot: vi.fn(async () => ready),
     diagnostics: vi.fn(async () => ({ capacity: 64, entries: [] })),

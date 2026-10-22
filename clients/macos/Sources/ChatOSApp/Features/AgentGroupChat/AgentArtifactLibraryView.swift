@@ -174,12 +174,19 @@ struct AgentArtifactLibraryView: View {
         Task {
             defer { loadingArtifactIDs.remove(artifact.id) }
             do {
-                let data = try await validatedData(artifact)
                 let panel = NSSavePanel()
                 panel.nameFieldStringValue = artifact.name
                 panel.canCreateDirectories = true
                 guard panel.runModal() == .OK, let url = panel.url else { return }
-                try data.write(to: url, options: .atomic)
+                let reference = try await service.localAgentArtifactFile(
+                    ownerUserID: ownerUserID,
+                    artifactID: artifact.id
+                )
+                guard reference.size == artifact.size,
+                      reference.sha256 == artifact.sha256.lowercased() else {
+                    throw AgentArtifactPresentationError.integrityMismatch
+                }
+                try await AgentArtifactFileExporter.export(reference, to: url)
             } catch {
                 errorMessage = error.localizedDescription
             }

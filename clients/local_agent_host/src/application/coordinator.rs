@@ -585,6 +585,7 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::CreateArtifact(_)
         | HostCommand::ListArtifacts(_)
         | HostCommand::GetArtifactData(_)
+        | HostCommand::GetArtifactFile(_)
         | HostCommand::DeleteArtifact(_)
         | HostCommand::CreateRequirementSurvey(_)
         | HostCommand::ListRequirementSurveys(_)

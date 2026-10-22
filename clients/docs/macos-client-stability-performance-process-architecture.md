@@ -1649,6 +1649,23 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：附件上限当前只有 20 MiB，导出仍在 App 进程内执行文件 I/O；源文件缺少摘要的旧/异常记录明确拒绝导出。Agent Artifact Library 仍通过 service 返回完整文档 `Data` 后另存为，模型输入和 Markdown 正文也仍需要字节值；全局文件 I/O Governor、真实外置卷/只读卷/ENOSPC/睡眠与进程终止矩阵、签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.58 第五十八批实施记录：Agent Artifact Library 文件原生导出（2026-10-23）
+
+本批关闭 12.57 明确保留的 Artifact Library 导出峰值。此前“另存为”会在保存面板出现前让 Host 从文件聚合最多 2 MiB `Vec<u8>`，Base64 放大后写入 framed JSON；App 再解码为 `Data` 并执行原子写出。最终消费者仍是文件，但跨进程和两个进程内都保留了完整正文副本。
+
+已实施：
+
+- 新增账户绑定的只读 `get_artifact_file` Host 命令。存储层只查询当前 owner 与 artifact ID 对应的受控相对文件名、大小和 SHA-256，并以 `symlink_metadata` 要求现有普通文件及记录尺寸一致；文件名必须精确等于 `<artifact_id>.artifact`。
+- IPC 只返回 opaque 单文件名和完整性元数据，不返回绝对路径、文件正文或用户选择的目标路径；Swift 仅能在由 Host 数据库 URL 确定的 `.artifacts` 根目录下解析，重复校验 artifact ID、单文件名、2 MiB 上限和摘要格式。不存在 Host 任意路径读取或替用户写任意目标的接口。
+- Artifact Library 保存面板现在先取得用户目标，取消不触发 Host 查询或文件读取；确认后才请求文件引用。Markdown 预览仍使用原有有界正文读取，因为文本渲染最终需要 UTF-8 字符串。
+- 新增 `AgentArtifactFileExporter`：以 `O_NOFOLLOW | O_CLOEXEC` 打开 Host-owned 源文件，使用固定 256 KiB 缓冲增量校验 SHA-256，目标同目录以 `0600` 临时文件写入，处理短写、`EINTR`、取消、容量门禁与 `fsync`，最后 `rename(2)` 原子替换。源缺失、符号链接、摘要不符或并发改写均保留已有目标并清理临时文件。
+- Local Agent Host 协议升级到 v45；Rust、Swift 与 Windows React 的共享 fixture/常量同步迁移，避免旧客户端把新增协议当作兼容 v44 解析。
+- 新增回归覆盖 owner 隔离、受控文件引用、路径逃逸拒绝、正确导出、摘要不符保留目标和符号链接拒绝；Windows 6 个受影响契约测试文件共 17 项通过。
+
+验证：Debug 与 arm64 Release 各选择性运行 12.57 的 87 项图片/HTTP/性能门禁，以及 `NativeLocalAgentArtifactClientTests` 2 项、v45 `NativeLocalAgentHostContractFixtureTests` 3 项和 `AgentArtifactFileExporterTests` 3 项，共 95 项，全部通过；Host protocol/runtime/storage 相关 298 项 Rust 测试通过，`cargo fmt --check`、Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。完整 Rust workspace 额外检查只被用户当前未提交的 `plugins/browser/npm/chatos.plugin.json` 与其既有 published-manifest hash 不一致阻断；未修改该目录。未启动/安装正式 App，未访问活动用户数据库。
+
+边界：Artifact 创建与 Markdown 预览仍按现有 2 MiB 文本契约传递 Base64/`Data`；本批只消除“另存为”路径的完整正文跨进程复制。文件引用只适用于 App 与其直接子 Host 共享、由 App 配置的私有存储根，不扩展为网络 IPC 或第三方客户端通用路径能力。真实外置卷/只读卷/ENOSPC/睡眠和进程终止矩阵、跨进程 FD 传递、全局文件 I/O Governor、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

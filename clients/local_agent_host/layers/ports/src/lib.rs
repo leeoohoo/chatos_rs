@@ -4,19 +4,19 @@
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, CreateTaskGraphCommand,
-    GuideConversationTurnCommand, LocalAgentArtifact, LocalAgentArtifactPage,
-    LocalAgentEventPayloadMode, LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunListScope,
-    LocalAgentRunPage, LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentToolApprovalDecision,
-    LocalAgentToolApprovalResult, LocalAgentToolClaim, LocalAgentToolCommitResult,
-    LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalConversationAttachmentRecord,
-    LocalConversationDetail, LocalConversationHistoryPage, LocalConversationPage,
-    LocalConversationRuntimeSettings, LocalConversationTurnStart, LocalConversationTurnUpdate,
-    LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail, LocalPluginInstallationPage,
-    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalRemoteConnection,
-    LocalRequirementSurvey, LocalRequirementSurveyResolution, LocalRequirementSurveyStatus,
-    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage, LocalTaskRecord, LocalTaskStatus,
-    PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
-    StartConversationTurnCommand, UpdateNotepadNoteCommand,
+    GuideConversationTurnCommand, LocalAgentArtifact, LocalAgentArtifactFile,
+    LocalAgentArtifactPage, LocalAgentEventPayloadMode, LocalAgentEventRecord, LocalAgentRunClaim,
+    LocalAgentRunListScope, LocalAgentRunPage, LocalAgentRunRecord, LocalAgentRunStatus,
+    LocalAgentToolApprovalDecision, LocalAgentToolApprovalResult, LocalAgentToolClaim,
+    LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
+    LocalConversationAttachmentRecord, LocalConversationDetail, LocalConversationHistoryPage,
+    LocalConversationPage, LocalConversationRuntimeSettings, LocalConversationTurnStart,
+    LocalConversationTurnUpdate, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
+    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
+    LocalRemoteConnection, LocalRequirementSurvey, LocalRequirementSurveyResolution,
+    LocalRequirementSurveyStatus, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
+    LocalTaskRecord, LocalTaskStatus, PutConversationRuntimeSettingsCommand,
+    ResumeConversationTurnCommand, StartConversationTurnCommand, UpdateNotepadNoteCommand,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -688,6 +688,12 @@ pub trait LocalAgentArtifactStore: Send + Sync {
         owner_user_id: &str,
         artifact_id: &str,
     ) -> Result<Option<Vec<u8>>, ClientStorageError>;
+
+    async fn read_artifact_file(
+        &self,
+        owner_user_id: &str,
+        artifact_id: &str,
+    ) -> Result<Option<LocalAgentArtifactFile>, ClientStorageError>;
 
     async fn delete_artifact(
         &self,

@@ -79,6 +79,7 @@ impl HostCommand {
             Self::CreateArtifact(command) => Some(&command.owner_user_id),
             Self::ListArtifacts(command) => Some(&command.owner_user_id),
             Self::GetArtifactData(command) => Some(&command.owner_user_id),
+            Self::GetArtifactFile(command) => Some(&command.owner_user_id),
             Self::DeleteArtifact(command) => Some(&command.owner_user_id),
             Self::CreateRequirementSurvey(command) => Some(&command.owner_user_id),
             Self::ListRequirementSurveys(command) => Some(&command.owner_user_id),

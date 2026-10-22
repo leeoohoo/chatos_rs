@@ -197,6 +197,9 @@ pub enum HostResult {
         artifact_id: String,
         data_base64: String,
     },
+    ArtifactFile {
+        file: crate::LocalAgentArtifactFile,
+    },
     ArtifactDeleted {
         artifact_id: String,
     },

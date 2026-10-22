@@ -1,0 +1,13 @@
+{
+  "protocol_version": 45,
+  "command_id": "contract-health-1",
+  "ok": true,
+  "result": {
+    "type": "health",
+    "service": "chatos-local-agent-host",
+    "storage_ready": true,
+    "recovered_claims": 0,
+    "max_frame_bytes": 4194304,
+    "max_message_bytes": 67108864
+  }
+}

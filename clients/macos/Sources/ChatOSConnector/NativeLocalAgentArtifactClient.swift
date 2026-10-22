@@ -1,11 +1,16 @@
 import ChatOSCore
 import Foundation
 
-public struct NativeLocalAgentArtifactClient: AgentArtifactServing, Sendable {
+public struct NativeLocalAgentArtifactClient: AgentArtifactFileServing, Sendable {
     private let host: any LocalAgentHostClientServicing
+    private let artifactDirectoryURL: URL
 
-    public init(host: any LocalAgentHostClientServicing) {
+    public init(
+        host: any LocalAgentHostClientServicing,
+        artifactDirectoryURL: URL
+    ) {
         self.host = host
+        self.artifactDirectoryURL = artifactDirectoryURL.standardizedFileURL
     }
 
     public func store(
@@ -59,6 +64,45 @@ public struct NativeLocalAgentArtifactClient: AgentArtifactServing, Sendable {
             throw NativeLocalAgentHostError.invalidResponse
         }
         return data
+    }
+
+    public func fileReference(
+        ownerUserID: String,
+        artifactID: String
+    ) async throws -> AgentArtifactFileReference {
+        guard artifactDirectoryURL.isFileURL else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        let response: ArtifactFileResult = try await host.request(IdentityCommand(
+            type: "get_artifact_file",
+            ownerUserID: ownerUserID,
+            artifactID: artifactID
+        ))
+        let file = response.file
+        guard response.type == "artifact_file",
+              file.artifactID == artifactID,
+              file.relativePath == "\(artifactID).artifact",
+              !file.relativePath.contains("/"),
+              !file.relativePath.contains("\\"),
+              file.size > 0,
+              file.size <= 2 * 1_024 * 1_024,
+              file.sha256.utf8.count == 64,
+              file.sha256.utf8.allSatisfy({ byte in
+                  (48...57).contains(byte) || (65...70).contains(byte) || (97...102).contains(byte)
+              }) else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        let fileURL = artifactDirectoryURL
+            .appendingPathComponent(file.relativePath, isDirectory: false)
+            .standardizedFileURL
+        guard fileURL.deletingLastPathComponent().path == artifactDirectoryURL.path else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        return .init(
+            fileURL: fileURL,
+            size: Int(clamping: file.size),
+            sha256: file.sha256.lowercased()
+        )
     }
 
     public func remove(ownerUserID: String, artifactID: String) async throws {
@@ -144,6 +188,24 @@ private struct ArtifactDataResult: Decodable, Sendable {
         case type
         case artifactID = "artifact_id"
         case dataBase64 = "data_base64"
+    }
+}
+
+private struct ArtifactFileResult: Decodable, Sendable {
+    let type: String
+    let file: ArtifactFileRecord
+}
+
+private struct ArtifactFileRecord: Decodable, Sendable {
+    let artifactID: String
+    let relativePath: String
+    let size: UInt64
+    let sha256: String
+
+    enum CodingKeys: String, CodingKey {
+        case size, sha256
+        case artifactID = "artifact_id"
+        case relativePath = "relative_path"
     }
 }
 

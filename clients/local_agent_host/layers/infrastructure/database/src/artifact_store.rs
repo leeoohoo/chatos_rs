@@ -6,7 +6,9 @@ use super::{
     SqliteClientStorage, SqliteResultExt,
 };
 use async_trait::async_trait;
-use chatos_local_agent_protocol::{LocalAgentArtifact, LocalAgentArtifactPage};
+use chatos_local_agent_protocol::{
+    LocalAgentArtifact, LocalAgentArtifactFile, LocalAgentArtifactPage,
+};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::path::{Path, PathBuf};
@@ -182,6 +184,49 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
             )));
         }
         Ok(Some(data))
+    }
+
+    async fn read_artifact_file(
+        &self,
+        owner_user_id: &str,
+        artifact_id: &str,
+    ) -> Result<Option<LocalAgentArtifactFile>, ClientStorageError> {
+        let row = sqlx::query(
+            "SELECT relative_path, size, sha256 FROM local_agent_artifacts \
+             WHERE owner_user_id = ? AND artifact_id = ?",
+        )
+        .bind(owner_user_id)
+        .bind(artifact_id)
+        .fetch_optional(&self.pool)
+        .await
+        .db()?;
+        let Some(row) = row else { return Ok(None) };
+        let relative_path: String = row.try_get("relative_path").db()?;
+        if relative_path != format!("{artifact_id}.artifact") {
+            return Err(ClientStorageError::InvalidState(format!(
+                "artifact file identity failed verification: {artifact_id}"
+            )));
+        }
+        let size: i64 = row.try_get("size").db()?;
+        let size = u64::try_from(size).map_err(|_| {
+            ClientStorageError::InvalidState("artifact size is negative".to_string())
+        })?;
+        let sha256: String = row.try_get("sha256").db()?;
+        let path = safe_artifact_path(&self.artifact_root, &relative_path)?;
+        let metadata = tokio::fs::symlink_metadata(path)
+            .await
+            .map_err(ClientStorageError::database)?;
+        if !metadata.file_type().is_file() || metadata.len() != size {
+            return Err(ClientStorageError::InvalidState(format!(
+                "artifact file metadata failed verification: {artifact_id}"
+            )));
+        }
+        Ok(Some(LocalAgentArtifactFile {
+            artifact_id: artifact_id.to_string(),
+            relative_path,
+            size,
+            sha256,
+        }))
     }
 
     async fn delete_artifact(
