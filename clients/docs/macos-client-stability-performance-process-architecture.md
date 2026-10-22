@@ -1714,6 +1714,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批不增加 512 KiB 保留预算，也不把输出落盘；超限后的尾部内容不可恢复，需要完整大日志的消费者仍应使用长生命周期 Terminal Store 的分页/轮询路径。真实进程树风暴、磁盘日志方案、全局进程并发 Governor、签名 Release soak 与 P0-D/P0-E 综合压力门禁仍待完成。
 
+### 12.62 第六十二批实施记录：Agent Artifact 上传读取脱离 Store actor（2026-10-23）
+
+本批处理 Agent Artifact 创建侧在进入 Host IPC 前的本地文件读取。`claimNextAgentArtifactStorage` 原先在 SQLite Store actor 内同步读取最多 2 MiB 附件并整块计算 SHA-256；协调器每轮最多连续领取 8 份文档，期间同一 actor 上的房间、消息和附件查询都必须等待。该路径还通过 `try?` 吞掉取消，把用户退出/任务取消误记为“本地文档完整性失败”并进入失败退避。
+
+已实施：
+
+- `claimNextAgentArtifactStorage` 改为 async；事务内只完成候选领取和 5 分钟 recoverable lease，随后把文件读取及摘要校验交给可取消的 utility detached task。等待磁盘期间 actor 可重入服务其他数据库请求，不再被同步文件 I/O 占住。
+- 新增 `AgentArtifactUploadDataLoader`：以 `O_NOFOLLOW | O_CLOEXEC` 打开来源，要求普通文件、记录尺寸精确一致且不超过 2 MiB；用固定 256 KiB 缓冲分块读取、增量 SHA-256、短读/`EINTR` 处理，并在结束时复查 descriptor 的 device/inode/size/mtime/ctime，拒绝符号链接与并发改写。
+- 该阶段最终仍需构造协议要求的有界 `Data`，但不再额外对完整 `Data` 做第二次 SHA 遍历，且读取/哈希均不占 Store actor。后续 Host Base64 IPC 文件化仍作为独立协议阶段处理。
+- 取消在进入 detached work 前和每个读取分块都会检查；取消向上传播为 `CancellationError`，不调用 `markAgentArtifactStorageFailed`。已经领取的记录保持 `uploading` lease，超时后可由既有队列安全重领，避免把生命周期取消污染为业务失败及指数退避。
+- 新增回归覆盖跨多个分块的正确读取、摘要不符、符号链接拒绝，以及预取消 claim 保持 uploading lease、无 upload error 且 next due 精确指向租约到期。
+
+验证：Debug 与 arm64 Release 各选择性运行 12.61 的 113 项图片/HTTP/性能/快照/终端门禁及本批新增 4 项 Agent Artifact 上传读取回归，共 117 项，全部通过；Swift 6 编译、优化编译及文件读取边界源码审查同步作为本批门禁。测试只使用独立临时目录和测试数据库；不启动/安装正式 App，不访问活动用户数据库。
+
+边界：`AgentArtifactWriteRequest` 与 Host v45 的 `store_artifact` 仍携带最多 2 MiB `Data`/Base64，跨进程放大尚未消除；要继续文件化必须设计 App-owned staging、opaque token、Host 根目录校验、崩溃回收及协议升级，不能把任意绝对路径直接暴露给 Host。全局 I/O Governor、真实慢盘/磁盘故障、签名 Release soak 与 P0-D/P0-E 综合压力门禁仍待完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

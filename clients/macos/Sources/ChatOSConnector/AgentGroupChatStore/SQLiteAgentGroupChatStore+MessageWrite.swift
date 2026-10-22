@@ -289,7 +289,7 @@ extension SQLiteAgentGroupChatStore {
     public func claimNextAgentArtifactStorage(
         ownerUserID: String,
         nowUnixMs: Int64
-    ) throws -> ProjectAgentArtifactWriteJob? {
+    ) async throws -> ProjectAgentArtifactWriteJob? {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
         guard let candidate: AgentArtifactWriteCandidate = try transaction({
@@ -317,13 +317,16 @@ extension SQLiteAgentGroupChatStore {
         }) else { return nil }
 
         let fileURL = try attachmentFileURL(relativePath: candidate.relativePath)
-        guard candidate.size > 0,
-              let data = try? NativeBoundedFileReader.read(
-                  fileURL,
-                  maximumBytes: candidate.size
-              ),
-              data.count == candidate.size,
-              Self.sha256(data) == candidate.sha256 else {
+        let data: Data
+        do {
+            data = try await AgentArtifactUploadDataLoader.load(
+                from: fileURL,
+                expectedBytes: candidate.size,
+                expectedSHA256: candidate.sha256
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
             try markAgentArtifactStorageFailed(
                 ownerUserID: ownerUserID,
                 attachmentID: candidate.id,

@@ -271,6 +271,68 @@ final class AgentArtifactStorageTests: XCTestCase {
         XCTAssertEqual(downloadCount, 0)
     }
 
+    func testCancelledArtifactClaimKeepsUploadingLeaseWithoutRecordingFailure() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let artifactStore = AgentArtifactStoreStub(failuresBeforeSuccess: 0)
+        let service = NativeAgentGroupChatService(
+            databaseURL: url,
+            agentArtifactStore: artifactStore
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "取消助手", rolePrompt: "测试取消", modelConfigID: "model-1")
+        )
+        let room = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: agent.id
+        )
+        let posted = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .agent,
+                senderID: agent.id,
+                content: "附件",
+                attachments: [
+                    .init(
+                        name: "取消.md",
+                        mimeType: "text/markdown",
+                        kind: .file,
+                        origin: .file,
+                        data: Data(
+                            repeating: 0x61,
+                            count: AgentCommunicationPolicy.standard.maximumDocumentBytes
+                        )
+                    ),
+                ]
+            )
+        )
+        let now: Int64 = 10_000
+        let claim = Task {
+            try await store.claimNextAgentArtifactStorage(
+                ownerUserID: "alice",
+                nowUnixMs: now
+            )
+        }
+        claim.cancel()
+
+        do {
+            _ = try await claim.value
+            XCTFail("cancelled artifact claim completed")
+        } catch is CancellationError {
+            // Expected: cancellation keeps the upload lease recoverable instead of recording failure.
+        }
+        let messages = try await store.listMessages(ownerUserID: "alice", roomID: room.id)
+        let attachment = try XCTUnwrap(messages.last?.attachmentItems.first)
+        XCTAssertEqual(attachment.id, posted.message.attachmentItems.first?.id)
+        XCTAssertEqual(attachment.syncStatus, .uploading)
+        XCTAssertNil(attachment.uploadError)
+        let nextDue = try await store.nextAgentArtifactStorageDue(ownerUserID: "alice")
+        XCTAssertEqual(nextDue, now + 300_000)
+    }
+
     func testLegacyAttachmentTableMigratesWithoutLosingRows() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
