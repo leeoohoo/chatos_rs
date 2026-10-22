@@ -287,6 +287,17 @@ impl AuthenticationApiClient {
         .await
     }
 
+    pub(crate) async fn authenticated_user_service<R: DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        method: &str,
+        access_token: &str,
+    ) -> Result<R, ApiError> {
+        self.request::<(), R>(endpoint, method, None, Some(access_token))
+            .await
+            .map(|reply| reply.value)
+    }
+
     async fn control_plane_request<R: DeserializeOwned>(
         &self,
         base_path: &str,
@@ -390,7 +401,12 @@ impl AuthenticationApiClient {
                 unauthorized: status == StatusCode::UNAUTHORIZED,
             });
         }
-        let value = serde_json::from_slice(&bytes).map_err(|_| ApiError {
+        let source = if bytes.is_empty() {
+            b"null".as_slice()
+        } else {
+            bytes.as_ref()
+        };
+        let value = serde_json::from_slice(source).map_err(|_| ApiError {
             message: "服务器返回了无法识别的数据。".into(),
             unauthorized: false,
         })?;

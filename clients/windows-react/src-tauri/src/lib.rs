@@ -36,6 +36,7 @@ mod system_permissions;
 mod terminal_runtime;
 mod terminal_tool_worker;
 mod tool_approval;
+mod wechat_companion;
 mod workspace_index;
 
 use access_control::load_access_control;
@@ -181,6 +182,11 @@ use tool_approval::{
     decide_tool_approval, list_tool_approvals, load_tool_approval_settings,
     update_tool_approval_mode, update_tool_approval_model,
 };
+use wechat_companion::{
+    confirm_wechat_bind_ticket, discard_wechat_bind_ticket, issue_wechat_bind_ticket,
+    load_wechat_companion, poll_wechat_bind_ticket, revoke_wechat_client_session,
+    unbind_wechat_companion, wechat_qr_protocol, WeChatCompanionManager,
+};
 use workspace_index::{list_local_projects, refresh_workspace_relations};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -203,6 +209,8 @@ pub fn run() {
     let protocol_media_studio_manager = media_studio_manager.clone();
     let protocol_story_studio_manager = story_studio_manager.clone();
     let protocol_agent_profile_store = agent_profile_store.clone();
+    let wechat_companion_manager = WeChatCompanionManager::default();
+    let protocol_wechat_companion_manager = wechat_companion_manager.clone();
     let drop_attachment_manager = attachment_manager.clone();
     let app = tauri::Builder::default()
         .manage(authentication)
@@ -212,6 +220,7 @@ pub fn run() {
         .manage(agent_profile_store)
         .manage(agent_conversation_store)
         .manage(agent_skill_store)
+        .manage(wechat_companion_manager)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
@@ -258,6 +267,9 @@ pub fn run() {
         })
         .register_uri_scheme_protocol("chatos-agent", move |_context, request| {
             agent_avatar_protocol(protocol_agent_profile_store.clone(), request)
+        })
+        .register_uri_scheme_protocol("chatos-wechat", move |_context, request| {
+            wechat_qr_protocol(protocol_wechat_companion_manager.clone(), request)
         })
         .on_webview_event(move |webview, event| {
             let emit_drag_state = |targeted| {
@@ -391,6 +403,13 @@ pub fn run() {
             adopt_requirement_survey_plan,
             load_general_settings,
             update_general_settings,
+            load_wechat_companion,
+            issue_wechat_bind_ticket,
+            poll_wechat_bind_ticket,
+            confirm_wechat_bind_ticket,
+            discard_wechat_bind_ticket,
+            revoke_wechat_client_session,
+            unbind_wechat_companion,
             load_notepad,
             create_notepad_folder,
             rename_notepad_folder,

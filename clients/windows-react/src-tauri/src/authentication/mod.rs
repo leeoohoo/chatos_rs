@@ -7,6 +7,7 @@ pub(crate) use client::{runtime_api_base_url, GatewayAgentCapability, GatewayMod
 use client::{ApiError, AuthenticationApiClient};
 pub(crate) use credentials::model_credential_environment_variable;
 use credentials::{CredentialStore, PlatformCredentialStore};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tokio::sync::{Mutex, Semaphore};
@@ -17,6 +18,7 @@ use crate::{
     local_terminal::LocalTerminalRegistry, media_studio::MediaStudioManager,
     plugin_application::PluginApplicationManager, project_run::ProjectRunManager,
     remote_connection::RemoteConnectionManager, story_studio::StoryStudioManager,
+    wechat_companion::WeChatCompanionManager,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -210,6 +212,19 @@ impl AuthenticationManager {
         Ok(())
     }
 
+    pub(crate) async fn authenticated_user_service<R: DeserializeOwned>(
+        &self,
+        owner_user_id: &str,
+        endpoint: &str,
+        method: &str,
+    ) -> Result<R, String> {
+        let token = self.access_token_for_owner(owner_user_id).await?;
+        self.client
+            .authenticated_user_service(endpoint, method, &token)
+            .await
+            .map_err(api_message)
+    }
+
     pub(crate) async fn model_catalog_for_owner(
         &self,
         owner_user_id: &str,
@@ -322,7 +337,9 @@ pub async fn restore_authentication_session(
     media_studio: State<'_, MediaStudioManager>,
     story_studio: State<'_, StoryStudioManager>,
     agent_profiles: State<'_, AgentProfileStore>,
+    wechat_companion: State<'_, WeChatCompanionManager>,
 ) -> Result<Option<AuthSession>, String> {
+    wechat_companion.reset();
     agent_profiles.reset();
     story_studio.reset();
     media_studio.reset();
@@ -414,7 +431,9 @@ pub async fn logout(
     media_studio: State<'_, MediaStudioManager>,
     story_studio: State<'_, StoryStudioManager>,
     agent_profiles: State<'_, AgentProfileStore>,
+    wechat_companion: State<'_, WeChatCompanionManager>,
 ) -> Result<(), String> {
+    wechat_companion.reset();
     agent_profiles.reset();
     story_studio.reset();
     media_studio.reset();

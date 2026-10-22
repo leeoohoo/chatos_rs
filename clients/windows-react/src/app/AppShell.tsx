@@ -124,6 +124,19 @@ const GeneralSettingsWorkspace = lazy(async () => {
   return { default: viewModule.GeneralSettingsView };
 });
 
+const WeChatCompanionWorkspace = lazy(async () => {
+  const [adapterModule, viewModule] = await Promise.all([
+    import("../features/wechat-companion/adapters/TauriWeChatCompanionAdapter"),
+    import("../features/wechat-companion/ui/WeChatCompanionView"),
+  ]);
+  const port = new adapterModule.TauriWeChatCompanionAdapter();
+  return {
+    default: ({ ownerUserId }: { ownerUserId: string }) => (
+      <viewModule.WeChatCompanionView ownerUserId={ownerUserId} port={port} />
+    ),
+  };
+});
+
 const SystemPermissionsWorkspace = lazy(async () => {
   const [adapterModule, viewModule] = await Promise.all([
     import("../features/runtime-permissions/adapters/TauriSystemPermissionsAdapter"),
@@ -299,7 +312,7 @@ export function AppShell({
   const pluginApplications = usePluginApplicationStore((state) => state.applications);
   const resetPluginApplications = usePluginApplicationStore((state) => state.reset);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
-  const [activeSurface, setActiveSurface] = useState<"workspace" | "general-settings" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
+  const [activeSurface, setActiveSurface] = useState<"workspace" | "general-settings" | "wechat-companion" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [remoteEditorTarget, setRemoteEditorTarget] = useState<"create" | string | null>(null);
   const text = (key: Parameters<typeof interfaceText>[1]) => interfaceText(interfaceLanguage, key);
@@ -370,6 +383,8 @@ export function AppShell({
   const defaultContactReady = workspaceSnapshot.contacts.some((contact) => contact.id === "jiguli");
   const title = activeSurface === "general-settings"
     ? text("generalAccount")
+    : activeSurface === "wechat-companion"
+    ? text("wechatCompanion")
     : activeSurface === "tool-approval"
     ? text("commandApproval")
     : activeSurface === "runtime-permissions"
@@ -425,6 +440,15 @@ export function AppShell({
             <span><strong>{text("generalAccount")}</strong><small>{text("generalAccountDetail")}</small></span>
           </button>
           <button
+            aria-current={activeSurface === "wechat-companion" ? "page" : undefined}
+            className={`sidebar-settings-button ${activeSurface === "wechat-companion" ? "sidebar-settings-button--active" : ""}`}
+            onClick={() => setActiveSurface("wechat-companion")}
+            type="button"
+          >
+            <span aria-hidden="true">⌗</span>
+            <span><strong>{text("wechatCompanion")}</strong><small>{text("wechatCompanionDetail")}</small></span>
+          </button>
+          <button
             aria-current={activeSurface === "tool-approval" ? "page" : undefined}
             className={`sidebar-settings-button ${activeSurface === "tool-approval" ? "sidebar-settings-button--active" : ""}`}
             onClick={() => setActiveSurface("tool-approval")}
@@ -470,6 +494,8 @@ export function AppShell({
             <p className="eyebrow">{
               activeSurface === "general-settings"
                 ? "SETTINGS"
+                : activeSurface === "wechat-companion"
+                ? "WECHAT COMPANION"
                 : activeSurface === "tool-approval"
                 ? "LOCAL SECURITY"
                 : activeSurface === "runtime-permissions"
@@ -502,6 +528,8 @@ export function AppShell({
             role={session.user.role}
             username={session.user.username}
           />
+        ) : activeSurface === "wechat-companion" ? (
+          <WeChatCompanionWorkspace ownerUserId={session.user.id} />
         ) : activeSurface === "tool-approval" ? (
           <ToolApprovalSettingsView
             approvalPort={toolApproval}
