@@ -1553,6 +1553,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批移除的是 Story 最终文件化路径的 HTTPS 压缩源 `Data`，ImageIO 像素解码/PNG 编码仍在主进程；旧 Base64-only 结果仍有一次源解码，UI 预览仍按调用契约返回有界像素面。真实 20 MiB/64 MP physical-footprint、内存压力/取消风暴、恶意图片进程隔离、URLSession 断网/睡眠/ENOSPC、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.52 第五十二批实施记录：HTTPS 图片预览源文件化（2026-10-23）
+
+本批继续收紧远端图片的主进程内存峰值。媒体网格与全屏预览的业务输出是受像素上限约束的 `AppDecodedThumbnail`，但 HTTPS 输入仍经 `MediaStudioImageLoader.data` 聚合完整响应，再用 `CGImageSourceCreateWithData` 解码；当网格加载多张远端结果时，每个共享任务仍会叠加一份压缩源 `Data`。
+
+已实施：
+
+- `MediaStudioImageLoader.thumbnail` 对 HTTPS 资产复用 response artifact 下载器，再调用 `AppImageThumbnailLoader.loadLocalFile` 从安全预打开的 descriptor 创建 ImageIO source；网络响应不再作为完整 `Data` 进入网格/全屏预览路径。
+- 下载 owner 覆盖文件解码周期；ImageIO 已生成独立的有界位图后立即释放 owner，临时 response artifact 在 `thumbnail` 返回前删除。现有共享 task pool 与 `NSCache` 继续合并同 key 并发请求并按解码像素成本记账。
+- `thumbnail` 增加默认化的临时目录与可用容量注入参数，生产调用不变；归一化的非 HTTPS 分支同步传递同一预算，避免测试/故障注入绕开准入约束。
+- 新增远端预览回归：拆分 payload 只能调用一次 `stream`、不得调用 `send`，128×64 输入在 32 像素边界下输出 32×16，返回时临时目录为空。
+
+验证：Debug 与 arm64 Release 各选择性运行 `HTTPTransportTests` 13 项、`Base64PayloadFileWriterTests` 1 项、`MediaStudioHistoryStoreTests` 11 项和 `MediaStudioImageInteractionTests` 16 项，共 41 项，全部通过；Swift 6 编译、优化编译与 `git diff --check` 同步作为本批门禁。未启动/安装正式 App，未请求真实 provider，未访问活动用户数据库。
+
+边界：`MediaStudioImageLoader.data` 仍保留给确实要求字节值的兼容调用，Agent Avatar 选择器的归一化仍以 `Data` 为输入；旧 Base64-only 预览也仍需一次源解码。位图解码和缓存继续位于主进程，真实多图滚动 physical-footprint、内存压力/取消风暴、恶意图片进程隔离、断网/睡眠/ENOSPC、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

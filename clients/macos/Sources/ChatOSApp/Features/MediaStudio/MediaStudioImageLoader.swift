@@ -57,7 +57,9 @@ enum MediaStudioImageLoader {
     static func thumbnail(
         for asset: GeneratedMediaAsset,
         maximumDisplayPixelSize: Int,
-        transport: any HTTPTransport = URLSessionHTTPTransport()
+        transport: any HTTPTransport = URLSessionHTTPTransport(),
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        availableCapacityOverride: Int64? = nil
     ) async throws -> AppDecodedThumbnail {
         guard maximumDisplayPixelSize > 0 else { throw ImageError.invalidImage }
         if let url = asset.url, url.isFileURL {
@@ -65,6 +67,22 @@ enum MediaStudioImageLoader {
             defer { withExtendedLifetime(owner) {} }
             return try await AppImageThumbnailLoader.loadLocalFile(
                 url,
+                maximumBytes: maximumImageBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumDisplayPixelSize: maximumDisplayPixelSize
+            )
+        }
+        if let url = asset.url,
+           url.scheme?.lowercased() == "https" {
+            let downloaded = try await downloadedFile(
+                from: url,
+                transport: transport,
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: availableCapacityOverride
+            )
+            defer { withExtendedLifetime(downloaded) {} }
+            return try await AppImageThumbnailLoader.loadLocalFile(
+                downloaded.url,
                 maximumBytes: maximumImageBytes,
                 maximumSourcePixelCount: maximumSourcePixelCount,
                 maximumDisplayPixelSize: maximumDisplayPixelSize
@@ -155,7 +173,9 @@ enum MediaStudioImageLoader {
             decoded = try await thumbnail(
                 for: asset,
                 maximumDisplayPixelSize: maximumNormalizedPixelSize,
-                transport: transport
+                transport: transport,
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: availableCapacityOverride
             )
         }
         return try await ChatOSMediaArtifactFileWriter.writeNormalizedImage(

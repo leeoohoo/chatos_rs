@@ -325,6 +325,43 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputArtifact.path))
     }
 
+    func testRemoteThumbnailStreamsThroughTemporaryFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MediaStudioRemoteThumbnailTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 128, pixelsHigh: 64,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        bitmap.bitmapData?.initialize(repeating: 45, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+        let sourcePNG = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let transport = StreamingImageTransport(data: sourcePNG)
+
+        let thumbnail = try await MediaStudioImageLoader.thumbnail(
+            for: .init(
+                id: "remote-thumbnail",
+                mimeType: "image/png",
+                url: URL(string: "https://cdn.example/thumbnail.png")!
+            ),
+            maximumDisplayPixelSize: 32,
+            transport: transport,
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max
+        )
+
+        XCTAssertEqual(thumbnail.image.width, 32)
+        XCTAssertEqual(thumbnail.image.height, 16)
+        let streamRequestCount = await transport.streamRequestCount
+        let dataRequestCount = await transport.dataRequestCount
+        XCTAssertEqual(streamRequestCount, 1)
+        XCTAssertEqual(dataRequestCount, 0)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+    }
+
     func testFileBackedThumbnailCacheKeepsOwnerThroughDirectDecode() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "MediaStudioFileThumbnailTests-\(UUID().uuidString)",
