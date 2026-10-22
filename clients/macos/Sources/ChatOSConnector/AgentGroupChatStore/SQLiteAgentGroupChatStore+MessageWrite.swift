@@ -240,24 +240,45 @@ extension SQLiteAgentGroupChatStore {
                   let agentArtifactStore else {
                 throw AgentGroupChatError.storage("message attachment file is missing")
             }
-            let data = try await agentArtifactStore.read(
-                ownerUserID: ownerUserID,
-                artifactID: artifactID
-            )
-            guard data.count == stored.attachment.size,
-                  Self.sha256(data) == expectedSHA256 else {
-                throw AgentGroupChatError.storage("restored message attachment failed integrity check")
+            do {
+                if let fileStore = agentArtifactStore as? any AgentArtifactFileServing {
+                    let reference = try await fileStore.fileReference(
+                        ownerUserID: ownerUserID,
+                        artifactID: artifactID
+                    )
+                    try await AgentArtifactFileRestorer.restore(
+                        reference,
+                        to: fileURL,
+                        expectedBytes: stored.attachment.size,
+                        expectedSHA256: expectedSHA256
+                    )
+                } else {
+                    let data = try await agentArtifactStore.read(
+                        ownerUserID: ownerUserID,
+                        artifactID: artifactID
+                    )
+                    guard data.count == stored.attachment.size,
+                          Self.sha256(data) == expectedSHA256 else {
+                        throw AgentArtifactFileRestoreError.invalidSource
+                    }
+                    try FileManager.default.createDirectory(
+                        at: fileURL.deletingLastPathComponent(),
+                        withIntermediateDirectories: true,
+                        attributes: [.posixPermissions: 0o700]
+                    )
+                    try data.write(to: fileURL, options: .atomic)
+                    try FileManager.default.setAttributes(
+                        [.posixPermissions: 0o600],
+                        ofItemAtPath: fileURL.path
+                    )
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw AgentGroupChatError.storage(
+                    "restored message attachment failed integrity check"
+                )
             }
-            try FileManager.default.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-            try data.write(to: fileURL, options: .atomic)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: fileURL.path
-            )
         }
         return ProjectAgentMessageAttachmentPayload(
             attachment: stored.attachment,

@@ -1666,6 +1666,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：Artifact 创建与 Markdown 预览仍按现有 2 MiB 文本契约传递 Base64/`Data`；本批只消除“另存为”路径的完整正文跨进程复制。文件引用只适用于 App 与其直接子 Host 共享、由 App 配置的私有存储根，不扩展为网络 IPC 或第三方客户端通用路径能力。真实外置卷/只读卷/ENOSPC/睡眠和进程终止矩阵、跨进程 FD 传递、全局文件 I/O Governor、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.59 第五十九批实施记录：Agent Artifact 缺失附件文件原生恢复（2026-10-23）
+
+本批继续复用 12.58 的账户绑定文件引用，关闭 Agent 消息附件在本地副本丢失后的恢复峰值。此前 Store 会让 Host 读取最多 2 MiB artifact 为 `Vec<u8>`、经 Base64 framed JSON 返回，再在 App 中解码为完整 `Data` 并执行原子写入；因此一次恢复同时产生跨进程编码放大和两端完整正文副本。
+
+已实施：
+
+- `SQLiteAgentGroupChatStore.messageAttachment` 在生产 `AgentArtifactFileServing` 可用时只请求 owner 与 artifact ID 绑定的受控文件引用，不再调用 `read`；不具备文件能力的内存/兼容实现仍保留原有有界 `Data` 后备，不改变协议抽象和既有测试替身。
+- 新增 `AgentArtifactFileRestorer`，把恢复 I/O 放到可取消的 utility detached task；严格复验文件引用与消息记录的 size、SHA-256 和 2 MiB 文档上限，以 `O_NOFOLLOW | O_CLOEXEC` 打开 Host-owned 源文件，并要求 descriptor 指向精确尺寸的普通文件。
+- 恢复使用固定 256 KiB 缓冲分块读取、增量 SHA-256 和完整短写/`EINTR` 处理；目标目录执行容量门禁，在同目录创建 `0600`、`O_EXCL | O_NOFOLLOW` 临时文件，写完 `fsync`，仅在摘要及源 descriptor 的 device/inode/size/mtime/ctime 前后复查全部通过后才用 `rename(2)` 原子安装。
+- Host-owned artifact 源始终保留；摘要不符、引用元数据不符、符号链接、短读、并发改写或取消均不安装附件并清理临时文件。文件型服务失败不会静默降级到完整 `Data` 下载，避免安全校验失败重新引入内存峰值或绕过路径约束。
+- 新增回归覆盖文件原生恢复且源文件保留、生产路径不调用 `read`、摘要不符不安装、符号链接拒绝、引用元数据不符拒绝、临时文件清理，以及非文件型服务继续使用兼容后备。
+
+验证：Debug 与 arm64 Release 各选择性运行 12.58 的 95 项图片/HTTP/性能/文件导出/Host 契约门禁及 `AgentArtifactStorageTests` 6 项，共 101 项，全部通过；Swift 6 编译、优化编译、`git diff --check` 与源码审查同步作为本批门禁。测试只使用独立临时目录和受控替身；未启动/安装正式 App，未访问活动用户数据库。
+
+边界：Artifact 创建/上传和 Markdown 正文预览仍按现有 2 MiB 文本契约持有 `Data`；非文件型 `AgentArtifactServing` 的兼容恢复也仍走完整字节值。本批不改变 Host v45 协议，只消费 12.58 已有的只读能力。真实磁盘满/只读卷/睡眠与强杀矩阵、跨进程 FD 传递、全局文件 I/O Governor、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
@@ -1796,7 +1812,7 @@ Release 验收建议记录：
 
 ### 16.1 源码与文档漂移治理
 
-- 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift Host 常量为 v44，而 `clients/local_agent_host/ARCHITECTURE.md` 仍有“validate protocol v28”陈述，属于待修的文档漂移；本方案引用版本不能替代实际握手。
+- 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift Host 常量为 v45，而 `clients/local_agent_host/ARCHITECTURE.md` 仍有“validate protocol v28”陈述，属于待修的文档漂移；本方案引用版本不能替代实际握手。
 - CI 比较 Swift/Rust 协议版本、payload 边界、支持能力和打包后的真实可执行版本；Schema 兼容矩阵、进程布局及 ADR 随实现更新。
 - 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；新增 Governor、Worker、job 状态机与门禁仍为待实施项。
 

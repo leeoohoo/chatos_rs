@@ -109,6 +109,168 @@ final class AgentArtifactStorageTests: XCTestCase {
         XCTAssertEqual(downloadCount, 1)
     }
 
+    func testMissingSyncedAttachmentRestoresFromFileWithoutDataDownload() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let artifactStore = FileAgentArtifactStoreStub(
+            rootURL: url.deletingLastPathComponent().appendingPathComponent("artifacts")
+        )
+        let fixture = try await makeSyncedAttachment(
+            databaseURL: url,
+            artifactStore: artifactStore
+        )
+        let localResult = try await fixture.store.messageAttachment(
+            ownerUserID: "alice",
+            roomID: fixture.roomID,
+            messageID: fixture.messageID,
+            attachmentID: fixture.attachmentID
+        )
+        let localPayload = try XCTUnwrap(localResult)
+        try FileManager.default.removeItem(at: localPayload.localFileURL)
+
+        let restoredResult = try await fixture.store.messageAttachment(
+            ownerUserID: "alice",
+            roomID: fixture.roomID,
+            messageID: fixture.messageID,
+            attachmentID: fixture.attachmentID
+        )
+        let restored = try XCTUnwrap(restoredResult)
+
+        XCTAssertEqual(try Data(contentsOf: restored.localFileURL), fixture.data)
+        let sourceURL = await artifactStore.sourceURL()
+        let fileReferenceCount = await artifactStore.fileReferenceCount()
+        let downloadCount = await artifactStore.downloadCount()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.path))
+        XCTAssertEqual(fileReferenceCount, 1)
+        XCTAssertEqual(downloadCount, 0)
+    }
+
+    func testFileRestoreRejectsDigestMismatchWithoutInstallingAttachment() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let artifactStore = FileAgentArtifactStoreStub(
+            rootURL: url.deletingLastPathComponent().appendingPathComponent("artifacts")
+        )
+        let fixture = try await makeSyncedAttachment(
+            databaseURL: url,
+            artifactStore: artifactStore
+        )
+        let localResult = try await fixture.store.messageAttachment(
+            ownerUserID: "alice",
+            roomID: fixture.roomID,
+            messageID: fixture.messageID,
+            attachmentID: fixture.attachmentID
+        )
+        let localPayload = try XCTUnwrap(localResult)
+        try FileManager.default.removeItem(at: localPayload.localFileURL)
+        try await artifactStore.replaceSource(
+            with: Data(repeating: 0x78, count: fixture.data.count)
+        )
+
+        do {
+            _ = try await fixture.store.messageAttachment(
+                ownerUserID: "alice",
+                roomID: fixture.roomID,
+                messageID: fixture.messageID,
+                attachmentID: fixture.attachmentID
+            )
+            XCTFail("expected integrity failure")
+        } catch let error as AgentGroupChatError {
+            XCTAssertEqual(
+                error,
+                .storage("restored message attachment failed integrity check")
+            )
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: localPayload.localFileURL.path))
+        XCTAssertEqual(try restoreTemporaryFiles(beside: localPayload.localFileURL), [])
+        let downloadCount = await artifactStore.downloadCount()
+        XCTAssertEqual(downloadCount, 0)
+    }
+
+    func testFileRestoreRejectsSymbolicLinkSource() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let artifactStore = FileAgentArtifactStoreStub(
+            rootURL: url.deletingLastPathComponent().appendingPathComponent("artifacts")
+        )
+        let fixture = try await makeSyncedAttachment(
+            databaseURL: url,
+            artifactStore: artifactStore
+        )
+        let localResult = try await fixture.store.messageAttachment(
+            ownerUserID: "alice",
+            roomID: fixture.roomID,
+            messageID: fixture.messageID,
+            attachmentID: fixture.attachmentID
+        )
+        let localPayload = try XCTUnwrap(localResult)
+        try FileManager.default.removeItem(at: localPayload.localFileURL)
+        try await artifactStore.replaceSourceWithSymbolicLink()
+
+        do {
+            _ = try await fixture.store.messageAttachment(
+                ownerUserID: "alice",
+                roomID: fixture.roomID,
+                messageID: fixture.messageID,
+                attachmentID: fixture.attachmentID
+            )
+            XCTFail("expected symlink rejection")
+        } catch let error as AgentGroupChatError {
+            XCTAssertEqual(
+                error,
+                .storage("restored message attachment failed integrity check")
+            )
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: localPayload.localFileURL.path))
+        XCTAssertEqual(try restoreTemporaryFiles(beside: localPayload.localFileURL), [])
+        let downloadCount = await artifactStore.downloadCount()
+        XCTAssertEqual(downloadCount, 0)
+    }
+
+    func testFileRestoreRejectsReferenceMetadataMismatchWithoutDataFallback() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let artifactStore = FileAgentArtifactStoreStub(
+            rootURL: url.deletingLastPathComponent().appendingPathComponent("artifacts")
+        )
+        let fixture = try await makeSyncedAttachment(
+            databaseURL: url,
+            artifactStore: artifactStore
+        )
+        let localResult = try await fixture.store.messageAttachment(
+            ownerUserID: "alice",
+            roomID: fixture.roomID,
+            messageID: fixture.messageID,
+            attachmentID: fixture.attachmentID
+        )
+        let localPayload = try XCTUnwrap(localResult)
+        try FileManager.default.removeItem(at: localPayload.localFileURL)
+        await artifactStore.setReferenceMetadataMismatch()
+
+        do {
+            _ = try await fixture.store.messageAttachment(
+                ownerUserID: "alice",
+                roomID: fixture.roomID,
+                messageID: fixture.messageID,
+                attachmentID: fixture.attachmentID
+            )
+            XCTFail("expected metadata rejection")
+        } catch let error as AgentGroupChatError {
+            XCTAssertEqual(
+                error,
+                .storage("restored message attachment failed integrity check")
+            )
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: localPayload.localFileURL.path))
+        let fileReferenceCount = await artifactStore.fileReferenceCount()
+        let downloadCount = await artifactStore.downloadCount()
+        XCTAssertEqual(fileReferenceCount, 1)
+        XCTAssertEqual(downloadCount, 0)
+    }
+
     func testLegacyAttachmentTableMigratesWithoutLosingRows() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -188,6 +350,65 @@ final class AgentArtifactStorageTests: XCTestCase {
               let value = sqlite3_column_text(statement, 0) else { return nil }
         return String(cString: value)
     }
+
+    private func makeSyncedAttachment(
+        databaseURL: URL,
+        artifactStore: any AgentArtifactServing
+    ) async throws -> (
+        store: SQLiteAgentGroupChatStore,
+        roomID: String,
+        messageID: String,
+        attachmentID: String,
+        data: Data
+    ) {
+        let service = NativeAgentGroupChatService(
+            databaseURL: databaseURL,
+            agentArtifactStore: artifactStore
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "文件恢复助手", rolePrompt: "恢复附件", modelConfigID: "model-1")
+        )
+        let room = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: agent.id
+        )
+        let data = Data("# 文件恢复\n\n流式校验内容".utf8)
+        let posted = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .agent,
+                senderID: agent.id,
+                content: "附件",
+                attachments: [
+                    .init(
+                        name: "恢复.md",
+                        mimeType: "text/markdown; charset=utf-8",
+                        kind: .file,
+                        origin: .file,
+                        data: data
+                    ),
+                ]
+            )
+        )
+        let persistedCount = try await service.persistPendingAgentArtifacts(ownerUserID: "alice")
+        XCTAssertEqual(persistedCount, 1)
+        return (
+            store,
+            room.id,
+            posted.message.id,
+            try XCTUnwrap(posted.message.attachmentItems.first?.id),
+            data
+        )
+    }
+
+    private func restoreTemporaryFiles(beside fileURL: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(
+            atPath: fileURL.deletingLastPathComponent().path
+        ).filter { $0.hasPrefix(".chatos-artifact-restore-") }
+    }
 }
 
 private enum AgentArtifactStoreStubError: Error { case offline }
@@ -259,4 +480,105 @@ private actor AgentArtifactStoreStub: AgentArtifactServing {
 
     func downloadCount() -> Int { downloads }
     func storeCount() -> Int { successfulStores }
+}
+
+private actor FileAgentArtifactStoreStub: AgentArtifactFileServing {
+    private let rootURL: URL
+    private let artifactID = "artifact_0123456789abcdef0123456789abcdef"
+    private var item: AgentArtifactItem?
+    private var reads = 0
+    private var fileReferences = 0
+    private var metadataMismatch = false
+
+    init(rootURL: URL) {
+        self.rootURL = rootURL
+    }
+
+    func store(
+        ownerUserID: String,
+        request: AgentArtifactWriteRequest
+    ) async throws -> AgentArtifactMetadata {
+        XCTAssertEqual(ownerUserID, "alice")
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try request.data.write(to: sourceURL(), options: .atomic)
+        item = .init(
+            artifactID: artifactID,
+            name: request.name,
+            mimeType: request.mimeType,
+            size: request.data.count,
+            sha256: request.sha256,
+            status: "stored",
+            createdAtUnixMs: 1,
+            updatedAtUnixMs: 1
+        )
+        return .init(
+            artifactID: artifactID,
+            name: request.name,
+            mimeType: request.mimeType,
+            size: request.data.count,
+            sha256: request.sha256
+        )
+    }
+
+    func list(ownerUserID: String, limit: Int, cursor: String?) async throws -> AgentArtifactPage {
+        XCTAssertEqual(ownerUserID, "alice")
+        return .init(artifacts: item.map { [$0] } ?? [], nextCursor: nil)
+    }
+
+    func read(ownerUserID: String, artifactID: String) async throws -> Data {
+        XCTAssertEqual(ownerUserID, "alice")
+        XCTAssertEqual(artifactID, self.artifactID)
+        reads += 1
+        return try Data(contentsOf: sourceURL())
+    }
+
+    func fileReference(
+        ownerUserID: String,
+        artifactID: String
+    ) async throws -> AgentArtifactFileReference {
+        XCTAssertEqual(ownerUserID, "alice")
+        XCTAssertEqual(artifactID, self.artifactID)
+        fileReferences += 1
+        let item = try XCTUnwrap(item)
+        return .init(
+            fileURL: sourceURL(),
+            size: item.size + (metadataMismatch ? 1 : 0),
+            sha256: item.sha256
+        )
+    }
+
+    func remove(ownerUserID: String, artifactID: String) async throws {
+        XCTAssertEqual(ownerUserID, "alice")
+        XCTAssertEqual(artifactID, self.artifactID)
+        try? FileManager.default.removeItem(at: sourceURL())
+        item = nil
+    }
+
+    func replaceSource(with data: Data) throws {
+        try data.write(to: sourceURL(), options: .atomic)
+    }
+
+    func replaceSourceWithSymbolicLink() throws {
+        let source = sourceURL()
+        let target = rootURL.appendingPathComponent("symlink-target")
+        let data = try Data(contentsOf: source)
+        try data.write(to: target)
+        try FileManager.default.removeItem(at: source)
+        try FileManager.default.createSymbolicLink(at: source, withDestinationURL: target)
+    }
+
+    func setReferenceMetadataMismatch() {
+        metadataMismatch = true
+    }
+
+    func sourceURL() -> URL {
+        rootURL.appendingPathComponent("\(artifactID).artifact")
+    }
+
+    func downloadCount() -> Int { reads }
+    func fileReferenceCount() -> Int { fileReferences }
 }
