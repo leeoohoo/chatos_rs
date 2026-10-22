@@ -19,6 +19,8 @@ import { usePetPreferencesStore } from "../features/pet/application/petPreferenc
 import type { PetPreferencesPort } from "../features/pet/ports/PetPreferencesPort";
 import type { PetPresentationPort } from "../features/pet/ports/PetPresentationPort";
 import { startPetPresentationPolling } from "../features/pet/application/petPresentationPolling";
+import { useGlobalUtilityPreferencesStore } from "../features/global-utilities/application/globalUtilityPreferencesStore";
+import type { GlobalUtilityPreferencesPort } from "../features/global-utilities/ports/GlobalUtilityPreferencesPort";
 import { usePluginApplicationStore } from "../features/plugin-applications/application/pluginApplicationStore";
 import type { PluginApplicationPort } from "../features/plugin-applications/ports/PluginApplicationPort";
 import { useProjectConversationStore } from "../features/project-conversation/application/projectConversationStore";
@@ -146,6 +148,11 @@ const PetSettingsWorkspace = lazy(async () => {
   return { default: viewModule.PetSettingsView };
 });
 
+const GlobalUtilitiesSettingsWorkspace = lazy(async () => {
+  const viewModule = await import("../features/global-utilities/ui/GlobalUtilitiesSettingsView");
+  return { default: viewModule.GlobalUtilitiesSettingsView };
+});
+
 const SystemPermissionsWorkspace = lazy(async () => {
   const [adapterModule, viewModule] = await Promise.all([
     import("../features/runtime-permissions/adapters/TauriSystemPermissionsAdapter"),
@@ -267,6 +274,7 @@ interface AppShellProps {
   hostLifecycle: HostLifecyclePort;
   generalSettings: GeneralSettingsPort;
   petPreferences: PetPreferencesPort;
+  globalUtilities: GlobalUtilityPreferencesPort;
   petPresentation: PetPresentationPort;
   pluginApplication: PluginApplicationPort;
   workspaceIndex: WorkspaceIndexPort;
@@ -287,6 +295,7 @@ export function AppShell({
   hostLifecycle,
   generalSettings,
   petPreferences,
+  globalUtilities,
   petPresentation,
   pluginApplication,
   workspaceIndex,
@@ -305,6 +314,8 @@ export function AppShell({
   const snapshot = useHostLifecycleStore((state) => state.snapshot);
   const activateGeneralSettings = useGeneralSettingsStore((state) => state.activate);
   const activatePetPreferences = usePetPreferencesStore((state) => state.activate);
+  const activateGlobalUtilities = useGlobalUtilityPreferencesStore((state) => state.activate);
+  const resetGlobalUtilities = useGlobalUtilityPreferencesStore((state) => state.reset);
   const interfaceLanguage = useGeneralSettingsStore((state) => state.settings.interfaceLanguage);
   const contextLanguage = useGeneralSettingsStore((state) => state.settings.contextLanguage);
   const updateGeneralSettingsDraft = useGeneralSettingsStore((state) => state.updateDraft);
@@ -326,7 +337,7 @@ export function AppShell({
   const pluginApplications = usePluginApplicationStore((state) => state.applications);
   const resetPluginApplications = usePluginApplicationStore((state) => state.reset);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
-  const [activeSurface, setActiveSurface] = useState<"workspace" | "general-settings" | "wechat-companion" | "pet-settings" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
+  const [activeSurface, setActiveSurface] = useState<"workspace" | "general-settings" | "wechat-companion" | "pet-settings" | "global-utilities" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [remoteEditorTarget, setRemoteEditorTarget] = useState<"create" | string | null>(null);
   const text = (key: Parameters<typeof interfaceText>[1]) => interfaceText(interfaceLanguage, key);
@@ -342,6 +353,10 @@ export function AppShell({
   useEffect(() => {
     void activatePetPreferences(petPreferences, session.user.id);
   }, [activatePetPreferences, petPreferences, session.user.id]);
+
+  useEffect(() => {
+    void activateGlobalUtilities(globalUtilities, session.user.id);
+  }, [activateGlobalUtilities, globalUtilities, session.user.id]);
 
   useEffect(() => {
     if (!snapshot.ready) {
@@ -413,6 +428,8 @@ export function AppShell({
     ? text("wechatCompanion")
     : activeSurface === "pet-settings"
     ? text("petSettings")
+    : activeSurface === "global-utilities"
+    ? text("globalUtilities")
     : activeSurface === "tool-approval"
     ? text("commandApproval")
     : activeSurface === "runtime-permissions"
@@ -437,6 +454,11 @@ export function AppShell({
   const selectWorkspace = (nextSelection: WorkspaceSelection) => {
     setSelection(nextSelection);
     setActiveSurface("workspace");
+  };
+  const handleLogout = async () => {
+    await globalUtilities.deactivate(session.user.id).catch(() => undefined);
+    resetGlobalUtilities();
+    await onLogout();
   };
 
   return (
@@ -486,6 +508,15 @@ export function AppShell({
             <span><strong>{text("petSettings")}</strong><small>{text("petSettingsDetail")}</small></span>
           </button>
           <button
+            aria-current={activeSurface === "global-utilities" ? "page" : undefined}
+            className={`sidebar-settings-button ${activeSurface === "global-utilities" ? "sidebar-settings-button--active" : ""}`}
+            onClick={() => setActiveSurface("global-utilities")}
+            type="button"
+          >
+            <span aria-hidden="true">⌘</span>
+            <span><strong>{text("globalUtilities")}</strong><small>{text("globalUtilitiesDetail")}</small></span>
+          </button>
+          <button
             aria-current={activeSurface === "tool-approval" ? "page" : undefined}
             className={`sidebar-settings-button ${activeSurface === "tool-approval" ? "sidebar-settings-button--active" : ""}`}
             onClick={() => setActiveSurface("tool-approval")}
@@ -517,7 +548,7 @@ export function AppShell({
           <span className={`status-light status-light--${snapshot.phase}`} />
           <span>{snapshot.label}</span>
         </div>
-        <button className="account-button" onClick={() => void onLogout()} type="button">
+        <button className="account-button" onClick={() => void handleLogout()} type="button">
           <span className="account-avatar">{(session.user.displayName ?? session.user.username).slice(0, 1).toUpperCase()}</span>
           <span className="account-copy">
             <strong>{session.user.displayName ?? session.user.username}</strong>
@@ -535,6 +566,8 @@ export function AppShell({
                 ? "WECHAT COMPANION"
                 : activeSurface === "pet-settings"
                 ? "DESKTOP PET"
+                : activeSurface === "global-utilities"
+                ? "GLOBAL UTILITIES"
                 : activeSurface === "tool-approval"
                 ? "LOCAL SECURITY"
                 : activeSurface === "runtime-permissions"
@@ -561,7 +594,7 @@ export function AppShell({
           {activeSurface === "general-settings" ? (
           <GeneralSettingsWorkspace
             displayName={session.user.displayName}
-            onLogout={onLogout}
+            onLogout={handleLogout}
             ownerUserId={session.user.id}
             port={generalSettings}
             role={session.user.role}
@@ -571,6 +604,8 @@ export function AppShell({
           <WeChatCompanionWorkspace ownerUserId={session.user.id} />
         ) : activeSurface === "pet-settings" ? (
           <PetSettingsWorkspace ownerUserId={session.user.id} port={petPreferences} />
+        ) : activeSurface === "global-utilities" ? (
+          <GlobalUtilitiesSettingsWorkspace ownerUserId={session.user.id} port={globalUtilities} />
         ) : activeSurface === "tool-approval" ? (
           <ToolApprovalSettingsView
             approvalPort={toolApproval}

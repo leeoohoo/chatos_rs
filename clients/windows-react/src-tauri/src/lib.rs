@@ -14,6 +14,7 @@ mod conversation_history;
 mod conversation_realtime;
 mod conversation_runtime_settings;
 mod general_settings;
+mod global_utilities;
 mod host_lifecycle;
 mod local_terminal;
 mod media_studio;
@@ -87,8 +88,10 @@ use conversation_runtime_settings::{
     select_conversation_reasoning_level, select_conversation_remote_connection,
     ConversationRuntimeSettingsManager,
 };
-use general_settings::{
-    load_general_settings, update_general_settings, GeneralSettingsStore,
+use general_settings::{load_general_settings, update_general_settings, GeneralSettingsStore};
+use global_utilities::{
+    deactivate_global_utilities, load_global_utility_preferences,
+    update_global_utility_preferences, GlobalUtilityPreferencesStore,
 };
 use host_lifecycle::{
     host_diagnostics, host_lifecycle_snapshot, start_local_agent_host, stop_local_agent_host,
@@ -220,6 +223,7 @@ pub fn run() {
     let protocol_pet_asset_store = pet_asset_store.clone();
     let drop_attachment_manager = attachment_manager.clone();
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(authentication)
         .manage(attachment_manager)
         .manage(media_studio_manager)
@@ -251,6 +255,7 @@ pub fn run() {
             app.manage(RemoteConnectionManager::new(data_dir.clone()));
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
             app.manage(GeneralSettingsStore::new(data_dir.clone()));
+            app.manage(GlobalUtilityPreferencesStore::new(data_dir.clone()));
             app.manage(PetPreferencesStore::new(data_dir.clone()));
             app.manage(PluginApplicationManager::new(data_dir));
             let resource_directory = app
@@ -422,6 +427,9 @@ pub fn run() {
             adopt_requirement_survey_plan,
             load_general_settings,
             update_general_settings,
+            load_global_utility_preferences,
+            update_global_utility_preferences,
+            deactivate_global_utilities,
             load_pet_preferences,
             update_pet_preferences,
             reset_pet_position,

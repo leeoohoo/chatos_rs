@@ -15,6 +15,7 @@ import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/T
 import { TauriPluginApplicationAdapter } from "../features/plugin-applications/adapters/TauriPluginApplicationAdapter";
 import { TauriGeneralSettingsAdapter } from "../features/general-settings/adapters/TauriGeneralSettingsAdapter";
 import { TauriPetPreferencesAdapter } from "../features/pet/adapters/TauriPetPreferencesAdapter";
+import { TauriGlobalUtilityPreferencesAdapter } from "../features/global-utilities/adapters/TauriGlobalUtilityPreferencesAdapter";
 import { PetOverlaySurface } from "../features/pet/ui/PetOverlaySurface";
 import { PetActivitySurface } from "../features/pet/ui/PetActivitySurface";
 import { TauriPetPresentationAdapter } from "../features/pet/adapters/TauriPetPresentationAdapter";
@@ -30,6 +31,7 @@ const hostLifecycle = new TauriHostLifecycleAdapter();
 const pluginApplication = new TauriPluginApplicationAdapter();
 const generalSettings = new TauriGeneralSettingsAdapter();
 const petPreferences = new TauriPetPreferencesAdapter();
+const globalUtilities = new TauriGlobalUtilityPreferencesAdapter();
 const petPresentation = new TauriPetPresentationAdapter();
 const windowChrome = new TauriWindowChromeAdapter();
 const workspaceIndex = new TauriWorkspaceIndexAdapter();
@@ -77,6 +79,7 @@ function ApplicationRoot() {
             hostLifecycle={hostLifecycle}
             generalSettings={generalSettings}
             petPreferences={petPreferences}
+            globalUtilities={globalUtilities}
             petPresentation={petPresentation}
             pluginApplication={pluginApplication}
             workspaceIndex={workspaceIndex}
