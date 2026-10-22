@@ -1633,6 +1633,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：发送草稿和 Agent 模型输入仍按现有 DTO/模型协议持有图片 `Data`，另存为仍会先读取完整附件；缩略图 ImageIO 解码仍在主进程。64 MiB 是两个 ViewModel 各自的缓存上限，不是整个 App 的统一图片预算；全局资源 Governor、跨页面共享缓存、真实快速滚动/账户切换 physical-footprint、恶意图片进程隔离、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.57 第五十七批实施记录：Agent 附件另存为流式原子导出（2026-10-23）
+
+本批关闭 12.56 明确保留的文件型消费者峰值。Agent 消息附件“另存为”此前会先调用 `AgentMessageAttachmentDataLoader` 把最多 20 MiB 文件完整读入 `Data`，而且在用户确认保存位置之前就开始读取；随后再由 `Data.write(.atomic)` 形成输出文件。最终消费者本来就是磁盘文件，不需要这份完整内存副本。
+
+已实施：
+
+- 保存面板先取得用户目标；确认后才查询消息归属下的持久化 payload，取消面板不触发附件读取。
+- 新增 `AgentMessageAttachmentFileExporter`：以 `O_NOFOLLOW | O_CLOEXEC` 打开源文件，要求普通文件、记录尺寸精确一致、范围为 1...20 MiB 且存在 64 字符 SHA-256；使用固定 256 KiB 缓冲分块读取、增量计算摘要并处理短写、`EINTR` 与任务取消，不再构造完整附件 `Data`。
+- 导出在目标同目录创建 `0600`、`O_EXCL | O_NOFOLLOW` 临时文件，写入前执行磁盘容量门禁，写完 `fsync`；只有摘要和源 descriptor 的 device/inode/size/mtime 复查全部通过后才以 `rename(2)` 原子替换目标。
+- 摘要不符、源符号链接、短读或并发改写会删除临时文件并保留已有目标；源附件始终保留。Markdown 预览仍因文本渲染契约读取有界正文，预览内的“另存为”保存当前已加载文本，不重复读取源文件。
+- 新增 3 项回归，覆盖正确导出覆盖已有目标且保留源、摘要不匹配保持旧目标以及拒绝符号链接且无临时文件残留。
+
+验证：Debug 与 arm64 Release 各选择性运行 12.56 的 84 项图片/HTTP/性能门禁及 `AgentMessageAttachmentFileExporterTests` 3 项，共 87 项，全部通过；Swift 6 编译、优化编译、`git diff --check` 和源码检索确认消息附件保存路径不再调用完整 `Data` 写出。未启动/安装正式 App，未访问活动用户数据库。
+
+边界：附件上限当前只有 20 MiB，导出仍在 App 进程内执行文件 I/O；源文件缺少摘要的旧/异常记录明确拒绝导出。Agent Artifact Library 仍通过 service 返回完整文档 `Data` 后另存为，模型输入和 Markdown 正文也仍需要字节值；全局文件 I/O Governor、真实外置卷/只读卷/ENOSPC/睡眠与进程终止矩阵、签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

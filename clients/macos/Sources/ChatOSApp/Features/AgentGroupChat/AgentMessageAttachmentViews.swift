@@ -217,16 +217,25 @@ struct AgentMessageAttachmentChips: View {
     }
 
     private func saveAttachment(_ attachment: ProjectAgentMessageAttachment) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = attachment.name
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
         guard loadingAttachmentIDs.insert(attachment.id).inserted else { return }
         Task {
             defer { loadingAttachmentIDs.remove(attachment.id) }
             do {
-                let data = try await attachmentData(attachment)
-                let panel = NSSavePanel()
-                panel.nameFieldStringValue = attachment.name
-                panel.canCreateDirectories = true
-                guard panel.runModal() == .OK, let url = panel.url else { return }
-                try data.write(to: url, options: .atomic)
+                let store = try await service.store()
+                guard let payload = try await store.messageAttachment(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    messageID: messageID,
+                    attachmentID: attachment.id
+                ) else { throw AgentAttachmentPresentationError.notFound }
+                try await AgentMessageAttachmentFileExporter.export(
+                    payload,
+                    to: destinationURL
+                )
             } catch {
                 operationError = error.localizedDescription
             }
