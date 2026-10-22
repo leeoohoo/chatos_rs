@@ -350,6 +350,296 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
         }
     }
 
+    func recoverStoryVideoGeneration(
+        ownerUserID: String,
+        accountSessionID: UUID,
+        project: StoryProject,
+        segmentID: String,
+        continuationCheck: @escaping @Sendable () async throws -> Void,
+        onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
+    ) async throws -> StoryVideoGenerationRecoveryOutcome {
+        guard let segment = project.segments.first(where: { $0.id == segmentID }),
+              let localJobID = segment.videoJobRecordID,
+              segment.attempt == nil else { throw StoryError.invalidPlan }
+        let workload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: project.id,
+            segmentID: segmentID,
+            attemptID: localJobID
+        )
+        var activated = false
+        var phase = "recovery"
+        do {
+            try await continuationCheck()
+            let service: any MediaGenerationServicing
+            if let bindable = media as? any SessionBoundMediaGenerationServicing {
+                service = try await bindable.boundToCurrentSession()
+            } else {
+                service = media
+            }
+            try await continuationCheck()
+
+            let initial = try await videoJobStore.snapshot(id: localJobID, owner: ownerUserID)
+            guard initial.workload == workload else {
+                throw MediaStudioVideoJobStoreError.jobConflict
+            }
+
+            // Story is committed before the job terminal marker. Reconcile that crash window
+            // locally without querying or downloading the provider result a second time.
+            if let video = segment.video {
+                guard initial.providerJobID == video.jobID else {
+                    return try await needsReview(
+                        project: project,
+                        segmentID: segmentID,
+                        localJobID: localJobID,
+                        ownerUserID: ownerUserID,
+                        message: "剧情视频已保存，但服务商任务 ID 与持久任务记录不一致，请人工核对。"
+                    )
+                }
+                if initial.status == .completed {
+                    return .finished(.init(project: project, status: .completed))
+                }
+                let claimed = try await videoJobStore.activate(
+                    id: localJobID,
+                    owner: ownerUserID,
+                    sessionEpoch: accountSessionID,
+                    workload: workload
+                )
+                activated = true
+                if claimed.snapshot.status != .completed {
+                    try await videoJobStore.markCompleted(
+                        id: localJobID,
+                        owner: ownerUserID,
+                        sessionEpoch: accountSessionID,
+                        providerJobID: video.jobID
+                    )
+                }
+                return .finished(.init(project: project, status: .completed))
+            }
+
+            let execution: MediaStudioVideoJobStore.Execution
+            if initial.isActive {
+                guard let recovered = try await videoJobStore.recover(
+                    owner: ownerUserID,
+                    sessionEpoch: accountSessionID,
+                    workload: workload
+                ) else {
+                    let message: String
+                    if initial.status == .completed {
+                        message = "持久任务已完成，但剧情视频文件尚未提交，请人工核对。"
+                    } else {
+                        message = initial.failureMessage
+                            ?? "视频任务当前不能自动恢复，请核对服务商任务记录。"
+                    }
+                    return try await needsReview(
+                        project: project,
+                        segmentID: segmentID,
+                        localJobID: localJobID,
+                        ownerUserID: ownerUserID,
+                        message: message
+                    )
+                }
+                execution = recovered
+            } else {
+                execution = try await videoJobStore.activate(
+                    id: localJobID,
+                    owner: ownerUserID,
+                    sessionEpoch: accountSessionID,
+                    workload: workload
+                )
+            }
+            activated = true
+
+            switch execution.mode {
+            case .needsReview:
+                return try await needsReview(
+                    project: project,
+                    segmentID: segmentID,
+                    localJobID: localJobID,
+                    ownerUserID: ownerUserID,
+                    message: execution.snapshot.failureMessage
+                        ?? "上次视频提交结果尚未确认。为避免重复计费，客户端不会自动重发。"
+                )
+            case .create, .resume:
+                break
+            }
+
+            var running = execution
+            switch execution.mode {
+            case .create:
+                phase = "submitting"
+                running = try await videoJobStore.markSubmitting(
+                    id: localJobID,
+                    owner: ownerUserID,
+                    sessionEpoch: accountSessionID
+                )
+                await onEvent(.init(
+                    project: project,
+                    progress: .init(status: "submitting")
+                ))
+            case let .resume(providerJobID):
+                phase = "running"
+                await onEvent(.init(
+                    project: project,
+                    progress: .init(status: "checking")
+                ))
+                guard running.snapshot.providerJobID == providerJobID else {
+                    throw StoryError.unresolvedSubmission
+                }
+            case .needsReview:
+                throw StoryError.unresolvedSubmission
+            }
+
+            let persistenceGate = StoryVideoProgressPersistenceGate()
+            let progress = progressHandler(
+                localJobID: localJobID,
+                ownerUserID: ownerUserID,
+                accountSessionID: accountSessionID,
+                project: project,
+                persistenceGate: persistenceGate,
+                onEvent: onEvent
+            )
+            let result: VideoGenerationResult
+            do {
+                switch running.mode {
+                case .create:
+                    result = try await service.generateVideo(running.request, progress: progress)
+                case let .resume(providerJobID):
+                    guard let resumable = service as? any ResumableVideoGenerationServicing else {
+                        throw StoryError.unavailable
+                    }
+                    result = try await resumable.resumeVideo(
+                        running.request,
+                        jobID: providerJobID,
+                        progress: progress
+                    )
+                case .needsReview:
+                    throw StoryError.unresolvedSubmission
+                }
+            } catch {
+                if let persistenceError = await persistenceGate.error { throw persistenceError }
+                throw error
+            }
+            if let persistenceError = await persistenceGate.error { throw persistenceError }
+            defer { result.videoFile?.removeIfNeeded() }
+
+            try await continuationCheck()
+            phase = "finalizing"
+            try await videoJobStore.markFinalizing(
+                id: localJobID,
+                owner: ownerUserID,
+                sessionEpoch: accountSessionID,
+                providerJobID: result.id
+            )
+            await onEvent(.init(project: project, progress: .init(status: "saving")))
+            let completed = try await store.completeVideoGenerationFromMediaJob(
+                result,
+                projectID: project.id,
+                segmentID: segmentID,
+                jobRecordID: localJobID,
+                owner: ownerUserID
+            )
+            do {
+                try await videoJobStore.markCompleted(
+                    id: localJobID,
+                    owner: ownerUserID,
+                    sessionEpoch: accountSessionID,
+                    providerJobID: result.id
+                )
+            } catch {
+                await onEvent(.init(
+                    project: completed.0,
+                    progress: .init(status: "saving"),
+                    error: "视频已保存，任务状态将在下次恢复时核对：\(error.localizedDescription)"
+                ))
+                return .finished(.init(project: completed.0, status: .completed))
+            }
+            result.videoFile?.removeIfNeeded()
+            var finalProject = completed.0
+            do {
+                let videoURL = try store.fileURL(
+                    completed.1.filename,
+                    projectID: project.id,
+                    owner: ownerUserID
+                )
+                let finalFrame = try await StoryVideoFrameExtractor.lastFramePNG(from: videoURL)
+                try await continuationCheck()
+                finalProject = try await store.applyActualVideoLastFrame(
+                    finalFrame,
+                    projectID: project.id,
+                    segmentID: segmentID,
+                    videoJobID: completed.1.jobID,
+                    owner: ownerUserID
+                ).0
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // The provider video is already durable. Tail extraction is a local enhancement.
+            }
+            try await continuationCheck()
+            return .finished(.init(project: finalProject, status: .completed))
+        } catch {
+            if error is CancellationError || Task.isCancelled {
+                if activated {
+                    try? await videoJobStore.markCancellation(
+                        id: localJobID,
+                        owner: ownerUserID,
+                        sessionEpoch: accountSessionID
+                    )
+                }
+                throw CancellationError()
+            }
+            do {
+                try await continuationCheck()
+            } catch {
+                throw CancellationError()
+            }
+            if activated {
+                let mayHaveSubmitted = (error as? any MediaGenerationSubmissionFailure)?
+                    .requestMayHaveBeenSubmitted ?? true
+                do {
+                    try await videoJobStore.markFailure(
+                        id: localJobID,
+                        owner: ownerUserID,
+                        sessionEpoch: accountSessionID,
+                        phase: phase,
+                        message: error.localizedDescription,
+                        requestMayHaveBeenSubmitted: mayHaveSubmitted,
+                        retryable: true
+                    )
+                } catch MediaStudioVideoJobStoreError.staleSession {
+                    throw CancellationError()
+                } catch {
+                    // Preserve the original provider/recovery error for the Story surface.
+                }
+            }
+            let failed = try await store.failVideoGenerationFromMediaJob(
+                error.localizedDescription,
+                projectID: project.id,
+                segmentID: segmentID,
+                jobRecordID: localJobID,
+                owner: ownerUserID
+            )
+            return .finished(.init(project: failed, status: .failedRetainingAttempt))
+        }
+    }
+
+    private func needsReview(
+        project: StoryProject,
+        segmentID: String,
+        localJobID: UUID,
+        ownerUserID: String,
+        message: String
+    ) async throws -> StoryVideoGenerationRecoveryOutcome {
+        let reviewed = try await store.failVideoGenerationFromMediaJob(
+            message,
+            projectID: project.id,
+            segmentID: segmentID,
+            jobRecordID: localJobID,
+            owner: ownerUserID
+        )
+        return .needsReview(project: reviewed, message: message)
+    }
+
     private func makeRequest(
         command: StoryVideoGenerationCommand,
         intent: StoryProjectStore.VideoGenerationIntent,

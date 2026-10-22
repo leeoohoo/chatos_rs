@@ -5,6 +5,145 @@ import Foundation
 
 @MainActor
 extension StoryStudioViewModel {
+    func enqueueDurableVideoRecoveries(
+        _ loadedProjects: [StoryProject],
+        owner: String,
+        token: UUID
+    ) {
+        guard self.owner == owner, session == token else { return }
+        for project in loadedProjects {
+            for segment in project.segments where segment.videoJobRecordID != nil {
+                let key = VideoGenerationKey(projectID: project.id, segmentID: segment.id)
+                guard pendingVideoRecoveries[key] == nil,
+                      videoGenerationTasks[key] == nil,
+                      !activeVideoGenerations.contains(key) else { continue }
+                pendingVideoRecoveries[key] = project
+                pendingVideoRecoveryOrder.append(key)
+            }
+        }
+        startDurableVideoRecoveryIfNeeded(owner: owner, token: token)
+    }
+
+    private func startDurableVideoRecoveryIfNeeded(owner: String, token: UUID) {
+        guard videoRecoveryTask == nil, !pendingVideoRecoveryOrder.isEmpty else { return }
+        let storyVideoGeneration = storyVideoGeneration
+        videoRecoveryTask = Task { [weak self, storyVideoGeneration] in
+            while !Task.isCancelled {
+                guard let work = self?.takeNextDurableVideoRecovery(
+                    owner: owner,
+                    token: token
+                ) else { break }
+                let result: Result<StoryVideoGenerationRecoveryOutcome, Error>
+                do {
+                    result = .success(try await storyVideoGeneration.recover(
+                        ownerUserID: owner,
+                        accountSessionID: token,
+                        project: work.project,
+                        segmentID: work.key.segmentID,
+                        continuationCheck: { [weak self] in
+                            guard let self else { throw CancellationError() }
+                            try await self.check(token)
+                        },
+                        onEvent: { [weak self] event in
+                            await self?.receiveDurableVideoRecoveryEvent(
+                                event,
+                                key: work.key,
+                                recordID: work.recordID,
+                                owner: owner,
+                                token: token
+                            )
+                        }
+                    ))
+                } catch {
+                    result = .failure(error)
+                }
+                self?.finishDurableVideoRecovery(
+                    result,
+                    key: work.key,
+                    recordID: work.recordID,
+                    owner: owner,
+                    token: token
+                )
+            }
+            self?.finishDurableVideoRecoveryQueue(owner: owner, token: token)
+        }
+    }
+
+    private func takeNextDurableVideoRecovery(
+        owner: String,
+        token: UUID
+    ) -> (key: VideoGenerationKey, project: StoryProject, recordID: UUID)? {
+        guard self.owner == owner, session == token else { return nil }
+        while !pendingVideoRecoveryOrder.isEmpty {
+            let key = pendingVideoRecoveryOrder.removeFirst()
+            guard let queued = pendingVideoRecoveries.removeValue(forKey: key) else { continue }
+            let project = projects.first(where: { $0.id == key.projectID }) ?? queued
+            guard let segment = project.segments.first(where: { $0.id == key.segmentID }),
+                  let recordID = segment.videoJobRecordID,
+                  videoGenerationTasks[key] == nil,
+                  !activeVideoGenerations.contains(key) else { continue }
+            activeVideoGenerations.insert(key)
+            generationActivity.setVideoProgress(.init(status: "recovering"), for: key)
+            return (key, project, recordID)
+        }
+        return nil
+    }
+
+    private func receiveDurableVideoRecoveryEvent(
+        _ event: StoryVideoGenerationEvent,
+        key: VideoGenerationKey,
+        recordID: UUID,
+        owner: String,
+        token: UUID
+    ) {
+        guard self.owner == owner, session == token,
+              event.project.id == key.projectID,
+              event.project.segments.first(where: { $0.id == key.segmentID })?
+                .videoJobRecordID == recordID else { return }
+        if shouldPublishVideoGenerationProject(event.project, key: key) {
+            publishProject(event.project, token: token)
+        }
+        generationActivity.setVideoProgress(.init(
+            status: event.progress.status,
+            percent: event.progress.percent
+        ), for: key)
+        if let error = event.error { errorMessage = error }
+    }
+
+    private func finishDurableVideoRecovery(
+        _ result: Result<StoryVideoGenerationRecoveryOutcome, Error>,
+        key: VideoGenerationKey,
+        recordID: UUID,
+        owner: String,
+        token: UUID
+    ) {
+        guard self.owner == owner, session == token else { return }
+        activeVideoGenerations.remove(key)
+        generationActivity.setVideoProgress(nil, for: key)
+        switch result {
+        case .success(.finished(let outcome)):
+            guard outcome.project.segments.first(where: { $0.id == key.segmentID })?
+                .videoJobRecordID == recordID else { return }
+            publishProject(outcome.project, token: token)
+        case .success(.needsReview(let project, let message)):
+            guard project.segments.first(where: { $0.id == key.segmentID })?
+                .videoJobRecordID == recordID else { return }
+            publishProject(project, token: token)
+            errorMessage = message
+        case .failure(let error):
+            guard !(error is CancellationError), !Task.isCancelled else { return }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func finishDurableVideoRecoveryQueue(owner: String, token: UUID) {
+        guard self.owner == owner, session == token else { return }
+        videoRecoveryTask = nil
+        if !pendingVideoRecoveryOrder.isEmpty {
+            startDurableVideoRecoveryIfNeeded(owner: owner, token: token)
+        }
+    }
+
     func generateBatch(availableModels: [MediaGenerationModel], userIdeas: String = "") {
         guard !isBusy, !isLoading, videoBatchTask == nil, let owner, let project else { return }
         let ids = project.segments.filter { selectedSegments.contains($0.id) && $0.isReady }.map(\.id)

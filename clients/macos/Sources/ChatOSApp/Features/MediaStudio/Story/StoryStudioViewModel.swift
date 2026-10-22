@@ -143,6 +143,9 @@ final class StoryStudioViewModel: ObservableObject {
     var assetGenerationTasks: [AssetGenerationKey: Task<Void, Never>] = [:]
     var frameGenerationTasks: [FrameGenerationKey: Task<Void, Never>] = [:]
     var videoGenerationTasks: [VideoGenerationKey: Task<Void, Never>] = [:]
+    var pendingVideoRecoveries: [VideoGenerationKey: StoryProject] = [:]
+    var pendingVideoRecoveryOrder: [VideoGenerationKey] = []
+    var videoRecoveryTask: Task<Void, Never>?
     var videoFrameExtractionTasks: [VideoGenerationKey: Task<Void, Never>] = [:]
     var videoBatchTask: Task<Void, Never>?
     var sourceDrafts: [UUID: SourceDraft] = [:]
@@ -289,7 +292,9 @@ final class StoryStudioViewModel: ObservableObject {
     }
     var hasActiveAssetGenerations: Bool { !activeAssetGenerations.isEmpty }
     var hasActiveFrameGenerations: Bool { !activeFrameGenerations.isEmpty }
-    var hasActiveVideoGenerations: Bool { !activeVideoGenerations.isEmpty || videoBatchTask != nil }
+    var hasActiveVideoGenerations: Bool {
+        !activeVideoGenerations.isEmpty || videoBatchTask != nil || videoRecoveryTask != nil
+    }
     func hasActiveAssetGenerations(projectID: UUID) -> Bool {
         activeAssetGenerations.contains { $0.projectID == projectID }
     }
@@ -409,6 +414,11 @@ final class StoryStudioViewModel: ObservableObject {
                 projects = collection.projects
                 projectCursor = collection.nextCursor
                 hasMoreProjects = collection.nextCursor != nil
+                enqueueDurableVideoRecoveries(
+                    collection.projects,
+                    owner: userID,
+                    token: accountSessionID
+                )
                 if collection.unreadableCount > 0 { errorMessage = "有 \(collection.unreadableCount) 个剧情无法读取，原文件已保留。" }
             case .failure(let error):
                 errorMessage = error.localizedDescription
@@ -460,6 +470,11 @@ final class StoryStudioViewModel: ObservableObject {
                 projects = collection.projects
                 projectCursor = collection.nextCursor
                 hasMoreProjects = collection.nextCursor != nil
+                enqueueDurableVideoRecoveries(
+                    snapshot.projects,
+                    owner: owner,
+                    token: accountSessionID
+                )
                 if snapshot.unreadableCount > 0 {
                     errorMessage = "有 \(snapshot.unreadableCount) 个更早剧情无法读取，原文件已保留。"
                 }
@@ -489,6 +504,8 @@ final class StoryStudioViewModel: ObservableObject {
         frameGenerationTasks = [:]; activeFrameGenerations = []; frameGenerationErrors = [:]
         for generationTask in videoGenerationTasks.values { generationTask.cancel() }
         videoBatchTask?.cancel(); videoBatchTask = nil
+        videoRecoveryTask?.cancel(); videoRecoveryTask = nil
+        pendingVideoRecoveries = [:]; pendingVideoRecoveryOrder = []
         videoGenerationTasks = [:]; activeVideoGenerations = []
         for extractionTask in videoFrameExtractionTasks.values { extractionTask.cancel() }
         videoFrameExtractionTasks = [:]; activeVideoFrameExtractions = []

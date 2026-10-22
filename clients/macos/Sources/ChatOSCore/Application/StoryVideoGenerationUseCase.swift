@@ -68,6 +68,11 @@ public struct StoryVideoGenerationOutcome: Equatable, Sendable {
     }
 }
 
+public enum StoryVideoGenerationRecoveryOutcome: Equatable, Sendable {
+    case needsReview(project: StoryProject, message: String)
+    case finished(StoryVideoGenerationOutcome)
+}
+
 public protocol StoryVideoGenerating: Sendable {
     func prepareStoryVideoGeneration(
         ownerUserID: String,
@@ -85,6 +90,15 @@ public protocol StoryVideoGenerating: Sendable {
         continuationCheck: @escaping @Sendable () async throws -> Void,
         onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
     ) async throws -> StoryVideoGenerationOutcome
+
+    func recoverStoryVideoGeneration(
+        ownerUserID: String,
+        accountSessionID: UUID,
+        project: StoryProject,
+        segmentID: String,
+        continuationCheck: @escaping @Sendable () async throws -> Void,
+        onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
+    ) async throws -> StoryVideoGenerationRecoveryOutcome
 }
 
 public struct StoryVideoGenerationUseCase: Sendable {
@@ -185,6 +199,48 @@ public struct StoryVideoGenerationUseCase: Sendable {
         return outcome
     }
 
+    public func recover(
+        ownerUserID ownerInput: String,
+        accountSessionID: UUID,
+        project: StoryProject,
+        segmentID: String,
+        continuationCheck: @escaping @Sendable () async throws -> Void,
+        onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
+    ) async throws -> StoryVideoGenerationRecoveryOutcome {
+        let owner = try Self.normalizedOwner(ownerInput)
+        try project.validate()
+        guard let segment = project.segments.first(where: { $0.id == segmentID }),
+              let recordID = segment.videoJobRecordID,
+              segment.attempt == nil else {
+            throw StoryVideoGenerationError.targetUnavailable
+        }
+        try await continuationCheck()
+        let outcome = try await generator.recoverStoryVideoGeneration(
+            ownerUserID: owner,
+            accountSessionID: accountSessionID,
+            project: project,
+            segmentID: segmentID,
+            continuationCheck: continuationCheck,
+            onEvent: { event in
+                guard Self.acceptsRecoveryProject(
+                    event.project,
+                    projectID: project.id,
+                    segmentID: segmentID,
+                    recordID: recordID
+                ) else { return }
+                await onEvent(event)
+            }
+        )
+        try await continuationCheck()
+        guard Self.acceptsRecoveryOutcome(
+            outcome,
+            projectID: project.id,
+            segmentID: segmentID,
+            recordID: recordID
+        ) else { throw StoryVideoGenerationError.identityMismatch }
+        return outcome
+    }
+
     private static func validate(_ command: StoryVideoGenerationCommand) throws {
         try command.project.validate()
         guard let segment = command.project.segments.first(where: {
@@ -235,6 +291,52 @@ public struct StoryVideoGenerationUseCase: Sendable {
             return segment.attempt == nil && segment.videoJobRecordID == nil
                 && segment.video == nil && segment.error != nil
         }
+    }
+
+    private static func acceptsRecoveryProject(
+        _ project: StoryProject,
+        projectID: UUID,
+        segmentID: String,
+        recordID: UUID
+    ) -> Bool {
+        project.id == projectID
+            && project.segments.first(where: { $0.id == segmentID })?.videoJobRecordID
+                == recordID
+    }
+
+    private static func acceptsRecoveryOutcome(
+        _ outcome: StoryVideoGenerationRecoveryOutcome,
+        projectID: UUID,
+        segmentID: String,
+        recordID: UUID
+    ) -> Bool {
+        let project: StoryProject
+        switch outcome {
+        case .needsReview(let value, let message):
+            guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return false
+            }
+            project = value
+        case .finished(let value):
+            project = value.project
+            guard let segment = project.segments.first(where: { $0.id == segmentID }) else {
+                return false
+            }
+            switch value.status {
+            case .completed:
+                guard segment.video != nil else { return false }
+            case .failedRetainingAttempt:
+                guard segment.video == nil, segment.error != nil else { return false }
+            case .failedBeforeSubmission:
+                return false
+            }
+        }
+        return acceptsRecoveryProject(
+            project,
+            projectID: projectID,
+            segmentID: segmentID,
+            recordID: recordID
+        )
     }
 
     private static func normalizedOwner(_ input: String) throws -> String {

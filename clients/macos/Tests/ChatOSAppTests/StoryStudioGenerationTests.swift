@@ -6,6 +6,265 @@ import XCTest
 @testable import ChatOSApp
 
 extension StoryStudioTests {
+    func testProjectLoadActivatesStagedStoryJobAndCreatesOnce() async throws {
+        let fixture = try await durableStoryRecoveryFixture()
+        let vm = StoryStudioViewModel(
+            media: fixture.service,
+            planner: fixture.service,
+            store: fixture.store,
+            videoJobStore: fixture.jobStore
+        )
+
+        vm.activate(userID: "alice")
+        try await idle(vm)
+
+        let segment = try XCTUnwrap(vm.projects.first?.segments.first(where: { $0.id == "s1" }))
+        XCTAssertEqual(segment.video?.jobID, "remote-job")
+        XCTAssertEqual(segment.videoJobRecordID, fixture.attempt.id)
+        let snapshot = try await fixture.jobStore.snapshot(
+            id: fixture.attempt.id,
+            owner: "alice"
+        )
+        XCTAssertTrue(snapshot.isActive)
+        XCTAssertEqual(snapshot.status, .completed)
+        let events = await fixture.service.events()
+        XCTAssertEqual(events.filter { $0 == "video" }.count, 1)
+        XCTAssertFalse(events.contains("resume"))
+    }
+
+    func testProjectLoadResumesActiveProviderJobWithoutCreatingAgain() async throws {
+        let fixture = try await durableStoryRecoveryFixture(
+            providerJobID: "existing-provider-job"
+        )
+        _ = try await fixture.jobStore.activate(
+            id: fixture.attempt.id,
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: fixture.workload
+        )
+        let vm = StoryStudioViewModel(
+            media: fixture.service,
+            planner: fixture.service,
+            store: fixture.store,
+            videoJobStore: fixture.jobStore
+        )
+
+        vm.activate(userID: "alice")
+        try await idle(vm)
+
+        let segment = try XCTUnwrap(vm.projects.first?.segments.first(where: { $0.id == "s1" }))
+        XCTAssertEqual(segment.video?.jobID, "existing-provider-job")
+        let events = await fixture.service.events()
+        XCTAssertEqual(events.filter { $0 == "video" }.count, 0)
+        XCTAssertEqual(events.filter { $0 == "resume" }.count, 1)
+    }
+
+    func testProjectLoadNeverRecreatesUncertainSubmission() async throws {
+        let fixture = try await durableStoryRecoveryFixture()
+        let oldSession = UUID()
+        _ = try await fixture.jobStore.activate(
+            id: fixture.attempt.id,
+            owner: "alice",
+            sessionEpoch: oldSession,
+            workload: fixture.workload
+        )
+        _ = try await fixture.jobStore.markSubmitting(
+            id: fixture.attempt.id,
+            owner: "alice",
+            sessionEpoch: oldSession
+        )
+        let vm = StoryStudioViewModel(
+            media: fixture.service,
+            planner: fixture.service,
+            store: fixture.store,
+            videoJobStore: fixture.jobStore
+        )
+
+        vm.activate(userID: "alice")
+        try await idle(vm)
+
+        let snapshot = try await fixture.jobStore.snapshot(
+            id: fixture.attempt.id,
+            owner: "alice"
+        )
+        XCTAssertEqual(snapshot.status, .submissionUncertain)
+        XCTAssertNil(snapshot.providerJobID)
+        let segment = try XCTUnwrap(vm.projects.first?.segments.first(where: { $0.id == "s1" }))
+        XCTAssertEqual(segment.videoJobRecordID, fixture.attempt.id)
+        XCTAssertNotNil(segment.error)
+        XCTAssertNotNil(vm.errorMessage)
+        let events = await fixture.service.events()
+        XCTAssertFalse(events.contains("video"))
+        XCTAssertFalse(events.contains("resume"))
+    }
+
+    func testProjectLoadReconcilesStorySaveBeforeJobCompletionWithoutProviderCall() async throws {
+        let fixture = try await durableStoryRecoveryFixture()
+        let oldSession = UUID()
+        _ = try await fixture.jobStore.activate(
+            id: fixture.attempt.id,
+            owner: "alice",
+            sessionEpoch: oldSession,
+            workload: fixture.workload
+        )
+        _ = try await fixture.jobStore.markSubmitting(
+            id: fixture.attempt.id,
+            owner: "alice",
+            sessionEpoch: oldSession
+        )
+        try await fixture.jobStore.recordProgress(
+            id: fixture.attempt.id,
+            owner: "alice",
+            sessionEpoch: oldSession,
+            progress: .init(status: "completed", jobID: "saved-provider-job")
+        )
+        try await fixture.jobStore.markFinalizing(
+            id: fixture.attempt.id,
+            owner: "alice",
+            sessionEpoch: oldSession,
+            providerJobID: "saved-provider-job"
+        )
+        _ = try await fixture.store.completeVideoGenerationFromMediaJob(
+            .init(
+                id: "saved-provider-job",
+                modelConfigID: fixture.attempt.modelConfigID,
+                modelName: "MiniMax-H3",
+                createdAt: "",
+                mimeType: "video/mp4",
+                videoData: Data("already-saved".utf8)
+            ),
+            projectID: fixture.project.id,
+            segmentID: "s1",
+            jobRecordID: fixture.attempt.id,
+            owner: "alice"
+        )
+        let vm = StoryStudioViewModel(
+            media: fixture.service,
+            planner: fixture.service,
+            store: fixture.store,
+            videoJobStore: fixture.jobStore
+        )
+
+        vm.activate(userID: "alice")
+        try await idle(vm)
+
+        let snapshot = try await fixture.jobStore.snapshot(
+            id: fixture.attempt.id,
+            owner: "alice"
+        )
+        XCTAssertEqual(snapshot.status, .completed)
+        let segment = try XCTUnwrap(vm.projects.first?.segments.first(where: { $0.id == "s1" }))
+        XCTAssertEqual(segment.video?.jobID, "saved-provider-job")
+        let events = await fixture.service.events()
+        XCTAssertFalse(events.contains("video"))
+        XCTAssertFalse(events.contains("resume"))
+    }
+
+    func testRecoveredStoryJobCannotPublishAfterAccountSwitch() async throws {
+        let fixture = try await durableStoryRecoveryFixture()
+        await fixture.service.setDelay(true)
+        let vm = StoryStudioViewModel(
+            media: fixture.service,
+            planner: fixture.service,
+            store: fixture.store,
+            videoJobStore: fixture.jobStore
+        )
+        vm.activate(userID: "alice")
+        for _ in 0..<100 {
+            let events = await fixture.service.events()
+            if events.contains("video") { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let startedEvents = await fixture.service.events()
+        XCTAssertTrue(startedEvents.contains("video"))
+
+        vm.activate(userID: "bob")
+        try await idle(vm)
+        for _ in 0..<20 { await Task.yield() }
+
+        XCTAssertEqual(vm.owner, "bob")
+        XCTAssertTrue(vm.projects.isEmpty)
+        XCTAssertTrue(vm.activeVideoGenerations.isEmpty)
+    }
+
+    private func durableStoryRecoveryFixture(
+        providerJobID: String? = nil
+    ) async throws -> DurableStoryRecoveryFixture {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryDurableRecoveryTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try? FileManager.default.removeItem(at: root)
+            }
+        }
+        let store = StoryProjectStore(root: root)
+        let jobStore = MediaStudioVideoJobStore(
+            root: root.appendingPathComponent("MediaJobs", isDirectory: true)
+        )
+        let service = StoryTestService()
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        let attempt = StoryVideoAttempt(
+            modelConfigID: project.models.videoModelID,
+            prompt: "recover durable Story video",
+            size: "768P",
+            ratio: project.ratio,
+            seconds: project.segments[0].seconds
+        )
+        _ = try await store.beginVideoGeneration(
+            projectID: project.id,
+            segmentID: "s1",
+            attempt: attempt,
+            owner: "alice"
+        )
+        let workload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: project.id,
+            segmentID: "s1",
+            attemptID: attempt.id
+        )
+        let request = VideoGenerationRequest(
+            modelConfigID: attempt.modelConfigID,
+            prompt: attempt.prompt,
+            size: attempt.size,
+            seconds: attempt.seconds,
+            ratio: attempt.ratio
+        )
+        if let providerJobID {
+            _ = try await jobStore.stageImportedProviderJob(
+                request: request,
+                id: attempt.id,
+                providerJobID: providerJobID,
+                owner: "alice",
+                sessionEpoch: UUID(),
+                workload: workload
+            )
+        } else {
+            _ = try await jobStore.stagePrepared(
+                request: request,
+                id: attempt.id,
+                owner: "alice",
+                sessionEpoch: UUID(),
+                workload: workload
+            )
+        }
+        let handedOff = try await store.handoffVideoGenerationToMediaJob(
+            projectID: project.id,
+            segmentID: "s1",
+            expectedAttempt: attempt,
+            owner: "alice"
+        )
+        return .init(
+            store: store,
+            jobStore: jobStore,
+            service: service,
+            project: handedOff,
+            attempt: attempt,
+            workload: workload
+        )
+    }
+
     func testStoryVideoStartTransfersToDurableJobBeforeProviderSubmission() async throws {
         let (vm, store, service) = try await fixture()
         let draft = try await readyProject(store)
@@ -613,6 +872,15 @@ extension StoryStudioTests {
         XCTAssertThrowsError(try StoryPlanningTools.detailRequest(project, segmentID: "another-project-id"))
     }
 
+}
+
+private struct DurableStoryRecoveryFixture {
+    let store: StoryProjectStore
+    let jobStore: MediaStudioVideoJobStore
+    let service: StoryTestService
+    let project: StoryProject
+    let attempt: StoryVideoAttempt
+    let workload: MediaStudioVideoJobStore.Workload
 }
 
 private actor DeferredStoryAssetImageGenerator: StoryAssetImageGenerating {

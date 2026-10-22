@@ -133,6 +133,42 @@ struct StoryVideoGenerationUseCaseTests {
         }
     }
 
+    @Test("recovery accepts only the durable record associated with the target segment")
+    func validatesRecoveryIdentity() async throws {
+        var project = Self.readyProject()
+        project.version = 3
+        let recordID = UUID()
+        project.segments[0].videoJobRecordID = recordID
+        var foreign = project
+        foreign.segments[0].videoJobRecordID = UUID()
+        var completed = project
+        completed.segments[0].video = .init(
+            filename: "video.mp4",
+            jobID: "provider-job",
+            modelName: "MiniMax-H3"
+        )
+        let collector = StoryVideoEventCollector()
+        let useCase = StoryVideoGenerationUseCase(generator: StubStoryVideoGenerator(
+            events: [
+                .init(project: foreign, progress: .init(status: "foreign")),
+                .init(project: project, progress: .init(status: "checking")),
+            ],
+            outcome: .init(project: completed, status: .completed)
+        ))
+
+        let outcome = try await useCase.recover(
+            ownerUserID: "alice",
+            accountSessionID: UUID(),
+            project: project,
+            segmentID: "s1",
+            continuationCheck: {},
+            onEvent: { await collector.append($0) }
+        )
+
+        #expect(outcome == .finished(.init(project: completed, status: .completed)))
+        #expect(await collector.events.map(\.progress.status) == ["checking"])
+    }
+
     @Test("lifecycle permits different segments and rejects replacements and stale cleanup")
     func validatesLifecycle() {
         let project = Self.readyProject()
@@ -234,6 +270,19 @@ private struct StubStoryVideoGenerator: StoryVideoGenerating {
         try await continuationCheck()
         for event in events { await onEvent(event) }
         return outcome
+    }
+
+    func recoverStoryVideoGeneration(
+        ownerUserID: String,
+        accountSessionID: UUID,
+        project: StoryProject,
+        segmentID: String,
+        continuationCheck: @escaping @Sendable () async throws -> Void,
+        onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
+    ) async throws -> StoryVideoGenerationRecoveryOutcome {
+        try await continuationCheck()
+        for event in events { await onEvent(event) }
+        return .finished(outcome)
     }
 }
 

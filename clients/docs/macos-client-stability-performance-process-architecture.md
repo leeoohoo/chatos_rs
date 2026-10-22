@@ -1169,6 +1169,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批只迁移当前进程内主动发起的 Story 单段/直连任务，尚未在项目加载后扫描 `videoJobRecordID` 并执行 staged activate、prepared create、已有 provider ID resume 或 submission-uncertain 人工核对。因此 handoff 后进程退出的任务必须由下一批启动恢复协调器接管，本批不能宣称 Story 恢复闭环完成。旧持久 Batch 的分页导入、明确的 durable failed-job 人工释放/重试入口、staging 限龄清理、长期 lease/App→Worker 交接、真实强杀矩阵和 Media Worker 仍待完成，P0-E 不能标记完成。
 
+### 12.27 第二十七批实施记录：Story 项目加载恢复协调器（2026-10-22）
+
+本批补齐 12.26 明确保留的进程退出恢复窗口。恢复以已加载的 Story project manifest 为路由事实：只有 segment 中的完整 `videoJobRecordID` 能构造精确 `story_video(projectID, segmentID, attemptID)` workload，不能枚举 MediaJobStore 后猜测归属或消费其他业务分区。
+
+已实施：
+
+- Story 项目首页和后续分页加载完成后，按页面/segment 顺序把 durable video 关联加入单一恢复队列；同一 target 已在主动生成、已排队或正在恢复时不会重复入队。恢复任务计入现有视频活动状态，但不占用全局 Story 编辑 busy，离开项目页后仍可继续完成。
+- staged job 说明业务 manifest 已经 handoff、但 activate 尚未落盘：加载后幂等 activate；prepared 才允许进入 create。active job 统一经 workload 精确 `recover`：已有 provider ID 只 resume，`submitting` 且无 provider ID 会先持久化为 `submission_uncertain` 并返回人工核对提示，绝不重新 create；failed/cancelled/completed 但缺少 Story 结果等不能自动证明安全的组合也只提示核对。
+- Story 视频已提交而 MediaJobStore 仍处于 finalizing 的崩溃窗口不再请求 provider：恢复器校验两边 provider job ID 一致后，只补 `markCompleted`。若两边 ID 不一致则保留文件和记录并要求人工核对；已经双边 completed 的任务为只读成功，不在每次项目加载时重写 epoch/manifest。
+- 恢复沿用 12.26 的幂等 Story finalize、progress gate、provider identity fencing 和 session epoch。ViewModel 切换账号/reset 会取消队列并清空 pending target；所有事件和终态同时校验 owner、session、project、segment 与 record ID，旧账号恢复即使稍后返回也不能发布到新账号 UI 或继续写被新 epoch 接管的 job。
+- Core application boundary 新增显式 recovery outcome：`finished` 仍须满足 completed/failed 的业务字段组合，`needsReview` 必须保留同一个 durable record 且带非空说明；外来 project/segment/record 的进度和终态继续被过滤。
+
+验证：新增 handoff 后未 activate 的 staged create 恢复、active provider job 只 resume、无 provider ID 的 uncertain submission 禁止 create、Story 已保存时本地补 completed、恢复中切账号丢弃迟到结果，以及 Core durable record 身份过滤回归。Debug 选择性运行 MediaJobStore/Story/Core 共 XCTest 100 项与 Swift Testing 6 项，全部通过；arm64 Release 同矩阵、Swift 6 编译与 `git diff --check` 作为本批提交门禁。
+
+边界：恢复在 Story workspace 实际加载项目页时启动，不把尚未分页读取的 project 全量扫入内存，也不是 App 登录主路径的无界磁盘扫描。当前两份同时存活的 App 仍可能依次接管 epoch 并并发查询同一 provider job；不会重复 create，但长期 lease/heartbeat 与 App→Worker 独占交接尚未实现。明确的 failed/uncertain 人工释放或核对后重试 UI、旧持久 Batch 分页导入、隐藏 staging 限龄清理、终态 job 保留清理、真实强杀/睡眠/断网矩阵和 Media Worker 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
