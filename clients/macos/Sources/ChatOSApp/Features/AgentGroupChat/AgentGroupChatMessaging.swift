@@ -190,27 +190,6 @@ extension AgentGroupChatViewModel {
         return store
     }
 
-    nonisolated static func loadAttachmentData(
-        requests: [AgentAttachmentDataLoadRequest],
-        roomID: String,
-        ownerUserID: String,
-        store: SQLiteAgentGroupChatStore
-    ) async throws -> [String: Data] {
-        var result: [String: Data] = [:]
-        result.reserveCapacity(requests.count)
-        for request in requests {
-            try Task.checkCancellation()
-            guard let payload = try await store.messageAttachment(
-                ownerUserID: ownerUserID,
-                roomID: roomID,
-                messageID: request.messageID,
-                attachmentID: request.attachment.id
-            ) else { continue }
-            result[request.attachment.id] = try await AgentMessageAttachmentDataLoader.load(payload)
-        }
-        return result
-    }
-
     func mergeMessages(
         _ current: [ProjectAgentMessage],
         with incoming: [ProjectAgentMessage]

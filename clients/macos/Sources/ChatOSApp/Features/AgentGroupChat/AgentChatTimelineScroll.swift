@@ -5,7 +5,7 @@ import SwiftUI
 /// drafts and task-board changes must not recreate historical Markdown documents.
 struct AgentChatTimelineRowState: Equatable {
     var profiles: [LocalAgentProfile] = []
-    var attachmentData: [String: Data] = [:]
+    var attachmentThumbnails: [String: AgentMessageAttachmentThumbnail] = [:]
     var teams: [ProjectAgentRoom] = []
     var actionIDs: Set<String> = []
 }

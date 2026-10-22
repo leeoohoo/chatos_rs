@@ -49,6 +49,58 @@ final class AgentMessageAttachmentImageLoaderTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.url.path))
     }
 
+    func testThumbnailRetentionUsesDecodedMemoryCost() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let firstPayload = payload(for: fixture, sha256: fixture.sha256)
+        let secondAttachment = ProjectAgentMessageAttachment(
+            id: "attachment-2",
+            name: "attachment-2.png",
+            mimeType: "image/png",
+            size: fixture.data.count,
+            kind: .image,
+            origin: .file,
+            sha256: fixture.sha256
+        )
+        let decoded = try await AgentMessageAttachmentImageLoader.load(
+            firstPayload,
+            maximumDisplayPixelSize: 64
+        )
+        let first = AgentMessageAttachmentThumbnail(
+            attachment: firstPayload.attachment,
+            decoded: decoded
+        )
+        let second = AgentMessageAttachmentThumbnail(
+            attachment: secondAttachment,
+            decoded: decoded
+        )
+        let plan = [
+            AgentAttachmentThumbnailLoadRequest(
+                messageID: "message-1",
+                attachment: firstPayload.attachment
+            ),
+            AgentAttachmentThumbnailLoadRequest(
+                messageID: "message-2",
+                attachment: secondAttachment
+            ),
+        ]
+
+        let retained = AgentAttachmentThumbnailCachePolicy.retainedThumbnails(
+            [firstPayload.attachment.id: first, secondAttachment.id: second],
+            for: plan,
+            maximumMemoryCost: first.memoryCost
+        )
+
+        XCTAssertEqual(Set(retained.keys), [firstPayload.attachment.id])
+        XCTAssertEqual(
+            AgentAttachmentThumbnailCachePolicy.remainingMemoryCost(
+                after: retained,
+                maximumMemoryCost: first.memoryCost
+            ),
+            0
+        )
+    }
+
     private func assertInvalidAttachment(
         _ payload: ProjectAgentMessageAttachmentPayload
     ) async {

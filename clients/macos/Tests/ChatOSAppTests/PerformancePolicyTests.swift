@@ -484,8 +484,8 @@ struct PerformancePolicyTests {
         ).isEmpty)
     }
 
-    @Test("agent attachment cache keeps only newest images within its byte budget")
-    func agentAttachmentCacheIsBoundedAndRecent() {
+    @Test("agent attachment thumbnail plan keeps only newest images within its source budget")
+    func agentAttachmentThumbnailPlanIsBoundedAndRecent() {
         func attachment(
             _ id: String,
             size: Int,
@@ -525,22 +525,16 @@ struct PerformancePolicyTests {
                 attachment("new-small", size: 3),
             ]),
         ]
-        let plan = AgentAttachmentDataCachePolicy.loadPlan(
+        let plan = AgentAttachmentThumbnailCachePolicy.loadPlan(
             messages: messages,
-            maximumBytes: 10,
+            maximumSourceBytes: 10,
             maximumCount: 2
         )
 
         #expect(plan.map(\.attachment.id) == ["new-large", "new-small"])
-
-        let retained = AgentAttachmentDataCachePolicy.retainedData([
-            "old-image": Data(repeating: 1, count: 4),
-            "new-large": Data(repeating: 2, count: 7),
-        ], for: plan)
-        #expect(Set(retained.keys) == ["new-large"])
-        #expect(AgentAttachmentDataCachePolicy.missingRequests(
+        #expect(AgentAttachmentThumbnailCachePolicy.missingRequests(
             in: plan,
-            cachedDataByID: retained
-        ).map(\.attachment.id) == ["new-small"])
+            cachedThumbnailsByID: [:]
+        ).map(\.attachment.id) == ["new-large", "new-small"])
     }
 }

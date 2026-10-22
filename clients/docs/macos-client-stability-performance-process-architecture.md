@@ -1616,6 +1616,23 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：发送期 `dataByID` 仍按现有消息 DTO 保留完整压缩图片，Markdown、另存为和 Agent 输入仍按业务契约读取最多 20 MiB 正文；ImageIO 仍位于主进程。本批没有改变附件存储格式或恢复协议；真实群聊大图 physical-footprint、快速反复开关预览、恶意图片隔离、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.56 第五十六批实施记录：Agent 图片热路径去压缩字节缓存（2026-10-23）
+
+本批修正 12.55 之后仍存在的主路径偏差。两个 Agent 聊天 ViewModel 原先会 eager 读取最近最多 24 张图片、累计最多 48 MiB 的完整压缩 `Data` 到 `attachmentDataByID`；因此热消息仍优先绕过 12.55 的文件原生预览入口，并与全局解码缓存中的位图同时驻留。12.55 实际只覆盖缓存外图片，不能作为群聊图片主路径已经文件化的结论。
+
+已实施：
+
+- 将 `AgentAttachmentDataCachePolicy` 替换为 `AgentAttachmentThumbnailCachePolicy`：仍以最近消息、最多 48 MiB 源文件读取计划限制 eager I/O，但内存只保留从持久化文件直接校验并下采样的 `AppDecodedThumbnail`，不再保留压缩源字节。
+- 群聊与私聊共享 `AgentMessageAttachmentThumbnailLoader`，逐项复用 12.55 的 size/SHA-256/`O_NOFOLLOW` descriptor 校验和 ImageIO 文件解码；行内缩略图最长边为 1024 像素，缓存同时限制为 16 项和 64 MiB 实际 `bytesPerRow × height` 成本。
+- 已缓存缩略图按附件 ID、记录尺寸和摘要保持稳定身份，消息刷新只保留当前计划内且仍符合内存预算的像素面；新加载只消费剩余预算。损坏或缺摘要的旧图片不进入缩略图缓存，但继续以附件 chip 呈现，不能阻断提案、任务板等补充元数据加载。
+- 行内图片直接渲染有界 `CGImage`；用户点按时仍从持久化文件按 2048 像素上限重新校验和解码，避免把 1024 像素缩略图冒充全屏预览。
+- 删除群聊/私聊重复的 `loadAttachmentData` 整文件读取循环，并把 native timeline 的 row state 从压缩 `Data` 字典改为缩略图字典；Markdown、另存为和 Agent 模型输入所需的字节路径不在本批改变。
+- 新增解码内存成本保留回归，并更新性能策略回归验证最近优先、图片类型筛选、源读取预算及缺失项计划。
+
+验证：Debug 与 arm64 Release 各选择性运行既有图片/HTTP 门禁 53 项及 `PerformancePolicyTests` 31 项，共 84 项，全部通过；Swift 6 编译、优化编译、源码检索确认 Agent UI eager 路径不再调用 `AgentMessageAttachmentDataLoader`，`git diff --check` 同步作为本批门禁。未启动/安装正式 App，未访问活动用户数据库。
+
+边界：发送草稿和 Agent 模型输入仍按现有 DTO/模型协议持有图片 `Data`，另存为仍会先读取完整附件；缩略图 ImageIO 解码仍在主进程。64 MiB 是两个 ViewModel 各自的缓存上限，不是整个 App 的统一图片预算；全局资源 Governor、跨页面共享缓存、真实快速滚动/账户切换 physical-footprint、恶意图片进程隔离、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

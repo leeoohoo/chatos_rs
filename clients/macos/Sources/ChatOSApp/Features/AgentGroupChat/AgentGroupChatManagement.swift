@@ -54,23 +54,26 @@ extension AgentGroupChatViewModel {
             )
             messages = mergeMessages(messages, with: page.messages)
             hasOlderMessages = page.hasMore
-            let attachmentPlan = AgentAttachmentDataCachePolicy.loadPlan(messages: messages)
-            let retainedAttachmentData = AgentAttachmentDataCachePolicy.retainedData(
-                attachmentDataByID,
+            let attachmentPlan = AgentAttachmentThumbnailCachePolicy.loadPlan(messages: messages)
+            let retainedAttachmentThumbnails = AgentAttachmentThumbnailCachePolicy.retainedThumbnails(
+                attachmentThumbnailsByID,
                 for: attachmentPlan
             )
-            let loadedAttachmentData = try await Self.loadAttachmentData(
-                requests: AgentAttachmentDataCachePolicy.missingRequests(
+            let loadedAttachmentThumbnails = try await AgentMessageAttachmentThumbnailLoader.load(
+                requests: AgentAttachmentThumbnailCachePolicy.missingRequests(
                     in: attachmentPlan,
-                    cachedDataByID: retainedAttachmentData
+                    cachedThumbnailsByID: retainedAttachmentThumbnails
                 ),
                 roomID: room.id,
                 ownerUserID: ownerUserID,
-                store: store
+                store: store,
+                maximumMemoryCost: AgentAttachmentThumbnailCachePolicy.remainingMemoryCost(
+                    after: retainedAttachmentThumbnails
+                )
             )
-            var nextAttachmentData = retainedAttachmentData
-            nextAttachmentData.merge(loadedAttachmentData) { _, new in new }
-            attachmentDataByID = nextAttachmentData
+            var nextAttachmentThumbnails = retainedAttachmentThumbnails
+            nextAttachmentThumbnails.merge(loadedAttachmentThumbnails) { _, new in new }
+            attachmentThumbnailsByID = nextAttachmentThumbnails
             errorMessage = nil
             return firstMessageID
         } catch {

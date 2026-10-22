@@ -103,7 +103,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var todoRunPresentationsByTodoID: [String: TeamTodoRunPresentation] = [:]
     @Published private(set) var isLoadingRunHistory = false
     let composerState = AgentChatComposerState()
-    @Published var attachmentDataByID: [String: Data] = [:]
+    @Published var attachmentThumbnailsByID: [String: AgentMessageAttachmentThumbnail] = [:]
     @Published var isLoading = false
     @Published var isLoadingModels = false
     @Published var isLoadingOlderMessages = false
@@ -285,7 +285,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                 publishIfChanged(messagePage?.hasMore ?? false, at: \.hasOlderMessages)
             }
             if room == nil {
-                publishIfChanged([:], at: \.attachmentDataByID)
+                publishIfChanged([:], at: \.attachmentThumbnailsByID)
                 publishIfChanged(false, at: \.hasOlderMessages)
             }
             publishIfChanged(teams, at: \.teams)
@@ -351,25 +351,29 @@ final class AgentGroupChatViewModel: ObservableObject {
             return
         }
 
-        let attachmentPlan = AgentAttachmentDataCachePolicy.loadPlan(messages: messages)
-        let retainedAttachmentData = AgentAttachmentDataCachePolicy.retainedData(
-            mergeAttachments ? attachmentDataByID : [:],
+        let attachmentPlan = AgentAttachmentThumbnailCachePolicy.loadPlan(messages: messages)
+        let retainedAttachmentThumbnails = AgentAttachmentThumbnailCachePolicy.retainedThumbnails(
+            mergeAttachments ? attachmentThumbnailsByID : [:],
             for: attachmentPlan
         )
-        let missingAttachmentRequests = AgentAttachmentDataCachePolicy.missingRequests(
+        let missingAttachmentRequests = AgentAttachmentThumbnailCachePolicy.missingRequests(
             in: attachmentPlan,
-            cachedDataByID: retainedAttachmentData
+            cachedThumbnailsByID: retainedAttachmentThumbnails
+        )
+        let availableThumbnailMemory = AgentAttachmentThumbnailCachePolicy.remainingMemoryCost(
+            after: retainedAttachmentThumbnails
         )
         let ownerUserID = ownerUserID
         let projectID = projectID
 
         supplementaryLoadTask = Task { [weak self] in
             do {
-                async let loadedAttachmentData = Self.loadAttachmentData(
+                async let loadedAttachmentThumbnails = AgentMessageAttachmentThumbnailLoader.load(
                     requests: missingAttachmentRequests,
                     roomID: room.id,
                     ownerUserID: ownerUserID,
-                    store: store
+                    store: store,
+                    maximumMemoryCost: availableThumbnailMemory
                 )
                 let pendingProposals = try await store.listAgentProposals(
                     ownerUserID: ownerUserID,
@@ -451,12 +455,15 @@ final class AgentGroupChatViewModel: ObservableObject {
                         return ($0.id, delivery)
                     }
                 )
-                var nextAttachmentData = retainedAttachmentData
-                nextAttachmentData.merge(try await loadedAttachmentData) { _, new in new }
+                var nextAttachmentThumbnails = retainedAttachmentThumbnails
+                nextAttachmentThumbnails.merge(try await loadedAttachmentThumbnails) { _, new in new }
                 guard !Task.isCancelled,
                       let self,
                       self.room?.id == room.id else { return }
-                self.publishIfChanged(nextAttachmentData, at: \.attachmentDataByID)
+                self.publishIfChanged(
+                    nextAttachmentThumbnails,
+                    at: \.attachmentThumbnailsByID
+                )
                 self.publishIfChanged(interruptedRuns, at: \.interruptedRuns)
                 self.publishIfChanged(pendingProposals, at: \.pendingProposals)
                 self.publishIfChanged(pendingRemovalProposals, at: \.pendingRemovalProposals)

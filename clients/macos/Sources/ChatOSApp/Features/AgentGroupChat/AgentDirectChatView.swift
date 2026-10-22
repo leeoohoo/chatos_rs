@@ -107,7 +107,8 @@ struct AgentDirectChatView: View {
             isLoadingOlderItems: viewModel.isLoadingOlderMessages,
             scrollToLatestRequest: viewModel.scrollToLatestRequest,
             rowState: .init(
-                profiles: viewModel.agents, attachmentData: viewModel.attachmentDataByID,
+                profiles: viewModel.agents,
+                attachmentThumbnails: viewModel.attachmentThumbnailsByID,
                 teams: viewModel.teams, actionIDs: viewModel.proposalActionIDs
             ),
             loadOlderItems: {
@@ -183,7 +184,7 @@ struct AgentDirectChatView: View {
                         messageID: message.id,
                         creatorName: displayName,
                         attachments: message.attachmentItems,
-                        dataByID: viewModel.attachmentDataByID,
+                        thumbnailsByID: viewModel.attachmentThumbnailsByID,
                         service: model.agentGroupChatService
                     )
                 }

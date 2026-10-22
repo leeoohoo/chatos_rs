@@ -12,7 +12,10 @@ extension ProjectAgentGroupChatView {
             hasOlderItems: viewModel.hasOlderMessages,
             isLoadingOlderItems: viewModel.isLoadingOlderMessages,
             scrollToLatestRequest: viewModel.scrollToLatestRequest,
-            rowState: .init(profiles: viewModel.agents, attachmentData: viewModel.attachmentDataByID),
+            rowState: .init(
+                profiles: viewModel.agents,
+                attachmentThumbnails: viewModel.attachmentThumbnailsByID
+            ),
             loadOlderItems: { await viewModel.loadOlderMessages() },
             rowContent: { message in messageRow(message) },
             emptyContent: {
@@ -65,7 +68,7 @@ extension ProjectAgentGroupChatView {
                             messageID: message.id,
                             creatorName: displayName,
                             attachments: message.attachmentItems,
-                            dataByID: viewModel.attachmentDataByID,
+                            thumbnailsByID: viewModel.attachmentThumbnailsByID,
                             service: model.agentGroupChatService
                         )
                     }

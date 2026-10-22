@@ -50,7 +50,7 @@ final class AgentDirectChatViewModel: ObservableObject {
     }
     @Published private(set) var teams: [ProjectAgentRoom] = []
     let composerState = AgentChatComposerState()
-    @Published private(set) var attachmentDataByID: [String: Data] = [:]
+    @Published private(set) var attachmentThumbnailsByID: [String: AgentMessageAttachmentThumbnail] = [:]
     @Published private(set) var isLoading = false
     @Published private(set) var hasCompletedInitialLoad = false
     @Published private(set) var isLoadingOlderMessages = false
@@ -231,31 +231,35 @@ final class AgentDirectChatViewModel: ObservableObject {
         store: SQLiteAgentGroupChatStore
     ) {
         supplementaryLoadTask?.cancel()
-        let attachmentPlan = AgentAttachmentDataCachePolicy.loadPlan(messages: messages)
-        let retainedAttachmentData = AgentAttachmentDataCachePolicy.retainedData(
-            attachmentDataByID,
+        let attachmentPlan = AgentAttachmentThumbnailCachePolicy.loadPlan(messages: messages)
+        let retainedAttachmentThumbnails = AgentAttachmentThumbnailCachePolicy.retainedThumbnails(
+            attachmentThumbnailsByID,
             for: attachmentPlan
         )
-        let missingAttachmentRequests = AgentAttachmentDataCachePolicy.missingRequests(
+        let missingAttachmentRequests = AgentAttachmentThumbnailCachePolicy.missingRequests(
             in: attachmentPlan,
-            cachedDataByID: retainedAttachmentData
+            cachedThumbnailsByID: retainedAttachmentThumbnails
+        )
+        let availableThumbnailMemory = AgentAttachmentThumbnailCachePolicy.remainingMemoryCost(
+            after: retainedAttachmentThumbnails
         )
         let ownerUserID = ownerUserID
         let conversationID = conversationID
         supplementaryLoadTask = Task { [weak self] in
             do {
-                async let loadedAttachmentData = Self.loadAttachmentData(
+                async let loadedAttachmentThumbnails = AgentMessageAttachmentThumbnailLoader.load(
                     requests: missingAttachmentRequests,
+                    roomID: conversationID,
                     ownerUserID: ownerUserID,
-                    conversationID: conversationID,
-                    store: store
+                    store: store,
+                    maximumMemoryCost: availableThumbnailMemory
                 )
 
                 guard conversation.conversationKind == .humanAgentDirect else {
-                    var nextAttachmentData = retainedAttachmentData
-                    nextAttachmentData.merge(try await loadedAttachmentData) { _, new in new }
+                    var nextAttachmentThumbnails = retainedAttachmentThumbnails
+                    nextAttachmentThumbnails.merge(try await loadedAttachmentThumbnails) { _, new in new }
                     guard !Task.isCancelled, let self else { return }
-                    self.attachmentDataByID = nextAttachmentData
+                    self.attachmentThumbnailsByID = nextAttachmentThumbnails
                     self.pendingTeamProposals = []
                     self.pendingAgentProposals = []
                     self.pendingMembershipProposals = []
@@ -287,10 +291,10 @@ final class AgentDirectChatViewModel: ObservableObject {
                 let agentProposals = try await loadedAgentProposals
                 let membershipProposals = try await loadedMembershipProposals
                 let rooms = try await loadedTeams
-                var nextAttachmentData = retainedAttachmentData
-                nextAttachmentData.merge(try await loadedAttachmentData) { _, new in new }
+                var nextAttachmentThumbnails = retainedAttachmentThumbnails
+                nextAttachmentThumbnails.merge(try await loadedAttachmentThumbnails) { _, new in new }
                 guard !Task.isCancelled, let self else { return }
-                self.attachmentDataByID = nextAttachmentData
+                self.attachmentThumbnailsByID = nextAttachmentThumbnails
                 self.pendingTeamProposals = teamProposals
                 self.pendingAgentProposals = agentProposals
                 self.pendingMembershipProposals = membershipProposals
@@ -368,23 +372,26 @@ final class AgentDirectChatViewModel: ObservableObject {
             )
             messages = mergeMessages(messages, with: page.messages)
             hasOlderMessages = page.hasMore
-            let attachmentPlan = AgentAttachmentDataCachePolicy.loadPlan(messages: messages)
-            let retainedAttachmentData = AgentAttachmentDataCachePolicy.retainedData(
-                attachmentDataByID,
+            let attachmentPlan = AgentAttachmentThumbnailCachePolicy.loadPlan(messages: messages)
+            let retainedAttachmentThumbnails = AgentAttachmentThumbnailCachePolicy.retainedThumbnails(
+                attachmentThumbnailsByID,
                 for: attachmentPlan
             )
-            let loadedAttachmentData = try await Self.loadAttachmentData(
-                requests: AgentAttachmentDataCachePolicy.missingRequests(
+            let loadedAttachmentThumbnails = try await AgentMessageAttachmentThumbnailLoader.load(
+                requests: AgentAttachmentThumbnailCachePolicy.missingRequests(
                     in: attachmentPlan,
-                    cachedDataByID: retainedAttachmentData
+                    cachedThumbnailsByID: retainedAttachmentThumbnails
                 ),
+                roomID: conversationID,
                 ownerUserID: ownerUserID,
-                conversationID: conversationID,
-                store: store
+                store: store,
+                maximumMemoryCost: AgentAttachmentThumbnailCachePolicy.remainingMemoryCost(
+                    after: retainedAttachmentThumbnails
+                )
             )
-            var nextAttachmentData = retainedAttachmentData
-            nextAttachmentData.merge(loadedAttachmentData) { _, new in new }
-            attachmentDataByID = nextAttachmentData
+            var nextAttachmentThumbnails = retainedAttachmentThumbnails
+            nextAttachmentThumbnails.merge(loadedAttachmentThumbnails) { _, new in new }
+            attachmentThumbnailsByID = nextAttachmentThumbnails
             return firstMessageID
         } catch {
             errorMessage = error.localizedDescription
@@ -548,27 +555,6 @@ final class AgentDirectChatViewModel: ObservableObject {
         let store = try await service.store()
         openedStore = store
         return store
-    }
-
-    nonisolated private static func loadAttachmentData(
-        requests: [AgentAttachmentDataLoadRequest],
-        ownerUserID: String,
-        conversationID: String,
-        store: SQLiteAgentGroupChatStore
-    ) async throws -> [String: Data] {
-        var result: [String: Data] = [:]
-        result.reserveCapacity(requests.count)
-        for request in requests {
-            try Task.checkCancellation()
-            guard let payload = try await store.messageAttachment(
-                ownerUserID: ownerUserID,
-                roomID: conversationID,
-                messageID: request.messageID,
-                attachmentID: request.attachment.id
-            ) else { continue }
-            result[request.attachment.id] = try await AgentMessageAttachmentDataLoader.load(payload)
-        }
-        return result
     }
 
     private func mergeMessages(
