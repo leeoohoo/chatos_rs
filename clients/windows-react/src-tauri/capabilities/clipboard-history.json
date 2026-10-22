@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "clipboard-history",
+  "description": "Minimal native clipboard history command surface",
+  "windows": ["clipboard-history"],
+  "permissions": ["core:default"]
+}

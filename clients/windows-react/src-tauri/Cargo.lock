@@ -610,6 +610,7 @@ dependencies = [
  "chatos_local_agent_protocol",
  "chatos_plugin_management_sdk",
  "chrono",
+ "clipboard-win",
  "dirs 6.0.0",
  "image",
  "keyring",

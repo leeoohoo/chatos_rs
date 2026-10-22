@@ -1246,7 +1246,7 @@ Windows React 已完成对应独立切片：
 | 22 | 设置 / 通用 | macOS 界面/上下文语言、显示、休眠和账号语义已映射；Windows owner-scoped 原子偏好、共享界面 locale、可信 Agent Skill 语言消费与 Apple 主题设置页已完成 | 已进入 React；内部上下文语言只由 Rust 当前账号偏好进入新 Run，消息输入不得覆盖 |
 | 23 | 设置 / 微信 | macOS 绑定、二维码二次确认、session 撤销与解绑语义已映射；Windows User Service 原生适配、opaque 二维码预览、typed Store lifecycle 与 Apple 主题页面已完成 | 已进入 React；token/ticket/scene/二维码字节不跨 Rust 边界，页面与账号 teardown 后预览失败关闭 |
 | 24 | 设置 / 宠物 | macOS 设备级偏好、透明浮窗、资源、尺寸、位置恢复与 Run 活动映射语义已映射；Windows 原子偏好、可信资源协议、双原生 Tauri overlay、Host Run 安全投影、typed polling/event lifecycle 与 Apple 主题页面已完成 | 已进入 React；Windows 公开 API 不支持把单一窗口固定到所有虚拟桌面，当前以置顶浮窗实现并在页面明确说明平台差异；Run ID、input 与 terminal outcome 不跨 Rust/窗口边界 |
-| 25 | 设置 / 全局工具 | macOS 总开关、四项动作、设备级偏好、快捷键冲突/回退与隐私语义已映射；Windows 原子偏好、真实系统级注册、冲突状态、截图/录屏系统入口、typed lifecycle 与 Apple 主题设置页已完成 | 分阶段进入 React；剪贴板历史与快速搜索原生浮层尚未准入，当前快捷键只唤醒主窗口，不得标记为完整实现 |
+| 25 | 设置 / 全局工具 | macOS 总开关、四项动作、设备级偏好、快捷键冲突/回退、剪贴板历史与隐私语义已映射；Windows 原子偏好、真实系统级注册、截图/录屏入口、剪贴板原生监听/存储/恢复、独立浮层、typed lifecycle 与 Apple 主题设置页已完成 | 分阶段进入 React；Quick Search 原生搜索浮层尚未准入，当前快捷键只唤醒主窗口，不得标记为完整实现 |
 | 26 | 设置 / AI 模型 | 未映射 | 禁止 |
 | 27 | 设置 / 设备网关 | 未映射 | 禁止 |
 | 28 | 设置 / 插件与 Skills | 未映射 | 禁止 |
@@ -1341,5 +1341,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 79. [已完成] 第 22 页设置 / 通用已完成 owner-scoped 原子偏好、revision 冲突回读、界面语言/内部上下文语言、12...18 pt 全局缩放、Windows 长驻线程防空闲休眠、账号卡片与退出登录；共享 locale 已接入 Authentication、App Shell、Workspace Sidebar 和 Host 顶级状态。Agent Skill 管理器按 macOS `initialLanguage/onLanguageChange` 同步全局上下文语言；Agent 私聊、团队与 Agent 通讯的新 Run 只由 Rust `GeneralSettingsStore` 选择中英文 Skill 快照，不信任 React 回传。Rust 通用设置 3 项、Agent Skill 4 项、React 全量门禁及 Clippy `-D warnings` 通过。
 80. [已完成] 第 23 页设置 / 微信已完成当前账号绑定状态、短期小程序码、扫码后二次确认、登录 session 撤销和整体解绑。Rust 独占 access token、ticket/scene 与二维码字节，以随机预览 token、自定义协议、PNG/JPEG 签名、2 MiB/400 万像素、no-store/nosniff 和 authentication generation 形成失败关闭边界；React 只消费 typed 安全投影并以 2/4/8 秒轮询退避、owner/epoch/operation identity 拒绝迟到结果，页面 teardown 主动销毁二维码。Rust 微信定向 3 项、React 微信 7 项、全量门禁及 Clippy `-D warnings` 通过。
 81. [已完成] 第 25 页设置 / 全局工具第一阶段已按 macOS 默认关闭、四动作默认开启、首次冲突确认、单项注册状态和 350ms 触发门禁完成 Windows 映射。设备级原子 JSON 由 Rust 持有 revision，登录加载时注册、退出登录立即注销；React 只提交结构化快捷键 intent，不持有原生 key code。Windows 将 macOS Command 语义适配为 Control，Quick Search 冲突时回退 `Control+Shift+Space`；截屏/录屏由 Rust 直接打开 Windows 系统入口，Clipboard History/Quick Search 在各自原生浮层完成前只安全唤醒主窗口并继续标记未准入。React 全量 117 个测试文件、450 项，Rust 定向 3 项、production build、架构/Bundle 审计与 Clippy `-D warnings` 通过。下一片实现 Clipboard History 原生存储/监听/安全投影与独立浮层。
+82. [已完成] 第 25 页 Clipboard History 已按 macOS 事实源完成 Windows 原生轮询、敏感格式及私钥/token 对过滤、25 MiB 上限、SHA-256 去重、500 条/30 天清理、置顶/删除/清空和恢复。Rust SQLite 与私有 payload 目录不跨 IPC；React 只接收 360 字预览、时间、大小、固定类型和受控图片 URL，图片协议重新验证记录、格式、像素预算并固定 `no-store/nosniff`。快捷键打开独立透明 Tauri 浮层，查询/选择/快捷键/图片预览采用 Apple 主题；账号退出会注销热键、停止监听并隐藏浮层，后台刷新失败保留最后可信列表。React 全量 120 个测试文件、454 项，Clipboard Rust 3 项、production build、架构/Bundle 审计与 Clippy `-D warnings` 通过。下一片实现 Quick Search 原生数据源、排序和独立浮层。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

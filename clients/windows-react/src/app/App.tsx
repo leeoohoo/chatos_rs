@@ -24,6 +24,8 @@ import { TauriWindowChromeAdapter } from "../platform/window/adapters/TauriWindo
 import { WindowControls } from "../platform/window/ui/WindowControls";
 import { TauriWorkspaceIndexAdapter } from "../features/workspace-index/adapters/TauriWorkspaceIndexAdapter";
 import { AppShell } from "./AppShell";
+import { TauriClipboardHistoryAdapter } from "../features/clipboard-history/adapters/TauriClipboardHistoryAdapter";
+import { ClipboardHistorySurface } from "../features/clipboard-history/ui/ClipboardHistorySurface";
 
 const authentication = new TauriAuthenticationAdapter();
 const askUser = new TauriAskUserAdapter();
@@ -43,6 +45,7 @@ const conversationRuntimeSettings = new TauriConversationRuntimeSettingsAdapter(
 const runInspector = new TauriRunInspectorAdapter();
 const remoteConnection = new TauriRemoteConnectionAdapter();
 const toolApproval = new TauriToolApprovalAdapter();
+const clipboardHistory = new TauriClipboardHistoryAdapter();
 
 export function App() {
   if (new URLSearchParams(window.location.search).get("surface") === "pet-overlay") {
@@ -50,6 +53,9 @@ export function App() {
   }
   if (new URLSearchParams(window.location.search).get("surface") === "pet-activity") {
     return <PetActivitySurface port={petPresentation} />;
+  }
+  if (new URLSearchParams(window.location.search).get("surface") === "clipboard-history") {
+    return <ClipboardHistorySurface port={clipboardHistory} />;
   }
   return (
     <Routes>

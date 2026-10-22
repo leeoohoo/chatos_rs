@@ -6,6 +6,7 @@ mod agent_skill_management;
 mod ask_user;
 mod attachment_tool_worker;
 mod authentication;
+mod clipboard_history;
 mod connector_state;
 mod control_plane;
 mod conversation_attachments;
@@ -72,6 +73,11 @@ use attachment_tool_worker::AttachmentToolWorker;
 use authentication::{
     login, logout, register, restore_authentication_session, send_registration_code,
     AuthenticationManager,
+};
+use clipboard_history::{
+    clear_clipboard_history, clipboard_history_protocol, close_clipboard_history,
+    delete_clipboard_history_entry, list_clipboard_history, restore_clipboard_history_entry,
+    set_clipboard_history_entry_pinned, ClipboardHistoryManager,
 };
 use conversation_attachments::{
     activate_conversation_attachment_scope, attachment_protocol,
@@ -221,6 +227,8 @@ pub fn run() {
     let protocol_wechat_companion_manager = wechat_companion_manager.clone();
     let pet_asset_store = PetAssetStore::default();
     let protocol_pet_asset_store = pet_asset_store.clone();
+    let clipboard_history_manager = ClipboardHistoryManager::default();
+    let protocol_clipboard_history_manager = clipboard_history_manager.clone();
     let drop_attachment_manager = attachment_manager.clone();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -233,6 +241,7 @@ pub fn run() {
         .manage(agent_skill_store)
         .manage(wechat_companion_manager)
         .manage(pet_asset_store)
+        .manage(clipboard_history_manager)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
@@ -256,6 +265,9 @@ pub fn run() {
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
             app.manage(GeneralSettingsStore::new(data_dir.clone()));
             app.manage(GlobalUtilityPreferencesStore::new(data_dir.clone()));
+            app.state::<ClipboardHistoryManager>()
+                .open(data_dir.join("clipboard-history"))
+                .map_err(std::io::Error::other)?;
             app.manage(PetPreferencesStore::new(data_dir.clone()));
             app.manage(PluginApplicationManager::new(data_dir));
             let resource_directory = app
@@ -294,6 +306,9 @@ pub fn run() {
         })
         .register_uri_scheme_protocol("chatos-pet", move |_context, request| {
             pet_asset_protocol(protocol_pet_asset_store.clone(), request)
+        })
+        .register_uri_scheme_protocol("chatos-clipboard", move |_context, request| {
+            clipboard_history_protocol(protocol_clipboard_history_manager.clone(), request)
         })
         .on_webview_event(move |webview, event| {
             let emit_drag_state = |targeted| {
@@ -430,6 +445,12 @@ pub fn run() {
             load_global_utility_preferences,
             update_global_utility_preferences,
             deactivate_global_utilities,
+            list_clipboard_history,
+            set_clipboard_history_entry_pinned,
+            delete_clipboard_history_entry,
+            clear_clipboard_history,
+            restore_clipboard_history_entry,
+            close_clipboard_history,
             load_pet_preferences,
             update_pet_preferences,
             reset_pet_position,

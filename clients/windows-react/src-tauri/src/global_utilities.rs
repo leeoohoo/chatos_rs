@@ -12,7 +12,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 use uuid::Uuid;
 
-use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owner};
+use crate::{
+    authentication::AuthenticationManager,
+    clipboard_history::{show_clipboard_history, ClipboardHistoryManager},
+    host_lifecycle::validate_owner,
+};
 
 const FILE_VERSION: u32 = 1;
 const MAXIMUM_FILE_BYTES: u64 = 64 * 1_024;
@@ -216,6 +220,15 @@ impl GlobalUtilityPreferencesStore {
         self.load()
     }
 
+    pub(crate) fn active_owner(&self) -> Result<String, String> {
+        self.runtime
+            .lock()
+            .map_err(|_| utility_error())?
+            .active_owner
+            .clone()
+            .ok_or_else(|| "当前没有已登录账号。".into())
+    }
+
     fn update(
         &self,
         input: UpdateGlobalUtilityPreferencesInput,
@@ -349,6 +362,8 @@ impl GlobalUtilityPreferencesStore {
         }
         runtime.registered = registered;
         runtime.registrations = registrations.clone();
+        app.state::<ClipboardHistoryManager>()
+            .set_monitoring(file.is_enabled && file.clipboard_history_enabled)?;
         Ok(registrations)
     }
 
@@ -436,6 +451,11 @@ impl GlobalUtilityPreferencesStore {
         };
         for shortcut in registered {
             let _ = app.global_shortcut().unregister(shortcut);
+        }
+        app.state::<ClipboardHistoryManager>()
+            .set_monitoring(false)?;
+        if let Some(window) = app.get_webview_window("clipboard-history") {
+            let _ = window.hide();
         }
         Ok(())
     }
@@ -634,10 +654,9 @@ fn dispatch_action(app: &AppHandle, action: GlobalUtilityAction) {
         };
         let _ = std::process::Command::new("explorer.exe").arg(uri).spawn();
     }
-    if matches!(
-        action,
-        GlobalUtilityAction::ClipboardHistory | GlobalUtilityAction::QuickSearch
-    ) {
+    if action == GlobalUtilityAction::ClipboardHistory {
+        let _ = show_clipboard_history(app);
+    } else if action == GlobalUtilityAction::QuickSearch {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.unminimize();
             let _ = window.show();
