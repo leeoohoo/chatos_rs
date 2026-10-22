@@ -16,6 +16,7 @@ use crate::{
     authentication::AuthenticationManager,
     clipboard_history::{show_clipboard_history, ClipboardHistoryManager},
     host_lifecycle::validate_owner,
+    quick_search::{dismiss_quick_search, show_quick_search},
 };
 
 const FILE_VERSION: u32 = 1;
@@ -364,6 +365,9 @@ impl GlobalUtilityPreferencesStore {
         runtime.registrations = registrations.clone();
         app.state::<ClipboardHistoryManager>()
             .set_monitoring(file.is_enabled && file.clipboard_history_enabled)?;
+        if !file.is_enabled || !file.quick_search_enabled {
+            dismiss_quick_search(app);
+        }
         Ok(registrations)
     }
 
@@ -457,6 +461,7 @@ impl GlobalUtilityPreferencesStore {
         if let Some(window) = app.get_webview_window("clipboard-history") {
             let _ = window.hide();
         }
+        dismiss_quick_search(app);
         Ok(())
     }
 }
@@ -641,7 +646,7 @@ fn validate_shortcut(shortcut: &GlobalShortcutSpec) -> Result<(), String> {
     Ok(())
 }
 
-fn dispatch_action(app: &AppHandle, action: GlobalUtilityAction) {
+pub(crate) fn dispatch_action(app: &AppHandle, action: GlobalUtilityAction) {
     #[cfg(target_os = "windows")]
     if matches!(
         action,
@@ -657,11 +662,7 @@ fn dispatch_action(app: &AppHandle, action: GlobalUtilityAction) {
     if action == GlobalUtilityAction::ClipboardHistory {
         let _ = show_clipboard_history(app);
     } else if action == GlobalUtilityAction::QuickSearch {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
+        let _ = show_quick_search(app);
     }
     let _ = app.emit(
         "global-utility-triggered",

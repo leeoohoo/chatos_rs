@@ -31,6 +31,7 @@ mod project_filesystem;
 mod project_git;
 mod project_removal;
 mod project_run;
+mod quick_search;
 mod remote_connection;
 mod requirement_survey;
 mod run_inspector;
@@ -152,6 +153,10 @@ use project_run::{
     poll_project_run_changes, set_project_run_default_target, start_project_run, stop_project_run,
     update_project_run_environment, ProjectRunManager, ProjectRunPreferencesStore,
 };
+use quick_search::{
+    close_quick_search, execute_quick_search, load_quick_search, query_quick_search,
+    QuickSearchManager,
+};
 pub use remote_connection::run_ssh_askpass_helper_if_requested;
 use remote_connection::{
     close_remote_terminal, create_remote_connection, create_remote_directory,
@@ -265,6 +270,7 @@ pub fn run() {
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
             app.manage(GeneralSettingsStore::new(data_dir.clone()));
             app.manage(GlobalUtilityPreferencesStore::new(data_dir.clone()));
+            app.manage(QuickSearchManager::new(data_dir.clone()));
             app.state::<ClipboardHistoryManager>()
                 .open(data_dir.join("clipboard-history"))
                 .map_err(std::io::Error::other)?;
@@ -445,6 +451,10 @@ pub fn run() {
             load_global_utility_preferences,
             update_global_utility_preferences,
             deactivate_global_utilities,
+            load_quick_search,
+            query_quick_search,
+            execute_quick_search,
+            close_quick_search,
             list_clipboard_history,
             set_clipboard_history_entry_pinned,
             delete_clipboard_history_entry,

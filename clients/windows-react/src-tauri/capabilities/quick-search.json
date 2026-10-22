@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quick-search",
+  "description": "Minimal native Quick Search command surface",
+  "windows": ["quick-search"],
+  "permissions": ["core:default", "core:event:allow-listen", "core:event:allow-unlisten"]
+}

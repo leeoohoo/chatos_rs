@@ -29,6 +29,7 @@ import type { RemoteConnectionPort } from "../features/remote-connection/ports/R
 import { useWorkspaceIndexStore } from "../features/workspace-index/application/workspaceIndexStore";
 import type { WorkspaceSelection } from "../features/workspace-index/domain/workspaceIndex";
 import type { WorkspaceIndexPort } from "../features/workspace-index/ports/WorkspaceIndexPort";
+import type { QuickSearchNavigationPort } from "../features/quick-search/ports/QuickSearchPort";
 import { WorkspaceSidebar } from "../features/workspace-index/ui/WorkspaceSidebar";
 import { interfaceText } from "../shared/interfaceLocale";
 
@@ -287,6 +288,7 @@ interface AppShellProps {
   runInspector: RunInspectorPort;
   askUser: AskUserPort;
   toolApproval: ToolApprovalPort & ToolApprovalSettingsPort;
+  quickSearchNavigation: QuickSearchNavigationPort;
   session: AuthSession;
   onLogout(): Promise<void>;
 }
@@ -308,6 +310,7 @@ export function AppShell({
   runInspector,
   askUser,
   toolApproval,
+  quickSearchNavigation,
   session,
   onLogout,
 }: AppShellProps) {
@@ -374,6 +377,32 @@ export function AppShell({
     resetProjectConversations(session.user.id);
     resetPluginApplications(pluginApplication);
   }, [pluginApplication, resetPluginApplications, resetProjectConversations, session.user.id]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void quickSearchNavigation.subscribeNavigation((payload) => {
+      if (payload.ownerUserId !== session.user.id) return;
+      if (payload.destination === "project" && payload.resourceId) {
+        setSelection({ kind: "project", id: payload.resourceId });
+        setActiveSurface("workspace");
+      } else if (payload.destination === "contact" && payload.resourceId) {
+        setSelection({ kind: "contact", id: payload.resourceId });
+        setActiveSurface("workspace");
+      } else if (payload.destination === "settings") {
+        setActiveSurface("general-settings");
+      } else if (payload.destination === "runtimePermissions") {
+        setActiveSurface("runtime-permissions");
+      }
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [quickSearchNavigation, session.user.id]);
 
   useEffect(() => {
     if (selection.kind === "project"

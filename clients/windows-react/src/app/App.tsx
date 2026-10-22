@@ -26,6 +26,8 @@ import { TauriWorkspaceIndexAdapter } from "../features/workspace-index/adapters
 import { AppShell } from "./AppShell";
 import { TauriClipboardHistoryAdapter } from "../features/clipboard-history/adapters/TauriClipboardHistoryAdapter";
 import { ClipboardHistorySurface } from "../features/clipboard-history/ui/ClipboardHistorySurface";
+import { TauriQuickSearchAdapter } from "../features/quick-search/adapters/TauriQuickSearchAdapter";
+import { QuickSearchSurface } from "../features/quick-search/ui/QuickSearchSurface";
 
 const authentication = new TauriAuthenticationAdapter();
 const askUser = new TauriAskUserAdapter();
@@ -46,6 +48,7 @@ const runInspector = new TauriRunInspectorAdapter();
 const remoteConnection = new TauriRemoteConnectionAdapter();
 const toolApproval = new TauriToolApprovalAdapter();
 const clipboardHistory = new TauriClipboardHistoryAdapter();
+const quickSearch = new TauriQuickSearchAdapter();
 
 export function App() {
   if (new URLSearchParams(window.location.search).get("surface") === "pet-overlay") {
@@ -56,6 +59,9 @@ export function App() {
   }
   if (new URLSearchParams(window.location.search).get("surface") === "clipboard-history") {
     return <ClipboardHistorySurface port={clipboardHistory} />;
+  }
+  if (new URLSearchParams(window.location.search).get("surface") === "quick-search") {
+    return <QuickSearchSurface port={quickSearch} />;
   }
   return (
     <Routes>
@@ -98,6 +104,7 @@ function ApplicationRoot() {
             runInspector={runInspector}
             askUser={askUser}
             toolApproval={toolApproval}
+            quickSearchNavigation={quickSearch}
             session={session}
             onLogout={() => logout(authentication, () => stopHost(hostLifecycle))}
           />
