@@ -153,7 +153,13 @@ public struct LocalConnectorTerminalResult: Codable, Sendable, Equatable {
     public var timedOut: Bool
     public var stdout: String
     public var stderr: String
+    public var stdoutTruncated: Bool
+    public var stderrTruncated: Bool
     public var error: String?
+
+    public var outputTruncated: Bool {
+        stdoutTruncated || stderrTruncated
+    }
 
     public init(
         command: String,
@@ -164,6 +170,8 @@ public struct LocalConnectorTerminalResult: Codable, Sendable, Equatable {
         timedOut: Bool,
         stdout: String,
         stderr: String,
+        stdoutTruncated: Bool = false,
+        stderrTruncated: Bool = false,
         error: String?
     ) {
         self.command = command
@@ -174,7 +182,59 @@ public struct LocalConnectorTerminalResult: Codable, Sendable, Equatable {
         self.timedOut = timedOut
         self.stdout = stdout
         self.stderr = stderr
+        self.stdoutTruncated = stdoutTruncated
+        self.stderrTruncated = stderrTruncated
         self.error = error
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case command
+        case args
+        case cwd
+        case success
+        case exitCode
+        case timedOut
+        case stdout
+        case stderr
+        case stdoutTruncated
+        case stderrTruncated
+        case error
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        command = try container.decode(String.self, forKey: .command)
+        args = try container.decode([String].self, forKey: .args)
+        cwd = try container.decode(String.self, forKey: .cwd)
+        success = try container.decode(Bool.self, forKey: .success)
+        exitCode = try container.decodeIfPresent(Int.self, forKey: .exitCode)
+        timedOut = try container.decode(Bool.self, forKey: .timedOut)
+        stdout = try container.decode(String.self, forKey: .stdout)
+        stderr = try container.decode(String.self, forKey: .stderr)
+        stdoutTruncated = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .stdoutTruncated
+        ) ?? false
+        stderrTruncated = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .stderrTruncated
+        ) ?? false
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(command, forKey: .command)
+        try container.encode(args, forKey: .args)
+        try container.encode(cwd, forKey: .cwd)
+        try container.encode(success, forKey: .success)
+        try container.encodeIfPresent(exitCode, forKey: .exitCode)
+        try container.encode(timedOut, forKey: .timedOut)
+        try container.encode(stdout, forKey: .stdout)
+        try container.encode(stderr, forKey: .stderr)
+        try container.encode(stdoutTruncated, forKey: .stdoutTruncated)
+        try container.encode(stderrTruncated, forKey: .stderrTruncated)
+        try container.encodeIfPresent(error, forKey: .error)
     }
 }
 

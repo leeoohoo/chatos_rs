@@ -1698,6 +1698,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：快照最终消费者仍需要完整 JSON，因此后台任务内仍会持有一次有上限的编码/解码 `Data`；本批不把 Companion IPC 改成增量数据库或共享内存。Distributed Notification、真实万级资源压力、低磁盘/只读卷、睡眠/强杀、全局 I/O Governor、Media Worker 与签名 Release soak 仍待完成，P0-E 不能标记完成。
 
+### 12.61 第六十一批实施记录：本机终端有界输出截断可观测（2026-10-23）
+
+本批修正本机终端短命令执行器的结果语义。执行器原先已经持续排空 stdout/stderr 管道并把每路内存限制在 512 KiB，但超限字节会静默丢弃；即使命令产生 3 MiB 输出，结果仍只有 `success = true` 和一段看似完整的 512 KiB 字符串。调用方无法区分“命令成功且完整”与“命令成功但观测不完整”，容易基于残缺日志作出错误判断。
+
+已实施：
+
+- `LockedDataBuffer` 在持锁追加时同时记录该路是否丢弃过字节，继续保持 stdout/stderr 各 512 KiB 的严格内存上限；结束时以单次锁快照取得文本与截断状态，避免文本和标志来自两个不同瞬间。
+- `LocalConnectorTerminalResult` 新增 `stdoutTruncated`、`stderrTruncated` 及聚合 `outputTruncated`。进程 exit code 与 `success` 仍只表达命令是否成功退出，截断标志独立表达结果是否完整，不把成功命令伪装成执行失败。
+- 新字段进入 Codable/Relay 结果；自定义解码对旧 payload 缺失字段默认 `false`，避免旧缓存或旧对端结果因模型扩展而无法读取。启动失败、stdin 打开失败、超时和正常结束路径都返回同一组可观测字段。
+- 本机终端 UI 在任一路超限时明确显示“仅展示开头 512 KiB”的中英文警告，不再把前缀当作完整输出；原始 stdout/stderr 文本不混入哨兵字符串，现有精确解析调用方仍可按独立字段判断。
+- 新增回归覆盖 3 MiB stdout、3 MiB stderr 的独立截断标志、聚合状态、成功 exit 语义、普通小输出不误报，以及旧 JSON 缺字段兼容解码。
+
+验证：Debug 与 arm64 Release 各选择性运行 12.60 的 105 项图片/HTTP/性能/快照门禁及 `NativeTerminalExecutorTests` 8 项，共 113 项，全部通过；Swift 6 编译、优化编译、`git diff --check` 与结果 DTO 源码审查同步作为本批门禁。测试只执行受控临时目录命令；未启动/安装正式 App，未访问活动用户数据库。
+
+边界：本批不增加 512 KiB 保留预算，也不把输出落盘；超限后的尾部内容不可恢复，需要完整大日志的消费者仍应使用长生命周期 Terminal Store 的分页/轮询路径。真实进程树风暴、磁盘日志方案、全局进程并发 Governor、签名 Release soak 与 P0-D/P0-E 综合压力门禁仍待完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

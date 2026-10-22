@@ -48,6 +48,8 @@ enum NativeTerminalExecutor {
         guard nullInput >= 0 else {
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
+            let stdoutSnapshot = stdout.snapshot
+            let stderrSnapshot = stderr.snapshot
             return .init(
                 command: command,
                 args: args,
@@ -55,8 +57,10 @@ enum NativeTerminalExecutor {
                 success: false,
                 exitCode: nil,
                 timedOut: false,
-                stdout: stdout.string,
-                stderr: stderr.string,
+                stdout: stdoutSnapshot.string,
+                stderr: stderrSnapshot.string,
+                stdoutTruncated: stdoutSnapshot.truncated,
+                stderrTruncated: stderrSnapshot.truncated,
                 error: "无法打开标准输入"
             )
         }
@@ -82,6 +86,8 @@ enum NativeTerminalExecutor {
         guard spawnResult == 0, processID > 0 else {
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
+            let stdoutSnapshot = stdout.snapshot
+            let stderrSnapshot = stderr.snapshot
             return .init(
                 command: command,
                 args: args,
@@ -89,8 +95,10 @@ enum NativeTerminalExecutor {
                 success: false,
                 exitCode: nil,
                 timedOut: false,
-                stdout: stdout.string,
-                stderr: stderr.string,
+                stdout: stdoutSnapshot.string,
+                stderr: stderrSnapshot.string,
+                stdoutTruncated: stdoutSnapshot.truncated,
+                stderrTruncated: stderrSnapshot.truncated,
                 error: "无法启动命令：\(String(cString: strerror(spawnResult)))"
             )
         }
@@ -121,6 +129,8 @@ enum NativeTerminalExecutor {
         stdout.append(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
         stderr.append(stderrPipe.fileHandleForReading.readDataToEndOfFile())
         try Task.checkCancellation()
+        let stdoutSnapshot = stdout.snapshot
+        let stderrSnapshot = stderr.snapshot
         return .init(
             command: command,
             args: args,
@@ -128,8 +138,10 @@ enum NativeTerminalExecutor {
             success: !timedOut && exitCode == 0,
             exitCode: exitCode.map(Int.init),
             timedOut: timedOut,
-            stdout: stdout.string,
-            stderr: stderr.string,
+            stdout: stdoutSnapshot.string,
+            stderr: stderrSnapshot.string,
+            stdoutTruncated: stdoutSnapshot.truncated,
+            stderrTruncated: stderrSnapshot.truncated,
             error: timedOut ? "命令执行超时，相关子进程已终止。" : nil
         )
     }
@@ -148,6 +160,7 @@ private final class LockedDataBuffer: @unchecked Sendable {
     private static let maximumBytes = 512 * 1_024
     private let lock = NSLock()
     private var value = Data()
+    private var truncated = false
 
     func append(_ data: Data) {
         lock.lock()
@@ -155,14 +168,18 @@ private final class LockedDataBuffer: @unchecked Sendable {
         if remaining > 0 {
             value.append(data.prefix(remaining))
         }
+        if data.count > remaining {
+            truncated = true
+        }
         lock.unlock()
     }
 
-    var string: String {
+    var snapshot: (string: String, truncated: Bool) {
         lock.lock()
-        let snapshot = value
+        let data = value
+        let wasTruncated = truncated
         lock.unlock()
-        return String(decoding: snapshot, as: UTF8.self)
+        return (String(decoding: data, as: UTF8.self), wasTruncated)
     }
 }
 

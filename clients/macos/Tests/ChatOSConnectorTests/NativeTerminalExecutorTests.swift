@@ -26,6 +26,49 @@ struct NativeTerminalExecutorTests {
 
         #expect(result.success)
         #expect(result.stdout.utf8.count == 512 * 1_024)
+        #expect(result.stdoutTruncated)
+        #expect(!result.stderrTruncated)
+        #expect(result.outputTruncated)
+    }
+
+    @Test
+    func largeStandardErrorReportsItsIndependentTruncationState() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = LocalConnectorWorkspace(
+            id: "workspace-1",
+            alias: "Project",
+            absoluteRoot: root.path,
+            fingerprint: "abc"
+        )
+
+        let result = try await NativeTerminalExecutor.execute(
+            command: "/usr/bin/python3",
+            args: ["-c", "import sys; sys.stderr.write('x' * 3000000)"],
+            cwd: root.path,
+            workspace: workspace
+        )
+
+        #expect(result.success)
+        #expect(result.stderr.utf8.count == 512 * 1_024)
+        #expect(!result.stdoutTruncated)
+        #expect(result.stderrTruncated)
+        #expect(result.outputTruncated)
+    }
+
+    @Test
+    func legacyTerminalResultJSONDefaultsTruncationFlagsToFalse() throws {
+        let legacy = Data(
+            #"{"command":"pwd","args":[],"cwd":"/tmp","success":true,"exitCode":0,"timedOut":false,"stdout":"ok","stderr":""}"#.utf8
+        )
+
+        let result = try JSONDecoder().decode(LocalConnectorTerminalResult.self, from: legacy)
+
+        #expect(!result.stdoutTruncated)
+        #expect(!result.stderrTruncated)
+        #expect(!result.outputTruncated)
     }
 
     @Test
@@ -78,6 +121,7 @@ struct NativeTerminalExecutorTests {
         )
 
         #expect(result.success)
+        #expect(!result.outputTruncated)
         #expect(result.cwd == root.standardizedFileURL.resolvingSymlinksInPath().path)
         let shellWorkingDirectory = URL(
             fileURLWithPath: result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)

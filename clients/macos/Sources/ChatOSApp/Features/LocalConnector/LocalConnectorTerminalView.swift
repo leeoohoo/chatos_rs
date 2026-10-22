@@ -132,9 +132,15 @@ struct LocalConnectorTerminalView: View {
             .compactMap { $0?.trimmingCharacters(in: .newlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
-        let displayedOutput = output.isEmpty
+        var displayedOutput = output.isEmpty
             ? model.localized("（没有输出）", english: "(No output)")
             : output
+        if result.outputTruncated {
+            displayedOutput += model.localized(
+                "\n\n⚠️ 输出超过 512 KiB，当前仅显示开头部分。",
+                english: "\n\n⚠️ Output exceeded 512 KiB; only the beginning is shown."
+            )
+        }
         return model.localized(
             "$ \(commandLine)\n\(displayedOutput)\n\n进程退出：\(result.exitCode.map(String.init) ?? "—")",
             english: "$ \(commandLine)\n\(displayedOutput)\n\nProcess exited: \(result.exitCode.map(String.init) ?? "—")"
