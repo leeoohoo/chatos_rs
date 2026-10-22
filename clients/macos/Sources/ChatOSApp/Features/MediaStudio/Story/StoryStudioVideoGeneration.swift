@@ -538,12 +538,72 @@ extension StoryStudioViewModel {
 
     /// Only called after an explicit user confirmation, never by the planning model.
     func allowRetryAfterVerification(_ id: String) {
-        guard var next = project, let index = next.segments.firstIndex(where: { $0.id == id }),
-              next.segments[index].video == nil, let attempt = next.segments[index].attempt else { return }
-        next.segments[index].previousAttempts.append(attempt)
-        next.segments[index].attempt = nil
-        next.segments[index].error = nil
-        runCommit("保留旧任务记录并允许手动重试", project: next)
+        guard let current = project,
+              let index = current.segments.firstIndex(where: { $0.id == id }),
+              current.segments[index].video == nil else { return }
+        if let attempt = current.segments[index].attempt {
+            var next = current
+            next.segments[index].previousAttempts.append(attempt)
+            next.segments[index].attempt = nil
+            next.segments[index].error = nil
+            runCommit("保留旧任务记录并允许手动重试", project: next)
+            return
+        }
+        guard let owner,
+              let recordID = current.segments[index].videoJobRecordID else { return }
+        let token = session
+        let key = VideoGenerationKey(projectID: current.id, segmentID: id)
+        guard !activeVideoGenerations.contains(key), videoGenerationTasks[key] == nil else { return }
+        activeVideoGenerations.insert(key)
+        generationActivity.setVideoProgress(.init(status: "releasing"), for: key)
+        let storyVideoGeneration = storyVideoGeneration
+        videoGenerationTasks[key] = Task { [weak self, storyVideoGeneration] in
+            let result: Result<StoryProject, Error>
+            do {
+                result = .success(try await storyVideoGeneration.releaseAfterVerification(
+                    ownerUserID: owner,
+                    accountSessionID: token,
+                    project: current,
+                    segmentID: id,
+                    continuationCheck: { [weak self] in
+                        guard let self else { throw CancellationError() }
+                        try await self.checkVideoRetryRelease(
+                            key: key,
+                            recordID: recordID,
+                            owner: owner,
+                            token: token
+                        )
+                    }
+                ))
+            } catch {
+                result = .failure(error)
+            }
+            guard let self, self.owner == owner, self.session == token else { return }
+            self.activeVideoGenerations.remove(key)
+            self.generationActivity.setVideoProgress(nil, for: key)
+            self.videoGenerationTasks[key] = nil
+            switch result {
+            case .success(let released):
+                self.publishProject(released, token: token)
+            case .failure(let error):
+                guard !(error is CancellationError), !Task.isCancelled else { return }
+                self.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func checkVideoRetryRelease(
+        key: VideoGenerationKey,
+        recordID: UUID,
+        owner expectedOwner: String,
+        token: UUID
+    ) throws {
+        try check(token)
+        guard owner == expectedOwner,
+              activeVideoGenerations.contains(key),
+              projects.first(where: { $0.id == key.projectID })?
+                .segments.first(where: { $0.id == key.segmentID })?.videoJobRecordID == recordID
+        else { throw CancellationError() }
     }
 
     func mediaAsset(_ image: StoryImage, projectID: UUID) -> GeneratedMediaAsset? {

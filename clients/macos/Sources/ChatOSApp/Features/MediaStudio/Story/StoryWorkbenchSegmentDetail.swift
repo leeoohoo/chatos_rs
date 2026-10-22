@@ -151,6 +151,10 @@ extension StoryWorkbenchView {
                                 english: "The video job is safely stored and will resume from its local job record without resubmission."
                             ))
                             .font(.caption).foregroundStyle(.secondary)
+                            Button(appModel.localized("核对后允许重试…", english: "Allow Retry after Verification…")) {
+                                segmentToRetry = segment.id
+                            }
+                            .disabled(editingLocked)
                         }
                     }
                     if let error = segment.error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
@@ -470,11 +474,15 @@ private struct StoryVideoGenerationProgressView: View {
     let isAwaitingJobID: Bool
 
     var body: some View {
+        let status = activity.videoProgress[key]?.status
         let percent = activity.videoProgress[key]?.percent
+        let isReleasing = status == "releasing"
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text(appModel.localized("视频任务正在提交和生成", english: "Submitting and generating video"))
+                Text(isReleasing
+                     ? appModel.localized("正在安全释放已核对任务", english: "Safely releasing the verified task")
+                     : appModel.localized("视频任务正在提交和生成", english: "Submitting and generating video"))
                     .font(.callout.weight(.medium))
                 Spacer()
                 if let percent {
@@ -485,7 +493,7 @@ private struct StoryVideoGenerationProgressView: View {
             if let percent {
                 ProgressView(value: min(100, max(0, percent)), total: 100)
             }
-            if isAwaitingJobID {
+            if isAwaitingJobID && !isReleasing {
                 Text(appModel.localized(
                     "正在等待生成服务确认，请稍候。",
                     english: "Waiting for the generation service to confirm."

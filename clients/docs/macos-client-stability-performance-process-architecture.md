@@ -1185,6 +1185,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：恢复在 Story workspace 实际加载项目页时启动，不把尚未分页读取的 project 全量扫入内存，也不是 App 登录主路径的无界磁盘扫描。当前两份同时存活的 App 仍可能依次接管 epoch 并并发查询同一 provider job；不会重复 create，但长期 lease/heartbeat 与 App→Worker 独占交接尚未实现。明确的 failed/uncertain 人工释放或核对后重试 UI、旧持久 Batch 分页导入、隐藏 staging 限龄清理、终态 job 保留清理、真实强杀/睡眠/断网矩阵和 Media Worker 仍待完成，P0-E 不能标记完成。
 
+### 12.28 第二十八批实施记录：Story durable 任务核对后安全释放（2026-10-22）
+
+本批补齐 failed、`submission_uncertain` 及其他只能人工核对的 Story durable video job 释放闭环。用户确认只表示放弃旧关联并允许后续手动重新生成，不会在确认动作中调用 provider create/resume；警告文案继续明确潜在重复扣费风险。
+
+已实施：
+
+- Core `StoryVideoGenerating`/use case 新增显式 verified-release application boundary，冻结 owner、account session、project、segment 与 `videoJobRecordID`；返回项目必须清除同一 durable 关联且仍无 attempt/video，外来或错配结果失败关闭。ViewModel 不直接访问具体 Store。
+- Adapter 以完整 `story_video(projectID, segmentID, attemptID)` workload 校验 durable record；staged job 先幂等 activate，active/terminal record 接管到当前 session epoch。MediaJobStore 随后把记录写成 `cancelled` 终态，保存 `verified_retry_release` 审计原因、原 provider ID 和 manifest，并回收尚存提交输入；重复释放为只读幂等。
+- 提交顺序固定为“job 终态先落盘，Story 关联后清除”。若在两次提交之间崩溃，下一次用户确认会识别已终态记录并只补 Story 清除；不同 workload/record ID 不能清除业务关联。Story 清除本身允许 nil 关联的幂等重放，但拒绝新 attempt、已保存 video 或另一个 record。
+- `cancelled` 之后迟到的 finalizing/completed 写入被拒绝，避免旧 provider callback 重新打开用户已明确释放的任务。账号切换/reset 会取消释放 task；continuation 与最终发布都再次校验 owner/session/record，旧账号迟到结果不能进入新账号项目。
+- durable record 的非运行 UI 现在复用“核对后允许重试”确认框，释放期间显示独立状态；旧 legacy attempt 的归档逻辑保持不变。两条路径都只解锁 segment，不立即发起生成。
+
+验证：覆盖 staged/failed/`submission_uncertain` 释放、provider ID 审计保留、workload 错配拒绝、重复释放、释放后迟到 completed fencing、终态已写但 Story 未清的崩溃重放、点击确认不调用 provider、Core 输出身份过滤及切换账号丢弃迟到结果。Debug 与 arm64 Release 选择性运行 MediaJobStore/Story/Core，各 105 项 XCTest 与 7 项 Swift Testing 全部通过；Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
+
+边界：这是人工解锁闭环，不是 provider cancel/退款协议；用户确认前仍不会自动重发不确定任务，确认后也无法证明服务商没有继续执行旧任务。durable terminal job 的长期保留/配额清理、旧持久 Batch 分页导入、隐藏 staging 限龄清理、长期 lease/App→Worker 独占交接、真实逐状态强杀/睡眠/断网矩阵与 Media Worker 仍待完成，P0-E 不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

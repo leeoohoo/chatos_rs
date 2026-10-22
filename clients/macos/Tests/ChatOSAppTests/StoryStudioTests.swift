@@ -901,6 +901,102 @@ final class StoryStudioTests: XCTestCase {
         let events = await service.events(); XCTAssertTrue(events.isEmpty)
     }
 
+    func testVerifiedDurableRetryReleaseIsCrashSafeAndNeverCallsProvider() async throws {
+        let (vm, store, service) = try await fixture()
+        await service.setPreflightVideoFailure(true)
+        let draft = try await readyProject(store)
+        _ = await vm.create(draft, availableModels: models)
+        vm.selectedSegments = ["s1"]
+        vm.generateBatch(availableModels: models)
+        try await idle(vm)
+
+        let failed = try XCTUnwrap(vm.project)
+        let recordID = try XCTUnwrap(failed.segments[0].videoJobRecordID)
+        let jobStore = MediaStudioVideoJobStore(
+            root: store.root.appendingPathComponent("MediaJobs", isDirectory: true)
+        )
+        let workload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: failed.id,
+            segmentID: "s1",
+            attemptID: recordID
+        )
+        // Simulate a process death after the durable terminal marker but before Story clears
+        // its association. The user action must replay that second half without resubmission.
+        _ = try await jobStore.activate(
+            id: recordID,
+            owner: "alice",
+            sessionEpoch: vm.session,
+            workload: workload
+        )
+        _ = try await jobStore.releaseAfterVerifiedRetry(
+            id: recordID,
+            owner: "alice",
+            sessionEpoch: vm.session,
+            workload: workload
+        )
+        let callsBeforeRelease = await service.events()
+
+        vm.allowRetryAfterVerification("s1")
+        try await idle(vm)
+
+        let released = try XCTUnwrap(vm.project?.segments[0])
+        XCTAssertNil(released.videoJobRecordID)
+        XCTAssertNil(released.attempt)
+        XCTAssertNil(released.video)
+        XCTAssertNil(released.error)
+        XCTAssertTrue(released.isReady)
+        XCTAssertTrue(released.previousAttempts.isEmpty)
+        let callsAfterRelease = await service.events()
+        XCTAssertEqual(callsAfterRelease, callsBeforeRelease,
+                       "Verified release must not create or resume a provider task")
+        let audit = try await jobStore.snapshot(id: recordID, owner: "alice")
+        XCTAssertEqual(audit.status, .cancelled)
+        XCTAssertEqual(audit.failurePhase, "verified_retry_release")
+    }
+
+    func testAccountSwitchDropsLateVerifiedReleaseResult() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryRetryReleaseSessionTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let service = StoryTestService()
+        let release = DeferredStoryVideoReleaseGenerator()
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            storyVideoGeneration: release
+        )
+        vm.activate(userID: "alice")
+        try await idle(vm)
+        var project = try await readyProject(store)
+        project.version = 3
+        project.segments[0].videoJobRecordID = UUID()
+        project.segments[0].error = "needs review"
+        let created = await vm.create(project, availableModels: models)
+        XCTAssertTrue(created)
+
+        vm.allowRetryAfterVerification("s1")
+        for _ in 0..<100 where await !release.hasRequest() {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let hasReleaseRequest = await release.hasRequest()
+        XCTAssertTrue(hasReleaseRequest)
+        var released = project
+        released.segments[0].videoJobRecordID = nil
+        released.segments[0].error = nil
+
+        vm.activate(userID: "bob")
+        try await idle(vm)
+        await release.complete(with: released)
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertTrue(vm.projects.isEmpty)
+        XCTAssertNil(vm.project)
+    }
+
     func testStoreRejectsTraversalAndPreservesCorruptProjects() async throws {
         let (_, store, _) = try await fixture()
         let draft = makeProject()
@@ -1117,6 +1213,62 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertFalse(vm.isBusy); XCTAssertFalse(vm.isLoading)
         XCTAssertFalse(vm.hasActiveAssetGenerations); XCTAssertFalse(vm.hasActiveFrameGenerations)
         XCTAssertFalse(vm.hasActiveVideoGenerations)
+    }
+}
+
+private actor DeferredStoryVideoReleaseGenerator: StoryVideoGenerating {
+    private var requested = false
+    private var continuation: CheckedContinuation<StoryProject, Error>?
+
+    nonisolated func prepareStoryVideoGeneration(
+        ownerUserID: String,
+        project: StoryProject,
+        segmentID: String,
+        model: MediaGenerationModel,
+        size: String,
+        userIdeas: String
+    ) throws -> StoryVideoGenerationCommand {
+        throw StoryVideoGenerationError.targetUnavailable
+    }
+
+    func executeStoryVideoGeneration(
+        ownerUserID: String,
+        accountSessionID: UUID,
+        command: StoryVideoGenerationCommand,
+        continuationCheck: @escaping @Sendable () async throws -> Void,
+        onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
+    ) async throws -> StoryVideoGenerationOutcome {
+        throw StoryVideoGenerationError.targetUnavailable
+    }
+
+    func recoverStoryVideoGeneration(
+        ownerUserID: String,
+        accountSessionID: UUID,
+        project: StoryProject,
+        segmentID: String,
+        continuationCheck: @escaping @Sendable () async throws -> Void,
+        onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
+    ) async throws -> StoryVideoGenerationRecoveryOutcome {
+        throw StoryVideoGenerationError.targetUnavailable
+    }
+
+    func releaseStoryVideoGenerationAfterVerification(
+        ownerUserID: String,
+        accountSessionID: UUID,
+        project: StoryProject,
+        segmentID: String,
+        continuationCheck: @escaping @Sendable () async throws -> Void
+    ) async throws -> StoryProject {
+        try await continuationCheck()
+        requested = true
+        return try await withCheckedThrowingContinuation { continuation = $0 }
+    }
+
+    func hasRequest() -> Bool { requested }
+
+    func complete(with project: StoryProject) {
+        continuation?.resume(returning: project)
+        continuation = nil
     }
 }
 

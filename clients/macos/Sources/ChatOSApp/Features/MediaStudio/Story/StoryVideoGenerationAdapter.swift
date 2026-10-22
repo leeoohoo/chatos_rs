@@ -60,6 +60,53 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
         )
     }
 
+    func releaseStoryVideoGenerationAfterVerification(
+        ownerUserID: String,
+        accountSessionID: UUID,
+        project: StoryProject,
+        segmentID: String,
+        continuationCheck: @escaping @Sendable () async throws -> Void
+    ) async throws -> StoryProject {
+        guard let segment = project.segments.first(where: { $0.id == segmentID }),
+              segment.video == nil,
+              segment.attempt == nil,
+              let localJobID = segment.videoJobRecordID else {
+            throw StoryError.invalidPlan
+        }
+        let workload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: project.id,
+            segmentID: segmentID,
+            attemptID: localJobID
+        )
+        try await continuationCheck()
+        let initial = try await videoJobStore.snapshot(id: localJobID, owner: ownerUserID)
+        guard initial.workload == workload else {
+            throw MediaStudioVideoJobStoreError.jobConflict
+        }
+        _ = try await videoJobStore.activate(
+            id: localJobID,
+            owner: ownerUserID,
+            sessionEpoch: accountSessionID,
+            workload: workload
+        )
+        try await continuationCheck()
+        _ = try await videoJobStore.releaseAfterVerifiedRetry(
+            id: localJobID,
+            owner: ownerUserID,
+            sessionEpoch: accountSessionID,
+            workload: workload
+        )
+        // The terminal marker must win the crash order. A session change here intentionally
+        // leaves the Story association for the next verified, idempotent replay to finish.
+        try await continuationCheck()
+        return try await store.releaseVideoJobAfterVerification(
+            projectID: project.id,
+            segmentID: segmentID,
+            jobRecordID: localJobID,
+            owner: ownerUserID
+        )
+    }
+
     func executeStoryVideoGeneration(
         ownerUserID: String,
         accountSessionID: UUID,

@@ -524,6 +524,34 @@ actor StoryProjectStore {
         return project
     }
 
+    /// Clears a Story association only after MediaJobStore has durably terminalized the exact
+    /// record. A nil association is accepted as an idempotent replay after a prior successful
+    /// commit; a different record is never cleared.
+    func releaseVideoJobAfterVerification(
+        projectID: UUID,
+        segmentID: String,
+        jobRecordID: UUID,
+        owner: String
+    ) throws -> StoryProject {
+        var project = try loadProject(projectID: projectID, owner: owner)
+        guard let index = project.segments.firstIndex(where: { $0.id == segmentID }),
+              project.segments[index].attempt == nil,
+              project.segments[index].video == nil else {
+            throw StoryError.unresolvedSubmission
+        }
+        if project.segments[index].videoJobRecordID == nil {
+            return project
+        }
+        guard project.segments[index].videoJobRecordID == jobRecordID else {
+            throw StoryError.unresolvedSubmission
+        }
+        project.segments[index].videoJobRecordID = nil
+        project.segments[index].error = nil
+        project.updatedAt = Date()
+        try save(project, owner: owner)
+        return project
+    }
+
     /// A deterministic failure before the provider POST must release the local intent. Keeping
     /// it would falsely ask the user to recover a task ID that can never exist.
     func failVideoGenerationBeforeSubmission(_ error: String, projectID: UUID, segmentID: String,

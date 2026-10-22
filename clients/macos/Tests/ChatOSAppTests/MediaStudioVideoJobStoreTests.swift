@@ -247,6 +247,172 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         XCTAssertEqual(repeatedActivation.snapshot.stateVersion, activated.snapshot.stateVersion)
     }
 
+    func testVerifiedRetryReleaseTerminalizesStagedJobAndIsIdempotent() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        let attemptID = UUID()
+        let workload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: UUID(),
+            segmentID: "segment-release",
+            attemptID: attemptID
+        )
+        _ = try await store.stagePrepared(
+            request: request(prompt: "release staged task"),
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        let epoch = UUID()
+        _ = try await store.activate(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: epoch,
+            workload: workload
+        )
+
+        let released = try await store.releaseAfterVerifiedRetry(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: epoch,
+            workload: workload
+        )
+        XCTAssertEqual(released.status, .cancelled)
+        XCTAssertEqual(released.failurePhase, "verified_retry_release")
+        XCTAssertFalse(released.retryable)
+        XCTAssertTrue(files(named: "firstFrame.artifact", under: root).isEmpty)
+
+        let repeated = try await store.releaseAfterVerifiedRetry(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: epoch,
+            workload: workload
+        )
+        XCTAssertEqual(repeated, released)
+        do {
+            try await store.markCompleted(
+                id: attemptID,
+                owner: "alice",
+                sessionEpoch: epoch,
+                providerJobID: "late-provider-result"
+            )
+            XCTFail("A late provider result must not reopen an explicitly released job")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                MediaStudioVideoJobStoreError.invalidTransition.localizedDescription
+            )
+        }
+        let recovered = try await store.recover(
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        XCTAssertNil(recovered)
+    }
+
+    func testVerifiedRetryReleaseRetainsProviderIdentityAndRejectsForeignWorkload() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        let attemptID = UUID()
+        let projectID = UUID()
+        let workload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: projectID,
+            segmentID: "segment-provider",
+            attemptID: attemptID
+        )
+        _ = try await store.stageImportedProviderJob(
+            request: request(prompt: "retain provider identity"),
+            id: attemptID,
+            providerJobID: "provider-audit",
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        let epoch = UUID()
+        _ = try await store.activate(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: epoch,
+            workload: workload
+        )
+
+        do {
+            _ = try await store.releaseAfterVerifiedRetry(
+                id: attemptID,
+                owner: "alice",
+                sessionEpoch: epoch,
+                workload: .storyVideo(
+                    projectID: projectID,
+                    segmentID: "foreign-segment",
+                    attemptID: attemptID
+                )
+            )
+            XCTFail("A foreign Story association must not release this record")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                MediaStudioVideoJobStoreError.jobConflict.localizedDescription
+            )
+        }
+
+        let released = try await store.releaseAfterVerifiedRetry(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: epoch,
+            workload: workload
+        )
+        XCTAssertEqual(released.status, .cancelled)
+        XCTAssertEqual(released.providerJobID, "provider-audit")
+    }
+
+    func testSubmissionUncertainRequiresExplicitVerifiedRelease() async throws {
+        let root = try directory().appendingPathComponent("jobs")
+        let store = MediaStudioVideoJobStore(root: root)
+        let attemptID = UUID()
+        let workload = MediaStudioVideoJobStore.Workload.storyVideo(
+            projectID: UUID(),
+            segmentID: "segment-uncertain",
+            attemptID: attemptID
+        )
+        _ = try await store.stagePrepared(
+            request: request(prompt: "uncertain submission"),
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: UUID(),
+            workload: workload
+        )
+        let submittingEpoch = UUID()
+        _ = try await store.activate(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: submittingEpoch,
+            workload: workload
+        )
+        _ = try await store.markSubmitting(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: submittingEpoch
+        )
+        let reviewEpoch = UUID()
+        let review = try await store.recover(
+            owner: "alice",
+            sessionEpoch: reviewEpoch,
+            workload: workload
+        )
+        XCTAssertEqual(review?.snapshot.status, .submissionUncertain)
+        XCTAssertEqual(review?.mode, .needsReview)
+
+        let released = try await store.releaseAfterVerifiedRetry(
+            id: attemptID,
+            owner: "alice",
+            sessionEpoch: reviewEpoch,
+            workload: workload
+        )
+        XCTAssertEqual(released.status, .cancelled)
+        XCTAssertEqual(released.failurePhase, "verified_retry_release")
+    }
+
     func testProviderIdentityCannotChangeAfterFirstDurableObservation() async throws {
         let root = try directory().appendingPathComponent("jobs")
         let store = MediaStudioVideoJobStore(root: root)

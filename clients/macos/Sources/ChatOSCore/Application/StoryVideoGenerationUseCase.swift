@@ -99,6 +99,14 @@ public protocol StoryVideoGenerating: Sendable {
         continuationCheck: @escaping @Sendable () async throws -> Void,
         onEvent: @escaping @Sendable (StoryVideoGenerationEvent) async -> Void
     ) async throws -> StoryVideoGenerationRecoveryOutcome
+
+    func releaseStoryVideoGenerationAfterVerification(
+        ownerUserID: String,
+        accountSessionID: UUID,
+        project: StoryProject,
+        segmentID: String,
+        continuationCheck: @escaping @Sendable () async throws -> Void
+    ) async throws -> StoryProject
 }
 
 public struct StoryVideoGenerationUseCase: Sendable {
@@ -239,6 +247,45 @@ public struct StoryVideoGenerationUseCase: Sendable {
             recordID: recordID
         ) else { throw StoryVideoGenerationError.identityMismatch }
         return outcome
+    }
+
+    /// Releases a durable Story video association only after an explicit user review. The
+    /// platform adapter must terminalize the durable job before clearing the Story manifest.
+    public func releaseAfterVerification(
+        ownerUserID ownerInput: String,
+        accountSessionID: UUID,
+        project: StoryProject,
+        segmentID: String,
+        continuationCheck: @escaping @Sendable () async throws -> Void
+    ) async throws -> StoryProject {
+        let owner = try Self.normalizedOwner(ownerInput)
+        try project.validate()
+        guard let segment = project.segments.first(where: { $0.id == segmentID }),
+              segment.video == nil,
+              segment.attempt == nil,
+              let recordID = segment.videoJobRecordID else {
+            throw StoryVideoGenerationError.targetUnavailable
+        }
+        try await continuationCheck()
+        let released = try await generator.releaseStoryVideoGenerationAfterVerification(
+            ownerUserID: owner,
+            accountSessionID: accountSessionID,
+            project: project,
+            segmentID: segmentID,
+            continuationCheck: continuationCheck
+        )
+        try await continuationCheck()
+        try released.validate()
+        guard released.id == project.id,
+              let releasedSegment = released.segments.first(where: { $0.id == segmentID }),
+              releasedSegment.video == nil,
+              releasedSegment.attempt == nil,
+              releasedSegment.videoJobRecordID == nil,
+              project.segments.first(where: { $0.id == segmentID })?.videoJobRecordID
+                == recordID else {
+            throw StoryVideoGenerationError.identityMismatch
+        }
+        return released
     }
 
     private static func validate(_ command: StoryVideoGenerationCommand) throws {

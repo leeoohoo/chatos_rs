@@ -394,6 +394,10 @@ actor MediaStudioVideoJobStore {
         guard record.providerJobID == nil || record.providerJobID == providerJobID else {
             throw MediaStudioVideoJobStoreError.jobConflict
         }
+        if record.status == .completed { return }
+        guard record.status != .cancelled else {
+            throw MediaStudioVideoJobStoreError.invalidTransition
+        }
         record.providerJobID = providerJobID
         transition(&record, to: .finalizing)
         try removeInputs(for: &record)
@@ -416,6 +420,10 @@ actor MediaStudioVideoJobStore {
         try verify(sessionEpoch: sessionEpoch, record: record)
         guard record.providerJobID == nil || record.providerJobID == providerJobID else {
             throw MediaStudioVideoJobStoreError.jobConflict
+        }
+        if record.status == .completed { return }
+        guard record.status != .cancelled else {
+            throw MediaStudioVideoJobStoreError.invalidTransition
         }
         record.providerJobID = providerJobID
         record.failurePhase = nil
@@ -471,6 +479,37 @@ actor MediaStudioVideoJobStore {
             transition(&record, to: .submissionUncertain)
         }
         try save(record)
+    }
+
+    /// Records the user's explicit decision to abandon a reviewed task before callers remove
+    /// their business association. The manifest and provider identity remain as audit evidence.
+    /// Repeating this after a crash is read-only and safe.
+    func releaseAfterVerifiedRetry(
+        id: UUID,
+        owner ownerInput: String,
+        sessionEpoch: UUID,
+        workload: Workload
+    ) throws -> Snapshot {
+        let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        try validateStagedIdentity(id: id, owner: owner, workload: workload)
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
+        var record = try loadActive(id: id, owner: owner)
+        try verify(sessionEpoch: sessionEpoch, record: record)
+        guard resolvedWorkload(record) == workload else {
+            throw MediaStudioVideoJobStoreError.jobConflict
+        }
+        if record.status == .cancelled,
+           record.failurePhase == "verified_retry_release" {
+            return snapshot(record)
+        }
+        record.failurePhase = "verified_retry_release"
+        record.failureMessage = "用户已核对原任务，并明确释放该关联以允许重新生成。"
+        record.retryable = false
+        transition(&record, to: .cancelled)
+        try removeInputs(for: &record)
+        try save(record)
+        return snapshot(record)
     }
 
     /// Returns the newest generic Studio job that still requires action. A persisted

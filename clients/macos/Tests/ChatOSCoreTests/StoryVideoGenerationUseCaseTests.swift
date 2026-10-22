@@ -169,6 +169,46 @@ struct StoryVideoGenerationUseCaseTests {
         #expect(await collector.events.map(\.progress.status) == ["checking"])
     }
 
+    @Test("verified release accepts only clearing the frozen durable association")
+    func validatesVerifiedReleaseIdentity() async throws {
+        var project = Self.readyProject()
+        project.version = 3
+        project.segments[0].videoJobRecordID = UUID()
+        project.segments[0].error = "needs review"
+        var released = project
+        released.segments[0].videoJobRecordID = nil
+        released.segments[0].error = nil
+        let useCase = StoryVideoGenerationUseCase(generator: StubStoryVideoGenerator(
+            outcome: .init(project: project, status: .failedRetainingAttempt),
+            releasedProject: released
+        ))
+
+        let result = try await useCase.releaseAfterVerification(
+            ownerUserID: " alice ",
+            accountSessionID: UUID(),
+            project: project,
+            segmentID: "s1",
+            continuationCheck: {}
+        )
+        #expect(result == released)
+
+        var foreign = released
+        foreign.segments[0].videoJobRecordID = UUID()
+        let rejecting = StoryVideoGenerationUseCase(generator: StubStoryVideoGenerator(
+            outcome: .init(project: project, status: .failedRetainingAttempt),
+            releasedProject: foreign
+        ))
+        await #expect(throws: StoryVideoGenerationError.identityMismatch) {
+            _ = try await rejecting.releaseAfterVerification(
+                ownerUserID: "alice",
+                accountSessionID: UUID(),
+                project: project,
+                segmentID: "s1",
+                continuationCheck: {}
+            )
+        }
+    }
+
     @Test("lifecycle permits different segments and rejects replacements and stale cleanup")
     func validatesLifecycle() {
         let project = Self.readyProject()
@@ -234,6 +274,7 @@ struct StoryVideoGenerationUseCaseTests {
 private struct StubStoryVideoGenerator: StoryVideoGenerating {
     var events: [StoryVideoGenerationEvent] = []
     let outcome: StoryVideoGenerationOutcome
+    var releasedProject: StoryProject? = nil
 
     func prepareStoryVideoGeneration(
         ownerUserID: String,
@@ -283,6 +324,18 @@ private struct StubStoryVideoGenerator: StoryVideoGenerating {
         try await continuationCheck()
         for event in events { await onEvent(event) }
         return .finished(outcome)
+    }
+
+    func releaseStoryVideoGenerationAfterVerification(
+        ownerUserID: String,
+        accountSessionID: UUID,
+        project: StoryProject,
+        segmentID: String,
+        continuationCheck: @escaping @Sendable () async throws -> Void
+    ) async throws -> StoryProject {
+        try await continuationCheck()
+        guard let releasedProject else { throw StoryVideoGenerationError.targetUnavailable }
+        return releasedProject
     }
 }
 
