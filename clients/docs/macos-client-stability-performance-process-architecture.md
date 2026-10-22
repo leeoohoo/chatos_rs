@@ -2,7 +2,7 @@
 
 更新时间：2026-10-22
 
-状态：强化版方案，P0 部分实施中；阶段记录见 12.1—12.38，完整 Release 验收待完成
+状态：强化版方案，P0 部分实施中；阶段记录见 12.1—12.39，完整 Release 验收待完成
 
 适用范围：`clients/macos`、`clients/local_agent_host` 以及 macOS 客户端启动的 Plugin/Companion 进程
 
@@ -1358,6 +1358,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 验证：新增 4 项 `UploadBodyArtifactTests`，覆盖两种 writer 的实际目录/文件权限、payload 名称与显式清理，过期但活跃的 lease 保护，视频/图片混合 65 个 orphan 的每轮 64 上限，以及畸形 UUID、symlink、硬链接、未知文件和 lease-less 非空目录的保守策略。既有 `ChatOSMediaGenerationServiceTests` 29 项继续验证视频/音频/首尾帧增量 Base64、图片 multipart、多输入、低磁盘、provider 拒绝和正常请求后删除。Debug 与 arm64 Release 选择性运行上述 33 项测试，Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
 
 边界：本批只管理新版目录化 request body，不猜测或删除旧版 lease-less 的 `chatos-video-request-*.json` 与 `chatos-image-request-*.multipart`。尚未用独立 writer/上传子进程对 request body 执行真实 SIGKILL，也不覆盖 URLSession 正在从文件读取时的睡眠/断网、真实 ENOSPC、断电或文件系统损坏。App→Worker lease 所有权交接、Media Worker、图片/音频响应侧的大对象治理和签名 Release soak 仍待完成，P0-E 不能标记完成。
+
+### 12.39 第三十九批实施记录：上传 request body 真实 SIGKILL 回归（2026-10-23）
+
+本批用真实进程死亡验证 12.38 的两种上传 artifact。父测试分别启动独立 xctest 子进程，子进程运行生产视频 JSON writer 或图片 multipart writer，完整生成 request body 并持续持有返回的 `HTTPRequestBodyFile`；checkpoint 记录真实 artifact/payload 身份和精确字节数后，父进程先竞争维护，再发送 signal 9。生产 writer 和所有权模型没有增加测试暂停分支或崩溃钩子。
+
+已验证：
+
+- 视频 JSON 与图片 multipart 两种子进程都能生成符合各自命名协议、字节数与 payload 文件的 artifact。父进程把目录修改时间设为超过 24 小时后调用生产维护，跨进程活跃 lease 仍使删除数为零，证明完成写入但尚在上传/消费的 body 不会仅因年龄被回收。
+- 父进程真实 `SIGKILL` 后不执行 `HTTPRequestBodyFile` 的显式清理或 deinit；有界异步退出观察确认 termination reason/signal，随后新的维护进程取得由内核释放的 lease，分别安全删除两种过期 artifact。
+- 每个 mode 使用独立临时根目录，不启动/安装正式 App、不请求 provider、不读取活动用户数据。checkpoint 缺失、子进程提前退出、SIGKILL 后未及时退出、payload 字节数不一致或活跃 lease 被误删都会明确失败。
+
+验证：Debug 与 arm64 Release 各选择性运行 2 项父进程 XCTest；每项内部精确选择同一个 probe 入口并以不同 mode 运行独立 xctest 子进程，全部通过。Swift 6 编译与 `git diff --check` 同步作为本批提交门禁。
+
+边界：本批覆盖“request body 已生成、上传尚未结束”窗口的真实进程强杀，不注入 writer 每个 chunk 的中间指令窗口，也不证明 URLSession 内核/daemon 已停止读取文件。真实 provider 网络、睡眠/唤醒、断网、写入中 ENOSPC、断电、App→Worker lease 交接、Media Worker 和签名 Release soak 仍待完成，P0-E 不能标记完成。
 
 ## 十三、验证矩阵
 
