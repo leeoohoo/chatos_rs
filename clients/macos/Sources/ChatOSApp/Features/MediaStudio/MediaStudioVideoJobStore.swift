@@ -125,8 +125,6 @@ actor MediaStudioVideoJobStore {
         owner ownerInput: String,
         sessionEpoch: UUID
     ) throws -> Execution {
-        let lockDescriptor = try acquireStoreLock()
-        defer { releaseStoreLock(lockDescriptor) }
         let owner = ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !owner.isEmpty else { throw MediaStudioVideoJobStoreError.invalidOwner }
         let id = UUID()
@@ -157,9 +155,21 @@ actor MediaStudioVideoJobStore {
             updatedAt: now,
             request: storedRequest
         )
-        try save(record)
-        committed = true
-        return try execution(record, mode: .create)
+        // This folder has no manifest yet, so recovery treats it as uncommitted staging.
+        // Copying and hashing a large input does not need the global writer lock. Only the
+        // atomic manifest commit and publication of its final URLs are serialized.
+        let lockDescriptor = try acquireStoreLock()
+        defer { releaseStoreLock(lockDescriptor) }
+        do {
+            try save(record)
+            let prepared = try execution(record, mode: .create, validatesInputs: false)
+            committed = true
+            return prepared
+        } catch {
+            // Keep a failed manifest commit invisible to another locked reader.
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
     }
 
     func markSubmitting(id: UUID, owner: String, sessionEpoch: UUID) throws -> Execution {
@@ -468,7 +478,11 @@ actor MediaStudioVideoJobStore {
         )
     }
 
-    private func execution(_ record: Record, mode: RecoveryMode) throws -> Execution {
+    private func execution(
+        _ record: Record,
+        mode: RecoveryMode,
+        validatesInputs: Bool = true
+    ) throws -> Execution {
         let folder = jobFolder(id: record.id, owner: record.ownerUserID)
             .appendingPathComponent("inputs", isDirectory: true)
         var request = VideoGenerationRequest(
@@ -482,8 +496,10 @@ actor MediaStudioVideoJobStore {
         )
         for input in mode == .create ? record.request.inputs : [] {
             let url = folder.appendingPathComponent(input.filename)
-            guard try digest(url, expectedBytes: input.byteCount) == input.sha256 else {
-                throw MediaStudioVideoJobStoreError.invalidInput
+            if validatesInputs {
+                guard try digest(url, expectedBytes: input.byteCount) == input.sha256 else {
+                    throw MediaStudioVideoJobStoreError.invalidInput
+                }
             }
             switch input.kind {
             case .firstFrame:

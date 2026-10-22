@@ -24,6 +24,14 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         )
     }
 
+    private func files(named name: String, under root: URL) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        ) else { return [] }
+        return enumerator.compactMap { $0 as? URL }.filter { $0.lastPathComponent == name }
+    }
+
     func testWriterLockIsPrivateRegularFile() async throws {
         let root = try directory().appendingPathComponent("jobs")
         let store = MediaStudioVideoJobStore(root: root)
@@ -200,6 +208,71 @@ final class MediaStudioVideoJobStoreTests: XCTestCase {
         descriptorIsOpen = false
         let snapshot = try await operation.value
         XCTAssertEqual(snapshot.id, prepared.snapshot.id)
+    }
+
+    func testPrepareStagesInputBeforeWriterLockBecomesAvailable() async throws {
+        let directory = try directory()
+        let root = directory.appendingPathComponent("jobs")
+        let initial = MediaStudioVideoJobStore(root: root)
+        _ = try await initial.prepare(
+            request: request(prompt: "seed lock"),
+            owner: "alice",
+            sessionEpoch: UUID()
+        )
+        let source = directory.appendingPathComponent("large-input.mov")
+        let bytes = Data(repeating: 0x5A, count: 2 * 1_024 * 1_024)
+        try bytes.write(to: source)
+        let lockURL = root.appendingPathComponent(".writer.lock")
+        let descriptor = lockURL.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.open(path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        }
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        guard descriptor >= 0 else { return }
+        var descriptorIsOpen = true
+        defer {
+            if descriptorIsOpen {
+                _ = flock(descriptor, LOCK_UN)
+                _ = Darwin.close(descriptor)
+            }
+        }
+        XCTAssertEqual(flock(descriptor, LOCK_EX), 0)
+        let attempted = expectation(description: "prepare starts while writer lock is held")
+        let store = MediaStudioVideoJobStore(root: root)
+        let operation = Task {
+            attempted.fulfill()
+            return try await store.prepare(
+                request: .init(
+                    modelConfigID: "video-model",
+                    prompt: "stage outside lock",
+                    size: "768P",
+                    seconds: 4,
+                    referenceVideo: .init(
+                        name: "large-input.mov",
+                        mimeType: "video/quicktime",
+                        fileURL: source
+                    )
+                ),
+                owner: "alice",
+                sessionEpoch: UUID()
+            )
+        }
+        await fulfillment(of: [attempted], timeout: 1)
+
+        for _ in 0..<200 {
+            if !files(named: "referenceVideo.artifact", under: root).isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(files(named: "referenceVideo.artifact", under: root).count, 1)
+        XCTAssertEqual(files(named: "job.json", under: root).count, 1)
+
+        XCTAssertEqual(flock(descriptor, LOCK_UN), 0)
+        XCTAssertEqual(Darwin.close(descriptor), 0)
+        descriptorIsOpen = false
+        let prepared = try await operation.value
+        let durableInput = try XCTUnwrap(prepared.request.referenceVideo?.fileURL)
+        XCTAssertEqual(try Data(contentsOf: durableInput), bytes)
+        XCTAssertEqual(files(named: "job.json", under: root).count, 2)
     }
 
     func testPreparedIntentCopiesInputAndKeepsStableSubmissionIdentityAcrossRestart() async throws {

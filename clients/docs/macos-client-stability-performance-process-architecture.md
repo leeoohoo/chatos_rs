@@ -1093,6 +1093,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：这是单次 Store 操作锁，不是跨进程的长期 lease、heartbeat 或 App → Worker 升级交接协议；两份同时存活的客户端可以依次接管 epoch，只有最后接管者能提交后续状态，但本批未阻止前一个进程已发起的 provider 查询/下载。为先保证正确性，`prepare` 最多 47 MiB 的 artifact 复制与 SHA-256 仍在锁内；Story/Batch 迁移前应改为锁外私有 staging、短锁内 rename + manifest commit，并补齐长期所有者/交接协议。Story/Media Batch 仍未迁移，图片 job、终态清理和真实多进程强杀矩阵仍待完成，P0-E 仍不能标记完成。
 
+### 12.22 第二十二批实施记录：缩短 MediaJobStore prepare 写锁临界区（2026-10-22）
+
+本批收敛 12.21 为正确性暂时保留的大文件持锁问题。原实现会在全局 `.writer.lock` 内复制并两次计算最多 47 MiB 参考视频的 SHA-256，使其他账号和其他 job 的 snapshot/进度/取消写入也被大文件 I/O 阻塞。
+
+已实施：
+
+- `prepare` 先在随机 job ID 的私有目录内复制输入、校验长度并计算 SHA-256，此时不存在 `job.json`；并发 `recover` 依旧只能看到已提交 manifest 的 job，不会把正在 staging 的输入当成可执行任务。
+- 仅在最终 `job.json` 原子写入/替换和返回已发布文件 URL 时获取跨进程写锁。新鲜 staging 输入已在同一次 prepare 中验证摘要，发布时不再重复扫描整个大文件；重启 `recover` 仍会使用 `O_NOFOLLOW`、普通文件/长度和 SHA-256 全量复验，不降低持久输入的恢复门禁。
+- manifest 写入或发布后的本地组装失败时，在释放写锁前删除该未完成 job 目录，避免其他进程在错误清理窗口内读到半提交状态。
+
+验证：新增回归在人工持有 `.writer.lock` 时启动含 2 MiB 参考视频的 `prepare`；artifact 可在持锁期间完成 staging，但第二份 `job.json` 不会提前可见；释放锁后任务才发布，持久文件字节与源文件一致。Debug 与 arm64 Release 按 History/Video Job/Video Canvas/Image Interaction/ViewModel/API 各选择性运行 77 项，全部通过；Swift 6 编译与并发检查、`git diff --check` 同步作为门禁。
+
+边界：本批缩短的是 Store 全局互斥时间，不会减少单个输入必需的一次复制与摘要计算；这些 I/O 仍在 App 进程内，尚未迁往 Media Worker。进程在 manifest 提交前被 `SIGKILL` 仍可留下无 manifest 的私有 job 目录；它不会被恢复或提交，但启动对账/安全清理策略仍待实现。长期 lease/交接协议、Story/Media Batch 迁移和真实多进程强杀矩阵仍未完成，P0-E 仍不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
