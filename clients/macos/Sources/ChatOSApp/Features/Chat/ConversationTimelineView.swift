@@ -40,10 +40,8 @@ private struct ConversationTimelineContentView: View {
     @ObservedObject private var timelineObservationState: ConversationTimelineObservationState
     @Environment(\.locale) private var locale
     @State private var selectedProcessTurn: ConversationTurn?
-    @State private var selectedTaskTurn: ConversationTurn?
+    @State private var taskWorkspacePresentation: TaskWorkspacePresentation?
     @State private var selectedTaskReply: TaskReplySelection?
-    @State private var requestedTaskID: String?
-    @State private var requestedRunID: String?
     @State private var hasPositionedInitialTimeline = false
     @State private var initialPositionTask: Task<Void, Never>?
     @State private var isPinnedToBottom = true
@@ -58,19 +56,19 @@ private struct ConversationTimelineContentView: View {
 
     var body: some View {
         let _ = timelineObservationState.revision
-        timeline
+        Group {
+            if let presentation = taskWorkspacePresentation {
+                MessageTaskWorkspaceSheet(viewModel: presentation.viewModel) {
+                    taskWorkspacePresentation = nil
+                }
+                .transition(.opacity)
+            } else {
+                timeline
+            }
+        }
         .sheet(item: $selectedProcessTurn) { turn in
             if let viewModel = conversation.makeTurnProcessViewModel(for: turn) {
                 TurnProcessSheet(viewModel: viewModel)
-            }
-        }
-        .sheet(item: $selectedTaskTurn) { turn in
-            if let viewModel = conversation.makeMessageTaskWorkspaceViewModel(
-                for: turn,
-                initialTaskID: requestedTaskID,
-                initialRunID: requestedRunID
-            ) {
-                MessageTaskWorkspaceSheet(viewModel: viewModel)
             }
         }
         .alert(
@@ -256,9 +254,7 @@ private struct ConversationTimelineContentView: View {
                 showsTaskGraph: conversation.hasTaskGraph(for: turn),
                 onOpenProcess: { selectedProcessTurn = turn },
                 onOpenTaskGraph: {
-                    requestedTaskID = nil
-                    requestedRunID = nil
-                    selectedTaskTurn = turn
+                    openTaskWorkspace(for: turn)
                 }
             )
 
@@ -395,9 +391,11 @@ private struct ConversationTimelineContentView: View {
         if let targetTurn {
             scrollToTurn(targetTurn.id, using: proxy)
             if request.taskID != nil || request.runID != nil {
-                requestedTaskID = request.taskID
-                requestedRunID = request.runID
-                selectedTaskTurn = targetTurn
+                openTaskWorkspace(
+                    for: targetTurn,
+                    initialTaskID: request.taskID,
+                    initialRunID: request.runID
+                )
             }
             conversation.consumeFocusRequest(id: request.id)
             return
@@ -410,6 +408,24 @@ private struct ConversationTimelineContentView: View {
                   request.taskID == nil,
                   request.runID == nil {
             conversation.consumeFocusRequest(id: request.id)
+        }
+    }
+
+    private func openTaskWorkspace(
+        for turn: ConversationTurn,
+        initialTaskID: String? = nil,
+        initialRunID: String? = nil
+    ) {
+        guard let viewModel = conversation.makeMessageTaskWorkspaceViewModel(
+            for: turn,
+            initialTaskID: initialTaskID,
+            initialRunID: initialRunID
+        ) else { return }
+        withAnimation(.easeInOut(duration: 0.16)) {
+            taskWorkspacePresentation = TaskWorkspacePresentation(
+                turnID: turn.id,
+                viewModel: viewModel
+            )
         }
     }
 
@@ -439,4 +455,11 @@ private struct ConversationTimelineBottomPreferenceKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
     }
+}
+
+private struct TaskWorkspacePresentation: Identifiable {
+    let turnID: String
+    let viewModel: MessageTaskWorkspaceViewModel
+
+    var id: String { turnID }
 }

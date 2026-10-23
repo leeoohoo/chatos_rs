@@ -1,17 +1,19 @@
 import ChatOSCore
-import AppKit
 import Foundation
 import SwiftUI
 
 struct MessageTaskWorkspaceSheet: View {
     @EnvironmentObject private var model: AppModel
     @StateObject private var viewModel: MessageTaskWorkspaceViewModel
-    @State private var isFullscreen = false
     @State private var showsGraphOverview = true
-    @Environment(\.dismiss) private var dismiss
+    let onClose: () -> Void
 
-    init(viewModel: MessageTaskWorkspaceViewModel) {
+    init(
+        viewModel: MessageTaskWorkspaceViewModel,
+        onClose: @escaping () -> Void
+    ) {
         _viewModel = StateObject(wrappedValue: viewModel)
+        self.onClose = onClose
     }
 
     var body: some View {
@@ -25,10 +27,10 @@ struct MessageTaskWorkspaceSheet: View {
             content
                 .workspaceFill()
         }
-        .frame(width: workspaceSize.width, height: workspaceSize.height)
+        .frame(minWidth: 760, minHeight: 560)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(\.locale, model.interfaceLocale)
         .background(Color(nsColor: .windowBackgroundColor))
-        .animation(.easeInOut(duration: 0.2), value: isFullscreen)
         .confirmationDialog(
             model.localized("停止这个任务？", english: "Stop this task?"),
             isPresented: Binding(
@@ -54,6 +56,7 @@ struct MessageTaskWorkspaceSheet: View {
             ))
         }
         .task { viewModel.load() }
+        .onExitCommand(perform: onClose)
         .onDisappear {
             viewModel.stop()
         }
@@ -116,6 +119,15 @@ struct MessageTaskWorkspaceSheet: View {
 
     private var header: some View {
         HStack(spacing: 14) {
+            Button(
+                model.localized("返回聊天", english: "Back to Chat"),
+                systemImage: "chevron.left",
+                action: onClose
+            )
+            .help(model.localized(
+                "关闭任务流程图并返回当前聊天",
+                english: "Close the task flow and return to the current chat"
+            ))
             VStack(alignment: .leading, spacing: 4) {
                 Text("任务流程图").appFont(.title3.weight(.semibold))
                 Text(viewModel.turn.userMessage.text)
@@ -146,32 +158,9 @@ struct MessageTaskWorkspaceSheet: View {
                 .disabled(viewModel.isCancelling)
                 .tint(.red)
             }
-            Button(
-                isFullscreen ? "退出全屏" : "全屏",
-                systemImage: isFullscreen
-                    ? "arrow.down.right.and.arrow.up.left"
-                    : "arrow.up.left.and.arrow.down.right"
-            ) {
-                isFullscreen.toggle()
-            }
-            .help(isFullscreen ? "恢复默认窗口大小" : "将任务流程图扩展到屏幕可用区域")
-            Button("关闭", action: dismiss.callAsFunction)
+            Button("关闭", action: onClose)
         }
         .padding(16)
-    }
-
-    private var workspaceSize: CGSize {
-        let visibleSize = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
-        if isFullscreen {
-            return CGSize(
-                width: max(1080, visibleSize.width - 32),
-                height: max(680, visibleSize.height - 32)
-            )
-        }
-        return CGSize(
-            width: min(1280, max(1080, visibleSize.width - 96)),
-            height: min(800, max(720, visibleSize.height - 120))
-        )
     }
 
     @ViewBuilder
