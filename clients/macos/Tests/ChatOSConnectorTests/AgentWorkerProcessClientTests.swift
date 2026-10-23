@@ -184,6 +184,178 @@ final class AgentWorkerProcessClientTests: XCTestCase {
         XCTAssertTrue(lowercasedRequest.contains("authorization: bearer worker-secret"))
     }
 
+    func testNetworkDisconnectReconnectsWithinItsWorkerRun() async throws {
+        let executable = try workerExecutable()
+        let requestProbe = AgentWorkerHTTPRequestProbe()
+        let server = try AgentWorkerHTTPFixture(
+            probe: requestProbe,
+            disconnectCountBeforeResponse: 1
+        )
+        defer { server.close() }
+        let authorizationProbe = AgentWorkerDirectModelProbe()
+        let configuration = AgentWorkerModelTransportConfiguration.responses(try .init(
+            baseURL: server.baseURL,
+            model: "worker-reconnect-model",
+            apiKey: "worker-reconnect-secret",
+            thinking: nil,
+            maximumOutputTokens: 1_024,
+            temperature: nil,
+            promptCacheKey: "worker-reconnect-test"
+        ))
+        let processes = AgentWorkerProcessIDs()
+        var policy = testPolicy()
+        policy.maximumRequestRetries = 1
+        let result = try await Self.runIsolatedWorker(
+            client: Self.isolatedClient(executable: executable, processes: processes),
+            scope: "agent-worker-network-reconnect",
+            model: AgentWorkerDirectModel(
+                configuration: configuration,
+                probe: authorizationProbe
+            ),
+            policy: policy
+        )
+
+        XCTAssertEqual(result.status, .completed)
+        let requests = await requestProbe.waitForCount(2)
+        XCTAssertEqual(requests.count, 2)
+        let processIDs = await processes.waitForCount(1)
+        XCTAssertEqual(Set(processIDs).count, 1)
+    }
+
+    func testAccountSwitchAfterProviderResponseRejectsResultBeforeToolExecution() async throws {
+        let executable = try workerExecutable()
+        let requestProbe = AgentWorkerHTTPRequestProbe()
+        let responseGate = AgentWorkerHTTPResponseGate()
+        let server = try AgentWorkerHTTPFixture(
+            probe: requestProbe,
+            responseGate: responseGate
+        )
+        defer {
+            Task { await responseGate.release() }
+            server.close()
+        }
+        let session = AgentWorkerAuthenticationSession()
+        let configuration = AgentWorkerModelTransportConfiguration.responses(try .init(
+            baseURL: server.baseURL,
+            model: "worker-account-switch-model",
+            apiKey: "old-account-secret",
+            thinking: nil,
+            maximumOutputTokens: 1_024,
+            temperature: nil,
+            promptCacheKey: "worker-account-switch-test"
+        ))
+        let executionCount = AgentWorkerExecutionCount()
+        let scope = "agent-worker-account-switch"
+        let task = Task {
+            try await Self.runIsolatedWorker(
+                client: Self.isolatedClient(
+                    executable: executable,
+                    processes: AgentWorkerProcessIDs()
+                ),
+                scope: scope,
+                model: AgentWorkerSessionBoundModel(
+                    configuration: configuration,
+                    session: session
+                ),
+                execute: { _ in
+                    await executionCount.increment()
+                    return .init("must-not-execute")
+                }
+            )
+        }
+
+        await requestProbe.waitUntilRequest()
+        await session.invalidate()
+        await responseGate.release()
+        let result = try await task.value
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertTrue(result.pendingCalls.isEmpty)
+        XCTAssertNil(result.inFlightCallID)
+        let calls = await executionCount.value()
+        XCTAssertEqual(calls, 0)
+        let validationCount = await session.validationCount()
+        XCTAssertEqual(validationCount, 3)
+    }
+
+    func testSuspendedNetworkRunDoesNotBlockAnotherConversationAndResumes() async throws {
+        let executable = try workerExecutable()
+        let requestProbe = AgentWorkerHTTPRequestProbe()
+        let responseGate = AgentWorkerHTTPResponseGate()
+        let server = try AgentWorkerHTTPFixture(
+            probe: requestProbe,
+            responseGate: responseGate
+        )
+        defer {
+            Task { await responseGate.release() }
+            server.close()
+        }
+        let configuration = AgentWorkerModelTransportConfiguration.responses(try .init(
+            baseURL: server.baseURL,
+            model: "worker-suspended-model",
+            apiKey: "worker-suspended-secret",
+            thinking: nil,
+            maximumOutputTokens: 1_024,
+            temperature: nil,
+            promptCacheKey: "worker-suspended-test"
+        ))
+        let processes = AgentWorkerProcessIDs()
+        let client = Self.isolatedClient(executable: executable, processes: processes)
+        let suspended = Task {
+            try await Self.runIsolatedWorker(
+                client: client,
+                scope: "agent-worker-suspended-network",
+                model: AgentWorkerDirectModel(
+                    configuration: configuration,
+                    probe: AgentWorkerDirectModelProbe()
+                )
+            )
+        }
+        await requestProbe.waitUntilRequest()
+
+        let independent = try await Self.runIsolatedWorker(
+            client: client,
+            scope: "agent-worker-independent-while-suspended",
+            model: AgentWorkerTestModel()
+        )
+        XCTAssertEqual(independent.status, .completed)
+        let processIDs = await processes.waitForCount(2)
+        XCTAssertEqual(Set(processIDs).count, 2)
+
+        await responseGate.release()
+        let resumed = try await suspended.value
+        XCTAssertEqual(resumed.status, .completed)
+    }
+
+    func testSixteenIndependentRunsCompleteWithDistinctWorkerProcesses() async throws {
+        let executable = try workerExecutable()
+        let processes = AgentWorkerProcessIDs()
+        let client = Self.isolatedClient(executable: executable, processes: processes)
+        let runCount = 16
+        let results = try await withThrowingTaskGroup(
+            of: AgentRunCheckpoint.self,
+            returning: [AgentRunCheckpoint].self
+        ) { group in
+            for index in 0..<runCount {
+                group.addTask {
+                    try await Self.runIsolatedWorker(
+                        client: client,
+                        scope: "agent-worker-soak-\(index)",
+                        model: AgentWorkerTestModel()
+                    )
+                }
+            }
+            var values: [AgentRunCheckpoint] = []
+            for try await value in group { values.append(value) }
+            return values
+        }
+
+        XCTAssertEqual(results.count, runCount)
+        XCTAssertTrue(results.allSatisfy { $0.status == .completed })
+        let processIDs = await processes.waitForCount(runCount)
+        XCTAssertEqual(processIDs.count, runCount)
+        XCTAssertEqual(Set(processIDs).count, runCount)
+    }
+
     func testCancellingRunTerminatesOnlyItsWorkerProcess() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_AGENT_WORKER_PATH"],
               !path.isEmpty else {
@@ -495,14 +667,15 @@ final class AgentWorkerProcessClientTests: XCTestCase {
     private static func runIsolatedWorker(
         client: AgentWorkerProcessClient,
         scope: String,
-        model: any AgentModelClient
+        model: any AgentModelClient,
+        policy: AgentRunPolicy = testPolicy(),
+        execute: @escaping AgentRuntime.Executor = { _ in .init("completed") }
     ) async throws -> AgentRunCheckpoint {
         var checkpoint = AgentRunCheckpoint(
             scope: scope,
             messages: [.init(role: .user, content: scope)]
         )
         checkpoint.id = UUID()
-        let policy = testPolicy()
         return try await client.executeRun(
             checkpoint: checkpoint,
             scope: scope,
@@ -514,7 +687,7 @@ final class AgentWorkerProcessClientTests: XCTestCase {
                 schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8),
                 effect: .terminal
             )],
-            execute: { _ in .init("completed:\(scope)") },
+            execute: execute,
             completionCheck: { nil },
             contextProvider: nil,
             record: { _, _ in }
@@ -772,22 +945,68 @@ private struct AgentWorkerDirectModel: AgentModelClient {
     }
 }
 
+private enum AgentWorkerAuthenticationError: LocalizedError {
+    case sessionChanged
+    var errorDescription: String? { "authentication session changed" }
+}
+
+private actor AgentWorkerAuthenticationSession {
+    private var valid = true
+    private var validations = 0
+
+    func validate() throws {
+        validations += 1
+        guard valid else { throw AgentWorkerAuthenticationError.sessionChanged }
+    }
+
+    func invalidate() { valid = false }
+    func validationCount() -> Int { validations }
+}
+
+private struct AgentWorkerSessionBoundModel: AgentModelClient {
+    let configuration: AgentWorkerModelTransportConfiguration
+    let session: AgentWorkerAuthenticationSession
+
+    var usesServerSideCompaction: Bool { true }
+    var workerTransportConfiguration: AgentWorkerModelTransportConfiguration? { configuration }
+
+    func validateWorkerTransportAuthorization() async throws {
+        try await session.validate()
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        throw AgentRuntimeError.invalidResponse
+    }
+}
+
 private actor AgentWorkerHTTPRequestProbe {
-    private var value: String?
+    private var values: [String] = []
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func record(_ request: String) {
-        value = request
+        values.append(request)
         let current = waiters
         waiters.removeAll()
         current.forEach { $0.resume() }
     }
 
-    func request() -> String? { value }
+    func request() -> String? { values.last }
 
     func waitUntilRequest() async {
-        guard value == nil else { return }
+        guard values.isEmpty else { return }
         await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func waitForCount(_ count: Int) async -> [String] {
+        for _ in 0..<500 {
+            if values.count >= count { return Array(values.prefix(count)) }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return values
     }
 }
 
@@ -814,8 +1033,12 @@ private final class AgentWorkerHTTPFixture: @unchecked Sendable {
 
     init(
         probe: AgentWorkerHTTPRequestProbe,
-        responseGate: AgentWorkerHTTPResponseGate? = nil
+        responseGate: AgentWorkerHTTPResponseGate? = nil,
+        disconnectCountBeforeResponse: Int = 0
     ) throws {
+        guard disconnectCountBeforeResponse >= 0 else {
+            throw AgentWorkerProcessClientError.launchFailed
+        }
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw AgentWorkerProcessClientError.launchFailed }
         var reuse: Int32 = 1
@@ -860,7 +1083,8 @@ private final class AgentWorkerHTTPFixture: @unchecked Sendable {
             await Self.serve(
                 descriptor: descriptor,
                 probe: probe,
-                responseGate: responseGate
+                responseGate: responseGate,
+                disconnectCountBeforeResponse: disconnectCountBeforeResponse
             )
         }
     }
@@ -873,34 +1097,45 @@ private final class AgentWorkerHTTPFixture: @unchecked Sendable {
     private static func serve(
         descriptor: Int32,
         probe: AgentWorkerHTTPRequestProbe,
-        responseGate: AgentWorkerHTTPResponseGate?
+        responseGate: AgentWorkerHTTPResponseGate?,
+        disconnectCountBeforeResponse: Int
     ) async {
-        let client = accept(descriptor, nil, nil)
-        guard client >= 0 else { return }
-        defer { Darwin.close(client) }
-        _ = fcntl(client, F_SETNOSIGPIPE, 1)
-        guard let request = readRequest(client) else { return }
-        await probe.record(String(decoding: request, as: UTF8.self))
-        await responseGate?.wait()
-        let body = Data("""
-        data: {"type":"response.created","response":{"id":"resp_worker"}}
+        for attempt in 0...disconnectCountBeforeResponse {
+            let client = accept(descriptor, nil, nil)
+            guard client >= 0 else { return }
+            _ = fcntl(client, F_SETNOSIGPIPE, 1)
+            guard let request = readRequest(client) else {
+                Darwin.close(client)
+                return
+            }
+            await probe.record(String(decoding: request, as: UTF8.self))
+            if attempt < disconnectCountBeforeResponse {
+                _ = shutdown(client, SHUT_RDWR)
+                Darwin.close(client)
+                continue
+            }
+            await responseGate?.wait()
+            let body = Data("""
+            data: {"type":"response.created","response":{"id":"resp_worker"}}
 
-        data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"finish-call","name":"finish","arguments":""}}
+            data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"finish-call","name":"finish","arguments":""}}
 
-        data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}
+            data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}
 
-        data: {"type":"response.completed","response":{"id":"resp_worker","status":"completed","output":[{"type":"function_call","call_id":"finish-call","name":"finish","arguments":"{}"}]}}
+            data: {"type":"response.completed","response":{"id":"resp_worker","status":"completed","output":[{"type":"function_call","call_id":"finish-call","name":"finish","arguments":"{}"}]}}
 
-        """.utf8)
-        let header = Data("""
-        HTTP/1.1 200 OK\r
-        Content-Type: text/event-stream\r
-        Content-Length: \(body.count)\r
-        Connection: close\r
-        \r
+            """.utf8)
+            let header = Data("""
+            HTTP/1.1 200 OK\r
+            Content-Type: text/event-stream\r
+            Content-Length: \(body.count)\r
+            Connection: close\r
+            \r
 
-        """.utf8)
-        writeAll(header + body, descriptor: client)
+            """.utf8)
+            writeAll(header + body, descriptor: client)
+            Darwin.close(client)
+        }
     }
 
     private static func readRequest(_ descriptor: Int32) -> Data? {
