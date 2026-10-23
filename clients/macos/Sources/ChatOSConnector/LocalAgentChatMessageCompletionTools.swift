@@ -37,11 +37,11 @@ extension LocalAgentChatToolProvider {
             ownerUserID: context.ownerUserID,
             agentID: context.agentID
         )
-        if scheduling.runningTodo == nil, scheduling.readyTodo != nil {
+        if scheduling.readyTodo != nil {
             return Self.structuredFailure(
                 code: "ready_todo_requires_start",
                 field: "manager_cycle",
-                message: "当前 Agent 没有执行中的任务，但存在已经 ready 的任务。请先调用 todo_start_next，再结束本轮通讯处理。",
+                message: "当前 Agent 仍有可独立启动的 ready 任务。请先调用 todo_start_next，再结束本轮通讯处理。",
                 retryable: true,
                 nextTool: Self.todoStartNextToolName
             )

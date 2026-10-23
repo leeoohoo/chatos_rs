@@ -226,5 +226,33 @@ extension AgentGroupChatMigrations {
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (32)"
             )
         }
+        if !hasMigration(33) {
+            try execute("BEGIN IMMEDIATE")
+            do {
+                try execute("DROP INDEX IF EXISTS one_running_manager_delivery_per_agent")
+                try execute("DROP INDEX IF EXISTS one_running_executor_delivery_per_agent")
+                try execute(
+                    """
+                    CREATE UNIQUE INDEX one_running_manager_delivery_per_agent
+                    ON project_agent_deliveries(owner_user_id, room_id, target_agent_id)
+                    WHERE status = 'running' AND trigger_kind != 'todo'
+                    """
+                )
+                try execute(
+                    """
+                    CREATE UNIQUE INDEX one_running_executor_delivery_per_agent
+                    ON project_agent_deliveries(owner_user_id, room_id, target_agent_id)
+                    WHERE status = 'running' AND trigger_kind = 'todo'
+                    """
+                )
+                try execute(
+                    "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (33)"
+                )
+                try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
     }
 }

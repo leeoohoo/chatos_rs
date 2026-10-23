@@ -76,6 +76,258 @@ extension LocalAgentGroupChatSchedulerTests {
         }
     }
 
+    func testSchedulerRunsOneAgentAcrossIndependentRoomsConcurrently() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-cross-room-scheduler-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "跨会话 Agent",
+                rolePrompt: "独立处理不同会话。",
+                modelConfigID: "parallel-model"
+            )
+        )
+        let team = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "cross-room-project",
+            draft: .init(name: "跨会话项目")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: team.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        let direct = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: agent.id
+        )
+        let teamPost = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: team.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "处理项目会话",
+                mentionedAgentIDs: [agent.id]
+            ),
+            limits: .init()
+        )
+        let directPost = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: direct.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "同时处理私聊会话"
+            ),
+            limits: .init()
+        )
+
+        let probe = SchedulerConcurrencyProbe()
+        let settingsSuite = "local-agent-cross-room-scheduler-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: ParallelSchedulerTestServices(probe: probe),
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2
+        )
+
+        let results = try await scheduler.drainCommunications(
+            ownerUserID: "alice",
+            maximumRuns: 2
+        )
+
+        let expectedDeliveryIDs = Set((teamPost.deliveries + directPost.deliveries).map(\.id))
+        XCTAssertEqual(Set(results.map(\.deliveryID)), expectedDeliveryIDs)
+        XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })
+        let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
+        XCTAssertGreaterThanOrEqual(maximumConcurrentCalls, 2)
+    }
+
+    func testSchedulerRunsOneAgentsTodosAcrossIndependentTeamsConcurrently() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-cross-team-executors-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "跨项目执行 Agent",
+                rolePrompt: "独立处理不同项目任务。",
+                modelConfigID: "lane-model"
+            )
+        )
+        var todos: [LocalAgentTodo] = []
+        for index in 0..<2 {
+            let room = try await store.createRoom(
+                ownerUserID: "alice",
+                projectID: "cross-team-project-\(index)",
+                draft: .init(name: "并行团队 \(index)")
+            )
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(role: "执行者")
+            )
+            todos.append(try await store.createAgentTodo(
+                ownerUserID: "alice",
+                agentID: agent.id,
+                requestKey: "cross-team-todo-\(index)",
+                draft: .init(title: "并行任务 \(index)", teamRoomID: room.id),
+                nowUnixMs: Int64(100 + index)
+            ))
+        }
+        var deliveries: [ProjectAgentDelivery] = []
+        for index in 0..<2 {
+            let delivery = try await store.startNextReadyAgentTodo(
+                ownerUserID: "alice",
+                agentID: agent.id,
+                nowUnixMs: Int64(200 + index)
+            )
+            deliveries.append(try XCTUnwrap(delivery))
+        }
+        XCTAssertEqual(Set(deliveries.compactMap(\.todoID)), Set(todos.map(\.id)))
+
+        let probe = SchedulerConcurrencyProbe()
+        let settingsSuite = "local-agent-cross-team-executor-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: LaneSchedulerTestServices(probe: probe),
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2,
+            now: { 1_000 }
+        )
+
+        let results = try await scheduler.drainAccount(
+            ownerUserID: "alice",
+            maximumRuns: 2
+        )
+
+        XCTAssertEqual(Set(results.map(\.deliveryID)), Set(deliveries.map(\.id)))
+        XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })
+        let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
+        XCTAssertGreaterThanOrEqual(maximumConcurrentCalls, 2)
+        for todo in todos {
+            let stored = try await store.agentTodo(
+                ownerUserID: "alice",
+                agentID: agent.id,
+                todoID: todo.id
+            )
+            XCTAssertEqual(stored?.status, .completed)
+        }
+    }
+
+    func testLaterCrossTeamExecutorStartsWhileEarlierAccountDrainIsStillRunning() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-late-cross-team-executor-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "动态并行 Agent",
+                rolePrompt: "后到的独立任务不能等待前一个项目。",
+                modelConfigID: "cross-team-isolation-model"
+            )
+        )
+        var todos: [LocalAgentTodo] = []
+        for index in 0..<2 {
+            let room = try await store.createRoom(
+                ownerUserID: "alice",
+                projectID: "late-cross-team-project-\(index)",
+                draft: .init(name: "动态并行团队 \(index)")
+            )
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(role: "执行者")
+            )
+            todos.append(try await store.createAgentTodo(
+                ownerUserID: "alice",
+                agentID: agent.id,
+                requestKey: "late-cross-team-todo-\(index)",
+                draft: .init(title: "动态并行任务 \(index)", teamRoomID: room.id),
+                nowUnixMs: Int64(100 + index)
+            ))
+        }
+        let firstDeliveryValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 200
+        )
+        let firstDelivery = try XCTUnwrap(firstDeliveryValue)
+        let probe = CrossTeamExecutorIsolationProbe()
+        let settingsSuite = "local-agent-late-cross-team-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: CrossTeamExecutorIsolationServices(probe: probe),
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2,
+            now: { 1_000 }
+        )
+
+        let firstDrain = Task {
+            try await scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 1)
+        }
+        await probe.waitUntilFirstStarts()
+        let secondDeliveryValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 201
+        )
+        let secondDelivery = try XCTUnwrap(secondDeliveryValue)
+        let secondDrain = Task {
+            try await scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 1)
+        }
+
+        var secondStarted = false
+        for _ in 0..<100 {
+            if await probe.hasSecondStarted() {
+                secondStarted = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(secondStarted, "later independent executor must not wait for the first run")
+        guard secondStarted else {
+            await probe.releaseFirst()
+            _ = try await firstDrain.value
+            secondDrain.cancel()
+            _ = try? await secondDrain.value
+            return
+        }
+
+        let secondResults = try await secondDrain.value
+        XCTAssertEqual(secondResults.map(\.deliveryID), [secondDelivery.id])
+        let firstStillRunning = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: firstDelivery.id
+        )
+        XCTAssertEqual(firstStillRunning?.status, .running)
+
+        await probe.releaseFirst()
+        let firstResults = try await firstDrain.value
+        XCTAssertEqual(firstResults.map(\.deliveryID), [firstDelivery.id])
+        XCTAssertEqual(Set([firstDelivery.todoID, secondDelivery.todoID].compactMap { $0 }), Set(todos.map(\.id)))
+    }
+
     func testSchedulerNeverExecutesOrClaimsBeyondSharedExecutionBudget() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-execution-budget-\(UUID().uuidString)")
@@ -237,7 +489,7 @@ extension LocalAgentGroupChatSchedulerTests {
         XCTAssertEqual(completedTodo?.status, .completed)
     }
 
-    func testConcurrentAccountDrainsSerializeAndBothConsumeQueuedWork() async throws {
+    func testConcurrentAccountDrainsPreserveSameRoomSerializationWithoutDuplicateClaims() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-account-lease-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -277,9 +529,17 @@ extension LocalAgentGroupChatSchedulerTests {
         async let first = scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 1)
         async let second = scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 1)
         let (firstResults, secondResults) = try await (first, second)
+        var allResults = firstResults + secondResults
+        if allResults.count < 2 {
+            allResults.append(contentsOf: try await scheduler.drainAccount(
+                ownerUserID: "alice",
+                maximumRuns: 2 - allResults.count
+            ))
+        }
         let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
 
-        XCTAssertEqual([firstResults.count, secondResults.count], [1, 1])
+        XCTAssertEqual(allResults.count, 2)
+        XCTAssertEqual(Set(allResults.map(\.deliveryID)).count, 2)
         XCTAssertEqual(maximumConcurrentCalls, 1)
     }
 

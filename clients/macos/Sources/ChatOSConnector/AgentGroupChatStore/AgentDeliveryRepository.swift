@@ -180,6 +180,7 @@ enum AgentDeliveryRepository {
               AND NOT EXISTS (
                 SELECT 1 FROM project_agent_deliveries active
                 WHERE active.owner_user_id = d.owner_user_id
+                  AND active.room_id = d.room_id
                   AND active.target_agent_id = d.target_agent_id
                   AND active.status = 'running'
                   AND (

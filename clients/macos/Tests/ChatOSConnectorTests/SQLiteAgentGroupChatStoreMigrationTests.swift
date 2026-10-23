@@ -219,4 +219,47 @@ extension SQLiteAgentGroupChatStoreTests {
         ), 1)
     }
 
+    func testMigration33ScopesRunningDeliveryIndexesToRoom() throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        do {
+            let initialStore = try SQLiteAgentGroupChatStore(databaseURL: url)
+            withExtendedLifetime(initialStore) {}
+        }
+
+        try executeSQLite(
+            url,
+            sql: """
+            BEGIN IMMEDIATE;
+            DROP INDEX one_running_manager_delivery_per_agent;
+            DROP INDEX one_running_executor_delivery_per_agent;
+            CREATE UNIQUE INDEX one_running_manager_delivery_per_agent
+                ON project_agent_deliveries(owner_user_id, target_agent_id)
+                WHERE status = 'running' AND trigger_kind != 'todo';
+            CREATE UNIQUE INDEX one_running_executor_delivery_per_agent
+                ON project_agent_deliveries(owner_user_id, target_agent_id)
+                WHERE status = 'running' AND trigger_kind = 'todo';
+            DELETE FROM local_agent_group_chat_schema_migrations WHERE version = 33;
+            COMMIT;
+            """
+        )
+
+        let migratedStore = try SQLiteAgentGroupChatStore(databaseURL: url)
+        withExtendedLifetime(migratedStore) {}
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM local_agent_group_chat_schema_migrations WHERE version = 33"
+        ), 1)
+        for name in [
+            "one_running_manager_delivery_per_agent",
+            "one_running_executor_delivery_per_agent",
+        ] {
+            let sql = try sqliteText(
+                url,
+                sql: "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = '\(name)'"
+            )
+            XCTAssertTrue(sql.contains("owner_user_id, room_id, target_agent_id"))
+        }
+    }
+
 }

@@ -77,7 +77,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: todoStartNextToolName,
-            description: "由当前 Agent 的通讯线程原子启动自己最高优先级的 ready Todo。若已有 executor 则返回 executor_busy；没有 ready Todo 则返回 no_ready_todo。模型不能指定 Todo ID，因此不能绕过优先级和前置校验。",
+            description: "由当前 Agent 的通讯线程原子启动自己最高优先级且所属团队执行通道空闲的 ready Todo。不同团队的 executor 可以并行；同一团队已有 executor 且没有其他可并行 ready Todo 时返回 executor_busy，没有 ready Todo 时返回 no_ready_todo。模型不能指定 Todo ID，因此不能绕过优先级和前置校验。",
             schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8),
             effect: .write
         ),

@@ -38,6 +38,84 @@ struct CommunicationFastLaneServices: AgentServiceProviding {
     }
 }
 
+struct CrossTeamExecutorIsolationServices: AgentServiceProviding {
+    let probe: CrossTeamExecutorIsolationProbe
+    private let memoryRegistry = SchedulerTestMemoryRegistry()
+
+    func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy
+    ) async throws -> any AgentModelClient {
+        XCTAssertEqual(configID, "cross-team-isolation-model")
+        return CrossTeamExecutorIsolationModel(probe: probe)
+    }
+
+    func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
+        await memoryRegistry.memory(for: scope)
+    }
+}
+
+actor CrossTeamExecutorIsolationProbe {
+    private var executionCount = 0
+    private var firstStarted = false
+    private var firstReleased = false
+    private var secondStarted = false
+    private var firstStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var firstReleaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func beginExecution() async {
+        executionCount += 1
+        if executionCount == 1 {
+            firstStarted = true
+            let waiters = firstStartWaiters
+            firstStartWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+            guard !firstReleased else { return }
+            await withCheckedContinuation { firstReleaseWaiters.append($0) }
+            return
+        }
+        secondStarted = true
+    }
+
+    func waitUntilFirstStarts() async {
+        guard !firstStarted else { return }
+        await withCheckedContinuation { firstStartWaiters.append($0) }
+    }
+
+    func hasSecondStarted() -> Bool {
+        secondStarted
+    }
+
+    func releaseFirst() {
+        firstReleased = true
+        let waiters = firstReleaseWaiters
+        firstReleaseWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+}
+
+actor CrossTeamExecutorIsolationModel: AgentModelClient {
+    private let probe: CrossTeamExecutorIsolationProbe
+
+    init(probe: CrossTeamExecutorIsolationProbe) {
+        self.probe = probe
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        XCTAssertTrue(tools.contains { $0.name == LocalAgentChatToolProvider.todoCompleteToolName })
+        await probe.beginExecution()
+        return .init(role: .assistant, toolCalls: [.init(
+            id: "complete-isolated-executor",
+            name: LocalAgentChatToolProvider.todoCompleteToolName,
+            arguments: #"{"summary":"独立项目任务已完成。"}"#
+        )])
+    }
+}
+
 actor CommunicationFastLaneProbe {
     private let holdsFirstManagerCall: Bool
     private var executorStarted = false

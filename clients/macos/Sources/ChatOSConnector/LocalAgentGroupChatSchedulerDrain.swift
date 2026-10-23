@@ -107,24 +107,14 @@ extension LocalAgentGroupChatScheduler {
         maximumRuns: Int = 64
     ) async throws -> [DeliveryAttemptReceipt] {
         guard maximumRuns > 0 else { return [] }
-        guard await accountDrainCoordinator.acquire(ownerUserID: ownerUserID) else {
-            throw CancellationError()
-        }
-        do {
-            try Task.checkCancellation()
-            let results = try await drainAccountWithLease(
-                ownerUserID: ownerUserID,
-                maximumRuns: maximumRuns
-            )
-            await accountDrainCoordinator.release(ownerUserID: ownerUserID)
-            return results
-        } catch {
-            await accountDrainCoordinator.release(ownerUserID: ownerUserID)
-            throw error
-        }
+        try Task.checkCancellation()
+        return try await drainAccountPass(
+            ownerUserID: ownerUserID,
+            maximumRuns: maximumRuns
+        )
     }
 
-    func drainAccountWithLease(
+    func drainAccountPass(
         ownerUserID: String,
         maximumRuns: Int
     ) async throws -> [DeliveryAttemptReceipt] {
@@ -183,21 +173,22 @@ extension LocalAgentGroupChatScheduler {
             }
             var claimedWork: [ClaimedWork] = []
             claimedWork.reserveCapacity(remainingCapacity)
-            claimingAgents: for agentID in agentIDs where claimedWork.count < remainingCapacity {
-                // A full drain may claim both independent lanes for one Agent. A lane-specific
-                // drain claims once so the same manager or executor lane remains serialized.
-                let claimsPerAgent = lane == nil ? 2 : 1
-                for _ in 0..<claimsPerAgent where claimedWork.count < remainingCapacity {
+            var exhaustedAgentIDs = Set<String>()
+            // Claim in round-robin passes. A single Agent may own independent lanes in different
+            // rooms, but it must not consume every available permit before other Agents get one.
+            claimingPasses: while claimedWork.count < remainingCapacity {
+                var claimedInPass = false
+                for agentID in agentIDs where !exhaustedAgentIDs.contains(agentID) {
                     let executionPermit: LocalAgentExecutionPermit?
                     if claimedWork.isEmpty {
                         executionPermit = await executionGovernor.acquire()
                     } else {
                         executionPermit = await executionGovernor.tryAcquire()
                     }
-                    guard let executionPermit else { break claimingAgents }
+                    guard let executionPermit else { break claimingPasses }
                     if Task.isCancelled {
                         await executionPermit.releaseAndWait()
-                        break claimingAgents
+                        break claimingPasses
                     }
                     let delivery: ProjectAgentDelivery?
                     do {
@@ -221,41 +212,50 @@ extension LocalAgentGroupChatScheduler {
                     }
                     guard let delivery else {
                         await executionPermit.releaseAndWait()
-                        break
+                        exhaustedAgentIDs.insert(agentID)
+                        continue
                     }
-                    let room: ProjectAgentRoom
-                    if let known = roomByID[delivery.roomID] {
-                        room = known
-                    } else if let loaded = try await store.room(
-                        ownerUserID: ownerUserID,
-                        roomID: delivery.roomID
-                    ) {
-                        room = loaded
-                        roomByID[loaded.id] = loaded
-                    } else {
-                        throw AgentGroupChatError.notFound
+                    do {
+                        let room: ProjectAgentRoom
+                        if let known = roomByID[delivery.roomID] {
+                            room = known
+                        } else if let loaded = try await store.room(
+                            ownerUserID: ownerUserID,
+                            roomID: delivery.roomID
+                        ) {
+                            room = loaded
+                            roomByID[loaded.id] = loaded
+                        } else {
+                            throw AgentGroupChatError.notFound
+                        }
+                        let key = Self.memberKey(roomID: room.id, agentID: agentID)
+                        let member: ProjectAgentRoomMember
+                        if let known = memberByRoomAndAgent[key] {
+                            member = known
+                        } else if let loaded = try await store.listMembers(
+                            ownerUserID: ownerUserID,
+                            roomID: room.id
+                        ).first(where: { $0.agentID == agentID && $0.status == .active }) {
+                            member = loaded
+                            memberByRoomAndAgent[key] = loaded
+                        } else {
+                            throw AgentGroupChatError.notMember
+                        }
+                        claimedWork.append(.init(
+                            order: claimedWork.count,
+                            room: room,
+                            member: member,
+                            delivery: delivery,
+                            executionPermit: executionPermit
+                        ))
+                        claimedInPass = true
+                    } catch {
+                        await executionPermit.releaseAndWait()
+                        throw error
                     }
-                    let key = Self.memberKey(roomID: room.id, agentID: agentID)
-                    let member: ProjectAgentRoomMember
-                    if let known = memberByRoomAndAgent[key] {
-                        member = known
-                    } else if let loaded = try await store.listMembers(
-                        ownerUserID: ownerUserID,
-                        roomID: room.id
-                    ).first(where: { $0.agentID == agentID && $0.status == .active }) {
-                        member = loaded
-                        memberByRoomAndAgent[key] = loaded
-                    } else {
-                        throw AgentGroupChatError.notMember
-                    }
-                    claimedWork.append(.init(
-                        order: claimedWork.count,
-                        room: room,
-                        member: member,
-                        delivery: delivery,
-                        executionPermit: executionPermit
-                    ))
+                    if claimedWork.count == remainingCapacity { break }
                 }
+                if !claimedInPass { break }
             }
             if claimedWork.isEmpty { break }
             results.append(contentsOf: try await runClaimedWork(
@@ -268,8 +268,8 @@ extension LocalAgentGroupChatScheduler {
     }
 
     /// Chat surfaces only append/display messages. Recovery belongs to the Agent trigger runtime.
-    /// The account lease serializes recovery passes, while the active-delivery registry excludes
-    /// live communication work that intentionally runs beside a long executor task. Any remaining
+    /// Atomic durable claims and the active-delivery registry exclude live work across concurrent
+    /// drain callers without holding an account-wide lease for the lifetime of a model Run. Any remaining
     /// durable `running` checkpoint was left behind by an app exit or interrupted provider request.
     /// Resuming is safe even with an in-flight write marker because AgentRuntime converts that
     /// checkpoint to `needsReview` before any replay. Review states are never replayed

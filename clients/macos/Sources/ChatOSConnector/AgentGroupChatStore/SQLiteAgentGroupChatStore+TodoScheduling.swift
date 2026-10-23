@@ -168,11 +168,9 @@ extension SQLiteAgentGroupChatStore {
                 agentID: agentID,
                 preparedStatement: recordPreparedStatement
             )
-            // Match startNextReadyAgentTodo exactly: a Todo is only advertised as ready when
-            // the executor lane can actually start it. This prevents manager cycles from being
-            // trapped between `ready_todo_requires_start` and `no_ready_todo`.
-            let ready = running == nil ? startState.todo : nil
-            return .init(runningTodo: running, readyTodo: ready)
+            // A running executor in one team must not hide an independently startable Todo in
+            // another team. `startState.todo` already excludes the occupied team room.
+            return .init(runningTodo: running, readyTodo: startState.todo)
         }
     }
 

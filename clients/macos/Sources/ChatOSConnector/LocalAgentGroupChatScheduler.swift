@@ -62,61 +62,6 @@ actor LocalAgentActiveDeliveryRegistry {
     }
 }
 
-/// Serializes account-wide drain passes created by multiple windows and the heartbeat loop. The
-/// durable SQLite queue remains authoritative; this lease only prevents two local consumers from
-/// observing the same Agent work queue as busy and leaving newly queued work stranded between passes.
-actor LocalAgentAccountDrainCoordinator {
-    private struct Waiter {
-        let id: UUID
-        let continuation: CheckedContinuation<Bool, Never>
-    }
-
-    private var activeOwners: Set<String> = []
-    private var waitersByOwner: [String: [Waiter]] = [:]
-
-    func acquire(ownerUserID: String) async -> Bool {
-        guard !Task.isCancelled else { return false }
-        if activeOwners.insert(ownerUserID).inserted { return true }
-        let waiterID = UUID()
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                waitersByOwner[ownerUserID, default: []].append(.init(
-                    id: waiterID,
-                    continuation: continuation
-                ))
-            }
-        } onCancel: {
-            Task { await self.cancel(ownerUserID: ownerUserID, waiterID: waiterID) }
-        }
-    }
-
-    func release(ownerUserID: String) {
-        if var waiters = waitersByOwner[ownerUserID], !waiters.isEmpty {
-            let next = waiters.removeFirst()
-            if waiters.isEmpty {
-                waitersByOwner.removeValue(forKey: ownerUserID)
-            } else {
-                waitersByOwner[ownerUserID] = waiters
-            }
-            next.continuation.resume(returning: true)
-        } else {
-            activeOwners.remove(ownerUserID)
-        }
-    }
-
-    private func cancel(ownerUserID: String, waiterID: UUID) {
-        guard var waiters = waitersByOwner[ownerUserID],
-              let index = waiters.firstIndex(where: { $0.id == waiterID }) else { return }
-        let waiter = waiters.remove(at: index)
-        if waiters.isEmpty {
-            waitersByOwner.removeValue(forKey: ownerUserID)
-        } else {
-            waitersByOwner[ownerUserID] = waiters
-        }
-        waiter.continuation.resume(returning: false)
-    }
-}
-
 final class LocalAgentExecutionPermit: @unchecked Sendable {
     private let lock = NSLock()
     private var governor: LocalAgentExecutionGovernor?
@@ -399,7 +344,6 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     let relayMCP: LocalAgentRelayMCPServer
     let executorTaskRegistry: LocalAgentExecutorTaskRegistry
     let activeDeliveryRegistry: LocalAgentActiveDeliveryRegistry
-    let accountDrainCoordinator: LocalAgentAccountDrainCoordinator
     let executionGovernor: LocalAgentExecutionGovernor
     let additionalToolProviders: AdditionalToolProviderFactory
     let projectTypeKeyProvider: ProjectTypeKeyProvider
@@ -442,7 +386,6 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         let executorTaskRegistry = LocalAgentExecutorTaskRegistry()
         self.executorTaskRegistry = executorTaskRegistry
         self.activeDeliveryRegistry = LocalAgentActiveDeliveryRegistry()
-        self.accountDrainCoordinator = LocalAgentAccountDrainCoordinator()
         self.executionGovernor = LocalAgentExecutionGovernor(
             limit: max(1, maximumConcurrentExecutions)
         )

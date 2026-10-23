@@ -372,12 +372,14 @@ enum AgentTodoRepository {
                     SELECT 1 FROM local_agent_todos running
                     WHERE running.owner_user_id = t.owner_user_id
                       AND running.agent_id = t.agent_id
+                      AND running.team_room_id = t.team_room_id
                       AND running.status = 'in_progress'
                   )
                   AND NOT EXISTS (
                     SELECT 1 FROM project_agent_deliveries delivery
                     WHERE delivery.owner_user_id = t.owner_user_id
                       AND delivery.target_agent_id = t.agent_id
+                      AND delivery.room_id = t.team_room_id
                       AND delivery.trigger_kind = 'todo'
                       AND delivery.status IN ('pending', 'running')
                   )

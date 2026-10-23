@@ -1955,11 +1955,27 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：App 仍必须为最终头像持有一个受限 2K `CGImage` 和 256×256 编码面；本批不迁移已经持久化的 256×256 头像显示解码。inline/Base64 上游 DTO 仍短暂持有压缩字符串/`Data`。Markdown、Visual Session、剪贴板历史、Plugin 图标和 Pet 图片等高频或低风险消费者需要按调用频率决定批处理、缓存或继续留在进程内，不能机械地逐张启动 Worker。真实 20 MiB/64 MP physical-footprint、取消风暴、ENOSPC、长期 soak、上传下载和 durable media job 仍待完成，不能据此宣称 P0-E/P2/P4 完成。
 
+### 12.78 第七完整里程碑：解除 Agent 跨会话与跨项目执行阻塞（2026-10-23）
+
+本里程碑处理的不是会话 ID 串线，而是独立会话在执行层被错误地归入同一全账户串行域。此前同一 Agent 的 manager/executor 唯一索引、pending claim 和 Todo 启动判断均按 `(owner_user_id, target_agent_id)` 限制；更严重的是 `drainAccount` 从领取工作一直到模型 Run 结束都持有账户级 lease。项目 A 的长 executor 因而会让稍后到达的项目 B drain 在领取前等待，即使两者房间、Todo、取消域均独立且全局执行额度仍有空闲。
+
+已实施：
+
+- manager/executor 的 running 唯一索引与 pending claim 改为 `(owner_user_id, room_id, target_agent_id)` 范围；Schema migration 33 在单个 immediate transaction 内替换旧索引。同一房间内同一 Agent 仍各自保持 manager/executor 单通道，不同房间不再互相占用通道。
+- Todo executor 的占用范围缩小到 `team_room_id`。调度状态可以同时报告某团队中正在运行的 Todo 和另一团队可独立启动的 ready Todo；manager 在仍有可启动工作时继续调用 `todo_start_next`，而不是被全账户 busy 状态提前结束。
+- 删除覆盖整个模型 Run 生命周期的 account drain lease。并发 drain 依靠 SQLite 原子 claim、room-scoped 唯一索引、进程内 active-delivery registry 和共享 execution governor 防止重复；后到的独立任务可以使用剩余额度立即领取和执行。
+- 账户队列改为按 Agent round-robin 多轮领取：同一 Agent 可以在不同房间领取多个独立任务，但每轮先给其他 Agent 领取机会，避免单个 Agent 抢完全部 permit。共享 Governor 的默认总并发上限仍为 2，不把“可并行”误解为无限制并发。
+
+验证：Debug 与原生 arm64 Release 的针对性矩阵各 34 项全部通过，包括调度器 23 项、聊天工具 9 项及 Todo schedule/migration 2 项；Release 使用 `warnings-as-errors` 优化编译。新增回归证明同一 Agent 可跨项目会话与私聊达到并发 2、可跨两个项目团队并发执行 Todo、后创建的项目 B executor 能在项目 A executor 尚未释放时启动并完成；同时验证同一房间仍严格串行、并发 drain 不重复领取、全局执行额度不被突破，以及取消、恢复、manager/executor fast lane 语义不回退。测试仅使用独立临时数据库，不启动或安装正式 App，不访问活动用户数据库。
+
+边界：本里程碑消除了已确认的跨会话软件锁与数据库 lane 阻塞，但 Agent 模型 Run 仍执行在主 App 进程内；等待、崩溃、CPU/内存失控和进程级取消尚未形成每任务故障边界。用户已明确要求所有可并行任务拥有独立进程，因此 Agent Runtime 进程化现在是后续硬性里程碑，不再仅由旧方案中的性能阈值决定。下一阶段必须保持 Store 单一写所有者，由主 App 调度并通过版本化 IPC 启动每 Run worker；worker 不直接并发写共享 SQLite，并需补齐独立取消/超时、资源额度、durable checkpoint、工具代理、副作用 fencing、崩溃回收和真实多任务压力门禁。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
 | --- | --- |
 | 项目聊天 Run 执行中切 Agent 团队 | 输入、滚动和首帧可交互；后台 Run 不丢失 |
+| 同一 Agent 在两个独立会话/项目执行长任务 | 可在共享总资源预算内并行；后到任务不等待先到任务结束；同一会话仍保持因果顺序；取消或失败只影响所属任务 |
 | 项目聊天 Run 执行中切 AI 创作 | 无 Combine 崩溃；AI 页面按需加载 |
 | 反复切换三大模块 200 次 | 无崩溃、无 Task/observer 单调增长、无数据库连接泄漏 |
 | 登录/退出或切换账户 20 次 | 旧账号任务和媒体结果不能写入新账号状态 |

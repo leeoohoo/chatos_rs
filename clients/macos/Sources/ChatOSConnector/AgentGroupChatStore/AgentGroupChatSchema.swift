@@ -268,10 +268,10 @@ enum AgentGroupChatSchema {
         CREATE INDEX IF NOT EXISTS project_agent_deliveries_agent_queue
             ON project_agent_deliveries(owner_user_id, target_agent_id, status, created_at_unix_ms, id);
         CREATE UNIQUE INDEX IF NOT EXISTS one_running_manager_delivery_per_agent
-            ON project_agent_deliveries(owner_user_id, target_agent_id)
+            ON project_agent_deliveries(owner_user_id, room_id, target_agent_id)
             WHERE status = 'running' AND trigger_kind != 'todo';
         CREATE UNIQUE INDEX IF NOT EXISTS one_running_executor_delivery_per_agent
-            ON project_agent_deliveries(owner_user_id, target_agent_id)
+            ON project_agent_deliveries(owner_user_id, room_id, target_agent_id)
             WHERE status = 'running' AND trigger_kind = 'todo';
 
         CREATE TABLE IF NOT EXISTS local_agent_creation_proposals (

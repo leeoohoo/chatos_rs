@@ -35,7 +35,7 @@ extension LocalAgentChatToolProvider {
             readyResponse = nil
         }
         return try Self.outcome(TodoScheduleStateResponse(
-            state: state.runningTodo != nil ? "busy" : (state.readyTodo != nil ? "ready" : "idle"),
+            state: state.readyTodo != nil ? "ready" : (state.runningTodo != nil ? "busy" : "idle"),
             runningTodo: runningResponse,
             readyTodo: readyResponse
         ))
