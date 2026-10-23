@@ -11,7 +11,6 @@ enum AgentAvatarImageLoader {
         transport: any HTTPTransport = URLSessionHTTPTransport(),
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         availableCapacityOverride: Int64? = nil,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared,
         mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) async throws -> Data {
         guard !ownerUserID.isEmpty else { throw AgentAvatarImageError.invalidImage }
@@ -21,10 +20,8 @@ enum AgentAvatarImageLoader {
             return try await normalizedData(
                 forFile: url,
                 ownerUserID: ownerUserID,
-                taskID: asset.id,
                 temporaryDirectory: temporaryDirectory,
                 availableCapacityOverride: availableCapacityOverride,
-                heavyMediaGovernor: heavyMediaGovernor,
                 mediaWorker: mediaWorker
             )
         }
@@ -40,10 +37,8 @@ enum AgentAvatarImageLoader {
             return try await normalizedData(
                 forFile: downloaded.url,
                 ownerUserID: ownerUserID,
-                taskID: asset.id,
                 temporaryDirectory: temporaryDirectory,
                 availableCapacityOverride: availableCapacityOverride,
-                heavyMediaGovernor: heavyMediaGovernor,
                 mediaWorker: mediaWorker
             )
         }
@@ -57,10 +52,8 @@ enum AgentAvatarImageLoader {
         return try await normalizedData(
             forFile: file.url,
             ownerUserID: ownerUserID,
-            taskID: asset.id,
             temporaryDirectory: temporaryDirectory,
             availableCapacityOverride: availableCapacityOverride,
-            heavyMediaGovernor: heavyMediaGovernor,
             mediaWorker: mediaWorker
         )
     }
@@ -89,32 +82,23 @@ enum AgentAvatarImageLoader {
     static func normalizedData(
         forFile url: URL,
         ownerUserID: String,
-        taskID: String = UUID().uuidString.lowercased(),
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         availableCapacityOverride: Int64? = nil,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared,
         mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) async throws -> Data {
         guard !ownerUserID.isEmpty else { throw AgentAvatarImageError.invalidImage }
-        return try await heavyMediaGovernor.perform(context: .init(
-            taskID: "agent-avatar:\(String(taskID.prefix(128)))",
-            kind: .imageDecode,
-            estimatedDecodedBytes: AgentAvatarImageProcessor.maximumDecodePixelSize
-                * AgentAvatarImageProcessor.maximumDecodePixelSize * 4
-        )) {
-            let decoded = try await AppImageThumbnailLoader.loadLocalFileUsingWorker(
-                url,
-                ownerUserID: ownerUserID,
-                maximumBytes: AgentAvatarImageProcessor.maximumInputBytes,
-                maximumSourcePixelCount: AgentAvatarImageProcessor.maximumSourcePixelCount,
-                maximumDisplayPixelSize: AgentAvatarImageProcessor.maximumDecodePixelSize,
-                temporaryDirectory: temporaryDirectory,
-                availableCapacityOverride: availableCapacityOverride,
-                mediaWorker: mediaWorker
-            )
-            return try await AppCancellableDetachedWork.run {
-                try AgentAvatarImageProcessor.normalizeDecoded(decoded.image)
-            }
+        let decoded = try await AppImageThumbnailLoader.loadLocalFileUsingWorker(
+            url,
+            ownerUserID: ownerUserID,
+            maximumBytes: AgentAvatarImageProcessor.maximumInputBytes,
+            maximumSourcePixelCount: AgentAvatarImageProcessor.maximumSourcePixelCount,
+            maximumDisplayPixelSize: AgentAvatarImageProcessor.maximumDecodePixelSize,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride,
+            mediaWorker: mediaWorker
+        )
+        return try await AppCancellableDetachedWork.run {
+            try AgentAvatarImageProcessor.normalizeDecoded(decoded.image)
         }
     }
 }

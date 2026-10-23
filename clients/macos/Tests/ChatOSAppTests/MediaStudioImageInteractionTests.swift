@@ -57,20 +57,13 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         XCTAssertTrue(completed.queued.isEmpty)
     }
 
-    func testBoundedSmallThumbnailDoesNotWaitForHeavyMediaLane() async throws {
+    func testBoundedSmallThumbnailRunsInMediaWorker() async throws {
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 32,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
         ))
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        let governor = ClientHeavyMediaWorkGovernor(limit: 1)
-        let blocker = try await governor.acquire(context: .init(
-            taskID: "blocker",
-            kind: .videoFrameExtraction,
-            estimatedDecodedBytes: 64 * 1_024 * 1_024
-        ))
-
         let thumbnail = try await MediaStudioImageLoader.thumbnail(
             for: .init(
                 id: "small-thumbnail",
@@ -79,15 +72,10 @@ final class MediaStudioImageInteractionTests: XCTestCase {
             ),
             ownerUserID: "test-user",
             maximumDisplayPixelSize: 64,
-            heavyMediaGovernor: governor,
             mediaWorker: TestMediaWorkerImageNormalizer()
         )
 
         XCTAssertEqual(thumbnail.image.width, 64)
-        let snapshot = await governor.snapshot()
-        XCTAssertTrue(snapshot.queued.isEmpty)
-        XCTAssertEqual(snapshot.active.map(\.taskID), ["blocker"])
-        await blocker.releaseAndWait()
     }
 
     func testProcessIsolatedVideoFrameDoesNotWaitForHeavyMediaLane() async throws {

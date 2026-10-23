@@ -20,6 +20,8 @@ Story 图片归一化此前在主 App 内使用 ImageIO 解码和编码，视频
 
 P2 媒体解码垂直切片只采用选项 3，不并行维护 XPC 或 socket 实现。`ChatOSMediaWorker` 是放在 `Contents/MacOS` 的独立 arm64 executable；App 通过匿名 stdin/stdout 管道先完成 hello，再提交一个 `normalize_png_v1` 或 `extract_last_video_frame_png_v1` 请求，收到单个终态响应后进程退出。Story 最终图片与 UI 缩略图复用同一图片操作和安全边界，只通过不同的输出像素上限区分；视频操作固定提取尾帧，不接受任意时间或任意输出格式。
 
+每个 Worker-backed 请求拥有独立进程、PID、超时、取消和故障边界，不再经过进程内的全局单槽媒体 Governor。项目图片预览、Media Studio 缩略图和 Agent 头像可以并行进入各自 Worker；仍在 App/Connector 进程内执行的旧图片归一化路径继续受有界 Governor 保护，直到迁入 Worker。
+
 协议规则：
 
 - hello 协商 min/max protocol、`media-worker-v1` build contract、capabilities 和 512 KiB inline 上限；握手前不接受业务请求。

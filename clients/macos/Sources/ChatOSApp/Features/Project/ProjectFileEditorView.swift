@@ -269,67 +269,46 @@ enum ProjectImagePreviewLoader {
     private static let maximumSourcePixelCount = 64_000_000
     private static let maximumDisplayPixelSize = 4_096
 
-    static func taskID(
-        path: String,
-        size: Int64,
-        modifiedAt: Date?
-    ) -> String {
-        var hasher = Hasher()
-        hasher.combine(path)
-        hasher.combine(size)
-        hasher.combine(modifiedAt)
-        return "project-image:\(String(hasher.finalize(), radix: 16)):preview"
-    }
-
     static func decode(
         content: String,
         isBinary: Bool,
         sourceFileURL: URL? = nil,
-        taskID: String,
         ownerUserID: String,
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         availableCapacityOverride: Int64? = nil,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared,
         mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) async throws -> AppDecodedThumbnail? {
         guard !ownerUserID.isEmpty else { return nil }
         try Task.checkCancellation()
-        return try await heavyMediaGovernor.perform(context: .init(
-            taskID: String(taskID.prefix(160)),
-            kind: .imageDecode,
-            estimatedDecodedBytes: maximumDisplayPixelSize
-                * maximumDisplayPixelSize * 4
-        )) {
-            let source: GeneratedMediaFile?
-            let sourceURL: URL
-            if let sourceFileURL {
-                guard sourceFileURL.isFileURL else {
-                    throw CocoaError(.fileReadInvalidFileName)
-                }
-                source = nil
-                sourceURL = sourceFileURL
-            } else {
-                let materialized = try await materializeSource(
-                    content: content,
-                    isBinary: isBinary,
-                    temporaryDirectory: temporaryDirectory,
-                    availableCapacityOverride: availableCapacityOverride
-                )
-                source = materialized
-                sourceURL = materialized.url
+        let source: GeneratedMediaFile?
+        let sourceURL: URL
+        if let sourceFileURL {
+            guard sourceFileURL.isFileURL else {
+                throw CocoaError(.fileReadInvalidFileName)
             }
-            defer { withExtendedLifetime(source) {} }
-            return try await AppImageThumbnailLoader.loadLocalFileUsingWorker(
-                sourceURL,
-                ownerUserID: ownerUserID,
-                maximumBytes: maximumSourceBytes,
-                maximumSourcePixelCount: maximumSourcePixelCount,
-                maximumDisplayPixelSize: maximumDisplayPixelSize,
+            source = nil
+            sourceURL = sourceFileURL
+        } else {
+            let materialized = try await materializeSource(
+                content: content,
+                isBinary: isBinary,
                 temporaryDirectory: temporaryDirectory,
-                availableCapacityOverride: availableCapacityOverride,
-                mediaWorker: mediaWorker
+                availableCapacityOverride: availableCapacityOverride
             )
+            source = materialized
+            sourceURL = materialized.url
         }
+        defer { withExtendedLifetime(source) {} }
+        return try await AppImageThumbnailLoader.loadLocalFileUsingWorker(
+            sourceURL,
+            ownerUserID: ownerUserID,
+            maximumBytes: maximumSourceBytes,
+            maximumSourcePixelCount: maximumSourcePixelCount,
+            maximumDisplayPixelSize: maximumDisplayPixelSize,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride,
+            mediaWorker: mediaWorker
+        )
     }
 
     private static func materializeSource(
@@ -423,11 +402,6 @@ private struct ProjectImagePreview: View {
                     content: content,
                     isBinary: isBinary,
                     sourceFileURL: file.sourceFileURL,
-                    taskID: ProjectImagePreviewLoader.taskID(
-                        path: file.path,
-                        size: file.size,
-                        modifiedAt: file.modifiedAt
-                    ),
                     ownerUserID: ownerUserID
                 )
             } catch {

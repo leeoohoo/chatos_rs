@@ -66,7 +66,6 @@ enum MediaStudioImageLoader {
         transport: any HTTPTransport = URLSessionHTTPTransport(),
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         availableCapacityOverride: Int64? = nil,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared,
         mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) async throws -> AppDecodedThumbnail {
         guard !ownerUserID.isEmpty,
@@ -82,34 +81,14 @@ enum MediaStudioImageLoader {
             temporaryDirectory: temporaryDirectory,
             availableCapacityOverride: availableCapacityOverride
         )
-        // Small cached thumbnails remain latency-sensitive and have a bounded output surface.
-        // They still use the Worker, but do not wait behind large preview/normalization jobs.
-        guard maximumDisplayPixelSize > 2_048 else {
-            return try await decode(
-                source,
-                ownerUserID: ownerUserID,
-                maximumDisplayPixelSize: maximumDisplayPixelSize,
-                temporaryDirectory: temporaryDirectory,
-                availableCapacityOverride: availableCapacityOverride,
-                mediaWorker: mediaWorker
-            )
-        }
-        return try await heavyMediaGovernor.perform(context: .init(
-            taskID: mediaTaskID(assetID: asset.id, operation: "thumbnail"),
-            kind: .imageDecode,
-            estimatedDecodedBytes: estimatedDecodedBytes(
-                maximumDisplayPixelSize: maximumDisplayPixelSize
-            )
-        )) {
-            try await decode(
-                source,
-                ownerUserID: ownerUserID,
-                maximumDisplayPixelSize: maximumDisplayPixelSize,
-                temporaryDirectory: temporaryDirectory,
-                availableCapacityOverride: availableCapacityOverride,
-                mediaWorker: mediaWorker
-            )
-        }
+        return try await decode(
+            source,
+            ownerUserID: ownerUserID,
+            maximumDisplayPixelSize: maximumDisplayPixelSize,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride,
+            mediaWorker: mediaWorker
+        )
     }
 
     static func downloadedFile(
@@ -284,20 +263,6 @@ enum MediaStudioImageLoader {
             availableCapacityOverride: availableCapacityOverride,
             mediaWorker: mediaWorker
         )
-    }
-
-    private static func mediaTaskID(assetID: String, operation: String) -> String {
-        let component = assetID.isEmpty
-            ? UUID().uuidString.lowercased()
-            : String(assetID.prefix(128))
-        return "media-image:\(component):\(operation)"
-    }
-
-    private static func estimatedDecodedBytes(maximumDisplayPixelSize: Int) -> Int {
-        let maximumDisplayPixels = Double(maximumDisplayPixelSize)
-            * Double(maximumDisplayPixelSize)
-        let decodedPixels = min(Double(maximumSourcePixelCount), maximumDisplayPixels)
-        return Int(decodedPixels) * 4
     }
 
     enum ImageError: LocalizedError {

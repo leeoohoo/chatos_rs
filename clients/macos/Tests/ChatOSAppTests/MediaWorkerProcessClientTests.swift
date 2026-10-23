@@ -142,7 +142,6 @@ final class MediaWorkerProcessClientTests: XCTestCase {
             content: "",
             isBinary: true,
             sourceFileURL: sourceURL,
-            taskID: "project-image:worker-test:preview",
             ownerUserID: "process-client-test",
             temporaryDirectory: root,
             availableCapacityOverride: Int64.max,
@@ -241,7 +240,6 @@ final class MediaWorkerProcessClientTests: XCTestCase {
         let avatar = try await AgentAvatarImageLoader.normalizedData(
             forFile: source,
             ownerUserID: "process-client-test",
-            taskID: "avatar-worker-test",
             temporaryDirectory: root,
             availableCapacityOverride: Int64.max,
             mediaWorker: MediaWorkerProcessClient(

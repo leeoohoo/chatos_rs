@@ -6,7 +6,7 @@ import XCTest
 @testable import ChatOSApp
 
 final class ProjectImagePreviewLoaderTests: XCTestCase {
-    func testProjectImagePreviewWaitsForSharedHeavyMediaLane() async throws {
+    func testProjectImagePreviewMaterializesInlineSourceForWorker() async throws {
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil,
             pixelsWide: 64,
@@ -20,7 +20,6 @@ final class ProjectImagePreviewLoaderTests: XCTestCase {
             bitsPerPixel: 0
         ))
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        let governor = ClientHeavyMediaWorkGovernor(limit: 1)
         let worker = ProjectPreviewRecordingWorker()
         let temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "ProjectImagePreviewLoaderTests-\(UUID().uuidString)",
@@ -31,33 +30,14 @@ final class ProjectImagePreviewLoaderTests: XCTestCase {
             withIntermediateDirectories: true
         )
         defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
-        let blocker = try await governor.acquire(context: .init(
-            taskID: "blocker",
-            kind: .videoFrameExtraction,
-            estimatedDecodedBytes: 64 * 1_024 * 1_024
-        ))
-        let preview = Task {
-            try await ProjectImagePreviewLoader.decode(
-                content: png.base64EncodedString(),
-                isBinary: true,
-                taskID: "project-image:test:preview",
-                ownerUserID: "alice",
-                temporaryDirectory: temporaryDirectory,
-                availableCapacityOverride: Int64.max,
-                heavyMediaGovernor: governor,
-                mediaWorker: worker
-            )
-        }
-        try await waitForHeavyMediaQueue(governor)
-        let queued = await governor.snapshot()
-        XCTAssertEqual(queued.queued, [.init(
-            taskID: "project-image:test:preview",
-            kind: .imageDecode,
-            estimatedDecodedBytes: 4_096 * 4_096 * 4
-        )])
-
-        await blocker.releaseAndWait()
-        let result = try await preview.value
+        let result = try await ProjectImagePreviewLoader.decode(
+            content: png.base64EncodedString(),
+            isBinary: true,
+            ownerUserID: "alice",
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: worker
+        )
         let decoded = try XCTUnwrap(result)
         XCTAssertEqual(decoded.image.width, 64)
         XCTAssertEqual(decoded.image.height, 32)
@@ -66,27 +46,6 @@ final class ProjectImagePreviewLoaderTests: XCTestCase {
         XCTAssertEqual(invocation.ownerUserID, "alice")
         XCTAssertEqual(invocation.maximumOutputPixelSize, 4_096)
         XCTAssertFalse(FileManager.default.fileExists(atPath: invocation.sourceURL.path))
-        let completed = await governor.snapshot()
-        XCTAssertTrue(completed.active.isEmpty)
-        XCTAssertTrue(completed.queued.isEmpty)
-    }
-
-    func testProjectImageTaskIDDoesNotExposePath() {
-        let path = "/Users/example/Secret Project/private-image.png"
-        let first = ProjectImagePreviewLoader.taskID(
-            path: path,
-            size: 123,
-            modifiedAt: Date(timeIntervalSince1970: 1_000)
-        )
-        let second = ProjectImagePreviewLoader.taskID(
-            path: path,
-            size: 123,
-            modifiedAt: Date(timeIntervalSince1970: 1_000)
-        )
-        XCTAssertEqual(first, second)
-        XCTAssertTrue(first.hasPrefix("project-image:"))
-        XCTAssertFalse(first.contains("Secret Project"))
-        XCTAssertFalse(first.contains("private-image.png"))
     }
 
     func testProjectImagePreviewPassesAuthorizedSourceFileDirectlyToWorker() async throws {
@@ -117,7 +76,6 @@ final class ProjectImagePreviewLoaderTests: XCTestCase {
             content: "",
             isBinary: true,
             sourceFileURL: sourceURL,
-            taskID: "project-image:direct-source:preview",
             ownerUserID: "alice",
             temporaryDirectory: root,
             availableCapacityOverride: Int64.max,
@@ -135,15 +93,6 @@ final class ProjectImagePreviewLoaderTests: XCTestCase {
         )
     }
 
-    private func waitForHeavyMediaQueue(
-        _ governor: ClientHeavyMediaWorkGovernor
-    ) async throws {
-        for _ in 0..<200 {
-            if await governor.snapshot().queued.count == 1 { return }
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        XCTFail("Timed out waiting for heavy-media admission")
-    }
 }
 
 private actor ProjectPreviewRecordingWorker: MediaWorkerImageNormalizing {

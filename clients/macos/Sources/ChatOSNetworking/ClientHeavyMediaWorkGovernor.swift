@@ -91,8 +91,9 @@ public final class ClientHeavyMediaWorkPermit: @unchecked Sendable {
     }
 }
 
-/// Process-wide admission for memory-intensive image normalization and video frame extraction.
-/// This actor limits transient decode working sets; it does not own media jobs or their leases.
+/// Process-wide admission for remaining in-process image normalization paths.
+/// Process-isolated media workers deliberately bypass this actor so unrelated jobs can run
+/// concurrently behind separate PID, timeout, cancellation, and failure boundaries.
 public actor ClientHeavyMediaWorkGovernor {
     public static let shared = ClientHeavyMediaWorkGovernor(limit: 1)
 
