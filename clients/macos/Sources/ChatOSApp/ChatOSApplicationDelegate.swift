@@ -147,9 +147,19 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         cancelPendingMainWindowPresentation()
         let controller = mainWindowController ?? makeMainWindowController()
         mainWindowController = controller
+        guard let window = controller.window else { return }
+        Self.restoreToVisibleScreenIfNeeded(window)
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        // The main window must remain a primary full-screen window. Marking it
+        // as `canJoinAllSpaces`/`fullScreenAuxiliary` makes AppKit treat it like
+        // a floating companion and disables its own native full-screen Space.
+        window.collectionBehavior.remove([.canJoinAllSpaces, .fullScreenAuxiliary])
+        window.collectionBehavior.insert([.moveToActiveSpace, .fullScreenPrimary])
         NSApp.activate(ignoringOtherApps: true)
         controller.showWindow(nil)
-        controller.window?.makeKeyAndOrderFront(nil)
+        window.makeKeyAndOrderFront(nil)
     }
 
     private func makeMainWindowController() -> NSWindowController {
@@ -165,6 +175,9 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         window.titleVisibility = .hidden
         window.minSize = NSSize(width: 1_100, height: 720)
         window.toolbarStyle = .unifiedCompact
+        // Keep ordinary window presentations on the active Space while still
+        // allowing the main window to create and own a native full-screen Space.
+        window.collectionBehavior.insert([.moveToActiveSpace, .fullScreenPrimary])
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
         installTitlebarActions(in: window)
@@ -182,6 +195,18 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
             let intersection = frame.intersection(screen.visibleFrame)
             return intersection.width >= 160 && intersection.height >= 120
         }
+    }
+
+    private static func restoreToVisibleScreenIfNeeded(_ window: NSWindow) {
+        guard !isMeaningfullyVisible(window.frame),
+              let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let visibleFrame = screen.visibleFrame
+        var frame = window.frame
+        frame.size.width = min(frame.width, visibleFrame.width)
+        frame.size.height = min(frame.height, visibleFrame.height)
+        frame.origin.x = visibleFrame.midX - frame.width / 2
+        frame.origin.y = visibleFrame.midY - frame.height / 2
+        window.setFrame(frame, display: false)
     }
 
     private func showSettingsWindow() {
