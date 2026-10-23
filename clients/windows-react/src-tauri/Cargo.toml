@@ -27,6 +27,8 @@ tauri-plugin-global-shortcut = "2.3.1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
 tokio-util = "0.7"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
+flate2 = "1"
+tar = "0.4"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }

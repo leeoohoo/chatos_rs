@@ -17,6 +17,7 @@ mod runtime;
 use crate::agent_plugin_runtime::{
     load_agent_plugin_skill_snapshot, AgentPluginRuntime, AgentPluginSkillSnapshot,
 };
+use crate::plugin_integrity::{requires_installation_integrity, verify_installation_integrity};
 use runtime::{
     PluginApplicationBridgeRequest, PluginApplicationLaunchRequest, PluginApplicationRuntime,
     PresentedPluginApplicationBridgeResponse, PresentedPluginApplicationLaunch,
@@ -721,6 +722,10 @@ fn load_manifest(
         candidate = candidate.parent().ok_or_else(plugin_catalog_error)?;
     };
     let manifest_path = installation_root.join("chatos.plugin.json");
+    if requires_installation_integrity(&record.spec.component_revision) {
+        verify_installation_integrity(plugin_root, &installation_root, &record.spec.release_digest)
+            .map_err(|_| plugin_catalog_error())?;
+    }
     let canonical_manifest = manifest_path
         .canonicalize()
         .map_err(|_| plugin_catalog_error())?;

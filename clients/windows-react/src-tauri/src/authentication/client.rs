@@ -6,6 +6,7 @@ use super::{AuthSession, AuthUser, RegistrationCodeDelivery};
 use chatos_plugin_management_sdk::{PluginInstallSourceList, UpdateUserPluginPreferenceResponse};
 
 const MAXIMUM_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const MAXIMUM_PLUGIN_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct AuthenticationApiClient {
@@ -505,6 +506,64 @@ impl AuthenticationApiClient {
             access_token,
         )
         .await
+    }
+
+    pub(crate) async fn download_plugin_artifact(
+        &self,
+        access_token: &str,
+        plugin_id: &str,
+        release_id: &str,
+    ) -> Result<reqwest::Response, ApiError> {
+        let mut url = self.gateway_url.clone();
+        {
+            let mut segments = url.path_segments_mut().map_err(|_| ApiError {
+                message: "ChatOS API 地址无效。".into(),
+                unauthorized: false,
+            })?;
+            segments.pop_if_empty();
+            for segment in [
+                "api",
+                "plugin-management",
+                "plugins",
+                plugin_id,
+                "releases",
+                release_id,
+                "artifact",
+            ] {
+                segments.push(segment);
+            }
+        }
+        let response = self
+            .client
+            .get(url)
+            .bearer_auth(access_token)
+            .header("Accept", "application/gzip, application/octet-stream")
+            .header("X-Chatos-Client-Surface", "local-connector-desktop")
+            .timeout(Duration::from_secs(5 * 60))
+            .send()
+            .await
+            .map_err(|_| ApiError {
+                message: "Plugin 安装包下载失败，请检查网络后重试。".into(),
+                unauthorized: false,
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            let bytes = response.bytes().await.unwrap_or_default();
+            return Err(ApiError {
+                message: error_message(status, &bytes[..bytes.len().min(MAXIMUM_RESPONSE_BYTES)]),
+                unauthorized: status == StatusCode::UNAUTHORIZED,
+            });
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length == 0 || length > MAXIMUM_PLUGIN_ARTIFACT_BYTES)
+        {
+            return Err(ApiError {
+                message: "Plugin 安装包大小超过限制。".into(),
+                unauthorized: false,
+            });
+        }
+        Ok(response)
     }
 
     pub(crate) async fn update_plugin_preference(

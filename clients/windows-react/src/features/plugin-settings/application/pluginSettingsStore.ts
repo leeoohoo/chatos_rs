@@ -11,6 +11,7 @@ interface PluginSettingsState {
   notice: string | null;
   epoch: number;
   load(port: PluginSettingsPort, ownerUserId: string): Promise<void>;
+  install(port: PluginSettingsPort, pluginId: string): Promise<boolean>;
   updateEnabled(port: PluginSettingsPort, pluginId: string, enabled: boolean): Promise<boolean>;
   uninstall(port: PluginSettingsPort, pluginId: string): Promise<boolean>;
   clearMessage(): void;
@@ -47,6 +48,13 @@ export const usePluginSettingsStore = create<PluginSettingsState>((set, get) => 
   async updateEnabled(port, pluginId, enabled) {
     return runMutation(set, get, pluginId, enabled ? "Plugin 已启用。" : "Plugin 已停用。", (ownerUserId) => (
       port.updateEnabled(ownerUserId, pluginId, enabled)
+    ));
+  },
+
+  async install(port, pluginId) {
+    const installed = get().snapshot?.plugins.find((plugin) => plugin.id === pluginId)?.installed;
+    return runMutation(set, get, pluginId, installed ? "Plugin 已安全更新。" : "Plugin 已安全安装。", (ownerUserId) => (
+      port.install(ownerUserId, pluginId)
     ));
   },
 

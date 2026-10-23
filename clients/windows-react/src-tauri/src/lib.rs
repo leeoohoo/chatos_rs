@@ -25,6 +25,8 @@ mod notepad;
 mod pet;
 mod platform_execution_context;
 mod plugin_application;
+mod plugin_installer;
+mod plugin_integrity;
 mod plugin_settings;
 mod product_skill_runtime;
 mod project_conversation;
@@ -140,7 +142,8 @@ use plugin_application::{
     launch_plugin_application, list_plugin_applications, PluginApplicationManager,
 };
 use plugin_settings::{
-    load_plugin_settings, uninstall_plugin, update_plugin_enabled, PluginSettingsManager,
+    install_marketplace_plugin, load_plugin_settings, uninstall_plugin, update_plugin_enabled,
+    PluginSettingsManager,
 };
 use project_conversation::prepare_project_conversation;
 use project_creation::{
@@ -555,6 +558,7 @@ pub fn run() {
             close_local_terminal,
             discard_local_terminal_presentation,
             list_plugin_applications,
+            install_marketplace_plugin,
             load_plugin_settings,
             update_plugin_enabled,
             uninstall_plugin,

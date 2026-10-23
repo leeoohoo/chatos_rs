@@ -433,6 +433,21 @@ impl AuthenticationManager {
         self.client.plugin_install_sources(&token).await
     }
 
+    pub(crate) async fn download_plugin_artifact_for_owner(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        release_id: &str,
+    ) -> Result<reqwest::Response, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(authentication_api_error)?;
+        self.client
+            .download_plugin_artifact(&token, plugin_id, release_id)
+            .await
+    }
+
     pub(crate) async fn update_plugin_preference_for_owner(
         &self,
         owner_user_id: &str,

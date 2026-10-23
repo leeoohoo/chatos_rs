@@ -12,6 +12,8 @@ describe("pluginSettingsStore", () => {
     expect(usePluginSettingsStore.getState().snapshot?.plugins[0]?.displayName).toBe("Diagram Studio");
     await usePluginSettingsStore.getState().updateEnabled(port, "plugin-1", false);
     expect(usePluginSettingsStore.getState().snapshot?.plugins[0]?.enabled).toBe(false);
+    await usePluginSettingsStore.getState().install(port, "plugin-1");
+    expect(usePluginSettingsStore.getState().snapshot?.plugins[0]?.installedVersion).toBe("1.2.0");
   });
 
   it("rejects a response that arrives after reset", async () => {

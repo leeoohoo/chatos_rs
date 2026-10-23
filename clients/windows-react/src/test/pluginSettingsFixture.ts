@@ -24,13 +24,13 @@ export function pluginSettingsSnapshot(): PluginSettingsSnapshot {
       permissions: [{ id: "process.spawn", required: true, reason: "Launch MCP", status: "declared_not_checked" }],
       installationIssue: null,
       windowsCompatible: true,
-      installActionAvailable: false,
+      installActionAvailable: true,
     }],
     marketplaceAvailable: true,
     localCatalogAvailable: true,
     marketplaceError: null,
     localCatalogError: null,
-    secureMarketplaceInstallAvailable: false,
+    secureMarketplaceInstallAvailable: true,
     manualInstallAvailable: false,
   };
 }
@@ -38,6 +38,15 @@ export function pluginSettingsSnapshot(): PluginSettingsSnapshot {
 export function pluginSettingsPort(overrides: Partial<PluginSettingsPort> = {}): PluginSettingsPort {
   return {
     load: async () => pluginSettingsSnapshot(),
+    install: async () => ({
+      ...pluginSettingsSnapshot(),
+      plugins: pluginSettingsSnapshot().plugins.map((plugin) => ({
+        ...plugin,
+        installed: true,
+        installedVersion: plugin.latestVersion,
+        updateAvailable: false,
+      })),
+    }),
     updateEnabled: async (_ownerUserId, _pluginId, enabled) => ({
       ...pluginSettingsSnapshot(),
       plugins: pluginSettingsSnapshot().plugins.map((plugin) => ({ ...plugin, enabled })),

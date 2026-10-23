@@ -16,6 +16,7 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
   const error = usePluginSettingsStore((state) => state.error);
   const notice = usePluginSettingsStore((state) => state.notice);
   const load = usePluginSettingsStore((state) => state.load);
+  const install = usePluginSettingsStore((state) => state.install);
   const updateEnabled = usePluginSettingsStore((state) => state.updateEnabled);
   const uninstall = usePluginSettingsStore((state) => state.uninstall);
   const clearMessage = usePluginSettingsStore((state) => state.clearMessage);
@@ -49,7 +50,8 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
       <output>{plugins.length} {english ? "items" : "项"}</output>
     </section>
 
-    {(!snapshot.secureMarketplaceInstallAvailable || !snapshot.manualInstallAvailable) && <section className="plugin-settings-platform-note"><span aria-hidden="true">i</span><div><strong>{english ? "Windows installation safety gate" : "Windows 安装安全门禁"}</strong><p>{english ? "Marketplace install, update, and manual import stay unavailable until the Windows native layer has the same signed download, archive confinement, per-file integrity, dependency isolation, and rollback chain as macOS. Installed plugins can still be inspected, enabled, disabled, and uninstalled here." : "Marketplace 安装、更新与手动导入需等 Windows 原生层具备与 macOS 相同的签名下载、压缩包路径隔离、逐文件完整性、依赖隔离和回滚链后才会开放。当前页面可以检查、启停及卸载已有 Plugin。"}</p></div></section>}
+    {!snapshot.secureMarketplaceInstallAvailable && <section className="plugin-settings-platform-note"><span aria-hidden="true">i</span><div><strong>{english ? "Windows installation safety gate" : "Windows 安装安全门禁"}</strong><p>{english ? "Marketplace installation is unavailable because the native verification chain is not ready." : "Windows 原生安装校验链尚未就绪，Marketplace 安装暂不可用。"}</p></div></section>}
+    {snapshot.secureMarketplaceInstallAvailable && !snapshot.manualInstallAvailable && <section className="plugin-settings-platform-note"><span aria-hidden="true">i</span><div><strong>{english ? "Verified Marketplace installation" : "受信 Marketplace 安装"}</strong><p>{english ? "Signed Marketplace plugins can be installed and updated. Manual package import remains unavailable until an equivalent trust chain is implemented." : "已支持安装和更新经过签名校验的 Marketplace Plugin；任意本地包导入仍保持关闭，等待独立信任链完成。"}</p></div></section>}
 
     {(!snapshot.marketplaceAvailable || !snapshot.localCatalogAvailable) && <section className="plugin-settings-partial"><strong>{english ? "Partial catalog" : "目录加载不完整"}</strong><p>{snapshot.marketplaceError ?? snapshot.localCatalogError}</p></section>}
 
@@ -67,7 +69,7 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
           <p className="plugin-settings-description">{plugin.description}</p>
           <div className="plugin-settings-meta"><span>{plugin.category}</span><span>{plugin.source === "marketplace" ? "Marketplace" : (english ? "Local" : "本机")}</span><span>{plugin.mcpServerCount} MCP</span><span>{plugin.skills.length} Skills</span>{!plugin.windowsCompatible && <span className="is-warning">{english ? "Not for Windows" : "不支持 Windows"}</span>}</div>
           {isExpanded && <PluginDetails english={english} plugin={plugin} />}
-          <footer><button onClick={() => setExpanded(isExpanded ? null : plugin.id)} type="button">{isExpanded ? (english ? "Hide Details" : "收起详情") : (english ? "Skills & Permissions" : "Skills 与权限")}</button><div>{plugin.updateAvailable && <button disabled type="button">{english ? "Update unavailable" : "更新未准入"}</button>}{!plugin.installed && <button className="is-primary" disabled type="button">{plugin.windowsCompatible ? (english ? "Install unavailable" : "安装未准入") : (english ? "Unsupported" : "平台不支持")}</button>}{plugin.installed && <button className="is-danger" disabled={Boolean(operatingPluginId)} onClick={() => setUninstallTarget(plugin)} type="button">{english ? "Uninstall" : "卸载"}</button>}</div></footer>
+          <footer><button onClick={() => setExpanded(isExpanded ? null : plugin.id)} type="button">{isExpanded ? (english ? "Hide Details" : "收起详情") : (english ? "Skills & Permissions" : "Skills 与权限")}</button><div>{plugin.updateAvailable && <button disabled={Boolean(operatingPluginId) || !plugin.installActionAvailable} onClick={() => void install(port, plugin.id)} type="button">{plugin.installActionAvailable ? plugin.installationIssue ? (english ? "Reinstall" : "安全重装") : (english ? "Update" : "安全更新") : (english ? "Update unavailable" : "更新未准入")}</button>}{!plugin.installed && <button className="is-primary" disabled={Boolean(operatingPluginId) || !plugin.installActionAvailable} onClick={() => void install(port, plugin.id)} type="button">{!plugin.windowsCompatible ? (english ? "Unsupported" : "平台不支持") : plugin.installActionAvailable ? (english ? "Install" : "安全安装") : (english ? "Install unavailable" : "安装未准入")}</button>}{plugin.installed && <button className="is-danger" disabled={Boolean(operatingPluginId)} onClick={() => setUninstallTarget(plugin)} type="button">{english ? "Uninstall" : "卸载"}</button>}</div></footer>
         </article>;
       })}
     </section>
