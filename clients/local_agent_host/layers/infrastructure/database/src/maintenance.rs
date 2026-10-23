@@ -95,30 +95,6 @@ fn is_artifact_staging_name(name: &str) -> bool {
         })
 }
 
-#[cfg(test)]
-mod artifact_staging_tests {
-    use super::*;
-
-    #[test]
-    fn cleanup_removes_only_old_regular_staging_files() {
-        let root = tempfile::tempdir().expect("temporary directory");
-        let token = "01234567-89ab-cdef-0123-456789abcdef";
-        let staged = root.path().join(format!("{token}.staged"));
-        let temporary = root.path().join(format!(".{token}.tmp"));
-        let unknown = root.path().join("keep.txt");
-        std::fs::write(&staged, b"staged").expect("write staged");
-        std::fs::write(&temporary, b"temporary").expect("write temporary");
-        std::fs::write(&unknown, b"unknown").expect("write unknown");
-        let future = SystemTime::now() + Duration::from_secs(25 * 60 * 60);
-
-        remove_stale_artifact_staging_files_at(root.path(), future).expect("cleanup staging");
-
-        assert!(!staged.exists());
-        assert!(!temporary.exists());
-        assert!(unknown.exists());
-    }
-}
-
 #[cfg(unix)]
 fn restrict_directory_permissions(path: &Path) -> Result<(), ClientStorageError> {
     use std::os::unix::fs::PermissionsExt;
@@ -276,6 +252,106 @@ pub(super) async fn create_migration_backup(
     Ok(backup_path)
 }
 
+/// After a migration is fully committed and verified, keep its newly published snapshot and
+/// best-effort remove older snapshots for the same database. Failures deliberately leave extra
+/// recovery files in place; the next migration's count and byte admission guard will fail closed.
+pub(super) fn prune_superseded_migration_backups(database_path: &Path, retained_backup: &Path) {
+    let Some(parent) = database_path.parent() else {
+        return;
+    };
+    let Some(file_name) = database_path.file_name().and_then(|value| value.to_str()) else {
+        return;
+    };
+    let prefix = format!("{file_name}.pre-migration-");
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    let retained_from_version = retained_backup
+        .file_name()
+        .and_then(|value| value.to_str())
+        .and_then(|name| migration_backup_from_version(name, &prefix));
+    let mut earliest_compatible: Option<(i64, SystemTime, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == retained_backup {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(from_version) = migration_backup_from_version(&name, &prefix) else {
+            continue;
+        };
+        if retained_from_version.is_none_or(|retained| from_version >= retained) {
+            continue;
+        }
+        let Ok(metadata) = path.symlink_metadata() else {
+            continue;
+        };
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        let replace = earliest_compatible
+            .as_ref()
+            .is_none_or(|(version, timestamp, _)| {
+                from_version < *version || (from_version == *version && modified > *timestamp)
+            });
+        if replace {
+            earliest_compatible = Some((from_version, modified, path));
+        }
+    }
+    let earliest_compatible = earliest_compatible.map(|(_, _, path)| path);
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    let mut removed_any = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == retained_backup || earliest_compatible.as_ref() == Some(&path) {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let is_complete = name.starts_with(&prefix) && name.ends_with(".backup.sqlite");
+        let is_recovery_artifact = is_complete
+            || (name.starts_with(&prefix)
+                && (name.ends_with(".backup.sqlite.incomplete")
+                    || name.ends_with(".backup.sqlite.incomplete-journal")));
+        if !is_recovery_artifact {
+            continue;
+        }
+        // An unrecognized complete file may come from a future/older naming scheme or a manual
+        // recovery workflow. Never delete it automatically. Incomplete files are never recovery
+        // points and remain safe to discard after a successful migration.
+        if is_complete && migration_backup_from_version(&name, &prefix).is_none() {
+            continue;
+        }
+        let Ok(metadata) = path.symlink_metadata() else {
+            continue;
+        };
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        if std::fs::remove_file(path).is_ok() {
+            removed_any = true;
+        }
+    }
+    if removed_any {
+        let _ = std::fs::File::open(parent).and_then(|directory| directory.sync_all());
+    }
+}
+
+fn migration_backup_from_version(name: &str, prefix: &str) -> Option<i64> {
+    let versioned = name
+        .strip_prefix(prefix)?
+        .strip_suffix(".backup.sqlite")?
+        .strip_prefix('v')?;
+    let (from_version, _) = versioned.split_once("-to-v")?;
+    from_version.parse().ok()
+}
+
 pub(super) async fn compact_database(pool: &SqlitePool) -> Result<(), ClientStorageError> {
     let mut connection = pool.acquire().await.db()?;
     sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -342,4 +418,28 @@ fn remove_incomplete_backup(path: &Path) {
     // Preserve the primary database error; this path is a generated,
     // incomplete artifact and is never used for recovery.
     let _ = std::fs::remove_file(path);
+}
+
+#[cfg(test)]
+mod artifact_staging_tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_removes_only_old_regular_staging_files() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let token = "01234567-89ab-cdef-0123-456789abcdef";
+        let staged = root.path().join(format!("{token}.staged"));
+        let temporary = root.path().join(format!(".{token}.tmp"));
+        let unknown = root.path().join("keep.txt");
+        std::fs::write(&staged, b"staged").expect("write staged");
+        std::fs::write(&temporary, b"temporary").expect("write temporary");
+        std::fs::write(&unknown, b"unknown").expect("write unknown");
+        let future = SystemTime::now() + Duration::from_secs(25 * 60 * 60);
+
+        remove_stale_artifact_staging_files_at(root.path(), future).expect("cleanup staging");
+
+        assert!(!staged.exists());
+        assert!(!temporary.exists());
+        assert!(unknown.exists());
+    }
 }

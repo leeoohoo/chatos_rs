@@ -134,8 +134,9 @@ async fn recovery_capacity_defers_migration_without_deleting_or_changing_source(
     assert_eq!(migrated_table, 0);
     source.close().await.unwrap();
 
-    // Explicitly clear one test-owned incomplete slot; the next attempt can
-    // migrate. A current-schema reopen must not require another recovery slot.
+    // Explicitly clear one test-owned incomplete slot; the next attempt can migrate, remove known
+    // incomplete artifacts and retain its newly verified snapshot. Unknown complete names remain
+    // for manual assessment. A current-schema reopen must not create another snapshot.
     std::fs::remove_file(
         directory
             .path()
@@ -143,11 +144,70 @@ async fn recovery_capacity_defers_migration_without_deleting_or_changing_source(
     )
     .unwrap();
     let migrated = SqliteClientStorage::connect_file(&path).await.unwrap();
-    assert_eq!(backup_files(directory.path()).len(), 8);
+    let retained = backup_files(directory.path());
+    assert_eq!(retained.len(), 5);
+    assert_eq!(
+        retained
+            .iter()
+            .filter(|path| path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.contains("sentinel")))
+            .count(),
+        4,
+        "unknown complete recovery names must remain for manual assessment"
+    );
+    assert!(retained.iter().any(|path| path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| name.contains("-to-v") && name.ends_with(".backup.sqlite"))));
     migrated.pool.close().await;
     let reopened = SqliteClientStorage::connect_file(&path).await.unwrap();
-    assert_eq!(backup_files(directory.path()).len(), 8);
+    assert_eq!(backup_files(directory.path()), retained);
     reopened.pool.close().await;
+}
+
+#[tokio::test]
+async fn successful_migration_keeps_new_snapshot_and_prunes_superseded_recovery_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client.sqlite");
+    let storage = SqliteClientStorage::connect_file(&path).await.unwrap();
+    {
+        let mut connection = storage.pool.acquire().await.unwrap();
+        super::migration_tests::rewind_receipt_v35(&mut connection).await;
+    }
+    storage.pool.close().await;
+
+    let old_complete = directory
+        .path()
+        .join("client.sqlite.pre-migration-v34-to-v37-old.backup.sqlite");
+    let old_incomplete = directory
+        .path()
+        .join("client.sqlite.pre-migration-v34-to-v37-old.backup.sqlite.incomplete");
+    let old_journal = directory
+        .path()
+        .join("client.sqlite.pre-migration-v34-to-v37-old.backup.sqlite.incomplete-journal");
+    let unrelated = directory.path().join("client.before-manual-repair.sqlite");
+    for file in [&old_complete, &old_incomplete, &old_journal, &unrelated] {
+        std::fs::write(file, b"preserve until migration succeeds").unwrap();
+    }
+
+    let migrated = SqliteClientStorage::connect_file(&path).await.unwrap();
+    let backups = backup_files(directory.path());
+    assert_eq!(backups.len(), 1);
+    assert!(backups[0]
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| name.ends_with(".backup.sqlite")));
+    assert_ne!(backups[0], old_complete);
+    assert!(!old_complete.exists());
+    assert!(!old_incomplete.exists());
+    assert!(!old_journal.exists());
+    assert_eq!(
+        std::fs::read(unrelated).unwrap(),
+        b"preserve until migration succeeds"
+    );
+    migrated.pool.close().await;
 }
 
 #[tokio::test]

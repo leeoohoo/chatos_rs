@@ -431,26 +431,44 @@ async fn crash_and_recover(point: &str, committed_version: i64, incomplete: bool
     storage.pool.close().await;
     assert_source(&fixture.database(), 37).await;
     for (path, digest) in &before {
-        assert_eq!(
-            Sha256::digest(fs::read(path).unwrap()).to_vec(),
-            *digest,
-            "recovery must not alter existing verified or incomplete backups"
-        );
+        if path.exists() {
+            assert_eq!(
+                Sha256::digest(fs::read(path).unwrap()).to_vec(),
+                *digest,
+                "retained recovery files must never be modified"
+            );
+        }
     }
+    let after = all_backups(&fixture);
     assert_eq!(
-        all_backups(&fixture).len(),
-        if committed_version < 37 { 3 } else { 2 }
+        after.len(),
+        match committed_version {
+            34 => 1,
+            35..=37 => 2,
+            _ => unreachable!(),
+        }
     );
     if committed_version < 37 {
-        let retry_backups = all_backups(&fixture)
-            .into_iter()
-            .filter(|path| !before.iter().any(|(existing, _)| existing == path))
+        assert!(after
+            .iter()
+            .all(|path| !path.to_string_lossy().ends_with(".incomplete")));
+        let retry_backups = after
+            .iter()
+            .filter(|path| !before.iter().any(|(existing, _)| existing == *path))
             .collect::<Vec<_>>();
         assert_eq!(retry_backups.len(), 1);
         assert!(!retry_backups[0].to_string_lossy().ends_with(".incomplete"));
         // The retry must back up the latest committed state, which may be v35
         // or v36, rather than copying the earlier v34 recovery point.
-        assert_source(&retry_backups[0], committed_version).await;
+        assert_source(retry_backups[0], committed_version).await;
+        if committed_version > 34 {
+            let rollback_backups = after
+                .iter()
+                .filter(|path| before.iter().any(|(existing, _)| existing == *path))
+                .collect::<Vec<_>>();
+            assert_eq!(rollback_backups.len(), 1);
+            assert_source(rollback_backups[0], 34).await;
+        }
     }
 }
 
