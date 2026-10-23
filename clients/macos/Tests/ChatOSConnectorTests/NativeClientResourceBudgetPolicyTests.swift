@@ -157,6 +157,65 @@ final class NativeClientResourceBudgetPolicyTests: XCTestCase {
         XCTAssertEqual(finished.metrics.releasedCount, 1)
     }
 
+    func testExecutionGovernorPrioritizesInteractiveWorkOverOlderBackgroundWaiter() async throws {
+        let governor = LocalAgentExecutionGovernor(limit: 1)
+        let activeValue = await governor.acquire()
+        let active = try XCTUnwrap(activeValue)
+        let background = Task { await governor.acquire(priority: .background) }
+        try await waitUntil(governor: governor) { $0.backgroundQueuedCount == 1 }
+        let interactive = Task { await governor.acquire(priority: .interactive) }
+        try await waitUntil(governor: governor) {
+            $0.backgroundQueuedCount == 1 && $0.interactiveQueuedCount == 1
+        }
+
+        await active.releaseAndWait()
+        let interactiveValue = await interactive.value
+        let interactivePermit = try XCTUnwrap(interactiveValue)
+        let prioritized = await governor.snapshot()
+        XCTAssertEqual(prioritized.backgroundQueuedCount, 1)
+        XCTAssertEqual(prioritized.interactiveQueuedCount, 0)
+        XCTAssertEqual(prioritized.metrics.interactivePriorityBypassCount, 1)
+
+        await interactivePermit.releaseAndWait()
+        let backgroundValue = await background.value
+        let backgroundPermit = try XCTUnwrap(backgroundValue)
+        await backgroundPermit.releaseAndWait()
+    }
+
+    func testExecutionGovernorBoundsInteractiveBurstSoBackgroundCannotStarve() async throws {
+        let governor = LocalAgentExecutionGovernor(limit: 1)
+        let activeValue = await governor.acquire()
+        let active = try XCTUnwrap(activeValue)
+        let order = LocalAgentExecutionAdmissionOrder()
+        let background = Task {
+            let permit = await governor.acquire(priority: .background)
+            await order.append("background")
+            await permit?.releaseAndWait()
+        }
+        try await waitUntil(governor: governor) { $0.backgroundQueuedCount == 1 }
+        var interactiveTasks: [Task<Void, Never>] = []
+        for index in 0..<5 {
+            interactiveTasks.append(Task {
+                let permit = await governor.acquire(priority: .interactive)
+                await order.append("interactive-\(index)")
+                await permit?.releaseAndWait()
+            })
+            try await waitUntil(governor: governor) { $0.interactiveQueuedCount == index + 1 }
+        }
+
+        await active.releaseAndWait()
+        await background.value
+        for task in interactiveTasks { await task.value }
+
+        let values = await order.values()
+        XCTAssertEqual(Array(values.prefix(4)), (0..<4).map { "interactive-\($0)" })
+        XCTAssertEqual(values[4], "background")
+        XCTAssertEqual(values[5], "interactive-4")
+        let finished = await governor.snapshot()
+        XCTAssertEqual(finished.metrics.backgroundFairnessAdmissionCount, 1)
+        XCTAssertEqual(finished.totalInFlight, 0)
+    }
+
     private func waitUntil(
         governor: LocalAgentExecutionGovernor,
         predicate: (LocalAgentExecutionGovernorSnapshot) -> Bool
@@ -167,4 +226,11 @@ final class NativeClientResourceBudgetPolicyTests: XCTestCase {
         }
         XCTFail("Timed out waiting for execution governor state")
     }
+}
+
+private actor LocalAgentExecutionAdmissionOrder {
+    private var recorded: [String] = []
+
+    func append(_ value: String) { recorded.append(value) }
+    func values() -> [String] { recorded }
 }

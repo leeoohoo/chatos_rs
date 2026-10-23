@@ -93,6 +93,11 @@ final class LocalAgentExecutionPermit: @unchecked Sendable {
     }
 }
 
+enum LocalAgentExecutionPriority: Sendable, Equatable {
+    case interactive
+    case background
+}
+
 public struct LocalAgentExecutionGovernorMetrics: Sendable, Equatable {
     public let admittedCount: UInt64
     public let queuedAdmissionCount: UInt64
@@ -104,6 +109,8 @@ public struct LocalAgentExecutionGovernorMetrics: Sendable, Equatable {
     public let maximumQueueWaitNanoseconds: UInt64
     public let maximumObservedActive: Int
     public let maximumObservedQueued: Int
+    public let interactivePriorityBypassCount: UInt64
+    public let backgroundFairnessAdmissionCount: UInt64
 }
 
 public struct LocalAgentExecutionGovernorSnapshot: Sendable, Equatable {
@@ -111,6 +118,8 @@ public struct LocalAgentExecutionGovernorSnapshot: Sendable, Equatable {
     public let maximumQueued: Int
     public let activeCount: Int
     public let queuedCount: Int
+    public let interactiveQueuedCount: Int
+    public let backgroundQueuedCount: Int
     public let totalInFlight: Int
     public let metrics: LocalAgentExecutionGovernorMetrics
 }
@@ -121,6 +130,7 @@ public struct LocalAgentExecutionGovernorSnapshot: Sendable, Equatable {
 actor LocalAgentExecutionGovernor {
     private struct Waiter {
         let id: UUID
+        let priority: LocalAgentExecutionPriority
         let enqueuedAtUptimeNanoseconds: UInt64
         let continuation: CheckedContinuation<LocalAgentExecutionPermit?, Never>
     }
@@ -136,12 +146,16 @@ actor LocalAgentExecutionGovernor {
         var maximumQueueWaitNanoseconds: UInt64 = 0
         var maximumObservedActive: Int = 0
         var maximumObservedQueued: Int = 0
+        var interactivePriorityBypassCount: UInt64 = 0
+        var backgroundFairnessAdmissionCount: UInt64 = 0
     }
 
+    private static let maximumInteractiveAdmissionBurst = 4
     let limit: Int
     let maximumQueued: Int
     private var active = 0
     private var waiters: [Waiter] = []
+    private var consecutiveInteractiveAdmissionsWhileContended = 0
     private var metrics = Metrics()
 
     init(limit: Int, maximumQueued: Int = 256) {
@@ -151,7 +165,9 @@ actor LocalAgentExecutionGovernor {
         self.maximumQueued = maximumQueued
     }
 
-    func acquire() async -> LocalAgentExecutionPermit? {
+    func acquire(
+        priority: LocalAgentExecutionPriority = .background
+    ) async -> LocalAgentExecutionPermit? {
         guard !Task.isCancelled else { return nil }
         if active < limit {
             active += 1
@@ -167,6 +183,7 @@ actor LocalAgentExecutionGovernor {
             await withCheckedContinuation { continuation in
                 waiters.append(.init(
                     id: waiterID,
+                    priority: priority,
                     enqueuedAtUptimeNanoseconds: DispatchTime.now().uptimeNanoseconds,
                     continuation: continuation
                 ))
@@ -196,11 +213,16 @@ actor LocalAgentExecutionGovernor {
     }
 
     func snapshot() -> LocalAgentExecutionGovernorSnapshot {
-        .init(
+        let interactiveQueuedCount = waiters.reduce(into: 0) { total, waiter in
+            if waiter.priority == .interactive { total += 1 }
+        }
+        return .init(
             limit: limit,
             maximumQueued: maximumQueued,
             activeCount: active,
             queuedCount: waiters.count,
+            interactiveQueuedCount: interactiveQueuedCount,
+            backgroundQueuedCount: waiters.count - interactiveQueuedCount,
             totalInFlight: active + waiters.count,
             metrics: .init(
                 admittedCount: metrics.admittedCount,
@@ -212,7 +234,9 @@ actor LocalAgentExecutionGovernor {
                 totalQueueWaitNanoseconds: metrics.totalQueueWaitNanoseconds,
                 maximumQueueWaitNanoseconds: metrics.maximumQueueWaitNanoseconds,
                 maximumObservedActive: metrics.maximumObservedActive,
-                maximumObservedQueued: metrics.maximumObservedQueued
+                maximumObservedQueued: metrics.maximumObservedQueued,
+                interactivePriorityBypassCount: metrics.interactivePriorityBypassCount,
+                backgroundFairnessAdmissionCount: metrics.backgroundFairnessAdmissionCount
             )
         )
     }
@@ -221,7 +245,7 @@ actor LocalAgentExecutionGovernor {
         precondition(active > 0)
         Self.increment(&metrics.releasedCount)
         while !waiters.isEmpty {
-            let waiter = waiters.removeFirst()
+            let waiter = waiters.remove(at: nextWaiterIndex())
             let queueWaitNanoseconds = DispatchTime.now().uptimeNanoseconds
                 - waiter.enqueuedAtUptimeNanoseconds
             recordAdmission(wasQueued: true, queueWaitNanoseconds: queueWaitNanoseconds)
@@ -229,6 +253,34 @@ actor LocalAgentExecutionGovernor {
             return
         }
         active -= 1
+        consecutiveInteractiveAdmissionsWhileContended = 0
+    }
+
+    private func nextWaiterIndex() -> Int {
+        let interactiveIndex = waiters.firstIndex { $0.priority == .interactive }
+        let backgroundIndex = waiters.firstIndex { $0.priority == .background }
+        switch (interactiveIndex, backgroundIndex) {
+        case let (.some(interactiveIndex), .some(backgroundIndex)):
+            if consecutiveInteractiveAdmissionsWhileContended
+                < Self.maximumInteractiveAdmissionBurst {
+                consecutiveInteractiveAdmissionsWhileContended += 1
+                if backgroundIndex < interactiveIndex {
+                    Self.increment(&metrics.interactivePriorityBypassCount)
+                }
+                return interactiveIndex
+            }
+            consecutiveInteractiveAdmissionsWhileContended = 0
+            Self.increment(&metrics.backgroundFairnessAdmissionCount)
+            return backgroundIndex
+        case let (.some(interactiveIndex), .none):
+            consecutiveInteractiveAdmissionsWhileContended = 0
+            return interactiveIndex
+        case let (.none, .some(backgroundIndex)):
+            consecutiveInteractiveAdmissionsWhileContended = 0
+            return backgroundIndex
+        case (.none, .none):
+            preconditionFailure("execution governor selected from an empty queue")
+        }
     }
 
     private func cancel(waiterID: UUID) {

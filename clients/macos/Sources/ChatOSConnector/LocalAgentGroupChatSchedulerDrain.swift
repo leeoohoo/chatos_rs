@@ -144,6 +144,9 @@ extension LocalAgentGroupChatScheduler {
         maximumRuns: Int,
         lane: LocalAgentRunLane?
     ) async throws -> [DeliveryAttemptReceipt] {
+        let executionPriority: LocalAgentExecutionPriority = lane == .manager
+            ? .interactive
+            : .background
         var results: [DeliveryAttemptReceipt] = []
         while results.count < maximumRuns, !Task.isCancelled {
             guard try await store.hasPendingDeliveries(
@@ -182,7 +185,9 @@ extension LocalAgentGroupChatScheduler {
                     try await runtime.checkExecutionAdmission()
                     let executionPermit: LocalAgentExecutionPermit?
                     if claimedWork.isEmpty {
-                        executionPermit = await executionGovernor.acquire()
+                        executionPermit = await executionGovernor.acquire(
+                            priority: executionPriority
+                        )
                     } else {
                         executionPermit = await executionGovernor.tryAcquire()
                     }
@@ -284,7 +289,9 @@ extension LocalAgentGroupChatScheduler {
         var results: [DeliveryAttemptReceipt] = []
         for run in runs where results.count < maximumRuns {
             try await runtime.checkExecutionAdmission()
-            guard let executionPermit = await executionGovernor.acquire() else { break }
+            guard let executionPermit = await executionGovernor.acquire(
+                priority: .background
+            ) else { break }
             defer { executionPermit.release() }
             let deliveryID = run.context.deliveryID
             guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else { continue }
@@ -386,6 +393,9 @@ extension LocalAgentGroupChatScheduler {
         maximumRuns: Int,
         lane: LocalAgentRunLane? = nil
     ) async throws -> [DeliveryAttemptReceipt] {
+        let executionPriority: LocalAgentExecutionPriority = lane == .manager
+            ? .interactive
+            : .background
         var results: [DeliveryAttemptReceipt] = []
         while results.count < maximumRuns {
             if Task.isCancelled { break }
@@ -404,7 +414,9 @@ extension LocalAgentGroupChatScheduler {
                     try await runtime.checkExecutionAdmission()
                     let executionPermit: LocalAgentExecutionPermit?
                     if claimedWork.isEmpty {
-                        executionPermit = await executionGovernor.acquire()
+                        executionPermit = await executionGovernor.acquire(
+                            priority: executionPriority
+                        )
                     } else {
                         executionPermit = await executionGovernor.tryAcquire()
                     }
