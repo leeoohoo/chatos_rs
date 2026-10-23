@@ -17,8 +17,16 @@ use super::models::{
 const MAXIMUM_HISTORY_BYTES: u64 = 16 * 1_024 * 1_024;
 const MAXIMUM_HISTORY_ENTRIES: usize = 1_000;
 const HISTORY_FILENAME: &str = "approval-activity.json";
-const AUTOMATIC_REVIEWER_DETAIL: &str =
-    "Windows 本机审批 Agent runtime 尚未完成准入；自动审批暂时按 macOS 降级规则转交用户确认。";
+const AUTOMATIC_REVIEWER_READY_DETAIL: &str =
+    "本机审批 Agent 已就绪；高风险、证据不完整或无法可靠判断的操作仍会转交用户确认。";
+const AUTOMATIC_REVIEWER_MODEL_REQUIRED_DETAIL: &str =
+    "请选择已启用且配置了密钥的模型，才能使用本机自动审批。";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ApprovalReviewerSelection {
+    pub(crate) model_id: String,
+    pub(crate) thinking_level: Option<String>,
+}
 
 #[derive(Clone)]
 pub(crate) struct ApprovalSettingsStore {
@@ -71,15 +79,46 @@ impl ApprovalSettingsStore {
             selected_model_id = None;
             selected_thinking_level = None;
         }
+        let automatic_reviewer_ready = selected_model_id.is_some();
         Ok(ToolApprovalSettings {
             default_mode: mode,
             selected_model_id,
             selected_thinking_level,
             models: models.iter().map(project_model).collect(),
-            automatic_reviewer_ready: false,
-            automatic_reviewer_detail: AUTOMATIC_REVIEWER_DETAIL.into(),
+            automatic_reviewer_ready,
+            automatic_reviewer_detail: if automatic_reviewer_ready {
+                AUTOMATIC_REVIEWER_READY_DETAIL.into()
+            } else {
+                AUTOMATIC_REVIEWER_MODEL_REQUIRED_DETAIL.into()
+            },
             history: self.load_history(owner_user_id)?,
         })
+    }
+
+    pub(crate) fn reviewer_selection(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Option<ApprovalReviewerSelection>, String> {
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| "审批设置暂时不可用。".to_owned())?;
+        let state = connector_state::read_owner_state(&self.app_data_directory, owner_user_id)?;
+        let Some(model_id) = optional_identifier(
+            state.get("commandApprovalModelConfigID"),
+            "commandApprovalModelConfigID",
+        )?
+        else {
+            return Ok(None);
+        };
+        let thinking_level = optional_identifier(
+            state.get("commandApprovalThinkingLevel"),
+            "commandApprovalThinkingLevel",
+        )?;
+        Ok(Some(ApprovalReviewerSelection {
+            model_id,
+            thinking_level,
+        }))
     }
 
     pub(crate) fn mode(&self, owner_user_id: &str) -> Result<ToolApprovalMode, String> {
@@ -446,7 +485,8 @@ mod tests {
         assert_eq!(snapshot.selected_model_id.as_deref(), Some("model-1"));
         assert_eq!(snapshot.selected_thinking_level.as_deref(), Some("high"));
         assert_eq!(snapshot.default_mode, ToolApprovalMode::AutoApproval);
-        assert!(!snapshot.automatic_reviewer_ready);
+        assert!(snapshot.automatic_reviewer_ready);
+        assert!(snapshot.automatic_reviewer_detail.contains("已就绪"));
         assert!(store
             .update_model("owner-1", Some("missing".into()), None, &models)
             .is_err());

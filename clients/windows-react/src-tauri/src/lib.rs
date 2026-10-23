@@ -210,6 +210,7 @@ use system_permissions::{load_system_permissions, request_system_permission};
 use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent};
 use terminal_tool_worker::TerminalToolWorker;
 use tool_approval::journal::ApprovalDecisionJournal;
+use tool_approval::reviewer::ApprovalReviewer;
 use tool_approval::settings::ApprovalSettingsStore;
 use tool_approval::{
     decide_tool_approval, list_tool_approvals, load_tool_approval_settings,
@@ -264,6 +265,7 @@ pub fn run() {
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
+        .manage(ApprovalReviewer::default())
         .manage(LocalTerminalRegistry::default())
         .manage(ConversationRuntimeSettingsManager::default())
         .manage(ProjectCreationManager::default())

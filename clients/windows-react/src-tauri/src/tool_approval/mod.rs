@@ -1,6 +1,7 @@
 pub(crate) mod journal;
 mod models;
 mod projection;
+pub(crate) mod reviewer;
 pub(crate) mod session;
 pub(crate) mod settings;
 #[cfg(test)]
@@ -13,6 +14,7 @@ use chatos_local_agent_protocol::{
 };
 use tauri::{AppHandle, State};
 
+use crate::authentication::AuthenticationManager;
 use crate::host_lifecycle::HostManager;
 use crate::platform_execution_context::{
     resolve_execution_directory, resolve_platform_execution_context, resolve_terminal_command,
@@ -25,6 +27,7 @@ use models::{
     ToolApprovalSettings,
 };
 use projection::pending_approval;
+use reviewer::{ApprovalReviewer, AutomaticReviewOutcome};
 use session::ApprovalSessionScope;
 use settings::ApprovalSettingsStore;
 
@@ -34,12 +37,15 @@ const SESSION_REVIEWER_ID: &str = "windows-react-session";
 const SESSION_APPROVAL_REASON: &str = "用户已允许当前 Windows 客户端会话执行此类操作。";
 const POLICY_REVIEWER_ID: &str = "windows-react-policy";
 const POLICY_APPROVAL_REASON: &str = "当前 Windows 审批策略允许直接执行此操作。";
+const AUTOMATIC_REVIEWER_ID: &str = "windows-react-approval-agent";
 
 #[tauri::command]
 pub async fn list_tool_approvals(
     app: AppHandle,
+    authentication: State<'_, AuthenticationManager>,
     manager: State<'_, HostManager>,
     journal: State<'_, ApprovalDecisionJournal>,
+    reviewer: State<'_, ApprovalReviewer>,
     settings: State<'_, ApprovalSettingsStore>,
     owner_user_id: String,
 ) -> Result<Vec<ToolApproval>, String> {
@@ -57,17 +63,28 @@ pub async fn list_tool_approvals(
         invocations,
     )
     .await?;
-    let invocations = reconcile_policy_decisions(
+    let (invocations, automatic_handoff) = reconcile_policy_decisions(
         &app,
+        &authentication,
         &manager,
         &journal,
+        &reviewer,
         &settings,
         &owner_user_id,
         mode,
         invocations,
     )
     .await?;
-    Ok(project_pending(invocations))
+    let mut approvals = project_pending(invocations);
+    if let Some((invocation_id, invocation_version, reason)) = automatic_handoff {
+        if let Some(approval) = approvals.iter_mut().find(|approval| {
+            approval.invocation_id == invocation_id
+                && approval.invocation_version == invocation_version
+        }) {
+            approval.reason = Some(format!("AI 自动审批已转人工：{reason}"));
+        }
+    }
+    Ok(approvals)
 }
 
 #[tauri::command]
@@ -318,18 +335,76 @@ async fn reconcile_session_decisions(
 
 async fn reconcile_policy_decisions(
     app: &AppHandle,
+    authentication: &AuthenticationManager,
     manager: &HostManager,
     journal: &ApprovalDecisionJournal,
+    reviewer: &ApprovalReviewer,
     settings: &ApprovalSettingsStore,
     owner_user_id: &str,
     mode: ToolApprovalMode,
     mut invocations: Vec<LocalAgentToolInvocationRecord>,
-) -> Result<Vec<LocalAgentToolInvocationRecord>, String> {
-    if mode != ToolApprovalMode::FullControl {
-        // The Windows approval Agent runtime has not crossed its source-of-truth gate yet.
-        // auto_approval therefore follows macOS's unavailable-reviewer fallback and remains
-        // in the Human queue instead of silently granting access.
-        return Ok(invocations);
+) -> Result<
+    (
+        Vec<LocalAgentToolInvocationRecord>,
+        Option<(String, u64, String)>,
+    ),
+    String,
+> {
+    if mode == ToolApprovalMode::RequestApproval {
+        return Ok((invocations, None));
+    }
+    if mode == ToolApprovalMode::AutoApproval {
+        let Some(invocation) = invocations.iter().find(|invocation| is_pending(invocation)) else {
+            return Ok((invocations, None));
+        };
+        let Some(approval) = pending_approval(invocation) else {
+            return Ok((invocations, None));
+        };
+        let Some(selection) = load_reviewer_selection(settings, owner_user_id).await? else {
+            return Ok((
+                invocations,
+                Some((
+                    approval.invocation_id,
+                    approval.invocation_version,
+                    "本机审批 Agent 尚未配置模型。".into(),
+                )),
+            ));
+        };
+        return match reviewer
+            .review(authentication, owner_user_id, &selection, &approval)
+            .await
+        {
+            AutomaticReviewOutcome::Handoff { reason } => Ok((
+                invocations,
+                Some((approval.invocation_id, approval.invocation_version, reason)),
+            )),
+            AutomaticReviewOutcome::Decide { decision, reason } => {
+                // A model request can take tens of seconds. Re-read Host truth after it returns;
+                // never apply a verdict to an invocation that changed while it was reviewed.
+                let current = load_pending(manager, owner_user_id).await?;
+                let Some(current) = exact_pending_invocation(
+                    &current,
+                    &approval.invocation_id,
+                    approval.invocation_version,
+                ) else {
+                    return Ok((current, None));
+                };
+                submit_decision(
+                    manager,
+                    journal,
+                    settings,
+                    owner_user_id,
+                    current,
+                    mode,
+                    decision,
+                    AUTOMATIC_REVIEWER_ID,
+                    &reason,
+                )
+                .await?;
+                invocations = load_pending(manager, owner_user_id).await?;
+                Ok((invocations, None))
+            }
+        };
     }
     let mut changed = false;
     for invocation in invocations
@@ -359,7 +434,7 @@ async fn reconcile_policy_decisions(
     if changed {
         invocations = load_pending(manager, owner_user_id).await?;
     }
-    Ok(invocations)
+    Ok((invocations, None))
 }
 
 async fn submit_decision(
@@ -440,6 +515,17 @@ async fn load_approval_mode(
     let store = settings.clone();
     let owner = owner_user_id.to_owned();
     tauri::async_runtime::spawn_blocking(move || store.mode(&owner))
+        .await
+        .map_err(|_| "审批设置任务异常退出。".to_owned())?
+}
+
+async fn load_reviewer_selection(
+    settings: &ApprovalSettingsStore,
+    owner_user_id: &str,
+) -> Result<Option<settings::ApprovalReviewerSelection>, String> {
+    let store = settings.clone();
+    let owner = owner_user_id.to_owned();
+    tauri::async_runtime::spawn_blocking(move || store.reviewer_selection(&owner))
         .await
         .map_err(|_| "审批设置任务异常退出。".to_owned())?
 }
@@ -591,6 +677,18 @@ fn is_pending(invocation: &LocalAgentToolInvocationRecord) -> bool {
         && invocation.approval_status == LocalAgentToolApprovalStatus::Pending
         && invocation.status == LocalAgentToolStatus::Pending
         && invocation.version > 0
+}
+
+fn exact_pending_invocation<'a>(
+    invocations: &'a [LocalAgentToolInvocationRecord],
+    invocation_id: &str,
+    expected_version: u64,
+) -> Option<&'a LocalAgentToolInvocationRecord> {
+    invocations.iter().find(|invocation| {
+        invocation.invocation_id == invocation_id
+            && invocation.version == expected_version
+            && is_pending(invocation)
+    })
 }
 
 fn required(field: &str, value: String) -> Result<String, String> {

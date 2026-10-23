@@ -5,6 +5,7 @@ use chatos_local_agent_protocol::{
 use serde_json::json;
 
 use super::{
+    exact_pending_invocation,
     models::{ToolApprovalDecision, ToolApprovalMode},
     policy_auto_approval_candidate, project_pending,
 };
@@ -198,6 +199,20 @@ fn full_control_never_auto_approves_unqualified_or_non_terminal_tools() {
         ToolApprovalMode::FullControl,
         &already_approved,
     ));
+}
+
+#[test]
+fn automatic_review_verdict_is_bound_to_the_exact_pending_version() {
+    let original = invocation("terminal", "execute_command", json!({}));
+    assert!(exact_pending_invocation(std::slice::from_ref(&original), "terminal", 2,).is_some());
+
+    let mut newer = original.clone();
+    newer.version = 3;
+    assert!(exact_pending_invocation(&[newer], "terminal", 2).is_none());
+
+    let mut resolved = original;
+    resolved.approval_status = LocalAgentToolApprovalStatus::Approved;
+    assert!(exact_pending_invocation(&[resolved], "terminal", 2).is_none());
 }
 
 fn invocation(
