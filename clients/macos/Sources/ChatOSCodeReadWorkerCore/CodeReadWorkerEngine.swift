@@ -50,6 +50,7 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
 
 public enum ChatOSCodeReadWorkerEngine {
     fileprivate static let maximumReadBytes = 2 * 1_024 * 1_024
+    fileprivate static let maximumProjectDirectoryEntries = 5_000
     fileprivate static let maximumSearchVisits = 20_000
     fileprivate static let ignoredGlobs = [
         "!.git/**", "!.build/**", "!.cache/**", "!.next/**", "!.idea/**",
@@ -102,6 +103,10 @@ public enum ChatOSCodeReadWorkerEngine {
                 mapped["pattern"] = .string(query)
             }
             return try context.searchText(mapped)
+        case "project_list_v1":
+            return try context.projectList(request.arguments)
+        case "project_search_entries_v1":
+            return try context.projectSearchEntries(request.arguments)
         default:
             throw CodeReadWorkerCoreError.unsupportedTool(request.operation)
         }
@@ -269,6 +274,13 @@ private struct Context {
         let pattern = try requiredString(arguments, "pattern")
         let path = try normalizedToolPath(arguments.string("path") ?? ".")
         let maximum = min(max(Int(arguments.number("max_results") ?? 200), 1), 500)
+        let caseInsensitive = arguments.bool("case_insensitive") ?? false
+        let partialOnTimeout = arguments.bool("partial_on_timeout") ?? false
+        let maximumLineCharacters = min(
+            max(Int(arguments.number("max_line_characters") ?? 400), 100),
+            2_000
+        )
+        let searchDeadline = operationDeadline(arguments)
         let start = try resolveExisting(path)
         let search = if let ripgrepURL {
             try RipgrepSearch.search(
@@ -277,10 +289,21 @@ private struct Context {
                 start: start,
                 root: root,
                 maximumResults: maximum,
-                deadlineUnixMilliseconds: deadlineUnixMilliseconds
+                caseInsensitive: caseInsensitive,
+                maximumLineCharacters: maximumLineCharacters,
+                partialOnTimeout: partialOnTimeout,
+                deadlineUnixMilliseconds: searchDeadline
             )
         } else {
-            try fallbackSearch(pattern: pattern, start: start, maximum: maximum)
+            try fallbackSearch(
+                pattern: pattern,
+                start: start,
+                maximum: maximum,
+                caseInsensitive: caseInsensitive,
+                maximumLineCharacters: maximumLineCharacters,
+                partialOnTimeout: partialOnTimeout,
+                searchDeadline: searchDeadline
+            )
         }
         return .object([
             "count": .number(Double(search.results.count)),
@@ -292,14 +315,22 @@ private struct Context {
     private func fallbackSearch(
         pattern: String,
         start: URL,
-        maximum: Int
+        maximum: Int,
+        caseInsensitive: Bool,
+        maximumLineCharacters: Int,
+        partialOnTimeout: Bool,
+        searchDeadline: Int64
     ) throws -> (results: [CodeReadWorkerJSONValue], truncated: Bool) {
         var stack = [start]
         var visits = 0
         var results: [CodeReadWorkerJSONValue] = []
         var truncated = false
         while let url = stack.popLast() {
-            try checkDeadline()
+            if deadlinePassed(searchDeadline), partialOnTimeout {
+                truncated = true
+                break
+            }
+            try checkDeadline(searchDeadline)
             guard visits < ChatOSCodeReadWorkerEngine.maximumSearchVisits else {
                 truncated = true
                 break
@@ -322,12 +353,18 @@ private struct Context {
             guard values?.isRegularFile == true,
                   (values?.fileSize ?? Int.max) <= ChatOSCodeReadWorkerEngine.maximumReadBytes,
                   let file = try? readTextFile(url: url) else { continue }
-            for (index, line) in normalizedLines(file.content).enumerated()
-            where line.contains(pattern) {
+            let options: String.CompareOptions = caseInsensitive
+                ? [.caseInsensitive, .diacriticInsensitive]
+                : []
+            for (index, line) in normalizedLines(file.content).enumerated() {
+                guard let range = line.range(of: pattern, options: options) else { continue }
                 results.append(.object([
                     "path": .string(relativePath(url)),
                     "line": .number(Double(index + 1)),
-                    "text": .string(String(line.prefix(400))),
+                    "column": .number(Double(
+                        line.distance(from: line.startIndex, to: range.lowerBound) + 1
+                    )),
+                    "text": .string(String(line.prefix(maximumLineCharacters))),
                 ]))
                 if results.count >= maximum {
                     truncated = true
@@ -336,6 +373,162 @@ private struct Context {
             }
         }
         return (results, truncated)
+    }
+
+    func projectList(
+        _ arguments: [String: CodeReadWorkerJSONValue]
+    ) throws -> CodeReadWorkerJSONValue {
+        try checkDeadline()
+        let path = try normalizedToolPath(arguments.string("path") ?? ".")
+        let maximum = min(
+            max(Int(arguments.number("max_entries") ?? 5_000), 1),
+            ChatOSCodeReadWorkerEngine.maximumProjectDirectoryEntries
+        )
+        let directory = try resolveExisting(path)
+        let directoryValues = try directory.resourceValues(forKeys: [.isDirectoryKey])
+        guard directoryValues.isDirectory == true else {
+            throw CodeReadWorkerCoreError.notDirectory
+        }
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
+            .fileSizeKey, .contentModificationDateKey,
+        ]
+        let enumerated = try directChildren(
+            of: directory,
+            keys: keys,
+            maximumEntries: maximum,
+            deadline: deadlineUnixMilliseconds
+        )
+        let entries = try enumerated.urls.compactMap { url -> WorkspaceEntry? in
+            try checkDeadline()
+            let values = try url.resourceValues(forKeys: keys)
+            guard values.isSymbolicLink != true else { return nil }
+            return WorkspaceEntry(
+                name: url.lastPathComponent,
+                path: relativePath(url),
+                isDirectory: values.isDirectory == true,
+                size: Int64(values.fileSize ?? 0),
+                modifiedAt: values.contentModificationDate.map {
+                    Int64($0.timeIntervalSince1970 * 1_000)
+                }
+            )
+        }.sorted {
+            if $0.isDirectory != $1.isDirectory { return $0.isDirectory && !$1.isDirectory }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        let relative = relativePath(directory)
+        let parent: CodeReadWorkerJSONValue = directory.path == root.path
+            ? .null
+            : .string(relativePath(directory.deletingLastPathComponent()))
+        return .object([
+            "path": .string(relative),
+            "parent": parent,
+            "entries": .array(entries.map(\.jsonValue)),
+            "truncated": .bool(enumerated.truncated),
+        ])
+    }
+
+    func projectSearchEntries(
+        _ arguments: [String: CodeReadWorkerJSONValue]
+    ) throws -> CodeReadWorkerJSONValue {
+        let path = try normalizedToolPath(arguments.string("path") ?? ".")
+        let needle = try requiredString(arguments, "query")
+        let maximum = min(max(Int(arguments.number("max_results") ?? 500), 1), 500)
+        let searchDeadline = operationDeadline(
+            arguments,
+            defaultDurationMilliseconds: 3_000
+        )
+        let start = try resolveExisting(path)
+        guard try start.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+            throw CodeReadWorkerCoreError.notDirectory
+        }
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey, .isSymbolicLinkKey,
+            .fileSizeKey, .contentModificationDateKey,
+        ]
+        var stack = [start]
+        var matches: [WorkspaceEntry] = []
+        var visitedDirectories = 0
+        var visitedEntries = 0
+        var truncated = false
+
+        while let directory = stack.popLast() {
+            guard !deadlinePassed(searchDeadline),
+                  visitedDirectories < ChatOSCodeReadWorkerEngine.maximumSearchVisits else {
+                truncated = true
+                break
+            }
+            visitedDirectories += 1
+            let remainingVisits = ChatOSCodeReadWorkerEngine.maximumSearchVisits - visitedEntries
+            guard remainingVisits > 0 else {
+                truncated = true
+                break
+            }
+            let enumerated = try? directChildren(
+                of: directory,
+                keys: keys,
+                maximumEntries: remainingVisits,
+                deadline: searchDeadline
+            )
+            let urls = enumerated?.urls ?? []
+            visitedEntries += urls.count
+            truncated = truncated || enumerated?.truncated == true
+                || deadlinePassed(searchDeadline)
+            for url in urls {
+                guard !deadlinePassed(searchDeadline), matches.count < maximum else {
+                    truncated = true
+                    break
+                }
+                let values = try? url.resourceValues(forKeys: keys)
+                guard values?.isSymbolicLink != true else { continue }
+                let isDirectory = values?.isDirectory == true
+                if isDirectory, !shouldSkip(url) { stack.append(url) }
+                let relative = relativePath(url)
+                guard url.lastPathComponent.localizedCaseInsensitiveContains(needle)
+                        || relative.localizedCaseInsensitiveContains(needle) else { continue }
+                matches.append(.init(
+                    name: url.lastPathComponent,
+                    path: relative,
+                    isDirectory: isDirectory,
+                    size: Int64(values?.fileSize ?? 0),
+                    modifiedAt: values?.contentModificationDate.map {
+                        Int64($0.timeIntervalSince1970 * 1_000)
+                    }
+                ))
+            }
+            if truncated { break }
+        }
+        matches.sort {
+            $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending
+        }
+        return .object([
+            "matches": .array(matches.map(\.jsonValue)),
+            "visited_dirs": .number(Double(visitedDirectories)),
+            "visited_entries": .number(Double(visitedEntries)),
+            "truncated": .bool(truncated),
+        ])
+    }
+
+    private func directChildren(
+        of directory: URL,
+        keys: Set<URLResourceKey>,
+        maximumEntries: Int,
+        deadline: Int64
+    ) throws -> (urls: [URL], truncated: Bool) {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsSubdirectoryDescendants],
+            errorHandler: { _, _ in false }
+        ) else { throw CodeReadWorkerCoreError.notDirectory }
+        var urls: [URL] = []
+        urls.reserveCapacity(min(maximumEntries, 1_024))
+        while let url = enumerator.nextObject() as? URL {
+            try checkDeadline(deadline)
+            if urls.count >= maximumEntries { return (urls, true) }
+            urls.append(url)
+        }
+        return (urls, false)
     }
 
     private func normalizedToolPath(_ rawPath: String) throws -> String {
@@ -471,10 +664,26 @@ private struct Context {
         return (data.count, content, digest)
     }
 
-    private func checkDeadline() throws {
-        if Int64(Date().timeIntervalSince1970 * 1_000) >= deadlineUnixMilliseconds {
+    private func checkDeadline(_ deadline: Int64? = nil) throws {
+        if deadlinePassed(deadline ?? deadlineUnixMilliseconds) {
             throw CodeReadWorkerCoreError.deadlineExceeded
         }
+    }
+
+    private func deadlinePassed(_ deadline: Int64) -> Bool {
+        Int64(Date().timeIntervalSince1970 * 1_000) >= deadline
+    }
+
+    private func operationDeadline(
+        _ arguments: [String: CodeReadWorkerJSONValue],
+        defaultDurationMilliseconds: Int? = nil
+    ) -> Int64 {
+        let duration = arguments.number("timeout_ms").map {
+            min(max(Int64($0), 50), 60_000)
+        } ?? defaultDurationMilliseconds.map(Int64.init)
+        guard let duration else { return deadlineUnixMilliseconds }
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        return min(deadlineUnixMilliseconds, now + duration)
     }
 
     private func contains(_ url: URL) -> Bool {
@@ -533,6 +742,9 @@ private enum RipgrepSearch {
         start: URL,
         root: URL,
         maximumResults: Int,
+        caseInsensitive: Bool,
+        maximumLineCharacters: Int,
+        partialOnTimeout: Bool,
         deadlineUnixMilliseconds: Int64
     ) throws -> (results: [CodeReadWorkerJSONValue], truncated: Bool) {
         let relativePath = relative(start, to: root)
@@ -542,8 +754,10 @@ private enum RipgrepSearch {
         rg.arguments = [
             "--json", "--fixed-strings", "--hidden", "--no-messages",
             "--max-filesize", String(ChatOSCodeReadWorkerEngine.maximumReadBytes),
-            "--max-columns", "1000", "--max-columns-preview",
-        ] + ChatOSCodeReadWorkerEngine.ignoredGlobs.flatMap { ["--glob", $0] }
+            "--max-columns", String(max(1_000, maximumLineCharacters)),
+            "--max-columns-preview",
+        ] + (caseInsensitive ? ["--ignore-case"] : [])
+            + ChatOSCodeReadWorkerEngine.ignoredGlobs.flatMap { ["--glob", $0] }
             + ["--", pattern, relativePath]
         let limiter = Process()
         limiter.executableURL = URL(fileURLWithPath: "/usr/bin/head")
@@ -574,13 +788,18 @@ private enum RipgrepSearch {
             if rg.isRunning { _ = Darwin.kill(rg.processIdentifier, SIGKILL) }
             if limiter.isRunning { _ = Darwin.kill(limiter.processIdentifier, SIGKILL) }
         }
+        var timedOut = false
         while limiter.isRunning {
             if Int64(Date().timeIntervalSince1970 * 1_000) >= deadlineUnixMilliseconds {
                 _ = Darwin.kill(rg.processIdentifier, SIGTERM)
                 _ = Darwin.kill(limiter.processIdentifier, SIGTERM)
-                throw CodeReadWorkerCoreError.deadlineExceeded
+                timedOut = true
+                break
             }
             usleep(5_000)
+        }
+        if timedOut, !partialOnTimeout {
+            throw CodeReadWorkerCoreError.deadlineExceeded
         }
         let rgDeadline = Date().addingTimeInterval(0.5)
         while rg.isRunning, Date() < rgDeadline { usleep(5_000) }
@@ -603,19 +822,35 @@ private enum RipgrepSearch {
                   case let .object(lines)? = data["lines"] else { continue }
             let text = (lines.string("text") ?? "").trimmingCharacters(in: .newlines)
             let normalizedPath = rawPath.hasPrefix("./") ? String(rawPath.dropFirst(2)) : rawPath
+            let column = firstMatchColumn(data: data, text: text)
             matches.append(.object([
                 "path": .string(normalizedPath),
                 "line": .number(lineNumber),
-                "text": .string(String(text.prefix(400))),
+                "column": .number(Double(column)),
+                "text": .string(String(text.prefix(maximumLineCharacters))),
             ]))
         }
-        return (matches, snapshot.discarded || matches.count >= maximumResults)
+        return (
+            matches,
+            snapshot.discarded || matches.count >= maximumResults || timedOut
+        )
     }
 
     private static func relative(_ url: URL, to root: URL) -> String {
         if url.path == root.path { return "." }
         let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
         return url.path.hasPrefix(prefix) ? String(url.path.dropFirst(prefix.count)) : "."
+    }
+
+    private static func firstMatchColumn(
+        data: [String: CodeReadWorkerJSONValue],
+        text: String
+    ) -> Int {
+        guard case let .array(submatches)? = data["submatches"],
+              case let .object(first)? = submatches.first,
+              let byteOffset = first.number("start"), byteOffset >= 0 else { return 1 }
+        let prefix = text.utf8.prefix(Int(byteOffset))
+        return String(decoding: prefix, as: UTF8.self).count + 1
     }
 }
 
@@ -655,6 +890,24 @@ private struct Entry {
             "type": .string(isDirectory ? "dir" : "file"),
             "size": .number(Double(size)),
             "mtime_ms": modifiedAt.map { .number(Double($0)) } ?? .null,
+        ])
+    }
+}
+
+private struct WorkspaceEntry {
+    let name: String
+    let path: String
+    let isDirectory: Bool
+    let size: Int64
+    let modifiedAt: Int64?
+
+    var jsonValue: CodeReadWorkerJSONValue {
+        .object([
+            "name": .string(name),
+            "path": .string(path),
+            "is_dir": .bool(isDirectory),
+            "size": .number(Double(size)),
+            "modified_at": modifiedAt.map { .number(Double($0)) } ?? .null,
         ])
     }
 }

@@ -11,7 +11,7 @@ enum NativeCodeReadWorkerBridge {
         defaultToolRoot: String?,
         client: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
     ) async throws -> NativeJSONValue {
-        guard NativeMCPCodeReadTools.workerToolNames.contains(name) else {
+        guard ChatOSCodeReadWorkerProtocol.operations.contains(name) else {
             throw CodeReadWorkerProcessClientError.invalidResponse
         }
         let result = try await client.execute(

@@ -1,20 +1,30 @@
 import AppKit
+import ChatOSCodeReadWorkerClient
 import ChatOSCore
 import Foundation
 
 public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendable {
     private let connector: NativeLocalConnectorService
+    private let codeReadWorker: any CodeReadWorkerExecuting
 
-    public init(connector: NativeLocalConnectorService) {
+    public init(
+        connector: NativeLocalConnectorService,
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
+    ) {
         self.connector = connector
+        self.codeReadWorker = codeReadWorker
     }
 
     public func listEntries(path: String, forceRefresh: Bool) async throws -> ProjectDirectoryListing {
         let resolved = try await connector.resolveProjectPath(path)
-        let value = try await Self.runDetached {
-            try NativeWorkspaceFilesystem(workspace: resolved.workspace)
-                .list(path: resolved.relativePath, includeFiles: true)
-        }
+        let value = try await executeReadWorker(
+            operation: "project_list_v1",
+            arguments: [
+                "path": .string(resolved.relativePath),
+                "max_entries": .number(5_000),
+            ],
+            resolved: resolved
+        )
         let object = try value.objectValue()
         let entries = try object.array("entries").map { item -> ProjectFileEntry in
             let entry = try item.objectValue()
@@ -42,10 +52,16 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     public func searchEntries(path: String, query: String, limit: Int) async throws -> [ProjectFileEntry] {
         let resolved = try await connector.resolveProjectPath(path)
-        let value = try await Self.runDetached {
-            try NativeWorkspaceFilesystem(workspace: resolved.workspace)
-                .searchEntries(path: resolved.relativePath, query: query, limit: limit)
-        }
+        let value = try await executeReadWorker(
+            operation: "project_search_entries_v1",
+            arguments: [
+                "path": .string(resolved.relativePath),
+                "query": .string(query),
+                "max_results": .number(Double(limit)),
+                "timeout_ms": .number(3_000),
+            ],
+            resolved: resolved
+        )
         return try value.objectValue().array("matches").map { item in
             let entry = try item.objectValue()
             let relative = try entry.string("path")
@@ -63,11 +79,20 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     public func searchContent(path: String, query: String, limit: Int) async throws -> [ProjectFileContentMatch] {
         let resolved = try await connector.resolveProjectPath(path)
-        let value = try await Self.runDetached {
-            try NativeWorkspaceFilesystem(workspace: resolved.workspace)
-                .searchContent(path: resolved.relativePath, query: query, limit: limit)
-        }
-        return try value.objectValue().array("matches").map { item in
+        let value = try await executeReadWorker(
+            operation: "search_text",
+            arguments: [
+                "path": .string(resolved.relativePath),
+                "pattern": .string(query),
+                "max_results": .number(Double(limit)),
+                "case_insensitive": .bool(true),
+                "timeout_ms": .number(3_000),
+                "partial_on_timeout": .bool(true),
+                "max_line_characters": .number(2_000),
+            ],
+            resolved: resolved
+        )
+        return try value.objectValue().array("results").map { item in
             let match = try item.objectValue()
             let relative = try match.string("path")
             return ProjectFileContentMatch(
@@ -155,6 +180,24 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     private func childPath(parent: String, name: String) -> String {
         parent == "." ? name : parent + "/" + name
+    }
+
+    private func executeReadWorker(
+        operation: String,
+        arguments: [String: NativeJSONValue],
+        resolved: NativeResolvedProjectPath
+    ) async throws -> NativeJSONValue {
+        try await NativeCodeReadWorkerBridge.execute(
+            name: operation,
+            arguments: arguments,
+            projectRoot: URL(
+                fileURLWithPath: resolved.workspace.absoluteRoot,
+                isDirectory: true
+            ),
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            client: codeReadWorker
+        )
     }
 
     private static func runDetached<Value: Sendable>(

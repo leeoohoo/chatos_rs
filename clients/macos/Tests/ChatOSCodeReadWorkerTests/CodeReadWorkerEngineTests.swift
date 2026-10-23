@@ -94,6 +94,58 @@ final class CodeReadWorkerEngineTests: XCTestCase {
         )
         XCTAssertThrowsError(try ChatOSCodeReadWorkerEngine.execute(expired))
     }
+
+    func testProjectBrowserOperationsPreserveWorkspaceShapesAndSearchColumns() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let project = fixture.root.appendingPathComponent("Nested", isDirectory: true)
+        let sources = project.appendingPathComponent("Sources", isDirectory: true)
+        let ignored = project.appendingPathComponent("node_modules", isDirectory: true)
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: ignored, withIntermediateDirectories: true)
+        try Data("let MixedToken = 1\n".utf8)
+            .write(to: sources.appendingPathComponent("MixedToken.swift"))
+        try Data("MixedToken\n".utf8)
+            .write(to: ignored.appendingPathComponent("MixedToken.txt"))
+
+        let listing = try fixture.execute(
+            "project_list_v1",
+            ["path": .string("Nested")]
+        ).object
+        XCTAssertEqual(try listing.string("path"), "Nested")
+        XCTAssertEqual(try listing.string("parent"), ".")
+        let sourceEntry = try XCTUnwrap(try listing.array("entries").first {
+            try $0.object.string("name") == "Sources"
+        })
+        XCTAssertEqual(try sourceEntry.object.string("path"), "Nested/Sources")
+        XCTAssertTrue(try sourceEntry.object.bool("is_dir"))
+
+        let entries = try fixture.execute(
+            "project_search_entries_v1",
+            [
+                "path": .string("Nested"),
+                "query": .string("mixedtoken"),
+                "max_results": .number(500),
+            ]
+        ).object
+        XCTAssertEqual(
+            try entries.array("matches").map { try $0.object.string("path") },
+            ["Nested/Sources/MixedToken.swift"]
+        )
+
+        let content = try fixture.execute(
+            "search_text",
+            [
+                "path": .string("Nested"),
+                "pattern": .string("mixedtoken"),
+                "case_insensitive": .bool(true),
+                "max_results": .number(500),
+            ]
+        ).object
+        let contentMatch = try XCTUnwrap(try content.array("results").first)
+        XCTAssertEqual(try contentMatch.object.string("path"), "Nested/Sources/MixedToken.swift")
+        XCTAssertEqual(try contentMatch.object.number("column"), 5)
+    }
 }
 
 private struct Fixture {
@@ -164,6 +216,11 @@ private extension Dictionary where Key == String, Value == CodeReadWorkerJSONVal
 
     func array(_ key: String) throws -> [CodeReadWorkerJSONValue] {
         guard case let .array(value)? = self[key] else { throw ShapeError.invalid }
+        return value
+    }
+
+    func bool(_ key: String) throws -> Bool {
+        guard case let .bool(value)? = self[key] else { throw ShapeError.invalid }
         return value
     }
 }

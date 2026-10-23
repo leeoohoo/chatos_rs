@@ -44,6 +44,27 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             return XCTFail("real worker returned an invalid read payload")
         }
         XCTAssertEqual(content, "isolated-content\n")
+
+        let listing = try await CodeReadWorkerProcessClient(
+            executableURL: executable,
+            timeout: 5
+        ).execute(
+            operation: "project_list_v1",
+            arguments: ["path": .string(".")],
+            projectRoot: fixture.root,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            ripgrepURL: nil
+        )
+        guard case let .object(listingPayload) = listing,
+              case let .array(entries)? = listingPayload["entries"] else {
+            return XCTFail("real worker returned an invalid project listing")
+        }
+        XCTAssertTrue(entries.contains { entry in
+            guard case let .object(fields) = entry,
+                  case let .string(name)? = fields["name"] else { return false }
+            return name == "README.md"
+        })
     }
 
     func testHungReadWorkerDoesNotBlockIndependentReadWorker() async throws {
@@ -123,7 +144,7 @@ private struct WorkerFixture {
         let script = """
         #!/bin/zsh
         IFS= read -r hello
-        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":1,"worker_build_version":"code-read-worker-v1","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files"],"maximum_inline_bytes":16777216,"error":null}'
+        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":1,"worker_build_version":"code-read-worker-v1","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files","project_list_v1","project_search_entries_v1"],"maximum_inline_bytes":16777216,"error":null}'
         IFS= read -r request
         \(behavior)
         """

@@ -165,6 +165,7 @@ let package = Package(
                 "ChatOSMediaWorkerClient",
                 "ChatOSMediaWorkerProtocol",
                 "ChatOSCodeReadWorkerClient",
+                "ChatOSCodeReadWorkerCore",
                 "ChatOSCodeReadWorkerProtocol",
             ],
             resources: [.copy("Fixtures")]
