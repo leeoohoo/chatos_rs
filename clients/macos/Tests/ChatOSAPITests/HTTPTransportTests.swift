@@ -1,5 +1,6 @@
 @testable import ChatOSAPI
 import ChatOSAgentRuntime
+import ChatOSNetworking
 import Darwin
 import Foundation
 import XCTest
@@ -63,6 +64,75 @@ final class HTTPTransportTests: XCTestCase {
         } catch ChatOSAPIError.invalidResponse {
             // Expected: upload and response buffering share the same response cap.
         }
+    }
+
+    func testFileUploadAndLargeDownloadUseSharedTransferAdmission() async throws {
+        let governor = ClientLargeTransferGovernor(limit: 1)
+        let blocker = try await governor.acquire(context: .init(
+            taskID: "blocker",
+            direction: .upload
+        ))
+        let bodyURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "governed-upload-\(UUID().uuidString).json"
+        )
+        let uploadBody = Data("governed".utf8)
+        try uploadBody.write(to: bodyURL)
+        defer { try? FileManager.default.removeItem(at: bodyURL) }
+        BoundedResponseURLProtocol.setBody(Data("ok".utf8))
+        let transport = transport(governor: governor)
+        let upload = Task {
+            try await transport.sendFileBacked(.init(
+                url: URL(string: "https://bounded-response.test/governed-upload")!,
+                method: "POST",
+                bodyFile: .init(url: bodyURL, byteCount: uploadBody.count),
+                maximumResponseBytes: 1_024,
+                transferTaskID: "media-upload",
+                transferOwnerSessionID: "session-a"
+            ))
+        }
+        try await waitForTransferQueue(governor, count: 1)
+        let queuedUpload = await governor.snapshot()
+        XCTAssertEqual(
+            queuedUpload.queued,
+            [.init(taskID: "media-upload", ownerSessionID: "session-a", direction: .upload)]
+        )
+        await blocker.releaseAndWait()
+        let uploadResponse = try await upload.value
+        XCTAssertEqual(uploadResponse.body, Data("ok".utf8))
+
+        let downloadBlocker = try await governor.acquire(context: .init(
+            taskID: "download-blocker",
+            direction: .upload
+        ))
+        BoundedResponseURLProtocol.setBody(Data("video".utf8))
+        let download = Task {
+            try await transport.stream(.init(
+                url: URL(string: "https://bounded-response.test/governed-download")!,
+                method: "GET",
+                maximumResponseBytes: 512 * 1_024 * 1_024,
+                transferTaskID: "video:job-a:content",
+                transferOwnerSessionID: "session-a"
+            ))
+        }
+        try await waitForTransferQueue(governor, count: 1)
+        let queuedDownload = await governor.snapshot()
+        XCTAssertEqual(
+            queuedDownload.queued,
+            [.init(
+                taskID: "video:job-a:content",
+                ownerSessionID: "session-a",
+                direction: .download
+            )]
+        )
+        await downloadBlocker.releaseAndWait()
+        let response = try await download.value
+        let activeDownload = await governor.snapshot()
+        XCTAssertEqual(activeDownload.active.first?.direction, .download)
+        var received = Data()
+        for try await chunk in response.body { received.append(chunk) }
+        XCTAssertEqual(received, Data("video".utf8))
+        let completedDownload = await governor.snapshot()
+        XCTAssertTrue(completedDownload.active.isEmpty)
     }
 
     func testResponseBodyFileWriterStreamsAndRemovesOversizedPartialFile() async throws {
@@ -406,10 +476,26 @@ final class HTTPTransportTests: XCTestCase {
         await fulfillment(of: [stopped], timeout: 2)
     }
 
-    private func transport() -> URLSessionHTTPTransport {
+    private func transport(
+        governor: ClientLargeTransferGovernor = .shared
+    ) -> URLSessionHTTPTransport {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [BoundedResponseURLProtocol.self]
-        return URLSessionHTTPTransport(session: URLSession(configuration: configuration))
+        return URLSessionHTTPTransport(
+            session: URLSession(configuration: configuration),
+            largeTransferGovernor: governor
+        )
+    }
+
+    private func waitForTransferQueue(
+        _ governor: ClientLargeTransferGovernor,
+        count: Int
+    ) async throws {
+        for _ in 0..<200 {
+            if await governor.snapshot().queued.count == count { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Timed out waiting for large-transfer admission")
     }
 
     private func makeTemporaryDirectory(prefix: String) throws -> URL {

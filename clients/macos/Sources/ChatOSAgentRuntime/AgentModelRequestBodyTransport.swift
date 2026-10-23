@@ -8,10 +8,18 @@ enum AgentModelRequestBodyTransport {
         bodyFile: AgentModelRequestBodyFile
     ) async throws -> (Data, Int) {
         try validate(bodyFile)
+        let transferPermit = try await ClientLargeTransferGovernor.shared.acquire(
+            context: .init(
+                taskID: "agent-model-upload:\(UUID().uuidString.lowercased())",
+                direction: .upload
+            )
+        )
+        defer { transferPermit.release() }
         let (data, response) = try await BoundedURLSessionDataLoader.upload(
             request: request,
             fileURL: bodyFile.url,
-            maximumBytes: 2 * 1_024 * 1_024
+            maximumBytes: 2 * 1_024 * 1_024,
+            transferPermit: transferPermit
         )
         guard let response = response as? HTTPURLResponse else {
             throw AgentRuntimeError.invalidResponse
@@ -24,10 +32,22 @@ enum AgentModelRequestBodyTransport {
         bodyFile: AgentModelRequestBodyFile
     ) async throws -> AgentHTTPStreamResponse {
         try validate(bodyFile)
-        return try await AgentURLSessionStream.open(
-            request,
-            bodyFileURL: bodyFile.url
+        let transferPermit = try await ClientLargeTransferGovernor.shared.acquire(
+            context: .init(
+                taskID: "agent-model-stream-upload:\(UUID().uuidString.lowercased())",
+                direction: .upload
+            )
         )
+        do {
+            return try await AgentURLSessionStream.open(
+                request,
+                bodyFileURL: bodyFile.url,
+                transferPermit: transferPermit
+            )
+        } catch {
+            transferPermit.release()
+            throw error
+        }
     }
 
     static func materialize(

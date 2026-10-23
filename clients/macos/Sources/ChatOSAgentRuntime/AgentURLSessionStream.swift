@@ -17,9 +17,10 @@ enum AgentURLSessionStream {
     static func open(
         _ request: URLRequest,
         bodyFileURL: URL,
+        transferPermit: ClientLargeTransferPermit? = nil,
         configuration: URLSessionConfiguration = URLSession.shared.configuration
     ) async throws -> AgentHTTPStreamResponse {
-        try await AgentFileUploadStreamLoader().open(
+        try await AgentFileUploadStreamLoader(transferPermit: transferPermit).open(
             request,
             bodyFileURL: bodyFileURL,
             configuration: configuration
@@ -38,6 +39,11 @@ private final class AgentFileUploadStreamLoader: NSObject, URLSessionDataDelegat
     private var responseTaskSuspended = false
     private var responseDelivered = false
     private var completed = false
+    private var transferPermit: ClientLargeTransferPermit?
+
+    init(transferPermit: ClientLargeTransferPermit?) {
+        self.transferPermit = transferPermit
+    }
 
     func open(
         _ request: URLRequest,
@@ -161,6 +167,18 @@ private final class AgentFileUploadStreamLoader: NSObject, URLSessionDataDelegat
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
+        didSendBodyData bytesSent: Int64,
+        totalBytesSent: Int64,
+        totalBytesExpectedToSend: Int64
+    ) {
+        guard totalBytesExpectedToSend > 0,
+              totalBytesSent >= totalBytesExpectedToSend else { return }
+        releaseTransferPermit()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
         didCompleteWithError error: (any Error)?
     ) {
         finish(error: error, cancelTask: false)
@@ -177,16 +195,19 @@ private final class AgentFileUploadStreamLoader: NSObject, URLSessionDataDelegat
         let bodyBuffer = self.bodyBuffer
         let task = self.task
         let session = self.session
+        let transferPermit = self.transferPermit
         self.responseContinuation = nil
         self.bodyBuffer = nil
         self.bodyStream = nil
         self.task = nil
         self.session = nil
+        self.transferPermit = nil
         let responseDelivered = self.responseDelivered
         lock.unlock()
 
         if cancelTask { task?.cancel() }
         session?.finishTasksAndInvalidate()
+        transferPermit?.release()
         bodyBuffer?.finish(error: error)
         if responseDelivered {
             return
@@ -217,6 +238,14 @@ private final class AgentFileUploadStreamLoader: NSObject, URLSessionDataDelegat
         responseTaskSuspended = false
         task.resume()
         lock.unlock()
+    }
+
+    private func releaseTransferPermit() {
+        lock.lock()
+        let transferPermit = self.transferPermit
+        self.transferPermit = nil
+        lock.unlock()
+        transferPermit?.release()
     }
 }
 

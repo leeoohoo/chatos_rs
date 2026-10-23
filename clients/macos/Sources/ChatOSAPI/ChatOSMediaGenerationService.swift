@@ -17,6 +17,8 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
     }
 
     private func sendProviderRequest(_ request: HTTPRequest) async throws -> HTTPResponse {
+        var request = request
+        request.transferOwnerSessionID = authenticationSessionID?.uuidString.lowercased()
         let disposableBodyFile = request.bodyFile.flatMap { $0.deleteWhenDone ? $0 : nil }
         defer {
             disposableBodyFile?.removeIfNeeded()
@@ -39,6 +41,8 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
     }
 
     private func streamProviderRequest(_ request: HTTPRequest) async throws -> HTTPStreamResponse {
+        var request = request
+        request.transferOwnerSessionID = authenticationSessionID?.uuidString.lowercased()
         try Task.checkCancellation()
         if let authenticationSessionID {
             guard try await client.currentAuthenticationSessionID() == authenticationSessionID else {
@@ -240,7 +244,8 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
                 method: "GET",
                 headers: ["Accept": "video/mp4"],
                 timeoutInterval: 10 * 60,
-                maximumResponseBytes: 512 * 1_024 * 1_024
+                maximumResponseBytes: 512 * 1_024 * 1_024,
+                transferTaskID: "video:\(job.id):content"
             )
         } else {
             contentRequest = HTTPRequest(
@@ -250,7 +255,8 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
                 method: "GET",
                 headers: Self.providerHeaders(runtime: runtime, accept: "video/mp4"),
                 timeoutInterval: 10 * 60,
-                maximumResponseBytes: 512 * 1_024 * 1_024
+                maximumResponseBytes: 512 * 1_024 * 1_024,
+                transferTaskID: "video:\(job.id):content"
             )
         }
         await progress(.init(status: "downloading"))

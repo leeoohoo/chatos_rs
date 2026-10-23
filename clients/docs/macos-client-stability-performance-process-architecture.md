@@ -1776,6 +1776,23 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批限制的是 Agent 模型请求附件和 SSE 待消费队列，不替代全局文件 I/O Governor；最多 64 MiB 请求文件仍会占用临时磁盘，容量检查不是空间预留。真实 ENOSPC/只读卷、provider 重定向或认证挑战重放、SIGKILL 各写入/上传窗口、网络切换与签名 Release soak 尚未完成，P0-D/P0-E 组合压力门禁仍不能标记完成。
 
+### 12.66 第六十六批实施记录：大文件网络传输共享准入（2026-10-23）
+
+本批关闭第 6.3 节“大文件上传/下载总并发 2”在主进程生产网络路径中的首个缺口。此前 Media 文件上传、视频下载和 Agent 模型请求文件上传各自直接启动；即使单条链路已经流式化，组合负载仍可能同时占用网络、文件 I/O、临时磁盘与内存带宽。
+
+已实施：
+
+- 在公共 `ChatOSNetworking` 增加进程内共享 `ClientLargeTransferGovernor`，默认并发 2、FIFO 等待、等待队列硬上限 256；队列满时停止新准入。permit 记录 task ID、可选 owner session ID 和上传/下载方向，但不认领或改写 durable job 状态。
+- 等待任务取消会从 FIFO 队列移除；取消与 permit 移交并发时，已移交 permit 会同步归还。permit 的显式释放与析构释放均幂等，避免错误、取消或调用方提前退出泄漏容量。
+- `URLSessionHTTPTransport` 的生产 file-backed upload 在网络 I/O 前统一取得上传 permit。当前 Media multipart/视频请求均走带响应上限的 delegate 上传，在 `didSendBodyData` 确认正文全部发出后即可释放；没有发送完成回调、错误或取消时由 completion/defer 兜底。
+- `AgentModelRequestBodyTransport` 的普通响应与 SSE 文件上传接入同一共享 Governor。SSE loader 同样在请求正文发完时提前释放，响应侧既有 256 KiB/2 MiB 有界背压继续独立生效；Agent 当前没有可安全透传的账户 session 上下文，因此只登记每次请求生成的 task ID，不伪造 owner。
+- `URLSessionHTTPTransport.stream` 仅把声明响应上限大于 2 MiB 的流视为大下载；Media 视频内容请求登记稳定 `video:<provider-job-id>:content` task ID，并把绑定后的认证 session UUID 带入 transfer context。permit 直接由既有 pull-based `URLSessionChunkStream.Reader` 持有，在 EOF、错误、取消或 reader 析构时释放，不新增会积压或丢字节的 push queue。
+- 共享准入只放在默认生产 URLSession transport。显式注入的测试/兼容 transport 仍可物化请求文件，以保持协议和测试替身兼容；它们不代表生产 Governor 已被绕过，也不能用来证明真实网络组合压力。
+
+验证：Debug 与原生 arm64 Release 选择性运行 `AgentChatModelClientTests` 15 项、`AgentURLSessionFileUploadTests` 2 项、`ChatOSMediaGenerationServiceTests` 32 项、`ClientLargeTransferGovernorTests` 2 项和 `HTTPTransportTests` 14 项，共 65 项，全部通过。新增回归覆盖 FIFO、排队取消、队列满 fail-closed、共享上传/下载额度、下载消费完成释放、Media 账户上下文和稳定视频 task ID；Swift 6 编译、优化编译与 `git diff --check` 同步作为门禁。测试只使用临时文件和受控 URLProtocol/transport，不启动或安装正式 App，不请求真实 provider，不访问活动用户数据库。
+
+边界：这是主进程内 Media/Agent 大网络传输的静态总额度，不是第 6.3 节完整动态 `ResourceGovernor`。Media 重解码的同时 1 个额度、Host/Swift Agent 逻辑 job 动态共享、Plugin、数据库维护和通用文件 I/O 尚未统一；也未实现账户公平、排队老化、前台交互降额、热状态/低电量迟滞、跨进程 lease/断连回收或诊断指标。Agent owner/session 尚未接入，未来 Media Worker 也不能复制一份独立“全局 2”。真实 Media + Agent 组合压力、认证挑战/重定向重放、网络切换、取消风暴、固定 Release trace 与长时间 soak 仍待验收，因此 P0-D/P0-E 和客户端总体 SLO 均不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
@@ -1855,6 +1872,7 @@ Release 验收建议记录：
 - Local Agent Host IPC：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostProcess.swift`
 - Media API：`clients/macos/Sources/ChatOSAPI/ChatOSMediaGenerationService.swift`
 - 文件请求上传与有界响应：`clients/macos/Sources/ChatOSAPI/HTTPTransport.swift`、`clients/macos/Sources/ChatOSNetworking/BoundedURLSessionDataLoader.swift`
+- 大文件网络传输共享准入：`clients/macos/Sources/ChatOSNetworking/ClientLargeTransferGovernor.swift`、`clients/macos/Sources/ChatOSNetworking/URLSessionChunkStream.swift`
 - 参考视频增量 JSON/Base64 请求文件：`clients/macos/Sources/ChatOSAPI/ChatOSVideoRequestBodyFileWriter.swift`
 - 视频响应流式临时文件：`clients/macos/Sources/ChatOSAPI/ChatOSResponseBodyFileWriter.swift`
 - 参考媒体 DTO：`clients/macos/Sources/ChatOSCore/MediaGenerationModels.swift`
@@ -1908,7 +1926,7 @@ Release 验收建议记录：
 
 - 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift/Windows Host 常量与共享 fixture 为 v46；本方案引用版本不能替代实际握手。
 - CI 比较 Swift/Rust 协议版本、payload 边界、支持能力和打包后的真实可执行版本；Schema 兼容矩阵、进程布局及 ADR 随实现更新。
-- 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；新增 Governor、Worker、job 状态机与门禁仍为待实施项。
+- 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；大传输静态 Governor 见 12.66，跨资源动态/跨进程 Governor、Worker 和剩余门禁仍为待实施项。
 
 ### 16.2 ADR：v35 本地命令防重身份（实现范围冻结，生产迁移门禁未通过）
 

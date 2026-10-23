@@ -98,7 +98,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ChatOSAPITests",
-            dependencies: ["ChatOSAPI", "ChatOSCore"]
+            dependencies: ["ChatOSAPI", "ChatOSCore", "ChatOSNetworking"]
         ),
         .testTarget(
             name: "ChatOSConnectorTests",

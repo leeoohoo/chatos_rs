@@ -46,7 +46,10 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
     func testResumeVideoOnlyQueriesExistingNewAPITask() async throws {
         let transport = NewAPIVideoTransport()
         let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://example.com")!), accessToken: "token", transport: transport)
-        let service = ChatOSMediaGenerationService(client: client, providerTransport: transport, videoPollIntervalNanoseconds: 0)
+        let sessionID = try await client.currentAuthenticationSessionID().uuidString.lowercased()
+        let unboundService = ChatOSMediaGenerationService(client: client, providerTransport: transport, videoPollIntervalNanoseconds: 0)
+        let boundService = try await unboundService.boundToCurrentSession()
+        let service = try XCTUnwrap(boundService as? ChatOSMediaGenerationService)
         let progress = VideoProgressRecorder()
         let result = try await service.resumeVideo(.init(modelConfigID: "h3", prompt: "original prompt", size: "768P", seconds: 15), jobID: "video-h3") {
             await progress.append($0)
@@ -54,6 +57,12 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         let requests = await transport.allRequests()
         XCTAssertTrue(requests.allSatisfy { $0.method == "GET" })
         XCTAssertEqual(requests.map(\.url.path), ["/api/user/model-configs/h3", "/v1/videos/video-h3", "/result.mp4"])
+        XCTAssertNil(requests[0].transferOwnerSessionID)
+        XCTAssertTrue(requests.dropFirst().allSatisfy {
+            $0.transferOwnerSessionID == sessionID
+        })
+        XCTAssertNil(requests[1].transferTaskID)
+        XCTAssertEqual(requests[2].transferTaskID, "video:video-h3:content")
         XCTAssertEqual(result.id, "video-h3")
         let updates = await progress.values()
         XCTAssertEqual(updates.first?.jobID, "video-h3")

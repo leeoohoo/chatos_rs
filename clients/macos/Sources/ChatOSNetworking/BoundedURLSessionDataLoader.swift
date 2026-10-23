@@ -29,12 +29,16 @@ public enum BoundedURLSessionDataLoader {
         request: URLRequest,
         fileURL: URL,
         session: URLSession = .shared,
-        maximumBytes: Int
+        maximumBytes: Int,
+        transferPermit: ClientLargeTransferPermit? = nil
     ) async throws -> (data: Data, response: URLResponse) {
         guard maximumBytes > 0, fileURL.isFileURL else {
             throw BoundedURLSessionDataLoaderError.invalidResponse
         }
-        let loader = Loader(maximumBytes: maximumBytes)
+        let loader = Loader(
+            maximumBytes: maximumBytes,
+            transferPermit: transferPermit
+        )
         return try await loader.load(
             request: request,
             configuration: session.configuration,
@@ -51,10 +55,15 @@ private final class Loader: NSObject, URLSessionDataDelegate, @unchecked Sendabl
     private var continuation: CheckedContinuation<(Data, URLResponse), any Error>?
     private var session: URLSession?
     private var task: URLSessionDataTask?
+    private var transferPermit: ClientLargeTransferPermit?
     private var completed = false
 
-    init(maximumBytes: Int) {
+    init(
+        maximumBytes: Int,
+        transferPermit: ClientLargeTransferPermit? = nil
+    ) {
         self.maximumBytes = maximumBytes
+        self.transferPermit = transferPermit
     }
 
     func load(
@@ -157,6 +166,18 @@ private final class Loader: NSObject, URLSessionDataDelegate, @unchecked Sendabl
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
+        didSendBodyData bytesSent: Int64,
+        totalBytesSent: Int64,
+        totalBytesExpectedToSend: Int64
+    ) {
+        guard totalBytesExpectedToSend > 0,
+              totalBytesSent >= totalBytesExpectedToSend else { return }
+        releaseTransferPermit()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
         didCompleteWithError error: (any Error)?
     ) {
         if let error {
@@ -189,12 +210,23 @@ private final class Loader: NSObject, URLSessionDataDelegate, @unchecked Sendabl
         let continuation = self.continuation
         let task = self.task
         let session = self.session
+        let transferPermit = self.transferPermit
         self.continuation = nil
         self.task = nil
         self.session = nil
+        self.transferPermit = nil
         lock.unlock()
         if cancelTask { task?.cancel() }
         session?.finishTasksAndInvalidate()
+        transferPermit?.release()
         continuation?.resume(with: result)
+    }
+
+    private func releaseTransferPermit() {
+        lock.lock()
+        let transferPermit = self.transferPermit
+        self.transferPermit = nil
+        lock.unlock()
+        transferPermit?.release()
     }
 }

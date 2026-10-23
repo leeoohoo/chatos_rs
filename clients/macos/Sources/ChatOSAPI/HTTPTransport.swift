@@ -73,6 +73,8 @@ public struct HTTPRequest: Sendable {
     public var bodyFile: HTTPRequestBodyFile?
     public var timeoutInterval: TimeInterval?
     public var maximumResponseBytes: Int?
+    public var transferTaskID: String?
+    public var transferOwnerSessionID: String?
 
     public init(
         url: URL,
@@ -81,7 +83,9 @@ public struct HTTPRequest: Sendable {
         body: Data? = nil,
         bodyFile: HTTPRequestBodyFile? = nil,
         timeoutInterval: TimeInterval? = nil,
-        maximumResponseBytes: Int? = nil
+        maximumResponseBytes: Int? = nil,
+        transferTaskID: String? = nil,
+        transferOwnerSessionID: String? = nil
     ) {
         self.url = url
         self.method = method
@@ -90,6 +94,8 @@ public struct HTTPRequest: Sendable {
         self.bodyFile = bodyFile
         self.timeoutInterval = timeoutInterval
         self.maximumResponseBytes = maximumResponseBytes
+        self.transferTaskID = transferTaskID
+        self.transferOwnerSessionID = transferOwnerSessionID
     }
 }
 
@@ -153,10 +159,17 @@ public extension HTTPTransport {
 }
 
 public struct URLSessionHTTPTransport: HTTPTransport {
-    private let session: URLSession
+    private static let largeDownloadThresholdBytes = 2 * 1_024 * 1_024
 
-    public init(session: URLSession = .shared) {
+    private let session: URLSession
+    private let largeTransferGovernor: ClientLargeTransferGovernor
+
+    public init(
+        session: URLSession = .shared,
+        largeTransferGovernor: ClientLargeTransferGovernor = .shared
+    ) {
         self.session = session
+        self.largeTransferGovernor = largeTransferGovernor
     }
 
     public func send(_ request: HTTPRequest) async throws -> HTTPResponse {
@@ -192,6 +205,13 @@ public struct URLSessionHTTPTransport: HTTPTransport {
               bodyFile.byteCount > 0 else {
             throw ChatOSAPIError.invalidResponse
         }
+        let transferPermit = try await largeTransferGovernor.acquire(context: .init(
+            taskID: request.transferTaskID
+                ?? "http-upload:\(UUID().uuidString.lowercased())",
+            ownerSessionID: request.transferOwnerSessionID,
+            direction: .upload
+        ))
+        defer { transferPermit.release() }
         let urlRequest = urlRequest(for: request)
         let data: Data
         let response: URLResponse
@@ -201,7 +221,8 @@ public struct URLSessionHTTPTransport: HTTPTransport {
                     request: urlRequest,
                     fileURL: bodyFile.url,
                     session: session,
-                    maximumBytes: maximumResponseBytes
+                    maximumBytes: maximumResponseBytes,
+                    transferPermit: transferPermit
                 )
             } catch is BoundedURLSessionDataLoaderError {
                 throw ChatOSAPIError.invalidResponse
@@ -213,14 +234,39 @@ public struct URLSessionHTTPTransport: HTTPTransport {
     }
 
     public func stream(_ request: HTTPRequest) async throws -> HTTPStreamResponse {
+        let transferPermit: ClientLargeTransferPermit?
+        if let maximumResponseBytes = request.maximumResponseBytes,
+           maximumResponseBytes > Self.largeDownloadThresholdBytes {
+            transferPermit = try await largeTransferGovernor.acquire(context: .init(
+                taskID: request.transferTaskID
+                    ?? "http-download:\(UUID().uuidString.lowercased())",
+                ownerSessionID: request.transferOwnerSessionID,
+                direction: .download
+            ))
+        } else {
+            transferPermit = nil
+        }
         var urlRequest = urlRequest(for: request)
         urlRequest.httpBody = request.body
-        let (bytes, response) = try await session.bytes(for: urlRequest)
-        guard let response = response as? HTTPURLResponse else { throw ChatOSAPIError.invalidResponse }
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: urlRequest)
+        } catch {
+            transferPermit?.release()
+            throw error
+        }
+        guard let response = response as? HTTPURLResponse else {
+            transferPermit?.release()
+            throw ChatOSAPIError.invalidResponse
+        }
         let headers = response.allHeaderFields.reduce(into: [String: String]()) { result, entry in
             result[String(describing: entry.key).lowercased()] = String(describing: entry.value)
         }
-        let stream = URLSessionChunkStream.body(from: bytes)
+        let stream = URLSessionChunkStream.body(
+            from: bytes,
+            transferPermit: transferPermit
+        )
         return .init(statusCode: response.statusCode, headers: headers, body: stream)
     }
 
