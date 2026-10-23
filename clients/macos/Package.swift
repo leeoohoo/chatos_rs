@@ -12,7 +12,9 @@ let package = Package(
         .library(name: "ChatOSCore", targets: ["ChatOSCore"]),
         .library(name: "ChatOSAPI", targets: ["ChatOSAPI"]),
         .library(name: "ChatOSConnector", targets: ["ChatOSConnector"]),
+        .library(name: "ChatOSMediaWorkerProtocol", targets: ["ChatOSMediaWorkerProtocol"]),
         .executable(name: "ChatOSSwift", targets: ["ChatOSApp"]),
+        .executable(name: "ChatOSMediaWorker", targets: ["ChatOSMediaWorker"]),
         .executable(name: "chatos_plugin_ps", targets: ["ChatOSPluginProcessList"]),
     ],
     dependencies: [
@@ -27,6 +29,15 @@ let package = Package(
             publicHeadersPath: "include"
         ),
         .target(name: "ChatOSNetworking"),
+        .target(name: "ChatOSMediaWorkerProtocol"),
+        .target(
+            name: "ChatOSMediaWorkerCore",
+            dependencies: ["ChatOSMediaWorkerProtocol"],
+            linkerSettings: [
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("ImageIO"),
+            ]
+        ),
         .target(name: "ChatOSModelCapabilities", resources: [.process("Resources")]),
         .target(
             name: "ChatOSAgentRuntime",
@@ -77,6 +88,7 @@ let package = Package(
                 "ChatOSConnector",
                 "ChatOSAgentRuntime",
                 "ChatOSNetworking",
+                "ChatOSMediaWorkerProtocol",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             linkerSettings: [
@@ -87,6 +99,10 @@ let package = Package(
                 .linkedFramework("AVFoundation"),
                 .linkedLibrary("sqlite3"),
             ]
+        ),
+        .executableTarget(
+            name: "ChatOSMediaWorker",
+            dependencies: ["ChatOSMediaWorkerCore", "ChatOSMediaWorkerProtocol"]
         ),
         .executableTarget(name: "ChatOSPluginProcessList"),
         .testTarget(
@@ -108,7 +124,17 @@ let package = Package(
         ),
         .testTarget(
             name: "ChatOSAppTests",
-            dependencies: ["ChatOSApp", "ChatOSCore", "ChatOSNetworking"]
+            dependencies: [
+                "ChatOSApp",
+                "ChatOSCore",
+                "ChatOSNetworking",
+                "ChatOSMediaWorkerCore",
+                "ChatOSMediaWorkerProtocol",
+            ]
+        ),
+        .testTarget(
+            name: "ChatOSMediaWorkerTests",
+            dependencies: ["ChatOSMediaWorkerCore", "ChatOSMediaWorkerProtocol"]
         ),
     ]
 )

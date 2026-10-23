@@ -1880,6 +1880,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本里程碑治理的是迁移恢复文件的生产空间上界与保留策略，不自动处理被人工移到任意子目录或改名的历史文件，也不替代在线维护 lease、旧 Host 跨版本交接、真实 ENOSPC/断电、数据库物理缩容和正式 Release 大库耗时门禁。已完成 v37 的普通启动不会为清理历史快照重新进入迁移；既有重复文件需经过明确人工核对后清理。P0-C 的生产迁移门禁仍未全部关闭。
 
+### 12.73 第二完整里程碑：Media Worker 图片归一化垂直切片（2026-10-23）
+
+本里程碑开始落实 P2，但只把 Story 最终文件化路径中的 PNG 归一化作为第一条完整生产切片。此前 12.47 已消除最终 PNG `Data`，像素解码和编码仍留在主 App；本批将 ImageIO 解码、downsample、PNG 编码、输出同步和 SHA-256 全部移入独立 `ChatOSMediaWorker`，主进程只准备/持有受限文件 artifact 和小型 descriptor。
+
+已实施：
+
+- 新增独立协议、Core 与 executable target。wire v1 先 hello 协商版本、`media-worker-v1` capability 和 512 KiB inline 上限，再处理一个 `normalize_png_v1` 请求；媒体正文不进入 JSON。传输冻结为 App 直接创建的单用途子进程和 inherited stdin/stdout，理由、XPC/socket 取舍、安全边界及回滚见 `clients/macos/docs/23-media-worker-transport-adr.md`。
+- App 预创建既有 mode `0700/0600`、lease-owned 的输出 artifact；Worker 对输入/输出使用 `O_NOFOLLOW`，打开后复核 device/inode/size、普通文件、owner、单链接空输出，并拒绝 symlink、路径替换和输入输出同 inode。输入最多 20 MiB/64 MP，输出长边最多 8192 px/20 MiB。
+- Worker 不联网、不接收 provider secret、不打开业务数据库或修改 Story 元数据。Base64 兼容输入先落入已有有界 image-response artifact，HTTPS 继续流式落盘；像素面和 PNG 编码缓冲不再进入主 App。
+- Worker 要求直接父 PID 与 `getppid()` 一致，并监听父进程退出。App 取消/超时先 `SIGTERM`，250 ms 后 `SIGKILL`；异常新启动采用 1/2/4/8/16/30 秒退避，5 分钟内连续 5 次异常时隔离 30 秒。invalid-image 业务拒绝不计为进程崩溃，失败请求不自动重放。
+- 打包脚本独立构建 Worker、纳入 Release dSYM/build evidence，复制到 `Contents/MacOS` 并从内到外签名；验证脚本检查存在性、arm64-only、Release 路径、嵌套签名、bundle 深度签名及无父能力启动失败。
+
+验证：Debug 与原生 arm64 Release 各 28 项通过。Worker Core 4 项覆盖真实 PNG 输出、symlink、输出 inode 替换和 deadline；真实子进程 5 项覆盖握手/归一化、Story lease artifact 整条链路、取消、超时，以及父进程被 `SIGKILL` 且 stdin 仍由旁路进程保持打开时 Worker 自行退出；Media Studio 图片回归 19 项覆盖文件/Base64/HTTPS、Governor、invalid image 和 lease 清理。Debug/Release 的 Worker 与主 App product 均完成优化编译，Worker 与主 App 的 warnings-as-errors 构建通过；打包/证据脚本回归 25 项、shell 语法和 `git diff --check` 通过。未提交源码的原生 arm64 Release 诊断包完成全量组装，`ChatOSMediaWorker` 位于 `Contents/MacOS`，App/Worker 嵌套 ad-hoc 签名、arm64-only、Release 路径、四份 dSYM UUID、bundle 内容哈希及 build-evidence 全部验证通过；未执行 App 启动 smoke，也不把该 dirty diagnostic build 作为 Developer ID 分发验收。
+
+边界：这不是 P2 全部完成。缩略图、聊天附件预览、视频 frame/poster、已文件化上传/下载和 durable media job 仍未移交 Worker；普通子进程提供崩溃/内存隔离但不是 App Sandbox。真实 20 MiB/64 MP physical-footprint、恶意解码崩溃、ENOSPC、睡眠/断网、账户切换、连续崩溃 soak、Developer ID/hardened runtime/notarization 及完整 Release SLO 仍是后续门禁，不能据此宣称 P0-E/P2/P4 或客户端总体性能优化已经完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
@@ -1958,6 +1974,8 @@ Release 验收建议记录：
 - Local Agent Host 生命周期：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostLifecycle.swift`
 - Local Agent Host IPC：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostProcess.swift`
 - Media API：`clients/macos/Sources/ChatOSAPI/ChatOSMediaGenerationService.swift`
+- Media Worker 协议/解码核心/入口：`clients/macos/Sources/ChatOSMediaWorkerProtocol/`、`ChatOSMediaWorkerCore/`、`ChatOSMediaWorker/`
+- Media Worker 主进程监督客户端与传输 ADR：`clients/macos/Sources/ChatOSApp/Infrastructure/MediaWorkerProcessClient.swift`、`clients/macos/docs/23-media-worker-transport-adr.md`
 - 文件请求上传与有界响应：`clients/macos/Sources/ChatOSAPI/HTTPTransport.swift`、`clients/macos/Sources/ChatOSNetworking/BoundedURLSessionDataLoader.swift`
 - 大文件网络传输共享准入：`clients/macos/Sources/ChatOSNetworking/ClientLargeTransferGovernor.swift`、`clients/macos/Sources/ChatOSNetworking/URLSessionChunkStream.swift`
 - 重媒体解码共享准入：`clients/macos/Sources/ChatOSNetworking/ClientHeavyMediaWorkGovernor.swift`、`clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioImageLoader.swift`、`clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryVideoFrameExtractor.swift`

@@ -201,6 +201,7 @@ def finish(repository, app, captured, commands, symbols):
     artifacts = inventory(app)
     binaries = {}
     for relative in ("Contents/MacOS/ChatOSSwift", "Contents/MacOS/chatos_local_agent_host",
+                     "Contents/MacOS/ChatOSMediaWorker",
                      "Contents/Resources/Tools/darwin-arm64/ps", "Contents/Resources/Tools/darwin-arm64/rg"):
         path = app / relative
         if not path.is_file() or path.is_symlink():

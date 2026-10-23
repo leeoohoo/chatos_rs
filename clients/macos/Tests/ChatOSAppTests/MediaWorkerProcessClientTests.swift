@@ -1,0 +1,255 @@
+import AppKit
+import ChatOSCore
+import Darwin
+import Foundation
+import XCTest
+@testable import ChatOSApp
+
+final class MediaWorkerProcessClientTests: XCTestCase {
+    func testStoryNormalizationRunsThroughBuiltWorkerAndLeaseArtifact() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run Story integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 48,
+            pixelsHigh: 24,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        var file: GeneratedMediaFile? = try await MediaStudioImageLoader.normalizedPNGFile(
+            for: .init(
+                id: "real-media-worker",
+                mimeType: "image/png",
+                base64Data: png.base64EncodedString()
+            ),
+            ownerUserID: "process-client-test",
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: MediaWorkerProcessClient(
+                executableURL: URL(fileURLWithPath: path),
+                timeout: 10
+            )
+        )
+        let output = try XCTUnwrap(file?.url)
+        let artifact = output.deletingLastPathComponent()
+        let decoded = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: output)))
+        XCTAssertEqual(decoded.pixelsWide, 48)
+        XCTAssertEqual(decoded.pixelsHigh, 24)
+        XCTAssertEqual(
+            Set(try FileManager.default.contentsOfDirectory(atPath: root.path)),
+            [artifact.lastPathComponent]
+        )
+        file = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: artifact.path))
+    }
+
+    func testBuiltWorkerCompletesHandshakeAndNormalizesOutOfProcess() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run packaged-worker integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.png")
+        let destination = root.appendingPathComponent("destination.png")
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 32,
+            pixelsHigh: 16,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: source)
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: destination.path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600]
+        ))
+
+        let result = try await MediaWorkerProcessClient(
+            executableURL: URL(fileURLWithPath: path),
+            timeout: 10
+        ).normalizePNG(
+            sourceURL: source,
+            destinationURL: destination,
+            ownerUserID: "process-client-test",
+            maximumSourceBytes: 20 * 1_024 * 1_024,
+            maximumSourcePixelCount: 64_000_000,
+            maximumOutputPixelSize: 8_192,
+            maximumOutputBytes: 20 * 1_024 * 1_024
+        )
+
+        XCTAssertEqual(result.path, destination.path)
+        XCTAssertEqual(result.pixelWidth, 32)
+        XCTAssertEqual(result.pixelHeight, 16)
+        XCTAssertGreaterThan(result.byteCount, 0)
+    }
+
+    func testCancellationTerminatesUnresponsiveWorker() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.png")
+        let destination = root.appendingPathComponent("destination.png")
+        let script = root.appendingPathComponent("hanging-worker.sh")
+        let marker = root.appendingPathComponent("worker.pid")
+        try Data("image".utf8).write(to: source)
+        XCTAssertTrue(FileManager.default.createFile(atPath: destination.path, contents: nil))
+        let scriptBody = "#!/bin/sh\nprintf '%s' \"$$\" > '\(marker.path)'\nexec /bin/sleep 60\n"
+        try Data(scriptBody.utf8).write(to: script)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: script.path
+        )
+
+        let task = Task {
+            try await MediaWorkerProcessClient(executableURL: script, timeout: 30).normalizePNG(
+                sourceURL: source,
+                destinationURL: destination,
+                ownerUserID: "process-client-test",
+                maximumSourceBytes: 1_024,
+                maximumSourcePixelCount: 1_024,
+                maximumOutputPixelSize: 32,
+                maximumOutputBytes: 1_024
+            )
+        }
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: marker.path) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let processID = try XCTUnwrap(Int32(
+            XCTUnwrap(String(contentsOf: marker, encoding: .utf8))
+        ))
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("Cancelled media worker unexpectedly succeeded")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected cancellation error: \(error)")
+        }
+        for _ in 0..<200 {
+            if kill(processID, 0) == -1, errno == ESRCH { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Cancelled media worker process remained alive")
+    }
+
+    func testTimeoutTerminatesUnresponsiveWorker() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.png")
+        let destination = root.appendingPathComponent("destination.png")
+        let script = root.appendingPathComponent("timeout-worker.sh")
+        try Data("image".utf8).write(to: source)
+        XCTAssertTrue(FileManager.default.createFile(atPath: destination.path, contents: nil))
+        try Data("#!/bin/sh\nexec /bin/sleep 60\n".utf8).write(to: script)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: script.path
+        )
+
+        do {
+            _ = try await MediaWorkerProcessClient(
+                executableURL: script,
+                timeout: 0.2
+            ).normalizePNG(
+                sourceURL: source,
+                destinationURL: destination,
+                ownerUserID: "process-client-test",
+                maximumSourceBytes: 1_024,
+                maximumSourcePixelCount: 1_024,
+                maximumOutputPixelSize: 32,
+                maximumOutputBytes: 1_024
+            )
+            XCTFail("Timed-out media worker unexpectedly succeeded")
+        } catch MediaWorkerProcessClientError.timedOut {
+            // The timeout branch owns process termination and waits for pipe EOF.
+        }
+    }
+
+    func testWorkerExitsWhenDirectParentIsKilledEvenIfInputRemainsOpen() async throws {
+        guard let workerPath = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !workerPath.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run parent-death integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let script = root.appendingPathComponent("parent-probe.sh")
+        let fifo = root.appendingPathComponent("worker.stdin")
+        let workerMarker = root.appendingPathComponent("worker.pid")
+        let keeperMarker = root.appendingPathComponent("keeper.pid")
+        let scriptBody = """
+        #!/bin/sh
+        /usr/bin/mkfifo '\(fifo.path)'
+        ( /bin/sleep 60 ) > '\(fifo.path)' &
+        keeper=$!
+        '\(workerPath.replacingOccurrences(of: "'", with: "'\\''"))' --parent-pid "$$" < '\(fifo.path)' > /dev/null 2> /dev/null &
+        worker=$!
+        printf '%s' "$worker" > '\(workerMarker.path)'
+        printf '%s' "$keeper" > '\(keeperMarker.path)'
+        wait "$worker"
+        """
+        try Data(scriptBody.utf8).write(to: script)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: script.path
+        )
+        let parent = Process()
+        parent.executableURL = script
+        parent.standardInput = FileHandle.nullDevice
+        parent.standardOutput = FileHandle.nullDevice
+        parent.standardError = FileHandle.nullDevice
+        try parent.run()
+        var workerProcessID: Int32?
+        var keeperProcessID: Int32?
+        for _ in 0..<200 {
+            if let worker = try? String(contentsOf: workerMarker, encoding: .utf8),
+               let keeper = try? String(contentsOf: keeperMarker, encoding: .utf8),
+               let parsedWorker = Int32(worker),
+               let parsedKeeper = Int32(keeper) {
+                workerProcessID = parsedWorker
+                keeperProcessID = parsedKeeper
+                break
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let worker = try XCTUnwrap(workerProcessID)
+        let keeper = try XCTUnwrap(keeperProcessID)
+        defer {
+            _ = kill(worker, SIGKILL)
+            _ = kill(keeper, SIGKILL)
+            if parent.isRunning { _ = kill(parent.processIdentifier, SIGKILL) }
+        }
+
+        _ = kill(parent.processIdentifier, SIGKILL)
+        for _ in 0..<200 {
+            if kill(worker, 0) == -1, errno == ESRCH { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Media worker survived its direct parent's death")
+    }
+
+    private func makeRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MediaWorkerProcessClientTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+}

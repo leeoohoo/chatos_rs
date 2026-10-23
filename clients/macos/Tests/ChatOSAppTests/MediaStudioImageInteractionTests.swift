@@ -1,7 +1,10 @@
 import AppKit
 import ChatOSAPI
 import ChatOSCore
+import ChatOSMediaWorkerCore
+import ChatOSMediaWorkerProtocol
 import ChatOSNetworking
+import Darwin
 import Foundation
 import XCTest
 @testable import ChatOSApp
@@ -34,9 +37,11 @@ final class MediaStudioImageInteractionTests: XCTestCase {
                     mimeType: "image/png",
                     base64Data: png.base64EncodedString()
                 ),
+                ownerUserID: "test-user",
                 temporaryDirectory: root,
                 availableCapacityOverride: Int64.max,
-                heavyMediaGovernor: governor
+                heavyMediaGovernor: governor,
+                mediaWorker: TestMediaWorkerImageNormalizer()
             )
         }
         try await waitForHeavyMediaQueue(governor, count: 1)
@@ -345,8 +350,10 @@ final class MediaStudioImageInteractionTests: XCTestCase {
 
         var normalized: GeneratedMediaFile? = try await MediaStudioImageLoader.normalizedPNGFile(
             for: try XCTUnwrap(asset),
+            ownerUserID: "test-user",
             temporaryDirectory: root,
-            availableCapacityOverride: Int64.max
+            availableCapacityOverride: Int64.max,
+            mediaWorker: TestMediaWorkerImageNormalizer()
         )
         let outputURL = try XCTUnwrap(normalized?.url)
         let outputArtifact = outputURL.deletingLastPathComponent()
@@ -381,8 +388,10 @@ final class MediaStudioImageInteractionTests: XCTestCase {
                 mimeType: "image/png",
                 base64Data: sourcePNG.base64EncodedString()
             ),
+            ownerUserID: "test-user",
             temporaryDirectory: root,
-            availableCapacityOverride: Int64.max
+            availableCapacityOverride: Int64.max,
+            mediaWorker: TestMediaWorkerImageNormalizer()
         )
 
         let outputURL = try XCTUnwrap(normalized?.url)
@@ -419,9 +428,11 @@ final class MediaStudioImageInteractionTests: XCTestCase {
                 mimeType: "image/png",
                 url: URL(string: "https://cdn.example/normalize.png")!
             ),
+            ownerUserID: "test-user",
             transport: transport,
             temporaryDirectory: root,
-            availableCapacityOverride: Int64.max
+            availableCapacityOverride: Int64.max,
+            mediaWorker: TestMediaWorkerImageNormalizer()
         )
 
         let outputURL = try XCTUnwrap(normalized?.url)
@@ -527,7 +538,7 @@ final class MediaStudioImageInteractionTests: XCTestCase {
                 id: "invalid-image",
                 mimeType: "image/png",
                 base64Data: Data("not-an-image".utf8).base64EncodedString()
-            ))
+            ), ownerUserID: "test-user", mediaWorker: TestMediaWorkerImageNormalizer())
             XCTFail("Invalid image data was accepted")
         } catch is MediaStudioImageLoader.ImageError {
             // Expected.
@@ -606,6 +617,57 @@ final class MediaStudioImageInteractionTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Timed out waiting for image selection")
+    }
+}
+
+private struct TestMediaWorkerImageNormalizer: MediaWorkerImageNormalizing {
+    func normalizePNG(
+        sourceURL: URL,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int
+    ) async throws -> MediaWorkerImageDescriptor {
+        do {
+            let sourceIdentity = try identity(sourceURL)
+            let destinationIdentity = try identity(destinationURL)
+            let request = MediaWorkerNormalizePNGRequest(
+                protocolVersion: ChatOSMediaWorkerProtocol.maximumVersion,
+                requestID: UUID().uuidString.lowercased(),
+                ownerUserID: ownerUserID,
+                accountSessionID: "test-session",
+                sessionEpoch: "test-epoch",
+                helperInstanceID: "in-process-test-worker",
+                deadlineUnixMilliseconds: Int64((Date().timeIntervalSince1970 + 30) * 1_000),
+                sourcePath: sourceURL.path,
+                sourceIdentity: sourceIdentity,
+                destinationPath: destinationURL.path,
+                destinationIdentity: destinationIdentity,
+                maximumSourceBytes: maximumSourceBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumOutputPixelSize: maximumOutputPixelSize,
+                maximumOutputBytes: maximumOutputBytes
+            )
+            return try await Task.detached(priority: .userInitiated) {
+                try ChatOSMediaWorkerEngine.normalizePNG(request)
+            }.value
+        } catch let error as MediaWorkerCoreError {
+            throw MediaWorkerProcessClientError.requestRejected(code: error.payload.code)
+        }
+    }
+
+    private func identity(_ url: URL) throws -> MediaWorkerFileIdentity {
+        var status = stat()
+        guard url.path.withCString({ Darwin.lstat($0, &status) }) == 0 else {
+            throw MediaWorkerProcessClientError.invalidResponse
+        }
+        return .init(
+            device: UInt64(status.st_dev),
+            inode: UInt64(status.st_ino),
+            byteCount: Int64(status.st_size)
+        )
     }
 }
 

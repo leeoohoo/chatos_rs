@@ -39,6 +39,7 @@
 20. [macOS 客户端性能问题与修复计划](./20-performance-remediation-plan.md)
 21. [macOS 客户端最终性能优化方案](./21-performance-optimization-final-plan.md)
 22. [页面设计稿](./design/README.md)
+23. [Media Worker 单用途子进程与继承管道 ADR](./23-media-worker-transport-adr.md)
 
 ## 设计预览
 

@@ -49,7 +49,10 @@ struct StoryAssetImageGenerationAdapter: StoryAssetImageGenerating {
               result.projectID == nil || result.projectID == command.projectID.uuidString,
               result.resourceID == nil || result.resourceID == command.resourceID,
               let generated = result.images.first else { throw StoryError.invalidPlan }
-        let pngFile = try await MediaStudioImageLoader.normalizedPNGFile(for: generated)
+        let pngFile = try await MediaStudioImageLoader.normalizedPNGFile(
+            for: generated,
+            ownerUserID: ownerUserID
+        )
         try await continuationCheck()
         let completed = try await store.completeAssetImageGeneration(
             pngFile,

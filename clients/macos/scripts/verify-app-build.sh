@@ -19,13 +19,14 @@ fi
 INFO_PLIST="$APP_PATH/Contents/Info.plist"
 EXECUTABLE="$APP_PATH/Contents/MacOS/ChatOSSwift"
 LOCAL_AGENT_HOST="$APP_PATH/Contents/MacOS/chatos_local_agent_host"
+MEDIA_WORKER="$APP_PATH/Contents/MacOS/ChatOSMediaWorker"
 PLUGIN_PROCESS_LIST="$APP_PATH/Contents/Resources/Tools/darwin-arm64/ps"
-if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" || ! -x "$LOCAL_AGENT_HOST" || ! -x "$PLUGIN_PROCESS_LIST" ]]; then
+if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" || ! -x "$LOCAL_AGENT_HOST" || ! -x "$MEDIA_WORKER" || ! -x "$PLUGIN_PROCESS_LIST" ]]; then
   echo "Invalid ChatOS app bundle: $APP_PATH" >&2
   exit 1
 fi
 
-for BINARY in "$EXECUTABLE" "$LOCAL_AGENT_HOST" "$PLUGIN_PROCESS_LIST" \
+for BINARY in "$EXECUTABLE" "$LOCAL_AGENT_HOST" "$MEDIA_WORKER" "$PLUGIN_PROCESS_LIST" \
     "$APP_PATH/Contents/Resources/Tools/darwin-arm64/rg"; do
   if [[ "$(/usr/bin/lipo -archs "$BINARY")" != "arm64" ]]; then
     echo "Expected arm64-only macOS executable: $BINARY" >&2
@@ -77,8 +78,13 @@ if [[ "$CONFIGURATION" == "release" ]] && strings "$LOCAL_AGENT_HOST" | grep -F 
   echo "Release Local Agent Host contains a Debug build path" >&2
   exit 1
 fi
+if [[ "$CONFIGURATION" == "release" ]] && strings "$MEDIA_WORKER" | grep -F '/debug/' >/dev/null; then
+  echo "Release Media Worker contains a Debug build path" >&2
+  exit 1
+fi
 
 codesign --verify --strict "$LOCAL_AGENT_HOST"
+codesign --verify --strict "$MEDIA_WORKER"
 codesign --verify --strict "$PLUGIN_PROCESS_LIST"
 codesign --verify --deep --strict "$APP_PATH"
 
@@ -101,6 +107,10 @@ if [[ "$RUN_LAUNCH_SMOKE" == "1" ]]; then
   trap cleanup_smoke EXIT INT TERM
 
   "$LOCAL_AGENT_HOST" --help >"$SMOKE_ROOT/local-agent-host.log" 2>&1
+  if "$MEDIA_WORKER" >"$SMOKE_ROOT/media-worker.log" 2>&1; then
+    echo "Media Worker accepted a launch without its inherited parent capability" >&2
+    exit 1
+  fi
   env \
     CFFIXED_USER_HOME="$SMOKE_ROOT" \
     CHATOS_BUILD_SMOKE_TEST=1 \

@@ -41,4 +41,19 @@ public enum ChatOSMediaArtifactFileWriter {
             task.cancel()
         }
     }
+
+    public static func writeNormalizedImageUsingWorker(
+        maximumBytes: Int,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        availableCapacityOverride: Int64? = nil,
+        populate: @escaping @Sendable (URL, FileHandle) async throws -> Void
+    ) async throws -> GeneratedMediaFile {
+        try await ChatOSResponseBodyFileWriter.writeUsingFileDescriptorAsync(
+            maximumBytes: maximumBytes,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride,
+            artifactKind: .normalizedImage,
+            populate: populate
+        )
+    }
 }

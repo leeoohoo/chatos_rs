@@ -92,7 +92,7 @@ class RepositoryTests(unittest.TestCase):
 
     def make_app(self, configuration="release", commit=None):
         app = self.root / "ChatOS.app"
-        for binary in ("MacOS/ChatOSSwift", "MacOS/chatos_local_agent_host",
+        for binary in ("MacOS/ChatOSSwift", "MacOS/chatos_local_agent_host", "MacOS/ChatOSMediaWorker",
                        "Resources/Tools/darwin-arm64/ps", "Resources/Tools/darwin-arm64/rg"):
             path = app / "Contents" / binary
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,6 +115,7 @@ class RepositoryTests(unittest.TestCase):
     def test_clean_release_is_not_claimed_as_performance_or_distribution_acceptance(self):
         result = self.finish(self.make_app())
         self.assertEqual(result["classification"], "clean-release-build")
+        self.assertIn("Contents/MacOS/ChatOSMediaWorker", result["app"]["binaries"])
         self.assertEqual(result["performance_acceptance"], "not-run")
         self.assertEqual(result["distribution_acceptance"], "not-run")
         self.assertEqual(result["symbolication_status"], "not-collected")

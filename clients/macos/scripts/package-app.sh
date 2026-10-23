@@ -104,6 +104,14 @@ swiftpm build \
   --configuration "$BUILD_CONFIGURATION" \
   "${SWIFT_DEBUG_ARGUMENTS[@]}" \
   --product chatos_plugin_ps
+swiftpm build \
+  --arch arm64 \
+  --force-resolved-versions \
+  --build-system "$SWIFT_BUILD_SYSTEM" \
+  --scratch-path "$SWIFT_SCRATCH_PATH" \
+  --configuration "$BUILD_CONFIGURATION" \
+  "${SWIFT_DEBUG_ARGUMENTS[@]}" \
+  --product ChatOSMediaWorker
 BIN_DIR=$(swiftpm build \
   --arch arm64 \
   --force-resolved-versions \
@@ -113,12 +121,17 @@ BIN_DIR=$(swiftpm build \
   --show-bin-path)
 EXECUTABLE="$BIN_DIR/ChatOSSwift"
 PLUGIN_PROCESS_LIST="$BIN_DIR/chatos_plugin_ps"
+MEDIA_WORKER="$BIN_DIR/ChatOSMediaWorker"
 if [[ ! -x "$EXECUTABLE" ]]; then
   echo "ChatOSSwift executable not found at $EXECUTABLE" >&2
   exit 1
 fi
 if [[ ! -x "$PLUGIN_PROCESS_LIST" ]]; then
   echo "Plugin process-list helper not found at $PLUGIN_PROCESS_LIST" >&2
+  exit 1
+fi
+if [[ ! -x "$MEDIA_WORKER" ]]; then
+  echo "Media Worker executable not found at $MEDIA_WORKER" >&2
   exit 1
 fi
 
@@ -146,7 +159,7 @@ if [[ ! -x "$LOCAL_AGENT_HOST" ]]; then
 fi
 
 if [[ "$BUILD_CONFIGURATION" == "release" ]]; then
-  for SYMBOL_BINARY in "$EXECUTABLE" "$LOCAL_AGENT_HOST" "$PLUGIN_PROCESS_LIST"; do
+  for SYMBOL_BINARY in "$EXECUTABLE" "$LOCAL_AGENT_HOST" "$PLUGIN_PROCESS_LIST" "$MEDIA_WORKER"; do
     SYMBOL_PATH="$EVIDENCE_DIR/${SYMBOL_BINARY:t}.dSYM"
     record_command dsymutil "$SYMBOL_BINARY" -o "$SYMBOL_PATH"
     dsymutil "$SYMBOL_BINARY" -o "$SYMBOL_PATH"
@@ -170,6 +183,7 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$TOOLS_DIR" "$RIPGREP_NOTICE_DIR" "$SWIFTTERM_NOTICE_DIR" "$PET_DIR" "$EN_LOCALIZATION_DIR" "$ZH_HANS_LOCALIZATION_DIR"
 cp "$EXECUTABLE" "$MACOS_DIR/ChatOSSwift"
 cp "$LOCAL_AGENT_HOST" "$MACOS_DIR/chatos_local_agent_host"
+cp "$MEDIA_WORKER" "$MACOS_DIR/ChatOSMediaWorker"
 copy_swift_resource_bundle() {
   local bundle_name=$1
   local source_bundle="$BIN_DIR/$bundle_name"
@@ -203,11 +217,13 @@ cp "$PROJECT_DIR/Support/Localization/zh-Hans.lproj/Localizable.strings" "$ZH_HA
 chmod 755 "$TOOLS_DIR/rg"
 chmod 755 "$TOOLS_DIR/ps"
 chmod 755 "$MACOS_DIR/chatos_local_agent_host"
+chmod 755 "$MACOS_DIR/ChatOSMediaWorker"
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$TOOLS_DIR/rg"
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$TOOLS_DIR/ps"
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/chatos_local_agent_host"
+  codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/ChatOSMediaWorker"
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$APP_DIR"
 else
   # Keep a stable designated requirement across local debug rebuilds. A plain
@@ -216,6 +232,7 @@ else
   codesign --force --sign - "$TOOLS_DIR/rg"
   codesign --force --sign - "$TOOLS_DIR/ps"
   codesign --force --sign - "$MACOS_DIR/chatos_local_agent_host"
+  codesign --force --sign - "$MACOS_DIR/ChatOSMediaWorker"
   codesign \
     --force \
     --sign - \
