@@ -257,6 +257,13 @@ fn parse_authentication_response(frame: Message) -> CoreResult<BridgeHello> {
     Ok(hello)
 }
 
+fn is_extension_reconnecting(error: &CoreError) -> bool {
+    matches!(
+        error,
+        CoreError::Backend(message) if message.starts_with("Chrome extension is not connected.")
+    )
+}
+
 async fn run_connection<S>(
     mut socket: async_tungstenite::WebSocketStream<S>,
     mut outbound_rx: mpsc::Receiver<Outbound>,

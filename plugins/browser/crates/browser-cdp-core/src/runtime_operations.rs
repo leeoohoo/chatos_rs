@@ -5,7 +5,7 @@ impl BrowserRuntime {
         &self,
         browser_session_id: &str,
         full_page: bool,
-    ) -> CoreResult<ArtifactDescriptor> {
+    ) -> CoreResult<ScreenshotCapture> {
         let session = self.session(browser_session_id).await?;
         let session = session.lock().await;
         let (_, backend_session_id) = session.tab_session(None)?;
@@ -30,8 +30,13 @@ impl BrowserRuntime {
         let bytes = BASE64
             .decode(encoded)
             .map_err(|error| CoreError::Backend(format!("invalid screenshot data: {error}")))?;
-        self.write_artifact("screenshot.png", "image/png", &bytes)
-            .await
+        let artifact = self
+            .write_artifact("screenshot.png", "image/png", &bytes)
+            .await?;
+        Ok(ScreenshotCapture {
+            artifact,
+            png_base64: encoded.to_owned(),
+        })
     }
 
     pub async fn handle_dialog(

@@ -40,6 +40,8 @@ use uuid::Uuid;
 const BRIDGE_PROTOCOL_VERSION: &str = "1.0";
 const BRIDGE_SUBPROTOCOL: &str = "chatos-browser-bridge.v1";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const EXTENSION_RECONNECT_GRACE: Duration = Duration::from_secs(5);
+const EXTENSION_RECONNECT_INTERVAL: Duration = Duration::from_millis(200);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_CLIENT_MESSAGE_BYTES: usize = 1024 * 1024;
 const MAX_BRIDGE_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
@@ -295,8 +297,19 @@ impl BrowserBackend for ExtensionCdpBackend {
             return Err(CoreError::InvalidRequest("backend is already open".into()));
         }
 
-        let (client, hello, event_rx, connection_task) =
-            BridgeClient::connect(&self.config).await?;
+        let reconnect_deadline = tokio::time::Instant::now() + EXTENSION_RECONNECT_GRACE;
+        let (client, hello, event_rx, connection_task) = loop {
+            match BridgeClient::connect(&self.config).await {
+                Ok(connected) => break connected,
+                Err(error)
+                    if is_extension_reconnecting(&error)
+                        && tokio::time::Instant::now() < reconnect_deadline =>
+                {
+                    tokio::time::sleep(EXTENSION_RECONNECT_INTERVAL).await;
+                }
+                Err(error) => return Err(error),
+            }
+        };
         let mut capabilities = vec!["existing_chrome".into(), "bridge_authenticated".into()];
         capabilities.extend(hello.capabilities);
         capabilities.sort();

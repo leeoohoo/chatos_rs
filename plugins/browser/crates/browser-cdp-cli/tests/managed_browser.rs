@@ -386,6 +386,14 @@ fn managed_browser_host_selected_end_to_end() {
             .unwrap()
             > 0
     );
+    let screenshot_image = screenshot["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["type"] == "image")
+        .expect("browser_screenshot must return model-visible image content");
+    assert_eq!(screenshot_image["mimeType"], "image/png");
+    assert!(!screenshot_image["data"].as_str().unwrap().is_empty());
 
     let links = mcp.call_tool("browser_snapshot", json!({}));
     let nodes = links["structuredContent"]["nodes"].as_array().unwrap();

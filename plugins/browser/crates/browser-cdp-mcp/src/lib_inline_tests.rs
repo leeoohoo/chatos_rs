@@ -240,4 +240,56 @@ mod tests {
         assert_eq!(candidates[0]["producer_artifact_id"], "artifact_local");
         assert!(candidates[0].get("absolute_path").is_none());
     }
+
+    #[test]
+    fn screenshot_response_keeps_artifact_registration_and_adds_model_image() {
+        let result = json!({
+            "artifact_id": "artifact_local",
+            "relative_path": "artifact_local-screenshot.png",
+            "display_name": "screenshot.png",
+            "media_type": "image/png",
+            "size_bytes": 8,
+            "sha256": "abc123"
+        });
+        let image = json!({
+            "type": "image",
+            "data": "iVBORw0KGgo=",
+            "mimeType": "image/png"
+        });
+
+        let response = tool_success_response(result, Some(image), MAX_TOOL_RESULT_CHARS);
+
+        assert_eq!(response["content"][1]["type"], "image");
+        assert_eq!(response["content"][1]["mimeType"], "image/png");
+        assert_eq!(response["content"][1]["data"], "iVBORw0KGgo=");
+        assert!(response["content"][1].get("image_url").is_none());
+        assert_eq!(
+            response["_meta"]["chatos/artifacts"][0]["producer_artifact_id"],
+            "artifact_local"
+        );
+        assert_eq!(response["structuredContent"]["display_name"], "screenshot.png");
+    }
+
+    #[test]
+    fn ordinary_artifact_response_does_not_add_model_image() {
+        let response = tool_success_response(
+            json!({
+                "artifact_id": "artifact_download",
+                "relative_path": "artifact_download-download.zip",
+                "display_name": "download.zip",
+                "media_type": "application/zip",
+                "size_bytes": 12,
+                "sha256": "def456"
+            }),
+            None,
+            MAX_TOOL_RESULT_CHARS,
+        );
+
+        assert_eq!(response["content"].as_array().unwrap().len(), 1);
+        assert_eq!(response["content"][0]["type"], "text");
+        assert_eq!(
+            response["_meta"]["chatos/artifacts"][0]["producer_artifact_id"],
+            "artifact_download"
+        );
+    }
 }

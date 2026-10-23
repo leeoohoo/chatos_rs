@@ -2,6 +2,10 @@
 mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use async_tungstenite::{
         tokio::accept_hdr_async,
@@ -121,6 +125,28 @@ mod tests {
         assert!(matches!(unsupported, CoreError::Unsupported(_)));
         backend.unsubscribe(&subscription_id).await.unwrap();
         backend.detach_target(&session).await.unwrap();
+        backend.close().await.unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn paired_extension_has_time_to_reconnect_during_browser_startup() {
+        let (endpoint, attempts, server) = spawn_reconnecting_bridge(TEST_TOKEN, 2).await;
+        let config = BridgeConfig::new(&endpoint, TEST_TOKEN.into()).unwrap();
+        let backend = ExtensionCdpBackend::new(config);
+
+        let descriptor = backend
+            .open(OpenBrowserRequest {
+                mode: BrowserMode::ChromeExtension,
+                headless: true,
+                persistent_profile: false,
+                session_name: Some("Cold start verification".into()),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(descriptor.mode, BrowserMode::ChromeExtension);
+        assert_eq!(attempts.load(Ordering::Acquire), 3);
         backend.close().await.unwrap();
         server.await.unwrap();
     }
@@ -359,5 +385,96 @@ mod tests {
             }
         });
         (format!("ws://{address}/v1/browser"), task)
+    }
+
+    async fn spawn_reconnecting_bridge(
+        expected_token: &'static str,
+        unavailable_attempts: usize,
+    ) -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let attempts_for_server = attempts.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut socket =
+                    accept_hdr_async(stream, |request: &Request, mut response: Response| {
+                        let protocol = request.headers().get(SEC_WEBSOCKET_PROTOCOL).unwrap();
+                        assert_eq!(protocol, BRIDGE_SUBPROTOCOL);
+                        response.headers_mut().insert(
+                            SEC_WEBSOCKET_PROTOCOL,
+                            HeaderValue::from_static(BRIDGE_SUBPROTOCOL),
+                        );
+                        Ok(response)
+                    })
+                    .await
+                    .unwrap();
+                let attempt = attempts_for_server.fetch_add(1, Ordering::AcqRel) + 1;
+                let authentication = socket.next().await.unwrap().unwrap();
+                let Message::Text(authentication) = authentication else {
+                    panic!("authentication must be text");
+                };
+                let authentication: Value = serde_json::from_str(&authentication).unwrap();
+                assert_eq!(authentication["method"], "bridge.authenticate");
+                assert_eq!(authentication["params"]["token"], expected_token);
+
+                if attempt <= unavailable_attempts {
+                    socket
+                        .send(Message::text(
+                            json!({
+                                "type": "response",
+                                "id": 1,
+                                "error": {
+                                    "code": "extension_unavailable",
+                                    "message": "Chrome extension is not connected"
+                                }
+                            })
+                            .to_string(),
+                        ))
+                        .await
+                        .unwrap();
+                    let _ = socket.close(None).await;
+                    continue;
+                }
+
+                socket
+                    .send(Message::text(
+                        json!({
+                            "type": "response",
+                            "id": 1,
+                            "result": {
+                                "protocol_version": BRIDGE_PROTOCOL_VERSION,
+                                "connection_id": "reconnected-extension",
+                                "product": "Mock Chrome/1",
+                                "user_agent": "Mock Chrome",
+                                "capabilities": ["native_tab_groups"]
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .await
+                    .unwrap();
+
+                while let Some(Ok(Message::Text(text))) = socket.next().await {
+                    let request: Value = serde_json::from_str(&text).unwrap();
+                    let id = request["id"].as_u64().unwrap();
+                    let method = request["method"].as_str().unwrap();
+                    assert!(matches!(method, "bridge.configureSession" | "bridge.close"));
+                    socket
+                        .send(Message::text(
+                            json!({"type": "response", "id": id, "result": {}}).to_string(),
+                        ))
+                        .await
+                        .unwrap();
+                    if method == "bridge.close" {
+                        let _ = socket.close(None).await;
+                        return;
+                    }
+                }
+                return;
+            }
+        });
+        (format!("ws://{address}/v1/browser"), attempts, task)
     }
 }

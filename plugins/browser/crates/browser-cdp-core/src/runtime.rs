@@ -103,6 +103,14 @@ pub struct PageSnapshot {
     pub nodes: Vec<SnapshotNode>,
 }
 
+/// A screenshot has two independent consumers: the durable artifact pipeline and
+/// the current model turn. Keep the artifact descriptor free of binary data while
+/// carrying the already-returned CDP payload to the MCP response as an image block.
+pub struct ScreenshotCapture {
+    pub artifact: ArtifactDescriptor,
+    pub png_base64: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadCollection {
     pub events: EventBatch,

@@ -170,6 +170,7 @@ async fn call_tool(
         Some(resolve_browser_session_id(&arguments, &active_browser_session).await?)
     };
 
+    let mut model_image: Option<Value> = None;
     let result = match name.as_str() {
         "browser_session_open" => {
             let request: OpenBrowserRequest = serde_json::from_value(arguments)
@@ -410,8 +411,8 @@ async fn call_tool(
                 )
                 .await?
         }
-        "browser_screenshot" => serde_json::to_value(
-            runtime
+        "browser_screenshot" => {
+            let capture = runtime
                 .screenshot(
                     browser_session_id
                         .as_deref()
@@ -421,9 +422,14 @@ async fn call_tool(
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
                 )
-                .await?,
-        )
-        .unwrap(),
+                .await?;
+            model_image = Some(json!({
+                "type": "image",
+                "data": capture.png_base64,
+                "mimeType": "image/png"
+            }));
+            serde_json::to_value(capture.artifact).unwrap()
+        }
         "browser_downloads" => {
             let browser_session_id = browser_session_id
                 .as_deref()
@@ -741,18 +747,26 @@ async fn call_tool(
     ) {
         hide_browser_session_id_from_result(&mut result);
     }
+    Ok(tool_success_response(result, model_image, max_chars))
+}
+
+fn tool_success_response(result: Value, model_image: Option<Value>, max_chars: usize) -> Value {
     let artifact_candidates = artifact_registration_candidates(&result);
     let result = truncate_serializable(&result, max_chars);
     let text = serde_json::to_string(&result).unwrap_or_else(|_| "null".into());
+    let mut content = vec![json!({ "type": "text", "text": text })];
+    if let Some(image) = model_image {
+        content.push(image);
+    }
     let mut response = json!({
-        "content": [{ "type": "text", "text": text }],
+        "content": content,
         "structuredContent": result,
         "isError": false
     });
     if !artifact_candidates.is_empty() {
         response["_meta"] = json!({"chatos/artifacts": artifact_candidates});
     }
-    Ok(response)
+    response
 }
 
 include!("lib_part01.rs");
