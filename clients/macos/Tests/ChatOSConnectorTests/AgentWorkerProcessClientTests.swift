@@ -304,6 +304,194 @@ final class AgentWorkerProcessClientTests: XCTestCase {
         XCTAssertEqual(healthyResult.status, .completed)
     }
 
+    func testSIGKILLDuringWorkerAuthorizationFailsOnlyThatRun() async throws {
+        let executable = try workerExecutable()
+        let processes = AgentWorkerProcessIDs()
+        let authorizationGate = AgentWorkerAuthorizationGate()
+        let configuration = AgentWorkerModelTransportConfiguration.responses(try .init(
+            baseURL: URL(string: "http://127.0.0.1:1/v1/")!,
+            model: "authorization-kill-model",
+            apiKey: "authorization-kill-secret",
+            thinking: nil,
+            maximumOutputTokens: 1_024,
+            temperature: nil,
+            promptCacheKey: "authorization-kill"
+        ))
+        let client = Self.isolatedClient(executable: executable, processes: processes)
+        let task = Task {
+            try await Self.runIsolatedWorker(
+                client: client,
+                scope: "agent-worker-authorization-kill",
+                model: AgentWorkerBlockingAuthorizationModel(
+                    configuration: configuration,
+                    gate: authorizationGate
+                )
+            )
+        }
+
+        await authorizationGate.waitUntilWorkerAuthorization()
+        let processIDs = await processes.waitForCount(1)
+        let processID = try XCTUnwrap(processIDs.first)
+        XCTAssertEqual(Darwin.kill(processID, SIGKILL), 0)
+        await authorizationGate.release()
+        try await assertInfrastructureInterruption(task)
+    }
+
+    func testSIGKILLDuringWorkerNetworkRequestFailsOnlyThatRun() async throws {
+        let executable = try workerExecutable()
+        let requestProbe = AgentWorkerHTTPRequestProbe()
+        let responseGate = AgentWorkerHTTPResponseGate()
+        let server = try AgentWorkerHTTPFixture(
+            probe: requestProbe,
+            responseGate: responseGate
+        )
+        defer {
+            Task { await responseGate.release() }
+            server.close()
+        }
+        let processes = AgentWorkerProcessIDs()
+        let configuration = AgentWorkerModelTransportConfiguration.responses(try .init(
+            baseURL: server.baseURL,
+            model: "network-kill-model",
+            apiKey: "network-kill-secret",
+            thinking: nil,
+            maximumOutputTokens: 1_024,
+            temperature: nil,
+            promptCacheKey: "network-kill"
+        ))
+        let task = Task {
+            try await Self.runIsolatedWorker(
+                client: Self.isolatedClient(executable: executable, processes: processes),
+                scope: "agent-worker-network-kill",
+                model: AgentWorkerDirectModel(
+                    configuration: configuration,
+                    probe: AgentWorkerDirectModelProbe()
+                )
+            )
+        }
+
+        await requestProbe.waitUntilRequest()
+        let processIDs = await processes.waitForCount(1)
+        let processID = try XCTUnwrap(processIDs.first)
+        XCTAssertEqual(Darwin.kill(processID, SIGKILL), 0)
+        await responseGate.release()
+        try await assertInfrastructureInterruption(task)
+    }
+
+    func testSIGKILLDuringWriteToolIPCLeavesCheckpointForReviewWithoutReplay() async throws {
+        let executable = try workerExecutable()
+        let processes = AgentWorkerProcessIDs()
+        let executionGate = AgentWorkerProcessGate()
+        let records = AgentWorkerCheckpointProbe()
+        let scope = "agent-worker-tool-kill"
+        var checkpoint = AgentRunCheckpoint(
+            scope: scope,
+            messages: [.init(role: .user, content: scope)]
+        )
+        checkpoint.id = UUID()
+        let policy = testPolicy()
+        let writeTool = AgentToolDefinition(
+            name: "write_state",
+            description: "写入状态",
+            schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8),
+            effect: .write
+        )
+        let task = Task {
+            try await Self.isolatedClient(
+                executable: executable,
+                processes: processes
+            ).executeRun(
+                checkpoint: checkpoint,
+                scope: scope,
+                policy: policy,
+                model: AgentWorkerWriteModel(),
+                tools: [writeTool],
+                execute: { _ in
+                    await executionGate.block()
+                    return .init("write-finished")
+                },
+                completionCheck: { nil },
+                contextProvider: nil,
+                record: { saved, event in
+                    await records.record(checkpoint: saved, event: event)
+                }
+            )
+        }
+
+        await executionGate.waitUntilBlocked()
+        let processIDs = await processes.waitForCount(1)
+        let processID = try XCTUnwrap(processIDs.first)
+        XCTAssertEqual(Darwin.kill(processID, SIGKILL), 0)
+        await executionGate.release()
+        try await assertInfrastructureInterruption(task)
+
+        let latestCheckpoint = await records.latestCheckpoint()
+        let interrupted = try XCTUnwrap(latestCheckpoint)
+        XCTAssertEqual(interrupted.inFlightCallID, "write-call")
+        XCTAssertEqual(interrupted.pendingCalls.map(\.id), ["write-call"])
+        let replayProbe = AgentWorkerExecutionCount()
+        let resumed = try await AgentRuntime().run(
+            checkpoint: interrupted,
+            scope: scope,
+            policy: policy,
+            model: AgentWorkerWriteModel(),
+            tools: [writeTool],
+            execute: { _ in
+                await replayProbe.increment()
+                return .init("must-not-replay")
+            },
+            record: { _, _ in }
+        )
+        XCTAssertEqual(resumed.status, .needsReview)
+        XCTAssertNotNil(resumed.inFlightCallID)
+        let replayCount = await replayProbe.value()
+        XCTAssertEqual(replayCount, 0)
+    }
+
+    private func workerExecutable() throws -> URL {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_AGENT_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_AGENT_WORKER_PATH to run Agent worker integration.")
+        }
+        return URL(fileURLWithPath: path)
+    }
+
+    private static func isolatedClient(
+        executable: URL,
+        processes: AgentWorkerProcessIDs
+    ) -> AgentWorkerProcessClient {
+        AgentWorkerProcessClient(
+            executableURL: executable,
+            shutdownGraceSeconds: 5,
+            resourcePolicy: .init(),
+            processObserver: { processID in
+                Task { await processes.append(processID) }
+            },
+            circuitBreaker: AgentWorkerFailureCircuitBreaker()
+        )
+    }
+
+    private func assertInfrastructureInterruption(
+        _ task: Task<AgentRunCheckpoint, Error>
+    ) async throws {
+        do {
+            _ = try await task.value
+            XCTFail("SIGKILLed Agent Run unexpectedly completed")
+        } catch let error as AgentWorkerProcessClientError {
+            guard case .invalidResponse = error else { throw error }
+        }
+    }
+
+    private func testPolicy() -> AgentRunPolicy {
+        var policy = AgentRunPolicy()
+        policy.maximumModelCalls = 2
+        policy.maximumRequestRetries = 0
+        policy.maximumNoProgressRounds = 2
+        policy.requestTimeoutSeconds = 10
+        policy.runTimeoutSeconds = 30
+        return policy
+    }
+
     private static func runIsolatedWorker(
         client: AgentWorkerProcessClient,
         scope: String,
@@ -314,12 +502,7 @@ final class AgentWorkerProcessClientTests: XCTestCase {
             messages: [.init(role: .user, content: scope)]
         )
         checkpoint.id = UUID()
-        var policy = AgentRunPolicy()
-        policy.maximumModelCalls = 2
-        policy.maximumRequestRetries = 0
-        policy.maximumNoProgressRounds = 2
-        policy.requestTimeoutSeconds = 10
-        policy.runTimeoutSeconds = 30
+        let policy = testPolicy()
         return try await client.executeRun(
             checkpoint: checkpoint,
             scope: scope,
@@ -336,6 +519,16 @@ final class AgentWorkerProcessClientTests: XCTestCase {
             contextProvider: nil,
             record: { _, _ in }
         )
+    }
+
+    private static func testPolicy() -> AgentRunPolicy {
+        var policy = AgentRunPolicy()
+        policy.maximumModelCalls = 2
+        policy.maximumRequestRetries = 0
+        policy.maximumNoProgressRounds = 2
+        policy.requestTimeoutSeconds = 10
+        policy.runTimeoutSeconds = 30
+        return policy
     }
 }
 
@@ -454,6 +647,85 @@ private actor AgentWorkerCancellationProbe {
     }
 }
 
+private actor AgentWorkerAuthorizationGate {
+    private var authorizationCount = 0
+    private var workerAuthorizationStarted = false
+    private var released = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func authorize() async {
+        authorizationCount += 1
+        guard authorizationCount == 2 else { return }
+        workerAuthorizationStarted = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilWorkerAuthorization() async {
+        guard !workerAuthorizationStarted else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+}
+
+private struct AgentWorkerBlockingAuthorizationModel: AgentModelClient {
+    let configuration: AgentWorkerModelTransportConfiguration
+    let gate: AgentWorkerAuthorizationGate
+
+    var usesServerSideCompaction: Bool { true }
+    var workerTransportConfiguration: AgentWorkerModelTransportConfiguration? { configuration }
+
+    func validateWorkerTransportAuthorization() async throws {
+        await gate.authorize()
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        throw AgentRuntimeError.invalidResponse
+    }
+}
+
+private struct AgentWorkerWriteModel: AgentModelClient {
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        .init(role: .assistant, toolCalls: [
+            .init(id: "write-call", name: "write_state", arguments: "{}"),
+        ])
+    }
+}
+
+private actor AgentWorkerCheckpointProbe {
+    private var latest: AgentRunCheckpoint?
+
+    func record(checkpoint: AgentRunCheckpoint, event: AgentRunEvent) {
+        latest = checkpoint
+    }
+
+    func latestCheckpoint() -> AgentRunCheckpoint? { latest }
+}
+
+private actor AgentWorkerExecutionCount {
+    private var count = 0
+    func increment() { count += 1 }
+    func value() -> Int { count }
+}
+
 private struct AgentWorkerCancellationModel: AgentModelClient {
     let probe: AgentWorkerCancellationProbe
 
@@ -502,15 +774,48 @@ private struct AgentWorkerDirectModel: AgentModelClient {
 
 private actor AgentWorkerHTTPRequestProbe {
     private var value: String?
-    func record(_ request: String) { value = request }
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func record(_ request: String) {
+        value = request
+        let current = waiters
+        waiters.removeAll()
+        current.forEach { $0.resume() }
+    }
+
     func request() -> String? { value }
+
+    func waitUntilRequest() async {
+        guard value == nil else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+}
+
+private actor AgentWorkerHTTPResponseGate {
+    private var released = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !released else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        let current = waiters
+        waiters.removeAll()
+        current.forEach { $0.resume() }
+    }
 }
 
 private final class AgentWorkerHTTPFixture: @unchecked Sendable {
     let baseURL: URL
     private let descriptor: Int32
 
-    init(probe: AgentWorkerHTTPRequestProbe) throws {
+    init(
+        probe: AgentWorkerHTTPRequestProbe,
+        responseGate: AgentWorkerHTTPResponseGate? = nil
+    ) throws {
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw AgentWorkerProcessClientError.launchFailed }
         var reuse: Int32 = 1
@@ -552,7 +857,11 @@ private final class AgentWorkerHTTPFixture: @unchecked Sendable {
         self.descriptor = descriptor
         self.baseURL = baseURL
         Task.detached(priority: .userInitiated) {
-            await Self.serve(descriptor: descriptor, probe: probe)
+            await Self.serve(
+                descriptor: descriptor,
+                probe: probe,
+                responseGate: responseGate
+            )
         }
     }
 
@@ -563,7 +872,8 @@ private final class AgentWorkerHTTPFixture: @unchecked Sendable {
 
     private static func serve(
         descriptor: Int32,
-        probe: AgentWorkerHTTPRequestProbe
+        probe: AgentWorkerHTTPRequestProbe,
+        responseGate: AgentWorkerHTTPResponseGate?
     ) async {
         let client = accept(descriptor, nil, nil)
         guard client >= 0 else { return }
@@ -571,6 +881,7 @@ private final class AgentWorkerHTTPFixture: @unchecked Sendable {
         _ = fcntl(client, F_SETNOSIGPIPE, 1)
         guard let request = readRequest(client) else { return }
         await probe.record(String(decoding: request, as: UTF8.self))
+        await responseGate?.wait()
         let body = Data("""
         data: {"type":"response.created","response":{"id":"resp_worker"}}
 
