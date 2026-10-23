@@ -52,6 +52,22 @@ class MacOSReleasePackagingPolicyTests(unittest.TestCase):
         self.assertIn("Release ChatOS binary contains a Debug build path", verify)
         self.assertIn("codesign --verify --deep --strict", verify)
 
+        delegate = self.read(
+            REPOSITORY_ROOT
+            / "clients"
+            / "macos"
+            / "Sources"
+            / "ChatOSApp"
+            / "ChatOSApplicationDelegate.swift"
+        )
+        self.assertIn("BundledAgentSkillLoader.validateCatalog()", delegate)
+
+    def test_debug_build_cannot_overwrite_release_artifact(self) -> None:
+        package = self.read(MACOS_SCRIPTS / "package-app.sh")
+
+        self.assertIn('.build/$BUILD_CONFIGURATION/ChatOS.app', package)
+        self.assertNotIn('APP_DIR="$PROJECT_DIR/.build/ChatOS.app"', package)
+
     def test_dmg_checksum_is_portable_between_machines(self) -> None:
         dmg = self.read(MACOS_SCRIPTS / "package-release-dmg.sh")
 

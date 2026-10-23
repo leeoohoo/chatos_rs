@@ -11,16 +11,6 @@ native_python() {
 }
 PROJECT_DIR=${SCRIPT_DIR:h}
 REPOSITORY_DIR=${PROJECT_DIR:h:h}
-APP_DIR="$PROJECT_DIR/.build/ChatOS.app"
-CONTENTS_DIR="$APP_DIR/Contents"
-MACOS_DIR="$CONTENTS_DIR/MacOS"
-RESOURCES_DIR="$CONTENTS_DIR/Resources"
-TOOLS_DIR="$RESOURCES_DIR/Tools/darwin-arm64"
-RIPGREP_NOTICE_DIR="$RESOURCES_DIR/ThirdPartyNotices/ripgrep"
-SWIFTTERM_NOTICE_DIR="$RESOURCES_DIR/ThirdPartyNotices/SwiftTerm"
-PET_DIR="$RESOURCES_DIR/Pets/fengtuan"
-EN_LOCALIZATION_DIR="$RESOURCES_DIR/en.lproj"
-ZH_HANS_LOCALIZATION_DIR="$RESOURCES_DIR/zh-Hans.lproj"
 SIGNING_IDENTITY=${CHATOS_CODESIGN_IDENTITY:-}
 SWIFT_BUILD_SYSTEM=${CHATOS_SWIFT_BUILD_SYSTEM:-native}
 SWIFT_SCRATCH_PATH=${CHATOS_SWIFT_SCRATCH_PATH:-"$PROJECT_DIR/.build-native"}
@@ -37,6 +27,20 @@ case "$BUILD_CONFIGURATION" in
     exit 2
     ;;
 esac
+
+# Keep diagnostic Debug artifacts physically separate from distributable Release
+# artifacts. A later Debug build must never overwrite the app selected for upload
+# or installation by a release workflow.
+APP_DIR="$PROJECT_DIR/.build/$BUILD_CONFIGURATION/ChatOS.app"
+CONTENTS_DIR="$APP_DIR/Contents"
+MACOS_DIR="$CONTENTS_DIR/MacOS"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
+TOOLS_DIR="$RESOURCES_DIR/Tools/darwin-arm64"
+RIPGREP_NOTICE_DIR="$RESOURCES_DIR/ThirdPartyNotices/ripgrep"
+SWIFTTERM_NOTICE_DIR="$RESOURCES_DIR/ThirdPartyNotices/SwiftTerm"
+PET_DIR="$RESOURCES_DIR/Pets/fengtuan"
+EN_LOCALIZATION_DIR="$RESOURCES_DIR/en.lproj"
+ZH_HANS_LOCALIZATION_DIR="$RESOURCES_DIR/zh-Hans.lproj"
 
 if [[ "$BUILD_CONFIGURATION" == "release" && -n "$(git -C "$PROJECT_DIR" status --porcelain)" && "${CHATOS_ALLOW_DIRTY_RELEASE:-0}" != "1" ]]; then
   echo "Refusing to package a Release app from a dirty worktree." >&2

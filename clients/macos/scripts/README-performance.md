@@ -13,7 +13,7 @@ CHATOS_BUILD_CONFIGURATION=release CHATOS_VERIFY_LAUNCH_SMOKE=0 \
 
 打包现在强制使用 Swift `Package.resolved` 和 Cargo `--locked`，并产出：
 
-- `.build/ChatOS.app.build-manifest.json`：App、Host、工具及完整 bundle 文件清单/哈希、UUID、签名描述、版本、源码输入摘要、构建命令、工具链、协议/Schema 源码版本和环境。
+- `.build/release/ChatOS.app.build-manifest.json`：Release App、Host、工具及完整 bundle 文件清单/哈希、UUID、签名描述、版本、源码输入摘要、构建命令、工具链、协议/Schema 源码版本和环境。Debug 证据位于对应的 `.build/debug/`，不会覆盖 Release 产物。
 - `.build/build-evidence.*/inputs.json`、`commands.json`：构建前输入及实际命令记录。tracked 文件、非 ignored 的 untracked 文件、缺失文件、可执行位、symlink 目标和 Git index 都参与校验。构建期间输入发生变化，拒绝发布证据。
 - 同一 evidence 目录下的 Release App、Host、ps dSYM：逐个校验 UUID/架构是否与成品对应，并记录文件哈希。Release Rust 使用 `CARGO_PROFILE_RELEASE_DEBUG=1` 保留行表。
 

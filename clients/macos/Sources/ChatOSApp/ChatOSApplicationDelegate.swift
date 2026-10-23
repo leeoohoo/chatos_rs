@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSCore
 import Foundation
 import SwiftUI
 
@@ -31,6 +32,14 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if Self.isBuildSmokeTest {
+            do {
+                try BundledAgentSkillLoader.validateCatalog()
+            } catch {
+                fatalError("Packaged ChatOS resource validation failed: \(error.localizedDescription)")
+            }
+        }
+
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
         model.startPetOverlayIfNeeded()
@@ -55,11 +64,15 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
 
     private static var buildSmokeTestExitDelay: TimeInterval? {
         let environment = ProcessInfo.processInfo.environment
-        guard environment["CHATOS_BUILD_SMOKE_TEST"] == "1",
+        guard isBuildSmokeTest,
               let rawValue = environment["CHATOS_BUILD_SMOKE_TEST_EXIT_AFTER_SECONDS"],
               let delay = TimeInterval(rawValue),
               delay > 0 else { return nil }
         return delay
+    }
+
+    private static var isBuildSmokeTest: Bool {
+        ProcessInfo.processInfo.environment["CHATOS_BUILD_SMOKE_TEST"] == "1"
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {

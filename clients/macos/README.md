@@ -16,8 +16,10 @@ swift run ChatOSSwift
 
 ```bash
 ./scripts/package-debug-app.sh
-open .build/ChatOS.app
+open .build/debug/ChatOS.app
 ```
+
+Debug 与 Release 产物分别位于 `.build/debug/` 和 `.build/release/`，调试构建不会覆盖待发布客户端。
 
 ## 当前能力
 
