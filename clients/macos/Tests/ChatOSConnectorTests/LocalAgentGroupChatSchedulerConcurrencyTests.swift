@@ -151,6 +151,101 @@ extension LocalAgentGroupChatSchedulerTests {
         XCTAssertGreaterThanOrEqual(maximumConcurrentCalls, 2)
     }
 
+    func testRecoveryRunsIndependentInterruptedConversationsConcurrently() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-parallel-recovery-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        var expectedDeliveryIDs = Set<String>()
+        for index in 0..<3 {
+            let agent = try await store.createAgent(
+                ownerUserID: "alice",
+                draft: .init(
+                    name: "恢复 Agent \(index)",
+                    rolePrompt: "独立恢复不同会话。",
+                    modelConfigID: "recovery-parallel-model"
+                )
+            )
+            let room = try await store.openHumanAgentDirect(
+                ownerUserID: "alice",
+                agentID: agent.id
+            )
+            let post = try await store.postMessage(
+                ownerUserID: "alice",
+                roomID: room.id,
+                draft: .init(
+                    senderKind: .human,
+                    senderID: "alice",
+                    content: "恢复独立会话 \(index)"
+                ),
+                limits: .init()
+            )
+            let claimedValue = try await store.claimNextDelivery(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                nowUnixMs: Int64(100 + index)
+            )
+            let delivery = try XCTUnwrap(claimedValue)
+            expectedDeliveryIDs.insert(delivery.id)
+            let runID = UUID()
+            let context = try LocalAgentChatRunContext(
+                ownerUserID: "alice",
+                projectID: room.projectID,
+                roomID: room.id,
+                agentID: agent.id,
+                deliveryID: delivery.id,
+                triggerMessageID: delivery.messageID,
+                rootMessageID: delivery.rootMessageID,
+                runID: runID.uuidString.lowercased(),
+                hopCount: delivery.hopCount
+            )
+            var checkpoint = AgentRunCheckpoint(
+                scope: LocalAgentGroupChatRun.runtimeScope(for: context),
+                messages: [
+                    .init(role: .system, content: "system"),
+                    .init(role: .user, content: post.message.content),
+                ]
+            )
+            checkpoint.id = runID
+            checkpoint.status = .ready
+            try await store.saveRun(try LocalAgentGroupChatRun(
+                id: runID,
+                context: context,
+                modelConfigID: agent.draft.modelConfigID,
+                policy: .init(),
+                checkpoint: checkpoint,
+                createdAtUnixMs: Int64(100 + index),
+                updatedAtUnixMs: Int64(100 + index)
+            ))
+        }
+
+        let probe = SchedulerConcurrencyProbe()
+        let settingsSuite = "local-agent-parallel-recovery-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: RecoveryConcurrencyServices(probe: probe),
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2,
+            now: { 1_000 }
+        )
+
+        let results = try await scheduler.recoverInterruptedRuns(
+            store: store,
+            ownerUserID: "alice",
+            maximumRuns: 3
+        )
+
+        XCTAssertEqual(Set(results.map(\.deliveryID)), expectedDeliveryIDs)
+        XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })
+        let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
+        XCTAssertEqual(maximumConcurrentCalls, 2)
+    }
+
     func testSchedulerRunsOneAgentsTodosAcrossIndependentTeamsConcurrently() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-cross-team-executors-\(UUID().uuidString)")

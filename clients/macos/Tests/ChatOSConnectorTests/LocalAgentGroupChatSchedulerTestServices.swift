@@ -207,6 +207,49 @@ struct ParallelSchedulerTestServices: AgentServiceProviding {
     }
 }
 
+struct RecoveryConcurrencyServices: AgentServiceProviding {
+    let probe: SchedulerConcurrencyProbe
+    private let memoryRegistry = SchedulerTestMemoryRegistry()
+
+    func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy
+    ) async throws -> any AgentModelClient {
+        XCTAssertEqual(configID, "recovery-parallel-model")
+        return RecoveryConcurrencyModel(probe: probe)
+    }
+
+    func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
+        await memoryRegistry.memory(for: scope)
+    }
+}
+
+actor RecoveryConcurrencyModel: AgentModelClient {
+    private let probe: SchedulerConcurrencyProbe
+
+    init(probe: SchedulerConcurrencyProbe) {
+        self.probe = probe
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        XCTAssertTrue(tools.contains {
+            $0.name == LocalAgentChatToolProvider.completeManagerCycleToolName
+        })
+        await probe.enter()
+        try await Task.sleep(for: .milliseconds(75))
+        await probe.leave()
+        return .init(role: .assistant, toolCalls: [.init(
+            id: "complete-recovered-manager-cycle",
+            name: LocalAgentChatToolProvider.completeManagerCycleToolName,
+            arguments: "{}"
+        )])
+    }
+}
+
 actor SchedulerConcurrencyProbe {
     private var activeCalls = 0
     private var maximumCalls = 0

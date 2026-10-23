@@ -287,84 +287,139 @@ extension LocalAgentGroupChatScheduler {
     ) async throws -> [DeliveryAttemptReceipt] {
         let runs = try await store.listInterruptedRuns(ownerUserID: ownerUserID, limit: 500)
         var results: [DeliveryAttemptReceipt] = []
-        for run in runs where results.count < maximumRuns {
-            try await runtime.checkExecutionAdmission()
-            guard let executionPermit = await executionGovernor.acquire(
-                priority: .background
-            ) else { break }
-            defer { executionPermit.release() }
-            let deliveryID = run.context.deliveryID
-            guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else { continue }
-            do {
-                // Re-read after acquiring ownership. A Human retry may have changed both the
-                // checkpoint and Todo between the account snapshot and this recovery attempt.
-                guard let currentDelivery = try await store.delivery(
-                    ownerUserID: ownerUserID,
-                    deliveryID: deliveryID
-                ), currentDelivery.status == .running,
-                   let currentRun = try await store.run(
-                    ownerUserID: ownerUserID,
-                    deliveryID: deliveryID
-                   ) else {
-                    await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+        var nextRunIndex = 0
+        while nextRunIndex < runs.count,
+              results.count < maximumRuns,
+              !Task.isCancelled {
+            let batchStartIndex = nextRunIndex
+            let remainingCapacity = maximumRuns - results.count
+            var running: [Task<OrderedDeliveryAttemptReceipt?, Error>] = []
+            running.reserveCapacity(min(remainingCapacity, executionGovernor.limit))
+            while nextRunIndex < runs.count, running.count < remainingCapacity {
+                try await runtime.checkExecutionAdmission()
+                let executionPermit: LocalAgentExecutionPermit?
+                if running.isEmpty {
+                    executionPermit = await executionGovernor.acquire(priority: .background)
+                } else {
+                    executionPermit = await executionGovernor.tryAcquire()
+                }
+                guard let executionPermit else { break }
+                if Task.isCancelled {
+                    await executionPermit.releaseAndWait()
+                    break
+                }
+                let order = nextRunIndex
+                let run = runs[nextRunIndex]
+                nextRunIndex += 1
+                let deliveryID = run.context.deliveryID
+                guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else {
+                    await executionPermit.releaseAndWait()
                     continue
                 }
-                if currentRun.checkpoint.status == .needsReview {
-                    try await suspendTodoForReview(
-                        store: store,
-                        ownerUserID: ownerUserID,
-                        delivery: currentDelivery,
-                        runID: currentRun.context.runID,
-                        detail: currentRun.checkpoint.stopReason
-                            ?? "执行中断，需要检查副作用后再决定是否重试。"
-                    )
-                    await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
-                    continue
-                }
-                var isRecoveryEligible = Self.isAutomaticTriggerRecoveryEligible(
-                    currentRun.checkpoint
-                )
-                // Older builds could leave a Todo blocked while its durable delivery stayed
-                // running and its Run later paused on repeated identity rejections. Once the
-                // Human explicitly resolves that blocker, the Todo becomes pending but cannot
-                // be claimed again because the original delivery is still running. Repair that
-                // split state in place and resume the same durable Run.
-                if !isRecoveryEligible,
-                   currentDelivery.triggerKind == .todo,
-                   currentRun.checkpoint.status == .paused,
-                   currentRun.checkpoint.pendingCalls.isEmpty,
-                   currentRun.checkpoint.inFlightCallID == nil,
-                   let todo = try await store.todoForDelivery(
-                    ownerUserID: ownerUserID,
-                    deliveryID: currentDelivery.id
-                   ), todo.status == .pending {
-                    _ = try await store.updateAgentTodo(
-                        ownerUserID: ownerUserID,
-                        agentID: todo.agentID,
-                        todoID: todo.id,
-                        update: .init(status: .inProgress, blockedReason: ""),
-                        nowUnixMs: now()
-                    )
-                    isRecoveryEligible = true
-                }
-                guard isRecoveryEligible else {
-                    await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
-                    continue
-                }
-                let result = try await resumeRegisteredDelivery(
-                    ownerUserID: ownerUserID,
-                    projectID: currentRun.context.projectID,
-                    deliveryID: deliveryID
-                )
-                await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
-                results.append(result)
-                if result.outcome != .completed { break }
-            } catch {
-                await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
-                throw error
+                running.append(Task {
+                    do {
+                        let receipt = try await recoverInterruptedRun(
+                            store: store,
+                            ownerUserID: ownerUserID,
+                            run: run
+                        )
+                        await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+                        await executionPermit.releaseAndWait()
+                        return receipt.map {
+                            OrderedDeliveryAttemptReceipt(order: order, receipt: $0)
+                        }
+                    } catch {
+                        await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+                        await executionPermit.releaseAndWait()
+                        throw error
+                    }
+                })
             }
+            guard !running.isEmpty else {
+                if nextRunIndex > batchStartIndex { continue }
+                break
+            }
+
+            var batch: [OrderedDeliveryAttemptReceipt] = []
+            var firstError: Error?
+            for task in running {
+                do {
+                    if let completed = try await task.value {
+                        batch.append(completed)
+                    }
+                } catch {
+                    if firstError == nil { firstError = error }
+                }
+            }
+            if let firstError { throw firstError }
+            batch.sort { $0.order < $1.order }
+            results.append(contentsOf: batch.map(\.receipt))
+            if batch.contains(where: { $0.receipt.outcome != .completed }) { break }
         }
         return results
+    }
+
+    private func recoverInterruptedRun(
+        store: SQLiteAgentGroupChatStore,
+        ownerUserID: String,
+        run: LocalAgentGroupChatRun
+    ) async throws -> DeliveryAttemptReceipt? {
+        let deliveryID = run.context.deliveryID
+        // Re-read after acquiring ownership. A Human retry may have changed both the
+        // checkpoint and Todo between the account snapshot and this recovery attempt.
+        guard let currentDelivery = try await store.delivery(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID
+        ), currentDelivery.status == .running,
+           let currentRun = try await store.run(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID
+           ) else {
+            return nil
+        }
+        if currentRun.checkpoint.status == .needsReview {
+            try await suspendTodoForReview(
+                store: store,
+                ownerUserID: ownerUserID,
+                delivery: currentDelivery,
+                runID: currentRun.context.runID,
+                detail: currentRun.checkpoint.stopReason
+                    ?? "执行中断，需要检查副作用后再决定是否重试。"
+            )
+            return nil
+        }
+        var isRecoveryEligible = Self.isAutomaticTriggerRecoveryEligible(
+            currentRun.checkpoint
+        )
+        // Older builds could leave a Todo blocked while its durable delivery stayed
+        // running and its Run later paused on repeated identity rejections. Once the
+        // Human explicitly resolves that blocker, the Todo becomes pending but cannot
+        // be claimed again because the original delivery is still running. Repair that
+        // split state in place and resume the same durable Run.
+        if !isRecoveryEligible,
+           currentDelivery.triggerKind == .todo,
+           currentRun.checkpoint.status == .paused,
+           currentRun.checkpoint.pendingCalls.isEmpty,
+           currentRun.checkpoint.inFlightCallID == nil,
+           let todo = try await store.todoForDelivery(
+            ownerUserID: ownerUserID,
+            deliveryID: currentDelivery.id
+           ), todo.status == .pending {
+            _ = try await store.updateAgentTodo(
+                ownerUserID: ownerUserID,
+                agentID: todo.agentID,
+                todoID: todo.id,
+                update: .init(status: .inProgress, blockedReason: ""),
+                nowUnixMs: now()
+            )
+            isRecoveryEligible = true
+        }
+        guard isRecoveryEligible else { return nil }
+        return try await resumeRegisteredDelivery(
+            ownerUserID: ownerUserID,
+            projectID: currentRun.context.projectID,
+            deliveryID: deliveryID
+        )
     }
 
     static func isAutomaticTriggerRecoveryEligible(
