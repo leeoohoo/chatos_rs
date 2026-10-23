@@ -228,7 +228,10 @@ extension LocalAgentGroupChatSchedulerTests {
         defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
         let scheduler = LocalAgentGroupChatScheduler(
             service: service,
-            services: RecoveryRollingWindowServices(probe: probe),
+            services: SchedulerRollingWindowServices(
+                probe: probe,
+                expectedConfigID: "recovery-parallel-model"
+            ),
             settings: .init(suiteName: settingsSuite),
             maximumConcurrentExecutions: 2,
             now: { 1_000 }
@@ -257,6 +260,84 @@ extension LocalAgentGroupChatSchedulerTests {
         )
         await probe.releaseFirst()
         let results = try await recoveryTask.value
+
+        XCTAssertEqual(Set(results.map(\.deliveryID)), expectedDeliveryIDs)
+        XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })
+        let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
+        XCTAssertEqual(maximumConcurrentCalls, 2)
+    }
+
+    func testAccountDrainRefillsCapacityBeforeSlowIndependentDeliveryFinishes() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-account-rolling-window-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        var expectedDeliveryIDs = Set<String>()
+        for index in 0..<3 {
+            let agent = try await store.createAgent(
+                ownerUserID: "alice",
+                draft: .init(
+                    name: "滚动调度 Agent \(index)",
+                    rolePrompt: "独立处理新消息。",
+                    modelConfigID: "fresh-rolling-model"
+                )
+            )
+            let room = try await store.openHumanAgentDirect(
+                ownerUserID: "alice",
+                agentID: agent.id
+            )
+            let post = try await store.postMessage(
+                ownerUserID: "alice",
+                roomID: room.id,
+                draft: .init(
+                    senderKind: .human,
+                    senderID: "alice",
+                    content: "独立新消息 \(index)"
+                ),
+                limits: .init()
+            )
+            expectedDeliveryIDs.formUnion(post.deliveries.map(\.id))
+        }
+
+        let probe = RecoveryRollingWindowProbe()
+        let settingsSuite = "local-agent-account-rolling-window-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: SchedulerRollingWindowServices(
+                probe: probe,
+                expectedConfigID: "fresh-rolling-model"
+            ),
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2,
+            now: { 1_000 }
+        )
+
+        let drainTask = Task {
+            try await scheduler.drainCommunications(
+                ownerUserID: "alice",
+                maximumRuns: 3
+            )
+        }
+        await probe.waitUntilFirstStarts()
+
+        var thirdStarted = false
+        for _ in 0..<100 {
+            if await probe.hasThirdStarted() {
+                thirdStarted = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(
+            thirdStarted,
+            "a released account-drain slot must refill before the unrelated slow delivery finishes"
+        )
+        await probe.releaseFirst()
+        let results = try await drainTask.value
 
         XCTAssertEqual(Set(results.map(\.deliveryID)), expectedDeliveryIDs)
         XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })

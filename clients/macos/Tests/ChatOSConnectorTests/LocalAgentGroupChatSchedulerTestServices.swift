@@ -207,15 +207,16 @@ struct ParallelSchedulerTestServices: AgentServiceProviding {
     }
 }
 
-struct RecoveryRollingWindowServices: AgentServiceProviding {
+struct SchedulerRollingWindowServices: AgentServiceProviding {
     let probe: RecoveryRollingWindowProbe
+    let expectedConfigID: String
     private let memoryRegistry = SchedulerTestMemoryRegistry()
 
     func makeAgentModel(
         configID: String,
         policy: AgentRunPolicy
     ) async throws -> any AgentModelClient {
-        XCTAssertEqual(configID, "recovery-parallel-model")
+        XCTAssertEqual(configID, expectedConfigID)
         return RecoveryRollingWindowModel(probe: probe)
     }
 

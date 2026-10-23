@@ -144,57 +144,66 @@ extension LocalAgentGroupChatScheduler {
         maximumRuns: Int,
         lane: LocalAgentRunLane?
     ) async throws -> [DeliveryAttemptReceipt] {
+        guard maximumRuns > 0,
+              try await store.hasPendingDeliveries(
+                  ownerUserID: ownerUserID,
+                  lane: lane
+              ) else {
+            return []
+        }
         let executionPriority: LocalAgentExecutionPriority = lane == .manager
             ? .interactive
             : .background
-        var results: [DeliveryAttemptReceipt] = []
-        while results.count < maximumRuns, !Task.isCancelled {
-            guard try await store.hasPendingDeliveries(
-                ownerUserID: ownerUserID,
-                lane: lane
-            ) else { break }
-            let teams = try await store.listRooms(ownerUserID: ownerUserID, includeArchived: false)
-            let directs = try await store.listDirectConversations(
-                ownerUserID: ownerUserID,
-                includeArchived: false
-            )
-            let rooms = teams + directs
-            let remainingCapacity = maximumRuns - results.count
-            var roomByID = Dictionary(uniqueKeysWithValues: rooms.map { ($0.id, $0) })
-            var memberByRoomAndAgent: [String: ProjectAgentRoomMember] = [:]
-            var agentIDs: [String] = []
-            var seenAgentIDs = Set<String>()
-            for member in try await store.listActiveMembers(ownerUserID: ownerUserID) {
-                guard roomByID[member.roomID] != nil else { continue }
-                memberByRoomAndAgent[Self.memberKey(
-                    roomID: member.roomID,
-                    agentID: member.agentID
-                )] = member
-                if seenAgentIDs.insert(member.agentID).inserted {
-                    agentIDs.append(member.agentID)
-                }
-            }
-            var claimedWork: [ClaimedWork] = []
-            claimedWork.reserveCapacity(remainingCapacity)
-            var exhaustedAgentIDs = Set<String>()
-            // Claim in round-robin passes. A single Agent may own independent lanes in different
-            // rooms, but it must not consume every available permit before other Agents get one.
-            claimingPasses: while claimedWork.count < remainingCapacity {
-                var claimedInPass = false
-                for agentID in agentIDs where !exhaustedAgentIDs.contains(agentID) {
-                    try await runtime.checkExecutionAdmission()
+        var claimContext = try await accountDrainClaimContext(
+            store: store,
+            ownerUserID: ownerUserID
+        )
+        return try await withThrowingTaskGroup(
+            of: ScheduledWorkCompletion.self,
+            returning: [DeliveryAttemptReceipt].self
+        ) { group in
+            var completed: [OrderedDeliveryAttemptReceipt] = []
+            var inFlightCount = 0
+            var nextOrder = 0
+            var nextAgentIndex = 0
+            var shouldSchedule = true
+            var firstError: Error?
+
+            while inFlightCount > 0
+                    || (shouldSchedule
+                        && !Task.isCancelled
+                        && completed.count < maximumRuns) {
+                var exhaustedAgentIDs = Set<String>()
+                while shouldSchedule,
+                      !Task.isCancelled,
+                      !claimContext.agentIDs.isEmpty,
+                      exhaustedAgentIDs.count < claimContext.agentIDs.count,
+                      completed.count + inFlightCount < maximumRuns {
+                    let agentID = claimContext.agentIDs[
+                        nextAgentIndex % claimContext.agentIDs.count
+                    ]
+                    nextAgentIndex = (nextAgentIndex + 1) % claimContext.agentIDs.count
+                    guard !exhaustedAgentIDs.contains(agentID) else { continue }
+                    do {
+                        try await runtime.checkExecutionAdmission()
+                    } catch {
+                        if firstError == nil { firstError = error }
+                        shouldSchedule = false
+                        break
+                    }
                     let executionPermit: LocalAgentExecutionPermit?
-                    if claimedWork.isEmpty {
+                    if inFlightCount == 0 {
                         executionPermit = await executionGovernor.acquire(
                             priority: executionPriority
                         )
                     } else {
                         executionPermit = await executionGovernor.tryAcquire()
                     }
-                    guard let executionPermit else { break claimingPasses }
+                    guard let executionPermit else { break }
                     if Task.isCancelled {
                         await executionPermit.releaseAndWait()
-                        break claimingPasses
+                        shouldSchedule = false
+                        break
                     }
                     let delivery: ProjectAgentDelivery?
                     do {
@@ -214,7 +223,9 @@ extension LocalAgentGroupChatScheduler {
                         }
                     } catch {
                         await executionPermit.releaseAndWait()
-                        throw error
+                        if firstError == nil { firstError = error }
+                        shouldSchedule = false
+                        break
                     }
                     guard let delivery else {
                         await executionPermit.releaseAndWait()
@@ -223,54 +234,140 @@ extension LocalAgentGroupChatScheduler {
                     }
                     do {
                         let room: ProjectAgentRoom
-                        if let known = roomByID[delivery.roomID] {
+                        if let known = claimContext.roomByID[delivery.roomID] {
                             room = known
                         } else if let loaded = try await store.room(
                             ownerUserID: ownerUserID,
                             roomID: delivery.roomID
                         ) {
                             room = loaded
-                            roomByID[loaded.id] = loaded
+                            claimContext.roomByID[loaded.id] = loaded
                         } else {
                             throw AgentGroupChatError.notFound
                         }
                         let key = Self.memberKey(roomID: room.id, agentID: agentID)
                         let member: ProjectAgentRoomMember
-                        if let known = memberByRoomAndAgent[key] {
+                        if let known = claimContext.memberByRoomAndAgent[key] {
                             member = known
                         } else if let loaded = try await store.listMembers(
                             ownerUserID: ownerUserID,
                             roomID: room.id
                         ).first(where: { $0.agentID == agentID && $0.status == .active }) {
                             member = loaded
-                            memberByRoomAndAgent[key] = loaded
+                            claimContext.memberByRoomAndAgent[key] = loaded
                         } else {
                             throw AgentGroupChatError.notMember
                         }
-                        claimedWork.append(.init(
-                            order: claimedWork.count,
+                        let work = ClaimedWork(
+                            order: nextOrder,
                             room: room,
                             member: member,
                             delivery: delivery,
                             executionPermit: executionPermit
-                        ))
-                        claimedInPass = true
+                        )
+                        nextOrder += 1
+                        inFlightCount += 1
+                        group.addTask {
+                            do {
+                                let receipt = try await runClaimedWork(
+                                    [work],
+                                    store: store,
+                                    ownerUserID: ownerUserID
+                                ).first
+                                return .finished(receipt.map {
+                                    OrderedDeliveryAttemptReceipt(
+                                        order: work.order,
+                                        receipt: $0
+                                    )
+                                })
+                            } catch {
+                                await work.executionPermit.releaseAndWait()
+                                return .failed(error)
+                            }
+                        }
                     } catch {
                         await executionPermit.releaseAndWait()
-                        throw error
+                        if firstError == nil { firstError = error }
+                        shouldSchedule = false
+                        break
                     }
-                    if claimedWork.count == remainingCapacity { break }
                 }
-                if !claimedInPass { break }
+
+                guard inFlightCount > 0 else { break }
+                guard let completion = try await group.next() else { break }
+                inFlightCount -= 1
+                switch completion {
+                case let .finished(receipt):
+                    if let receipt { completed.append(receipt) }
+                case let .failed(error):
+                    if firstError == nil { firstError = error }
+                    shouldSchedule = false
+                }
+                if shouldSchedule, !Task.isCancelled {
+                    do {
+                        guard try await store.hasPendingDeliveries(
+                            ownerUserID: ownerUserID,
+                            lane: lane
+                        ) else {
+                            shouldSchedule = false
+                            continue
+                        }
+                        claimContext = try await accountDrainClaimContext(
+                            store: store,
+                            ownerUserID: ownerUserID
+                        )
+                        if !claimContext.agentIDs.isEmpty {
+                            nextAgentIndex %= claimContext.agentIDs.count
+                        } else {
+                            nextAgentIndex = 0
+                        }
+                    } catch {
+                        if firstError == nil { firstError = error }
+                        shouldSchedule = false
+                    }
+                }
             }
-            if claimedWork.isEmpty { break }
-            results.append(contentsOf: try await runClaimedWork(
-                claimedWork,
-                store: store,
-                ownerUserID: ownerUserID
-            ))
+
+            if let firstError { throw firstError }
+            completed.sort { $0.order < $1.order }
+            return completed.map(\.receipt)
         }
-        return results
+    }
+
+    private struct AccountDrainClaimContext {
+        var roomByID: [String: ProjectAgentRoom]
+        var memberByRoomAndAgent: [String: ProjectAgentRoomMember]
+        var agentIDs: [String]
+    }
+
+    private func accountDrainClaimContext(
+        store: SQLiteAgentGroupChatStore,
+        ownerUserID: String
+    ) async throws -> AccountDrainClaimContext {
+        let teams = try await store.listRooms(ownerUserID: ownerUserID, includeArchived: false)
+        let directs = try await store.listDirectConversations(
+            ownerUserID: ownerUserID,
+            includeArchived: false
+        )
+        let roomByID = Dictionary(uniqueKeysWithValues: (teams + directs).map { ($0.id, $0) })
+        var memberByRoomAndAgent: [String: ProjectAgentRoomMember] = [:]
+        var agentIDs: [String] = []
+        var seenAgentIDs = Set<String>()
+        for member in try await store.listActiveMembers(ownerUserID: ownerUserID) {
+            guard roomByID[member.roomID] != nil else { continue }
+            memberByRoomAndAgent[Self.memberKey(
+                roomID: member.roomID,
+                agentID: member.agentID
+            )] = member
+            if seenAgentIDs.insert(member.agentID).inserted {
+                agentIDs.append(member.agentID)
+            }
+        }
+        return .init(
+            roomByID: roomByID,
+            memberByRoomAndAgent: memberByRoomAndAgent,
+            agentIDs: agentIDs
+        )
     }
 
     /// Chat surfaces only append/display messages. Recovery belongs to the Agent trigger runtime.
@@ -287,7 +384,7 @@ extension LocalAgentGroupChatScheduler {
     ) async throws -> [DeliveryAttemptReceipt] {
         let runs = try await store.listInterruptedRuns(ownerUserID: ownerUserID, limit: 500)
         return try await withThrowingTaskGroup(
-            of: InterruptedRunRecoveryCompletion.self,
+            of: ScheduledWorkCompletion.self,
             returning: [DeliveryAttemptReceipt].self
         ) { group in
             var completed: [OrderedDeliveryAttemptReceipt] = []
@@ -376,7 +473,7 @@ extension LocalAgentGroupChatScheduler {
         }
     }
 
-    private enum InterruptedRunRecoveryCompletion: @unchecked Sendable {
+    private enum ScheduledWorkCompletion: @unchecked Sendable {
         case finished(OrderedDeliveryAttemptReceipt?)
         case failed(Error)
     }
