@@ -109,9 +109,11 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         let extraction = Task {
             try await StoryVideoFrameExtractor.lastFramePNG(
                 from: invalidVideo,
+                ownerUserID: "test-user",
                 taskID: "provider-job",
                 ownerSessionID: "session-a",
-                heavyMediaGovernor: governor
+                heavyMediaGovernor: governor,
+                mediaWorker: RejectingVideoFrameWorker()
             )
         }
         try await waitForHeavyMediaQueue(governor, count: 1)
@@ -628,6 +630,19 @@ final class MediaStudioImageInteractionTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Timed out waiting for image selection")
+    }
+}
+
+private struct RejectingVideoFrameWorker: MediaWorkerVideoFrameExtracting {
+    func extractLastVideoFramePNG(
+        sourceURL: URL,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int
+    ) async throws -> MediaWorkerImageDescriptor {
+        throw MediaWorkerProcessClientError.requestRejected(code: "invalid_video")
     }
 }
 

@@ -1,18 +1,26 @@
-import AppKit
-import AVFoundation
+import ChatOSAPI
 import ChatOSCore
 import ChatOSNetworking
 import Foundation
 
 enum StoryVideoFrameExtractor {
     private static let maximumFramePixelSize = 4_096
+    private static let maximumVideoBytes = 512 * 1_024 * 1_024
+    private static let maximumFrameBytes = 20 * 1_024 * 1_024
 
     static func lastFramePNG(
         from videoURL: URL,
+        ownerUserID: String,
         taskID: String? = nil,
         ownerSessionID: String? = nil,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
-    ) async throws -> Data {
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        availableCapacityOverride: Int64? = nil,
+        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared,
+        mediaWorker: any MediaWorkerVideoFrameExtracting = MediaWorkerProcessClient.shared
+    ) async throws -> GeneratedMediaFile {
+        guard videoURL.isFileURL, !ownerUserID.isEmpty else {
+            throw StoryError.unsafeFile
+        }
         let taskComponent = taskID.map { String($0.prefix(128)) }
             ?? UUID().uuidString.lowercased()
         return try await heavyMediaGovernor.perform(context: .init(
@@ -21,37 +29,28 @@ enum StoryVideoFrameExtractor {
             kind: .videoFrameExtraction,
             estimatedDecodedBytes: maximumFramePixelSize * maximumFramePixelSize * 4
         )) {
-            try await AppCancellableDetachedWork.runAsync(priority: .utility) {
-                try Task.checkCancellation()
-                let asset = AVURLAsset(url: videoURL)
-                let duration = try await asset.load(.duration)
-                try Task.checkCancellation()
-                guard duration.isNumeric, duration > .zero else { throw StoryError.unsafeFile }
-
-                let oneTick = CMTime(value: 1, timescale: 600)
-                let requestedTime = duration > oneTick ? CMTimeSubtract(duration, oneTick) : .zero
-                let generator = AVAssetImageGenerator(asset: asset)
-                generator.appliesPreferredTrackTransform = true
-                generator.maximumSize = CGSize(
-                    width: maximumFramePixelSize,
-                    height: maximumFramePixelSize
+            try await ChatOSMediaArtifactFileWriter.writeNormalizedImageUsingWorker(
+                maximumBytes: maximumFrameBytes,
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: availableCapacityOverride
+            ) { destinationURL, _ in
+                let descriptor = try await mediaWorker.extractLastVideoFramePNG(
+                    sourceURL: videoURL,
+                    destinationURL: destinationURL,
+                    ownerUserID: ownerUserID,
+                    maximumSourceBytes: maximumVideoBytes,
+                    maximumOutputPixelSize: maximumFramePixelSize,
+                    maximumOutputBytes: maximumFrameBytes
                 )
-                generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 30)
-                generator.requestedTimeToleranceAfter = .zero
-                let result = try await generator.image(at: requestedTime)
-                try Task.checkCancellation()
-                guard result.image.width > 0,
-                      result.image.height > 0,
-                      result.image.width <= maximumFramePixelSize,
-                      result.image.height <= maximumFramePixelSize else {
+                guard descriptor.path == destinationURL.path,
+                      descriptor.mimeType == "image/png",
+                      descriptor.byteCount > 0,
+                      descriptor.byteCount <= maximumFrameBytes,
+                      descriptor.pixelWidth > 0,
+                      descriptor.pixelHeight > 0,
+                      max(descriptor.pixelWidth, descriptor.pixelHeight) <= maximumFramePixelSize else {
                     throw StoryError.unsafeFile
                 }
-                guard let png = NSBitmapImageRep(cgImage: result.image)
-                    .representation(using: .png, properties: [:]), !png.isEmpty else {
-                    throw StoryError.unsafeFile
-                }
-                try Task.checkCancellation()
-                return png
             }
         }
     }

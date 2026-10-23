@@ -34,6 +34,8 @@ let package = Package(
             name: "ChatOSMediaWorkerCore",
             dependencies: ["ChatOSMediaWorkerProtocol"],
             linkerSettings: [
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("CoreMedia"),
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("ImageIO"),
             ]

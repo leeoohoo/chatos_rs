@@ -1,11 +1,78 @@
 import AppKit
+import AVFoundation
 import ChatOSCore
+import CoreVideo
 import Darwin
 import Foundation
 import XCTest
 @testable import ChatOSApp
 
 final class MediaWorkerProcessClientTests: XCTestCase {
+    @MainActor
+    func testBuiltWorkerExtractsLastVideoFrameOutOfProcess() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run video-frame integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.mov")
+        let destination = root.appendingPathComponent("frame.png")
+        try await makeVideo(at: source)
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: destination.path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600]
+        ))
+
+        let result = try await MediaWorkerProcessClient(
+            executableURL: URL(fileURLWithPath: path),
+            timeout: 10
+        ).extractLastVideoFramePNG(
+            sourceURL: source,
+            destinationURL: destination,
+            ownerUserID: "process-client-test",
+            maximumSourceBytes: 512 * 1_024 * 1_024,
+            maximumOutputPixelSize: 4_096,
+            maximumOutputBytes: 20 * 1_024 * 1_024
+        )
+
+        XCTAssertEqual(result.path, destination.path)
+        XCTAssertEqual(result.pixelWidth, 64)
+        XCTAssertEqual(result.pixelHeight, 32)
+        XCTAssertNotNil(NSBitmapImageRep(data: try Data(contentsOf: destination)))
+    }
+
+    @MainActor
+    func testStoryVideoTailExtractionReturnsLeaseOwnedWorkerArtifact() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run Story tail integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("story.mov")
+        try await makeVideo(at: source)
+
+        var frame: GeneratedMediaFile? = try await StoryVideoFrameExtractor.lastFramePNG(
+            from: source,
+            ownerUserID: "process-client-test",
+            taskID: "story-tail-test",
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: MediaWorkerProcessClient(
+                executableURL: URL(fileURLWithPath: path),
+                timeout: 10
+            )
+        )
+        let output = try XCTUnwrap(frame?.url)
+        let artifact = output.deletingLastPathComponent()
+        XCTAssertNotNil(NSBitmapImageRep(data: try Data(contentsOf: output)))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: artifact.path))
+        frame = nil
+        XCTAssertFalse(FileManager.default.fileExists(atPath: artifact.path))
+    }
+
     func testMediaStudioThumbnailRunsThroughBuiltWorker() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
               !path.isEmpty else {
@@ -293,5 +360,67 @@ final class MediaWorkerProcessClientTests: XCTestCase {
         )
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
+    }
+
+    @MainActor
+    private func makeVideo(at url: URL) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: 64,
+                AVVideoHeightKey: 32,
+            ]
+        )
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String:
+                    kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: 64,
+                kCVPixelBufferHeightKey as String: 32,
+            ]
+        )
+        guard writer.canAdd(input) else { throw CocoaError(.fileWriteUnknown) }
+        writer.add(input)
+        guard writer.startWriting() else {
+            throw writer.error ?? CocoaError(.fileWriteUnknown)
+        }
+        writer.startSession(atSourceTime: .zero)
+        for index in 0..<2 {
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            var optionalBuffer: CVPixelBuffer?
+            let status = CVPixelBufferCreate(
+                kCFAllocatorDefault,
+                64,
+                32,
+                kCVPixelFormatType_32BGRA,
+                nil,
+                &optionalBuffer
+            )
+            guard status == kCVReturnSuccess, let buffer = optionalBuffer else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            if let address = CVPixelBufferGetBaseAddress(buffer) {
+                memset(address, index == 0 ? 40 : 180, CVPixelBufferGetDataSize(buffer))
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            guard adaptor.append(
+                buffer,
+                withPresentationTime: CMTime(value: Int64(index), timescale: 30)
+            ) else {
+                throw writer.error ?? CocoaError(.fileWriteUnknown)
+            }
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else {
+            throw writer.error ?? CocoaError(.fileWriteUnknown)
+        }
     }
 }

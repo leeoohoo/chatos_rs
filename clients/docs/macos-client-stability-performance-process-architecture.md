@@ -1911,6 +1911,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：App 为渲染仍必须持有最终受限 `CGImage`，本批不宣称 UI 像素面为零；草稿内存图片、头像、Markdown、项目文件预览和其他普通图片消费者尚未全部迁移。当前一次请求启动一个 Worker，尚未以大量列表冷启动、20 MiB/64 MP、快速滚动/取消风暴和组合内存压力决定是否需要受控的批处理或常驻执行模型。视频 frame/poster、上传/下载、durable media job、ENOSPC/睡眠/断网、长期 soak 及 Developer ID/hardened runtime/notarization 仍未完成，不能据此宣称 P0-E/P2/P4 或总体性能优化完成。
 
+### 12.75 第四完整里程碑：Story 视频尾帧提取迁入 Media Worker（2026-10-23）
+
+本里程碑迁移主 App 中唯一的生产 `AVAssetImageGenerator` 路径。Story 视频完成后的连续性尾帧此前在 UI 进程加载最高 512 MiB 视频、解码最高 4096 像素帧，再编码为 PNG `Data` 后复制到 Story Store；现在 AVFoundation 解码、方向变换、下采样、PNG 编码、同步和 SHA-256 全部由 Media Worker 完成。
+
+已实施：
+
+- wire v1 增加 `extract_last_video_frame_png_v1` capability 和专用请求，固定语义为“有效时长最后一个 1/600 秒 tick、向前容忍 1/30 秒”，不暴露任意 seek 或格式转换接口。输入普通文件/owner/device/inode/byte count 和预创建单链接空输出继续复用既有授权，视频上限 512 MiB，输出长边 4096 px/20 MiB。
+- AVFoundation 不能可靠识别 `/dev/fd` 容器，因此 Worker 保持授权 descriptor 打开，并在 AVURLAsset 创建前和提取完成后对 App-owned 路径执行 `lstat` 身份复核；symlink、路径替换、inode/大小变化或输入输出同文件均 fail-closed。
+- `StoryVideoFrameExtractor` 现在返回 lease-owned `GeneratedMediaFile`，真实账户 ID 和任务/session context 一并传入 Worker/Governor。Batch、直接生成和恢复式尾帧路径调用 Store 的新文件重载，采用有界复制与重入后二次业务 fencing；失败会删除候选，成功后临时 artifact 自动释放，4K PNG 不再聚合为主进程 `Data`。
+- hello response 同时发布图片与视频 capability；新客户端按实际 operation 校验 capability，旧图片客户端仍可只声明 `normalize_png_v1`，避免不必要的握手破坏。
+
+验证：Debug 与原生 arm64 Release 的针对性矩阵各 43 项全部通过，包括原有图片/附件/生命周期 38 项、视频 deadline/symlink/真实进程/lease artifact 4 项，以及 Story Store 文件提交 1 项。真实 Worker 使用 AVAssetWriter 生成的两帧 H.264 MOV 验证尾帧提取，并覆盖 Story extractor 的 lease artifact 完整链路；首版 `/dev/fd` 输入被 AVFoundation 拒绝，门禁未放行，切换为 descriptor 保活 + 路径双重身份 fencing 后同一用例通过。Release 测试、Worker product 和 App product 均以 `warnings-as-errors`/优化配置编译通过；打包脚本语法、build-evidence 的 25 项回归和差异空白检查通过。未提交源码的完整 arm64 Release 诊断包通过 5 个二进制架构检查、Worker/App 嵌套签名、4 个 dSYM UUID 匹配、bundle 哈希和 build-evidence 校验，manifest 标记为 `diagnostic-build` / `uuid-matched`；未运行 launch smoke，未启动、安装或替换正式 App。
+
+边界：本批只迁移 Story 已落盘视频的尾帧，不新增 UI poster 缓存，也不处理任意时间 frame 或正在下载的 partial。AVFoundation 仍必须用 App-owned 路径打开媒体；普通子进程不是 sandbox，同用户恶意进程若能在两次身份检查之间替换并恢复完全相同 inode/size 的内容，不属于当前信任模型。真实 512 MiB/4K physical-footprint、损坏容器/多轨/HDR/旋转矩阵、连续取消/崩溃、上传下载所有权、睡眠/断网/ENOSPC、长期 soak 和发布签名仍待完成，不能据此宣称 P0-E/P2/P4 完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

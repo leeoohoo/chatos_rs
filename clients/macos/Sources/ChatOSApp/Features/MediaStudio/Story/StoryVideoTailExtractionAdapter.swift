@@ -14,6 +14,7 @@ struct StoryVideoTailExtractionAdapter: StoryVideoTailExtracting {
         )
         let png = try await StoryVideoFrameExtractor.lastFramePNG(
             from: url,
+            ownerUserID: command.ownerUserID,
             taskID: command.videoJobID
         )
         try Task.checkCancellation()

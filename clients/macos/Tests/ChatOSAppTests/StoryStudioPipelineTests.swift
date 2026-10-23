@@ -1293,8 +1293,16 @@ extension StoryStudioTests {
         project.segments = [first, second]
         try await store.save(project, owner: "alice")
 
+        let leasedFrameURL = root.appendingPathComponent("leased-actual-frame.png")
+        let leasedFrameData = Data("actual-frame".utf8)
+        try leasedFrameData.write(to: leasedFrameURL)
+        let leasedFrame = GeneratedMediaFile(
+            url: leasedFrameURL,
+            byteCount: leasedFrameData.count,
+            deleteWhenReleased: true
+        )
         let firstApply = try await store.applyActualVideoLastFrame(
-            Data("actual-frame".utf8), projectID: project.id, segmentID: "s1",
+            leasedFrame, projectID: project.id, segmentID: "s1",
             videoJobID: video.jobID, owner: "alice"
         )
         let actual = firstApply.1

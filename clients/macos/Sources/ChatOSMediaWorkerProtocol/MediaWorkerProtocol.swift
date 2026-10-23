@@ -6,6 +6,12 @@ public enum ChatOSMediaWorkerProtocol {
     public static let buildVersion = "media-worker-v1"
     public static let maximumInlineBytes = 512 * 1_024
     public static let normalizePNGOperation = "normalize_png_v1"
+    public static let extractLastVideoFramePNGOperation = "extract_last_video_frame_png_v1"
+
+    public static let capabilities = [
+        normalizePNGOperation,
+        extractLastVideoFramePNGOperation,
+    ]
 }
 
 public struct MediaWorkerFileIdentity: Codable, Sendable, Equatable {
@@ -40,7 +46,7 @@ public struct MediaWorkerHelloRequest: Codable, Sendable, Equatable {
         protocolMaxVersion = ChatOSMediaWorkerProtocol.maximumVersion
         self.clientInstanceID = clientInstanceID
         self.parentProcessID = parentProcessID
-        capabilities = [ChatOSMediaWorkerProtocol.normalizePNGOperation]
+        capabilities = ChatOSMediaWorkerProtocol.capabilities
         maximumInlineBytes = ChatOSMediaWorkerProtocol.maximumInlineBytes
     }
 
@@ -75,7 +81,7 @@ public struct MediaWorkerHelloResponse: Codable, Sendable, Equatable {
         self.selectedProtocolVersion = selectedProtocolVersion
         workerBuildVersion = ChatOSMediaWorkerProtocol.buildVersion
         self.helperInstanceID = helperInstanceID
-        capabilities = [ChatOSMediaWorkerProtocol.normalizePNGOperation]
+        capabilities = ChatOSMediaWorkerProtocol.capabilities
         maximumInlineBytes = ChatOSMediaWorkerProtocol.maximumInlineBytes
         self.error = error
     }
@@ -86,6 +92,77 @@ public struct MediaWorkerHelloResponse: Codable, Sendable, Equatable {
         case workerBuildVersion = "worker_build_version"
         case helperInstanceID = "helper_instance_id"
         case maximumInlineBytes = "maximum_inline_bytes"
+    }
+}
+
+public struct MediaWorkerExtractVideoFrameRequest: Codable, Sendable, Equatable {
+    public let type: String
+    public let protocolVersion: Int
+    public let requestID: String
+    public let ownerUserID: String
+    public let accountSessionID: String
+    public let sessionEpoch: String
+    public let helperInstanceID: String
+    public let operation: String
+    public let deadlineUnixMilliseconds: Int64
+    public let sourcePath: String
+    public let sourceIdentity: MediaWorkerFileIdentity
+    public let destinationPath: String
+    public let destinationIdentity: MediaWorkerFileIdentity
+    public let maximumSourceBytes: Int
+    public let maximumOutputPixelSize: Int
+    public let maximumOutputBytes: Int
+
+    public init(
+        protocolVersion: Int,
+        requestID: String,
+        ownerUserID: String,
+        accountSessionID: String,
+        sessionEpoch: String,
+        helperInstanceID: String,
+        deadlineUnixMilliseconds: Int64,
+        sourcePath: String,
+        sourceIdentity: MediaWorkerFileIdentity,
+        destinationPath: String,
+        destinationIdentity: MediaWorkerFileIdentity,
+        maximumSourceBytes: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int
+    ) {
+        type = "request"
+        self.protocolVersion = protocolVersion
+        self.requestID = requestID
+        self.ownerUserID = ownerUserID
+        self.accountSessionID = accountSessionID
+        self.sessionEpoch = sessionEpoch
+        self.helperInstanceID = helperInstanceID
+        operation = ChatOSMediaWorkerProtocol.extractLastVideoFramePNGOperation
+        self.deadlineUnixMilliseconds = deadlineUnixMilliseconds
+        self.sourcePath = sourcePath
+        self.sourceIdentity = sourceIdentity
+        self.destinationPath = destinationPath
+        self.destinationIdentity = destinationIdentity
+        self.maximumSourceBytes = maximumSourceBytes
+        self.maximumOutputPixelSize = maximumOutputPixelSize
+        self.maximumOutputBytes = maximumOutputBytes
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, operation
+        case protocolVersion = "protocol_version"
+        case requestID = "request_id"
+        case ownerUserID = "owner_user_id"
+        case accountSessionID = "account_session_id"
+        case sessionEpoch = "session_epoch"
+        case helperInstanceID = "helper_instance_id"
+        case deadlineUnixMilliseconds = "deadline_unix_milliseconds"
+        case sourcePath = "source_path"
+        case sourceIdentity = "source_identity"
+        case destinationPath = "destination_path"
+        case destinationIdentity = "destination_identity"
+        case maximumSourceBytes = "maximum_source_bytes"
+        case maximumOutputPixelSize = "maximum_output_pixel_size"
+        case maximumOutputBytes = "maximum_output_bytes"
     }
 }
 

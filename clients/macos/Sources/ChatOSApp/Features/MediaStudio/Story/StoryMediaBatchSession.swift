@@ -545,6 +545,7 @@ actor StoryMediaBatchSession {
             )
             let png = try await StoryVideoFrameExtractor.lastFramePNG(
                 from: videoURL,
+                ownerUserID: state.owner,
                 taskID: video.jobID,
                 ownerSessionID: accountSessionID.uuidString.lowercased()
             )

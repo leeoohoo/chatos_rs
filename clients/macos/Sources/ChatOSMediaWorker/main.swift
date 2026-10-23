@@ -16,6 +16,10 @@ private struct WorkerFailure: LocalizedError {
     var errorDescription: String? { message }
 }
 
+private struct WorkerRequestEnvelope: Decodable {
+    let operation: String
+}
+
 private func readLine(descriptor: Int32) throws -> Data {
     var result = Data()
     var buffer = [UInt8](repeating: 0, count: 4_096)
@@ -105,31 +109,78 @@ do {
         helperInstanceID: helperInstanceID
     ))
 
-    let request = try MediaWorkerWireCodec.decode(
-        MediaWorkerNormalizePNGRequest.self,
-        from: readLine(descriptor: STDIN_FILENO)
+    let requestData = try readLine(descriptor: STDIN_FILENO)
+    let envelope = try MediaWorkerWireCodec.decode(
+        WorkerRequestEnvelope.self,
+        from: requestData
     )
-    guard request.helperInstanceID == helperInstanceID else {
-        throw MediaWorkerCoreError.invalidRequest("The helper instance does not match the handshake.")
-    }
-    do {
-        let result = try ChatOSMediaWorkerEngine.normalizePNG(request)
-        try writeLine(MediaWorkerNormalizePNGResponse(
-            requestID: request.requestID,
-            result: result
-        ))
-    } catch let error as MediaWorkerCoreError {
-        try writeLine(MediaWorkerNormalizePNGResponse(
-            requestID: request.requestID,
-            error: error.payload,
-            retryable: false
-        ))
-    } catch {
-        try writeLine(MediaWorkerNormalizePNGResponse(
-            requestID: request.requestID,
-            error: .init(code: "worker_failure", message: "The media worker could not normalize the image."),
-            retryable: false
-        ))
+    switch envelope.operation {
+    case ChatOSMediaWorkerProtocol.normalizePNGOperation:
+        let request = try MediaWorkerWireCodec.decode(
+            MediaWorkerNormalizePNGRequest.self,
+            from: requestData
+        )
+        guard request.helperInstanceID == helperInstanceID else {
+            throw MediaWorkerCoreError.invalidRequest(
+                "The helper instance does not match the handshake."
+            )
+        }
+        do {
+            let result = try ChatOSMediaWorkerEngine.normalizePNG(request)
+            try writeLine(MediaWorkerNormalizePNGResponse(
+                requestID: request.requestID,
+                result: result
+            ))
+        } catch let error as MediaWorkerCoreError {
+            try writeLine(MediaWorkerNormalizePNGResponse(
+                requestID: request.requestID,
+                error: error.payload,
+                retryable: false
+            ))
+        } catch {
+            try writeLine(MediaWorkerNormalizePNGResponse(
+                requestID: request.requestID,
+                error: .init(
+                    code: "worker_failure",
+                    message: "The media worker could not normalize the image."
+                ),
+                retryable: false
+            ))
+        }
+    case ChatOSMediaWorkerProtocol.extractLastVideoFramePNGOperation:
+        let request = try MediaWorkerWireCodec.decode(
+            MediaWorkerExtractVideoFrameRequest.self,
+            from: requestData
+        )
+        guard request.helperInstanceID == helperInstanceID else {
+            throw MediaWorkerCoreError.invalidRequest(
+                "The helper instance does not match the handshake."
+            )
+        }
+        do {
+            let result = try await ChatOSMediaWorkerEngine.extractLastVideoFramePNG(request)
+            try writeLine(MediaWorkerNormalizePNGResponse(
+                requestID: request.requestID,
+                result: result
+            ))
+        } catch let error as MediaWorkerCoreError {
+            try writeLine(MediaWorkerNormalizePNGResponse(
+                requestID: request.requestID,
+                error: error.payload,
+                retryable: false
+            ))
+        } catch {
+            try writeLine(MediaWorkerNormalizePNGResponse(
+                requestID: request.requestID,
+                error: .init(
+                    code: "worker_failure",
+                    message: "The media worker could not extract the video frame."
+                ),
+                retryable: false
+            ))
+        }
+    default:
+        throw MediaWorkerCoreError.invalidRequest("The requested operation is unsupported.")
     }
     parentMonitor.cancel()
     Darwin._exit(EXIT_SUCCESS)

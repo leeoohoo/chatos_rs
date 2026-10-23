@@ -595,6 +595,68 @@ actor StoryProjectStore {
         return (project, image)
     }
 
+    func applyActualVideoLastFrame(
+        _ file: GeneratedMediaFile,
+        projectID: UUID,
+        segmentID: String,
+        videoJobID: String,
+        owner: String,
+        forceNew: Bool = false
+    ) async throws -> (StoryProject, StoryImage) {
+        var project = try loadProject(projectID: projectID, owner: owner)
+        guard let initialIndex = project.segments.firstIndex(where: { $0.id == segmentID }),
+              project.segments[initialIndex].video?.jobID == videoJobID else {
+            throw StoryError.unresolvedSubmission
+        }
+        if !forceNew, let existing = project.segments[initialIndex].lastFrames.images.first(where: {
+            $0.derivedFromVideoJobID == videoJobID
+        }) {
+            project.segments[initialIndex].actualVideoLastFrameID = existing.id
+            StoryContinuityContext.reconcileInheritedFirstFrames(&project)
+            project.updatedAt = Date()
+            try save(project, owner: owner)
+            return (project, existing)
+        }
+
+        let image = try await saveImage(
+            file,
+            mimeType: "image/png",
+            projectID: projectID,
+            owner: owner,
+            sourceResourceID: segmentID,
+            providerResultID: videoJobID,
+            providerAssetID: "video-last-frame",
+            derivedFromVideoJobID: videoJobID
+        )
+        let imageURL = try fileURL(image.filename, projectID: projectID, owner: owner)
+        do {
+            project = try loadProject(projectID: projectID, owner: owner)
+            guard let index = project.segments.firstIndex(where: { $0.id == segmentID }),
+                  project.segments[index].video?.jobID == videoJobID else {
+                throw StoryError.unresolvedSubmission
+            }
+            if !forceNew, let existing = project.segments[index].lastFrames.images.first(where: {
+                $0.derivedFromVideoJobID == videoJobID
+            }) {
+                try? FileManager.default.removeItem(at: imageURL)
+                project.segments[index].actualVideoLastFrameID = existing.id
+                StoryContinuityContext.reconcileInheritedFirstFrames(&project)
+                project.updatedAt = Date()
+                try save(project, owner: owner)
+                return (project, existing)
+            }
+            project.segments[index].lastFrames.images.append(image)
+            project.segments[index].actualVideoLastFrameID = image.id
+            StoryContinuityContext.reconcileInheritedFirstFrames(&project)
+            project.updatedAt = Date()
+            try save(project, owner: owner)
+            return (project, image)
+        } catch {
+            try? FileManager.default.removeItem(at: imageURL)
+            throw error
+        }
+    }
+
     func failVideoGeneration(_ error: String, projectID: UUID, segmentID: String,
                              attemptID: UUID, owner: String) throws -> StoryProject {
         var project = try loadProject(projectID: projectID, owner: owner)

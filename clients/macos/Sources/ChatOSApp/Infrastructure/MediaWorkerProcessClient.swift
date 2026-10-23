@@ -15,6 +15,17 @@ protocol MediaWorkerImageNormalizing: Sendable {
     ) async throws -> MediaWorkerImageDescriptor
 }
 
+protocol MediaWorkerVideoFrameExtracting: Sendable {
+    func extractLastVideoFramePNG(
+        sourceURL: URL,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int
+    ) async throws -> MediaWorkerImageDescriptor
+}
+
 enum MediaWorkerProcessClientError: LocalizedError, Equatable {
     case unavailable
     case invalidExecutable
@@ -47,7 +58,7 @@ enum MediaWorkerProcessClientError: LocalizedError, Equatable {
     }
 }
 
-struct MediaWorkerProcessClient: MediaWorkerImageNormalizing {
+struct MediaWorkerProcessClient: MediaWorkerImageNormalizing, MediaWorkerVideoFrameExtracting {
     static let shared = MediaWorkerProcessClient()
 
     private static let accountSessionID = UUID().uuidString.lowercased()
@@ -99,6 +110,7 @@ struct MediaWorkerProcessClient: MediaWorkerImageNormalizing {
                                     maximumSourcePixelCount: maximumSourcePixelCount,
                                     maximumOutputPixelSize: maximumOutputPixelSize,
                                     maximumOutputBytes: maximumOutputBytes,
+                                    operation: .normalizePNG,
                                     timeout: timeout,
                                     accountSessionID: Self.accountSessionID,
                                     sessionEpoch: Self.sessionEpoch
@@ -140,6 +152,81 @@ struct MediaWorkerProcessClient: MediaWorkerImageNormalizing {
         }
     }
 
+    func extractLastVideoFramePNG(
+        sourceURL: URL,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int
+    ) async throws -> MediaWorkerImageDescriptor {
+        guard timeout.isFinite,
+              (0.05...300).contains(timeout),
+              !ownerUserID.isEmpty,
+              ownerUserID.utf8.count <= 512 else {
+            throw MediaWorkerProcessClientError.invalidResponse
+        }
+        if let delay = try await Self.circuitBreaker.admissionDelay() {
+            try await Task.sleep(for: delay)
+        }
+        let resolvedExecutable = try executableURL ?? Self.resolveExecutable()
+        let controller = MediaWorkerProcessController()
+        do {
+            let result = try await withTaskCancellationHandler {
+                try await withThrowingTaskGroup(of: MediaWorkerImageDescriptor.self) { group in
+                    group.addTask {
+                        try await withTaskCancellationHandler {
+                            try await Task.detached(priority: .userInitiated) {
+                                try controller.run(
+                                    executableURL: resolvedExecutable,
+                                    sourceURL: sourceURL,
+                                    authorizedSourceIdentity: nil,
+                                    destinationURL: destinationURL,
+                                    ownerUserID: ownerUserID,
+                                    maximumSourceBytes: maximumSourceBytes,
+                                    maximumSourcePixelCount: 1,
+                                    maximumOutputPixelSize: maximumOutputPixelSize,
+                                    maximumOutputBytes: maximumOutputBytes,
+                                    operation: .extractLastVideoFramePNG,
+                                    timeout: timeout,
+                                    accountSessionID: Self.accountSessionID,
+                                    sessionEpoch: Self.sessionEpoch
+                                )
+                            }.value
+                        } onCancel: {
+                            controller.terminate()
+                        }
+                    }
+                    group.addTask {
+                        let nanoseconds = UInt64(max(0.001, timeout) * 1_000_000_000)
+                        try await Task.sleep(nanoseconds: nanoseconds)
+                        controller.terminate()
+                        throw MediaWorkerProcessClientError.timedOut
+                    }
+                    defer { group.cancelAll() }
+                    guard let first = try await group.next() else {
+                        throw MediaWorkerProcessClientError.invalidResponse
+                    }
+                    return first
+                }
+            } onCancel: {
+                controller.terminate()
+            }
+            await Self.circuitBreaker.recordSuccess()
+            return result
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as MediaWorkerProcessClientError {
+            if Task.isCancelled { throw CancellationError() }
+            if case .requestRejected = error { throw error }
+            await Self.circuitBreaker.recordAbnormalFailure()
+            throw error
+        } catch {
+            await Self.circuitBreaker.recordAbnormalFailure()
+            throw MediaWorkerProcessClientError.invalidResponse
+        }
+    }
+
     private static func resolveExecutable() throws -> URL {
         #if DEBUG
         if let configured = ProcessInfo.processInfo.environment["CHATOS_MEDIA_WORKER_PATH"]?
@@ -161,6 +248,19 @@ struct MediaWorkerProcessClient: MediaWorkerImageNormalizing {
         }
         #endif
         throw MediaWorkerProcessClientError.unavailable
+    }
+}
+
+private enum MediaWorkerProcessOperation {
+    case normalizePNG
+    case extractLastVideoFramePNG
+
+    var capability: String {
+        switch self {
+        case .normalizePNG: ChatOSMediaWorkerProtocol.normalizePNGOperation
+        case .extractLastVideoFramePNG:
+            ChatOSMediaWorkerProtocol.extractLastVideoFramePNGOperation
+        }
     }
 }
 
@@ -214,6 +314,7 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
         maximumSourcePixelCount: Int,
         maximumOutputPixelSize: Int,
         maximumOutputBytes: Int,
+        operation: MediaWorkerProcessOperation,
         timeout: TimeInterval,
         accountSessionID: String,
         sessionEpoch: String
@@ -268,7 +369,7 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
               hello.ok,
               hello.selectedProtocolVersion == ChatOSMediaWorkerProtocol.maximumVersion,
               hello.workerBuildVersion == ChatOSMediaWorkerProtocol.buildVersion,
-              hello.capabilities.contains(ChatOSMediaWorkerProtocol.normalizePNGOperation),
+              hello.capabilities.contains(operation.capability),
               hello.maximumInlineBytes == ChatOSMediaWorkerProtocol.maximumInlineBytes,
               !hello.helperInstanceID.isEmpty else {
             throw MediaWorkerProcessClientError.incompatibleProtocol
@@ -276,24 +377,45 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
 
         let requestID = UUID().uuidString.lowercased()
         let deadline = Int64((Date().timeIntervalSince1970 + timeout) * 1_000)
-        let request = MediaWorkerNormalizePNGRequest(
-            protocolVersion: ChatOSMediaWorkerProtocol.maximumVersion,
-            requestID: requestID,
-            ownerUserID: ownerUserID,
-            accountSessionID: accountSessionID,
-            sessionEpoch: sessionEpoch,
-            helperInstanceID: hello.helperInstanceID,
-            deadlineUnixMilliseconds: deadline,
-            sourcePath: sourceURL.path,
-            sourceIdentity: sourceIdentity,
-            destinationPath: destinationURL.path,
-            destinationIdentity: destinationIdentity,
-            maximumSourceBytes: maximumSourceBytes,
-            maximumSourcePixelCount: maximumSourcePixelCount,
-            maximumOutputPixelSize: maximumOutputPixelSize,
-            maximumOutputBytes: maximumOutputBytes
-        )
-        try input.fileHandleForWriting.write(contentsOf: MediaWorkerWireCodec.encodeLine(request))
+        let requestData: Data
+        switch operation {
+        case .normalizePNG:
+            requestData = try MediaWorkerWireCodec.encodeLine(MediaWorkerNormalizePNGRequest(
+                protocolVersion: ChatOSMediaWorkerProtocol.maximumVersion,
+                requestID: requestID,
+                ownerUserID: ownerUserID,
+                accountSessionID: accountSessionID,
+                sessionEpoch: sessionEpoch,
+                helperInstanceID: hello.helperInstanceID,
+                deadlineUnixMilliseconds: deadline,
+                sourcePath: sourceURL.path,
+                sourceIdentity: sourceIdentity,
+                destinationPath: destinationURL.path,
+                destinationIdentity: destinationIdentity,
+                maximumSourceBytes: maximumSourceBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumOutputPixelSize: maximumOutputPixelSize,
+                maximumOutputBytes: maximumOutputBytes
+            ))
+        case .extractLastVideoFramePNG:
+            requestData = try MediaWorkerWireCodec.encodeLine(MediaWorkerExtractVideoFrameRequest(
+                protocolVersion: ChatOSMediaWorkerProtocol.maximumVersion,
+                requestID: requestID,
+                ownerUserID: ownerUserID,
+                accountSessionID: accountSessionID,
+                sessionEpoch: sessionEpoch,
+                helperInstanceID: hello.helperInstanceID,
+                deadlineUnixMilliseconds: deadline,
+                sourcePath: sourceURL.path,
+                sourceIdentity: sourceIdentity,
+                destinationPath: destinationURL.path,
+                destinationIdentity: destinationIdentity,
+                maximumSourceBytes: maximumSourceBytes,
+                maximumOutputPixelSize: maximumOutputPixelSize,
+                maximumOutputBytes: maximumOutputBytes
+            ))
+        }
+        try input.fileHandleForWriting.write(contentsOf: requestData)
         try input.fileHandleForWriting.close()
         let response = try MediaWorkerWireCodec.decode(
             MediaWorkerNormalizePNGResponse.self,

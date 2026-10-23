@@ -81,6 +81,42 @@ final class MediaWorkerImageNormalizerTests: XCTestCase {
         }
     }
 
+    func testVideoFrameRejectsSymlinkSource() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let link = fixture.root.appendingPathComponent("source-link.mov")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: fixture.source)
+        do {
+            _ = try await ChatOSMediaWorkerEngine.extractLastVideoFramePNG(
+                try videoRequest(
+                    source: link,
+                    destination: fixture.destination,
+                    sourceIdentity: identity(fixture.source)
+                )
+            )
+            XCTFail("A symlink video source was accepted")
+        } catch MediaWorkerCoreError.unauthorizedPath {
+            // Expected before AVFoundation receives the path.
+        }
+    }
+
+    func testVideoFrameRejectsExpiredDeadline() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        do {
+            _ = try await ChatOSMediaWorkerEngine.extractLastVideoFramePNG(
+                try videoRequest(
+                    source: fixture.source,
+                    destination: fixture.destination,
+                    deadline: 1
+                )
+            )
+            XCTFail("An expired video-frame request was accepted")
+        } catch let error as MediaWorkerCoreError {
+            XCTAssertEqual(error, .deadlineExceeded)
+        }
+    }
+
     private func makeFixture() throws -> (root: URL, source: URL, destination: URL) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "ChatOSMediaWorkerTests-\(UUID().uuidString)",
@@ -128,6 +164,31 @@ final class MediaWorkerImageNormalizerTests: XCTestCase {
             maximumSourceBytes: 20 * 1_024 * 1_024,
             maximumSourcePixelCount: 64_000_000,
             maximumOutputPixelSize: 8_192,
+            maximumOutputBytes: 20 * 1_024 * 1_024
+        )
+    }
+
+    private func videoRequest(
+        source: URL,
+        destination: URL,
+        sourceIdentity: MediaWorkerFileIdentity? = nil,
+        deadline: Int64? = nil
+    ) throws -> MediaWorkerExtractVideoFrameRequest {
+        .init(
+            protocolVersion: ChatOSMediaWorkerProtocol.maximumVersion,
+            requestID: UUID().uuidString.lowercased(),
+            ownerUserID: "worker-test",
+            accountSessionID: "worker-test-session",
+            sessionEpoch: "worker-test-epoch",
+            helperInstanceID: "worker-test-instance",
+            deadlineUnixMilliseconds: deadline
+                ?? Int64((Date().timeIntervalSince1970 + 30) * 1_000),
+            sourcePath: source.path,
+            sourceIdentity: try sourceIdentity ?? identity(source),
+            destinationPath: destination.path,
+            destinationIdentity: try identity(destination),
+            maximumSourceBytes: 512 * 1_024 * 1_024,
+            maximumOutputPixelSize: 4_096,
             maximumOutputBytes: 20 * 1_024 * 1_024
         )
     }
