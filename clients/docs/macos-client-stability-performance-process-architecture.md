@@ -1838,6 +1838,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：项目文件内容在上游 IPC/DTO 中仍是字符串，Base64 解码会在取得 permit 后形成压缩源 `Data`；本批限制像素工作集并发，不解决项目文件内容的文件原生化。2K 及以下 UI 图片仍可彼此并行，其上限和缓存预算继续独立生效；截图合成等已持有 `CGImage` 的路径不属于本批压缩媒体解码门禁。Plugin 派生进程、未来 Media Worker 和其他 Helper 仍不受这份主进程静态额度控制，跨进程 lease/fencing、账户公平、前台权重、热状态/低电量迟滞、真实项目大图切换 trace 与长时间 soak 尚未完成，因此 P0-D/P0-E 和客户端总体 SLO 均不能标记完成。
 
+### 12.70 第七十批实施记录：共享资源 Governor 进程内诊断指标（2026-10-23）
+
+本批补齐 12.66–12.69 两类共享准入的首组可观测信号。此前 snapshot 只能看到当前 active/queued context，无法区分正常排队、容量拒绝和取消，也不能量化排队时间与进程生命周期内的峰值，组合压力问题仍缺少可核对证据。
+
+已实施：
+
+- `ClientLargeTransferGovernor` 与 `ClientHeavyMediaWorkGovernor` 的 snapshot 增加当前 `totalInFlight`，并提供进程内累计的成功准入、排队后准入、真实 permit 释放、排队取消、queue full 拒绝、总/最大排队纳秒、最大 active 和最大 queued。重媒体 Governor 另外区分非法估算与单任务超工作集预算拒绝，避免把输入错误和容量压力混为一类。
+- waiter 在进入 FIFO 时记录单调 uptime，只有真正从队列移交 permit 才累计等待时间；立即准入不伪造排队样本。释放计数只在 active permit 首次真实移除时增加，重复显式释放或析构不会重复计数；取消与移交竞争继续沿用既有 actor 串行语义。
+- 长期累计的 `UInt64` 计数和等待时间采用饱和加法，避免极长进程生命周期发生回绕。指标只保留数值聚合，不复制 task ID、路径、owner session 或媒体正文；现有 snapshot 中用于实时诊断的 active/queued context 语义不变。
+
+验证：Debug 与原生 arm64 Release 各选择性运行 `ClientLargeTransferGovernorTests` 4 项及 `ClientHeavyMediaWorkGovernorTests` 4 项，共 8 项，全部通过。新增回归覆盖立即与排队准入、非零排队时间、当前总 in-flight、active/queued 峰值、幂等释放、排队取消、queue full，以及重媒体非法估算和超预算的独立拒绝计数；Swift 6 Debug/Release 编译、优化编译与 `git diff --check` 同步作为门禁。不启动或安装正式 App，不访问活动用户数据库。
+
+边界：这些指标只存在于各自主进程 actor 的内存中，进程重启即清零；本批没有持久化、OS signpost、诊断 UI、采样导出、账户维度或跨进程聚合。它们也不提供动态调额、前台权重、排队老化、热状态/低电量迟滞、Helper lease/断连回收或 fencing，因此不能把第 6.3 节动态/跨进程 `ResourceGovernor`、P0-D/P0-E 或客户端总体 SLO 标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
