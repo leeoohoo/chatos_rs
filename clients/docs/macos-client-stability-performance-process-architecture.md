@@ -90,7 +90,7 @@ ChatOSSwift（主进程）
 - Host 由 `NativeLocalAgentHostLifecycle` 管理；
 - Swift 使用 `ManagedLocalAgentHostProcess` 通过 stdio 请求/响应；
 - 单帧最大 4 MiB，单消息最大 64 MiB；
-- App 启动 Host 时使用 12.12 的进程组逻辑 job 预算：默认总额为 3（两核及以下为 2），在常规机器上分为 Rust Host 1、Swift Agent 2；可通过 `CHATOS_BACKGROUND_JOB_BUDGET` 配置 2–16 的总额，旧 Host 单项覆盖也会被总额和 Swift 保留位约束。独立运行 Rust Host 且未指定参数时，其 Rust 默认值仍限制在 2–8；两者必须分别记录，不能混称一个默认值；
+- App 启动 Host 时使用 12.12、12.84 的进程组逻辑 job 预算：未配置时同时按 CPU 和物理内存计算 2–16 的静态启动额度，为 App/OS 保留 2 个逻辑核与 2 GiB，每个后台 job 预算 2 GiB；Host 默认取得约四分之一且至少 1 个额度，其余交给独立 Swift Agent Run。可通过 `CHATOS_BACKGROUND_JOB_BUDGET` 显式配置 2–16 的总额，旧 Host 单项覆盖也会被总额和 Swift 保留位约束。独立运行 Rust Host 且未指定参数时，其 Rust 默认值仍限制在 2–8；两者必须分别记录，不能混称一个默认值；
 - `local-agent.sqlite3` 保存 Run、Event、Tool Invocation、Command Receipt 等数据。
 
 页面离开时，`ConversationSessionViewModel.deactivate()` 会取消 Realtime、历史刷新、分页和视口任务，但不会取消已经持久化并提交给 Host 的后台 Run。这符合“切页不丢任务”的产品语义，却要求后台任务降低优先级并受资源预算约束。
@@ -307,7 +307,7 @@ UI 和 `AppModel` 只能依赖该协议，不能持有 `SQLiteAgentGroupChatStor
 
 | 资源类别 | 起始策略（待固定机器基线校准） | 必须保证 |
 | --- | --- | --- |
-| 后台逻辑 job | Host 与 Swift Agent 合计起始上限 3；交互窗口可降至 2 | 分配给两者的 permit 总数不超过上限，批次 64 不等于并发 64 |
+| 后台逻辑 job | Host 与 Swift Agent 合计按 CPU/物理内存取较小值，默认 2–16；显式覆盖仍为 2–16 | 为 App/OS 保留 2 核/2 GiB、每 job 2 GiB；分配给两者的 permit 总数不超过上限，批次 64 不等于并发 64 |
 | 媒体重解码/帧提取 | 整个 App 进程组同时 1 个重任务 | 按预计解码工作集准入，超预算拒绝或 downsample |
 | 大文件上传/下载 | 起始总并发 2，流式缓冲有硬上限 | 文件大小与峰值内存不形成线性关系 |
 | 数据库压缩/大型扫描 | 同时 1 个；空闲且有磁盘余量 | 与交互写路径错峰，不在 MainActor 等待 |
@@ -2046,6 +2046,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 验证：Debug 与原生 arm64 Release 的针对性矩阵各 38 项全部通过，包括真实 Agent Worker 13 项和调度器并发/恢复/副作用门禁 25 项；Release 使用 `warnings-as-errors` 优化编译。真实回归覆盖授权、网络和写工具三个 `SIGKILL` 窗口、16 个独立 Run/独立 PID、断网重连、账户切换、资源超限和取消隔离。Release 首次紧随九分钟全量链接执行时，16 Worker 压力项受瞬时机器负载影响命中 Run timeout；该项隔离重跑在 0.214 秒通过，随后完整 38 项热态重跑在 8.157 秒全部通过，未发现可重复功能失败。未启动、安装或替换正式 App，不访问活动用户数据库。
 
 边界：本批消除的是共享故障状态，不取消安全监督，也不允许 in-process fallback。移除全局 quarantine 后，错误风暴不能再靠暂停所有会话来抑制；后续账户级 CPU/内存 lease、来源限速与连续异常告警必须跨进程观测并公平分配，不能使用全局单槽锁，也不能让一个 Run 的失败成为其他 Run 的准入条件。Memory 和部分工具 capability 仍由 App 代理，适合迁移的重负载仍需逐项进程化。
+
+### 12.84 第十三完整里程碑：独立 Agent Run 按机器资源扩展并行度（2026-10-24）
+
+本里程碑修正静态保守默认值造成的剩余跨会话排队。12.12 为防止 Host 与 Swift Agent 两套并发默认值相乘，把常规机器固定为总额 3、Swift Agent 2；在进程隔离、每 Run 资源采样与真实 16 Worker 回归均已建立后，这个固定值会让第三个独立会话即使在高配机器上仍等待，与“可并行任务拥有独立 PID”的产品要求不符。
+
+已实施：
+
+- 未显式配置时，后台总逻辑 job 同时受 CPU 与物理内存约束：为 App/UI/OS 保留 2 个逻辑核和 2 GiB，每个 Host/Agent 逻辑 job 分配 2 GiB 预算，取两种容量的较小值并限制在 2–16。
+- Host 默认取得总额约四分之一且至少 1 个额度，剩余额度用于 Swift Agent 独立 Run；当前 12 核、96 GiB 开发机从 Host 1 + Swift Agent 2 提升为 Host 2 + Swift Agent 8。8 GiB/12 核机器仍保持总额 3，8 核/充足内存机器为总额 6、Swift Agent 5，避免仅按 CPU 数盲目放大工作集。
+- `CHATOS_BACKGROUND_JOB_BUDGET` / `ChatOSBackgroundJobBudget` 的显式 2–16 覆盖保持不变；Host 单项覆盖仍不能突破总额，且始终为 Swift Agent 保留至少一条 lane。
+- claim 前 Governor、队列上限、取消归还、即时容量拒绝和并发峰值指标全部保留。额度内每个 Run 仍由自己的 `ChatOSAgentWorker` PID 承担；超出安全预算时只在 durable claim 前等待，不占用数据库 lease。
+
+验证：Debug 与原生 arm64 Release 的针对性矩阵各 32 项全部通过，包括调度器并发/恢复/副作用门禁 25 项和资源预算/Governor 7 项；Release 使用 `warnings-as-errors` 优化编译。确定性硬件夹具覆盖 12 核/96 GiB、12 核/8 GiB、8 核/96 GiB、2 核/4 GiB，以及无效/显式覆盖；继续验证预算 2 时执行峰值精确为 2、claim 不超额、排队取消与 permit 幂等归还。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：这是基于启动时硬件容量的静态自适应，不是运行中的热状态、内存压力或低电量动态调额，也没有把 Host 实际 in-flight、Media、Plugin 和数据库维护汇入同一个跨进程 lease 服务。显式配置仍可选择更高额度，运维应结合机型与负载设置。后续仍需账户公平、前台权重、动态迟滞、组合负载和长时间 soak；这些保护不得重新退化为全局单槽。
 
 ## 十三、验证矩阵
 

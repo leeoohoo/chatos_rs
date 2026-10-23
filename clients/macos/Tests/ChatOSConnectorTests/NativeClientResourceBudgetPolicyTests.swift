@@ -3,11 +3,14 @@ import XCTest
 
 final class NativeClientResourceBudgetPolicyTests: XCTestCase {
     func testAdaptiveBudgetSplitsOneTotalAcrossHostAndSwiftAgent() {
-        let budget = NativeClientResourceBudgetPolicy.recommended(logicalProcessorCount: 12)
+        let budget = NativeClientResourceBudgetPolicy.recommended(
+            logicalProcessorCount: 12,
+            physicalMemoryBytes: 96 * 1_024 * 1_024 * 1_024
+        )
 
-        XCTAssertEqual(budget.totalLogicalJobs, 3)
-        XCTAssertEqual(budget.localAgentHostWorkItems, 1)
-        XCTAssertEqual(budget.swiftAgentRuns, 2)
+        XCTAssertEqual(budget.totalLogicalJobs, 10)
+        XCTAssertEqual(budget.localAgentHostWorkItems, 2)
+        XCTAssertEqual(budget.swiftAgentRuns, 8)
         XCTAssertEqual(
             budget.localAgentHostWorkItems + budget.swiftAgentRuns,
             budget.totalLogicalJobs
@@ -17,6 +20,7 @@ final class NativeClientResourceBudgetPolicyTests: XCTestCase {
     func testConfiguredHostCannotConsumeSwiftAgentReserve() {
         let budget = NativeClientResourceBudgetPolicy.recommended(
             logicalProcessorCount: 12,
+            physicalMemoryBytes: 96 * 1_024 * 1_024 * 1_024,
             configuredTotalLogicalJobs: 5,
             configuredHostWorkItems: 16
         )
@@ -32,16 +36,36 @@ final class NativeClientResourceBudgetPolicyTests: XCTestCase {
         XCTAssertEqual(
             NativeClientResourceBudgetPolicy.recommended(
                 logicalProcessorCount: 2,
+                physicalMemoryBytes: 4 * 1_024 * 1_024 * 1_024,
                 configuredTotalLogicalJobs: 100
             ).totalLogicalJobs,
             2
         )
         XCTAssertEqual(
             NativeClientResourceBudgetPolicy.recommended(
-                logicalProcessorCount: 128
+                logicalProcessorCount: 128,
+                physicalMemoryBytes: 4 * 1_024 * 1_024 * 1_024
             ).totalLogicalJobs,
-            3
+            2
         )
+    }
+
+    func testAdaptiveBudgetRequiresBothProcessorAndMemoryCapacity() {
+        let memoryBound = NativeClientResourceBudgetPolicy.recommended(
+            logicalProcessorCount: 12,
+            physicalMemoryBytes: 8 * 1_024 * 1_024 * 1_024
+        )
+        XCTAssertEqual(memoryBound.totalLogicalJobs, 3)
+        XCTAssertEqual(memoryBound.localAgentHostWorkItems, 1)
+        XCTAssertEqual(memoryBound.swiftAgentRuns, 2)
+
+        let processorBound = NativeClientResourceBudgetPolicy.recommended(
+            logicalProcessorCount: 8,
+            physicalMemoryBytes: 96 * 1_024 * 1_024 * 1_024
+        )
+        XCTAssertEqual(processorBound.totalLogicalJobs, 6)
+        XCTAssertEqual(processorBound.localAgentHostWorkItems, 1)
+        XCTAssertEqual(processorBound.swiftAgentRuns, 5)
     }
 
     func testExecutionGovernorCancellationReturnsQueueCapacity() async throws {

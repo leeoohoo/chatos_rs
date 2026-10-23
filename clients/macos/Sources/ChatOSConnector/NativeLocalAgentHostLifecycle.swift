@@ -49,26 +49,49 @@ public struct NativeClientResourceBudget: Sendable, Equatable {
 public enum NativeClientResourceBudgetPolicy {
     public static let minimumTotalLogicalJobs = 2
     public static let maximumTotalLogicalJobs = 16
+    public static let reservedApplicationMemoryBytes: UInt64 = 2 * 1_024 * 1_024 * 1_024
+    public static let memoryBytesPerLogicalJob: UInt64 = 2 * 1_024 * 1_024 * 1_024
 
     public static var adaptiveDefault: NativeClientResourceBudget {
-        recommended(logicalProcessorCount: ProcessInfo.processInfo.activeProcessorCount)
+        recommended(
+            logicalProcessorCount: ProcessInfo.processInfo.activeProcessorCount,
+            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+        )
     }
 
     public static func recommended(
         logicalProcessorCount: Int,
+        physicalMemoryBytes: UInt64 = ProcessInfo.processInfo.physicalMemory,
         configuredTotalLogicalJobs: Int? = nil,
         configuredHostWorkItems: Int? = nil
     ) -> NativeClientResourceBudget {
-        // Start with the architecture plan's conservative process-group limit. Very small
-        // machines use two jobs; larger machines stay at three until a fixed Release baseline
-        // justifies raising it. Processor count alone is not evidence that memory/I/O scale too.
-        let conservativeDefault = logicalProcessorCount <= 2 ? 2 : 3
-        let total = configuredTotalLogicalJobs.flatMap(validatedTotal) ?? conservativeDefault
+        // Reserve two logical cores for UI/OS work and 2 GiB for the App and shared services.
+        // Each remaining logical job receives a conservative 2 GiB memory share, which is above
+        // the Agent Worker hard RSS limit. Both bounds must permit a job before the default grows.
+        let processorCapacity = max(
+            minimumTotalLogicalJobs,
+            logicalProcessorCount - 2
+        )
+        let memoryAvailable = physicalMemoryBytes > reservedApplicationMemoryBytes
+            ? physicalMemoryBytes - reservedApplicationMemoryBytes
+            : 0
+        let memoryCapacity = max(
+            minimumTotalLogicalJobs,
+            Int(min(
+                UInt64(maximumTotalLogicalJobs),
+                memoryAvailable / memoryBytesPerLogicalJob
+            ))
+        )
+        let adaptiveTotal = max(
+            minimumTotalLogicalJobs,
+            min(maximumTotalLogicalJobs, min(processorCapacity, memoryCapacity))
+        )
+        let total = configuredTotalLogicalJobs.flatMap(validatedTotal) ?? adaptiveTotal
         // Keep one slot for the Swift Agent runtime. A legacy Host override remains useful,
         // but it no longer permits the two runtimes to multiply their independent defaults.
-        // The default also preserves two Swift lanes where possible so a manager reply is not
-        // blocked behind one long executor Run.
-        let recommendedHost = max(1, total - 2)
+        // Give Host roughly one quarter of the budget; Swift keeps the remaining independent Run
+        // lanes so long model/network waits do not strand otherwise idle process capacity.
+        let recommendedHost = max(1, total / 4)
         let requestedHost = configuredHostWorkItems
             .flatMap(NativeLocalAgentConcurrencyPolicy.validated) ?? recommendedHost
         return .init(
