@@ -332,16 +332,20 @@ extension LocalAgentGroupChatScheduler {
         } catch {
             let detail = Self.failureDetail(error)
             var savedRunID: String?
+            var interruptedInFlightCall = false
             if var savedRun = try await store.run(
                 ownerUserID: ownerUserID,
                 deliveryID: delivery.id
             ) {
                 savedRunID = savedRun.context.runID
-                savedRun.checkpoint.status = .failed
-                savedRun.checkpoint.stopReason = detail
+                interruptedInFlightCall = savedRun.checkpoint.inFlightCallID != nil
+                savedRun.checkpoint.status = interruptedInFlightCall ? .needsReview : .failed
+                savedRun.checkpoint.stopReason = interruptedInFlightCall
+                    ? "独立执行进程在工具结果确认前中断；副作用结果未知，需要人工核实，不能自动重放。"
+                    : detail
                 savedRun.events.append(.init(
-                    kind: "stopped",
-                    detail: detail,
+                    kind: interruptedInFlightCall ? "needs_review" : "stopped",
+                    detail: savedRun.checkpoint.stopReason ?? detail,
                     modelCalls: savedRun.checkpoint.modelCalls
                 ))
                 savedRun.updatedAtUnixMs = max(now(), savedRun.updatedAtUnixMs)
@@ -355,20 +359,34 @@ extension LocalAgentGroupChatScheduler {
                 ))
             }
             if try await store.delivery(ownerUserID: ownerUserID, deliveryID: delivery.id)?.status == .running {
-                try await failDeliveryAndNotifyManager(
-                    store: store,
-                    ownerUserID: ownerUserID,
-                    delivery: delivery,
-                    runID: savedRunID,
-                    detail: detail,
-                    stage: "executor_failed"
-                )
+                if interruptedInFlightCall, delivery.lane == .executor {
+                    try await suspendTodoForReview(
+                        store: store,
+                        ownerUserID: ownerUserID,
+                        delivery: delivery,
+                        runID: savedRunID,
+                        detail: "独立执行进程中断时工具结果尚未确认；请核实副作用后再决定是否重试。"
+                    )
+                } else {
+                    try await failDeliveryAndNotifyManager(
+                        store: store,
+                        ownerUserID: ownerUserID,
+                        delivery: delivery,
+                        runID: savedRunID,
+                        detail: interruptedInFlightCall
+                            ? "通讯 Run 的工具结果未知，需要人工核实；后续通讯仍可继续。"
+                            : detail,
+                        stage: interruptedInFlightCall ? "worker_interrupted" : "executor_failed"
+                    )
+                }
             }
             receipt = .init(
                 deliveryID: delivery.id,
                 agentID: delivery.targetAgentID,
-                outcome: .failed,
-                detail: detail
+                outcome: interruptedInFlightCall ? .suspended : .failed,
+                detail: interruptedInFlightCall
+                    ? "独立执行进程中断，工具副作用结果待人工核实。"
+                    : detail
             )
         }
         return receipt

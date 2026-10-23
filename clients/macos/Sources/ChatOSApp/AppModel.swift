@@ -392,6 +392,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         let agentGroupChatScheduler = LocalAgentGroupChatScheduler(
             service: agentGroupChatService,
             services: agentServices,
+            runtime: AgentWorkerProcessClient(),
             maximumConcurrentExecutions: RuntimeConfiguration.swiftAgentMaximumConcurrentRuns,
             projectTypeKeyProvider: { ownerUserID, projectID in
                 try await localProjectsService.registry().get(

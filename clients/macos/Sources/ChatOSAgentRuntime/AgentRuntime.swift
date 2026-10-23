@@ -24,7 +24,7 @@ public struct AgentRuntime: Sendable {
         model: any AgentModelClient, tools: [AgentToolDefinition],
         execute: @escaping Executor,
         completionCheck: @escaping CompletionCheck = { nil },
-        contextProvider: AgentMemoryContextProvider? = nil,
+        contextProvider: (any AgentContextProviding)? = nil,
         shouldPause: @escaping @Sendable () async -> Bool = { false },
         onModelStreamEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void = { _ in },
         record: @escaping Recorder = { _, _ in }
@@ -208,7 +208,8 @@ public struct AgentRuntime: Sendable {
                     if activeModelMessages == nil {
                         let prepared = try await contextProvider.prepare(
                             checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
-                            deadline: deadline, shouldPause: shouldPause, record: record
+                            deadline: deadline, synchronizeOnly: false,
+                            shouldPause: shouldPause, record: record
                         )
                         state = prepared.checkpoint
                         activeModelMessages = prepared.messages
@@ -577,7 +578,7 @@ private final class AgentModelAttemptTelemetry: @unchecked Sendable {
 /// after `cancelAll()`. Some provider transports only observe cancellation after their socket
 /// returns, which used to leave an Agent Run durably stuck at `model_request`. The losing task is
 /// still cancelled, but the caller is released immediately so it can persist a terminal state.
-func withAgentTimeout<T: Sendable>(
+public func withAgentTimeout<T: Sendable>(
     seconds: Double,
     operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {

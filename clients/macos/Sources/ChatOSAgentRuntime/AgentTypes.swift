@@ -84,7 +84,7 @@ public struct AgentUsage: Codable, Equatable, Sendable {
     }
 }
 
-public struct AgentToolDefinition: Sendable {
+public struct AgentToolDefinition: Codable, Equatable, Sendable {
     public enum Effect: String, Codable, Sendable { case readOnly, write, billable, terminal }
     public var name: String
     public var description: String
@@ -293,7 +293,7 @@ public struct AgentRunEvent: Codable, Identifiable, Equatable, Sendable {
 
 /// Transient transport progress. Only the fully validated message returned by `stream` may be
 /// written to a checkpoint or used to execute tools.
-public enum AgentModelStreamEvent: Equatable, Sendable {
+public enum AgentModelStreamEvent: Codable, Equatable, Sendable {
     /// Raw transport activity. Emitted for every received body chunk, including reasoning or
     /// provider-specific SSE events that do not map to a semantic delta.
     case activity(bytes: Int)
@@ -369,6 +369,7 @@ public enum AgentRuntimeError: LocalizedError, Sendable {
         }
     }
     public static func isTransient(_ error: Error) -> Bool {
+        if let remote = error as? AgentRemoteCallbackError { return remote.transient }
         if case .timeout = error as? AgentRuntimeError { return true }
         if case .provider(let code) = error as? AgentRuntimeError { return code == 408 || code == 429 || code >= 500 }
         if case .providerDetail(let code, _) = error as? AgentRuntimeError { return code == 408 || code == 429 || code >= 500 }

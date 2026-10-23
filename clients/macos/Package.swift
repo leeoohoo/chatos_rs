@@ -13,8 +13,10 @@ let package = Package(
         .library(name: "ChatOSAPI", targets: ["ChatOSAPI"]),
         .library(name: "ChatOSConnector", targets: ["ChatOSConnector"]),
         .library(name: "ChatOSMediaWorkerProtocol", targets: ["ChatOSMediaWorkerProtocol"]),
+        .library(name: "ChatOSAgentWorkerProtocol", targets: ["ChatOSAgentWorkerProtocol"]),
         .executable(name: "ChatOSSwift", targets: ["ChatOSApp"]),
         .executable(name: "ChatOSMediaWorker", targets: ["ChatOSMediaWorker"]),
+        .executable(name: "ChatOSAgentWorker", targets: ["ChatOSAgentWorker"]),
         .executable(name: "chatos_plugin_ps", targets: ["ChatOSPluginProcessList"]),
     ],
     dependencies: [
@@ -46,6 +48,10 @@ let package = Package(
             dependencies: ["ChatOSNetworking", "ChatOSModelCapabilities"]
         ),
         .target(
+            name: "ChatOSAgentWorkerProtocol",
+            dependencies: ["ChatOSAgentRuntime"]
+        ),
+        .target(
             name: "ChatOSCore",
             dependencies: ["ChatOSModelCapabilities"],
             resources: [
@@ -67,6 +73,7 @@ let package = Package(
                 "ChatOSNetworking",
                 "ChatOSProcessRuntime",
                 "ChatOSModelCapabilities",
+                "ChatOSAgentWorkerProtocol",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             linkerSettings: [
@@ -106,10 +113,14 @@ let package = Package(
             name: "ChatOSMediaWorker",
             dependencies: ["ChatOSMediaWorkerCore", "ChatOSMediaWorkerProtocol"]
         ),
+        .executableTarget(
+            name: "ChatOSAgentWorker",
+            dependencies: ["ChatOSAgentRuntime", "ChatOSAgentWorkerProtocol"]
+        ),
         .executableTarget(name: "ChatOSPluginProcessList"),
         .testTarget(
             name: "ChatOSAgentRuntimeTests",
-            dependencies: ["ChatOSAgentRuntime"]
+            dependencies: ["ChatOSAgentRuntime", "ChatOSAgentWorkerProtocol"]
         ),
         .testTarget(
             name: "ChatOSCoreTests",

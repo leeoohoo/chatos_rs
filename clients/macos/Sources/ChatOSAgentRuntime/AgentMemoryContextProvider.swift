@@ -1,18 +1,42 @@
 import Foundation
 
-public struct AgentPreparedContext: Sendable {
+public struct AgentPreparedContext: Codable, Equatable, Sendable {
     public let checkpoint: AgentRunCheckpoint
     public let messages: [AgentMessage]
+
+    public init(checkpoint: AgentRunCheckpoint, messages: [AgentMessage]) {
+        self.checkpoint = checkpoint
+        self.messages = messages
+    }
 }
 
 public struct AgentContextPreparationFailure: Error, Sendable {
     public let checkpoint: AgentRunCheckpoint
     public let reason: String
     public let cancelled: Bool
+
+    public init(checkpoint: AgentRunCheckpoint, reason: String, cancelled: Bool) {
+        self.checkpoint = checkpoint
+        self.reason = reason
+        self.cancelled = cancelled
+    }
+}
+
+public protocol AgentContextProviding: Sendable {
+    var scope: AgentMemoryScope { get }
+    func prepare(
+        checkpoint initial: AgentRunCheckpoint,
+        tools: [AgentToolDefinition],
+        policy: AgentContextPolicy,
+        deadline: Date,
+        synchronizeOnly: Bool,
+        shouldPause: @escaping @Sendable () async -> Bool,
+        record: @escaping AgentRuntime.Recorder
+    ) async throws -> AgentPreparedContext
 }
 
 /// No credentials or network configuration are stored in checkpoints.
-public struct AgentMemoryContextProvider: Sendable {
+public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
     public let scope: AgentMemoryScope
     private let service: any AgentMemoryServicing
 

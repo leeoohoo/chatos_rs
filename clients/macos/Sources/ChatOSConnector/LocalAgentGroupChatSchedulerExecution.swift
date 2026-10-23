@@ -295,7 +295,7 @@ extension LocalAgentGroupChatScheduler {
             policy: policy,
             thinkingLevel: profile.draft.thinkingLevel
         )
-        var finalCheckpoint = try await runtime.run(
+        var finalCheckpoint = try await runtime.executeRun(
             checkpoint: checkpoint,
             scope: scope,
             policy: policy,

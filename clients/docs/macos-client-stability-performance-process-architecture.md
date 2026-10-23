@@ -1970,6 +1970,23 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本里程碑消除了已确认的跨会话软件锁与数据库 lane 阻塞，但 Agent 模型 Run 仍执行在主 App 进程内；等待、崩溃、CPU/内存失控和进程级取消尚未形成每任务故障边界。用户已明确要求所有可并行任务拥有独立进程，因此 Agent Runtime 进程化现在是后续硬性里程碑，不再仅由旧方案中的性能阈值决定。下一阶段必须保持 Store 单一写所有者，由主 App 调度并通过版本化 IPC 启动每 Run worker；worker 不直接并发写共享 SQLite，并需补齐独立取消/超时、资源额度、durable checkpoint、工具代理、副作用 fencing、崩溃回收和真实多任务压力门禁。
 
+### 12.79 第八完整里程碑：Agent Run 一任务一 Worker 进程（2026-10-23）
+
+本里程碑把生产 Agent 团队调度器的状态机从主 App 迁入按 Run 创建的 `ChatOSAgentWorker`。每个 manager/executor Run 各自启动一个子进程，具有独立 PID、标准输入输出通道、墙钟超时和取消/终止域；项目 A 的 worker 等待、退出或协议失败不会占用项目 B 的 worker 生命周期。App 仍以共享 Governor 控制总进程准入，避免把独立进程误解为无限并发。
+
+已实施：
+
+- 新增 `ChatOSAgentWorkerProtocol` v1、`ChatOSAgentWorker` 和 `AgentWorkerProcessClient`。握手绑定 parent PID、Run UUID、随机 nonce 和协议区间；单条 NDJSON 消息硬限制 64 MiB，未知顺序、错误 Run/scope、协议不兼容或无父进程启动均 fail closed。
+- Worker 独占 `AgentRuntime` 的模型/工具循环、检查点状态转换、重试/无进展计数和 Run 总时限；每次模型、工具、完成校验、Memory compose/sync 与 checkpoint record 通过父进程 capability 代理。App 只保留数据库、凭据、Memory 和工具授权的单一所有权，Worker 不打开也不写共享 SQLite。
+- 生产 `AppModel` 显式注入进程执行器；没有“Worker 找不到就静默退回主进程”的生产 fallback。测试仍可注入 in-process `AgentRuntime`，但不改变已打包 App 的进程边界。
+- 取消或墙钟超时立即终止所属 Worker；两秒后仍未退出会升级 `SIGKILL`。Worker 同时监视父 PID，App 退出后自行终止，不能成为孤儿常驻进程。
+- checkpoint 在每个模型/工具边界仍由 App 原子持久化。若 Worker 在 `inFlightCallID` 清除前中断，Run 转为 `needsReview`，Todo 进入 blocked，不能把结果未知的写入/计费工具自动重放；没有 in-flight 副作用的故障按普通失败处理。
+- 打包、签名、架构、Debug 路径、dSYM UUID 和 build-evidence 清单纳入新 Worker；无父能力启动检查加入既有 smoke 逻辑。
+
+验证：Debug 与原生 arm64 Release 的针对性矩阵各 38 项全部通过，包括真实 Agent Worker 进程 3 项、调度器 24 项、聊天工具 9 项及 Todo schedule/migration 2 项；Release 使用 `warnings-as-errors` 优化编译。真实进程测试覆盖 Memory/record/model/tool/terminal 完整代理链路，并证明两个并发 Run 获得不同 PID：第一个 Run 被故意保持等待时，第二个 Run 可先完成；取消其中一个 Run 只终止所属 Worker PID，父进程对已关闭 pipe 的并发写入被转换为普通错误而不会收到 `SIGPIPE`。故障回归证明存在 durable `inFlightCallID` 时进程中断会进入 `needsReview` 和 blocked Todo，而不是误标失败或自动重放。打包/证据脚本 25 项、shell 语法和差异检查通过；完整 arm64 Release 诊断包通过 6 个二进制架构、App/Host/Media Worker/Agent Worker 嵌套签名、5 份 dSYM UUID、bundle 哈希和 build-evidence 校验，manifest 为 `diagnostic-build` / `uuid-matched`。未运行 launch smoke，未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：当前独立的是 Agent orchestration/状态机进程；provider 网络客户端、Memory 客户端和受权工具仍由父进程代理，因此本批建立了 Run 生命周期与状态机崩溃边界，但不宣称第三方 SDK 解析崩溃、主进程内工具实现或全部 CPU/内存工作集已经迁出。后续要把可安全序列化的模型传输迁入 Worker，并为 Worker 增加跨进程动态 CPU/内存预算、连续崩溃熔断、真实 `SIGKILL` 每个 IPC 窗口、睡眠/断网/账户切换及长时间组合 soak；Plugin/Host 等已有独立进程继续使用各自监督协议，不能再套一层无所有权设计的 Worker。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
@@ -2028,7 +2045,7 @@ Release 验收建议记录：
 - Receipt 策略以 Feature Flag 灰度，可恢复旧读取兼容，但不得同时恢复无界写入；
 - Media Worker 初期保留受控的 in-process fallback，仅用于 Worker 不兼容，仍须遵守文件原生化、资源预算和媒体校验；未经校验的高风险解码不自动退回主进程；
 - Helper 协议不兼容时应明确提示并停止对应功能，不能尝试解析未知 payload；
-- Agent Group Runtime 在未满足进程化门槛前保持 in-process 实现，避免一次改动同时改变业务逻辑、数据库所有权和 IPC；
+- Agent Group Runtime 的生产路径固定为一 Run 一 `ChatOSAgentWorker`；协议不兼容或 Worker 缺失时暂停/失败并保留 durable checkpoint，不静默退回主进程；
 - 任何阶段出现数据正确性问题时，优先回滚该阶段，不回退无关的稳定性修复；
 - Schema 已升级时先核对旧包读取能力；恢复旧快照会丢弃快照之后的新写入，必须走明确的数据恢复流程，不能静默用旧备份覆盖。Feature Flag 本身不构成数据库降级方案。
 
@@ -2046,6 +2063,8 @@ Release 验收建议记录：
 - Agent 团队服务：`clients/macos/Sources/ChatOSConnector/NativeAgentGroupChatService.swift`
 - Agent 团队 Store：`clients/macos/Sources/ChatOSConnector/SQLiteAgentGroupChatStore.swift`
 - Agent 团队 Scheduler：`clients/macos/Sources/ChatOSConnector/LocalAgentGroupChatScheduler*.swift`
+- Agent Run Worker 协议/入口/父进程客户端：`clients/macos/Sources/ChatOSAgentWorkerProtocol/`、`clients/macos/Sources/ChatOSAgentWorker/`、`clients/macos/Sources/ChatOSConnector/AgentWorkerProcessClient.swift`
+- Agent Run Worker 传输 ADR：`clients/macos/docs/24-agent-run-worker-transport-adr.md`
 - Local Agent Host 生命周期：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostLifecycle.swift`
 - Local Agent Host IPC：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostProcess.swift`
 - Media API：`clients/macos/Sources/ChatOSAPI/ChatOSMediaGenerationService.swift`
@@ -2144,13 +2163,21 @@ Release 验收建议记录：
 - 兼容/失败：不改变 Schema/wire。新版与新版互斥，旧版与新版不保证互斥；旧 Host 未确认停止就禁止生产升级。持锁路径必须受信且稳定，绕过协议/替换 inode 的写入者不受 advisory lock 强制隔离；当前 epoch 未实现提交 fencing，未来独立维护入口和跨版本交接需遵守同一协议。
 - 门禁：macOS 临时库上的真实子进程测试证明重复启动拒绝、原所有者健康、正常退出/启动失败/空闲强杀后可重开，不证明迁移中途强杀、跨版本 App 双开、磁盘满、Windows 行为或在线维护完成。验证与边界见 12.7；不得据此启用无人值守的活动库治理。
 
+### 16.6 ADR：Agent Run Worker 单一数据所有者与 capability 代理
+
+- 问题/选择：跨会话 lane 并行只能解决软件锁等待，不能阻止一个 Agent 状态机崩溃或卡死影响主 App。生产调度器因此为每个 manager/executor Run 启动一个短生命周期 Worker，而不是为账户、Agent 或会话复用常驻进程。
+- 数据所有权：SQLite、Delivery/Todo claim、Memory 服务、模型凭据和工具授权只存在于 App；Worker 不接收数据库路径或凭据，只通过 Run-scoped IPC 请求 capability。这样不会为了进程隔离引入多个 SQLite 写所有者，也不允许 Worker 绕过 Todo 身份 fencing。
+- 协议/生命周期：v1 握手绑定父 PID、Run UUID、nonce 和版本区间；父进程取消/超时先 `SIGTERM`、两秒后 `SIGKILL`，Worker 监视父 PID。每个请求严格顺序、消息有 64 MiB 硬上限，最终 checkpoint 必须匹配起始 Run/scope。
+- 副作用：`tool_started` checkpoint 必须先由 App 持久化再执行 capability。Worker/IPC 在结果确认前中断时保留 `inFlightCallID` 并转 `needsReview`，不能通过启动新 Worker自动重放；只有 Human 明确走既有 retry/reconcile 流程才能清理该 fencing。
+- 回滚/边界：打包生产路径不允许静默 in-process fallback；回滚必须回到上一完整 App 包，并遵守当前 Schema/Run checkpoint 兼容性。当前 provider/Memory/tool 执行仍在 App capability 端，下一阶段再迁移可安全序列化的模型传输和跨进程动态资源预算。详细传输约束见 `clients/macos/docs/24-agent-run-worker-transport-adr.md`。
+
 ## 十七、最终决策摘要
 
 本项目需要的是选择性进程隔离，不是“每个大功能一个进程”：
 
 - 已有 Rust Host、Plugin 和 Global Utilities 隔离继续保留；
 - 媒体先完成上传/下载文件原生化与 durable job 一致性，再新增 Media Worker 隔离解码和文件 I/O；
-- Agent 团队先服务化，再按真实指标决定是否独立进程；
+- Agent 团队已按 Run 独立进程；后续继续把安全可迁移的模型传输与资源预算移入该边界，不回退到账户级长锁或共享常驻 Agent 进程；
 - 主 UI 进程必须先解决 Combine 生命周期、状态观察范围和 eager activation；
 - Local Agent 必须先解决 Receipt 与大 JSON 写放大；
 - Swift Agent 与 Rust Host 必须共享总并发预算，并处理 claim/lease 与嵌套调用，不能各自限流后相加失控；

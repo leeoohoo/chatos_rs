@@ -5,6 +5,76 @@ import Foundation
 import XCTest
 
 extension LocalAgentGroupChatSchedulerTests {
+    func testWorkerInterruptionWithInFlightToolRequiresReviewInsteadOfReplay() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-worker-interruption-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "进程中断执行者",
+                rolePrompt: "执行任务。",
+                modelConfigID: "local-model"
+            )
+        )
+        let team = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "worker-interruption-project",
+            draft: .init(name: "进程中断团队")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: team.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "worker-interruption-todo",
+            draft: .init(title: "中断任务", teamRoomID: team.id),
+            nowUnixMs: 100
+        )
+        let deliveryValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 101
+        )
+        let delivery = try XCTUnwrap(deliveryValue)
+        let settingsSuite = "local-agent-worker-interruption-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: SchedulerTestServices(),
+            settings: .init(suiteName: settingsSuite),
+            runtime: InterruptedAgentWorkerRuntime(),
+            now: { 200 }
+        )
+
+        let results = try await scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 1)
+
+        XCTAssertEqual(results.first?.outcome, .suspended)
+        let runValue = try await store.run(
+            ownerUserID: "alice",
+            deliveryID: delivery.id
+        )
+        let run = try XCTUnwrap(runValue)
+        XCTAssertEqual(run.checkpoint.status, .needsReview)
+        XCTAssertNotNil(run.checkpoint.inFlightCallID)
+        let storedTodoValue = try await store.agentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id
+        )
+        let storedTodo = try XCTUnwrap(storedTodoValue)
+        XCTAssertEqual(storedTodo.status, .blocked)
+        XCTAssertTrue(storedTodo.blockedReason.contains("副作用"))
+    }
+
     func testCancelledTodoRejectsExecutorToolBeforeSideEffect() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-cancelled-executor-\(UUID().uuidString)")
@@ -223,5 +293,35 @@ extension LocalAgentGroupChatSchedulerTests {
             limit: 10
         )
         XCTAssertEqual(messages.map(\.content), ["记住之前的工作继续做"])
+    }
+}
+
+private struct InterruptedAgentWorkerRuntime: AgentRuntimeExecuting {
+    func executeRun(
+        checkpoint: AgentRunCheckpoint,
+        scope: String,
+        policy: AgentRunPolicy,
+        model: any AgentModelClient,
+        tools: [AgentToolDefinition],
+        execute: @escaping AgentRuntime.Executor,
+        completionCheck: @escaping AgentRuntime.CompletionCheck,
+        contextProvider: (any AgentContextProviding)?,
+        record: @escaping AgentRuntime.Recorder
+    ) async throws -> AgentRunCheckpoint {
+        var interrupted = checkpoint
+        let call = AgentToolCall(
+            id: "interrupted-write",
+            name: tools.first(where: { $0.effect != .readOnly })?.name ?? "unknown_write",
+            arguments: "{}"
+        )
+        interrupted.status = .running
+        interrupted.pendingCalls = [call]
+        interrupted.inFlightCallID = call.id
+        try await record(interrupted, .init(
+            kind: "tool_started",
+            detail: call.name,
+            modelCalls: interrupted.modelCalls
+        ))
+        throw AgentWorkerProcessClientError.workerFailed("simulated crash")
     }
 }
