@@ -436,6 +436,72 @@ final class MediaWorkerProcessClientTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
     }
 
+    func testFailedWorkerDoesNotDelayIndependentWorker() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run worker isolation integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.png")
+        let failedDestination = root.appendingPathComponent("failed.png")
+        let healthyDestination = root.appendingPathComponent("healthy.png")
+        let failingWorker = root.appendingPathComponent("failing-worker.sh")
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 8,
+            pixelsHigh: 8,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: source)
+        XCTAssertTrue(FileManager.default.createFile(atPath: failedDestination.path, contents: nil))
+        XCTAssertTrue(FileManager.default.createFile(atPath: healthyDestination.path, contents: nil))
+        try Data("#!/bin/sh\nexit 1\n".utf8).write(to: failingWorker)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: failingWorker.path
+        )
+
+        do {
+            _ = try await MediaWorkerProcessClient(
+                executableURL: failingWorker,
+                timeout: 1
+            ).normalizePNG(
+                sourceURL: source,
+                destinationURL: failedDestination,
+                ownerUserID: "failed-worker-test",
+                maximumSourceBytes: 1_024 * 1_024,
+                maximumSourcePixelCount: 1_024,
+                maximumOutputPixelSize: 32,
+                maximumOutputBytes: 1_024 * 1_024
+            )
+            XCTFail("Failing worker unexpectedly returned an image")
+        } catch {
+            // The independent follow-up must not inherit this failure.
+        }
+
+        let started = ContinuousClock.now
+        _ = try await MediaWorkerProcessClient(
+            executableURL: URL(fileURLWithPath: path),
+            timeout: 10
+        ).normalizePNG(
+            sourceURL: source,
+            destinationURL: healthyDestination,
+            ownerUserID: "healthy-worker-test",
+            maximumSourceBytes: 1_024 * 1_024,
+            maximumSourcePixelCount: 1_024,
+            maximumOutputPixelSize: 32,
+            maximumOutputBytes: 1_024 * 1_024
+        )
+        XCTAssertLessThan(started.duration(to: .now), .milliseconds(900))
+    }
+
     func testCancellationTerminatesUnresponsiveWorker() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

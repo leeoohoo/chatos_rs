@@ -49,7 +49,6 @@ public enum MediaWorkerProcessClientError: LocalizedError, Equatable {
     case invalidResponse
     case requestRejected(code: String)
     case timedOut
-    case quarantined
 
     public var errorDescription: String? {
         switch self {
@@ -67,8 +66,6 @@ public enum MediaWorkerProcessClientError: LocalizedError, Equatable {
             "图片处理失败（\(code)）。"
         case .timedOut:
             "图片处理超时，已终止独立处理进程。"
-        case .quarantined:
-            "图片处理进程连续异常，已暂时停用。"
         }
     }
 }
@@ -79,8 +76,6 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
 
     private static let accountSessionID = UUID().uuidString.lowercased()
     private static let sessionEpoch = UUID().uuidString.lowercased()
-    private static let circuitBreaker = MediaWorkerCircuitBreaker()
-
     public let executableURL: URL?
     public let timeout: TimeInterval
 
@@ -157,9 +152,6 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
               ownerUserID.utf8.count <= 512 else {
             throw MediaWorkerProcessClientError.invalidResponse
         }
-        if let delay = try await Self.circuitBreaker.admissionDelay() {
-            try await Task.sleep(for: delay)
-        }
         let resolvedExecutable = try executableURL ?? Self.resolveExecutable()
         let controller = MediaWorkerProcessController()
         do {
@@ -203,7 +195,6 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
             } onCancel: {
                 controller.terminate()
             }
-            await Self.circuitBreaker.recordSuccess()
             return result
         } catch is CancellationError {
             throw CancellationError()
@@ -213,11 +204,9 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
             if case .requestRejected = error {
                 throw error
             }
-            await Self.circuitBreaker.recordAbnormalFailure()
             throw error
         } catch {
             if controller.didTimeOut { throw MediaWorkerProcessClientError.timedOut }
-            await Self.circuitBreaker.recordAbnormalFailure()
             throw MediaWorkerProcessClientError.invalidResponse
         }
     }
@@ -235,9 +224,6 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
               !ownerUserID.isEmpty,
               ownerUserID.utf8.count <= 512 else {
             throw MediaWorkerProcessClientError.invalidResponse
-        }
-        if let delay = try await Self.circuitBreaker.admissionDelay() {
-            try await Task.sleep(for: delay)
         }
         let resolvedExecutable = try executableURL ?? Self.resolveExecutable()
         let controller = MediaWorkerProcessController()
@@ -282,7 +268,6 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
             } onCancel: {
                 controller.terminate()
             }
-            await Self.circuitBreaker.recordSuccess()
             return result
         } catch is CancellationError {
             throw CancellationError()
@@ -290,11 +275,9 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
             if Task.isCancelled { throw CancellationError() }
             if controller.didTimeOut { throw MediaWorkerProcessClientError.timedOut }
             if case .requestRejected = error { throw error }
-            await Self.circuitBreaker.recordAbnormalFailure()
             throw error
         } catch {
             if controller.didTimeOut { throw MediaWorkerProcessClientError.timedOut }
-            await Self.circuitBreaker.recordAbnormalFailure()
             throw MediaWorkerProcessClientError.invalidResponse
         }
     }
@@ -341,41 +324,6 @@ private enum MediaWorkerProcessOperation {
         switch self {
         case .normalizeJPEG: "image/jpeg"
         case .normalizePNG, .extractLastVideoFramePNG: "image/png"
-        }
-    }
-}
-
-private actor MediaWorkerCircuitBreaker {
-    private var abnormalFailureDates: [ContinuousClock.Instant] = []
-    private var quarantineUntil: ContinuousClock.Instant?
-
-    func admissionDelay() throws -> Duration? {
-        let now = ContinuousClock.now
-        abnormalFailureDates.removeAll {
-            now - $0 > .seconds(300)
-        }
-        if let quarantineUntil, quarantineUntil > now {
-            throw MediaWorkerProcessClientError.quarantined
-        }
-        self.quarantineUntil = nil
-        guard !abnormalFailureDates.isEmpty else { return nil }
-        let seconds = min(30, 1 << min(abnormalFailureDates.count - 1, 5))
-        return .seconds(seconds)
-    }
-
-    func recordSuccess() {
-        abnormalFailureDates.removeAll()
-        quarantineUntil = nil
-    }
-
-    func recordAbnormalFailure() {
-        let now = ContinuousClock.now
-        abnormalFailureDates.removeAll {
-            now - $0 > .seconds(300)
-        }
-        abnormalFailureDates.append(now)
-        if abnormalFailureDates.count >= 5 {
-            quarantineUntil = now.advanced(by: .seconds(30))
         }
     }
 }

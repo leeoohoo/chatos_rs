@@ -2017,7 +2017,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 验证：Debug 与原生 arm64 Release 的针对性矩阵各 23 项全部通过，包括 Worker Core 9 项、Plugin 归一化/并发 6 项、粘贴图片 6 项和两条真实 Worker 进程集成。并发回归证明同一 Plugin 结果的 3 张图片达到 Worker 最大并发 3；真实 Release Worker 完成 TIFF→PNG 与 PNG→JPEG。Release 全测试目标以 `warnings-as-errors` 完成优化编译；build-evidence 脚本 25 项和 `git diff --check` 通过。未运行 launch smoke，未启动、安装或替换正式 App，不访问活动用户数据库。
 
-边界：最终 PNG/JPEG 仍需作为有界 `Data` 进入聊天附件或模型请求 DTO，本批消除的是原始容器的主进程解码/编码和跨功能单槽等待，不是网络层 JSON/Base64 流式化。单个 Plugin 结果最多可并行 8 个 Worker，后续账户级动态 CPU/内存预算必须做跨进程观测与公平调度，不能重新用全局单槽锁实现。Media Worker 当前共享异常退避状态，连续 Helper 基础设施故障可能影响后续启动；按会话/请求隔离熔断、ENOSPC、内存压力、取消风暴和长期 soak 仍是后续门禁。
+边界：最终 PNG/JPEG 仍需作为有界 `Data` 进入聊天附件或模型请求 DTO，本批消除的是原始容器的主进程解码/编码和跨功能单槽等待，不是网络层 JSON/Base64 流式化。单个 Plugin 结果最多可并行 8 个 Worker，后续账户级动态 CPU/内存预算必须做跨进程观测与公平调度，不能重新用全局单槽锁实现。Media Worker 当前仍共享异常退避状态，连续 Helper 基础设施故障可能影响后续启动；按会话/请求隔离熔断、ENOSPC、内存压力、取消风暴和长期 soak 仍是后续门禁。
+
+### 12.82 第十一完整里程碑：Media Worker 故障不再跨任务传染（2026-10-24）
+
+本里程碑移除 `MediaWorkerProcessClient` 的全局静态熔断器。此前任一 Worker 的 launch、握手、输出或协议异常都会写入同一进程级失败序列；下一张完全无关的图片即使使用健康 Worker，也会先等待 1/2/4/8/16/30 秒，累计五次后所有媒体请求共同隔离 30 秒。这与一次请求一次进程的故障边界冲突，也是跨会话“没有串 ID 但仍互相阻塞”的隐蔽来源。
+
+已实施：
+
+- PNG、JPEG 和视频尾帧请求不再查询或修改共享异常日期、退避时间和 quarantine；每个请求只受自己的 Worker PID、deadline、取消和强杀状态约束。
+- 业务级拒绝、异常退出、无效 Helper 和超时仍按原错误返回，输出身份/摘要/签名校验不放宽，也不增加 in-process fallback 或自动重放。
+- 新增真实进程回归：先启动立即异常退出的独立 Helper，再立刻启动正式健康 Worker；健康请求必须在 900 ms 内完成，证明没有继承一秒退避。测试目标继续使用随机私有文件和独立 PID，不访问用户数据。
+- ADR 23 明确一次性 Worker 不共享故障退避；未来总 CPU/内存额度由跨进程资源 Governor 负责，但不得以全局单槽或共享失败状态实现。
+
+边界：移除共享熔断避免故障传染，也意味着高频调用方不能依赖全局 quarantine 抑制错误风暴。当前每个入口已有输入数量、大小、deadline 与任务生命周期上限；账户级跨 Helper 动态资源预算、连续恶意请求速率限制和发布 soak 仍需后续交付。Agent Worker 使用按可执行身份共享的独立熔断实现，尚需另行核对它是否会让无关 Run 互相隔离，不能把本批结论外推到 Agent/Plugin/Host。
 
 ## 十三、验证矩阵
 

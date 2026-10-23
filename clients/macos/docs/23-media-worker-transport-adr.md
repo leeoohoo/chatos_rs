@@ -34,7 +34,7 @@ P2 媒体解码垂直切片只采用选项 3，不并行维护 XPC 或 socket �
 
 - Worker 启动参数包含直接父 PID，并要求 `getppid()` 一致；kqueue/Dispatch process source 监控父进程退出，父进程死亡时 Worker 立即 `_exit`。PID payload 本身不被当作远程身份凭证，真正能力是 App 创建的匿名管道和直接父子关系。
 - App 取消或 deadline 到期时先发 `SIGTERM`，250 ms 后仍存活则 `SIGKILL`。不可中断 ImageIO 不会拖住 App；输出 artifact 未完成时由既有 lease/orphan 协议删除或启动式回收。
-- 一次请求不会在崩溃后自动重放。新的 Worker launch 在异常后按 1/2/4/8/16/30 秒退避；5 分钟内 5 次异常时隔离 30 秒。业务级 invalid-image 拒绝不计为 Worker 崩溃。
+- 一次请求不会在崩溃后自动重放。每个一次性 Worker 的异常、超时和取消只结束所属请求，不写入跨请求共享的退避或隔离状态；一个损坏输入、测试 Helper 或瞬时 launch 失败不能让另一会话的健康 Worker 延迟 1–30 秒。调用方仍必须遵守各功能的输入数量上限，未来跨进程 CPU/内存 Governor 负责总资源预算，但不得重新引入单槽故障传染。
 - Helper 不兼容、缺失或签名包不完整时明确失败，不把未经隔离的高风险解码自动退回主进程。回滚通过回滚整个 App 包执行，不同时维护第二套正式 IPC。
 
 ## 打包、签名与安全边界
