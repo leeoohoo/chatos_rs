@@ -540,7 +540,11 @@ actor StoryMediaBatchSession {
                 projectID: state.draft.id,
                 owner: state.owner
             )
-            let png = try await StoryVideoFrameExtractor.lastFramePNG(from: videoURL)
+            let png = try await StoryVideoFrameExtractor.lastFramePNG(
+                from: videoURL,
+                taskID: video.jobID,
+                ownerSessionID: accountSessionID.uuidString.lowercased()
+            )
             let actualLastFrame = try await store.saveImage(
                 png,
                 mimeType: "image/png",

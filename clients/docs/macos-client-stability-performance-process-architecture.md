@@ -1793,6 +1793,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：这是主进程内 Media/Agent 大网络传输的静态总额度，不是第 6.3 节完整动态 `ResourceGovernor`。Media 重解码的同时 1 个额度、Host/Swift Agent 逻辑 job 动态共享、Plugin、数据库维护和通用文件 I/O 尚未统一；也未实现账户公平、排队老化、前台交互降额、热状态/低电量迟滞、跨进程 lease/断连回收或诊断指标。Agent owner/session 尚未接入，未来 Media Worker 也不能复制一份独立“全局 2”。真实 Media + Agent 组合压力、认证挑战/重定向重放、网络切换、取消风暴、固定 Release trace 与长时间 soak 仍待验收，因此 P0-D/P0-E 和客户端总体 SLO 均不能标记完成。
 
+### 12.67 第六十七批实施记录：重媒体解码共享准入（2026-10-23）
+
+本批关闭第 6.3 节“媒体重解码/帧提取同时 1 个”在 Media Studio 主进程生产路径中的首个缺口。此前图片归一化、大尺寸预览和 Story 视频末帧提取可以并行执行；即使各入口已有源文件大小、像素数或任务取消边界，多个解码工作集和 PNG 编码仍可能在主进程内叠加。
+
+已实施：
+
+- 在公共 `ChatOSNetworking` 增加独立的进程内共享 `ClientHeavyMediaWorkGovernor`，默认并发 1、FIFO 等待、等待队列硬上限 256；它与大网络传输额度分离，permit 记录任务 ID、可选 owner session ID、图片解码/视频帧提取类别和预计解码字节，但不认领或改写 durable job/lease。
+- 单任务预计解码工作集默认最多 256 MiB；零值、负值和超预算请求在解码前 fail-closed。等待取消会从队列移除，取消与 permit 移交竞争时已移交额度同步归还；成功、错误和显式/析构释放均幂等，避免泄漏单一通道。
+- Media Studio 图片归一化和边长请求大于 2,048 像素的大预览接入共享额度。归一化 permit 覆盖有界解码及 PNG 写出，防止上一份大解码图仍参与编码时放行下一份；远程资源继续先按既有流式、磁盘预算路径下载到临时文件，再等待解码 permit，避免网络等待占住重媒体通道。
+- 边长不超过 2,048 像素的缓存缩略图继续使用既有 64,000,000 源像素门禁和有界 downsample，不进入重媒体队列，以免后台归一化阻塞列表与预览交互。归一化最大边长仍为 8,192，按 `min(64,000,000, target²) × 4` 估算，单任务最大估算为 256,000,000 字节；本批通过串行化防止多任务峰值叠加，不宣称降低了该单任务峰值。
+- Story 视频末帧提取接入同一额度，生产调用使用 provider job ID 形成稳定 task ID；可取得认证账户时同时携带 session UUID。`AVAssetImageGenerator` 输出最大限制为 4,096 × 4,096，生成后再次校验宽高，按 64 MiB 预计工作集准入，再执行 PNG 编码。
+
+验证：Debug 与原生 arm64 Release 各选择性运行 `MediaStudioImageInteractionTests` 19 项及 `ClientHeavyMediaWorkGovernorTests` 2 项，共 21 项，全部通过。新增回归覆盖 FIFO、排队取消、queue full、超估算预算拒绝、operation 错误后的同步释放、图片归一化串行化、小缩略图不等待重媒体通道，以及视频帧提取携带稳定 task/session context 并在解码错误后回收 permit；Swift 6 Debug/Release 编译、优化编译与 `git diff --check` 同步作为门禁。测试只使用独立临时目录、生成的小图片及故意无效的视频输入；不启动或安装正式 App，不访问活动用户数据库。
+
+边界：这仍是主进程内 Media Studio 部分重媒体路径的静态额度，不是整个 App 进程组的动态/跨进程 `ResourceGovernor`。普通 UI 图片解码、Plugin 图片归一化、Local Agent 图片模型输入、粘贴图片归一化和其他 AVFoundation 消费者尚未接入；未来 Media Worker 不能复制一份独立“全局 1”，仍需跨进程 lease、断连回收和 fencing 协议。尚未实现账户公平、排队老化、前台交互降额、热状态/低电量迟滞或诊断指标，也没有用真实超大图片、有效 4K/8K 视频、固定 Release trace、组合负载与长时间 soak 验证峰值和切页 SLO，因此 P0-D/P0-E 和客户端总体 SLO 均不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
@@ -1873,6 +1889,7 @@ Release 验收建议记录：
 - Media API：`clients/macos/Sources/ChatOSAPI/ChatOSMediaGenerationService.swift`
 - 文件请求上传与有界响应：`clients/macos/Sources/ChatOSAPI/HTTPTransport.swift`、`clients/macos/Sources/ChatOSNetworking/BoundedURLSessionDataLoader.swift`
 - 大文件网络传输共享准入：`clients/macos/Sources/ChatOSNetworking/ClientLargeTransferGovernor.swift`、`clients/macos/Sources/ChatOSNetworking/URLSessionChunkStream.swift`
+- 重媒体解码共享准入：`clients/macos/Sources/ChatOSNetworking/ClientHeavyMediaWorkGovernor.swift`、`clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioImageLoader.swift`、`clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryVideoFrameExtractor.swift`
 - 参考视频增量 JSON/Base64 请求文件：`clients/macos/Sources/ChatOSAPI/ChatOSVideoRequestBodyFileWriter.swift`
 - 视频响应流式临时文件：`clients/macos/Sources/ChatOSAPI/ChatOSResponseBodyFileWriter.swift`
 - 参考媒体 DTO：`clients/macos/Sources/ChatOSCore/MediaGenerationModels.swift`
@@ -1926,7 +1943,7 @@ Release 验收建议记录：
 
 - 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift/Windows Host 常量与共享 fixture 为 v46；本方案引用版本不能替代实际握手。
 - CI 比较 Swift/Rust 协议版本、payload 边界、支持能力和打包后的真实可执行版本；Schema 兼容矩阵、进程布局及 ADR 随实现更新。
-- 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；大传输静态 Governor 见 12.66，跨资源动态/跨进程 Governor、Worker 和剩余门禁仍为待实施项。
+- 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；大传输静态 Governor 见 12.66，重媒体静态 Governor 见 12.67，跨资源动态/跨进程 Governor、Worker 和剩余门禁仍为待实施项。
 
 ### 16.2 ADR：v35 本地命令防重身份（实现范围冻结，生产迁移门禁未通过）
 

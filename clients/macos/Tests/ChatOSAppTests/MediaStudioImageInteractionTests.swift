@@ -1,12 +1,133 @@
 import AppKit
 import ChatOSAPI
 import ChatOSCore
+import ChatOSNetworking
 import Foundation
 import XCTest
 @testable import ChatOSApp
 
 @MainActor
 final class MediaStudioImageInteractionTests: XCTestCase {
+    func testHeavyMediaGovernorSerializesImageNormalization() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MediaStudioGovernedNormalizationTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 32,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let governor = ClientHeavyMediaWorkGovernor(limit: 1)
+        let blocker = try await governor.acquire(context: .init(
+            taskID: "blocker",
+            kind: .videoFrameExtraction,
+            estimatedDecodedBytes: 64 * 1_024 * 1_024
+        ))
+        let normalization = Task {
+            try await MediaStudioImageLoader.normalizedPNGFile(
+                for: .init(
+                    id: "governed-normalization",
+                    mimeType: "image/png",
+                    base64Data: png.base64EncodedString()
+                ),
+                temporaryDirectory: root,
+                availableCapacityOverride: Int64.max,
+                heavyMediaGovernor: governor
+            )
+        }
+        try await waitForHeavyMediaQueue(governor, count: 1)
+        let queued = await governor.snapshot()
+        XCTAssertEqual(queued.queued, [.init(
+            taskID: "media-image:governed-normalization:normalize",
+            kind: .imageDecode,
+            estimatedDecodedBytes: 64_000_000 * 4
+        )])
+
+        await blocker.releaseAndWait()
+        let normalized = try await normalization.value
+        XCTAssertTrue(FileManager.default.fileExists(atPath: normalized.url.path))
+        normalized.removeIfNeeded()
+        let completed = await governor.snapshot()
+        XCTAssertTrue(completed.active.isEmpty)
+        XCTAssertTrue(completed.queued.isEmpty)
+    }
+
+    func testBoundedSmallThumbnailDoesNotWaitForHeavyMediaLane() async throws {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 32,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let governor = ClientHeavyMediaWorkGovernor(limit: 1)
+        let blocker = try await governor.acquire(context: .init(
+            taskID: "blocker",
+            kind: .videoFrameExtraction,
+            estimatedDecodedBytes: 64 * 1_024 * 1_024
+        ))
+
+        let thumbnail = try await MediaStudioImageLoader.thumbnail(
+            for: .init(
+                id: "small-thumbnail",
+                mimeType: "image/png",
+                base64Data: png.base64EncodedString()
+            ),
+            maximumDisplayPixelSize: 64,
+            heavyMediaGovernor: governor
+        )
+
+        XCTAssertEqual(thumbnail.image.width, 64)
+        let snapshot = await governor.snapshot()
+        XCTAssertTrue(snapshot.queued.isEmpty)
+        XCTAssertEqual(snapshot.active.map(\.taskID), ["blocker"])
+        await blocker.releaseAndWait()
+    }
+
+    func testHeavyMediaGovernorCarriesVideoFrameTaskAndSessionContext() async throws {
+        let invalidVideo = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "governed-frame-\(UUID().uuidString).mp4"
+        )
+        try Data("not-a-video".utf8).write(to: invalidVideo)
+        addTeardownBlock { try? FileManager.default.removeItem(at: invalidVideo) }
+        let governor = ClientHeavyMediaWorkGovernor(limit: 1)
+        let blocker = try await governor.acquire(context: .init(
+            taskID: "blocker",
+            kind: .imageDecode,
+            estimatedDecodedBytes: 64 * 1_024 * 1_024
+        ))
+        let extraction = Task {
+            try await StoryVideoFrameExtractor.lastFramePNG(
+                from: invalidVideo,
+                taskID: "provider-job",
+                ownerSessionID: "session-a",
+                heavyMediaGovernor: governor
+            )
+        }
+        try await waitForHeavyMediaQueue(governor, count: 1)
+        let queued = await governor.snapshot()
+        XCTAssertEqual(queued.queued, [.init(
+            taskID: "video:provider-job:last-frame",
+            ownerSessionID: "session-a",
+            kind: .videoFrameExtraction,
+            estimatedDecodedBytes: 64 * 1_024 * 1_024
+        )])
+
+        await blocker.releaseAndWait()
+        do {
+            _ = try await extraction.value
+            XCTFail("Invalid video unexpectedly produced a final frame")
+        } catch {
+            // Expected after admission; the fixture is intentionally not a video.
+        }
+        let completed = await governor.snapshot()
+        XCTAssertTrue(completed.active.isEmpty)
+        XCTAssertTrue(completed.queued.isEmpty)
+    }
+
     func testImageWorkspaceImportsLocalReferencesAndEnforcesCapacityBeforeReading() async throws {
         let (vm, _, upload) = try await fixture()
 
@@ -466,6 +587,17 @@ final class MediaStudioImageInteractionTests: XCTestCase {
             !vm.isLoadingHistory && !vm.isLoadingModels && !vm.isRecoveringVideoJob
         }
         return (vm, service, upload)
+    }
+
+    private func waitForHeavyMediaQueue(
+        _ governor: ClientHeavyMediaWorkGovernor,
+        count: Int
+    ) async throws {
+        for _ in 0..<200 {
+            if await governor.snapshot().queued.count == count { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Timed out waiting for heavy-media admission")
     }
 
     private func wait(_ condition: () -> Bool) async throws {

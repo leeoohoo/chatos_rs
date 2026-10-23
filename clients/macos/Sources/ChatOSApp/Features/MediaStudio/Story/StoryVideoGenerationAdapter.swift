@@ -304,7 +304,11 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
                     projectID: command.projectID,
                     owner: ownerUserID
                 )
-                let finalFrame = try await StoryVideoFrameExtractor.lastFramePNG(from: videoURL)
+                let finalFrame = try await StoryVideoFrameExtractor.lastFramePNG(
+                    from: videoURL,
+                    taskID: completed.1.jobID,
+                    ownerSessionID: accountSessionID.uuidString.lowercased()
+                )
                 try await continuationCheck()
                 finalProject = try await store.applyActualVideoLastFrame(
                     finalFrame,
@@ -608,7 +612,11 @@ struct StoryVideoGenerationAdapter: StoryVideoGenerating {
                     projectID: project.id,
                     owner: ownerUserID
                 )
-                let finalFrame = try await StoryVideoFrameExtractor.lastFramePNG(from: videoURL)
+                let finalFrame = try await StoryVideoFrameExtractor.lastFramePNG(
+                    from: videoURL,
+                    taskID: completed.1.jobID,
+                    ownerSessionID: accountSessionID.uuidString.lowercased()
+                )
                 try await continuationCheck()
                 finalProject = try await store.applyActualVideoLastFrame(
                     finalFrame,

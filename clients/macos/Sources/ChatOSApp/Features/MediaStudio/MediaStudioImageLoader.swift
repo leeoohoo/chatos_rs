@@ -1,5 +1,6 @@
 import ChatOSAPI
 import ChatOSCore
+import ChatOSNetworking
 import Darwin
 import Foundation
 import ImageIO
@@ -10,6 +11,12 @@ enum MediaStudioImageLoader {
     static let maximumEncodedCharacters = ((maximumImageBytes + 2) / 3) * 4
     private static let maximumSourcePixelCount = 64_000_000
     private static let maximumNormalizedPixelSize = 8_192
+
+    private struct PreparedImageSource: Sendable {
+        let fileURL: URL?
+        let owner: GeneratedMediaFile?
+        let data: Data?
+    }
 
     static func data(for asset: GeneratedMediaAsset, transport: any HTTPTransport = URLSessionHTTPTransport()) async throws -> Data {
         try Task.checkCancellation()
@@ -59,45 +66,35 @@ enum MediaStudioImageLoader {
         maximumDisplayPixelSize: Int,
         transport: any HTTPTransport = URLSessionHTTPTransport(),
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
-        availableCapacityOverride: Int64? = nil
+        availableCapacityOverride: Int64? = nil,
+        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
     ) async throws -> AppDecodedThumbnail {
         guard maximumDisplayPixelSize > 0 else { throw ImageError.invalidImage }
-        if let url = asset.url, url.isFileURL {
-            let owner = asset.mediaFile
-            defer { withExtendedLifetime(owner) {} }
-            return try await AppImageThumbnailLoader.loadLocalFile(
-                url,
-                maximumBytes: maximumImageBytes,
-                maximumSourcePixelCount: maximumSourcePixelCount,
+        let source = try await preparedSource(
+            for: asset,
+            transport: transport,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride
+        )
+        // Small cached thumbnails are latency-sensitive and already have a bounded decoded
+        // footprint. Reserve the single heavy-media lane for large previews and normalization.
+        guard maximumDisplayPixelSize > 2_048 else {
+            return try await decode(
+                source,
                 maximumDisplayPixelSize: maximumDisplayPixelSize
             )
         }
-        if let url = asset.url,
-           url.scheme?.lowercased() == "https" {
-            let downloaded = try await downloadedFile(
-                from: url,
-                transport: transport,
-                temporaryDirectory: temporaryDirectory,
-                availableCapacityOverride: availableCapacityOverride
-            )
-            defer { withExtendedLifetime(downloaded) {} }
-            return try await AppImageThumbnailLoader.loadLocalFile(
-                downloaded.url,
-                maximumBytes: maximumImageBytes,
-                maximumSourcePixelCount: maximumSourcePixelCount,
+        return try await heavyMediaGovernor.perform(context: .init(
+            taskID: mediaTaskID(assetID: asset.id, operation: "thumbnail"),
+            kind: .imageDecode,
+            estimatedDecodedBytes: estimatedDecodedBytes(
                 maximumDisplayPixelSize: maximumDisplayPixelSize
             )
-        }
-        let bytes = try await data(for: asset, transport: transport)
-        return try await AppCancellableDetachedWork.run {
-            guard let decoded = AppImageThumbnailLoader.decode(
-                bytes,
-                maximumSourcePixelCount: maximumSourcePixelCount,
+        )) {
+            try await decode(
+                source,
                 maximumDisplayPixelSize: maximumDisplayPixelSize
-            ) else {
-                throw ImageError.invalidImage
-            }
-            return decoded
+            )
         }
     }
 
@@ -151,44 +148,103 @@ enum MediaStudioImageLoader {
         for asset: GeneratedMediaAsset,
         transport: any HTTPTransport = URLSessionHTTPTransport(),
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
-        availableCapacityOverride: Int64? = nil
+        availableCapacityOverride: Int64? = nil,
+        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
     ) async throws -> GeneratedMediaFile {
-        let decoded: AppDecodedThumbnail
-        if let url = asset.url,
-           url.scheme?.lowercased() == "https" {
+        let source = try await preparedSource(
+            for: asset,
+            transport: transport,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride
+        )
+        return try await heavyMediaGovernor.perform(context: .init(
+            taskID: mediaTaskID(assetID: asset.id, operation: "normalize"),
+            kind: .imageDecode,
+            estimatedDecodedBytes: estimatedDecodedBytes(
+                maximumDisplayPixelSize: maximumNormalizedPixelSize
+            )
+        )) {
+            let decoded = try await decode(
+                source,
+                maximumDisplayPixelSize: maximumNormalizedPixelSize
+            )
+            return try await ChatOSMediaArtifactFileWriter.writeNormalizedImage(
+                maximumBytes: maximumImageBytes,
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: availableCapacityOverride
+            ) { destinationHandle in
+                try encodedPNG(
+                    decoded,
+                    to: destinationHandle,
+                    maximumBytes: maximumImageBytes
+                )
+            }
+        }
+    }
+
+    private static func preparedSource(
+        for asset: GeneratedMediaAsset,
+        transport: any HTTPTransport,
+        temporaryDirectory: URL,
+        availableCapacityOverride: Int64?
+    ) async throws -> PreparedImageSource {
+        if let url = asset.url, url.isFileURL {
+            return .init(fileURL: url, owner: asset.mediaFile, data: nil)
+        }
+        if let url = asset.url, url.scheme?.lowercased() == "https" {
             let downloaded = try await downloadedFile(
                 from: url,
                 transport: transport,
                 temporaryDirectory: temporaryDirectory,
                 availableCapacityOverride: availableCapacityOverride
             )
-            defer { withExtendedLifetime(downloaded) {} }
-            decoded = try await AppImageThumbnailLoader.loadLocalFile(
-                downloaded.url,
+            return .init(fileURL: downloaded.url, owner: downloaded, data: nil)
+        }
+        return .init(
+            fileURL: nil,
+            owner: nil,
+            data: try await data(for: asset, transport: transport)
+        )
+    }
+
+    private static func decode(
+        _ source: PreparedImageSource,
+        maximumDisplayPixelSize: Int
+    ) async throws -> AppDecodedThumbnail {
+        if let fileURL = source.fileURL {
+            defer { withExtendedLifetime(source.owner) {} }
+            return try await AppImageThumbnailLoader.loadLocalFile(
+                fileURL,
                 maximumBytes: maximumImageBytes,
                 maximumSourcePixelCount: maximumSourcePixelCount,
-                maximumDisplayPixelSize: maximumNormalizedPixelSize
-            )
-        } else {
-            decoded = try await thumbnail(
-                for: asset,
-                maximumDisplayPixelSize: maximumNormalizedPixelSize,
-                transport: transport,
-                temporaryDirectory: temporaryDirectory,
-                availableCapacityOverride: availableCapacityOverride
+                maximumDisplayPixelSize: maximumDisplayPixelSize
             )
         }
-        return try await ChatOSMediaArtifactFileWriter.writeNormalizedImage(
-            maximumBytes: maximumImageBytes,
-            temporaryDirectory: temporaryDirectory,
-            availableCapacityOverride: availableCapacityOverride
-        ) { destinationHandle in
-            try encodedPNG(
-                decoded,
-                to: destinationHandle,
-                maximumBytes: maximumImageBytes
-            )
+        guard let data = source.data else { throw ImageError.invalidImage }
+        return try await AppCancellableDetachedWork.run {
+            guard let decoded = AppImageThumbnailLoader.decode(
+                data,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumDisplayPixelSize: maximumDisplayPixelSize
+            ) else {
+                throw ImageError.invalidImage
+            }
+            return decoded
         }
+    }
+
+    private static func mediaTaskID(assetID: String, operation: String) -> String {
+        let component = assetID.isEmpty
+            ? UUID().uuidString.lowercased()
+            : String(assetID.prefix(128))
+        return "media-image:\(component):\(operation)"
+    }
+
+    private static func estimatedDecodedBytes(maximumDisplayPixelSize: Int) -> Int {
+        let maximumDisplayPixels = Double(maximumDisplayPixelSize)
+            * Double(maximumDisplayPixelSize)
+        let decodedPixels = min(Double(maximumSourcePixelCount), maximumDisplayPixels)
+        return Int(decodedPixels) * 4
     }
 
     private nonisolated static func encodedPNG(

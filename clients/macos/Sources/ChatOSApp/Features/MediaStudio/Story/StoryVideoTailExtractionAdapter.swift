@@ -12,7 +12,10 @@ struct StoryVideoTailExtractionAdapter: StoryVideoTailExtracting {
             projectID: command.projectID,
             owner: command.ownerUserID
         )
-        let png = try await StoryVideoFrameExtractor.lastFramePNG(from: url)
+        let png = try await StoryVideoFrameExtractor.lastFramePNG(
+            from: url,
+            taskID: command.videoJobID
+        )
         try Task.checkCancellation()
         let applied = try await store.applyActualVideoLastFrame(
             png,

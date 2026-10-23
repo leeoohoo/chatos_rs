@@ -76,6 +76,7 @@ let package = Package(
                 "ChatOSAPI",
                 "ChatOSConnector",
                 "ChatOSAgentRuntime",
+                "ChatOSNetworking",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             linkerSettings: [
@@ -107,7 +108,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ChatOSAppTests",
-            dependencies: ["ChatOSApp", "ChatOSCore"]
+            dependencies: ["ChatOSApp", "ChatOSCore", "ChatOSNetworking"]
         ),
     ]
 )
