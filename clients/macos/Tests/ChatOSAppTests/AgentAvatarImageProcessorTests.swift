@@ -1,6 +1,7 @@
 import AppKit
 import ChatOSAPI
 import ChatOSCore
+import ChatOSMediaWorkerProtocol
 @testable import ChatOSApp
 import XCTest
 
@@ -49,6 +50,7 @@ final class AgentAvatarImageProcessorTests: XCTestCase {
         bitmap.bitmapData?.initialize(repeating: 110, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
         let sourcePNG = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         let transport = AvatarStreamingTransport(data: sourcePNG)
+        let worker = AvatarRecordingMediaWorker()
 
         let result = try await AgentAvatarImageLoader.normalizedData(
             for: .init(
@@ -56,9 +58,11 @@ final class AgentAvatarImageProcessorTests: XCTestCase {
                 mimeType: "image/png",
                 url: URL(string: "https://cdn.example/avatar.png")!
             ),
+            ownerUserID: "alice",
             transport: transport,
             temporaryDirectory: root,
-            availableCapacityOverride: Int64.max
+            availableCapacityOverride: Int64.max,
+            mediaWorker: worker
         )
 
         let decoded = try XCTUnwrap(NSBitmapImageRep(data: result))
@@ -72,7 +76,54 @@ final class AgentAvatarImageProcessorTests: XCTestCase {
         let requests = await transport.requests
         XCTAssertEqual(requests.count, 1)
         XCTAssertNil(requests[0].headers["Authorization"])
+        let invocation = await worker.invocation
+        XCTAssertEqual(invocation?.ownerUserID, "alice")
+        XCTAssertEqual(invocation?.maximumOutputPixelSize, 2_048)
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+    }
+}
+
+private actor AvatarRecordingMediaWorker: MediaWorkerImageNormalizing {
+    struct Invocation: Sendable {
+        let ownerUserID: String
+        let maximumOutputPixelSize: Int
+    }
+
+    private(set) var invocation: Invocation?
+
+    func normalizePNG(
+        sourceURL: URL,
+        sourceIdentity: MediaWorkerFileIdentity?,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int
+    ) async throws -> MediaWorkerImageDescriptor {
+        _ = sourceIdentity
+        _ = maximumSourceBytes
+        _ = maximumSourcePixelCount
+        _ = maximumOutputBytes
+        invocation = .init(
+            ownerUserID: ownerUserID,
+            maximumOutputPixelSize: maximumOutputPixelSize
+        )
+        let data = try Data(contentsOf: sourceURL)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
+        let output = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let handle = try FileHandle(forWritingTo: destinationURL)
+        try handle.write(contentsOf: output)
+        try handle.synchronize()
+        try handle.close()
+        return .init(
+            path: destinationURL.path,
+            mimeType: "image/png",
+            byteCount: output.count,
+            sha256: String(repeating: "0", count: 64),
+            pixelWidth: bitmap.pixelsWide,
+            pixelHeight: bitmap.pixelsHigh
+        )
     }
 }
 

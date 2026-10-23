@@ -45,4 +45,4 @@ P2 媒体解码垂直切片只采用选项 3，不并行维护 XPC 或 socket �
 
 最小门禁包括：协议握手、真实独立进程归一化、symlink/文件替换拒绝、像素/字节/deadline、取消后子进程消失、Debug/Release 回归，以及打包后架构、签名和 build evidence 校验。
 
-本 ADR 当前覆盖 Story PNG 归一化、Media Studio 缩略图/全屏预览、普通聊天和 Agent 聊天持久图片附件预览、项目文件 4K 图片预览，以及 Story 视频尾帧提取。App 为显示仍需解码 Worker 产生的受限尺寸 PNG，但不再在 UI 进程解析这些路径的原始 20 MiB/64 MP 图片；Story 尾帧则以 lease-owned 文件直接提交 Store，不回到主进程 `Data`。通用视频 poster/任意时间 frame、其他普通 UI 图片消费者、媒体上传/下载、durable media job 所有权、跨账户 durable lease、真实大媒体 physical-footprint、内存压力/取消风暴、ENOSPC/睡眠/断网和发布 soak 仍属于后续 P2/P4 门禁。
+本 ADR 当前覆盖 Story PNG 归一化、Media Studio 缩略图/全屏预览、普通聊天和 Agent 聊天持久图片附件预览、项目文件 4K 图片预览、Agent 头像原图，以及 Story 视频尾帧提取。App 为显示或生成最终小图仍需解码 Worker 产生的受限尺寸 PNG，但不再在 UI 进程解析这些路径的原始 20 MiB/64 MP 图片；Story 尾帧则以 lease-owned 文件直接提交 Store，不回到主进程 `Data`。通用视频 poster/任意时间 frame、Markdown/Visual Session 等高频图片消费者、媒体上传/下载、durable media job 所有权、跨账户 durable lease、真实大媒体 physical-footprint、内存压力/取消风暴、ENOSPC/睡眠/断网和发布 soak 仍属于后续 P2/P4 门禁。

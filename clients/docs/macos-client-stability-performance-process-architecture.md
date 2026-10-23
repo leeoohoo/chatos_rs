@@ -1938,7 +1938,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 验证：Debug 与原生 arm64 Release 的单元/真实 Worker 集成各 3 项全部通过，覆盖共享重媒体通道排队、真实账户/4K 参数透传、独立进程解码、最终像素尺寸，以及输入/输出 artifact 全部回收；Release 目标以 `warnings-as-errors` 优化编译通过。打包脚本语法、build-evidence 的 25 项回归和差异空白检查通过。完整 arm64 Release 诊断包通过 5 个二进制架构检查、Worker/App 嵌套签名、4 个 dSYM UUID 匹配、bundle 哈希和 build-evidence 校验，manifest 为 `diagnostic-build` / `uuid-matched`；首次打包因并行 Windows 源码在构建期间变化被 evidence 正确拒绝，输入稳定后的增量重跑通过。未运行 launch smoke，未启动、安装或替换正式 App。
 
-边界：项目文件上游 DTO 仍持有完整字符串；本批会在主进程短暂物化最多 20 MiB 的压缩源 `Data` 并立即落盘，只迁移高风险/高峰值的 64 MP ImageIO 解码，不宣称项目文件传输已经文件原生化。复制到剪贴板时既有 `imagePreviewData` 仍会按用户操作物化压缩数据；头像、Markdown 网络图片和其他普通 UI 图片消费者尚未全部迁移。真实 20 MiB/64 MP physical-footprint、快速切文件取消风暴、ENOSPC、长期 soak、上传下载与 durable media job 仍待完成，不能据此宣称 P0-E/P2/P4 完成。
+边界：项目文件上游 DTO 仍持有完整字符串；本批会在主进程短暂物化最多 20 MiB 的压缩源 `Data` 并立即落盘，只迁移高风险/高峰值的 64 MP ImageIO 解码，不宣称项目文件传输已经文件原生化。复制到剪贴板时既有 `imagePreviewData` 仍会按用户操作物化压缩数据；Markdown 网络图片和其他普通 UI 图片消费者尚未全部迁移。真实 20 MiB/64 MP physical-footprint、快速切文件取消风暴、ENOSPC、长期 soak、上传下载与 durable media job 仍待完成，不能据此宣称 P0-E/P2/P4 完成。
+
+### 12.77 第六完整里程碑：Agent 头像原图解码迁入 Media Worker（2026-10-23）
+
+本里程碑迁移 Agent 头像编辑器的本机文件、生成记录和远程生成图片三条生产路径。此前头像处理在主 App 直接用 ImageIO 解析最多 20 MiB/64 MP 原图到最长边 2048 的像素面，再裁剪并编码 256×256 JPEG；现在原图解析、方向变换、下采样和清洗 PNG 编码由 Media Worker 完成，App 只对受限 2K 输出执行固定 256×256 裁剪与 JPEG 编码。
+
+已实施：
+
+- 本机 security-scoped 文件、已落盘生成结果、HTTPS 流式下载和 inline Base64 均收敛到 `AgentAvatarImageLoader` 的文件路径；inline 压缩数据有界落成 lease artifact 后立即释放主进程源 `Data`，不把媒体字节送入 IPC。
+- 头像解码复用 `normalize_png_v1`、20 MiB/64 MP 输入门禁、2K 输出门禁和既有单通道重媒体 Governor。最终 256×256 裁剪仅处理 Worker 清洗后的受限 PNG，不再接触原始容器。
+- 编辑器和生成记录选择器传入真实认证账户 ID；账户切换或退出后会拒绝旧任务回写。取消继续终止 Worker，输入和输出 artifact 在成功、错误或取消时由 lease 回收。
+- 高频 Markdown 图片与 Visual Session 帧没有直接套用一次一进程模型：前者单文档最多 32 张、后者持续刷新，必须先冻结多输出 artifact 所有权、部分失败和批量取消语义，避免进程启动成本造成新的性能回退。
+
+验证：Debug 与原生 arm64 Release 的单元/真实 Worker 集成各 5 项全部通过，覆盖裁剪/输出预算、无效输入、HTTPS 流式落盘、真实账户与 2K 参数透传、独立进程原图解码，以及临时 artifact 回收；Release 目标以 `warnings-as-errors` 优化编译通过。打包脚本语法、build-evidence 的 25 项回归和差异空白检查通过。完整 arm64 Release 诊断包通过 5 个二进制架构检查、Worker/App 嵌套签名、4 个 dSYM UUID 匹配、bundle 哈希和 build-evidence 校验，manifest 为 `diagnostic-build` / `uuid-matched`；首次打包因并行 Windows/Plugin 源码在构建期间变化被 evidence 正确拒绝，输入稳定后的增量重跑通过。未运行 launch smoke，未启动、安装或替换正式 App。
+
+边界：App 仍必须为最终头像持有一个受限 2K `CGImage` 和 256×256 编码面；本批不迁移已经持久化的 256×256 头像显示解码。inline/Base64 上游 DTO 仍短暂持有压缩字符串/`Data`。Markdown、Visual Session、剪贴板历史、Plugin 图标和 Pet 图片等高频或低风险消费者需要按调用频率决定批处理、缓存或继续留在进程内，不能机械地逐张启动 Worker。真实 20 MiB/64 MP physical-footprint、取消风暴、ENOSPC、长期 soak、上传下载和 durable media job 仍待完成，不能据此宣称 P0-E/P2/P4 完成。
 
 ## 十三、验证矩阵
 

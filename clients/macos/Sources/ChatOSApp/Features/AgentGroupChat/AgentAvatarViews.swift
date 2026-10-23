@@ -49,6 +49,7 @@ struct AgentAvatarView: View {
 }
 
 struct AgentAvatarEditor: View {
+    @EnvironmentObject private var appModel: AppModel
     @Binding var avatarData: Data?
     let agentName: String
     let generatedImages: [GeneratedMediaAsset]
@@ -143,27 +144,40 @@ struct AgentAvatarEditor: View {
         isLoading = true
         errorMessage = nil
         loadTask = Task {
-            do {
-                let normalized = try await AppCancellableDetachedWork.run {
-                    let accessed = url.startAccessingSecurityScopedResource()
-                    defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                    return try AgentAvatarImageProcessor.normalizeFile(url)
+            defer {
+                if loadGeneration == generation {
+                    isLoading = false
+                    loadTask = nil
                 }
-                guard loadGeneration == generation, !Task.isCancelled else { return }
+            }
+            guard let ownerUserID = appModel.authenticatedUserID else {
+                errorMessage = AgentAvatarImageError.invalidImage.localizedDescription
+                return
+            }
+            do {
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+                let normalized = try await AgentAvatarImageLoader.normalizedData(
+                    forFile: url,
+                    ownerUserID: ownerUserID
+                )
+                guard loadGeneration == generation,
+                      appModel.authenticatedUserID == ownerUserID,
+                      !Task.isCancelled else { return }
                 avatarData = normalized
             } catch {
-                guard loadGeneration == generation, !Task.isCancelled else { return }
+                guard loadGeneration == generation,
+                      appModel.authenticatedUserID == ownerUserID,
+                      !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription
             }
-            guard loadGeneration == generation else { return }
-            isLoading = false
-            loadTask = nil
         }
     }
 }
 
 private struct AgentGeneratedAvatarPicker: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appModel: AppModel
     let images: [GeneratedMediaAsset]
     let onSelect: (Data) -> Void
 
@@ -247,17 +261,33 @@ private struct AgentGeneratedAvatarPicker: View {
         loadingID = asset.id
         errorMessage = nil
         loadTask = Task {
+            defer {
+                if loadGeneration == generation {
+                    loadingID = nil
+                    loadTask = nil
+                }
+            }
+            guard let ownerUserID = appModel.authenticatedUserID else {
+                errorMessage = AgentAvatarImageError.invalidImage.localizedDescription
+                return
+            }
             do {
-                let normalized = try await AgentAvatarImageLoader.normalizedData(for: asset)
-                guard loadGeneration == generation, !Task.isCancelled else { return }
+                let normalized = try await AgentAvatarImageLoader.normalizedData(
+                    for: asset,
+                    ownerUserID: ownerUserID
+                )
+                guard loadGeneration == generation,
+                      appModel.authenticatedUserID == ownerUserID,
+                      !Task.isCancelled else { return }
                 onSelect(normalized)
                 dismiss()
             } catch {
-                guard loadGeneration == generation, !Task.isCancelled else { return }
+                guard loadGeneration == generation,
+                      appModel.authenticatedUserID == ownerUserID,
+                      !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription
                 loadingID = nil
             }
-            if loadGeneration == generation { loadTask = nil }
         }
     }
 }
@@ -307,7 +337,7 @@ enum AgentAvatarImageProcessor {
         return try normalizeDecoded(decoded.image)
     }
 
-    private static func normalizeDecoded(_ decoded: CGImage) throws -> Data {
+    static func normalizeDecoded(_ decoded: CGImage) throws -> Data {
         try Task.checkCancellation()
         let side = min(decoded.width, decoded.height)
         let cropRect = CGRect(

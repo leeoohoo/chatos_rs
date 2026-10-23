@@ -154,6 +154,49 @@ final class MediaWorkerProcessClientTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
     }
 
+    func testAgentAvatarNormalizationRunsThroughBuiltWorker() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run avatar integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("avatar-source.png")
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 320,
+            pixelsHigh: 160,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: source)
+
+        let avatar = try await AgentAvatarImageLoader.normalizedData(
+            forFile: source,
+            ownerUserID: "process-client-test",
+            taskID: "avatar-worker-test",
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: MediaWorkerProcessClient(
+                executableURL: URL(fileURLWithPath: path),
+                timeout: 10
+            )
+        )
+
+        let decoded = try XCTUnwrap(NSBitmapImageRep(data: avatar))
+        XCTAssertEqual(decoded.pixelsWide, 256)
+        XCTAssertEqual(decoded.pixelsHigh, 256)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: root.path),
+            [source.lastPathComponent]
+        )
+    }
+
     func testStoryNormalizationRunsThroughBuiltWorkerAndLeaseArtifact() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
               !path.isEmpty else {
