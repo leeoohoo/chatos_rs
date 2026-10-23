@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSMediaWorkerClient
 import ChatOSMediaWorkerProtocol
 import CryptoKit
 import Foundation

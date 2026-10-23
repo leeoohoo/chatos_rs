@@ -1,6 +1,7 @@
 import AppKit
 import ChatOSAPI
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import ChatOSMediaWorkerProtocol
 @testable import ChatOSApp
 import XCTest

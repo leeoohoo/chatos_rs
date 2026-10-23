@@ -1,115 +1,162 @@
-import AppKit
 import ChatOSCore
-import ChatOSNetworking
+import ChatOSMediaWorkerClient
+import ChatOSMediaWorkerProtocol
+import CryptoKit
 import Foundation
-import ImageIO
 
 enum NativeLocalAgentAttachmentModelInput {
     // Match the shared MCP runtime's image budget. The Local Agent transport can chunk
     // logical messages, but model inputs remain independently bounded.
     static let maximumModelBytes = 2 * 1_024 * 1_024
+    private static let outputPixelSizes = [4_096, 3_072, 2_048, 1_536, 1_024, 768, 512]
 
     static func result(
-        _ data: Data,
+        source: NativeLocalAgentVerifiedAttachmentFile,
         record: LocalAgentConversationAttachmentRecord,
+        ownerUserID: String,
         imported: LocalAgentJSONValue? = nil,
-        taskID: String? = nil,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) async throws -> LocalAgentJSONValue {
         try Task.checkCancellation()
         guard record.mediaType.lowercased().hasPrefix("image/") else {
             throw NativeLocalAgentAttachmentModelInputError.notImage
         }
-        let attachmentComponent = String(record.attachmentID.prefix(64))
-        let component = taskID.map {
-            "\(String($0.prefix(64))):\(attachmentComponent)"
-        } ?? attachmentComponent
-        return try await heavyMediaGovernor.perform(context: .init(
-            taskID: "local-agent-image:\(component):model",
-            kind: .imageDecode,
-            estimatedDecodedBytes: NativePluginModelImageNormalizer.maximumDisplayPixelSize
-                * NativePluginModelImageNormalizer.maximumDisplayPixelSize * 4
-        )) {
-            let task = Task<LocalAgentJSONValue, Error>.detached(priority: .userInitiated) {
-                try Task.checkCancellation()
-                let image = try modelImage(data)
-                var fields: [String: LocalAgentJSONValue] = [:]
-                if case let .object(value)? = imported { fields = value }
-                fields["display_name"] = .string(record.displayName)
-                fields["media_type"] = .string(record.mediaType)
-                fields["byte_size"] = .number(Double(record.byteSize))
-                fields["sha256"] = .string(record.sha256.lowercased())
-                fields["sha256_verified"] = .bool(true)
-                fields["delivery"] = imported == nil ? .string("model") : .string("workspace")
-                fields["model_image_supplied"] = .bool(true)
-                // Keep binary data out of the text tool result and structured memory.
-                // The shared runtime extracts _model_input into transient image parts.
-                let text = String(decoding: try JSONEncoder().encode(LocalAgentJSONValue.object(fields)), as: UTF8.self)
-                var result = fields
-                result["text"] = .string(text)
-                result["_structured_result"] = .object(fields)
-                result["_model_input"] = .array([.object([
-                        "type": .string("input_image"),
-                        "image_url": .string("data:\(image.mime);base64,\(image.bytes.base64EncodedString())"),
-                        "detail": .string("high"),
-                    ])])
-                return .object(result)
-            }
-            return try await withTaskCancellationHandler {
-                try await task.value
-            } onCancel: {
-                task.cancel()
-            }
-        }
-    }
-
-    private static func modelImage(_ data: Data) throws -> (bytes: Data, mime: String) {
-        guard !data.isEmpty, data.count <= NativeLocalAgentAttachmentVault.maximumAttachmentBytes,
-              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
-              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
-              width > 0, height > 0, width.isFinite, height.isFinite,
-              width * height <= Double(NativePluginModelImageNormalizer.maximumSourcePixelCount) else {
+        guard source.identity.byteCount == Int64(record.byteSize),
+              record.byteSize > 0,
+              record.byteSize <= UInt64(NativeLocalAgentAttachmentVault.maximumAttachmentBytes) else {
             throw NativeLocalAgentAttachmentModelInputError.invalidImage
         }
-        // Decode even small inputs; a header or a MIME label alone is not a valid image.
-        let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
-        let type = CGImageSourceGetType(source) as String?
-        let originalMime = ["public.png": "image/png", "public.jpeg": "image/jpeg", "org.webmproject.webp": "image/webp"][type ?? ""]
-        for maximumPixels in [4_096, 3_072, 2_048, 1_536] {
+
+        let output = try await normalizedImage(
+            source: source,
+            ownerUserID: ownerUserID,
+            mediaWorker: mediaWorker
+        )
+        var fields: [String: LocalAgentJSONValue] = [:]
+        if case let .object(value)? = imported { fields = value }
+        fields["display_name"] = .string(record.displayName)
+        fields["media_type"] = .string(record.mediaType)
+        fields["byte_size"] = .number(Double(record.byteSize))
+        fields["sha256"] = .string(record.sha256.lowercased())
+        fields["sha256_verified"] = .bool(true)
+        fields["delivery"] = imported == nil ? .string("model") : .string("workspace")
+        fields["model_image_supplied"] = .bool(true)
+        // Keep binary data out of the text tool result and structured memory.
+        // The shared runtime extracts _model_input into transient image parts.
+        let text = String(
+            decoding: try JSONEncoder().encode(LocalAgentJSONValue.object(fields)),
+            as: UTF8.self
+        )
+        var result = fields
+        result["text"] = .string(text)
+        result["_structured_result"] = .object(fields)
+        result["_model_input"] = .array([.object([
+            "type": .string("input_image"),
+            "image_url": .string("data:\(output.mime);base64,\(output.bytes.base64EncodedString())"),
+            "detail": .string("high"),
+        ])])
+        return .object(result)
+    }
+
+    private static func normalizedImage(
+        source: NativeLocalAgentVerifiedAttachmentFile,
+        ownerUserID: String,
+        mediaWorker: any MediaWorkerImageNormalizing
+    ) async throws -> (bytes: Data, mime: String) {
+        let root = source.url.deletingLastPathComponent().appendingPathComponent(
+            ".model-image-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        do {
+            try FileManager.default.createDirectory(
+                at: root,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+        } catch {
+            throw NativeLocalAgentAttachmentModelInputError.processingUnavailable
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for (index, maximumPixels) in outputPixelSizes.enumerated() {
             try Task.checkCancellation()
-            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maximumPixels,
-                kCGImageSourceShouldCacheImmediately: true,
-            ] as CFDictionary) else { throw NativeLocalAgentAttachmentModelInputError.invalidImage }
-            if maximumPixels == 4_096, data.count <= maximumModelBytes,
-               max(width, height) <= 4_096, orientation == 1,
-               CGImageSourceGetCount(source) == 1, let originalMime {
-                return (data, originalMime)
+            let destination = root.appendingPathComponent("attempt-\(index).png", isDirectory: false)
+            guard FileManager.default.createFile(
+                atPath: destination.path,
+                contents: nil,
+                attributes: [.posixPermissions: 0o600]
+            ) else {
+                throw NativeLocalAgentAttachmentModelInputError.processingUnavailable
             }
-            for quality in [0.88, 0.72] {
-                if let jpeg = NSBitmapImageRep(cgImage: image).representation(
-                    using: .jpeg, properties: [.compressionFactor: quality]
-                ), jpeg.count <= maximumModelBytes {
-                    return (jpeg, "image/jpeg")
+            do {
+                let descriptor = try await mediaWorker.normalizePNG(
+                    sourceURL: source.url,
+                    sourceIdentity: source.identity,
+                    destinationURL: destination,
+                    ownerUserID: ownerUserID,
+                    maximumSourceBytes: NativeLocalAgentAttachmentVault.maximumAttachmentBytes,
+                    maximumSourcePixelCount: NativePluginModelImageNormalizer.maximumSourcePixelCount,
+                    maximumOutputPixelSize: maximumPixels,
+                    maximumOutputBytes: maximumModelBytes
+                )
+                try Task.checkCancellation()
+                let bytes = try Data(contentsOf: destination, options: [.mappedIfSafe])
+                guard descriptor.path == destination.path,
+                      descriptor.mimeType == "image/png",
+                      descriptor.byteCount == bytes.count,
+                      descriptor.byteCount <= maximumModelBytes,
+                      descriptor.pixelWidth > 0,
+                      descriptor.pixelHeight > 0,
+                      max(descriptor.pixelWidth, descriptor.pixelHeight) <= maximumPixels,
+                      sha256(bytes) == descriptor.sha256.lowercased() else {
+                    throw NativeLocalAgentAttachmentModelInputError.invalidImage
                 }
+                return (bytes, descriptor.mimeType)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as MediaWorkerProcessClientError {
+                if case .requestRejected(code: "output_too_large") = error,
+                   index < outputPixelSizes.count - 1 {
+                    continue
+                }
+                if case let .requestRejected(code) = error {
+                    switch code {
+                    case "invalid_image", "unauthorized_path", "invalid_request":
+                        throw NativeLocalAgentAttachmentModelInputError.invalidImage
+                    case "output_too_large":
+                        throw NativeLocalAgentAttachmentModelInputError.imageTooLarge
+                    default:
+                        throw NativeLocalAgentAttachmentModelInputError.processingUnavailable
+                    }
+                }
+                throw NativeLocalAgentAttachmentModelInputError.processingUnavailable
+            } catch let error as NativeLocalAgentAttachmentModelInputError {
+                throw error
+            } catch {
+                throw NativeLocalAgentAttachmentModelInputError.processingUnavailable
             }
         }
         throw NativeLocalAgentAttachmentModelInputError.imageTooLarge
     }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 enum NativeLocalAgentAttachmentModelInputError: LocalizedError, Equatable {
-    case notImage, invalidImage, imageTooLarge
+    case notImage, invalidImage, imageTooLarge, processingUnavailable
 
     var errorDescription: String? {
         switch self {
-        case .notImage: "This attachment is not an image. Use content for text or workspace in a Task for file processing."
-        case .invalidImage: "The verified attachment could not be decoded as an image, or exceeds the safe pixel limit."
-        case .imageTooLarge: "The image could not fit the model transport budget. Provide a smaller image or use an authorized image-processing capability."
+        case .notImage:
+            "This attachment is not an image. Use content for text or workspace in a Task for file processing."
+        case .invalidImage:
+            "The verified attachment could not be decoded as an image, or exceeds the safe pixel limit."
+        case .imageTooLarge:
+            "The image could not fit the model transport budget. Provide a smaller image or use an authorized image-processing capability."
+        case .processingUnavailable:
+            "The isolated image-processing worker is unavailable. Try the attachment again."
         }
     }
 }

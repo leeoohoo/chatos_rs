@@ -1,8 +1,9 @@
 import ChatOSMediaWorkerProtocol
+import CryptoKit
 import Darwin
 import Foundation
 
-protocol MediaWorkerImageNormalizing: Sendable {
+public protocol MediaWorkerImageNormalizing: Sendable {
     func normalizePNG(
         sourceURL: URL,
         sourceIdentity: MediaWorkerFileIdentity?,
@@ -15,7 +16,7 @@ protocol MediaWorkerImageNormalizing: Sendable {
     ) async throws -> MediaWorkerImageDescriptor
 }
 
-protocol MediaWorkerVideoFrameExtracting: Sendable {
+public protocol MediaWorkerVideoFrameExtracting: Sendable {
     func extractLastVideoFramePNG(
         sourceURL: URL,
         destinationURL: URL,
@@ -26,7 +27,7 @@ protocol MediaWorkerVideoFrameExtracting: Sendable {
     ) async throws -> MediaWorkerImageDescriptor
 }
 
-enum MediaWorkerProcessClientError: LocalizedError, Equatable {
+public enum MediaWorkerProcessClientError: LocalizedError, Equatable {
     case unavailable
     case invalidExecutable
     case launchFailed
@@ -36,7 +37,7 @@ enum MediaWorkerProcessClientError: LocalizedError, Equatable {
     case timedOut
     case quarantined
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .unavailable:
             "图片处理进程不可用。"
@@ -58,22 +59,22 @@ enum MediaWorkerProcessClientError: LocalizedError, Equatable {
     }
 }
 
-struct MediaWorkerProcessClient: MediaWorkerImageNormalizing, MediaWorkerVideoFrameExtracting {
-    static let shared = MediaWorkerProcessClient()
+public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing, MediaWorkerVideoFrameExtracting {
+    public static let shared = MediaWorkerProcessClient()
 
     private static let accountSessionID = UUID().uuidString.lowercased()
     private static let sessionEpoch = UUID().uuidString.lowercased()
     private static let circuitBreaker = MediaWorkerCircuitBreaker()
 
-    let executableURL: URL?
-    let timeout: TimeInterval
+    public let executableURL: URL?
+    public let timeout: TimeInterval
 
-    init(executableURL: URL? = nil, timeout: TimeInterval = 60) {
+    public init(executableURL: URL? = nil, timeout: TimeInterval = 60) {
         self.executableURL = executableURL
         self.timeout = timeout
     }
 
-    func normalizePNG(
+    public func normalizePNG(
         sourceURL: URL,
         sourceIdentity: MediaWorkerFileIdentity? = nil,
         destinationURL: URL,
@@ -123,7 +124,7 @@ struct MediaWorkerProcessClient: MediaWorkerImageNormalizing, MediaWorkerVideoFr
                     group.addTask {
                         let nanoseconds = UInt64(max(0.001, timeout) * 1_000_000_000)
                         try await Task.sleep(nanoseconds: nanoseconds)
-                        controller.terminate()
+                        controller.terminate(timedOut: true)
                         throw MediaWorkerProcessClientError.timedOut
                     }
                     defer { group.cancelAll() }
@@ -141,18 +142,20 @@ struct MediaWorkerProcessClient: MediaWorkerImageNormalizing, MediaWorkerVideoFr
             throw CancellationError()
         } catch let error as MediaWorkerProcessClientError {
             if Task.isCancelled { throw CancellationError() }
+            if controller.didTimeOut { throw MediaWorkerProcessClientError.timedOut }
             if case .requestRejected = error {
                 throw error
             }
             await Self.circuitBreaker.recordAbnormalFailure()
             throw error
         } catch {
+            if controller.didTimeOut { throw MediaWorkerProcessClientError.timedOut }
             await Self.circuitBreaker.recordAbnormalFailure()
             throw MediaWorkerProcessClientError.invalidResponse
         }
     }
 
-    func extractLastVideoFramePNG(
+    public func extractLastVideoFramePNG(
         sourceURL: URL,
         destinationURL: URL,
         ownerUserID: String,
@@ -200,7 +203,7 @@ struct MediaWorkerProcessClient: MediaWorkerImageNormalizing, MediaWorkerVideoFr
                     group.addTask {
                         let nanoseconds = UInt64(max(0.001, timeout) * 1_000_000_000)
                         try await Task.sleep(nanoseconds: nanoseconds)
-                        controller.terminate()
+                        controller.terminate(timedOut: true)
                         throw MediaWorkerProcessClientError.timedOut
                     }
                     defer { group.cancelAll() }
@@ -218,10 +221,12 @@ struct MediaWorkerProcessClient: MediaWorkerImageNormalizing, MediaWorkerVideoFr
             throw CancellationError()
         } catch let error as MediaWorkerProcessClientError {
             if Task.isCancelled { throw CancellationError() }
+            if controller.didTimeOut { throw MediaWorkerProcessClientError.timedOut }
             if case .requestRejected = error { throw error }
             await Self.circuitBreaker.recordAbnormalFailure()
             throw error
         } catch {
+            if controller.didTimeOut { throw MediaWorkerProcessClientError.timedOut }
             await Self.circuitBreaker.recordAbnormalFailure()
             throw MediaWorkerProcessClientError.invalidResponse
         }
@@ -300,9 +305,18 @@ private actor MediaWorkerCircuitBreaker {
 }
 
 private final class MediaWorkerProcessController: @unchecked Sendable {
+    private enum TerminationReason: Equatable {
+        case cancelled
+        case timedOut
+    }
+
     private let lock = NSLock()
     private var process: Process?
-    private var cancellationRequested = false
+    private var terminationReason: TerminationReason?
+
+    var didTimeOut: Bool {
+        lock.withLock { terminationReason == .timedOut }
+    }
 
     func run(
         executableURL: URL,
@@ -447,12 +461,21 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
         guard !child.isRunning, child.terminationStatus == EXIT_SUCCESS else {
             throw MediaWorkerProcessClientError.invalidResponse
         }
+        try verifyOutput(
+            destinationURL,
+            authorizedIdentity: destinationIdentity,
+            result: result,
+            maximumOutputPixelSize: maximumOutputPixelSize,
+            maximumOutputBytes: maximumOutputBytes
+        )
         return result
     }
 
-    func terminate() {
+    func terminate(timedOut: Bool = false) {
         lock.lock()
-        cancellationRequested = true
+        if terminationReason == nil {
+            terminationReason = timedOut ? .timedOut : .cancelled
+        }
         let process = process
         lock.unlock()
         guard let process, process.isRunning else { return }
@@ -466,7 +489,7 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
     private func register(_ process: Process) {
         lock.lock()
         self.process = process
-        let shouldTerminate = cancellationRequested
+        let shouldTerminate = terminationReason != nil
         lock.unlock()
         if shouldTerminate { terminate() }
     }
@@ -513,6 +536,75 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
             inode: UInt64(status.st_ino),
             byteCount: Int64(status.st_size)
         )
+    }
+
+    private func verifyOutput(
+        _ url: URL,
+        authorizedIdentity: MediaWorkerFileIdentity,
+        result: MediaWorkerImageDescriptor,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int
+    ) throws {
+        let descriptor = url.path.withCString {
+            Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else {
+            throw MediaWorkerProcessClientError.invalidResponse
+        }
+        defer { _ = Darwin.close(descriptor) }
+
+        var before = stat()
+        guard fstat(descriptor, &before) == 0,
+              (before.st_mode & S_IFMT) == S_IFREG,
+              before.st_uid == geteuid(),
+              before.st_nlink == 1,
+              UInt64(before.st_dev) == authorizedIdentity.device,
+              UInt64(before.st_ino) == authorizedIdentity.inode,
+              before.st_size == Int64(result.byteCount),
+              before.st_size > 0,
+              before.st_size <= Int64(maximumOutputBytes),
+              result.mimeType == "image/png",
+              result.pixelWidth > 0,
+              result.pixelHeight > 0,
+              max(result.pixelWidth, result.pixelHeight) <= maximumOutputPixelSize else {
+            throw MediaWorkerProcessClientError.invalidResponse
+        }
+
+        var hasher = SHA256()
+        var signature = [UInt8]()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
+        var total = 0
+        while true {
+            let count = Darwin.read(descriptor, &buffer, buffer.count)
+            if count == 0 { break }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0, total <= maximumOutputBytes - count else {
+                throw MediaWorkerProcessClientError.invalidResponse
+            }
+            if signature.count < 8 {
+                signature.append(contentsOf: buffer.prefix(min(count, 8 - signature.count)))
+            }
+            hasher.update(data: Data(buffer[0..<count]))
+            total += count
+        }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        var after = stat()
+        guard signature == [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+              total == result.byteCount,
+              digest == result.sha256.lowercased(),
+              fstat(descriptor, &after) == 0,
+              before.st_dev == after.st_dev,
+              before.st_ino == after.st_ino,
+              before.st_size == after.st_size,
+              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+              try fileIdentity(url, requireEmpty: false) == .init(
+                  device: authorizedIdentity.device,
+                  inode: authorizedIdentity.inode,
+                  byteCount: Int64(result.byteCount)
+              ) else {
+            throw MediaWorkerProcessClientError.invalidResponse
+        }
     }
 
     private func readLine(_ handle: FileHandle) throws -> Data {

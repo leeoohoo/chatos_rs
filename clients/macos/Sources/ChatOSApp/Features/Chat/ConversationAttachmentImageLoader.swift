@@ -1,3 +1,4 @@
+import ChatOSMediaWorkerClient
 import ChatOSMediaWorkerProtocol
 import CryptoKit
 import Darwin

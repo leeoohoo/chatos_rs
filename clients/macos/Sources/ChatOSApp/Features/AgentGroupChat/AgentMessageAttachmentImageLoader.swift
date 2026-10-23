@@ -1,5 +1,6 @@
 import ChatOSConnector
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import Foundation
 
 struct AgentMessageAttachmentThumbnail: Sendable, Equatable {

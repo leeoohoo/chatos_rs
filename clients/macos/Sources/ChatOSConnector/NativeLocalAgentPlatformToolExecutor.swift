@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import Foundation
 
 protocol NativeLocalAgentPlatformToolExecuting: Sendable {
@@ -25,6 +26,7 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
   private let runtime: NativeLocalAgentRuntimeClient
   private let conversations: NativeLocalAgentConversationClient
   private let attachmentVault: NativeLocalAgentAttachmentVault
+  private let mediaWorker: any MediaWorkerImageNormalizing
   private let attachmentWorkspaceResolver: (any NativeLocalAgentAttachmentWorkspaceResolving)?
   private let projectTools: (any NativeLocalAgentProjectToolExecuting)?
   private let externalMCPs: NativeLocalAgentExternalMCPExecutor
@@ -35,11 +37,13 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
     attachmentRootURL: URL,
     projectTools: (any NativeLocalAgentProjectToolExecuting)? = nil,
     attachmentWorkspaceResolver: (any NativeLocalAgentAttachmentWorkspaceResolving)? = nil,
-    connector: NativeLocalConnectorService? = nil
+    connector: NativeLocalConnectorService? = nil,
+    mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
   ) {
     runtime = .init(host: host)
     conversations = .init(host: host)
     attachmentVault = .init(rootURL: attachmentRootURL)
+    self.mediaWorker = mediaWorker
     self.projectTools = projectTools
     self.attachmentWorkspaceResolver = attachmentWorkspaceResolver
     externalMCPs = .init(host: host)
@@ -135,13 +139,14 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
     }
     do {
       if delivery == "model" {
-        let data = try await attachmentVault.verifiedData(
+        let source = try await attachmentVault.verifiedFile(
           attachment, ownerUserID: ownerUserID, conversationID: conversationID
         )
         return try await NativeLocalAgentAttachmentModelInput.result(
-          data,
+          source: source,
           record: attachment,
-          taskID: invocation.runID
+          ownerUserID: ownerUserID,
+          mediaWorker: mediaWorker
         )
       }
       if let workspaceRoot {
@@ -153,11 +158,15 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
           conversationID: conversationID, rootURL: workspaceRoot
         ).jsonValue
         guard attachment.mediaType.lowercased().hasPrefix("image/") else { return imported }
+        let source = try await attachmentVault.verifiedFile(
+          attachment, ownerUserID: ownerUserID, conversationID: conversationID
+        )
         return try await NativeLocalAgentAttachmentModelInput.result(
-          data,
+          source: source,
           record: attachment,
+          ownerUserID: ownerUserID,
           imported: imported,
-          taskID: invocation.runID
+          mediaWorker: mediaWorker
         )
       }
       return try await attachmentVault.resolve(

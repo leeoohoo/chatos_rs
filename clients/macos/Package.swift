@@ -13,6 +13,7 @@ let package = Package(
         .library(name: "ChatOSAPI", targets: ["ChatOSAPI"]),
         .library(name: "ChatOSConnector", targets: ["ChatOSConnector"]),
         .library(name: "ChatOSMediaWorkerProtocol", targets: ["ChatOSMediaWorkerProtocol"]),
+        .library(name: "ChatOSMediaWorkerClient", targets: ["ChatOSMediaWorkerClient"]),
         .library(name: "ChatOSAgentWorkerProtocol", targets: ["ChatOSAgentWorkerProtocol"]),
         .executable(name: "ChatOSSwift", targets: ["ChatOSApp"]),
         .executable(name: "ChatOSMediaWorker", targets: ["ChatOSMediaWorker"]),
@@ -32,6 +33,10 @@ let package = Package(
         ),
         .target(name: "ChatOSNetworking"),
         .target(name: "ChatOSMediaWorkerProtocol"),
+        .target(
+            name: "ChatOSMediaWorkerClient",
+            dependencies: ["ChatOSMediaWorkerProtocol"]
+        ),
         .target(
             name: "ChatOSMediaWorkerCore",
             dependencies: ["ChatOSMediaWorkerProtocol"],
@@ -74,6 +79,8 @@ let package = Package(
                 "ChatOSProcessRuntime",
                 "ChatOSModelCapabilities",
                 "ChatOSAgentWorkerProtocol",
+                "ChatOSMediaWorkerClient",
+                "ChatOSMediaWorkerProtocol",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             linkerSettings: [
@@ -97,6 +104,7 @@ let package = Package(
                 "ChatOSConnector",
                 "ChatOSAgentRuntime",
                 "ChatOSNetworking",
+                "ChatOSMediaWorkerClient",
                 "ChatOSMediaWorkerProtocol",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
@@ -132,7 +140,13 @@ let package = Package(
         ),
         .testTarget(
             name: "ChatOSConnectorTests",
-            dependencies: ["ChatOSConnector", "ChatOSCore", "ChatOSNetworking"],
+            dependencies: [
+                "ChatOSConnector",
+                "ChatOSCore",
+                "ChatOSNetworking",
+                "ChatOSMediaWorkerClient",
+                "ChatOSMediaWorkerProtocol",
+            ],
             resources: [.copy("Fixtures")]
         ),
         .testTarget(
@@ -141,6 +155,7 @@ let package = Package(
                 "ChatOSApp",
                 "ChatOSCore",
                 "ChatOSNetworking",
+                "ChatOSMediaWorkerClient",
                 "ChatOSMediaWorkerCore",
                 "ChatOSMediaWorkerProtocol",
             ]

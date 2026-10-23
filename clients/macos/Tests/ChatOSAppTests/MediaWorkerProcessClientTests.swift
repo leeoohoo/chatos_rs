@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import CoreVideo
 import Darwin
 import Foundation
@@ -318,8 +319,13 @@ final class MediaWorkerProcessClientTests: XCTestCase {
                 maximumOutputBytes: 1_024
             )
         }
-        for _ in 0..<200 where !FileManager.default.fileExists(atPath: marker.path) {
+        for _ in 0..<1_000 where !FileManager.default.fileExists(atPath: marker.path) {
             try await Task.sleep(for: .milliseconds(5))
+        }
+        guard FileManager.default.fileExists(atPath: marker.path) else {
+            task.cancel()
+            _ = try? await task.value
+            return XCTFail("Media worker did not launch before the test deadline")
         }
         let processID = try XCTUnwrap(Int32(
             XCTUnwrap(String(contentsOf: marker, encoding: .utf8))

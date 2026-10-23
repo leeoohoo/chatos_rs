@@ -1,5 +1,6 @@
 @testable import ChatOSConnector
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import Foundation
 import XCTest
 
@@ -142,7 +143,8 @@ struct AttachmentDispatchFixture {
         conversationID: String = "conversation-1",
         attachmentConversationID: String = "conversation-1",
         workspaceResolver: (any NativeLocalAgentAttachmentWorkspaceResolving)? = nil,
-        mainChat: Bool = false
+        mainChat: Bool = false,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) throws -> NativeLocalAgentPlatformToolExecutor {
         let run: [String: Any] = [
             "type": "run",
@@ -176,7 +178,8 @@ struct AttachmentDispatchFixture {
                 conversationOwner: conversationOwner,
                 conversationID: conversationID
             ), attachmentRootURL: root, projectTools: projectTools,
-            attachmentWorkspaceResolver: workspaceResolver
+            attachmentWorkspaceResolver: workspaceResolver,
+            mediaWorker: mediaWorker
         )
     }
 

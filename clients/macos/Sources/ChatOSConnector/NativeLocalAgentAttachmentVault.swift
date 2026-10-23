@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSMediaWorkerProtocol
 import CryptoKit
 import Darwin
 import Foundation
@@ -25,6 +26,11 @@ struct NativeLocalAgentResolvedAttachment: Sendable, Equatable {
             "content": .string(content),
         ])
     }
+}
+
+struct NativeLocalAgentVerifiedAttachmentFile: Sendable, Equatable {
+    let url: URL
+    let identity: MediaWorkerFileIdentity
 }
 
 struct NativeLocalAgentAttachmentVault: Sendable {
@@ -112,6 +118,59 @@ struct NativeLocalAgentAttachmentVault: Sendable {
                 throw NativeLocalAgentAttachmentVaultError.integrityMismatch
             }
             return data
+        }.value
+    }
+
+    func verifiedFile(
+        _ record: LocalAgentConversationAttachmentRecord,
+        ownerUserID: String,
+        conversationID: String
+    ) async throws -> NativeLocalAgentVerifiedAttachmentFile {
+        try await Task.detached(priority: .utility) {
+            let file = try validatedFileURL(
+                record,
+                ownerUserID: ownerUserID,
+                conversationID: conversationID
+            )
+            let handle = try FileHandle(forReadingFrom: file)
+            defer { try? handle.close() }
+            let before = try Self.signature(
+                fileDescriptor: handle.fileDescriptor,
+                sha256: record.sha256.lowercased()
+            )
+            guard before.byteSize == record.byteSize,
+                  before.byteSize <= UInt64(Self.maximumAttachmentBytes) else {
+                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
+            }
+            var hasher = SHA256()
+            var total: UInt64 = 0
+            while true {
+                try Task.checkCancellation()
+                let chunk = try handle.read(upToCount: 64 * 1_024) ?? Data()
+                if chunk.isEmpty { break }
+                total += UInt64(chunk.count)
+                guard total <= UInt64(Self.maximumAttachmentBytes) else {
+                    throw NativeLocalAgentAttachmentVaultError.integrityMismatch
+                }
+                hasher.update(data: chunk)
+            }
+            let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            guard total == record.byteSize,
+                  digest == record.sha256.lowercased(),
+                  try Self.signature(
+                      fileDescriptor: handle.fileDescriptor,
+                      sha256: record.sha256.lowercased()
+                  ) == before else {
+                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
+            }
+            return .init(
+                url: file,
+                identity: .init(
+                    device: before.device,
+                    inode: before.inode,
+                    byteCount: Int64(before.byteSize)
+                )
+            )
         }.value
     }
 

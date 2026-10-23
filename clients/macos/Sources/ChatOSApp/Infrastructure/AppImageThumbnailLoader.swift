@@ -1,5 +1,6 @@
 import AppKit
 import ChatOSAPI
+import ChatOSMediaWorkerClient
 import ChatOSMediaWorkerProtocol
 import Darwin
 import Foundation

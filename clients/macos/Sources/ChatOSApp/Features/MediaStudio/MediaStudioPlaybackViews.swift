@@ -1,6 +1,7 @@
 import AppKit
 import AVKit
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import SwiftUI
 
 struct GeneratedMediaAssetView: View {

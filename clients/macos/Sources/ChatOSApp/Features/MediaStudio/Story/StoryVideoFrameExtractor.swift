@@ -1,5 +1,6 @@
 import ChatOSAPI
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import ChatOSNetworking
 import Foundation
 
