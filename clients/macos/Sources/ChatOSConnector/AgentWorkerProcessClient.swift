@@ -65,6 +65,14 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
         }
         let resolvedExecutable = try executableURL ?? Self.resolveExecutable()
         try Self.validateExecutable(resolvedExecutable)
+        let modelTransportConfiguration = model.workerTransportConfiguration
+        if let modelTransportConfiguration {
+            guard modelTransportConfiguration.usesServerSideCompaction
+                    == model.usesServerSideCompaction else {
+                throw AgentWorkerProcessClientError.invalidResponse
+            }
+            try await model.validateWorkerTransportAuthorization()
+        }
         let controller = try AgentWorkerProcessController(
             executableURL: resolvedExecutable,
             parentProcessID: getpid()
@@ -84,6 +92,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
                         execute: execute,
                         completionCheck: completionCheck,
                         contextProvider: contextProvider,
+                        modelTransportConfiguration: modelTransportConfiguration,
                         record: record
                     )
                 }
@@ -109,6 +118,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
         execute: @escaping AgentRuntime.Executor,
         completionCheck: @escaping AgentRuntime.CompletionCheck,
         contextProvider: (any AgentContextProviding)?,
+        modelTransportConfiguration: AgentWorkerModelTransportConfiguration?,
         record: @escaping AgentRuntime.Recorder
     ) async throws -> AgentRunCheckpoint {
         let nonce = UUID()
@@ -129,13 +139,17 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
             policy: policy,
             tools: tools,
             hasContextProvider: contextProvider != nil,
-            modelUsesServerSideCompaction: model.usesServerSideCompaction
+            modelUsesServerSideCompaction: model.usesServerSideCompaction,
+            modelTransportConfiguration: modelTransportConfiguration
         )))
 
         while true {
             try Task.checkCancellation()
             switch try await controller.receive() {
             case let .modelRequest(request):
+                guard modelTransportConfiguration == nil else {
+                    throw AgentWorkerProcessClientError.invalidResponse
+                }
                 do {
                     let forwarder = AgentWorkerModelEventForwarder(
                         controller: controller,
@@ -156,6 +170,21 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
                     try await controller.send(.modelResponse(.init(
                         requestID: request.id,
                         message: nil,
+                        failure: remoteFailure(error)
+                    )))
+                }
+            case let .modelAuthorizationRequest(request):
+                guard modelTransportConfiguration != nil else {
+                    throw AgentWorkerProcessClientError.invalidResponse
+                }
+                do {
+                    try await model.validateWorkerTransportAuthorization()
+                    try await controller.send(.modelAuthorizationResponse(.init(
+                        requestID: request.id
+                    )))
+                } catch {
+                    try await controller.send(.modelAuthorizationResponse(.init(
+                        requestID: request.id,
                         failure: remoteFailure(error)
                     )))
                 }

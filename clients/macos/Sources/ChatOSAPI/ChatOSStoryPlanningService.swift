@@ -6,8 +6,11 @@ import Foundation
 public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServiceProviding {
     private let client: ChatOSAPIClient
     private let transport: any HTTPTransport
+    private let workerModelTransportEnabled: Bool
     public init(client: ChatOSAPIClient, transport: any HTTPTransport = URLSessionHTTPTransport()) {
-        self.client = client; self.transport = transport
+        self.client = client
+        self.transport = transport
+        self.workerModelTransportEnabled = transport is URLSessionHTTPTransport
     }
 
     public func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
@@ -48,14 +51,35 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
                 timeoutInterval: request.timeoutInterval))
             return .init(statusCode: response.statusCode, headers: response.headers, body: response.body)
         }
+        let resolvedThinking = thinkingLevel ?? config.taskThinkingLevel
+        let maximumOutputTokens = (policy.context ?? .init()).outputReserveTokens
+        let promptCacheKey = "story-agent:\(configID):\(resolvedThinking ?? "default")"
         let model: any AgentModelClient = try AgentResponsesModelClient(
             baseURL: url, model: config.model, apiKey: key,
-            thinking: thinkingLevel ?? config.taskThinkingLevel,
-            maximumOutputTokens: (policy.context ?? .init()).outputReserveTokens,
-            promptCacheKey: "story-agent:\(configID):\(thinkingLevel ?? config.taskThinkingLevel ?? "default")",
+            thinking: resolvedThinking,
+            maximumOutputTokens: maximumOutputTokens,
+            promptCacheKey: promptCacheKey,
             transport: send, streamTransport: stream
         )
-        return StorySessionBoundModel(model: model, client: client, session: session)
+        let workerTransportConfiguration: AgentWorkerModelTransportConfiguration? = if workerModelTransportEnabled {
+            try .responses(.init(
+                baseURL: url,
+                model: config.model,
+                apiKey: key,
+                thinking: resolvedThinking,
+                maximumOutputTokens: maximumOutputTokens,
+                temperature: nil,
+                promptCacheKey: promptCacheKey
+            ))
+        } else {
+            nil
+        }
+        return StorySessionBoundModel(
+            model: model,
+            client: client,
+            session: session,
+            workerTransportConfiguration: workerTransportConfiguration
+        )
     }
 
     public func plan(_ request: StoryPlanningRequest) async throws -> Data {
@@ -119,23 +143,28 @@ private struct StorySessionBoundModel: AgentModelClient {
     let model: any AgentModelClient
     let client: ChatOSAPIClient
     let session: UUID
+    let workerTransportConfiguration: AgentWorkerModelTransportConfiguration?
     var usesServerSideCompaction: Bool { model.usesServerSideCompaction }
+
+    func validateWorkerTransportAuthorization() async throws {
+        guard try await client.currentAuthenticationSessionID() == session else {
+            throw ChatOSAPIError.unauthorized
+        }
+        try Task.checkCancellation()
+    }
+
     func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) async throws -> AgentMessage {
-        guard try await client.currentAuthenticationSessionID() == session else { throw ChatOSAPIError.unauthorized }
-        try Task.checkCancellation()
+        try await validateWorkerTransportAuthorization()
         let response = try await model.complete(messages: messages, tools: tools, timeout: timeout)
-        guard try await client.currentAuthenticationSessionID() == session else { throw ChatOSAPIError.unauthorized }
-        try Task.checkCancellation()
+        try await validateWorkerTransportAuthorization()
         return response
     }
 
     func stream(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
                 onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void) async throws -> AgentMessage {
-        guard try await client.currentAuthenticationSessionID() == session else { throw ChatOSAPIError.unauthorized }
-        try Task.checkCancellation()
+        try await validateWorkerTransportAuthorization()
         let response = try await model.stream(messages: messages, tools: tools, timeout: timeout, onEvent: onEvent)
-        guard try await client.currentAuthenticationSessionID() == session else { throw ChatOSAPIError.unauthorized }
-        try Task.checkCancellation()
+        try await validateWorkerTransportAuthorization()
         return response
     }
 }

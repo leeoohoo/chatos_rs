@@ -109,6 +109,47 @@ final class AgentWorkerProcessClientTests: XCTestCase {
         XCTAssertEqual(firstResult.status, .completed)
     }
 
+    func testDirectModelTransportRunsProviderNetworkingInsideWorker() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_AGENT_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_AGENT_WORKER_PATH to run Agent worker integration.")
+        }
+        let requestProbe = AgentWorkerHTTPRequestProbe()
+        let server = try AgentWorkerHTTPFixture(probe: requestProbe)
+        defer { server.close() }
+        let modelProbe = AgentWorkerDirectModelProbe()
+        let configuration = AgentWorkerModelTransportConfiguration.responses(try .init(
+            baseURL: server.baseURL,
+            model: "worker-model",
+            apiKey: "worker-secret",
+            thinking: nil,
+            maximumOutputTokens: 1_024,
+            temperature: nil,
+            promptCacheKey: "worker-direct-test"
+        ))
+        let result = try await Self.runIsolatedWorker(
+            client: AgentWorkerProcessClient(
+                executableURL: URL(fileURLWithPath: path),
+                shutdownGraceSeconds: 5
+            ),
+            scope: "agent-worker-direct-model",
+            model: AgentWorkerDirectModel(
+                configuration: configuration,
+                probe: modelProbe
+            )
+        )
+
+        XCTAssertEqual(result.status, .completed)
+        let modelSnapshot = await modelProbe.snapshot()
+        XCTAssertEqual(modelSnapshot.authorizations, 3)
+        XCTAssertEqual(modelSnapshot.parentModelCalls, 0)
+        let recordedRequest = await requestProbe.request()
+        let request = try XCTUnwrap(recordedRequest)
+        let lowercasedRequest = request.lowercased()
+        XCTAssertTrue(lowercasedRequest.contains("post /v1/responses "))
+        XCTAssertTrue(lowercasedRequest.contains("authorization: bearer worker-secret"))
+    }
+
     func testCancellingRunTerminatesOnlyItsWorkerProcess() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_AGENT_WORKER_PATH"],
               !path.isEmpty else {
@@ -311,5 +352,165 @@ private struct AgentWorkerCancellationModel: AgentModelClient {
         await probe.markStarted()
         try await Task.sleep(for: .seconds(60))
         return .init(role: .assistant)
+    }
+}
+
+private actor AgentWorkerDirectModelProbe {
+    private var authorizations = 0
+    private var parentModelCalls = 0
+
+    func authorize() { authorizations += 1 }
+    func recordParentModelCall() { parentModelCalls += 1 }
+    func snapshot() -> (authorizations: Int, parentModelCalls: Int) {
+        (authorizations, parentModelCalls)
+    }
+}
+
+private struct AgentWorkerDirectModel: AgentModelClient {
+    let configuration: AgentWorkerModelTransportConfiguration
+    let probe: AgentWorkerDirectModelProbe
+
+    var usesServerSideCompaction: Bool { true }
+    var workerTransportConfiguration: AgentWorkerModelTransportConfiguration? { configuration }
+
+    func validateWorkerTransportAuthorization() async throws {
+        await probe.authorize()
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        await probe.recordParentModelCall()
+        throw AgentRuntimeError.invalidResponse
+    }
+}
+
+private actor AgentWorkerHTTPRequestProbe {
+    private var value: String?
+    func record(_ request: String) { value = request }
+    func request() -> String? { value }
+}
+
+private final class AgentWorkerHTTPFixture: @unchecked Sendable {
+    let baseURL: URL
+    private let descriptor: Int32
+
+    init(probe: AgentWorkerHTTPRequestProbe) throws {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { throw AgentWorkerProcessClientError.launchFailed }
+        var reuse: Int32 = 1
+        guard setsockopt(
+            descriptor,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            &reuse,
+            socklen_t(MemoryLayout<Int32>.size)
+        ) == 0 else {
+            Darwin.close(descriptor)
+            throw AgentWorkerProcessClientError.launchFailed
+        }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0, listen(descriptor, 1) == 0 else {
+            Darwin.close(descriptor)
+            throw AgentWorkerProcessClientError.launchFailed
+        }
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &length)
+            }
+        }
+        guard named == 0,
+              let baseURL = URL(string: "http://127.0.0.1:\(UInt16(bigEndian: address.sin_port))/v1/") else {
+            Darwin.close(descriptor)
+            throw AgentWorkerProcessClientError.launchFailed
+        }
+        self.descriptor = descriptor
+        self.baseURL = baseURL
+        Task.detached(priority: .userInitiated) {
+            await Self.serve(descriptor: descriptor, probe: probe)
+        }
+    }
+
+    func close() {
+        _ = shutdown(descriptor, SHUT_RDWR)
+        Darwin.close(descriptor)
+    }
+
+    private static func serve(
+        descriptor: Int32,
+        probe: AgentWorkerHTTPRequestProbe
+    ) async {
+        let client = accept(descriptor, nil, nil)
+        guard client >= 0 else { return }
+        defer { Darwin.close(client) }
+        _ = fcntl(client, F_SETNOSIGPIPE, 1)
+        guard let request = readRequest(client) else { return }
+        await probe.record(String(decoding: request, as: UTF8.self))
+        let body = Data("""
+        data: {"type":"response.created","response":{"id":"resp_worker"}}
+
+        data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"finish-call","name":"finish","arguments":""}}
+
+        data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}
+
+        data: {"type":"response.completed","response":{"id":"resp_worker","status":"completed","output":[{"type":"function_call","call_id":"finish-call","name":"finish","arguments":"{}"}]}}
+
+        """.utf8)
+        let header = Data("""
+        HTTP/1.1 200 OK\r
+        Content-Type: text/event-stream\r
+        Content-Length: \(body.count)\r
+        Connection: close\r
+        \r
+
+        """.utf8)
+        writeAll(header + body, descriptor: client)
+    }
+
+    private static func readRequest(_ descriptor: Int32) -> Data? {
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4_096)
+        while data.count <= 2 * 1_024 * 1_024 {
+            let count = Darwin.read(descriptor, &buffer, buffer.count)
+            guard count > 0 else { return nil }
+            data.append(contentsOf: buffer.prefix(count))
+            guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else { continue }
+            let header = String(decoding: data[..<headerEnd.lowerBound], as: UTF8.self)
+            let contentLength = header.split(separator: "\n").first { line in
+                line.lowercased().hasPrefix("content-length:")
+            }.flatMap { Int($0.split(separator: ":", maxSplits: 1)[1]
+                .trimmingCharacters(in: .whitespacesAndNewlines)) } ?? 0
+            if data.count >= headerEnd.upperBound + contentLength { return data }
+        }
+        return nil
+    }
+
+    private static func writeAll(_ data: Data, descriptor: Int32) {
+        data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            var offset = 0
+            while offset < rawBuffer.count {
+                let count = Darwin.write(
+                    descriptor,
+                    baseAddress.advanced(by: offset),
+                    rawBuffer.count - offset
+                )
+                if count > 0 { offset += count }
+                else if count < 0, errno == EINTR { continue }
+                else { return }
+            }
+        }
     }
 }

@@ -56,6 +56,43 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         XCTAssertEqual((body["reasoning"] as? [String: Any])?["effort"] as? String, "high")
     }
 
+    func testProductionTransportProvidesSessionBoundWorkerConfiguration() async throws {
+        let transport = StoryPlanningTransport()
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://app.example")!),
+            accessToken: "alice",
+            transport: transport
+        )
+        let model = try await ChatOSStoryPlanningService(client: client).makeAgentModel(
+            configID: "text-model",
+            policy: .init(),
+            thinkingLevel: "high"
+        )
+        guard case let .responses(configuration)? = model.workerTransportConfiguration else {
+            return XCTFail("Production URLSession transport must run inside the Agent worker")
+        }
+        XCTAssertEqual(configuration.baseURL.absoluteString, "https://relay.example/prefix/v1/")
+        XCTAssertEqual(configuration.model, "chosen-text-model")
+        XCTAssertEqual(configuration.thinking, "high")
+        XCTAssertEqual(configuration.promptCacheKey, "story-agent:text-model:high")
+
+        try await model.validateWorkerTransportAuthorization()
+        try await client.setAccessToken("bob")
+        do {
+            try await model.validateWorkerTransportAuthorization()
+            XCTFail("An old account session must not authorize worker provider transport")
+        } catch {}
+
+        let injectedModel = try await makeService(StoryPlanningTransport()).makeAgentModel(
+            configID: "text-model",
+            policy: .init()
+        )
+        XCTAssertNil(
+            injectedModel.workerTransportConfiguration,
+            "Injected transports stay in-process so deterministic tests do not bypass their fixture"
+        )
+    }
+
     func testStoryAgentUsesOfficialResponsesCompaction() async throws {
         let transport = StoryPlanningTransport(scenario: "official")
         let model = try await makeService(transport).makeAgentModel(

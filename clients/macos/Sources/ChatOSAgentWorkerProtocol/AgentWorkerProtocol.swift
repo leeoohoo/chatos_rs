@@ -2,8 +2,8 @@ import ChatOSAgentRuntime
 import Foundation
 
 public enum ChatOSAgentWorkerProtocol {
-    public static let minimumVersion = 1
-    public static let maximumVersion = 1
+    public static let minimumVersion = 2
+    public static let maximumVersion = 2
     public static let maximumInlineBytes = 64 * 1_024 * 1_024
 }
 
@@ -49,6 +49,7 @@ public struct AgentWorkerStartRequest: Codable, Equatable, Sendable {
     public let tools: [AgentToolDefinition]
     public let hasContextProvider: Bool
     public let modelUsesServerSideCompaction: Bool
+    public let modelTransportConfiguration: AgentWorkerModelTransportConfiguration?
 
     public init(
         checkpoint: AgentRunCheckpoint,
@@ -56,7 +57,8 @@ public struct AgentWorkerStartRequest: Codable, Equatable, Sendable {
         policy: AgentRunPolicy,
         tools: [AgentToolDefinition],
         hasContextProvider: Bool,
-        modelUsesServerSideCompaction: Bool
+        modelUsesServerSideCompaction: Bool,
+        modelTransportConfiguration: AgentWorkerModelTransportConfiguration?
     ) {
         self.checkpoint = checkpoint
         self.scope = scope
@@ -64,6 +66,22 @@ public struct AgentWorkerStartRequest: Codable, Equatable, Sendable {
         self.tools = tools
         self.hasContextProvider = hasContextProvider
         self.modelUsesServerSideCompaction = modelUsesServerSideCompaction
+        self.modelTransportConfiguration = modelTransportConfiguration
+    }
+}
+
+public struct AgentWorkerModelAuthorizationRequest: Codable, Equatable, Sendable {
+    public let id: UUID
+    public init(id: UUID) { self.id = id }
+}
+
+public struct AgentWorkerModelAuthorizationResponse: Codable, Equatable, Sendable {
+    public let requestID: UUID
+    public let failure: AgentWorkerRemoteFailure?
+
+    public init(requestID: UUID, failure: AgentWorkerRemoteFailure? = nil) {
+        self.requestID = requestID
+        self.failure = failure
     }
 }
 
@@ -212,6 +230,8 @@ public enum AgentWorkerMessage: Codable, Equatable, Sendable {
     case hello(AgentWorkerHelloRequest)
     case helloResponse(AgentWorkerHelloResponse)
     case start(AgentWorkerStartRequest)
+    case modelAuthorizationRequest(AgentWorkerModelAuthorizationRequest)
+    case modelAuthorizationResponse(AgentWorkerModelAuthorizationResponse)
     case modelRequest(AgentWorkerModelRequest)
     case modelEvent(AgentWorkerModelEvent)
     case modelResponse(AgentWorkerModelResponse)

@@ -121,6 +121,63 @@ private struct WorkerProxyModel: AgentModelClient {
     }
 }
 
+/// Runs provider networking and response parsing in this Run's process. The parent only answers a
+/// narrow authorization challenge before and after each provider call, so an account switch can
+/// invalidate the result without moving credentials back into App-owned parsing code.
+private struct WorkerDirectModel: AgentModelClient {
+    let peer: AgentWorkerPeer
+    let model: any AgentModelClient
+
+    var usesServerSideCompaction: Bool { model.usesServerSideCompaction }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        try await authorize()
+        let message = try await model.complete(
+            messages: messages,
+            tools: tools,
+            timeout: timeout
+        )
+        try await authorize()
+        return message
+    }
+
+    func stream(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval,
+        onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void
+    ) async throws -> AgentMessage {
+        try await authorize()
+        let message = try await model.stream(
+            messages: messages,
+            tools: tools,
+            timeout: timeout,
+            onEvent: onEvent
+        )
+        try await authorize()
+        return message
+    }
+
+    private func authorize() async throws {
+        let request = AgentWorkerModelAuthorizationRequest(id: UUID())
+        try await peer.send(.modelAuthorizationRequest(request))
+        guard case let .modelAuthorizationResponse(response) = try await peer.receive(),
+              response.requestID == request.id else {
+            throw AgentRuntimeError.invalidResponse
+        }
+        if let failure = response.failure {
+            throw AgentRemoteCallbackError(
+                detail: failure.detail,
+                transient: failure.transient
+            )
+        }
+    }
+}
+
 private struct WorkerProxyContextProvider: AgentContextProviding {
     let scope: AgentMemoryScope
     let peer: AgentWorkerPeer
@@ -213,10 +270,22 @@ do {
           start.checkpoint.scope == start.scope else {
         terminate(.protocolFailure)
     }
-    let model = WorkerProxyModel(
-        peer: peer,
-        serverSideCompaction: start.modelUsesServerSideCompaction
-    )
+    let model: any AgentModelClient
+    if let configuration = start.modelTransportConfiguration {
+        guard configuration.usesServerSideCompaction
+                == start.modelUsesServerSideCompaction else {
+            terminate(.protocolFailure)
+        }
+        model = WorkerDirectModel(
+            peer: peer,
+            model: try configuration.makeModelClient()
+        )
+    } else {
+        model = WorkerProxyModel(
+            peer: peer,
+            serverSideCompaction: start.modelUsesServerSideCompaction
+        )
+    }
     let contextProvider: (any AgentContextProviding)? = if start.hasContextProvider {
         start.checkpoint.memory.map { WorkerProxyContextProvider(scope: $0.scope, peer: peer) }
     } else {

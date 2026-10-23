@@ -1987,6 +1987,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：当前独立的是 Agent orchestration/状态机进程；provider 网络客户端、Memory 客户端和受权工具仍由父进程代理，因此本批建立了 Run 生命周期与状态机崩溃边界，但不宣称第三方 SDK 解析崩溃、主进程内工具实现或全部 CPU/内存工作集已经迁出。后续要把可安全序列化的模型传输迁入 Worker，并为 Worker 增加跨进程动态 CPU/内存预算、连续崩溃熔断、真实 `SIGKILL` 每个 IPC 窗口、睡眠/断网/账户切换及长时间组合 soak；Plugin/Host 等已有独立进程继续使用各自监督协议，不能再套一层无所有权设计的 Worker。
 
+### 12.80 第九完整里程碑：生产 Agent 模型传输迁入所属 Worker（2026-10-23）
+
+本里程碑关闭 12.79 明确保留的 provider 主进程边界。生产 Agent 的 OpenAI Responses 请求体构造、文件上传、HTTP/SSE 读取、增量解析和终态组装现在都在该 Run 的 `ChatOSAgentWorker` 内执行；App 不再为这条路径执行第三方模型 transport 或解析响应。一个会话的 provider 卡死、畸形流或解析器退出只能终止所属 Worker，不会把另一个会话拖入同一模型执行栈。
+
+已实施：
+
+- `ChatOSAgentWorkerProtocol` 升至 v2，Start capability 可携带严格类型化的 Responses 配置。旧 v1 App/Worker 与 v2 版本区间不重叠时 fail closed，不允许静默退回主进程模型调用。
+- App 仍从当前账户会话读取模型配置并决定是否授权；只有生产 `URLSessionHTTPTransport` 路径生成 Worker 配置，注入测试 transport 和其他未声明可迁移的模型继续走显式 callback，不猜测任意闭包可以跨进程序列化。
+- endpoint、model、推理参数、输出预算、prompt cache key 与上游 key 仅经继承匿名 pipe 交付给单 Run Worker，不进入 argv、环境变量、checkpoint、日志或 build manifest。Worker 不获得账户 API client、SQLite 路径或任意配置查询能力。
+- 凭据交付前、每次 provider 请求前和响应完成后均由 App 对原 authentication session 做授权检查。账户切换后的 provider 结果会在进入 durable checkpoint 或工具调用前被拒绝；取消仍只终止所属 Worker 和它拥有的 URLSession。
+- Worker 本地直接产生模型流活动和解析状态，不再让每个 SSE 事件在 App 与 Worker 之间往返。工具、Memory 与 checkpoint 仍走父进程 capability，保持单一数据库写所有者和已有副作用 fencing。
+
+验证：Debug 与原生 arm64 Release 的针对性矩阵各 49 项，包括真实 Agent Worker 进程 4 项、生产模型选择/会话授权 10 项、调度器 24 项、聊天工具 9 项及 Todo schedule/migration 2 项；Release 使用 `warnings-as-errors` 优化编译。真实 Worker 用例启动本机 HTTP fixture，确认 `/v1/responses` 和 Authorization 请求确实来自 Worker、父进程模型调用为 0，并完成 terminal tool；同时确认凭据交付前/请求前/响应后共三次授权。打包/证据、签名和 dSYM 结果见本里程碑提交前的最终验证记录。
+
+边界：当前迁移的是生产 Agent 团队调度器使用的 Responses provider，不自动改变 Story Studio 的一次性规划调用，也不把自定义注入 transport、Memory 或工具实现伪装成已进程化。上游 key 在 Run 存活期间存在于可信 Worker 内存；Worker 尚无独立 App Sandbox/seatbelt，因此这是故障与工作集隔离，不是对本机恶意进程的秘密隔离。后续仍需动态 CPU/内存预算、连续崩溃熔断、真实强杀授权/网络/工具各窗口、睡眠/断网/账户切换及长时间组合 soak，并逐项迁移仍在 App 内且适合跨进程的工具负载。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
@@ -2064,6 +2080,7 @@ Release 验收建议记录：
 - Agent 团队 Store：`clients/macos/Sources/ChatOSConnector/SQLiteAgentGroupChatStore.swift`
 - Agent 团队 Scheduler：`clients/macos/Sources/ChatOSConnector/LocalAgentGroupChatScheduler*.swift`
 - Agent Run Worker 协议/入口/父进程客户端：`clients/macos/Sources/ChatOSAgentWorkerProtocol/`、`clients/macos/Sources/ChatOSAgentWorker/`、`clients/macos/Sources/ChatOSConnector/AgentWorkerProcessClient.swift`
+- Agent Worker 模型传输 capability：`clients/macos/Sources/ChatOSAgentRuntime/AgentWorkerModelTransport.swift`、`clients/macos/Sources/ChatOSAPI/ChatOSStoryPlanningService.swift`
 - Agent Run Worker 传输 ADR：`clients/macos/docs/24-agent-run-worker-transport-adr.md`
 - Local Agent Host 生命周期：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostLifecycle.swift`
 - Local Agent Host IPC：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostProcess.swift`
@@ -2116,7 +2133,7 @@ Release 验收建议记录：
 | 生命周期 | App 退出后停止本地执行、重启恢复；provider 远端作业按实际状态对账 | P0-E 前；产品 + macOS runtime |
 | 媒体 job 唯一所有者 | Media Service 起步，P2 整体交接 Worker，Story 元数据保持独立业务所有者 | P0-E 前；媒体/存储 |
 | Worker IPC 与沙箱 | App 生命周期优先评估 XPC，按真实签名/文件/网络约束选定一种传输 | P2 前；macOS runtime/打包 |
-| 凭据 | 长期 secret 留在代理，任务授权/流式代理且限制目标与操作 | P0-E/P2 前；API/凭据 |
+| 凭据 | 持久配置与账户 session 留在 App；v2 仅经继承 pipe 向单 Run Worker 交付 provider 凭据，请求前后重验 session；未来优先替换为短期 Run token | P0-E/P2 前；API/凭据 |
 | 并发预算 | Host + Swift Agent 后台总额度起始 3；媒体重任务 1；大传输 2 | P0-D 验收；runtime/性能 |
 | 防重与维护 | v35 防重见 16.2，v36 正文预算见 16.3，v37 不可变引用见 16.4，新版 Host 进程锁见 16.5；owner 配额、旧 Host 交接及在线维护仍待完成 | P0-C 生产迁移前；Host/存储 |
 | 分发与升级 | 定义内部测试签名和正式外部分发两条验收路径、旧版本兼容范围 | P2 打包前、P4 发布前；发布工程 |
@@ -2166,10 +2183,10 @@ Release 验收建议记录：
 ### 16.6 ADR：Agent Run Worker 单一数据所有者与 capability 代理
 
 - 问题/选择：跨会话 lane 并行只能解决软件锁等待，不能阻止一个 Agent 状态机崩溃或卡死影响主 App。生产调度器因此为每个 manager/executor Run 启动一个短生命周期 Worker，而不是为账户、Agent 或会话复用常驻进程。
-- 数据所有权：SQLite、Delivery/Todo claim、Memory 服务、模型凭据和工具授权只存在于 App；Worker 不接收数据库路径或凭据，只通过 Run-scoped IPC 请求 capability。这样不会为了进程隔离引入多个 SQLite 写所有者，也不允许 Worker 绕过 Todo 身份 fencing。
-- 协议/生命周期：v1 握手绑定父 PID、Run UUID、nonce 和版本区间；父进程取消/超时先 `SIGTERM`、两秒后 `SIGKILL`，Worker 监视父 PID。每个请求严格顺序、消息有 64 MiB 硬上限，最终 checkpoint 必须匹配起始 Run/scope。
+- 数据所有权：SQLite、Delivery/Todo claim、Memory 服务、持久模型配置来源和工具授权只存在于 App；Worker 不接收数据库路径。v2 仅在 App 重新验证账户 session 后经继承 pipe 交付该 Run 的 provider 配置与凭据，并在请求前后再次授权；这不会引入多个 SQLite 写所有者，也不允许 Worker 查询其他模型或绕过 Todo 身份 fencing。
+- 协议/生命周期：v2 握手绑定父 PID、Run UUID、nonce 和版本区间；父进程取消/超时先 `SIGTERM`、两秒后 `SIGKILL`，Worker 监视父 PID。每个请求严格顺序、消息有 64 MiB 硬上限，最终 checkpoint 必须匹配起始 Run/scope。旧 v1 不支持模型传输，版本不匹配必须拒绝。
 - 副作用：`tool_started` checkpoint 必须先由 App 持久化再执行 capability。Worker/IPC 在结果确认前中断时保留 `inFlightCallID` 并转 `needsReview`，不能通过启动新 Worker自动重放；只有 Human 明确走既有 retry/reconcile 流程才能清理该 fencing。
-- 回滚/边界：打包生产路径不允许静默 in-process fallback；回滚必须回到上一完整 App 包，并遵守当前 Schema/Run checkpoint 兼容性。当前 provider/Memory/tool 执行仍在 App capability 端，下一阶段再迁移可安全序列化的模型传输和跨进程动态资源预算。详细传输约束见 `clients/macos/docs/24-agent-run-worker-transport-adr.md`。
+- 回滚/边界：打包生产路径不允许静默 in-process fallback；回滚必须回到上一完整 App 包，并遵守当前 Schema/Run checkpoint 兼容性。生产 Responses provider 已在 Worker，Memory/tool 仍在 App capability 端；下一阶段继续跨进程动态资源预算、熔断、强杀矩阵并逐项审查工具迁移。详细传输约束见 `clients/macos/docs/24-agent-run-worker-transport-adr.md`。
 
 ## 十七、最终决策摘要
 

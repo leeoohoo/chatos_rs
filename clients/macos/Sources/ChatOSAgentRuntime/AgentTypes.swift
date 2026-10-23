@@ -305,6 +305,8 @@ public enum AgentModelStreamEvent: Codable, Equatable, Sendable {
 
 public protocol AgentModelClient: Sendable {
     var usesServerSideCompaction: Bool { get }
+    var workerTransportConfiguration: AgentWorkerModelTransportConfiguration? { get }
+    func validateWorkerTransportAuthorization() async throws
     func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) async throws -> AgentMessage
     func stream(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
                 onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void) async throws -> AgentMessage
@@ -312,6 +314,8 @@ public protocol AgentModelClient: Sendable {
 
 public extension AgentModelClient {
     var usesServerSideCompaction: Bool { false }
+    var workerTransportConfiguration: AgentWorkerModelTransportConfiguration? { nil }
+    func validateWorkerTransportAuthorization() async throws {}
 
     func stream(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
                 onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void) async throws -> AgentMessage {
