@@ -87,9 +87,17 @@ struct MediaStudioImagePreview: View {
             errorMessage = nil
             scale = nil
             guard request.images.indices.contains(index) else { return }
+            guard let ownerUserID = appModel.authenticatedUserID else {
+                errorMessage = appModel.localized(
+                    "登录状态已失效，无法预览图片。",
+                    english: "Your session expired. Sign in again to preview this image."
+                )
+                return
+            }
             do {
                 let prepared = try await MediaStudioImageLoader.thumbnail(
                     for: request.images[index],
+                    ownerUserID: ownerUserID,
                     maximumDisplayPixelSize: 8_192
                 )
                 try Task.checkCancellation()

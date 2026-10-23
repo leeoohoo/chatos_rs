@@ -1896,6 +1896,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：这不是 P2 全部完成。缩略图、聊天附件预览、视频 frame/poster、已文件化上传/下载和 durable media job 仍未移交 Worker；普通子进程提供崩溃/内存隔离但不是 App Sandbox。真实 20 MiB/64 MP physical-footprint、恶意解码崩溃、ENOSPC、睡眠/断网、账户切换、连续崩溃 soak、Developer ID/hardened runtime/notarization 及完整 Release SLO 仍是后续门禁，不能据此宣称 P0-E/P2/P4 或客户端总体性能优化已经完成。
 
+### 12.74 第三完整里程碑：缩略图与聊天附件预览迁入 Media Worker（2026-10-23）
+
+本里程碑关闭 12.45、12.54、12.56 和 12.73 明确保留的 UI 原始图片解码边界。Media Studio 卡片/Story 缩略图/全屏预览、普通聊天持久图片，以及 Agent 群聊/私聊缩略图与点按大图不再由主 App 直接用 ImageIO 解析原始文件；原始 20 MiB/64 MP 输入统一先交给单用途 `ChatOSMediaWorker` 下采样并编码成受限 PNG，App 只为最终显示解码该受限输出。
+
+已实施：
+
+- 复用已冻结的 `normalize_png_v1`、hello、文件身份、deadline、取消/强杀和 lease artifact 协议，不新增平行 IPC。Base64 和 HTTPS 资产先进入既有有界临时文件；Worker 输出在 App 成功构造有界 `CGImage` 后立即随 lease 释放，不形成长期重复媒体副本。
+- Media Studio 的 512/640/2,048 像素缓存缩略图和 8,192 像素全屏预览全部携带真实账户 ID；账户 ID 进入共享缓存键，避免切换账户后复用旧账户像素面。小于等于 2,048 像素的交互缩略图继续绕过重媒体排队，但不再绕过 Worker 隔离。
+- 普通聊天附件继续先验证记录 size 与 SHA-256。验证阶段冻结 device/inode/byte count/mtime，Worker 客户端只接受同一授权身份，完成后再次用 `O_NOFOLLOW` 打开并复核；digest 后路径替换、inode/大小或 mtime 变化均 fail-closed。Agent 聊天复用同一实现，真实 `ownerUserID` 从 ViewModel/消息调用链传入。
+- 主 App 解码的最终 PNG 已由 Worker 限制像素边长、源像素数和输出字节数；这保留 SwiftUI/AppKit 显示所需像素面，同时把恶意原图解析、方向变换、下采样和清洗编码的崩溃/峰值边界移出 UI 进程。
+
+验证：Debug 与原生 arm64 Release 的针对性矩阵各 38 项全部通过，覆盖 Media Studio 19 项、普通聊天附件 4 项、Agent 附件 5 项、Worker Core 4 项及真实 Worker 进程 6 项。新增真实进程用例覆盖 Media Studio 缩略图完整链路；新增附件回归覆盖 digest 校验后源路径被替换仍必须拒绝。Release 测试与 Worker product 使用 `warnings-as-errors` 优化编译通过，真实 Worker 的热态小缩略图链路在该测试机约 35--37 ms；该单点数据只用于发现明显回退，不作为正式性能 SLO。未提交源码的完整 arm64 Release 诊断包再次通过 Worker/App 嵌套签名、dSYM UUID、bundle 哈希和 build-evidence 校验；未启动、安装或替换正式 App。
+
+边界：App 为渲染仍必须持有最终受限 `CGImage`，本批不宣称 UI 像素面为零；草稿内存图片、头像、Markdown、项目文件预览和其他普通图片消费者尚未全部迁移。当前一次请求启动一个 Worker，尚未以大量列表冷启动、20 MiB/64 MP、快速滚动/取消风暴和组合内存压力决定是否需要受控的批处理或常驻执行模型。视频 frame/poster、上传/下载、durable media job、ENOSPC/睡眠/断网、长期 soak 及 Developer ID/hardened runtime/notarization 仍未完成，不能据此宣称 P0-E/P2/P4 或总体性能优化完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

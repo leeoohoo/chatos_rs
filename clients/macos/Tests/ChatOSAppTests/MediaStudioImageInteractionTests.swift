@@ -81,8 +81,10 @@ final class MediaStudioImageInteractionTests: XCTestCase {
                 mimeType: "image/png",
                 base64Data: png.base64EncodedString()
             ),
+            ownerUserID: "test-user",
             maximumDisplayPixelSize: 64,
-            heavyMediaGovernor: governor
+            heavyMediaGovernor: governor,
+            mediaWorker: TestMediaWorkerImageNormalizer()
         )
 
         XCTAssertEqual(thumbnail.image.width, 64)
@@ -479,10 +481,12 @@ final class MediaStudioImageInteractionTests: XCTestCase {
                 mimeType: "image/png",
                 url: URL(string: "https://cdn.example/thumbnail.png")!
             ),
+            ownerUserID: "test-user",
             maximumDisplayPixelSize: 32,
             transport: transport,
             temporaryDirectory: root,
-            availableCapacityOverride: Int64.max
+            availableCapacityOverride: Int64.max,
+            mediaWorker: TestMediaWorkerImageNormalizer()
         )
 
         XCTAssertEqual(thumbnail.image.width, 32)
@@ -521,7 +525,11 @@ final class MediaStudioImageInteractionTests: XCTestCase {
 
         let image = await GeneratedMediaAssetImageCache.image(
             for: try XCTUnwrap(asset),
-            maximumDisplayPixelSize: 24
+            ownerUserID: "test-user",
+            maximumDisplayPixelSize: 24,
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: TestMediaWorkerImageNormalizer()
         )
         let representation = try XCTUnwrap(image?.representations.first)
         XCTAssertLessThanOrEqual(representation.pixelsWide, 24)
@@ -560,7 +568,10 @@ final class MediaStudioImageInteractionTests: XCTestCase {
                 mimeType: "image/png",
                 base64Data: png.base64EncodedString()
             ),
-            maximumDisplayPixelSize: 24
+            ownerUserID: "test-user",
+            maximumDisplayPixelSize: 24,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: TestMediaWorkerImageNormalizer()
         )
 
         let representation = try XCTUnwrap(image?.representations.first)
@@ -620,9 +631,10 @@ final class MediaStudioImageInteractionTests: XCTestCase {
     }
 }
 
-private struct TestMediaWorkerImageNormalizer: MediaWorkerImageNormalizing {
+struct TestMediaWorkerImageNormalizer: MediaWorkerImageNormalizing {
     func normalizePNG(
         sourceURL: URL,
+        sourceIdentity authorizedSourceIdentity: MediaWorkerFileIdentity?,
         destinationURL: URL,
         ownerUserID: String,
         maximumSourceBytes: Int,
@@ -631,7 +643,12 @@ private struct TestMediaWorkerImageNormalizer: MediaWorkerImageNormalizing {
         maximumOutputBytes: Int
     ) async throws -> MediaWorkerImageDescriptor {
         do {
-            let sourceIdentity = try identity(sourceURL)
+            let sourceIdentity: MediaWorkerFileIdentity
+            if let authorizedSourceIdentity {
+                sourceIdentity = authorizedSourceIdentity
+            } else {
+                sourceIdentity = try identity(sourceURL)
+            }
             let destinationIdentity = try identity(destinationURL)
             let request = MediaWorkerNormalizePNGRequest(
                 protocolVersion: ChatOSMediaWorkerProtocol.maximumVersion,

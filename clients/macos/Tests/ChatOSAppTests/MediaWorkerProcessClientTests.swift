@@ -6,6 +6,48 @@ import XCTest
 @testable import ChatOSApp
 
 final class MediaWorkerProcessClientTests: XCTestCase {
+    func testMediaStudioThumbnailRunsThroughBuiltWorker() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run thumbnail integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 128,
+            pixelsHigh: 64,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+
+        let thumbnail = try await MediaStudioImageLoader.thumbnail(
+            for: .init(
+                id: "real-worker-thumbnail",
+                mimeType: "image/png",
+                base64Data: png.base64EncodedString()
+            ),
+            ownerUserID: "process-client-test",
+            maximumDisplayPixelSize: 32,
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: MediaWorkerProcessClient(
+                executableURL: URL(fileURLWithPath: path),
+                timeout: 10
+            )
+        )
+
+        XCTAssertEqual(thumbnail.image.width, 32)
+        XCTAssertEqual(thumbnail.image.height, 16)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+    }
+
     func testStoryNormalizationRunsThroughBuiltWorkerAndLeaseArtifact() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
               !path.isEmpty else {

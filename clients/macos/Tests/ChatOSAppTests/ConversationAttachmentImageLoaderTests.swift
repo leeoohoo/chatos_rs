@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSMediaWorkerProtocol
 import CryptoKit
 import Foundation
 import XCTest
@@ -14,7 +15,11 @@ final class ConversationAttachmentImageLoaderTests: XCTestCase {
             url: fixture.url,
             sha256: fixture.sha256,
             expectedBytes: fixture.data.count,
-            maximumDisplayPixelSize: 64
+            ownerUserID: "test-user",
+            maximumDisplayPixelSize: 64,
+            temporaryDirectory: fixture.root,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: TestMediaWorkerImageNormalizer()
         )
 
         XCTAssertEqual(decoded.image.width, 64)
@@ -30,7 +35,11 @@ final class ConversationAttachmentImageLoaderTests: XCTestCase {
             _ = try await ConversationAttachmentImageLoader.load(
                 url: fixture.url,
                 sha256: String(repeating: "0", count: 64),
-                expectedBytes: fixture.data.count
+                expectedBytes: fixture.data.count,
+                ownerUserID: "test-user",
+                temporaryDirectory: fixture.root,
+                availableCapacityOverride: Int64.max,
+                mediaWorker: TestMediaWorkerImageNormalizer()
             )
             XCTFail("Mismatched digest was accepted")
         } catch {
@@ -48,9 +57,34 @@ final class ConversationAttachmentImageLoaderTests: XCTestCase {
             _ = try await ConversationAttachmentImageLoader.load(
                 url: link,
                 sha256: fixture.sha256,
-                expectedBytes: fixture.data.count
+                expectedBytes: fixture.data.count,
+                ownerUserID: "test-user",
+                temporaryDirectory: fixture.root,
+                availableCapacityOverride: Int64.max,
+                mediaWorker: TestMediaWorkerImageNormalizer()
             )
             XCTFail("Symbolic link was accepted")
+        } catch {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.url.path))
+        }
+    }
+
+    func testSourceReplacementDuringWorkerOperationIsRejected() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        do {
+            _ = try await ConversationAttachmentImageLoader.load(
+                url: fixture.url,
+                sha256: fixture.sha256,
+                expectedBytes: fixture.data.count,
+                ownerUserID: "test-user",
+                maximumDisplayPixelSize: 64,
+                temporaryDirectory: fixture.root,
+                availableCapacityOverride: Int64.max,
+                mediaWorker: ReplacingTestMediaWorker()
+            )
+            XCTFail("A source replaced after digest verification was accepted")
         } catch {
             XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.url.path))
         }
@@ -73,5 +107,35 @@ final class ConversationAttachmentImageLoaderTests: XCTestCase {
         try data.write(to: url)
         let sha256 = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         return (root, url, data, sha256)
+    }
+}
+
+private struct ReplacingTestMediaWorker: MediaWorkerImageNormalizing {
+    func normalizePNG(
+        sourceURL: URL,
+        sourceIdentity: MediaWorkerFileIdentity?,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int
+    ) async throws -> MediaWorkerImageDescriptor {
+        let result = try await TestMediaWorkerImageNormalizer().normalizePNG(
+            sourceURL: sourceURL,
+            sourceIdentity: sourceIdentity,
+            destinationURL: destinationURL,
+            ownerUserID: ownerUserID,
+            maximumSourceBytes: maximumSourceBytes,
+            maximumSourcePixelCount: maximumSourcePixelCount,
+            maximumOutputPixelSize: maximumOutputPixelSize,
+            maximumOutputBytes: maximumOutputBytes
+        )
+        let replacement = sourceURL.deletingLastPathComponent().appendingPathComponent(
+            "replacement-\(UUID().uuidString).png"
+        )
+        try Data(contentsOf: sourceURL).write(to: replacement)
+        _ = try FileManager.default.replaceItemAt(sourceURL, withItemAt: replacement)
+        return result
     }
 }

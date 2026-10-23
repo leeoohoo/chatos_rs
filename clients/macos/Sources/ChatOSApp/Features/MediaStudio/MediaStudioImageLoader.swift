@@ -60,25 +60,37 @@ enum MediaStudioImageLoader {
 
     static func thumbnail(
         for asset: GeneratedMediaAsset,
+        ownerUserID: String,
         maximumDisplayPixelSize: Int,
         transport: any HTTPTransport = URLSessionHTTPTransport(),
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         availableCapacityOverride: Int64? = nil,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
+        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) async throws -> AppDecodedThumbnail {
-        guard maximumDisplayPixelSize > 0 else { throw ImageError.invalidImage }
-        let source = try await preparedSource(
+        guard !ownerUserID.isEmpty,
+              maximumDisplayPixelSize > 0 else { throw ImageError.invalidImage }
+        let prepared = try await preparedSource(
             for: asset,
             transport: transport,
             temporaryDirectory: temporaryDirectory,
             availableCapacityOverride: availableCapacityOverride
         )
-        // Small cached thumbnails are latency-sensitive and already have a bounded decoded
-        // footprint. Reserve the single heavy-media lane for large previews and normalization.
+        let source = try await fileBackedSource(
+            prepared,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride
+        )
+        // Small cached thumbnails remain latency-sensitive and have a bounded output surface.
+        // They still use the Worker, but do not wait behind large preview/normalization jobs.
         guard maximumDisplayPixelSize > 2_048 else {
             return try await decode(
                 source,
-                maximumDisplayPixelSize: maximumDisplayPixelSize
+                ownerUserID: ownerUserID,
+                maximumDisplayPixelSize: maximumDisplayPixelSize,
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: availableCapacityOverride,
+                mediaWorker: mediaWorker
             )
         }
         return try await heavyMediaGovernor.perform(context: .init(
@@ -90,7 +102,11 @@ enum MediaStudioImageLoader {
         )) {
             try await decode(
                 source,
-                maximumDisplayPixelSize: maximumDisplayPixelSize
+                ownerUserID: ownerUserID,
+                maximumDisplayPixelSize: maximumDisplayPixelSize,
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: availableCapacityOverride,
+                mediaWorker: mediaWorker
             )
         }
     }
@@ -178,6 +194,7 @@ enum MediaStudioImageLoader {
                 do {
                     let descriptor = try await mediaWorker.normalizePNG(
                         sourceURL: sourceURL,
+                        sourceIdentity: nil,
                         destinationURL: destinationURL,
                         ownerUserID: ownerUserID,
                         maximumSourceBytes: maximumImageBytes,
@@ -257,28 +274,24 @@ enum MediaStudioImageLoader {
 
     private static func decode(
         _ source: PreparedImageSource,
-        maximumDisplayPixelSize: Int
+        ownerUserID: String,
+        maximumDisplayPixelSize: Int,
+        temporaryDirectory: URL,
+        availableCapacityOverride: Int64?,
+        mediaWorker: any MediaWorkerImageNormalizing
     ) async throws -> AppDecodedThumbnail {
-        if let fileURL = source.fileURL {
-            defer { withExtendedLifetime(source.owner) {} }
-            return try await AppImageThumbnailLoader.loadLocalFile(
-                fileURL,
-                maximumBytes: maximumImageBytes,
-                maximumSourcePixelCount: maximumSourcePixelCount,
-                maximumDisplayPixelSize: maximumDisplayPixelSize
-            )
-        }
-        guard let data = source.data else { throw ImageError.invalidImage }
-        return try await AppCancellableDetachedWork.run {
-            guard let decoded = AppImageThumbnailLoader.decode(
-                data,
-                maximumSourcePixelCount: maximumSourcePixelCount,
-                maximumDisplayPixelSize: maximumDisplayPixelSize
-            ) else {
-                throw ImageError.invalidImage
-            }
-            return decoded
-        }
+        defer { withExtendedLifetime(source.owner) {} }
+        guard let fileURL = source.fileURL else { throw ImageError.invalidImage }
+        return try await AppImageThumbnailLoader.loadLocalFileUsingWorker(
+            fileURL,
+            ownerUserID: ownerUserID,
+            maximumBytes: maximumImageBytes,
+            maximumSourcePixelCount: maximumSourcePixelCount,
+            maximumDisplayPixelSize: maximumDisplayPixelSize,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride,
+            mediaWorker: mediaWorker
+        )
     }
 
     private static func mediaTaskID(assetID: String, operation: String) -> String {

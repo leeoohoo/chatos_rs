@@ -1,5 +1,6 @@
 import ChatOSConnector
 import ChatOSCore
+import Foundation
 
 struct AgentMessageAttachmentThumbnail: Sendable, Equatable {
     let identity: String
@@ -27,7 +28,11 @@ enum AgentMessageAttachmentImageLoader {
 
     static func load(
         _ payload: ProjectAgentMessageAttachmentPayload,
-        maximumDisplayPixelSize: Int = 2_048
+        ownerUserID: String,
+        maximumDisplayPixelSize: Int = 2_048,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        availableCapacityOverride: Int64? = nil,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) async throws -> AppDecodedThumbnail {
         let attachment = payload.attachment
         guard attachment.kind == .image,
@@ -42,7 +47,11 @@ enum AgentMessageAttachmentImageLoader {
                 url: payload.localFileURL,
                 sha256: sha256,
                 expectedBytes: attachment.size,
-                maximumDisplayPixelSize: maximumDisplayPixelSize
+                ownerUserID: ownerUserID,
+                maximumDisplayPixelSize: maximumDisplayPixelSize,
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: availableCapacityOverride,
+                mediaWorker: mediaWorker
             )
         } catch is CancellationError {
             throw CancellationError()
@@ -78,6 +87,7 @@ enum AgentMessageAttachmentThumbnailLoader {
             do {
                 decoded = try await AgentMessageAttachmentImageLoader.load(
                     payload,
+                    ownerUserID: ownerUserID,
                     maximumDisplayPixelSize: maximumDisplayPixelSize
                 )
             } catch is CancellationError {

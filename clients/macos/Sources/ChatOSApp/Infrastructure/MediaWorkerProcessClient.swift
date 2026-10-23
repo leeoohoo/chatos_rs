@@ -5,6 +5,7 @@ import Foundation
 protocol MediaWorkerImageNormalizing: Sendable {
     func normalizePNG(
         sourceURL: URL,
+        sourceIdentity: MediaWorkerFileIdentity?,
         destinationURL: URL,
         ownerUserID: String,
         maximumSourceBytes: Int,
@@ -63,6 +64,7 @@ struct MediaWorkerProcessClient: MediaWorkerImageNormalizing {
 
     func normalizePNG(
         sourceURL: URL,
+        sourceIdentity: MediaWorkerFileIdentity? = nil,
         destinationURL: URL,
         ownerUserID: String,
         maximumSourceBytes: Int,
@@ -90,6 +92,7 @@ struct MediaWorkerProcessClient: MediaWorkerImageNormalizing {
                                 try controller.run(
                                     executableURL: resolvedExecutable,
                                     sourceURL: sourceURL,
+                                    authorizedSourceIdentity: sourceIdentity,
                                     destinationURL: destinationURL,
                                     ownerUserID: ownerUserID,
                                     maximumSourceBytes: maximumSourceBytes,
@@ -204,6 +207,7 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
     func run(
         executableURL: URL,
         sourceURL: URL,
+        authorizedSourceIdentity: MediaWorkerFileIdentity?,
         destinationURL: URL,
         ownerUserID: String,
         maximumSourceBytes: Int,
@@ -215,7 +219,12 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
         sessionEpoch: String
     ) throws -> MediaWorkerImageDescriptor {
         try validateExecutable(executableURL)
-        let sourceIdentity = try fileIdentity(sourceURL, requireEmpty: false)
+        let currentSourceIdentity = try fileIdentity(sourceURL, requireEmpty: false)
+        if let authorizedSourceIdentity,
+           authorizedSourceIdentity != currentSourceIdentity {
+            throw MediaWorkerProcessClientError.invalidResponse
+        }
+        let sourceIdentity = authorizedSourceIdentity ?? currentSourceIdentity
         let destinationIdentity = try fileIdentity(destinationURL, requireEmpty: true)
         let child = Process()
         let input = Pipe()

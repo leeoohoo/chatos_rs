@@ -82,6 +82,7 @@ struct ComposerAttachmentChip: View {
 }
 
 struct MessageAttachmentChips: View {
+    @EnvironmentObject private var appModel: AppModel
     let attachments: [ConversationAttachmentReference]
     @State private var previewedImage: ConversationAttachmentReference?
 
@@ -92,6 +93,7 @@ struct MessageAttachmentChips: View {
                    attachment.localURL?.isFileURL == true {
                     MessageInlineImage(
                         attachment: attachment,
+                        ownerUserID: appModel.authenticatedUserID,
                         onPreview: { previewedImage = attachment }
                     )
                 } else {
@@ -100,13 +102,17 @@ struct MessageAttachmentChips: View {
             }
         }
         .sheet(item: $previewedImage) { attachment in
-            MessageLocalImagePreview(attachment: attachment)
+            MessageLocalImagePreview(
+                attachment: attachment,
+                ownerUserID: appModel.authenticatedUserID
+            )
         }
     }
 }
 
 private struct MessageInlineImage: View {
     let attachment: ConversationAttachmentReference
+    let ownerUserID: String?
     let onPreview: () -> Void
 
     var body: some View {
@@ -114,7 +120,8 @@ private struct MessageInlineImage: View {
             LocalAttachmentImage(
                 url: attachment.localURL,
                 sha256: attachment.sha256,
-                expectedBytes: attachment.size
+                expectedBytes: attachment.size,
+                ownerUserID: ownerUserID
             )
                 .frame(width: 360, height: 220)
                 .background(AppPalette.inputSurface)
@@ -161,6 +168,7 @@ private struct MessageFileAttachmentChip: View {
 
 private struct MessageLocalImagePreview: View {
     let attachment: ConversationAttachmentReference
+    let ownerUserID: String?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -178,7 +186,8 @@ private struct MessageLocalImagePreview: View {
                 LocalAttachmentImage(
                     url: attachment.localURL,
                     sha256: attachment.sha256,
-                    expectedBytes: attachment.size
+                    expectedBytes: attachment.size,
+                    ownerUserID: ownerUserID
                 )
                     .padding(20)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -193,6 +202,7 @@ private struct LocalAttachmentImage: View {
     let url: URL?
     let sha256: String?
     let expectedBytes: Int
+    let ownerUserID: String?
     @State private var image: NSImage?
     @State private var loadFailed = false
 
@@ -220,7 +230,7 @@ private struct LocalAttachmentImage: View {
         .task(id: url) {
             image = nil
             loadFailed = false
-            guard let url, url.isFileURL else {
+            guard let url, url.isFileURL, let ownerUserID else {
                 loadFailed = true
                 return
             }
@@ -228,7 +238,8 @@ private struct LocalAttachmentImage: View {
                 let decoded = try await ConversationAttachmentImageLoader.load(
                     url: url,
                     sha256: sha256,
-                    expectedBytes: expectedBytes
+                    expectedBytes: expectedBytes,
+                    ownerUserID: ownerUserID
                 )
                 guard !Task.isCancelled else { return }
                 image = decoded.makeNSImage()

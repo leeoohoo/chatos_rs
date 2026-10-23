@@ -27,6 +27,7 @@ extension View {
 }
 
 struct StoryThumbnail: View {
+    @EnvironmentObject private var appModel: AppModel
     let asset: GeneratedMediaAsset?
     @State private var image: NSImage?
     var body: some View {
@@ -34,11 +35,13 @@ struct StoryThumbnail: View {
             Color.primary.opacity(0.045)
             if let image { Image(nsImage: image).resizable().scaledToFit() }
             else { Image(systemName: "photo").foregroundStyle(.tertiary) }
-        }.task(id: asset?.id) {
+        }.task(id: "\(appModel.authenticatedUserID ?? "signed-out")|\(asset?.id ?? "none")") {
             image = nil
-            guard let asset else { return }
+            guard let asset,
+                  let ownerUserID = appModel.authenticatedUserID else { return }
             let loaded = await GeneratedMediaAssetImageCache.image(
                 for: asset,
+                ownerUserID: ownerUserID,
                 maximumDisplayPixelSize: 640
             )
             if !Task.isCancelled { image = loaded }

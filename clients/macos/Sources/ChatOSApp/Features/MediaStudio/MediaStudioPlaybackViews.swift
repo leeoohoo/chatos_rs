@@ -4,13 +4,14 @@ import ChatOSCore
 import SwiftUI
 
 struct GeneratedMediaAssetView: View {
+    @EnvironmentObject private var appModel: AppModel
     let asset: GeneratedMediaAsset
     var compact = false
     @State private var image: NSImage?
     @State private var loadFailed = false
 
     private var loadIdentity: String {
-        "\(asset.id)|\(asset.url?.absoluteString ?? "inline")|\(asset.base64Data?.count ?? 0)|\(compact)"
+        "\(appModel.authenticatedUserID ?? "signed-out")|\(asset.id)|\(asset.url?.absoluteString ?? "inline")|\(asset.base64Data?.count ?? 0)|\(compact)"
     }
 
     var body: some View {
@@ -36,8 +37,13 @@ struct GeneratedMediaAssetView: View {
         .task(id: loadIdentity) {
             image = nil
             loadFailed = false
+            guard let ownerUserID = appModel.authenticatedUserID else {
+                loadFailed = true
+                return
+            }
             let loaded = await GeneratedMediaAssetImageCache.image(
                 for: asset,
+                ownerUserID: ownerUserID,
                 maximumDisplayPixelSize: compact ? 512 : 2_048
             )
             guard !Task.isCancelled else { return }
@@ -65,9 +71,17 @@ enum GeneratedMediaAssetImageCache {
 
     static func image(
         for asset: GeneratedMediaAsset,
-        maximumDisplayPixelSize: Int
+        ownerUserID: String,
+        maximumDisplayPixelSize: Int,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        availableCapacityOverride: Int64? = nil,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) async -> NSImage? {
-        let key = cacheKey(for: asset, maximumDisplayPixelSize: maximumDisplayPixelSize)
+        let key = cacheKey(
+            for: asset,
+            ownerUserID: ownerUserID,
+            maximumDisplayPixelSize: maximumDisplayPixelSize
+        )
         if let cached = cache.object(forKey: key as NSString) {
             return cached
         }
@@ -75,7 +89,11 @@ enum GeneratedMediaAssetImageCache {
         let decoded = await taskPool.value(for: key) {
             try? await MediaStudioImageLoader.thumbnail(
                 for: asset,
-                maximumDisplayPixelSize: maximumDisplayPixelSize
+                ownerUserID: ownerUserID,
+                maximumDisplayPixelSize: maximumDisplayPixelSize,
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: availableCapacityOverride,
+                mediaWorker: mediaWorker
             )
         }
         guard let decoded else { return nil }
@@ -86,9 +104,10 @@ enum GeneratedMediaAssetImageCache {
 
     private static func cacheKey(
         for asset: GeneratedMediaAsset,
+        ownerUserID: String,
         maximumDisplayPixelSize: Int
     ) -> String {
-        "\(asset.id)|\(asset.url?.absoluteString ?? "inline")|\(asset.base64Data?.count ?? 0)|\(maximumDisplayPixelSize)"
+        "\(ownerUserID)|\(asset.id)|\(asset.url?.absoluteString ?? "inline")|\(asset.base64Data?.count ?? 0)|\(maximumDisplayPixelSize)"
     }
 }
 

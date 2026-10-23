@@ -159,7 +159,10 @@ struct AgentMessageAttachmentChips: View {
                     messageID: messageID,
                     attachmentID: attachment.id
                 ) else { throw AgentAttachmentPresentationError.notFound }
-                let decoded = try await AgentMessageAttachmentImageLoader.load(payload)
+                let decoded = try await AgentMessageAttachmentImageLoader.load(
+                    payload,
+                    ownerUserID: ownerUserID
+                )
                 guard !Task.isCancelled else { return }
                 previewedImage = .init(
                     attachment: attachment,

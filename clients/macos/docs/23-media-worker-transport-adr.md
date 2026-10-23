@@ -1,6 +1,6 @@
 # ADR 23：Media Worker 单用途子进程与继承管道
 
-- 状态：已冻结并用于 P2 第一条生产垂直切片
+- 状态：已冻结并用于 P2 图片归一化与预览缩略图生产切片
 - 日期：2026-10-23
 - 适用版本：`media-worker-v1` / wire protocol v1
 
@@ -18,7 +18,7 @@ Story 图片归一化此前在主 App 内使用 ImageIO 解码和编码。源文
 
 ## 决定
 
-P2 第一条垂直切片只采用选项 3，不并行维护 XPC 或 socket 实现。`ChatOSMediaWorker` 是放在 `Contents/MacOS` 的独立 arm64 executable；App 通过匿名 stdin/stdout 管道先完成 hello，再提交一个 `normalize_png_v1` 请求，收到单个终态响应后进程退出。
+P2 图片垂直切片只采用选项 3，不并行维护 XPC 或 socket 实现。`ChatOSMediaWorker` 是放在 `Contents/MacOS` 的独立 arm64 executable；App 通过匿名 stdin/stdout 管道先完成 hello，再提交一个 `normalize_png_v1` 请求，收到单个终态响应后进程退出。Story 最终文件与 UI 缩略图复用同一操作和安全边界，只通过不同的输出像素上限区分，不为预览复制第二套 wire operation。
 
 协议规则：
 
@@ -45,4 +45,4 @@ P2 第一条垂直切片只采用选项 3，不并行维护 XPC 或 socket 实�
 
 最小门禁包括：协议握手、真实独立进程归一化、symlink/文件替换拒绝、像素/字节/deadline、取消后子进程消失、Debug/Release 回归，以及打包后架构、签名和 build evidence 校验。
 
-本 ADR 只覆盖 Story PNG 归一化的第一条垂直切片。UI 缩略图、视频 frame/poster、媒体上传/下载、durable media job 所有权、跨账户 durable lease、真实 20 MiB/64 MP physical-footprint、内存压力/取消风暴、ENOSPC/睡眠/断网和发布 soak 仍属于后续 P2/P4 门禁。
+本 ADR 当前覆盖 Story PNG 归一化、Media Studio 缩略图/全屏预览，以及普通聊天和 Agent 聊天持久图片附件的缩略图/大图预览。App 为显示仍需解码 Worker 产生的受限尺寸 PNG，但不再在 UI 进程解析原始 20 MiB/64 MP 输入。视频 frame/poster、其他普通 UI 图片消费者、媒体上传/下载、durable media job 所有权、跨账户 durable lease、真实 20 MiB/64 MP physical-footprint、内存压力/取消风暴、ENOSPC/睡眠/断网和发布 soak 仍属于后续 P2/P4 门禁。

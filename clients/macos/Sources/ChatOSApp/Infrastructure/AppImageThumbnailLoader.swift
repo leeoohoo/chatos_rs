@@ -1,4 +1,6 @@
 import AppKit
+import ChatOSAPI
+import ChatOSMediaWorkerProtocol
 import Darwin
 import Foundation
 import ImageIO
@@ -26,6 +28,63 @@ struct AppDecodedThumbnail: @unchecked Sendable {
 }
 
 enum AppImageThumbnailLoader {
+    static func loadLocalFileUsingWorker(
+        _ url: URL,
+        sourceIdentity: MediaWorkerFileIdentity? = nil,
+        ownerUserID: String,
+        maximumBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumDisplayPixelSize: Int,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        availableCapacityOverride: Int64? = nil,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
+    ) async throws -> AppDecodedThumbnail {
+        guard url.isFileURL,
+              !ownerUserID.isEmpty,
+              maximumBytes > 0,
+              maximumSourcePixelCount > 0,
+              maximumDisplayPixelSize > 0,
+              maximumDisplayPixelSize <= 8_192 else {
+            throw AppImageThumbnailError.invalidImage
+        }
+        let output = try await ChatOSMediaArtifactFileWriter.writeNormalizedImageUsingWorker(
+            maximumBytes: maximumBytes,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride
+        ) { destinationURL, _ in
+            let descriptor = try await mediaWorker.normalizePNG(
+                sourceURL: url,
+                sourceIdentity: sourceIdentity,
+                destinationURL: destinationURL,
+                ownerUserID: ownerUserID,
+                maximumSourceBytes: maximumBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumOutputPixelSize: maximumDisplayPixelSize,
+                maximumOutputBytes: maximumBytes
+            )
+            guard descriptor.path == destinationURL.path,
+                  descriptor.mimeType == "image/png",
+                  descriptor.byteCount > 0,
+                  descriptor.byteCount <= maximumBytes,
+                  descriptor.pixelWidth > 0,
+                  descriptor.pixelHeight > 0,
+                  max(descriptor.pixelWidth, descriptor.pixelHeight) <= maximumDisplayPixelSize else {
+                throw AppImageThumbnailError.invalidImage
+            }
+        }
+        defer { withExtendedLifetime(output) {} }
+        try Task.checkCancellation()
+        return try await loadLocalFile(
+            output.url,
+            maximumBytes: maximumBytes,
+            maximumSourcePixelCount: min(
+                maximumSourcePixelCount,
+                maximumDisplayPixelSize * maximumDisplayPixelSize
+            ),
+            maximumDisplayPixelSize: maximumDisplayPixelSize
+        )
+    }
+
     static func loadLocalFile(
         _ url: URL,
         maximumBytes: Int,
