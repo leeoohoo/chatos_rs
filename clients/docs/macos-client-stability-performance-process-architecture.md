@@ -1852,6 +1852,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：这些指标只存在于各自主进程 actor 的内存中，进程重启即清零；本批没有持久化、OS signpost、诊断 UI、采样导出、账户维度或跨进程聚合。它们也不提供动态调额、前台权重、排队老化、热状态/低电量迟滞、Helper lease/断连回收或 fencing，因此不能把第 6.3 节动态/跨进程 `ResourceGovernor`、P0-D/P0-E 或客户端总体 SLO 标记完成。
 
+### 12.71 第七十一批实施记录：Swift Agent 执行准入有界排队与诊断快照（2026-10-23）
+
+本批继续收紧 12.12 的 Swift Agent 逻辑执行额度。此前 `LocalAgentExecutionGovernor` 虽限制 active execution，但来自不同账户、窗口、communication 和 recovery drain 的 `acquire()` waiter 可无界增长；大量并发 drain 不会提前 claim durable delivery，却仍可积累 Task、continuation 和调度压力，也没有办法从 Scheduler 核对实际使用与拒绝原因。
+
+已实施：
+
+- `LocalAgentExecutionGovernor` 增加默认 256 的等待队列硬上限；active 已满且队列也满时立即 fail-closed 返回，不创建 continuation。上层 drain 将其视为本轮没有执行额度并停止继续 claim，durable queue 保持权威且任务留待后续 drain，不把容量压力误写成业务失败。
+- 增加只读 `LocalAgentExecutionGovernorSnapshot`，由 `LocalAgentGroupChatScheduler.executionGovernorSnapshot()` 暴露 limit、队列上限、当前 active/queued/总 in-flight，以及成功准入、排队后准入、真实释放、排队取消、queue full、`tryAcquire` 即时容量不足、总/最大排队时间和 active/queued 峰值。累计值使用饱和加法，permit 重复释放不重复计数。
+- waiter 只在真正进入 FIFO 时记录单调 uptime，移交 permit 时才累计等待；release 向 waiter 直接转交既有 active slot，不制造 active 先降后升的虚假采样。snapshot 不保存 owner、消息、Run 或 prompt 正文。
+
+验证：Debug 与原生 arm64 Release 各选择性运行 `LocalAgentGroupChatSchedulerTests` 20 项及 `NativeClientResourceBudgetPolicyTests` 6 项，共 26 项，全部通过。新增回归覆盖 queue full fail-closed、即时容量拒绝、排队取消、非零等待、active/queued 峰值、总 in-flight 和幂等释放；原调度回归继续验证预算 2 时执行峰值精确为 2、claim 不超额、跨入口共享、communication fast lane、恢复与取消语义。Swift 6 Debug/Release 编译、优化编译与 `git diff --check` 同步作为门禁；不启动或安装正式 App，不访问活动用户数据库。
+
+边界：这是 Swift Agent 主进程内、claim 前的有界等待，不是 Host + Swift 的动态共享 permit；Host 额度仍在启动时静态切分，独立 Host 进程的 in-flight 也未汇入该 snapshot。由于 permit 在 durable claim 前取得，本层没有可登记的 delivery/task ID；账户公平、排队老化、前台降额、热状态/低电量迟滞、手动诊断 UI/导出、跨进程 lease 与 fencing 仍未完成，不能据此把第 6.3 节、P0-D/P0-E 或客户端总体 SLO 标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

@@ -148,60 +148,174 @@ final class LocalAgentExecutionPermit: @unchecked Sendable {
     }
 }
 
+public struct LocalAgentExecutionGovernorMetrics: Sendable, Equatable {
+    public let admittedCount: UInt64
+    public let queuedAdmissionCount: UInt64
+    public let releasedCount: UInt64
+    public let queuedCancellationCount: UInt64
+    public let queueFullRejectionCount: UInt64
+    public let immediateCapacityRejectionCount: UInt64
+    public let totalQueueWaitNanoseconds: UInt64
+    public let maximumQueueWaitNanoseconds: UInt64
+    public let maximumObservedActive: Int
+    public let maximumObservedQueued: Int
+}
+
+public struct LocalAgentExecutionGovernorSnapshot: Sendable, Equatable {
+    public let limit: Int
+    public let maximumQueued: Int
+    public let activeCount: Int
+    public let queuedCount: Int
+    public let totalInFlight: Int
+    public let metrics: LocalAgentExecutionGovernorMetrics
+}
+
 /// Bounds execution across account, room, communication and recovery drains. A permit is
 /// acquired before a durable delivery is claimed, so work never waits for capacity while its
 /// database lease is already aging.
 actor LocalAgentExecutionGovernor {
     private struct Waiter {
         let id: UUID
+        let enqueuedAtUptimeNanoseconds: UInt64
         let continuation: CheckedContinuation<LocalAgentExecutionPermit?, Never>
     }
 
+    private struct Metrics {
+        var admittedCount: UInt64 = 0
+        var queuedAdmissionCount: UInt64 = 0
+        var releasedCount: UInt64 = 0
+        var queuedCancellationCount: UInt64 = 0
+        var queueFullRejectionCount: UInt64 = 0
+        var immediateCapacityRejectionCount: UInt64 = 0
+        var totalQueueWaitNanoseconds: UInt64 = 0
+        var maximumQueueWaitNanoseconds: UInt64 = 0
+        var maximumObservedActive: Int = 0
+        var maximumObservedQueued: Int = 0
+    }
+
     let limit: Int
+    let maximumQueued: Int
     private var active = 0
     private var waiters: [Waiter] = []
+    private var metrics = Metrics()
 
-    init(limit: Int) {
+    init(limit: Int, maximumQueued: Int = 256) {
         precondition(limit > 0)
+        precondition(maximumQueued > 0)
         self.limit = limit
+        self.maximumQueued = maximumQueued
     }
 
     func acquire() async -> LocalAgentExecutionPermit? {
         guard !Task.isCancelled else { return nil }
         if active < limit {
             active += 1
+            recordAdmission(wasQueued: false, queueWaitNanoseconds: 0)
             return .init(governor: self)
         }
+        guard waiters.count < maximumQueued else {
+            Self.increment(&metrics.queueFullRejectionCount)
+            return nil
+        }
         let waiterID = UUID()
-        return await withTaskCancellationHandler {
+        let permit = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                waiters.append(.init(id: waiterID, continuation: continuation))
+                waiters.append(.init(
+                    id: waiterID,
+                    enqueuedAtUptimeNanoseconds: DispatchTime.now().uptimeNanoseconds,
+                    continuation: continuation
+                ))
+                metrics.maximumObservedQueued = max(
+                    metrics.maximumObservedQueued,
+                    waiters.count
+                )
             }
         } onCancel: {
             Task { await self.cancel(waiterID: waiterID) }
         }
+        if Task.isCancelled {
+            await permit?.releaseAndWait()
+            return nil
+        }
+        return permit
     }
 
     func tryAcquire() -> LocalAgentExecutionPermit? {
-        guard active < limit else { return nil }
+        guard active < limit else {
+            Self.increment(&metrics.immediateCapacityRejectionCount)
+            return nil
+        }
         active += 1
+        recordAdmission(wasQueued: false, queueWaitNanoseconds: 0)
         return .init(governor: self)
     }
 
+    func snapshot() -> LocalAgentExecutionGovernorSnapshot {
+        .init(
+            limit: limit,
+            maximumQueued: maximumQueued,
+            activeCount: active,
+            queuedCount: waiters.count,
+            totalInFlight: active + waiters.count,
+            metrics: .init(
+                admittedCount: metrics.admittedCount,
+                queuedAdmissionCount: metrics.queuedAdmissionCount,
+                releasedCount: metrics.releasedCount,
+                queuedCancellationCount: metrics.queuedCancellationCount,
+                queueFullRejectionCount: metrics.queueFullRejectionCount,
+                immediateCapacityRejectionCount: metrics.immediateCapacityRejectionCount,
+                totalQueueWaitNanoseconds: metrics.totalQueueWaitNanoseconds,
+                maximumQueueWaitNanoseconds: metrics.maximumQueueWaitNanoseconds,
+                maximumObservedActive: metrics.maximumObservedActive,
+                maximumObservedQueued: metrics.maximumObservedQueued
+            )
+        )
+    }
+
     fileprivate func release() {
+        precondition(active > 0)
+        Self.increment(&metrics.releasedCount)
         while !waiters.isEmpty {
             let waiter = waiters.removeFirst()
+            let queueWaitNanoseconds = DispatchTime.now().uptimeNanoseconds
+                - waiter.enqueuedAtUptimeNanoseconds
+            recordAdmission(wasQueued: true, queueWaitNanoseconds: queueWaitNanoseconds)
             waiter.continuation.resume(returning: .init(governor: self))
             return
         }
-        precondition(active > 0)
         active -= 1
     }
 
     private func cancel(waiterID: UUID) {
         guard let index = waiters.firstIndex(where: { $0.id == waiterID }) else { return }
         let waiter = waiters.remove(at: index)
+        Self.increment(&metrics.queuedCancellationCount)
         waiter.continuation.resume(returning: nil)
+    }
+
+    private func recordAdmission(
+        wasQueued: Bool,
+        queueWaitNanoseconds: UInt64
+    ) {
+        Self.increment(&metrics.admittedCount)
+        metrics.maximumObservedActive = max(metrics.maximumObservedActive, active)
+        guard wasQueued else { return }
+        Self.increment(&metrics.queuedAdmissionCount)
+        Self.add(queueWaitNanoseconds, to: &metrics.totalQueueWaitNanoseconds)
+        metrics.maximumQueueWaitNanoseconds = max(
+            metrics.maximumQueueWaitNanoseconds,
+            queueWaitNanoseconds
+        )
+    }
+
+    private static func increment(_ value: inout UInt64) {
+        guard value < .max else { return }
+        value += 1
+    }
+
+    private static func add(_ amount: UInt64, to value: inout UInt64) {
+        let result = value.addingReportingOverflow(amount)
+        value = result.overflow ? .max : result.partialValue
     }
 }
 
@@ -348,6 +462,10 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.contextLanguageProvider = contextLanguageProvider
         self.additionalToolProviders = additionalToolProviders
         self.now = now
+    }
+
+    public func executionGovernorSnapshot() async -> LocalAgentExecutionGovernorSnapshot {
+        await executionGovernor.snapshot()
     }
 
 }
