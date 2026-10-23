@@ -58,6 +58,41 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
         XCTAssertEqual(request.headers["Authorization"], "Bearer token-old")
     }
 
+    func testRestoreRenewsExpiredAccessTokenWithoutRequiringLogin() async throws {
+        let transport = QueueTransport(responses: [
+            HTTPResponse(
+                statusCode: 401,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"error":"invalid or expired token"}"#.utf8)
+            ),
+            HTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"token":"token-renewed"}"#.utf8)
+            ),
+            HTTPResponse(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(#"{"user":{"id":"user-2","username":"restored@example.com","display_name":null,"role":"admin"}}"#.utf8)
+            ),
+        ])
+        let store = MemoryCredentialStore(token: "token-expired")
+        let service = makeService(transport: transport, store: store)
+
+        let session = try await service.restoreSession()
+
+        XCTAssertEqual(session?.user.id, "user-2")
+        let storedToken = try await store.loadAccessToken()
+        XCTAssertEqual(storedToken, "token-renewed")
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.map(\.url.path), [
+            "/api/user/auth/me",
+            "/api/user/auth/refresh",
+            "/api/user/auth/me",
+        ])
+        XCTAssertEqual(requests.last?.headers["Authorization"], "Bearer token-renewed")
+    }
+
     func testSendRegistrationCodeUsesEmailAndInviteCode() async throws {
         let transport = QueueTransport(responses: [
             HTTPResponse(
@@ -120,6 +155,7 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
 
     func testUnauthorizedRestoreClearsCredential() async throws {
         let transport = QueueTransport(responses: [
+            HTTPResponse(statusCode: 401, headers: [:], body: Data()),
             HTTPResponse(statusCode: 401, headers: [:], body: Data()),
         ])
         let store = MemoryCredentialStore(token: "expired-token")

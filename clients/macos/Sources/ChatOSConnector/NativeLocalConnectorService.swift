@@ -84,6 +84,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     var gatewayConnectionFailureTask: Task<Void, Never>?
     var gatewayConnectionFailureGeneration: UInt64 = 0
     var reconnectTask: Task<Void, Never>?
+    var connectorCredentialRenewalTask: Task<Void, Never>?
     var gatewayConnectedBootstrapTask: Task<Void, Never>?
     var gatewayConnectedBootstrapGeneration: UInt64 = 0
     var companionRelayTasks: [UUID: Task<Void, Never>] = [:]
@@ -296,6 +297,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 state.gatewayConnectionEnabled = true
                 lastConnectorCredentialRefreshAttemptAt = nil
                 try stateStore.save(state)
+                scheduleConnectorCredentialRenewal(for: login.token)
                 try await connectGateway()
                 try? await Task.sleep(for: .milliseconds(200))
                 return statusSnapshot()
@@ -325,6 +327,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         state.gatewayConnectionEnabled = true
         lastConnectorCredentialRefreshAttemptAt = nil
         try stateStore.save(state)
+        scheduleConnectorCredentialRenewal(for: login.token)
         try await connectGateway()
         try? await Task.sleep(for: .milliseconds(200))
         return statusSnapshot()
@@ -344,6 +347,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func suspendForSignedOut() async {
+        connectorCredentialRenewalTask?.cancel()
+        connectorCredentialRenewalTask = nil
         resetLocalApprovalAgent()
         await stopServerAccess()
         await pluginApplicationRuntime.stopAll()
@@ -354,12 +359,17 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         guard state.deviceID != nil else { throw NativeConnectorError.notPaired }
         state.gatewayConnectionEnabled = true
         try stateStore.save(state)
+        if let token = try accessToken() {
+            scheduleConnectorCredentialRenewal(for: token)
+        }
         try await connectGateway()
         return statusSnapshot()
     }
 
     public func disconnect() async throws -> LocalConnectorStatus {
         let token = try? accessToken()
+        connectorCredentialRenewalTask?.cancel()
+        connectorCredentialRenewalTask = nil
         state.gatewayConnectionEnabled = false
         await stopServerAccess()
         try stateStore.save(state)

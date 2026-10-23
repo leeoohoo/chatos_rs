@@ -301,6 +301,7 @@ extension NativeLocalConnectorService {
             hasLoadedAccessToken = true
             state.user = login.user.domainModel
             try stateStore.save(state)
+            scheduleConnectorCredentialRenewal(for: login.token)
             shouldMaintainGatewayConnection = true
             gatewayReconnectFailureCount = 0
             Self.logger.info("Connector 凭证已自动续签，正在恢复网关长连接")
@@ -313,6 +314,80 @@ extension NativeLocalConnectorService {
                 "Connector 凭证自动续签失败：\(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    func scheduleConnectorCredentialRenewal(
+        for token: String,
+        now: Date = Date()
+    ) {
+        connectorCredentialRenewalTask?.cancel()
+        let delay = Self.connectorCredentialRenewalDelay(token: token, now: now)
+        connectorCredentialRenewalTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.renewConnectorCredentialProactively()
+        }
+    }
+
+    private func renewConnectorCredentialProactively() async {
+        // Clear the current task before pairing so the successful pairing can install the next
+        // renewal timer without cancelling the task that is performing the renewal.
+        connectorCredentialRenewalTask = nil
+        guard state.gatewayConnectionEnabled != false,
+              state.user?.id.gatewayTrimmedNonEmpty != nil else { return }
+        do {
+            _ = try await pairWithCurrentChatOSSession(deviceName: state.deviceName)
+            Self.logger.info("Connector 凭证已在过期前主动续签")
+        } catch is CancellationError {
+            return
+        } catch {
+            Self.logger.error(
+                "Connector 凭证主动续签失败，将稍后重试：\(error.localizedDescription, privacy: .public)"
+            )
+            scheduleConnectorCredentialRenewalRetry()
+        }
+    }
+
+    private func scheduleConnectorCredentialRenewalRetry() {
+        connectorCredentialRenewalTask?.cancel()
+        connectorCredentialRenewalTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.renewConnectorCredentialProactively()
+        }
+    }
+
+    static func connectorCredentialRenewalDelay(
+        token: String,
+        now: Date
+    ) -> TimeInterval {
+        struct Claims: Decodable {
+            let iat: TimeInterval
+            let exp: TimeInterval
+        }
+
+        let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3 else { return 60 * 60 }
+        var payload = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        payload.append(String(repeating: "=", count: (4 - payload.count % 4) % 4))
+        guard let data = Data(base64Encoded: payload),
+              let claims = try? JSONDecoder().decode(Claims.self, from: data),
+              claims.exp > claims.iat else {
+            return 60 * 60
+        }
+        let issuedLifetime = claims.exp - claims.iat
+        let renewalAt = claims.iat + issuedLifetime / 2
+        return max(0, renewalAt - now.timeIntervalSince1970)
     }
 
     private func requireCurrentGatewayConnectionFailure(generation: UInt64) throws {

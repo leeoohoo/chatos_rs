@@ -134,6 +134,30 @@ extension NativeLocalConnectorService {
         ownerUserID: String,
         memoryAccessToken: String?
     ) async throws -> NativeLocalAgentBootstrapResult {
+        do {
+            return try await bootstrapLocalAgentHostWithCurrentPairing(
+                host,
+                ownerUserID: ownerUserID,
+                memoryAccessToken: memoryAccessToken
+            )
+        } catch NativeConnectorError.notPaired {
+            // Connector credentials are deliberately independent from the primary desktop
+            // session and can expire while the app remains signed in. Re-pair through the
+            // primary session and rebuild the authoritative model/capability snapshot once.
+            _ = try await pairWithCurrentChatOSSession(deviceName: state.deviceName)
+            return try await bootstrapLocalAgentHostWithCurrentPairing(
+                host,
+                ownerUserID: ownerUserID,
+                memoryAccessToken: memoryAccessToken
+            )
+        }
+    }
+
+    private func bootstrapLocalAgentHostWithCurrentPairing(
+        _ host: NativeLocalAgentHostLifecycle,
+        ownerUserID: String,
+        memoryAccessToken: String?
+    ) async throws -> NativeLocalAgentBootstrapResult {
         guard state.user?.id == ownerUserID else {
             throw NativeConnectorError.notPaired
         }

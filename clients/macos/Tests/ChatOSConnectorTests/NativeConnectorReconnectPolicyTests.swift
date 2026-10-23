@@ -51,6 +51,38 @@ struct NativeConnectorReconnectPolicyTests {
     }
 
     @Test
+    func connectorCredentialRenewsAtHalfOfItsIssuedLifetime() throws {
+        let issuedAt = 10_000.0
+        let expiresAt = issuedAt + 12 * 60 * 60
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "iat": issuedAt,
+            "exp": expiresAt,
+        ])
+        let encoded = payload.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let token = "header.\(encoded).signature"
+
+        #expect(NativeLocalConnectorService.connectorCredentialRenewalDelay(
+            token: token,
+            now: Date(timeIntervalSince1970: issuedAt)
+        ) == 6 * 60 * 60)
+        #expect(NativeLocalConnectorService.connectorCredentialRenewalDelay(
+            token: token,
+            now: Date(timeIntervalSince1970: expiresAt)
+        ) == 0)
+    }
+
+    @Test
+    func malformedConnectorCredentialUsesBoundedRenewalFallback() {
+        #expect(NativeLocalConnectorService.connectorCredentialRenewalDelay(
+            token: "not-a-jwt",
+            now: Date(timeIntervalSince1970: 10_000)
+        ) == 60 * 60)
+    }
+
+    @Test
     func socketFailureHandlingIsSingleFlightAndRejectsStaleSockets() {
         #expect(NativeLocalConnectorService.shouldStartGatewayConnectionFailureHandling(
             socketMatches: true,
