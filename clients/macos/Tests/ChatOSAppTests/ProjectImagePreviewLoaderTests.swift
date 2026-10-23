@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSMediaWorkerProtocol
 import ChatOSNetworking
 import XCTest
 @testable import ChatOSApp
@@ -19,6 +20,16 @@ final class ProjectImagePreviewLoaderTests: XCTestCase {
         ))
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         let governor = ClientHeavyMediaWorkGovernor(limit: 1)
+        let worker = ProjectPreviewRecordingWorker()
+        let temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "ProjectImagePreviewLoaderTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
         let blocker = try await governor.acquire(context: .init(
             taskID: "blocker",
             kind: .videoFrameExtraction,
@@ -29,7 +40,11 @@ final class ProjectImagePreviewLoaderTests: XCTestCase {
                 content: png.base64EncodedString(),
                 isBinary: true,
                 taskID: "project-image:test:preview",
-                heavyMediaGovernor: governor
+                ownerUserID: "alice",
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: Int64.max,
+                heavyMediaGovernor: governor,
+                mediaWorker: worker
             )
         }
         try await waitForHeavyMediaQueue(governor)
@@ -45,6 +60,11 @@ final class ProjectImagePreviewLoaderTests: XCTestCase {
         let decoded = try XCTUnwrap(result)
         XCTAssertEqual(decoded.image.width, 64)
         XCTAssertEqual(decoded.image.height, 32)
+        let recordedInvocation = await worker.invocation()
+        let invocation = try XCTUnwrap(recordedInvocation)
+        XCTAssertEqual(invocation.ownerUserID, "alice")
+        XCTAssertEqual(invocation.maximumOutputPixelSize, 4_096)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: invocation.sourceURL.path))
         let completed = await governor.snapshot()
         XCTAssertTrue(completed.active.isEmpty)
         XCTAssertTrue(completed.queued.isEmpty)
@@ -77,4 +97,53 @@ final class ProjectImagePreviewLoaderTests: XCTestCase {
         }
         XCTFail("Timed out waiting for heavy-media admission")
     }
+}
+
+private actor ProjectPreviewRecordingWorker: MediaWorkerImageNormalizing {
+    struct Invocation: Sendable {
+        let sourceURL: URL
+        let ownerUserID: String
+        let maximumOutputPixelSize: Int
+    }
+
+    private var recordedInvocation: Invocation?
+
+    func normalizePNG(
+        sourceURL: URL,
+        sourceIdentity: MediaWorkerFileIdentity?,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int
+    ) async throws -> MediaWorkerImageDescriptor {
+        _ = sourceIdentity
+        _ = maximumSourceBytes
+        _ = maximumSourcePixelCount
+        _ = maximumOutputBytes
+        recordedInvocation = .init(
+            sourceURL: sourceURL,
+            ownerUserID: ownerUserID,
+            maximumOutputPixelSize: maximumOutputPixelSize
+        )
+        let data = try Data(contentsOf: sourceURL)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
+        let output = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let handle = try FileHandle(forWritingTo: destinationURL)
+        try handle.truncate(atOffset: 0)
+        try handle.write(contentsOf: output)
+        try handle.synchronize()
+        try handle.close()
+        return .init(
+            path: destinationURL.path,
+            mimeType: "image/png",
+            byteCount: output.count,
+            sha256: String(repeating: "0", count: 64),
+            pixelWidth: bitmap.pixelsWide,
+            pixelHeight: bitmap.pixelsHigh
+        )
+    }
+
+    func invocation() -> Invocation? { recordedInvocation }
 }

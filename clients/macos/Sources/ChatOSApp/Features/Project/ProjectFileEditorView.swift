@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSAPI
 import ChatOSCore
 import ChatOSNetworking
 import SwiftUI
@@ -257,6 +258,7 @@ struct ProjectFileEditorView: View {
 }
 
 enum ProjectImagePreviewLoader {
+    private static let maximumSourceBytes = 20 * 1_024 * 1_024
     private static let maximumSourcePixelCount = 64_000_000
     private static let maximumDisplayPixelSize = 4_096
 
@@ -276,8 +278,13 @@ enum ProjectImagePreviewLoader {
         content: String,
         isBinary: Bool,
         taskID: String,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
+        ownerUserID: String,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        availableCapacityOverride: Int64? = nil,
+        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) async throws -> AppDecodedThumbnail? {
+        guard !ownerUserID.isEmpty else { return nil }
         try Task.checkCancellation()
         return try await heavyMediaGovernor.perform(context: .init(
             taskID: String(taskID.prefix(160)),
@@ -285,26 +292,61 @@ enum ProjectImagePreviewLoader {
             estimatedDecodedBytes: maximumDisplayPixelSize
                 * maximumDisplayPixelSize * 4
         )) {
-            try await AppCancellableDetachedWork.run {
-                let data: Data
-                if isBinary {
-                    guard content.count <= 28 * 1_024 * 1_024,
-                          let value = Data(
-                            base64Encoded: content,
-                            options: .ignoreUnknownCharacters
-                          ) else { return nil }
-                    data = value
-                } else {
-                    guard content.utf8.count <= 20 * 1_024 * 1_024 else { return nil }
-                    data = Data(content.utf8)
-                }
-                return AppImageThumbnailLoader.decode(
-                    data,
-                    maximumSourcePixelCount: maximumSourcePixelCount,
-                    maximumDisplayPixelSize: maximumDisplayPixelSize
-                )
-            }
+            let source = try await materializeSource(
+                content: content,
+                isBinary: isBinary,
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: availableCapacityOverride
+            )
+            defer { withExtendedLifetime(source) {} }
+            return try await AppImageThumbnailLoader.loadLocalFileUsingWorker(
+                source.url,
+                ownerUserID: ownerUserID,
+                maximumBytes: maximumSourceBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumDisplayPixelSize: maximumDisplayPixelSize,
+                temporaryDirectory: temporaryDirectory,
+                availableCapacityOverride: availableCapacityOverride,
+                mediaWorker: mediaWorker
+            )
         }
+    }
+
+    private static func materializeSource(
+        content: String,
+        isBinary: Bool,
+        temporaryDirectory: URL,
+        availableCapacityOverride: Int64?
+    ) async throws -> GeneratedMediaFile {
+        let data: Data
+        if isBinary {
+            guard content.utf8.count <= 28 * 1_024 * 1_024,
+                  let decoded = Data(
+                    base64Encoded: content,
+                    options: .ignoreUnknownCharacters
+                  ),
+                  !decoded.isEmpty,
+                  decoded.count <= maximumSourceBytes else { throw CocoaError(.fileReadCorruptFile) }
+            data = decoded
+        } else {
+            guard content.utf8.count > 0,
+                  content.utf8.count <= maximumSourceBytes else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            data = Data(content.utf8)
+        }
+        try Task.checkCancellation()
+        let body = AsyncThrowingStream<Data, Error> { continuation in
+            continuation.yield(data)
+            continuation.finish()
+        }
+        return try await ChatOSMediaArtifactFileWriter.writeDownloadedImage(
+            body,
+            maximumBytes: maximumSourceBytes,
+            expectedBytes: data.count,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride
+        )
     }
 }
 
@@ -346,9 +388,13 @@ private struct ProjectImagePreview: View {
                 ProgressView().workspaceFill()
             }
         }
-        .task(id: "\(file.path)|\(file.size)|\(file.modifiedAt?.timeIntervalSince1970 ?? 0)") {
+        .task(id: "\(model.authenticatedUserID ?? "signed-out")|\(file.path)|\(file.size)|\(file.modifiedAt?.timeIntervalSince1970 ?? 0)") {
             image = nil
             loadFailed = false
+            guard let ownerUserID = model.authenticatedUserID else {
+                loadFailed = true
+                return
+            }
             let content = file.content
             let isBinary = file.isBinary
             let decoded: AppDecodedThumbnail?
@@ -360,12 +406,14 @@ private struct ProjectImagePreview: View {
                         path: file.path,
                         size: file.size,
                         modifiedAt: file.modifiedAt
-                    )
+                    ),
+                    ownerUserID: ownerUserID
                 )
             } catch {
                 return
             }
             guard !Task.isCancelled else { return }
+            guard model.authenticatedUserID == ownerUserID else { return }
             guard let decoded else {
                 loadFailed = true
                 return

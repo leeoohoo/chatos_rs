@@ -1926,6 +1926,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批只迁移 Story 已落盘视频的尾帧，不新增 UI poster 缓存，也不处理任意时间 frame 或正在下载的 partial。AVFoundation 仍必须用 App-owned 路径打开媒体；普通子进程不是 sandbox，同用户恶意进程若能在两次身份检查之间替换并恢复完全相同 inode/size 的内容，不属于当前信任模型。真实 512 MiB/4K physical-footprint、损坏容器/多轨/HDR/旋转矩阵、连续取消/崩溃、上传下载所有权、睡眠/断网/ENOSPC、长期 soak 和发布签名仍待完成，不能据此宣称 P0-E/P2/P4 完成。
 
+### 12.76 第五完整里程碑：项目文件 4K 图片预览迁入 Media Worker（2026-10-23）
+
+本里程碑关闭 12.69、12.74 保留的项目文件原始图片解码边界。项目文件服务当前仍以字符串 DTO 返回内容；此前预览路径在主 App 将最多约 28 MiB Base64 解成最多 20 MiB 压缩图片，再直接用 ImageIO 解析最高 64 MP 原图并生成 4K 像素面。现在 DTO 内容先有界落成私有 lease 文件，原图解析、方向变换、下采样和清洗 PNG 编码交给 `ChatOSMediaWorker`，App 只解码最长边 4096 的受限输出。
+
+已实施：
+
+- `ProjectImagePreviewLoader` 复用 `normalize_png_v1` 与既有 artifact writer，不新增 IPC capability。Base64 字符数、解码后 20 MiB、64 MP、输出 4096 px/20 MiB 门禁保持不变；输入和 Worker 输出均由 lease 管理，成功、失败或取消后自动删除临时目录。
+- 真实认证账户 ID 进入 Worker 请求；SwiftUI `.task(id:)` 同时包含账户身份，异步返回后再次核对当前账户，切换账户或退出登录会取消旧预览，旧账户像素面不会写入新账户页面状态。
+- 4K 预览继续占用既有单通道 `ClientHeavyMediaWorkGovernor` permit，permit 覆盖 Worker 启动、解码、输出和 App 最终受限 PNG 解码；task ID 仍为不暴露项目路径的进程内 opaque hash。
+
+验证：Debug 与原生 arm64 Release 的单元/真实 Worker 集成各 3 项全部通过，覆盖共享重媒体通道排队、真实账户/4K 参数透传、独立进程解码、最终像素尺寸，以及输入/输出 artifact 全部回收；Release 目标以 `warnings-as-errors` 优化编译通过。打包脚本语法、build-evidence 的 25 项回归和差异空白检查通过。完整 arm64 Release 诊断包通过 5 个二进制架构检查、Worker/App 嵌套签名、4 个 dSYM UUID 匹配、bundle 哈希和 build-evidence 校验，manifest 为 `diagnostic-build` / `uuid-matched`；首次打包因并行 Windows 源码在构建期间变化被 evidence 正确拒绝，输入稳定后的增量重跑通过。未运行 launch smoke，未启动、安装或替换正式 App。
+
+边界：项目文件上游 DTO 仍持有完整字符串；本批会在主进程短暂物化最多 20 MiB 的压缩源 `Data` 并立即落盘，只迁移高风险/高峰值的 64 MP ImageIO 解码，不宣称项目文件传输已经文件原生化。复制到剪贴板时既有 `imagePreviewData` 仍会按用户操作物化压缩数据；头像、Markdown 网络图片和其他普通 UI 图片消费者尚未全部迁移。真实 20 MiB/64 MP physical-footprint、快速切文件取消风暴、ENOSPC、长期 soak、上传下载与 durable media job 仍待完成，不能据此宣称 P0-E/P2/P4 完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

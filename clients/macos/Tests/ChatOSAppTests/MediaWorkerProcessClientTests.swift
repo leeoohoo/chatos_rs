@@ -115,6 +115,45 @@ final class MediaWorkerProcessClientTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
     }
 
+    func testProjectImagePreviewRunsThroughBuiltWorkerAndCleansArtifacts() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run project-preview integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 96,
+            pixelsHigh: 48,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+
+        let preview = try await ProjectImagePreviewLoader.decode(
+            content: png.base64EncodedString(),
+            isBinary: true,
+            taskID: "project-image:worker-test:preview",
+            ownerUserID: "process-client-test",
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: MediaWorkerProcessClient(
+                executableURL: URL(fileURLWithPath: path),
+                timeout: 10
+            )
+        )
+
+        XCTAssertEqual(preview?.image.width, 96)
+        XCTAssertEqual(preview?.image.height, 48)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+    }
+
     func testStoryNormalizationRunsThroughBuiltWorkerAndLeaseArtifact() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
               !path.isEmpty else {
