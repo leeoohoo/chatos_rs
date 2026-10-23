@@ -5,6 +5,75 @@ import Foundation
 import XCTest
 
 extension LocalAgentGroupChatSchedulerTests {
+    func testRuntimeCircuitBreakerRejectsBeforeDurableDeliveryClaim() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-worker-admission-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "熔断测试执行者",
+                rolePrompt: "执行任务。",
+                modelConfigID: "local-model"
+            )
+        )
+        let team = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "worker-admission-project",
+            draft: .init(name: "熔断测试团队")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: team.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        _ = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "worker-admission-todo",
+            draft: .init(title: "等待 Worker 恢复", teamRoomID: team.id),
+            nowUnixMs: 100
+        )
+        let deliveryValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 101
+        )
+        let delivery = try XCTUnwrap(deliveryValue)
+        let settingsSuite = "local-agent-worker-admission-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let runtime = RejectingAgentWorkerAdmissionRuntime()
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: SchedulerTestServices(),
+            settings: .init(suiteName: settingsSuite),
+            runtime: runtime,
+            now: { 200 }
+        )
+
+        do {
+            _ = try await scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 1)
+            XCTFail("scheduler claimed work while the worker circuit was open")
+        } catch let error as AgentWorkerProcessClientError {
+            guard case .temporarilyUnavailable = error else { throw error }
+        }
+
+        let storedDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: delivery.id
+        )
+        XCTAssertEqual(storedDelivery?.status, .pending)
+        let storedRun = try await store.run(ownerUserID: "alice", deliveryID: delivery.id)
+        XCTAssertNil(storedRun)
+        let executionCount = await runtime.executionCount()
+        XCTAssertEqual(executionCount, 0)
+    }
+
     func testWorkerInterruptionWithInFlightToolRequiresReviewInsteadOfReplay() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-worker-interruption-\(UUID().uuidString)")
@@ -294,6 +363,31 @@ extension LocalAgentGroupChatSchedulerTests {
         )
         XCTAssertEqual(messages.map(\.content), ["记住之前的工作继续做"])
     }
+}
+
+private actor RejectingAgentWorkerAdmissionRuntime: AgentRuntimeExecuting {
+    private var executions = 0
+
+    func checkExecutionAdmission() async throws {
+        throw AgentWorkerProcessClientError.temporarilyUnavailable(retryAfterSeconds: 30)
+    }
+
+    func executeRun(
+        checkpoint: AgentRunCheckpoint,
+        scope: String,
+        policy: AgentRunPolicy,
+        model: any AgentModelClient,
+        tools: [AgentToolDefinition],
+        execute: @escaping AgentRuntime.Executor,
+        completionCheck: @escaping AgentRuntime.CompletionCheck,
+        contextProvider: (any AgentContextProviding)?,
+        record: @escaping AgentRuntime.Recorder
+    ) async throws -> AgentRunCheckpoint {
+        executions += 1
+        return checkpoint
+    }
+
+    func executionCount() -> Int { executions }
 }
 
 private struct InterruptedAgentWorkerRuntime: AgentRuntimeExecuting {

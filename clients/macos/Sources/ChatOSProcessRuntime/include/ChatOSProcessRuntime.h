@@ -45,4 +45,15 @@ int chatos_process_matches_start_time(
     uint64_t microseconds
 );
 
+/// Samples one process only when pid still has the expected kernel start timestamp. Physical
+/// footprint is the kernel's pressure-aware resident footprint; CPU time is cumulative user plus
+/// system time in nanoseconds. Returns ESRCH if the process exited or the pid was reused.
+int chatos_process_resource_usage(
+    pid_t pid,
+    uint64_t expected_start_seconds,
+    uint64_t expected_start_microseconds,
+    uint64_t *physical_footprint_bytes,
+    uint64_t *cpu_time_nanoseconds
+);
+
 #endif

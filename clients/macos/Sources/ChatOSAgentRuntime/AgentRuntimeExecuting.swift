@@ -4,6 +4,11 @@ import Foundation
 /// worker client implement the same contract, so application wiring can require a process boundary
 /// without moving SQLite ownership or tool authority into the worker.
 public protocol AgentRuntimeExecuting: Sendable {
+    /// Checks whether a new durable delivery may be claimed for this runtime. Implementations
+    /// with a shared process boundary use this hook to reject work while that boundary is in
+    /// crash backoff, before the scheduler changes persistent delivery state.
+    func checkExecutionAdmission() async throws
+
     func executeRun(
         checkpoint: AgentRunCheckpoint,
         scope: String,
@@ -15,6 +20,10 @@ public protocol AgentRuntimeExecuting: Sendable {
         contextProvider: (any AgentContextProviding)?,
         record: @escaping AgentRuntime.Recorder
     ) async throws -> AgentRunCheckpoint
+}
+
+public extension AgentRuntimeExecuting {
+    func checkExecutionAdmission() async throws {}
 }
 
 extension AgentRuntime: AgentRuntimeExecuting {

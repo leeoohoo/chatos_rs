@@ -179,6 +179,7 @@ extension LocalAgentGroupChatScheduler {
             claimingPasses: while claimedWork.count < remainingCapacity {
                 var claimedInPass = false
                 for agentID in agentIDs where !exhaustedAgentIDs.contains(agentID) {
+                    try await runtime.checkExecutionAdmission()
                     let executionPermit: LocalAgentExecutionPermit?
                     if claimedWork.isEmpty {
                         executionPermit = await executionGovernor.acquire()
@@ -282,6 +283,7 @@ extension LocalAgentGroupChatScheduler {
         let runs = try await store.listInterruptedRuns(ownerUserID: ownerUserID, limit: 500)
         var results: [DeliveryAttemptReceipt] = []
         for run in runs where results.count < maximumRuns {
+            try await runtime.checkExecutionAdmission()
             guard let executionPermit = await executionGovernor.acquire() else { break }
             defer { executionPermit.release() }
             let deliveryID = run.context.deliveryID
@@ -399,6 +401,7 @@ extension LocalAgentGroupChatScheduler {
             claimingMembers: for member in members where claimedWork.count < remainingCapacity {
                 for _ in 0..<2 where claimedWork.count < remainingCapacity {
                     if Task.isCancelled { break }
+                    try await runtime.checkExecutionAdmission()
                     let executionPermit: LocalAgentExecutionPermit?
                     if claimedWork.isEmpty {
                         executionPermit = await executionGovernor.acquire()

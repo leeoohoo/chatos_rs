@@ -132,3 +132,44 @@ int chatos_process_matches_start_time(
     if (result != 0) return result;
     return current_seconds == seconds && current_microseconds == microseconds ? 1 : 0;
 }
+
+int chatos_process_resource_usage(
+    pid_t pid,
+    uint64_t expected_start_seconds,
+    uint64_t expected_start_microseconds,
+    uint64_t *physical_footprint_bytes,
+    uint64_t *cpu_time_nanoseconds
+) {
+    if (pid <= 0 || physical_footprint_bytes == NULL || cpu_time_nanoseconds == NULL) {
+        return EINVAL;
+    }
+    int matches = chatos_process_matches_start_time(
+        pid,
+        expected_start_seconds,
+        expected_start_microseconds
+    );
+    if (matches == 0) return ESRCH;
+    if (matches != 1) return matches;
+
+    struct rusage_info_v2 usage;
+    if (proc_pid_rusage(pid, RUSAGE_INFO_V2, (rusage_info_t *)&usage) != 0) {
+        return errno == 0 ? ESRCH : errno;
+    }
+
+    // Re-check after sampling so a pid reused during the syscall cannot be attributed to this Run.
+    matches = chatos_process_matches_start_time(
+        pid,
+        expected_start_seconds,
+        expected_start_microseconds
+    );
+    if (matches == 0) return ESRCH;
+    if (matches != 1) return matches;
+
+    *physical_footprint_bytes = usage.ri_phys_footprint;
+    if (UINT64_MAX - usage.ri_user_time < usage.ri_system_time) {
+        *cpu_time_nanoseconds = UINT64_MAX;
+    } else {
+        *cpu_time_nanoseconds = usage.ri_user_time + usage.ri_system_time;
+    }
+    return 0;
+}
