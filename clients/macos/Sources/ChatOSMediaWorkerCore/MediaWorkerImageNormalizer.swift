@@ -37,6 +37,51 @@ public enum ChatOSMediaWorkerEngine {
         _ request: MediaWorkerNormalizePNGRequest
     ) throws -> MediaWorkerImageDescriptor {
         try validateRequest(request)
+        return try normalizeImage(
+            request,
+            uniformType: "public.png" as CFString,
+            mimeType: "image/png",
+            encodingProperties: nil
+        )
+    }
+
+    public static func normalizeJPEG(
+        _ request: MediaWorkerNormalizeJPEGRequest
+    ) throws -> MediaWorkerImageDescriptor {
+        try validateRequest(request)
+        let commonRequest = MediaWorkerNormalizePNGRequest(
+            protocolVersion: request.protocolVersion,
+            requestID: request.requestID,
+            ownerUserID: request.ownerUserID,
+            accountSessionID: request.accountSessionID,
+            sessionEpoch: request.sessionEpoch,
+            helperInstanceID: request.helperInstanceID,
+            deadlineUnixMilliseconds: request.deadlineUnixMilliseconds,
+            sourcePath: request.sourcePath,
+            sourceIdentity: request.sourceIdentity,
+            destinationPath: request.destinationPath,
+            destinationIdentity: request.destinationIdentity,
+            maximumSourceBytes: request.maximumSourceBytes,
+            maximumSourcePixelCount: request.maximumSourcePixelCount,
+            maximumOutputPixelSize: request.maximumOutputPixelSize,
+            maximumOutputBytes: request.maximumOutputBytes
+        )
+        return try normalizeImage(
+            commonRequest,
+            uniformType: "public.jpeg" as CFString,
+            mimeType: "image/jpeg",
+            encodingProperties: [
+                kCGImageDestinationLossyCompressionQuality: request.compressionQuality,
+            ]
+        )
+    }
+
+    private static func normalizeImage(
+        _ request: MediaWorkerNormalizePNGRequest,
+        uniformType: CFString,
+        mimeType: String,
+        encodingProperties: [CFString: Any]?
+    ) throws -> MediaWorkerImageDescriptor {
         try checkDeadline(request.deadlineUnixMilliseconds)
 
         let sourceDescriptor = try openAuthorizedSource(request)
@@ -114,19 +159,23 @@ public enum ChatOSMediaWorkerEngine {
             cbks: &callbacks
         ), let destination = CGImageDestinationCreateWithDataConsumer(
             consumer,
-            "public.png" as CFString,
+            uniformType,
             1,
             nil
         ) else {
-            throw MediaWorkerCoreError.invalidImage("The PNG encoder could not be created.")
+            throw MediaWorkerCoreError.invalidImage("The image encoder could not be created.")
         }
-        CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationAddImage(
+            destination,
+            image,
+            encodingProperties.map { $0 as CFDictionary }
+        )
         let finalized = CGImageDestinationFinalize(destination)
         try withExtendedLifetime(consumerState) {
             if let error = consumerState.error { throw error }
         }
         guard finalized, consumerState.bytesWritten > 0 else {
-            throw MediaWorkerCoreError.invalidImage("The PNG encoder rejected the image.")
+            throw MediaWorkerCoreError.invalidImage("The image encoder rejected the image.")
         }
         guard fsync(destinationDescriptor) == 0 else {
             if errno == ENOSPC { throw MediaWorkerCoreError.insufficientDiskSpace }
@@ -148,7 +197,7 @@ public enum ChatOSMediaWorkerEngine {
 
         return .init(
             path: request.destinationPath,
-            mimeType: "image/png",
+            mimeType: mimeType,
             byteCount: Int(finalStatus.st_size),
             sha256: try sha256(descriptor: destinationDescriptor),
             pixelWidth: image.width,
@@ -259,6 +308,34 @@ public enum ChatOSMediaWorkerEngine {
               request.maximumOutputBytes
                 <= ChatOSMediaWorkerProtocol.maximumNormalizedImageBytes else {
             throw MediaWorkerCoreError.invalidRequest("The normalize request is outside v1 limits.")
+        }
+    }
+
+    private static func validateRequest(_ request: MediaWorkerNormalizeJPEGRequest) throws {
+        guard request.type == "request",
+              request.protocolVersion == ChatOSMediaWorkerProtocol.maximumVersion,
+              request.operation == ChatOSMediaWorkerProtocol.normalizeJPEGOperation,
+              !request.requestID.isEmpty,
+              !request.ownerUserID.isEmpty,
+              !request.accountSessionID.isEmpty,
+              !request.sessionEpoch.isEmpty,
+              !request.helperInstanceID.isEmpty,
+              request.maximumSourceBytes > 0,
+              request.maximumSourceBytes
+                <= ChatOSMediaWorkerProtocol.maximumNormalizedImageBytes,
+              request.maximumSourcePixelCount > 0,
+              request.maximumSourcePixelCount
+                <= ChatOSMediaWorkerProtocol.maximumNormalizedImagePixels,
+              request.maximumOutputPixelSize > 0,
+              request.maximumOutputPixelSize <= 8_192,
+              request.maximumOutputBytes > 0,
+              request.maximumOutputBytes
+                <= ChatOSMediaWorkerProtocol.maximumNormalizedImageBytes,
+              request.compressionQuality.isFinite,
+              (0...1).contains(request.compressionQuality) else {
+            throw MediaWorkerCoreError.invalidRequest(
+                "The JPEG normalize request is outside v2 limits."
+            )
         }
     }
 

@@ -1,19 +1,100 @@
 import Foundation
 
 public enum ChatOSMediaWorkerProtocol {
-    public static let minimumVersion = 1
-    public static let maximumVersion = 1
-    public static let buildVersion = "media-worker-v1"
+    public static let minimumVersion = 2
+    public static let maximumVersion = 2
+    public static let buildVersion = "media-worker-v2"
     public static let maximumInlineBytes = 512 * 1_024
     public static let maximumNormalizedImageBytes = 25 * 1_024 * 1_024
     public static let maximumNormalizedImagePixels = 64_000_000
     public static let normalizePNGOperation = "normalize_png_v1"
+    public static let normalizeJPEGOperation = "normalize_jpeg_v1"
     public static let extractLastVideoFramePNGOperation = "extract_last_video_frame_png_v1"
 
     public static let capabilities = [
         normalizePNGOperation,
+        normalizeJPEGOperation,
         extractLastVideoFramePNGOperation,
     ]
+}
+
+public struct MediaWorkerNormalizeJPEGRequest: Codable, Sendable, Equatable {
+    public let type: String
+    public let protocolVersion: Int
+    public let requestID: String
+    public let ownerUserID: String
+    public let accountSessionID: String
+    public let sessionEpoch: String
+    public let helperInstanceID: String
+    public let operation: String
+    public let deadlineUnixMilliseconds: Int64
+    public let sourcePath: String
+    public let sourceIdentity: MediaWorkerFileIdentity
+    public let destinationPath: String
+    public let destinationIdentity: MediaWorkerFileIdentity
+    public let maximumSourceBytes: Int
+    public let maximumSourcePixelCount: Int
+    public let maximumOutputPixelSize: Int
+    public let maximumOutputBytes: Int
+    public let compressionQuality: Double
+
+    public init(
+        protocolVersion: Int,
+        requestID: String,
+        ownerUserID: String,
+        accountSessionID: String,
+        sessionEpoch: String,
+        helperInstanceID: String,
+        deadlineUnixMilliseconds: Int64,
+        sourcePath: String,
+        sourceIdentity: MediaWorkerFileIdentity,
+        destinationPath: String,
+        destinationIdentity: MediaWorkerFileIdentity,
+        maximumSourceBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int,
+        compressionQuality: Double
+    ) {
+        type = "request"
+        self.protocolVersion = protocolVersion
+        self.requestID = requestID
+        self.ownerUserID = ownerUserID
+        self.accountSessionID = accountSessionID
+        self.sessionEpoch = sessionEpoch
+        self.helperInstanceID = helperInstanceID
+        operation = ChatOSMediaWorkerProtocol.normalizeJPEGOperation
+        self.deadlineUnixMilliseconds = deadlineUnixMilliseconds
+        self.sourcePath = sourcePath
+        self.sourceIdentity = sourceIdentity
+        self.destinationPath = destinationPath
+        self.destinationIdentity = destinationIdentity
+        self.maximumSourceBytes = maximumSourceBytes
+        self.maximumSourcePixelCount = maximumSourcePixelCount
+        self.maximumOutputPixelSize = maximumOutputPixelSize
+        self.maximumOutputBytes = maximumOutputBytes
+        self.compressionQuality = compressionQuality
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, operation
+        case protocolVersion = "protocol_version"
+        case requestID = "request_id"
+        case ownerUserID = "owner_user_id"
+        case accountSessionID = "account_session_id"
+        case sessionEpoch = "session_epoch"
+        case helperInstanceID = "helper_instance_id"
+        case deadlineUnixMilliseconds = "deadline_unix_milliseconds"
+        case sourcePath = "source_path"
+        case sourceIdentity = "source_identity"
+        case destinationPath = "destination_path"
+        case destinationIdentity = "destination_identity"
+        case maximumSourceBytes = "maximum_source_bytes"
+        case maximumSourcePixelCount = "maximum_source_pixel_count"
+        case maximumOutputPixelSize = "maximum_output_pixel_size"
+        case maximumOutputBytes = "maximum_output_bytes"
+        case compressionQuality = "compression_quality"
+    }
 }
 
 public struct MediaWorkerFileIdentity: Codable, Sendable, Equatable {

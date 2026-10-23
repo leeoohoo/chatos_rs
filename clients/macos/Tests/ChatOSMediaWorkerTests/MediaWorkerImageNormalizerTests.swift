@@ -22,6 +22,22 @@ final class MediaWorkerImageNormalizerTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fixture.destination).count, descriptor.byteCount)
     }
 
+    func testNormalizeJPEGUsesAuthorizedPrecreatedDestination() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let descriptor = try ChatOSMediaWorkerEngine.normalizeJPEG(
+            try jpegRequest(source: fixture.source, destination: fixture.destination)
+        )
+
+        let data = try Data(contentsOf: fixture.destination)
+        XCTAssertEqual(descriptor.path, fixture.destination.path)
+        XCTAssertEqual(descriptor.mimeType, "image/jpeg")
+        XCTAssertGreaterThan(descriptor.byteCount, 0)
+        XCTAssertTrue(data.starts(with: [0xFF, 0xD8]))
+        XCTAssertEqual(data.suffix(2), Data([0xFF, 0xD9]))
+    }
+
     func testNormalizePNGAcceptsProtocolByteCeiling() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -222,6 +238,30 @@ final class MediaWorkerImageNormalizerTests: XCTestCase {
             maximumSourceBytes: 512 * 1_024 * 1_024,
             maximumOutputPixelSize: 4_096,
             maximumOutputBytes: 20 * 1_024 * 1_024
+        )
+    }
+
+    private func jpegRequest(
+        source: URL,
+        destination: URL
+    ) throws -> MediaWorkerNormalizeJPEGRequest {
+        .init(
+            protocolVersion: ChatOSMediaWorkerProtocol.maximumVersion,
+            requestID: UUID().uuidString.lowercased(),
+            ownerUserID: "worker-test",
+            accountSessionID: "worker-test-session",
+            sessionEpoch: "worker-test-epoch",
+            helperInstanceID: "worker-test-instance",
+            deadlineUnixMilliseconds: Int64((Date().timeIntervalSince1970 + 30) * 1_000),
+            sourcePath: source.path,
+            sourceIdentity: try identity(source),
+            destinationPath: destination.path,
+            destinationIdentity: try identity(destination),
+            maximumSourceBytes: 20 * 1_024 * 1_024,
+            maximumSourcePixelCount: 64_000_000,
+            maximumOutputPixelSize: 4_096,
+            maximumOutputBytes: 20 * 1_024 * 1_024,
+            compressionQuality: 0.82
         )
     }
 

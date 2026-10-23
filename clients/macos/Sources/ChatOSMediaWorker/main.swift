@@ -147,6 +147,38 @@ do {
                 retryable: false
             ))
         }
+    case ChatOSMediaWorkerProtocol.normalizeJPEGOperation:
+        let request = try MediaWorkerWireCodec.decode(
+            MediaWorkerNormalizeJPEGRequest.self,
+            from: requestData
+        )
+        guard request.helperInstanceID == helperInstanceID else {
+            throw MediaWorkerCoreError.invalidRequest(
+                "The helper instance does not match the handshake."
+            )
+        }
+        do {
+            let result = try ChatOSMediaWorkerEngine.normalizeJPEG(request)
+            try writeLine(MediaWorkerNormalizePNGResponse(
+                requestID: request.requestID,
+                result: result
+            ))
+        } catch let error as MediaWorkerCoreError {
+            try writeLine(MediaWorkerNormalizePNGResponse(
+                requestID: request.requestID,
+                error: error.payload,
+                retryable: false
+            ))
+        } catch {
+            try writeLine(MediaWorkerNormalizePNGResponse(
+                requestID: request.requestID,
+                error: .init(
+                    code: "worker_failure",
+                    message: "The media worker could not normalize the JPEG image."
+                ),
+                retryable: false
+            ))
+        }
     case ChatOSMediaWorkerProtocol.extractLastVideoFramePNGOperation:
         let request = try MediaWorkerWireCodec.decode(
             MediaWorkerExtractVideoFrameRequest.self,

@@ -1,8 +1,8 @@
 # ADR 23：Media Worker 单用途子进程与继承管道
 
 - 状态：已冻结并用于 P2 图片归一化与预览缩略图生产切片
-- 日期：2026-10-23
-- 适用版本：`media-worker-v1` / wire protocol v1
+- 日期：2026-10-24
+- 适用版本：`media-worker-v2` / wire protocol v2
 
 ## 问题与证据
 
@@ -18,17 +18,17 @@ Story 图片归一化此前在主 App 内使用 ImageIO 解码和编码，视频
 
 ## 决定
 
-P2 媒体解码垂直切片只采用选项 3，不并行维护 XPC 或 socket 实现。`ChatOSMediaWorker` 是放在 `Contents/MacOS` 的独立 arm64 executable；App 通过匿名 stdin/stdout 管道先完成 hello，再提交一个 `normalize_png_v1` 或 `extract_last_video_frame_png_v1` 请求，收到单个终态响应后进程退出。Story 最终图片与 UI 缩略图复用同一图片操作和安全边界，只通过不同的输出像素上限区分；视频操作固定提取尾帧，不接受任意时间或任意输出格式。
+P2 媒体解码垂直切片只采用选项 3，不并行维护 XPC 或 socket 实现。`ChatOSMediaWorker` 是放在 `Contents/MacOS` 的独立 arm64 executable；App 通过匿名 stdin/stdout 管道先完成 hello，再提交一个 `normalize_png_v1`、`normalize_jpeg_v1` 或 `extract_last_video_frame_png_v1` 请求，收到单个终态响应后进程退出。Story 最终图片与 UI 缩略图复用 PNG 操作和安全边界；模型兼容图片使用固定质量、有界尺寸的 JPEG 操作；视频操作固定提取尾帧，不接受任意时间。
 
-每个 Worker-backed 请求拥有独立进程、PID、超时、取消和故障边界，不再经过进程内的全局单槽媒体 Governor。项目图片预览、Media Studio 缩略图和 Agent 头像可以并行进入各自 Worker；仍在 App/Connector 进程内执行的旧图片归一化路径继续受有界 Governor 保护，直到迁入 Worker。
+每个 Worker-backed 请求拥有独立进程、PID、超时、取消和故障边界，不再经过进程内的全局单槽媒体 Governor。项目图片预览、Media Studio 缩略图、Agent 头像、粘贴附件和 Plugin 模型图片可以并行进入各自 Worker；单个 Plugin 结果内最多 8 个合格图片块也各自启动 Worker 并行处理，结果按原索引归并。
 
 协议规则：
 
-- hello 协商 min/max protocol、`media-worker-v1` build contract、capabilities 和 512 KiB inline 上限；握手前不接受业务请求。
+- hello 协商 min/max protocol、`media-worker-v2` build contract、capabilities 和 512 KiB inline 上限；握手前不接受业务请求。v1 与 v2 区间不重叠，旧 App/Worker 组合必须 fail closed。
 - 每个请求包含 request/account session/session epoch/helper instance、deadline、operation 和小型文件 descriptor 元数据；媒体字节禁止进入 JSON。
 - Worker 不接收 API secret、不联网、不拥有 UI/Story 元数据，也不打开 Local Agent 数据库。
 - App 预创建 mode `0600` 的 lease-owned 输出文件。请求携带输入/输出的 device、inode 和 byte count；Worker 使用 `O_NOFOLLOW` 打开后 `fstat` 复核普通文件、owner、大小、单链接输出和文件身份。路径替换、symlink、同一输入输出均 fail-closed。
-- 图片归一化协议硬上限为 25 MiB/64 MP，归一化长边最多 8192 px；常规媒体消费者继续使用 20 MiB 业务上限，宠物文件台为兼容既有本机文件预览使用 25 MiB。视频输入最多 512 MiB，尾帧长边最多 4096 px；PNG 输出协议硬上限为 25 MiB。ImageIO/AVFoundation 解码、PNG 编码、同步和 SHA-256 都在 Worker 内执行；App 只持有文件 artifact 和小型 descriptor。
+- 图片归一化协议硬上限为 25 MiB/64 MP，归一化长边最多 8192 px；常规媒体消费者继续使用 20 MiB 业务上限，宠物文件台为兼容既有本机文件预览使用 25 MiB。JPEG 压缩质量必须是有限的 `0...1`，生产 Plugin 路径固定为 `0.82` 和 4096 px。视频输入最多 512 MiB，尾帧长边最多 4096 px；图片输出协议硬上限为 25 MiB。ImageIO/AVFoundation 解码、PNG/JPEG 编码、同步和 SHA-256 都在 Worker 内执行；App 只持有文件 artifact、小型 descriptor，以及确需进入请求 DTO 的最终有界图片字节。
 
 ## 生命周期、监督与失败
 
@@ -47,4 +47,4 @@ P2 媒体解码垂直切片只采用选项 3，不并行维护 XPC 或 socket �
 
 最小门禁包括：协议握手、真实独立进程归一化、symlink/文件替换拒绝、像素/字节/deadline、取消后子进程消失、Debug/Release 回归，以及打包后架构、签名和 build evidence 校验。
 
-本 ADR 当前覆盖 Story PNG 归一化、Media Studio 缩略图/全屏预览、普通聊天和 Agent 聊天持久图片附件预览、项目文件 4K 图片预览、宠物文件台本机图片预览、Agent 头像原图，以及 Story 视频尾帧提取。App 为显示或生成最终小图仍需解码 Worker 产生的受限尺寸 PNG，但不再在 UI 进程解析这些路径最高 25 MiB/64 MP 的原图；Story 尾帧则以 lease-owned 文件直接提交 Store，不回到主进程 `Data`。通用视频 poster/任意时间 frame、Markdown/Visual Session 等高频图片消费者、媒体上传/下载、durable media job 所有权、跨账户 durable lease、真实大媒体 physical-footprint、内存压力/取消风暴、ENOSPC/睡眠/断网和发布 soak 仍属于后续 P2/P4 门禁。
+本 ADR 当前覆盖 Story PNG 归一化、Media Studio 缩略图/全屏预览、普通聊天和 Agent 聊天持久图片附件预览、项目文件 4K 图片预览、宠物文件台本机图片预览、Agent 头像原图、剪贴板 TIFF 等非直传图片、Plugin 模型 PNG→JPEG，以及 Story 视频尾帧提取。App 为显示、上传或模型请求仍会读取 Worker 产生的有界 PNG/JPEG，但不再在 UI/Connector 进程解析这些路径最高 25 MiB/64 MP 的原图；Story 尾帧则以 lease-owned 文件直接提交 Store，不回到主进程 `Data`。通用视频 poster/任意时间 frame、Markdown/Visual Session 等高频图片消费者、媒体上传/下载、durable media job 所有权、跨账户 durable lease、真实大媒体 physical-footprint、内存压力/取消风暴、ENOSPC/睡眠/断网和发布 soak 仍属于后续 P2/P4 门禁。

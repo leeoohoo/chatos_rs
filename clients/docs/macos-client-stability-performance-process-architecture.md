@@ -2003,6 +2003,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：当前迁移的是生产 Agent 团队调度器使用的 Responses provider，不自动改变 Story Studio 的一次性规划调用，也不把自定义注入 transport、Memory 或工具实现伪装成已进程化。上游 key 在 Run 存活期间存在于可信 Worker 内存；Worker 尚无独立 App Sandbox/seatbelt，因此这是故障与工作集隔离，不是对本机恶意进程的秘密隔离。后续仍需动态 CPU/内存预算、连续崩溃熔断、真实强杀授权/网络/工具各窗口、睡眠/断网/账户切换及长时间组合 soak，并逐项迁移仍在 App 内且适合跨进程的工具负载。
 
+### 12.81 第十完整里程碑：剩余图片归一化解除主进程单槽阻塞（2026-10-24）
+
+本里程碑关闭生产代码中最后两条依赖 `ClientHeavyMediaWorkGovernor.shared` 的图片链路。剪贴板 TIFF 等非直传格式和 Plugin 模型 PNG 此前仍在 App/Connector 进程内执行 ImageIO/AppKit 解码，并被同一个全局单槽 Governor 串行化；任何一张慢图都会让无关会话、项目和媒体功能排队。
+
+已实施：
+
+- 粘贴图片先写入 mode `0700/0600` 的随机私有临时目录，再通过既有 `normalize_png_v1` 启动专属 `ChatOSMediaWorker`。每次粘贴拥有独立 PID、deadline、取消和故障边界；Worker 输出经路径、MIME、字节数、SHA-256、像素和 PNG 签名校验后才读回有界附件字节，成功/失败/取消均删除临时目录。
+- Media Worker wire/build contract 升至 v2，新增 `normalize_jpeg_v1`。JPEG 请求沿用输入/输出 inode 授权、25 MiB/64 MP 协议上限、最长边、deadline、同步和摘要校验，并额外验证有限的 `0...1` 压缩质量及 JPEG 首尾签名；v1/v2 不兼容组合 fail closed。
+- Plugin 模型图片最多接受 8 个 image block；合格 PNG 不再在 Connector 内解码，而是每块各自并行启动一个 JPEG Worker，完成后按原索引归并。单块损坏只降级为该块的显式 unavailable 文本，取消仍向上传播，不拖住或污染其他会话。
+- 会话粘贴路径和 Plugin 执行路径显式传入各自 session/owner 范围；测试注入协议与生产 `MediaWorkerProcessClient.shared` 使用同一调用契约。生产源码已无 `ClientHeavyMediaWorkGovernor.shared` 调用，旧类型暂留作历史测试与后续删除，不再成为运行时准入点。
+- ADR 23 同步冻结 `media-worker-v2`、JPEG capability、并行图片块和当前覆盖范围；打包仍只维护 inherited stdio 这一套正式 IPC。
+
+验证：Debug 与原生 arm64 Release 的针对性矩阵各 23 项全部通过，包括 Worker Core 9 项、Plugin 归一化/并发 6 项、粘贴图片 6 项和两条真实 Worker 进程集成。并发回归证明同一 Plugin 结果的 3 张图片达到 Worker 最大并发 3；真实 Release Worker 完成 TIFF→PNG 与 PNG→JPEG。Release 全测试目标以 `warnings-as-errors` 完成优化编译；build-evidence 脚本 25 项和 `git diff --check` 通过。未运行 launch smoke，未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：最终 PNG/JPEG 仍需作为有界 `Data` 进入聊天附件或模型请求 DTO，本批消除的是原始容器的主进程解码/编码和跨功能单槽等待，不是网络层 JSON/Base64 流式化。单个 Plugin 结果最多可并行 8 个 Worker，后续账户级动态 CPU/内存预算必须做跨进程观测与公平调度，不能重新用全局单槽锁实现。Media Worker 当前共享异常退避状态，连续 Helper 基础设施故障可能影响后续启动；按会话/请求隔离熔断、ENOSPC、内存压力、取消风暴和长期 soak 仍是后续门禁。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

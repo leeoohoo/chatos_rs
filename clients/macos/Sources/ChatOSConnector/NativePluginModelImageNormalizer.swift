@@ -1,148 +1,173 @@
-import AppKit
-import ChatOSNetworking
+import ChatOSMediaWorkerClient
 import Foundation
-import ImageIO
 
 enum NativePluginModelImageNormalizer {
-    private static let jpegCompressionQuality: CGFloat = 0.82
+    private static let jpegCompressionQuality = 0.82
     static let maximumEncodedCharacters = 28 * 1_024 * 1_024
     static let maximumDecodedBytes = 20 * 1_024 * 1_024
     static let maximumSourcePixelCount = 64_000_000
     static let maximumDisplayPixelSize = 4_096
     static let maximumImageBlocks = 8
-    private static let estimatedDecodedBytes = maximumDisplayPixelSize
-        * maximumDisplayPixelSize * 4
 
     /// Normalize image blocks only after the plugin runtime has consumed the
-    /// original result for its local visual session. This keeps picture-in-
-    /// picture frames lossless while giving model gateways a broadly compatible
-    /// baseline JPEG payload.
+    /// original result for its local visual session. Every eligible image is
+    /// handled by its own short-lived media worker process so unrelated plugin
+    /// calls and image blocks cannot serialize or crash the application process.
     static func normalizeForModel(
         _ result: NativeJSONValue,
-        taskID: String? = nil,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
+        ownerUserID: String = "plugin-model-image",
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        mediaWorker: any MediaWorkerJPEGNormalizing = MediaWorkerProcessClient.shared
     ) async throws -> NativeJSONValue {
         try Task.checkCancellation()
-        guard containsPNGImage(result) else { return result }
-        let component = taskID.map { String($0.prefix(128)) }
-            ?? UUID().uuidString.lowercased()
-        return try await heavyMediaGovernor.perform(context: .init(
-            taskID: "plugin-image:\(component):normalize",
-            kind: .imageDecode,
-            estimatedDecodedBytes: estimatedDecodedBytes
-        )) {
-            let task = Task.detached(priority: .userInitiated) {
-                try Task.checkCancellation()
-                return try normalize(result)
-            }
-            return try await withTaskCancellationHandler {
-                try await task.value
-            } onCancel: {
-                task.cancel()
-            }
-        }
-    }
-
-    private static func containsPNGImage(_ result: NativeJSONValue) -> Bool {
-        result.jsonObject?["content"]?.jsonArray?.contains { item in
-            guard item.jsonObject?["type"]?.jsonString == "image" else { return false }
-            let object = item.jsonObject
-            return object?["mimeType"]?.jsonString == "image/png"
-                || object?["mime_type"]?.jsonString == "image/png"
-                || object?["mime"]?.jsonString == "image/png"
-        } == true
-    }
-
-    nonisolated private static func normalize(_ result: NativeJSONValue) throws -> NativeJSONValue {
-        guard case var .object(root) = result,
+        guard containsPNGImage(result),
+              case var .object(root) = result,
               case let .array(content)? = root["content"] else {
             return result
         }
 
-        var normalized: [NativeJSONValue] = []
-        normalized.reserveCapacity(content.count)
+        var normalized = content
         var imageBlockCount = 0
-        for item in content {
-            try Task.checkCancellation()
+        var work: [(index: Int, item: NativeJSONValue)] = []
+        for (index, item) in content.enumerated() {
             let isImage = item.jsonObject?["type"]?.jsonString == "image"
-            if isImage {
-                imageBlockCount += 1
+            if isImage { imageBlockCount += 1 }
+            if imageBlockCount > maximumImageBlocks, isImage {
+                normalized[index] = unavailableItem("the plugin returned too many image blocks")
+            } else if isPNGImage(item) {
+                work.append((index, item))
             }
-            normalized.append(
-                imageBlockCount > maximumImageBlocks && isImage
-                    ? unavailableItem("the plugin returned too many image blocks")
-                    : normalizeContentItem(item)
-            )
         }
+
+        try await withThrowingTaskGroup(
+            of: (Int, NativeJSONValue).self
+        ) { group in
+            for entry in work {
+                group.addTask {
+                    let item = try await normalizeContentItem(
+                        entry.item,
+                        index: entry.index,
+                        ownerUserID: ownerUserID,
+                        temporaryDirectory: temporaryDirectory,
+                        mediaWorker: mediaWorker
+                    )
+                    return (entry.index, item)
+                }
+            }
+            for try await (index, item) in group {
+                normalized[index] = item
+            }
+        }
+
         root["content"] = .array(normalized)
         return .object(root)
     }
 
-    nonisolated private static func normalizeContentItem(
-        _ item: NativeJSONValue
-    ) -> NativeJSONValue {
+    private static func containsPNGImage(_ result: NativeJSONValue) -> Bool {
+        result.jsonObject?["content"]?.jsonArray?.contains(where: isPNGImage) == true
+    }
+
+    private static func isPNGImage(_ item: NativeJSONValue) -> Bool {
+        guard item.jsonObject?["type"]?.jsonString == "image" else { return false }
+        let object = item.jsonObject
+        return object?["mimeType"]?.jsonString == "image/png"
+            || object?["mime_type"]?.jsonString == "image/png"
+            || object?["mime"]?.jsonString == "image/png"
+    }
+
+    private static func normalizeContentItem(
+        _ item: NativeJSONValue,
+        index: Int,
+        ownerUserID: String,
+        temporaryDirectory: URL,
+        mediaWorker: any MediaWorkerJPEGNormalizing
+    ) async throws -> NativeJSONValue {
         guard case var .object(object) = item,
-              object["type"]?.jsonString == "image" else {
-            return item
-        }
-        let mimeType = object["mimeType"]?.jsonString
-            ?? object["mime_type"]?.jsonString
-            ?? object["mime"]?.jsonString
-        guard mimeType == "image/png" else {
-            return item
-        }
-        guard let encoded = object["data"]?.jsonString,
+              let encoded = object["data"]?.jsonString,
               encoded.utf8.count <= maximumEncodedCharacters,
               let pngData = Data(base64Encoded: encoded),
               !pngData.isEmpty,
               pngData.count <= maximumDecodedBytes,
-              let jpegData = jpegData(fromPNGData: pngData) else {
-            return unavailableItem("the plugin returned PNG data that could not be decoded locally")
+              !ownerUserID.isEmpty else {
+            return unavailableItem(
+                "the plugin returned PNG data that could not be decoded locally"
+            )
         }
 
-        object["data"] = .string(jpegData.base64EncodedString())
-        object["mimeType"] = .string("image/jpeg")
-        object.removeValue(forKey: "mime_type")
-        object.removeValue(forKey: "mime")
-        return .object(object)
+        let root = temporaryDirectory.appendingPathComponent(
+            "ChatOSPluginImage-\(index)-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        let sourceURL = root.appendingPathComponent("source.png", isDirectory: false)
+        let destinationURL = root.appendingPathComponent("normalized.jpg", isDirectory: false)
+        do {
+            try FileManager.default.createDirectory(
+                at: root,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try pngData.write(to: sourceURL, options: .withoutOverwriting)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: sourceURL.path
+            )
+            guard FileManager.default.createFile(
+                atPath: destinationURL.path,
+                contents: nil,
+                attributes: [.posixPermissions: 0o600]
+            ) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: root)
+            return unavailableItem("the plugin image could not be prepared for local decoding")
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        do {
+            let descriptor = try await mediaWorker.normalizeJPEG(
+                sourceURL: sourceURL,
+                sourceIdentity: nil,
+                destinationURL: destinationURL,
+                ownerUserID: ownerUserID,
+                maximumSourceBytes: maximumDecodedBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumOutputPixelSize: maximumDisplayPixelSize,
+                maximumOutputBytes: maximumDecodedBytes,
+                compressionQuality: jpegCompressionQuality
+            )
+            guard descriptor.path == destinationURL.path,
+                  descriptor.mimeType == "image/jpeg",
+                  descriptor.byteCount > 0,
+                  descriptor.byteCount <= maximumDecodedBytes else {
+                return unavailableItem(
+                    "the plugin returned PNG data that could not be decoded locally"
+                )
+            }
+            try Task.checkCancellation()
+            let jpegData = try Data(contentsOf: destinationURL, options: .mappedIfSafe)
+            guard jpegData.count == descriptor.byteCount,
+                  jpegData.starts(with: [0xFF, 0xD8]),
+                  jpegData.suffix(2) == Data([0xFF, 0xD9]) else {
+                return unavailableItem(
+                    "the plugin returned PNG data that could not be decoded locally"
+                )
+            }
+            object["data"] = .string(jpegData.base64EncodedString())
+            object["mimeType"] = .string("image/jpeg")
+            object.removeValue(forKey: "mime_type")
+            object.removeValue(forKey: "mime")
+            return .object(object)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return unavailableItem(
+                "the plugin returned PNG data that could not be decoded locally"
+            )
+        }
     }
 
-    nonisolated private static func jpegData(fromPNGData data: Data) -> Data? {
-        guard !Task.isCancelled,
-              let source = CGImageSourceCreateWithData(data as CFData, [
-                kCGImageSourceShouldCache: false,
-              ] as CFDictionary),
-              CGImageSourceGetCount(source) > 0,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
-                as? [CFString: Any],
-              let widthValue = properties[kCGImagePropertyPixelWidth] as? NSNumber,
-              let heightValue = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
-            return nil
-        }
-        let width = widthValue.doubleValue
-        let height = heightValue.doubleValue
-        guard !Task.isCancelled,
-              width.isFinite, height.isFinite,
-              width > 0, height > 0,
-              width * height <= Double(maximumSourcePixelCount),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maximumDisplayPixelSize,
-                kCGImageSourceShouldCacheImmediately: true,
-              ] as CFDictionary),
-              !Task.isCancelled,
-              let jpeg = NSBitmapImageRep(cgImage: image).representation(
-            using: .jpeg,
-            properties: [.compressionFactor: jpegCompressionQuality]
-              ),
-              jpeg.count <= maximumDecodedBytes else {
-            return nil
-        }
-        return jpeg
-    }
-
-    nonisolated private static func unavailableItem(_ reason: String) -> NativeJSONValue {
+    private static func unavailableItem(_ reason: String) -> NativeJSONValue {
         .object([
             "type": .string("text"),
             "text": .string(

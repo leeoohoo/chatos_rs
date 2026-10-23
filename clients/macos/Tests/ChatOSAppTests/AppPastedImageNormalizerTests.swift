@@ -1,51 +1,44 @@
 import AppKit
 import ChatOSCore
+import ChatOSMediaWorkerClient
+import ChatOSMediaWorkerProtocol
 import ChatOSNetworking
 import ImageIO
 @testable import ChatOSApp
 import XCTest
 
 final class AppPastedImageNormalizerTests: XCTestCase {
-    func testOffMainNormalizationWaitsForSharedHeavyMediaLane() async throws {
+    func testOffMainNormalizationRunsThroughMediaWorker() async throws {
         let limits = AppPastedImageNormalizationLimits(
             maximumInputBytes: 1_024 * 1_024,
             maximumSourcePixelCount: 128 * 64,
             maximumDecodePixelSize: 32,
             maximumOutputBytes: 1_024 * 1_024
         )
-        let governor = ClientHeavyMediaWorkGovernor(limit: 1)
-        let blocker = try await governor.acquire(context: .init(
-            taskID: "blocker",
-            kind: .videoFrameExtraction,
-            estimatedDecodedBytes: 64 * 1_024 * 1_024
-        ))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "AppPastedImageNormalizerTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let worker = PastedImageRecordingWorker()
         let source = try makeTIFF(width: 128, height: 64)
-        let normalization = Task {
-            try await AppPastedImageNormalizer.normalizeToPNGOffMain(
-                source,
-                limits: limits,
-                taskID: "paste-a",
-                heavyMediaGovernor: governor
-            )
-        }
-        try await waitForHeavyMediaQueue(governor)
-        let snapshot = await governor.snapshot()
-        XCTAssertEqual(snapshot.queued, [.init(
-            taskID: "pasted-image:paste-a:normalize",
-            kind: .imageDecode,
-            estimatedDecodedBytes: 32 * 32 * 4
-        )])
-
-        await blocker.releaseAndWait()
-        let output = try await normalization.value
+        let output = try await AppPastedImageNormalizer.normalizeToPNGOffMain(
+            source,
+            limits: limits,
+            ownerUserID: "test-user",
+            temporaryDirectory: root,
+            mediaWorker: worker
+        )
         XCTAssertEqual(
             CGImageSourceGetType(try XCTUnwrap(
                 CGImageSourceCreateWithData(output as CFData, nil)
             )) as String?,
             "public.png"
         )
-        let completed = await governor.snapshot()
-        XCTAssertTrue(completed.active.isEmpty)
+        let callCount = await worker.callCount
+        XCTAssertEqual(callCount, 1)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
     }
 
     func testDirectUploadFormatsDoNotRequireNormalization() {
@@ -115,7 +108,8 @@ final class AppPastedImageNormalizerTests: XCTestCase {
         let viewModel = ConversationSessionViewModel(
             sessionID: "normalization-test",
             initialTurns: [],
-            historyStore: ConversationHistoryStore()
+            historyStore: ConversationHistoryStore(),
+            pastedImageMediaWorker: PastedImageRecordingWorker()
         )
         viewModel.addPastedImage(
             data: try makeTIFF(width: 16, height: 8),
@@ -149,13 +143,40 @@ final class AppPastedImageNormalizerTests: XCTestCase {
         return try XCTUnwrap(bitmap.representation(using: .tiff, properties: [:]))
     }
 
-    private func waitForHeavyMediaQueue(
-        _ governor: ClientHeavyMediaWorkGovernor
-    ) async throws {
-        for _ in 0..<200 {
-            if await governor.snapshot().queued.count == 1 { return }
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        XCTFail("Timed out waiting for heavy-media admission")
+}
+
+private actor PastedImageRecordingWorker: MediaWorkerImageNormalizing {
+    private(set) var callCount = 0
+
+    func normalizePNG(
+        sourceURL: URL,
+        sourceIdentity: MediaWorkerFileIdentity?,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int
+    ) async throws -> MediaWorkerImageDescriptor {
+        callCount += 1
+        let source = try Data(contentsOf: sourceURL)
+        let output = try AppPastedImageNormalizer.normalizeToPNG(
+            source,
+            limits: .init(
+                maximumInputBytes: maximumSourceBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumDecodePixelSize: maximumOutputPixelSize,
+                maximumOutputBytes: maximumOutputBytes
+            )
+        )
+        try output.write(to: destinationURL)
+        return .init(
+            path: destinationURL.path,
+            mimeType: "image/png",
+            byteCount: output.count,
+            sha256: String(repeating: "0", count: 64),
+            pixelWidth: 1,
+            pixelHeight: 1
+        )
     }
 }

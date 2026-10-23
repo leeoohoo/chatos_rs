@@ -1,4 +1,4 @@
-import ChatOSNetworking
+import ChatOSMediaWorkerClient
 import Foundation
 import ImageIO
 
@@ -30,45 +30,88 @@ enum AppPastedImageNormalizer {
     static func normalizeToPNGOffMain(
         _ data: Data,
         limits: AppPastedImageNormalizationLimits = .attachment,
-        taskID: String? = nil,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
+        ownerUserID: String,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) async throws -> Data {
         try Task.checkCancellation()
-        guard limits.maximumInputBytes > 0,
+        guard !data.isEmpty,
+              data.count <= limits.maximumInputBytes,
+              limits.maximumInputBytes > 0,
               limits.maximumSourcePixelCount > 0,
               limits.maximumDecodePixelSize > 0,
-              limits.maximumOutputBytes > 0 else {
+              limits.maximumOutputBytes > 0,
+              !ownerUserID.isEmpty else {
             throw AppPastedImageNormalizationError.invalidImage
         }
-        let component = taskID.map { String($0.prefix(128)) }
-            ?? UUID().uuidString.lowercased()
-        let (maximumDecodePixels, pixelOverflow) = limits.maximumDecodePixelSize
-            .multipliedReportingOverflow(by: limits.maximumDecodePixelSize)
-        guard !pixelOverflow else {
-            throw AppPastedImageNormalizationError.imageTooLarge
-        }
-        let decodedPixels = min(
-            limits.maximumSourcePixelCount,
-            maximumDecodePixels
+        let root = temporaryDirectory.appendingPathComponent(
+            "ChatOSPastedImage-\(UUID().uuidString.lowercased())",
+            isDirectory: true
         )
-        let (estimatedDecodedBytes, byteOverflow) = decodedPixels
-            .multipliedReportingOverflow(by: 4)
-        guard !byteOverflow else {
-            throw AppPastedImageNormalizationError.imageTooLarge
+        let sourceURL = root.appendingPathComponent("source.image", isDirectory: false)
+        let destinationURL = root.appendingPathComponent("normalized.png", isDirectory: false)
+        do {
+            try FileManager.default.createDirectory(
+                at: root,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try data.write(to: sourceURL, options: .withoutOverwriting)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: sourceURL.path
+            )
+            guard FileManager.default.createFile(
+                atPath: destinationURL.path,
+                contents: nil,
+                attributes: [.posixPermissions: 0o600]
+            ) else {
+                throw AppPastedImageNormalizationError.cannotEncode
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: root)
+            throw error
         }
-        return try await heavyMediaGovernor.perform(context: .init(
-            taskID: "pasted-image:\(component):normalize",
-            kind: .imageDecode,
-            estimatedDecodedBytes: estimatedDecodedBytes
-        )) {
-            let task = Task.detached(priority: .userInitiated) {
-                try normalizeToPNG(data, limits: limits)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        do {
+            let descriptor = try await mediaWorker.normalizePNG(
+                sourceURL: sourceURL,
+                sourceIdentity: nil,
+                destinationURL: destinationURL,
+                ownerUserID: ownerUserID,
+                maximumSourceBytes: limits.maximumInputBytes,
+                maximumSourcePixelCount: limits.maximumSourcePixelCount,
+                maximumOutputPixelSize: limits.maximumDecodePixelSize,
+                maximumOutputBytes: limits.maximumOutputBytes
+            )
+            guard descriptor.path == destinationURL.path,
+                  descriptor.mimeType == "image/png",
+                  descriptor.byteCount > 0,
+                  descriptor.byteCount <= limits.maximumOutputBytes else {
+                throw AppPastedImageNormalizationError.invalidImage
             }
-            return try await withTaskCancellationHandler {
-                try await task.value
-            } onCancel: {
-                task.cancel()
+            try Task.checkCancellation()
+            let output = try Data(contentsOf: destinationURL, options: .mappedIfSafe)
+            guard output.count == descriptor.byteCount,
+                  output.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) else {
+                throw AppPastedImageNormalizationError.invalidImage
             }
+            return output
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as MediaWorkerProcessClientError {
+            if case let .requestRejected(code) = error {
+                switch code {
+                case "output_too_large":
+                    throw AppPastedImageNormalizationError.outputTooLarge
+                case "invalid_image", "unauthorized_path", "invalid_request":
+                    throw AppPastedImageNormalizationError.invalidImage
+                default:
+                    break
+                }
+            }
+            throw error
         }
     }
 

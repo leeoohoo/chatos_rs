@@ -16,6 +16,20 @@ public protocol MediaWorkerImageNormalizing: Sendable {
     ) async throws -> MediaWorkerImageDescriptor
 }
 
+public protocol MediaWorkerJPEGNormalizing: Sendable {
+    func normalizeJPEG(
+        sourceURL: URL,
+        sourceIdentity: MediaWorkerFileIdentity?,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int,
+        compressionQuality: Double
+    ) async throws -> MediaWorkerImageDescriptor
+}
+
 public protocol MediaWorkerVideoFrameExtracting: Sendable {
     func extractLastVideoFramePNG(
         sourceURL: URL,
@@ -59,7 +73,8 @@ public enum MediaWorkerProcessClientError: LocalizedError, Equatable {
     }
 }
 
-public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing, MediaWorkerVideoFrameExtracting {
+public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
+    MediaWorkerJPEGNormalizing, MediaWorkerVideoFrameExtracting {
     public static let shared = MediaWorkerProcessClient()
 
     private static let accountSessionID = UUID().uuidString.lowercased()
@@ -83,6 +98,58 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing, MediaWorker
         maximumSourcePixelCount: Int,
         maximumOutputPixelSize: Int,
         maximumOutputBytes: Int
+    ) async throws -> MediaWorkerImageDescriptor {
+        try await normalizeImage(
+            sourceURL: sourceURL,
+            sourceIdentity: sourceIdentity,
+            destinationURL: destinationURL,
+            ownerUserID: ownerUserID,
+            maximumSourceBytes: maximumSourceBytes,
+            maximumSourcePixelCount: maximumSourcePixelCount,
+            maximumOutputPixelSize: maximumOutputPixelSize,
+            maximumOutputBytes: maximumOutputBytes,
+            operation: .normalizePNG
+        )
+    }
+
+    public func normalizeJPEG(
+        sourceURL: URL,
+        sourceIdentity: MediaWorkerFileIdentity? = nil,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int,
+        compressionQuality: Double
+    ) async throws -> MediaWorkerImageDescriptor {
+        guard compressionQuality.isFinite,
+              (0...1).contains(compressionQuality) else {
+            throw MediaWorkerProcessClientError.invalidResponse
+        }
+        return try await normalizeImage(
+            sourceURL: sourceURL,
+            sourceIdentity: sourceIdentity,
+            destinationURL: destinationURL,
+            ownerUserID: ownerUserID,
+            maximumSourceBytes: maximumSourceBytes,
+            maximumSourcePixelCount: maximumSourcePixelCount,
+            maximumOutputPixelSize: maximumOutputPixelSize,
+            maximumOutputBytes: maximumOutputBytes,
+            operation: .normalizeJPEG(compressionQuality: compressionQuality)
+        )
+    }
+
+    private func normalizeImage(
+        sourceURL: URL,
+        sourceIdentity: MediaWorkerFileIdentity?,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int,
+        operation: MediaWorkerProcessOperation
     ) async throws -> MediaWorkerImageDescriptor {
         guard timeout.isFinite,
               (0.05...300).contains(timeout),
@@ -111,7 +178,7 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing, MediaWorker
                                     maximumSourcePixelCount: maximumSourcePixelCount,
                                     maximumOutputPixelSize: maximumOutputPixelSize,
                                     maximumOutputBytes: maximumOutputBytes,
-                                    operation: .normalizePNG,
+                                    operation: operation,
                                     timeout: timeout,
                                     accountSessionID: Self.accountSessionID,
                                     sessionEpoch: Self.sessionEpoch
@@ -258,13 +325,22 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing, MediaWorker
 
 private enum MediaWorkerProcessOperation {
     case normalizePNG
+    case normalizeJPEG(compressionQuality: Double)
     case extractLastVideoFramePNG
 
     var capability: String {
         switch self {
         case .normalizePNG: ChatOSMediaWorkerProtocol.normalizePNGOperation
+        case .normalizeJPEG: ChatOSMediaWorkerProtocol.normalizeJPEGOperation
         case .extractLastVideoFramePNG:
             ChatOSMediaWorkerProtocol.extractLastVideoFramePNGOperation
+        }
+    }
+
+    var mimeType: String {
+        switch self {
+        case .normalizeJPEG: "image/jpeg"
+        case .normalizePNG, .extractLastVideoFramePNG: "image/png"
         }
     }
 }
@@ -411,6 +487,25 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
                 maximumOutputPixelSize: maximumOutputPixelSize,
                 maximumOutputBytes: maximumOutputBytes
             ))
+        case let .normalizeJPEG(compressionQuality):
+            requestData = try MediaWorkerWireCodec.encodeLine(MediaWorkerNormalizeJPEGRequest(
+                protocolVersion: ChatOSMediaWorkerProtocol.maximumVersion,
+                requestID: requestID,
+                ownerUserID: ownerUserID,
+                accountSessionID: accountSessionID,
+                sessionEpoch: sessionEpoch,
+                helperInstanceID: hello.helperInstanceID,
+                deadlineUnixMilliseconds: deadline,
+                sourcePath: sourceURL.path,
+                sourceIdentity: sourceIdentity,
+                destinationPath: destinationURL.path,
+                destinationIdentity: destinationIdentity,
+                maximumSourceBytes: maximumSourceBytes,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumOutputPixelSize: maximumOutputPixelSize,
+                maximumOutputBytes: maximumOutputBytes,
+                compressionQuality: compressionQuality
+            ))
         case .extractLastVideoFramePNG:
             requestData = try MediaWorkerWireCodec.encodeLine(MediaWorkerExtractVideoFrameRequest(
                 protocolVersion: ChatOSMediaWorkerProtocol.maximumVersion,
@@ -444,7 +539,7 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
             )
         }
         guard result.path == destinationURL.path,
-              result.mimeType == "image/png",
+              result.mimeType == operation.mimeType,
               result.byteCount > 0,
               result.byteCount <= maximumOutputBytes,
               result.sha256.count == 64,
@@ -466,7 +561,8 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
             authorizedIdentity: destinationIdentity,
             result: result,
             maximumOutputPixelSize: maximumOutputPixelSize,
-            maximumOutputBytes: maximumOutputBytes
+            maximumOutputBytes: maximumOutputBytes,
+            operation: operation
         )
         return result
     }
@@ -543,7 +639,8 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
         authorizedIdentity: MediaWorkerFileIdentity,
         result: MediaWorkerImageDescriptor,
         maximumOutputPixelSize: Int,
-        maximumOutputBytes: Int
+        maximumOutputBytes: Int,
+        operation: MediaWorkerProcessOperation
     ) throws {
         let descriptor = url.path.withCString {
             Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
@@ -563,7 +660,7 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
               before.st_size == Int64(result.byteCount),
               before.st_size > 0,
               before.st_size <= Int64(maximumOutputBytes),
-              result.mimeType == "image/png",
+              result.mimeType == operation.mimeType,
               result.pixelWidth > 0,
               result.pixelHeight > 0,
               max(result.pixelWidth, result.pixelHeight) <= maximumOutputPixelSize else {
@@ -572,6 +669,7 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
 
         var hasher = SHA256()
         var signature = [UInt8]()
+        var endingSignature = [UInt8]()
         var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
         var total = 0
         while true {
@@ -584,12 +682,22 @@ private final class MediaWorkerProcessController: @unchecked Sendable {
             if signature.count < 8 {
                 signature.append(contentsOf: buffer.prefix(min(count, 8 - signature.count)))
             }
+            endingSignature.append(contentsOf: buffer.prefix(count))
+            if endingSignature.count > 2 {
+                endingSignature.removeFirst(endingSignature.count - 2)
+            }
             hasher.update(data: Data(buffer[0..<count]))
             total += count
         }
         let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
         var after = stat()
-        guard signature == [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+        let validSignature: Bool = switch operation {
+        case .normalizeJPEG:
+            signature.starts(with: [0xFF, 0xD8]) && endingSignature == [0xFF, 0xD9]
+        case .normalizePNG, .extractLastVideoFramePNG:
+            signature == [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+        }
+        guard validSignature,
               total == result.byteCount,
               digest == result.sha256.lowercased(),
               fstat(descriptor, &after) == 0,

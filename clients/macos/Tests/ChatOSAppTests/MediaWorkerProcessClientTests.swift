@@ -351,6 +351,91 @@ final class MediaWorkerProcessClientTests: XCTestCase {
         XCTAssertGreaterThan(result.byteCount, 0)
     }
 
+    func testBuiltWorkerNormalizesJPEGOutOfProcess() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run packaged-worker integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.png")
+        let destination = root.appendingPathComponent("destination.jpg")
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 32,
+            pixelsHigh: 16,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: source)
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: destination.path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600]
+        ))
+
+        let result = try await MediaWorkerProcessClient(
+            executableURL: URL(fileURLWithPath: path),
+            timeout: 10
+        ).normalizeJPEG(
+            sourceURL: source,
+            destinationURL: destination,
+            ownerUserID: "process-client-test",
+            maximumSourceBytes: 20 * 1_024 * 1_024,
+            maximumSourcePixelCount: 64_000_000,
+            maximumOutputPixelSize: 4_096,
+            maximumOutputBytes: 20 * 1_024 * 1_024,
+            compressionQuality: 0.82
+        )
+
+        let data = try Data(contentsOf: destination)
+        XCTAssertEqual(result.mimeType, "image/jpeg")
+        XCTAssertEqual(result.pixelWidth, 32)
+        XCTAssertEqual(result.pixelHeight, 16)
+        XCTAssertTrue(data.starts(with: [0xFF, 0xD8]))
+        XCTAssertEqual(data.suffix(2), Data([0xFF, 0xD9]))
+    }
+
+    func testPastedTIFFNormalizationRunsThroughBuiltWorker() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run pasted-image integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 64,
+            pixelsHigh: 32,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let tiff = try XCTUnwrap(bitmap.representation(using: .tiff, properties: [:]))
+
+        let output = try await AppPastedImageNormalizer.normalizeToPNGOffMain(
+            tiff,
+            ownerUserID: "process-client-test",
+            temporaryDirectory: root,
+            mediaWorker: MediaWorkerProcessClient(
+                executableURL: URL(fileURLWithPath: path),
+                timeout: 10
+            )
+        )
+
+        XCTAssertTrue(output.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+    }
+
     func testCancellationTerminatesUnresponsiveWorker() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

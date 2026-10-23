@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import Foundation
 import UniformTypeIdentifiers
 
@@ -42,13 +43,16 @@ extension ConversationSessionViewModel {
 
         let taskID = UUID()
         let token = attachmentImportState.begin()
+        let ownerUserID = sessionID
+        let mediaWorker = pastedImageMediaWorker
         let task = Task { [weak self] in
             let result: Result<Data, Error>
             do {
                 result = .success(
                     try await AppPastedImageNormalizer.normalizeToPNGOffMain(
                         data,
-                        taskID: taskID.uuidString.lowercased()
+                        ownerUserID: ownerUserID,
+                        mediaWorker: mediaWorker
                     )
                 )
             } catch {

@@ -1,5 +1,6 @@
 import ChatOSCore
 import ChatOSConnector
+import ChatOSMediaWorkerClient
 import Foundation
 
 private typealias ConversationRuntimeSettingsLoadRequest = (
@@ -104,6 +105,7 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     let historyStore: any ConversationHistoryStoring
+    let pastedImageMediaWorker: any MediaWorkerImageNormalizing
     let sendUseCase: ConversationSendUseCase?
     let viewportUseCase: ConversationViewportUseCase
     private let turnProcessService: (any TurnProcessServicing)?
@@ -176,7 +178,8 @@ final class ConversationSessionViewModel: ObservableObject {
         turnProcessService: (any TurnProcessServicing)? = nil,
         messageTaskGraphService: (any MessageTaskGraphServicing)? = nil,
         runtimeSettingsService: (any ConversationRuntimeSettingsServicing)? = nil,
-        askUserPromptService: (any AskUserPromptServicing)? = nil
+        askUserPromptService: (any AskUserPromptServicing)? = nil,
+        pastedImageMediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) {
         self.sessionID = sessionID
         self.turns = initialTurns
@@ -188,6 +191,7 @@ final class ConversationSessionViewModel: ObservableObject {
         self.timelineItemsBuildCount = 1
         self.selectedTurnID = initialTurns.last?.id
         self.historyStore = historyStore
+        self.pastedImageMediaWorker = pastedImageMediaWorker
         self.viewportUseCase = ConversationViewportUseCase(historyStore: historyStore)
         self.isLocalAgentRuntimeReady = localAgentRuntimeReady
         self.historyUseCase = remoteService.map {
