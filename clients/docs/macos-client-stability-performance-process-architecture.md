@@ -1824,6 +1824,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批控制的是像素解码/编码工作集，不倒退为完整文件 I/O Governor；Local Agent 已验证的附件 `Data` 和 Plugin 已返回的 Base64 字符串仍可能在等待 permit 时驻留。项目文件 4K 预览和其他普通 UI 图片消费者仍未统一接入；头像与常规缩略图目前限制在 2,048 px 或更小，为保护交互延迟继续不占重媒体通道。Plugin 派生进程自身的解码不受主进程 permit 控制，Media Worker 也尚未建立；跨进程 lease/fencing、账户公平、排队老化、热状态/低电量迟滞、真实多源 4K/64 MP 组合压力、固定 Release trace 与长时间 soak 仍待完成，因此 P0-D/P0-E 和客户端总体 SLO 均不能标记完成。
 
+### 12.69 第六十九批实施记录：项目文件 4K 预览共享重解码额度（2026-10-23）
+
+本批关闭 12.68 保留的项目文件图片预览缺口。项目编辑器允许最多约 20 MiB 原始或 28 MiB Base64 内容，并以 64 MP 源像素门禁解码到最长边 4,096 px；此前该 detached 解码会绕过 Media/Plugin/Agent 共用的单额度，在用户切换文件时与后台重媒体任务叠加。
+
+已实施：
+
+- 抽出可测试的 `ProjectImagePreviewLoader`，将 Base64/文本图片的有界物化、ImageIO 源校验和 4K downsample 整体置于 `ClientHeavyMediaWorkGovernor.shared` permit 内；按 4,096² × 4，即 64 MiB 预计解码工作集准入，既有 28 MiB Base64 字符串、20 MiB 原始内容和 64 MP 源像素限制保持不变。
+- SwiftUI 文件预览任务在进入 loader 前生成同进程稳定的 opaque task ID：哈希输入包含项目内路径、文件大小和修改时间，但 context 不保留或暴露真实路径。切换文件时既有 `.task(id:)` 取消继续向 Governor 排队和 detached 解码传播，permit 由统一取消/错误路径同步回收。
+- 头像、Markdown 图片、消息缩略图和 Media Studio 不超过 2,048 px 的缓存缩略图继续走低延迟有界旁路；本批只接入明确请求 4K 像素面的项目预览，避免单一后台归一化把所有小型 UI 图片排队。
+
+验证：Debug 与原生 arm64 Release 各选择性运行 `ProjectImagePreviewLoaderTests` 2 项和 `ClientHeavyMediaWorkGovernorTests` 2 项，共 4 项，全部通过。新增回归验证项目预览在共享通道被占用时真实排队、64 MiB context 正确、释放后可解码且 permit 无泄漏，并确认同一文件身份得到相同 opaque task ID 且不包含路径正文；Swift 6 Debug/Release 编译、优化编译与 `git diff --check` 同步作为门禁。测试只使用内存生成的小图片，不启动或安装正式 App，不访问活动用户数据库。
+
+边界：项目文件内容在上游 IPC/DTO 中仍是字符串，Base64 解码会在取得 permit 后形成压缩源 `Data`；本批限制像素工作集并发，不解决项目文件内容的文件原生化。2K 及以下 UI 图片仍可彼此并行，其上限和缓存预算继续独立生效；截图合成等已持有 `CGImage` 的路径不属于本批压缩媒体解码门禁。Plugin 派生进程、未来 Media Worker 和其他 Helper 仍不受这份主进程静态额度控制，跨进程 lease/fencing、账户公平、前台权重、热状态/低电量迟滞、真实项目大图切换 trace 与长时间 soak 尚未完成，因此 P0-D/P0-E 和客户端总体 SLO 均不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
@@ -1911,6 +1925,7 @@ Release 验收建议记录：
 - Story 参考视频文件引用：`clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryVideoGenerationAdapter.swift`、`StoryMediaBatchSession.swift`
 - Media Studio 状态：`clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioViewModel.swift`
 - Story Studio 状态：`clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryStudioViewModel.swift`
+- 项目文件 4K 图片预览：`clients/macos/Sources/ChatOSApp/Features/Project/ProjectFileEditorView.swift`
 - Global Utilities Companion：`clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/GlobalUtilityCompanion.swift`
 - Plugin 进程监督：`clients/macos/Sources/ChatOSConnector/NativePluginApplicationProcessRegistry.swift`
 - Receipt 策略入口：`clients/local_agent_host/layers/application/src/lib.rs`
@@ -1958,7 +1973,7 @@ Release 验收建议记录：
 
 - 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift/Windows Host 常量与共享 fixture 为 v46；本方案引用版本不能替代实际握手。
 - CI 比较 Swift/Rust 协议版本、payload 边界、支持能力和打包后的真实可执行版本；Schema 兼容矩阵、进程布局及 ADR 随实现更新。
-- 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；大传输静态 Governor 见 12.66，重媒体静态 Governor 及其模型/粘贴图片扩展见 12.67–12.68，跨资源动态/跨进程 Governor、Worker 和剩余门禁仍为待实施项。
+- 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；大传输静态 Governor 见 12.66，重媒体静态 Governor 及其主进程 4K 解码扩展见 12.67–12.69，跨资源动态/跨进程 Governor、Worker 和剩余门禁仍为待实施项。
 
 ### 16.2 ADR：v35 本地命令防重身份（实现范围冻结，生产迁移门禁未通过）
 

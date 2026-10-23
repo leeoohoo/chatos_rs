@@ -1,5 +1,6 @@
 import AppKit
 import ChatOSCore
+import ChatOSNetworking
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -255,6 +256,58 @@ struct ProjectFileEditorView: View {
     }
 }
 
+enum ProjectImagePreviewLoader {
+    private static let maximumSourcePixelCount = 64_000_000
+    private static let maximumDisplayPixelSize = 4_096
+
+    static func taskID(
+        path: String,
+        size: Int64,
+        modifiedAt: Date?
+    ) -> String {
+        var hasher = Hasher()
+        hasher.combine(path)
+        hasher.combine(size)
+        hasher.combine(modifiedAt)
+        return "project-image:\(String(hasher.finalize(), radix: 16)):preview"
+    }
+
+    static func decode(
+        content: String,
+        isBinary: Bool,
+        taskID: String,
+        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
+    ) async throws -> AppDecodedThumbnail? {
+        try Task.checkCancellation()
+        return try await heavyMediaGovernor.perform(context: .init(
+            taskID: String(taskID.prefix(160)),
+            kind: .imageDecode,
+            estimatedDecodedBytes: maximumDisplayPixelSize
+                * maximumDisplayPixelSize * 4
+        )) {
+            try await AppCancellableDetachedWork.run {
+                let data: Data
+                if isBinary {
+                    guard content.count <= 28 * 1_024 * 1_024,
+                          let value = Data(
+                            base64Encoded: content,
+                            options: .ignoreUnknownCharacters
+                          ) else { return nil }
+                    data = value
+                } else {
+                    guard content.utf8.count <= 20 * 1_024 * 1_024 else { return nil }
+                    data = Data(content.utf8)
+                }
+                return AppImageThumbnailLoader.decode(
+                    data,
+                    maximumSourcePixelCount: maximumSourcePixelCount,
+                    maximumDisplayPixelSize: maximumDisplayPixelSize
+                )
+            }
+        }
+    }
+}
+
 private struct ProjectImagePreview: View {
     @EnvironmentObject private var model: AppModel
     let file: ProjectFileContent
@@ -300,25 +353,15 @@ private struct ProjectImagePreview: View {
             let isBinary = file.isBinary
             let decoded: AppDecodedThumbnail?
             do {
-                decoded = try await AppCancellableDetachedWork.run {
-                let data: Data
-                if isBinary {
-                    guard content.count <= 28 * 1_024 * 1_024,
-                          let value = Data(
-                            base64Encoded: content,
-                            options: .ignoreUnknownCharacters
-                          ) else { return nil }
-                    data = value
-                } else {
-                    guard content.utf8.count <= 20 * 1_024 * 1_024 else { return nil }
-                    data = Data(content.utf8)
-                }
-                return AppImageThumbnailLoader.decode(
-                    data,
-                    maximumSourcePixelCount: 64_000_000,
-                    maximumDisplayPixelSize: 4_096
+                decoded = try await ProjectImagePreviewLoader.decode(
+                    content: content,
+                    isBinary: isBinary,
+                    taskID: ProjectImagePreviewLoader.taskID(
+                        path: file.path,
+                        size: file.size,
+                        modifiedAt: file.modifiedAt
+                    )
                 )
-                }
             } catch {
                 return
             }
