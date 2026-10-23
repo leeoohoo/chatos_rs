@@ -151,7 +151,7 @@ extension LocalAgentGroupChatSchedulerTests {
         XCTAssertGreaterThanOrEqual(maximumConcurrentCalls, 2)
     }
 
-    func testRecoveryRunsIndependentInterruptedConversationsConcurrently() async throws {
+    func testRecoveryRefillsCapacityBeforeSlowIndependentRunFinishes() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-parallel-recovery-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -223,22 +223,40 @@ extension LocalAgentGroupChatSchedulerTests {
             ))
         }
 
-        let probe = SchedulerConcurrencyProbe()
+        let probe = RecoveryRollingWindowProbe()
         let settingsSuite = "local-agent-parallel-recovery-tests-\(UUID().uuidString)"
         defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
         let scheduler = LocalAgentGroupChatScheduler(
             service: service,
-            services: RecoveryConcurrencyServices(probe: probe),
+            services: RecoveryRollingWindowServices(probe: probe),
             settings: .init(suiteName: settingsSuite),
             maximumConcurrentExecutions: 2,
             now: { 1_000 }
         )
 
-        let results = try await scheduler.recoverInterruptedRuns(
-            store: store,
-            ownerUserID: "alice",
-            maximumRuns: 3
+        let recoveryTask = Task {
+            try await scheduler.recoverInterruptedRuns(
+                store: store,
+                ownerUserID: "alice",
+                maximumRuns: 3
+            )
+        }
+        await probe.waitUntilFirstStarts()
+
+        var thirdStarted = false
+        for _ in 0..<100 {
+            if await probe.hasThirdStarted() {
+                thirdStarted = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(
+            thirdStarted,
+            "a released recovery slot must refill before the unrelated slow run finishes"
         )
+        await probe.releaseFirst()
+        let results = try await recoveryTask.value
 
         XCTAssertEqual(Set(results.map(\.deliveryID)), expectedDeliveryIDs)
         XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })

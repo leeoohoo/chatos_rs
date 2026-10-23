@@ -207,8 +207,8 @@ struct ParallelSchedulerTestServices: AgentServiceProviding {
     }
 }
 
-struct RecoveryConcurrencyServices: AgentServiceProviding {
-    let probe: SchedulerConcurrencyProbe
+struct RecoveryRollingWindowServices: AgentServiceProviding {
+    let probe: RecoveryRollingWindowProbe
     private let memoryRegistry = SchedulerTestMemoryRegistry()
 
     func makeAgentModel(
@@ -216,7 +216,7 @@ struct RecoveryConcurrencyServices: AgentServiceProviding {
         policy: AgentRunPolicy
     ) async throws -> any AgentModelClient {
         XCTAssertEqual(configID, "recovery-parallel-model")
-        return RecoveryConcurrencyModel(probe: probe)
+        return RecoveryRollingWindowModel(probe: probe)
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
@@ -224,10 +224,59 @@ struct RecoveryConcurrencyServices: AgentServiceProviding {
     }
 }
 
-actor RecoveryConcurrencyModel: AgentModelClient {
-    private let probe: SchedulerConcurrencyProbe
+actor RecoveryRollingWindowProbe {
+    private var activeCalls = 0
+    private var maximumCalls = 0
+    private var executionCount = 0
+    private var firstStarted = false
+    private var firstReleased = false
+    private var thirdStarted = false
+    private var firstStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var firstReleaseWaiters: [CheckedContinuation<Void, Never>] = []
 
-    init(probe: SchedulerConcurrencyProbe) {
+    func beginExecution() async {
+        activeCalls += 1
+        maximumCalls = max(maximumCalls, activeCalls)
+        executionCount += 1
+        if executionCount == 1 {
+            firstStarted = true
+            let startWaiters = firstStartWaiters
+            firstStartWaiters.removeAll()
+            for waiter in startWaiters { waiter.resume() }
+            if !firstReleased {
+                await withCheckedContinuation { firstReleaseWaiters.append($0) }
+            }
+        } else if executionCount == 3 {
+            thirdStarted = true
+        }
+        activeCalls -= 1
+    }
+
+    func waitUntilFirstStarts() async {
+        guard !firstStarted else { return }
+        await withCheckedContinuation { firstStartWaiters.append($0) }
+    }
+
+    func hasThirdStarted() -> Bool {
+        thirdStarted
+    }
+
+    func releaseFirst() {
+        firstReleased = true
+        let waiters = firstReleaseWaiters
+        firstReleaseWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
+    func maximumConcurrentCalls() -> Int {
+        maximumCalls
+    }
+}
+
+actor RecoveryRollingWindowModel: AgentModelClient {
+    private let probe: RecoveryRollingWindowProbe
+
+    init(probe: RecoveryRollingWindowProbe) {
         self.probe = probe
     }
 
@@ -239,9 +288,7 @@ actor RecoveryConcurrencyModel: AgentModelClient {
         XCTAssertTrue(tools.contains {
             $0.name == LocalAgentChatToolProvider.completeManagerCycleToolName
         })
-        await probe.enter()
-        try await Task.sleep(for: .milliseconds(75))
-        await probe.leave()
+        await probe.beginExecution()
         return .init(role: .assistant, toolCalls: [.init(
             id: "complete-recovered-manager-cycle",
             name: LocalAgentChatToolProvider.completeManagerCycleToolName,

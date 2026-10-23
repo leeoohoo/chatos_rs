@@ -286,77 +286,99 @@ extension LocalAgentGroupChatScheduler {
         maximumRuns: Int
     ) async throws -> [DeliveryAttemptReceipt] {
         let runs = try await store.listInterruptedRuns(ownerUserID: ownerUserID, limit: 500)
-        var results: [DeliveryAttemptReceipt] = []
-        var nextRunIndex = 0
-        while nextRunIndex < runs.count,
-              results.count < maximumRuns,
-              !Task.isCancelled {
-            let batchStartIndex = nextRunIndex
-            let remainingCapacity = maximumRuns - results.count
-            var running: [Task<OrderedDeliveryAttemptReceipt?, Error>] = []
-            running.reserveCapacity(min(remainingCapacity, executionGovernor.limit))
-            while nextRunIndex < runs.count, running.count < remainingCapacity {
-                try await runtime.checkExecutionAdmission()
-                let executionPermit: LocalAgentExecutionPermit?
-                if running.isEmpty {
-                    executionPermit = await executionGovernor.acquire(priority: .background)
-                } else {
-                    executionPermit = await executionGovernor.tryAcquire()
-                }
-                guard let executionPermit else { break }
-                if Task.isCancelled {
-                    await executionPermit.releaseAndWait()
-                    break
-                }
-                let order = nextRunIndex
-                let run = runs[nextRunIndex]
-                nextRunIndex += 1
-                let deliveryID = run.context.deliveryID
-                guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else {
-                    await executionPermit.releaseAndWait()
-                    continue
-                }
-                running.append(Task {
+        return try await withThrowingTaskGroup(
+            of: InterruptedRunRecoveryCompletion.self,
+            returning: [DeliveryAttemptReceipt].self
+        ) { group in
+            var completed: [OrderedDeliveryAttemptReceipt] = []
+            var nextRunIndex = 0
+            var inFlightCount = 0
+            var shouldSchedule = true
+            var firstError: Error?
+
+            while inFlightCount > 0
+                    || (shouldSchedule
+                        && !Task.isCancelled
+                        && nextRunIndex < runs.count
+                        && completed.count < maximumRuns) {
+                while shouldSchedule,
+                      !Task.isCancelled,
+                      nextRunIndex < runs.count,
+                      completed.count + inFlightCount < maximumRuns {
                     do {
-                        let receipt = try await recoverInterruptedRun(
-                            store: store,
-                            ownerUserID: ownerUserID,
-                            run: run
-                        )
-                        await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
-                        await executionPermit.releaseAndWait()
-                        return receipt.map {
-                            OrderedDeliveryAttemptReceipt(order: order, receipt: $0)
-                        }
+                        try await runtime.checkExecutionAdmission()
                     } catch {
-                        await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
-                        await executionPermit.releaseAndWait()
-                        throw error
+                        if firstError == nil { firstError = error }
+                        shouldSchedule = false
+                        break
                     }
-                })
-            }
-            guard !running.isEmpty else {
-                if nextRunIndex > batchStartIndex { continue }
-                break
+                    let executionPermit: LocalAgentExecutionPermit?
+                    if inFlightCount == 0 {
+                        executionPermit = await executionGovernor.acquire(priority: .background)
+                    } else {
+                        executionPermit = await executionGovernor.tryAcquire()
+                    }
+                    guard let executionPermit else { break }
+                    if Task.isCancelled {
+                        await executionPermit.releaseAndWait()
+                        shouldSchedule = false
+                        break
+                    }
+                    let order = nextRunIndex
+                    let run = runs[nextRunIndex]
+                    nextRunIndex += 1
+                    let deliveryID = run.context.deliveryID
+                    guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else {
+                        await executionPermit.releaseAndWait()
+                        continue
+                    }
+                    inFlightCount += 1
+                    group.addTask {
+                        do {
+                            let receipt = try await recoverInterruptedRun(
+                                store: store,
+                                ownerUserID: ownerUserID,
+                                run: run
+                            )
+                            await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+                            await executionPermit.releaseAndWait()
+                            return .finished(receipt.map {
+                                OrderedDeliveryAttemptReceipt(order: order, receipt: $0)
+                            })
+                        } catch {
+                            await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+                            await executionPermit.releaseAndWait()
+                            return .failed(error)
+                        }
+                    }
+                }
+
+                guard inFlightCount > 0 else { break }
+                guard let completion = try await group.next() else { break }
+                inFlightCount -= 1
+                switch completion {
+                case let .finished(receipt):
+                    if let receipt {
+                        completed.append(receipt)
+                        if receipt.receipt.outcome != .completed {
+                            shouldSchedule = false
+                        }
+                    }
+                case let .failed(error):
+                    if firstError == nil { firstError = error }
+                    shouldSchedule = false
+                }
             }
 
-            var batch: [OrderedDeliveryAttemptReceipt] = []
-            var firstError: Error?
-            for task in running {
-                do {
-                    if let completed = try await task.value {
-                        batch.append(completed)
-                    }
-                } catch {
-                    if firstError == nil { firstError = error }
-                }
-            }
             if let firstError { throw firstError }
-            batch.sort { $0.order < $1.order }
-            results.append(contentsOf: batch.map(\.receipt))
-            if batch.contains(where: { $0.receipt.outcome != .completed }) { break }
+            completed.sort { $0.order < $1.order }
+            return completed.map(\.receipt)
         }
-        return results
+    }
+
+    private enum InterruptedRunRecoveryCompletion: @unchecked Sendable {
+        case finished(OrderedDeliveryAttemptReceipt?)
+        case failed(Error)
     }
 
     private func recoverInterruptedRun(
