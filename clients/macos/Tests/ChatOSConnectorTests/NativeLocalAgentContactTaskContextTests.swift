@@ -1,4 +1,6 @@
 @testable import ChatOSConnector
+import ChatOSCodeReadWorkerClient
+import ChatOSCodeReadWorkerProtocol
 import ChatOSCore
 import Foundation
 import XCTest
@@ -55,7 +57,8 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
         let executor = NativeLocalAgentProjectToolExecutor(
             host: host,
             projects: projects,
-            connector: connector
+            connector: connector,
+            codeReadWorker: EmptyDirectoryCodeReadWorker()
         )
         let listed = try await executor.execute(
             ownerUserID: "user-1",
@@ -191,6 +194,20 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
             createdAtUnixMs: 1,
             updatedAtUnixMs: 1
         )
+    }
+}
+
+private struct EmptyDirectoryCodeReadWorker: CodeReadWorkerExecuting {
+    func execute(
+        operation: String,
+        arguments _: [String: CodeReadWorkerJSONValue],
+        projectRoot _: URL,
+        requestCWD _: String?,
+        defaultToolRoot _: String?,
+        ripgrepURL _: URL?
+    ) async throws -> CodeReadWorkerJSONValue {
+        XCTAssertEqual(operation, "list_dir")
+        return .object(["entries": .array([]), "truncated": .bool(false)])
     }
 }
 

@@ -119,6 +119,14 @@ swiftpm build \
   --scratch-path "$SWIFT_SCRATCH_PATH" \
   --configuration "$BUILD_CONFIGURATION" \
   "${SWIFT_DEBUG_ARGUMENTS[@]}" \
+  --product ChatOSCodeReadWorker
+swiftpm build \
+  --arch arm64 \
+  --force-resolved-versions \
+  --build-system "$SWIFT_BUILD_SYSTEM" \
+  --scratch-path "$SWIFT_SCRATCH_PATH" \
+  --configuration "$BUILD_CONFIGURATION" \
+  "${SWIFT_DEBUG_ARGUMENTS[@]}" \
   --product ChatOSAgentWorker
 BIN_DIR=$(swiftpm build \
   --arch arm64 \
@@ -130,6 +138,7 @@ BIN_DIR=$(swiftpm build \
 EXECUTABLE="$BIN_DIR/ChatOSSwift"
 PLUGIN_PROCESS_LIST="$BIN_DIR/chatos_plugin_ps"
 MEDIA_WORKER="$BIN_DIR/ChatOSMediaWorker"
+CODE_READ_WORKER="$BIN_DIR/ChatOSCodeReadWorker"
 AGENT_WORKER="$BIN_DIR/ChatOSAgentWorker"
 if [[ ! -x "$EXECUTABLE" ]]; then
   echo "ChatOSSwift executable not found at $EXECUTABLE" >&2
@@ -141,6 +150,10 @@ if [[ ! -x "$PLUGIN_PROCESS_LIST" ]]; then
 fi
 if [[ ! -x "$MEDIA_WORKER" ]]; then
   echo "Media Worker executable not found at $MEDIA_WORKER" >&2
+  exit 1
+fi
+if [[ ! -x "$CODE_READ_WORKER" ]]; then
+  echo "Code Read Worker executable not found at $CODE_READ_WORKER" >&2
   exit 1
 fi
 if [[ ! -x "$AGENT_WORKER" ]]; then
@@ -172,7 +185,7 @@ if [[ ! -x "$LOCAL_AGENT_HOST" ]]; then
 fi
 
 if [[ "$BUILD_CONFIGURATION" == "release" ]]; then
-  for SYMBOL_BINARY in "$EXECUTABLE" "$LOCAL_AGENT_HOST" "$PLUGIN_PROCESS_LIST" "$MEDIA_WORKER" "$AGENT_WORKER"; do
+  for SYMBOL_BINARY in "$EXECUTABLE" "$LOCAL_AGENT_HOST" "$PLUGIN_PROCESS_LIST" "$MEDIA_WORKER" "$CODE_READ_WORKER" "$AGENT_WORKER"; do
     SYMBOL_PATH="$EVIDENCE_DIR/${SYMBOL_BINARY:t}.dSYM"
     record_command dsymutil "$SYMBOL_BINARY" -o "$SYMBOL_PATH"
     dsymutil "$SYMBOL_BINARY" -o "$SYMBOL_PATH"
@@ -197,6 +210,7 @@ mkdir -p "$MACOS_DIR" "$TOOLS_DIR" "$RIPGREP_NOTICE_DIR" "$SWIFTTERM_NOTICE_DIR"
 cp "$EXECUTABLE" "$MACOS_DIR/ChatOSSwift"
 cp "$LOCAL_AGENT_HOST" "$MACOS_DIR/chatos_local_agent_host"
 cp "$MEDIA_WORKER" "$MACOS_DIR/ChatOSMediaWorker"
+cp "$CODE_READ_WORKER" "$MACOS_DIR/ChatOSCodeReadWorker"
 cp "$AGENT_WORKER" "$MACOS_DIR/ChatOSAgentWorker"
 copy_swift_resource_bundle() {
   local bundle_name=$1
@@ -232,6 +246,7 @@ chmod 755 "$TOOLS_DIR/rg"
 chmod 755 "$TOOLS_DIR/ps"
 chmod 755 "$MACOS_DIR/chatos_local_agent_host"
 chmod 755 "$MACOS_DIR/ChatOSMediaWorker"
+chmod 755 "$MACOS_DIR/ChatOSCodeReadWorker"
 chmod 755 "$MACOS_DIR/ChatOSAgentWorker"
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
@@ -239,6 +254,7 @@ if [[ -n "$SIGNING_IDENTITY" ]]; then
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$TOOLS_DIR/ps"
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/chatos_local_agent_host"
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/ChatOSMediaWorker"
+  codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/ChatOSCodeReadWorker"
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/ChatOSAgentWorker"
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$APP_DIR"
 else
@@ -249,6 +265,7 @@ else
   codesign --force --sign - "$TOOLS_DIR/ps"
   codesign --force --sign - "$MACOS_DIR/chatos_local_agent_host"
   codesign --force --sign - "$MACOS_DIR/ChatOSMediaWorker"
+  codesign --force --sign - "$MACOS_DIR/ChatOSCodeReadWorker"
   codesign --force --sign - "$MACOS_DIR/ChatOSAgentWorker"
   codesign \
     --force \

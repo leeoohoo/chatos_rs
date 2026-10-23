@@ -1,3 +1,4 @@
+import ChatOSCodeReadWorkerClient
 import ChatOSCore
 import Foundation
 
@@ -363,6 +364,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
     private let contextResolver: NativeLocalAgentProjectContextResolver
     private let writeStore: NativeMCPCodeWriteStore
     private let terminalStore: NativeLocalAgentTerminalStore
+    private let codeReadWorker: any CodeReadWorkerExecuting
     private let pluginTools: NativeLocalAgentPluginToolExecutor
     private let remoteConnections: NativeMCPRemoteConnectionController?
 
@@ -372,11 +374,13 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         connector: NativeLocalConnectorService,
         remoteConnectionProvider: (any NativeRemoteConnectionRuntimeProviding)? = nil,
         writeStore: NativeMCPCodeWriteStore = .init(),
-        terminalStore: NativeLocalAgentTerminalStore = .init()
+        terminalStore: NativeLocalAgentTerminalStore = .init(),
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
     ) {
         contextResolver = .init(host: host, projects: projects, connector: connector)
         self.writeStore = writeStore
         self.terminalStore = terminalStore
+        self.codeReadWorker = codeReadWorker
         pluginTools = .init(connector: connector, host: host)
         remoteConnections = remoteConnectionProvider.map {
             NativeMCPRemoteConnectionController(provider: $0)
@@ -480,9 +484,20 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                     )
                 }
             } else {
-                result = try await Task.detached {
-                    try tool.call(name: invocation.toolName, arguments: nativeArguments)
-                }.value
+                if NativeMCPCodeReadTools.workerToolNames.contains(invocation.toolName) {
+                    result = try await NativeCodeReadWorkerBridge.execute(
+                        name: invocation.toolName,
+                        arguments: nativeArguments,
+                        projectRoot: context.executionRootURL,
+                        requestCWD: nil,
+                        defaultToolRoot: nil,
+                        client: codeReadWorker
+                    )
+                } else {
+                    result = try await Task.detached {
+                        try tool.call(name: invocation.toolName, arguments: nativeArguments)
+                    }.value
+                }
             }
             return .init(native: result)
         } catch let error as NativeLocalAgentPlatformToolError {

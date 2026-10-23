@@ -161,18 +161,29 @@ extension NativeLocalConnectorService {
         if NativeMCPCodeReadTools.toolDefinitions.contains(where: {
             $0.jsonObject?["name"]?.jsonString == name
         }) {
-            let readTask = Task.detached {
-                try NativeMCPCodeReadTools(
-                    workspace: resolvedProject.workspace,
+            let result: NativeJSONValue
+            if NativeMCPCodeReadTools.workerToolNames.contains(name) {
+                result = try await NativeCodeReadWorkerBridge.execute(
+                    name: name,
+                    arguments: arguments,
                     projectRoot: projectRoot,
                     requestCWD: nil,
                     defaultToolRoot: nil
-                ).call(name: name, arguments: arguments)
-            }
-            let result = try await withTaskCancellationHandler {
-                try await readTask.value
-            } onCancel: {
-                readTask.cancel()
+                )
+            } else {
+                let readTask = Task.detached {
+                    try NativeMCPCodeReadTools(
+                        workspace: resolvedProject.workspace,
+                        projectRoot: projectRoot,
+                        requestCWD: nil,
+                        defaultToolRoot: nil
+                    ).call(name: name, arguments: arguments)
+                }
+                result = try await withTaskCancellationHandler {
+                    try await readTask.value
+                } onCancel: {
+                    readTask.cancel()
+                }
             }
             try await appendAgentBuiltinAudit(
                 name: name,

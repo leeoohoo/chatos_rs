@@ -14,9 +14,12 @@ let package = Package(
         .library(name: "ChatOSConnector", targets: ["ChatOSConnector"]),
         .library(name: "ChatOSMediaWorkerProtocol", targets: ["ChatOSMediaWorkerProtocol"]),
         .library(name: "ChatOSMediaWorkerClient", targets: ["ChatOSMediaWorkerClient"]),
+        .library(name: "ChatOSCodeReadWorkerProtocol", targets: ["ChatOSCodeReadWorkerProtocol"]),
+        .library(name: "ChatOSCodeReadWorkerClient", targets: ["ChatOSCodeReadWorkerClient"]),
         .library(name: "ChatOSAgentWorkerProtocol", targets: ["ChatOSAgentWorkerProtocol"]),
         .executable(name: "ChatOSSwift", targets: ["ChatOSApp"]),
         .executable(name: "ChatOSMediaWorker", targets: ["ChatOSMediaWorker"]),
+        .executable(name: "ChatOSCodeReadWorker", targets: ["ChatOSCodeReadWorker"]),
         .executable(name: "ChatOSAgentWorker", targets: ["ChatOSAgentWorker"]),
         .executable(name: "chatos_plugin_ps", targets: ["ChatOSPluginProcessList"]),
     ],
@@ -46,6 +49,15 @@ let package = Package(
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("ImageIO"),
             ]
+        ),
+        .target(name: "ChatOSCodeReadWorkerProtocol"),
+        .target(
+            name: "ChatOSCodeReadWorkerClient",
+            dependencies: ["ChatOSCodeReadWorkerProtocol"]
+        ),
+        .target(
+            name: "ChatOSCodeReadWorkerCore",
+            dependencies: ["ChatOSCodeReadWorkerProtocol"]
         ),
         .target(name: "ChatOSModelCapabilities", resources: [.process("Resources")]),
         .target(
@@ -81,6 +93,8 @@ let package = Package(
                 "ChatOSAgentWorkerProtocol",
                 "ChatOSMediaWorkerClient",
                 "ChatOSMediaWorkerProtocol",
+                "ChatOSCodeReadWorkerClient",
+                "ChatOSCodeReadWorkerProtocol",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             linkerSettings: [
@@ -122,6 +136,10 @@ let package = Package(
             dependencies: ["ChatOSMediaWorkerCore", "ChatOSMediaWorkerProtocol"]
         ),
         .executableTarget(
+            name: "ChatOSCodeReadWorker",
+            dependencies: ["ChatOSCodeReadWorkerCore", "ChatOSCodeReadWorkerProtocol"]
+        ),
+        .executableTarget(
             name: "ChatOSAgentWorker",
             dependencies: ["ChatOSAgentRuntime", "ChatOSAgentWorkerProtocol"]
         ),
@@ -146,6 +164,8 @@ let package = Package(
                 "ChatOSNetworking",
                 "ChatOSMediaWorkerClient",
                 "ChatOSMediaWorkerProtocol",
+                "ChatOSCodeReadWorkerClient",
+                "ChatOSCodeReadWorkerProtocol",
             ],
             resources: [.copy("Fixtures")]
         ),
@@ -163,6 +183,10 @@ let package = Package(
         .testTarget(
             name: "ChatOSMediaWorkerTests",
             dependencies: ["ChatOSMediaWorkerCore", "ChatOSMediaWorkerProtocol"]
+        ),
+        .testTarget(
+            name: "ChatOSCodeReadWorkerTests",
+            dependencies: ["ChatOSCodeReadWorkerCore", "ChatOSCodeReadWorkerProtocol"]
         ),
     ]
 )

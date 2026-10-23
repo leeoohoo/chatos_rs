@@ -202,6 +202,7 @@ def finish(repository, app, captured, commands, symbols):
     binaries = {}
     for relative in ("Contents/MacOS/ChatOSSwift", "Contents/MacOS/chatos_local_agent_host",
                      "Contents/MacOS/ChatOSMediaWorker",
+                     "Contents/MacOS/ChatOSCodeReadWorker",
                      "Contents/MacOS/ChatOSAgentWorker",
                      "Contents/Resources/Tools/darwin-arm64/ps", "Contents/Resources/Tools/darwin-arm64/rg"):
         path = app / relative
