@@ -1,4 +1,6 @@
 @testable import ChatOSConnector
+import ChatOSCodeReadWorkerClient
+import ChatOSCodeReadWorkerProtocol
 import ChatOSCore
 import Foundation
 import XCTest
@@ -8,11 +10,12 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("chatos-code-nav-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let project = root.appendingPathComponent("nested-project", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         try Data("export const categoryApi = { list() {} }\n".utf8)
-            .write(to: root.appendingPathComponent("categories.ts"))
+            .write(to: project.appendingPathComponent("categories.ts"))
         try Data("categoryApi.list()\n".utf8)
-            .write(to: root.appendingPathComponent("consumer.ts"))
+            .write(to: project.appendingPathComponent("consumer.ts"))
 
         let stateURL = root.appendingPathComponent("connector-state.json")
         var state = NativeConnectorPersistentState.empty
@@ -28,8 +31,11 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
             ),
             ticketProvider: NavigationTicketProvider()
         )
-        let service = NativeProjectCodeNavigationService(connector: connector)
-        let projectRoot = "local://connector/device/workspace"
+        let service = NativeProjectCodeNavigationService(
+            connector: connector,
+            codeReadWorker: NavigationCodeReadWorker()
+        )
+        let projectRoot = "local://connector/device/workspace/nested-project"
 
         let definition = try await service.definition(
             projectRoot: projectRoot,
@@ -74,7 +80,10 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
             ),
             ticketProvider: NavigationTicketProvider()
         )
-        let service = NativeProjectCodeNavigationService(connector: connector)
+        let service = NativeProjectCodeNavigationService(
+            connector: connector,
+            codeReadWorker: NavigationCodeReadWorker()
+        )
         let projectRoot = "local://connector/device/workspace"
 
         do {
@@ -87,6 +96,48 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
             XCTFail("Expected an oversized source error")
         } catch {
             XCTAssertEqual(error.localizedDescription, "当前文件超过 2 MB，无法执行代码导航。")
+        }
+    }
+}
+
+private struct NavigationCodeReadWorker: CodeReadWorkerExecuting {
+    func execute(
+        operation: String,
+        arguments: [String: CodeReadWorkerJSONValue],
+        projectRoot: URL,
+        requestCWD: String?,
+        defaultToolRoot: String?,
+        ripgrepURL _: URL?
+    ) async throws -> CodeReadWorkerJSONValue {
+        let workspace = LocalConnectorWorkspace(
+            id: "navigation-worker",
+            alias: "Navigation Worker",
+            absoluteRoot: projectRoot.path,
+            fingerprint: "navigation-worker"
+        )
+        do {
+            let nativeArguments = try JSONDecoder().decode(
+                [String: NativeJSONValue].self,
+                from: JSONEncoder().encode(arguments)
+            )
+            let result = try NativeMCPCodeReadTools(
+                workspace: workspace,
+                projectRoot: projectRoot,
+                requestCWD: requestCWD,
+                defaultToolRoot: defaultToolRoot
+            ).call(name: operation, arguments: nativeArguments)
+            return try JSONDecoder().decode(
+                CodeReadWorkerJSONValue.self,
+                from: JSONEncoder().encode(result)
+            )
+        } catch {
+            if error.localizedDescription.contains("文件超过读取限制") {
+                throw CodeReadWorkerProcessClientError.requestRejected(
+                    code: "file_too_large",
+                    message: error.localizedDescription
+                )
+            }
+            throw error
         }
     }
 }

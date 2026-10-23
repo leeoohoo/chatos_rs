@@ -1,13 +1,18 @@
+import ChatOSCodeReadWorkerClient
 import ChatOSCore
 import Foundation
 
 public actor NativeProjectCodeNavigationService: ProjectCodeNavigationServicing {
-    static let maximumSourceBytes = 2 * 1_024 * 1_024
     private let connector: NativeLocalConnectorService
+    private let codeReadWorker: any CodeReadWorkerExecuting
     private var searchCache: [SearchCacheKey: SearchCacheEntry] = [:]
 
-    public init(connector: NativeLocalConnectorService) {
+    public init(
+        connector: NativeLocalConnectorService,
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
+    ) {
         self.connector = connector
+        self.codeReadWorker = codeReadWorker
     }
 
     public func definition(
@@ -72,13 +77,36 @@ public actor NativeProjectCodeNavigationService: ProjectCodeNavigationServicing 
               file.absoluteURL.path != root.absoluteURL.path else {
             throw NavigationError.fileOutsideProject
         }
-        let readTask = Task.detached {
-            try Self.readSourceFile(file.absoluteURL)
-        }
-        let content = try await withTaskCancellationHandler {
-            try await readTask.value
-        } onCancel: {
-            readTask.cancel()
+        let content: String
+        do {
+            let value = try await NativeCodeReadWorkerBridge.execute(
+                name: "read_file_raw",
+                arguments: [
+                    "path": .string(Self.projectRelativePath(
+                        workspaceRelativePath: file.relativePath,
+                        rootRelativePath: root.relativePath
+                    )),
+                    "with_line_numbers": .bool(false),
+                ],
+                projectRoot: root.absoluteURL,
+                requestCWD: nil,
+                defaultToolRoot: nil,
+                client: codeReadWorker
+            )
+            guard case let .object(payload) = value,
+                  case let .string(source)? = payload["content"] else {
+                throw NavigationError.unreadableSource
+            }
+            content = source
+        } catch let error as CodeReadWorkerProcessClientError {
+            switch error {
+            case let .requestRejected(code, _) where code == "file_too_large":
+                throw NavigationError.fileTooLarge
+            case let .requestRejected(code, _) where code == "binary_file" || code == "not_file":
+                throw NavigationError.unreadableSource
+            default:
+                throw error
+            }
         }
         let fileProjectRelative = Self.projectRelativePath(
             workspaceRelativePath: file.relativePath,
@@ -93,25 +121,6 @@ public actor NativeProjectCodeNavigationService: ProjectCodeNavigationServicing 
         )
     }
 
-    private static func readSourceFile(_ url: URL) throws -> String {
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard values.isRegularFile == true,
-              let fileSize = values.fileSize,
-              fileSize <= maximumSourceBytes else {
-            throw NavigationError.fileTooLarge
-        }
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        let data = try handle.read(upToCount: maximumSourceBytes + 1) ?? Data()
-        guard data.count <= maximumSourceBytes else {
-            throw NavigationError.fileTooLarge
-        }
-        guard let content = String(data: data, encoding: .utf8) else {
-            throw NavigationError.unreadableSource
-        }
-        return content
-    }
-
     private func search(context: Context, token: String, limit: Int) async throws -> [SearchHit] {
         let cacheKey = SearchCacheKey(
             workspaceID: context.root.workspace.id,
@@ -122,27 +131,35 @@ public actor NativeProjectCodeNavigationService: ProjectCodeNavigationServicing 
             return Array(cached.hits.prefix(limit))
         }
 
-        let searchTask = Task.detached {
-            try NativeWorkspaceFilesystem(workspace: context.root.workspace)
-                .searchContent(path: context.root.relativePath, query: token, limit: 500)
-        }
-        let value = try await withTaskCancellationHandler {
-            try await searchTask.value
-        } onCancel: {
-            searchTask.cancel()
-        }
+        let value = try await NativeCodeReadWorkerBridge.execute(
+            name: "search_text",
+            arguments: [
+                "path": .string("."),
+                "pattern": .string(token),
+                "max_results": .number(500),
+            ],
+            projectRoot: context.root.absoluteURL,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            client: codeReadWorker
+        )
         guard case let .object(object) = value,
-              case let .array(items)? = object["matches"] else { return [] }
+              case let .array(items)? = object["results"] else { return [] }
         let hits: [SearchHit] = items.compactMap { item -> SearchHit? in
             guard case let .object(fields) = item,
                   case let .string(path)? = fields["path"],
                   case let .number(line)? = fields["line"],
-                  case let .string(text)? = fields["text"],
-                  let relative = Self.projectRelativePathIfContained(
-                    workspaceRelativePath: path,
-                    rootRelativePath: context.root.relativePath
-                  ) else { return nil }
-            return SearchHit(workspaceRelativePath: path, relativePath: relative, line: Int(line), text: text)
+                  case let .string(text)? = fields["text"] else { return nil }
+            let workspaceRelative = Self.workspaceRelativePath(
+                projectRelativePath: path,
+                rootRelativePath: context.root.relativePath
+            )
+            return SearchHit(
+                workspaceRelativePath: workspaceRelative,
+                relativePath: path,
+                line: Int(line),
+                text: text
+            )
         }
         guard !Task.isCancelled else { throw CancellationError() }
         searchCache[cacheKey] = SearchCacheEntry(createdAt: Date(), hits: hits)
@@ -319,6 +336,19 @@ private extension NativeProjectCodeNavigationService {
         let prefix = rootRelativePath + "/"
         guard workspaceRelativePath.hasPrefix(prefix) else { return nil }
         return String(workspaceRelativePath.dropFirst(prefix.count))
+    }
+
+    static func workspaceRelativePath(
+        projectRelativePath: String,
+        rootRelativePath: String
+    ) -> String {
+        guard rootRelativePath != ".", !rootRelativePath.isEmpty else {
+            return projectRelativePath
+        }
+        guard projectRelativePath != ".", !projectRelativePath.isEmpty else {
+            return rootRelativePath
+        }
+        return rootRelativePath + "/" + projectRelativePath
     }
 
     static func language(for file: URL) -> String {
