@@ -128,6 +128,14 @@ extension AppModel {
         ownerUserID: String,
         refreshControlPlaneAfterStart: Bool = false
     ) {
+        // Authentication restoration, wake recovery and request-driven recovery can all arrive
+        // while the same account is still launching. Cancelling that task used to abandon the
+        // caller while the detached Host was copying a multi-gigabyte migration backup, then
+        // immediately launch a competing Host. Let the existing same-owner launch finish.
+        if localAgentHostLifecycleTask != nil,
+           localAgentRuntimeState.ownerUserID == ownerUserID {
+            return
+        }
         if localAgentHostRecoveryState.activeRestart != nil {
             localAgentCrashRecoveryTask?.cancel()
             localAgentCrashRecoveryTask = nil

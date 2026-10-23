@@ -6,6 +6,94 @@ import SQLite3
 import XCTest
 
 final class NativeLocalAgentHostLifecycleTests: XCTestCase {
+    func testDefaultStartupTimeoutAllowsLargeDatabaseMigration() {
+        let configuration = NativeLocalAgentHostConfiguration(
+            executableURL: URL(fileURLWithPath: "/tmp/chatos_local_agent_host"),
+            databaseURL: URL(fileURLWithPath: "/tmp/local-agent.sqlite3")
+        )
+
+        XCTAssertEqual(configuration.startupTimeout, .seconds(10 * 60))
+    }
+
+    func testConcurrentBootstrapCallsShareOneHostLaunch() async throws {
+        let executable = try nativeHostExecutable()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-concurrent-bootstrap-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wrapper = try delayedHostWrapper(realExecutable: executable, root: root)
+        let lifecycle = NativeLocalAgentHostLifecycle(configuration: .init(
+            executableURL: wrapper.executable,
+            databaseURL: root.appendingPathComponent("agent.sqlite3"),
+            startupTimeout: .seconds(10)
+        ))
+
+        do {
+            async let first: Void = lifecycle.startForBootstrap(ownerUserID: "user-1")
+            try await Task.sleep(for: .milliseconds(25))
+            async let second: Void = lifecycle.startForBootstrap(ownerUserID: "user-1")
+            _ = try await (first, second)
+
+            XCTAssertEqual(try launchCount(at: wrapper.launchLog), 1)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: wrapper.overlapLog.path))
+            let processIdentifier = await lifecycle.processIdentifier
+            XCTAssertNotNil(processIdentifier)
+            await lifecycle.stop()
+        } catch {
+            await lifecycle.stop()
+            throw error
+        }
+    }
+
+    func testCredentialledRestartWaitsForBootstrapLaunchToFinish() async throws {
+        let executable = try nativeHostExecutable()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-serialized-restart-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wrapper = try delayedHostWrapper(realExecutable: executable, root: root)
+        let lifecycle = NativeLocalAgentHostLifecycle(configuration: .init(
+            executableURL: wrapper.executable,
+            databaseURL: root.appendingPathComponent("agent.sqlite3"),
+            startupTimeout: .seconds(10)
+        ))
+
+        do {
+            let bootstrap = Task {
+                try await lifecycle.startForBootstrap(ownerUserID: "user-1")
+            }
+            try await Task.sleep(for: .milliseconds(25))
+            let restart = Task {
+                try await lifecycle.restart(
+                    ownerUserID: "user-1",
+                    credentialEnvironment: [
+                        "CHATOS_LOCAL_AGENT_MODEL_TEST": "test-only-secret",
+                    ]
+                )
+            }
+            try await bootstrap.value
+            try await restart.value
+
+            XCTAssertEqual(try launchCount(at: wrapper.launchLog), 2)
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: wrapper.overlapLog.path),
+                "Bootstrap and credentialled Host processes must never launch concurrently"
+            )
+            let processIdentifier = await lifecycle.processIdentifier
+            XCTAssertNotNil(processIdentifier)
+            let recoveryArtifacts = try FileManager.default.contentsOfDirectory(
+                atPath: root.path
+            ).filter {
+                $0.contains(".pre-migration-") && $0.hasSuffix(".incomplete")
+            }
+            XCTAssertTrue(recoveryArtifacts.isEmpty)
+            await lifecycle.stop()
+        } catch {
+            await lifecycle.stop()
+            throw error
+        }
+    }
+
     func testNotRunningRequestSignalsRecoveryBeforeReturningTheError() async throws {
         let recoveryRequested = expectation(description: "Host recovery requested")
         let observer = NotificationCenter.default.addObserver(
@@ -702,6 +790,65 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         try truncated.fileHandleForWriting.write(contentsOf: Data([0, 0, 0, 4, 1, 2]))
         try truncated.fileHandleForWriting.close()
         XCTAssertThrowsError(try LocalAgentHostFrameCodec.read(from: truncated.fileHandleForReading))
+    }
+
+    private struct DelayedHostWrapper {
+        let executable: URL
+        let launchLog: URL
+        let overlapLog: URL
+    }
+
+    private func nativeHostExecutable() throws -> URL {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let executable = ProcessInfo.processInfo.environment["CHATOS_LOCAL_AGENT_HOST_PATH"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? repository.appendingPathComponent("target-shared/debug/chatos_local_agent_host")
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            if ProcessInfo.processInfo.environment["CHATOS_REQUIRE_NATIVE_HOST_TESTS"] == "1" {
+                XCTFail("Required native Host integration executable is missing")
+                throw NativeLocalAgentHostError.notRunning
+            }
+            throw XCTSkip("Build chatos_local_agent_host before running native lifecycle tests")
+        }
+        return executable
+    }
+
+    private func delayedHostWrapper(
+        realExecutable: URL,
+        root: URL
+    ) throws -> DelayedHostWrapper {
+        let wrapper = root.appendingPathComponent("delayed-host")
+        let launchLog = root.appendingPathComponent("launches.log")
+        let overlapLog = root.appendingPathComponent("overlap.log")
+        let guardDirectory = root.appendingPathComponent("launch-in-progress")
+        let quote: (String) -> String = { value in
+            "'\(value.replacingOccurrences(of: "'", with: "'\\\"'\\\"'"))'"
+        }
+        let script = """
+        #!/bin/sh
+        printf 'launch\\n' >> \(quote(launchLog.path))
+        if ! mkdir \(quote(guardDirectory.path)) 2>/dev/null; then
+          printf 'overlap\\n' >> \(quote(overlapLog.path))
+        fi
+        sleep 0.20
+        rmdir \(quote(guardDirectory.path)) 2>/dev/null || true
+        exec \(quote(realExecutable.path)) "$@"
+        """
+        try Data(script.utf8).write(to: wrapper, options: .atomic)
+        XCTAssertEqual(chmod(wrapper.path, 0o700), 0)
+        return DelayedHostWrapper(
+            executable: wrapper,
+            launchLog: launchLog,
+            overlapLog: overlapLog
+        )
+    }
+
+    private func launchCount(at url: URL) throws -> Int {
+        try String(contentsOf: url, encoding: .utf8)
+            .split(separator: "\n")
+            .count
     }
 }
 

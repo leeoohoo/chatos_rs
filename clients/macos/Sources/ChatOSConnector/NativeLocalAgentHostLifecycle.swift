@@ -97,7 +97,10 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
     public init(
         executableURL: URL,
         databaseURL: URL,
-        startupTimeout: Duration = .seconds(10),
+        // Startup includes integrity checks and the transactionally consistent pre-migration
+        // snapshot. A multi-gigabyte database can legitimately spend minutes in this phase;
+        // killing it after the ordinary request timeout leaves an incomplete recovery file.
+        startupTimeout: Duration = .seconds(10 * 60),
         requestTimeoutMilliseconds: Int = 75_000,
         readOnlyToolNames: [String] = NativeLocalAgentPlatformToolCatalog.readOnlyToolNames,
         approvalExemptToolNames: [String] =
@@ -121,11 +124,31 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
 }
 
 public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
+    private struct LaunchIntent: Sendable, Equatable {
+        let ownerUserID: String
+        let credentialFingerprint: Data
+        let workersEnabled: Bool
+
+        func satisfies(_ requested: LaunchIntent) -> Bool {
+            guard ownerUserID == requested.ownerUserID else { return false }
+            // A credentialled worker can serve every bootstrap request for the same account.
+            guard requested.workersEnabled else { return true }
+            return workersEnabled
+                && credentialFingerprint == requested.credentialFingerprint
+        }
+    }
+
+    private struct HostTransition: Sendable {
+        let id: UUID
+        let target: LaunchIntent?
+        let task: Task<ManagedLocalAgentHostProcess?, Error>
+    }
+
     private let configuration: NativeLocalAgentHostConfiguration
     private var managedProcess: ManagedLocalAgentHostProcess?
+    private var transition: HostTransition?
     private var credentialFingerprint: Data?
     private var workersEnabled = false
-    private var launchGeneration: UInt64 = 0
     public private(set) var activeOwnerUserID: String?
 
     public init(configuration: NativeLocalAgentHostConfiguration) {
@@ -143,9 +166,6 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
 
     public func start(ownerUserID: String) async throws {
         try Self.validate(ownerUserID: ownerUserID)
-        if managedProcess?.process.isRunning == true, activeOwnerUserID == ownerUserID {
-            return
-        }
         try await launch(
             ownerUserID: ownerUserID,
             credentialEnvironment: [:],
@@ -225,42 +245,74 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         credentialEnvironment: [String: String],
         workersEnabled: Bool
     ) async throws {
-        stopLocked()
-        let generation = launchGeneration
-        do {
-            let configuration = configuration
-            let managed = try await Task.detached(priority: .userInitiated) {
-                try ManagedLocalAgentHostProcess.launch(
-                    configuration: configuration,
-                    ownerUserID: ownerUserID,
-                    credentialEnvironment: credentialEnvironment,
-                    workersEnabled: workersEnabled
+        let intent = LaunchIntent(
+            ownerUserID: ownerUserID,
+            credentialFingerprint: Self.fingerprint(credentialEnvironment),
+            workersEnabled: workersEnabled
+        )
+
+        while true {
+            if runningProcessSatisfies(intent) { return }
+
+            if let transition {
+                if transition.target?.satisfies(intent) == true {
+                    try await settle(transition)
+                    continue
+                }
+                let successor = chainedLaunch(
+                    after: transition,
+                    intent: intent,
+                    credentialEnvironment: credentialEnvironment
                 )
-            }.value
-            guard generation == launchGeneration, !Task.isCancelled else {
-                managed.terminate()
-                throw CancellationError()
+                self.transition = successor
+                try await settle(successor)
+                continue
             }
-            managedProcess = managed
-            activeOwnerUserID = ownerUserID
-            self.workersEnabled = workersEnabled
-            credentialFingerprint = Self.fingerprint(credentialEnvironment)
-            managed.installTerminationHandler { [weak self] identity, processIdentifier in
-                Task {
-                    await self?.processDidTerminate(
-                        identity: identity,
-                        processIdentifier: processIdentifier
+
+            let predecessor = detachManagedProcess()
+            let configuration = configuration
+            let operation = HostTransition(
+                id: UUID(),
+                target: intent,
+                task: Task.detached(priority: .userInitiated) {
+                    predecessor?.terminateAndWait()
+                    return try ManagedLocalAgentHostProcess.launch(
+                        configuration: configuration,
+                        ownerUserID: intent.ownerUserID,
+                        credentialEnvironment: credentialEnvironment,
+                        workersEnabled: intent.workersEnabled
                     )
                 }
-            }
-        } catch {
-            if generation == launchGeneration { stopLocked() }
-            throw error
+            )
+            transition = operation
+            try await settle(operation)
         }
     }
 
     public func stop() async {
-        stopLocked()
+        let predecessor = transition
+        let managed = detachManagedProcess()
+        let operation = HostTransition(
+            id: UUID(),
+            target: nil,
+            task: Task.detached(priority: .userInitiated) {
+                let launched: ManagedLocalAgentHostProcess?
+                if let predecessor {
+                    do {
+                        launched = try await predecessor.task.value
+                    } catch {
+                        launched = nil
+                    }
+                } else {
+                    launched = nil
+                }
+                launched?.terminateAndWait()
+                managed?.terminateAndWait()
+                return nil
+            }
+        )
+        transition = operation
+        try? await settle(operation)
     }
 
     public func request(command: Data) async throws -> Data {
@@ -360,13 +412,78 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         return managedProcess
     }
 
-    private func stopLocked() {
-        launchGeneration &+= 1
+    private func runningProcessSatisfies(_ intent: LaunchIntent) -> Bool {
+        guard managedProcess?.process.isRunning == true,
+              activeOwnerUserID == intent.ownerUserID else { return false }
+        guard intent.workersEnabled else { return true }
+        return workersEnabled && credentialFingerprint == intent.credentialFingerprint
+    }
+
+    private func chainedLaunch(
+        after predecessor: HostTransition,
+        intent: LaunchIntent,
+        credentialEnvironment: [String: String]
+    ) -> HostTransition {
+        let configuration = configuration
+        return HostTransition(
+            id: UUID(),
+            target: intent,
+            task: Task.detached(priority: .userInitiated) {
+                let previous: ManagedLocalAgentHostProcess?
+                do {
+                    previous = try await predecessor.task.value
+                } catch {
+                    previous = nil
+                }
+                previous?.terminateAndWait()
+                return try ManagedLocalAgentHostProcess.launch(
+                    configuration: configuration,
+                    ownerUserID: intent.ownerUserID,
+                    credentialEnvironment: credentialEnvironment,
+                    workersEnabled: intent.workersEnabled
+                )
+            }
+        )
+    }
+
+    private func settle(_ observed: HostTransition) async throws {
+        let result = await observed.task.result
+        guard transition?.id == observed.id else { return }
+        transition = nil
+        switch result {
+        case let .success(managed):
+            guard let managed else { return }
+            managedProcess = managed
+            guard let intent = observed.target else {
+                managed.terminateAndWait()
+                managedProcess = nil
+                return
+            }
+            activeOwnerUserID = intent.ownerUserID
+            workersEnabled = intent.workersEnabled
+            credentialFingerprint = intent.credentialFingerprint
+            managed.installTerminationHandler { [weak self] identity, processIdentifier in
+                Task {
+                    await self?.processDidTerminate(
+                        identity: identity,
+                        processIdentifier: processIdentifier
+                    )
+                }
+            }
+        case let .failure(error):
+            _ = detachManagedProcess()
+            throw error
+        }
+    }
+
+    @discardableResult
+    private func detachManagedProcess() -> ManagedLocalAgentHostProcess? {
+        let managed = managedProcess
         credentialFingerprint = nil
         workersEnabled = false
         activeOwnerUserID = nil
-        managedProcess?.terminate()
         managedProcess = nil
+        return managed
     }
 
     private func processDidTerminate(identity: UUID, processIdentifier: Int32) {

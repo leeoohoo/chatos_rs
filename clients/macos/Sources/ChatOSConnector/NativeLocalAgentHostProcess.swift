@@ -168,6 +168,27 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         }
     }
 
+    /// Stops the child and waits for the operating system to release process-owned resources.
+    ///
+    /// In particular, the Local Agent Host owns an advisory lock beside its SQLite database.
+    /// Starting its replacement immediately after `Process.terminate()` can race that lock and
+    /// make the replacement fail with `WouldBlock`. This method runs only from a detached
+    /// lifecycle transition, so the short bounded wait never blocks the main actor.
+    func terminateAndWait() {
+        terminate()
+        let gracefulDeadline = ContinuousClock.now.advanced(by: .milliseconds(100))
+        while process.isRunning, ContinuousClock.now < gracefulDeadline {
+            usleep(10_000)
+        }
+        if process.isRunning {
+            _ = kill(process.processIdentifier, SIGKILL)
+            let forcedDeadline = ContinuousClock.now.advanced(by: .milliseconds(100))
+            while process.isRunning, ContinuousClock.now < forcedDeadline {
+                usleep(10_000)
+            }
+        }
+    }
+
     func installTerminationHandler(
         _ handler: @escaping @Sendable (UUID, Int32) -> Void
     ) {
