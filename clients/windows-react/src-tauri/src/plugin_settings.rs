@@ -20,6 +20,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::{
     authentication::AuthenticationManager,
+    computer_use_worker::TrustedComputerUseLaunch,
     connector_state,
     host_lifecycle::HostManager,
     plugin_application::PluginApplicationManager,
@@ -56,6 +57,108 @@ impl PluginSettingsManager {
             plugin_root: app_data_directory.join("NativeConnector").join("Plugins"),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ComputerUseInstallation {
+    Missing,
+    Disabled,
+    Ready(TrustedComputerUseLaunch),
+}
+
+pub(crate) async fn resolve_computer_use_installation(
+    host: &HostManager,
+    manager: &PluginSettingsManager,
+    owner_user_id: &str,
+) -> Result<ComputerUseInstallation, String> {
+    let records = list_installation_records(host, owner_user_id).await?;
+    let mut matches = Vec::new();
+    for record in records {
+        let manifest = match load_installed_manifest(&manager.plugin_root, &record) {
+            Ok(manifest) => manifest,
+            Err(_) => continue,
+        };
+        if manifest.name != "open-computer-use"
+            || !windows_compatible(&manifest.dependencies.supported_platforms)
+        {
+            continue;
+        }
+        if !requires_installation_integrity(&record.spec.component_revision) {
+            return Err("Computer Use 安装缺少可信完整性记录。".into());
+        }
+        let server = manifest
+            .mcp_servers
+            .iter()
+            .find(|server| server.component_key() == record.spec.server_id)
+            .ok_or_else(|| "Computer Use 安装记录与清单不一致。".to_owned())?;
+        let PluginMcpServer::Stdio {
+            component_key,
+            bin,
+            args,
+            ..
+        } = server
+        else {
+            return Err("Computer Use 必须使用本机 stdio Worker。".into());
+        };
+        if record.spec.component_id != *component_key
+            || record.spec.args != *args
+            || !required_component_permission(&manifest, "process.spawn", component_key)
+            || !required_component_permission(&manifest, "computer.control", component_key)
+        {
+            return Err("Computer Use 安装权限或启动参数无效。".into());
+        }
+        let manifest_path =
+            installation_manifest_path(&confined_plugin_root(&manager.plugin_root)?, &record)?;
+        let installation_root = manifest_path
+            .parent()
+            .ok_or_else(plugin_catalog_error)?
+            .canonicalize()
+            .map_err(|_| plugin_catalog_error())?;
+        let executable = resolve_executable(&installation_root, bin)?;
+        let recorded_executable = PathBuf::from(&record.spec.executable_path)
+            .canonicalize()
+            .map_err(|_| plugin_catalog_error())?;
+        let working_directory = record
+            .spec
+            .working_directory
+            .as_deref()
+            .map(PathBuf::from)
+            .ok_or_else(|| "Computer Use 安装目录缺失。".to_owned())?
+            .canonicalize()
+            .map_err(|_| "Computer Use 安装目录不可用。".to_owned())?;
+        if executable != recorded_executable || working_directory != installation_root {
+            return Err("Computer Use 启动边界与已验证安装不一致。".into());
+        }
+        matches.push((
+            record.spec.enabled,
+            TrustedComputerUseLaunch {
+                executable,
+                working_directory,
+            },
+        ));
+    }
+    match matches.as_slice() {
+        [] => Ok(ComputerUseInstallation::Missing),
+        [(false, _)] => Ok(ComputerUseInstallation::Disabled),
+        [(true, launch)] => Ok(ComputerUseInstallation::Ready(launch.clone())),
+        _ => Err("Computer Use 存在重复的本机 Worker 安装记录。".into()),
+    }
+}
+
+fn required_component_permission(
+    manifest: &PluginManifest,
+    permission_id: &str,
+    component_key: &str,
+) -> bool {
+    manifest.permissions.iter().any(|permission| {
+        permission.permission == permission_id
+            && permission.required
+            && (permission.components.is_empty()
+                || permission
+                    .components
+                    .iter()
+                    .any(|component| component == component_key))
+    })
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1150,5 +1253,48 @@ mod tests {
         assert_eq!(runtime_status(false, false), "not_installed");
         assert_eq!(runtime_status(true, false), "disabled");
         assert_eq!(runtime_status(true, true), "not_checked");
+    }
+
+    #[test]
+    fn computer_use_worker_requires_spawn_and_control_for_the_exact_component() {
+        let complete = parse_plugin_manifest(
+            r#"{
+                "schemaVersion": 3,
+                "name": "open-computer-use",
+                "version": "1.0.0",
+                "description": "Computer Use",
+                "author": { "name": "ChatOS" },
+                "interface": {
+                    "displayName": "Computer Use",
+                    "shortDescription": "Control Windows",
+                    "longDescription": "Control Windows from screenshots",
+                    "developerName": "ChatOS",
+                    "category": "Productivity"
+                },
+                "mcpServers": {
+                    "computer-use": { "type": "stdio", "bin": "computer-use" }
+                },
+                "permissions": [
+                    { "permission": "process.spawn", "required": true, "components": ["computer-use"] },
+                    { "permission": "computer.control", "required": true, "components": ["computer-use"] }
+                ]
+            }"#,
+        )
+        .unwrap();
+        assert!(required_component_permission(
+            &complete,
+            "process.spawn",
+            "computer-use"
+        ));
+        assert!(required_component_permission(
+            &complete,
+            "computer.control",
+            "computer-use"
+        ));
+        assert!(!required_component_permission(
+            &complete,
+            "computer.control",
+            "other-component"
+        ));
     }
 }

@@ -1108,10 +1108,11 @@ Windows React 已完成对应独立切片：
 - Rust/Tauri 发布有界、强类型的 `windows` 原生能力快照，命令要求当前 owner 的 Host session 就绪；React 只解析安全 DTO，不读取系统或 Host 内部状态；
 - `terminal` 对应已经准入的 Rust/Tauri PowerShell worker，状态为 `ready`，但明确保留账号、工作区、审批和进程树约束；
 - Windows 没有 macOS“完全磁盘访问”的等价总开关；`filesystem` 状态为 `on_demand`，准确说明当前账号 ACL、Registry 与 workspace grant 的联合边界；
-- Computer Use/UI Automation 与屏幕采集 worker 尚未准入，状态为 `missing_dependency` 且 `canRequest = false`。这代表产品能力缺失，不得伪装成用户尚未授权；
-- 当前快照没有应用内可请求项；request command 对未知或不可请求 ID 失败关闭。将来只有原生层发布 `canRequest` 后，React 才显示授权动作；
+- Computer Use/UI Automation 与屏幕采集已接入受信 Plugin Worker：Rust 会读取 Host 安装记录，复验安装完整性、Windows 平台声明、stdio component、必需权限、启动参数、可执行文件和工作目录；重复、越界或不一致记录全部失败关闭；
+- 权限状态来自 Worker 的有界 `--doctor` 诊断，不再固定伪装为缺失：未安装为 `missing_dependency`、停用或检查失败为 `action_required`、当前交互桌面不可用为 `needs_attention`、真实截图与输入能力均通过后才为 `ready`；
+- 只有诊断确认能力尚不可用时才发布 `canRequest`；request command 对未知或不可请求 ID 失败关闭，并通过已验证的同一 Worker 打开受控 `--onboarding` 指引。Windows Marketplace artifact 尚未发布时，正常安装路径仍会诚实显示 `missing_dependency`；
 - React Store 绑定 owner 与 Host availability，refresh/action 使用独立 request identity；短暂刷新失败保留最后可信快照，账号替换或 Host suspension 拒绝迟到结果；
-- Windows 定向验收为 Rust 82 项通过、2 项 sidecar 环境测试忽略，React 31 个文件 114 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
+- Windows 全量验收为 Rust 444 项通过、2 项 sidecar 环境测试忽略，React 130 个文件 472 项通过；Rustfmt、TypeScript、Vite production build、架构审计、bundle 预算和 `clippy -D warnings` 通过。
 
 ### 8.7 访问控制与执行后端的 Windows 平台映射
 

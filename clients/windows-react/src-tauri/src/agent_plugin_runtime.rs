@@ -2508,7 +2508,7 @@ fn main() {
         } else if line.contains("\"method\":\"tools/list\"") {
             r#"{"jsonrpc":"2.0","id":0,"result":{"tools":[{"name":"echo_document","description":"Echo a bounded document request.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false},"_meta":{"chatos/skillGate":{"allOf":["document-helper"]}}}]}}"#
         } else if line.contains("\"method\":\"tools/call\"") {
-            r#"{"jsonrpc":"2.0","id":0,"result":{"content":[{"type":"text","text":"verified"}],"isError":false}}"#
+            r#"{"jsonrpc":"2.0","id":0,"result":{"content":[{"type":"text","text":"verified"},{"type":"image","data":"/9j/2Q==","mimeType":"image/jpeg"}],"structuredContent":{"captureRegionGlobal":{"x":0,"y":0,"width":1,"height":1}},"isError":false}}"#
         } else {
             continue;
         };
@@ -2611,6 +2611,13 @@ fn main() {
             .await
             .unwrap();
         assert_eq!(result["content"][0]["text"], "verified");
+        assert_eq!(result["content"][1]["type"], "image");
+        assert_eq!(result["content"][1]["mimeType"], "image/jpeg");
+        assert_eq!(result["content"][1]["data"], "/9j/2Q==");
+        assert_eq!(
+            result["structuredContent"]["captureRegionGlobal"]["width"],
+            1
+        );
         session.invalidate().await;
     }
 }

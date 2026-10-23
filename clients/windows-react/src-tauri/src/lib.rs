@@ -8,6 +8,7 @@ mod ask_user;
 mod attachment_tool_worker;
 mod authentication;
 mod clipboard_history;
+mod computer_use_worker;
 mod connector_state;
 mod control_plane;
 mod conversation_attachments;

@@ -81,7 +81,7 @@ export function SystemPermissionsView({
           >重新检测</button>
         </header>
         <div className="settings-card__body">
-          <p className="settings-help">每项能力都由 Tauri 原生层报告准确的执行边界；尚未实现的 worker 不会被显示成系统授权问题。</p>
+          <p className="settings-help">每项能力都由 Tauri 原生层或通过完整性校验的 Plugin Worker 报告；未安装、已停用、运行检查失败和桌面不可用会分别显示。</p>
           <div className="system-permission-list">
             {snapshot.items.map((permission) => (
               <PermissionRow
