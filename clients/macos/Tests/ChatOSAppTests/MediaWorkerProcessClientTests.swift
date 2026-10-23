@@ -58,7 +58,6 @@ final class MediaWorkerProcessClientTests: XCTestCase {
         var frame: GeneratedMediaFile? = try await StoryVideoFrameExtractor.lastFramePNG(
             from: source,
             ownerUserID: "process-client-test",
-            taskID: "story-tail-test",
             temporaryDirectory: root,
             availableCapacityOverride: Int64.max,
             mediaWorker: MediaWorkerProcessClient(

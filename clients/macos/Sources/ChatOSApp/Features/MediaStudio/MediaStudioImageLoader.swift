@@ -164,7 +164,6 @@ enum MediaStudioImageLoader {
         transport: any HTTPTransport = URLSessionHTTPTransport(),
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         availableCapacityOverride: Int64? = nil,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared,
         mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
     ) async throws -> GeneratedMediaFile {
         let prepared = try await preparedSource(
@@ -178,49 +177,41 @@ enum MediaStudioImageLoader {
             temporaryDirectory: temporaryDirectory,
             availableCapacityOverride: availableCapacityOverride
         )
-        return try await heavyMediaGovernor.perform(context: .init(
-            taskID: mediaTaskID(assetID: asset.id, operation: "normalize"),
-            kind: .imageDecode,
-            estimatedDecodedBytes: estimatedDecodedBytes(
-                maximumDisplayPixelSize: maximumNormalizedPixelSize
-            )
-        )) {
-            defer { withExtendedLifetime(source.owner) {} }
-            guard let sourceURL = source.fileURL else { throw ImageError.invalidImage }
-            return try await ChatOSMediaArtifactFileWriter.writeNormalizedImageUsingWorker(
-                maximumBytes: maximumImageBytes,
-                temporaryDirectory: temporaryDirectory,
-                availableCapacityOverride: availableCapacityOverride
-            ) { destinationURL, _ in
-                do {
-                    let descriptor = try await mediaWorker.normalizePNG(
-                        sourceURL: sourceURL,
-                        sourceIdentity: nil,
-                        destinationURL: destinationURL,
-                        ownerUserID: ownerUserID,
-                        maximumSourceBytes: maximumImageBytes,
-                        maximumSourcePixelCount: maximumSourcePixelCount,
-                        maximumOutputPixelSize: maximumNormalizedPixelSize,
-                        maximumOutputBytes: maximumImageBytes
-                    )
-                    guard descriptor.path == destinationURL.path,
-                          descriptor.mimeType == "image/png",
-                          descriptor.byteCount > 0,
-                          descriptor.byteCount <= maximumImageBytes else {
-                        throw ImageError.invalidImage
-                    }
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch let error as MediaWorkerProcessClientError {
-                    if case let .requestRejected(code) = error,
-                       code == "insufficient_disk_space" {
-                        throw ImageError.insufficientDiskSpace
-                    }
-                    if case .requestRejected = error {
-                        throw ImageError.invalidImage
-                    }
-                    throw error
+        defer { withExtendedLifetime(source.owner) {} }
+        guard let sourceURL = source.fileURL else { throw ImageError.invalidImage }
+        return try await ChatOSMediaArtifactFileWriter.writeNormalizedImageUsingWorker(
+            maximumBytes: maximumImageBytes,
+            temporaryDirectory: temporaryDirectory,
+            availableCapacityOverride: availableCapacityOverride
+        ) { destinationURL, _ in
+            do {
+                let descriptor = try await mediaWorker.normalizePNG(
+                    sourceURL: sourceURL,
+                    sourceIdentity: nil,
+                    destinationURL: destinationURL,
+                    ownerUserID: ownerUserID,
+                    maximumSourceBytes: maximumImageBytes,
+                    maximumSourcePixelCount: maximumSourcePixelCount,
+                    maximumOutputPixelSize: maximumNormalizedPixelSize,
+                    maximumOutputBytes: maximumImageBytes
+                )
+                guard descriptor.path == destinationURL.path,
+                      descriptor.mimeType == "image/png",
+                      descriptor.byteCount > 0,
+                      descriptor.byteCount <= maximumImageBytes else {
+                    throw ImageError.invalidImage
                 }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as MediaWorkerProcessClientError {
+                if case let .requestRejected(code) = error,
+                   code == "insufficient_disk_space" {
+                    throw ImageError.insufficientDiskSpace
+                }
+                if case .requestRejected = error {
+                    throw ImageError.invalidImage
+                }
+                throw error
             }
         }
     }

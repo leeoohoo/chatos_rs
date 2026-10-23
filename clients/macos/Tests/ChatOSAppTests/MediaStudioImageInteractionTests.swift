@@ -12,7 +12,7 @@ import XCTest
 
 @MainActor
 final class MediaStudioImageInteractionTests: XCTestCase {
-    func testHeavyMediaGovernorSerializesImageNormalization() async throws {
+    func testProcessIsolatedImageNormalizationDoesNotWaitForHeavyMediaLane() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "MediaStudioGovernedNormalizationTests-\(UUID().uuidString)",
             isDirectory: true
@@ -41,22 +41,17 @@ final class MediaStudioImageInteractionTests: XCTestCase {
                 ownerUserID: "test-user",
                 temporaryDirectory: root,
                 availableCapacityOverride: Int64.max,
-                heavyMediaGovernor: governor,
                 mediaWorker: TestMediaWorkerImageNormalizer()
             )
         }
-        try await waitForHeavyMediaQueue(governor, count: 1)
-        let queued = await governor.snapshot()
-        XCTAssertEqual(queued.queued, [.init(
-            taskID: "media-image:governed-normalization:normalize",
-            kind: .imageDecode,
-            estimatedDecodedBytes: 64_000_000 * 4
-        )])
-
-        await blocker.releaseAndWait()
+        try await Task.sleep(for: .milliseconds(25))
+        let whileBlocked = await governor.snapshot()
+        XCTAssertTrue(whileBlocked.queued.isEmpty)
+        XCTAssertEqual(whileBlocked.active.map(\.taskID), ["blocker"])
         let normalized = try await normalization.value
         XCTAssertTrue(FileManager.default.fileExists(atPath: normalized.url.path))
         normalized.removeIfNeeded()
+        await blocker.releaseAndWait()
         let completed = await governor.snapshot()
         XCTAssertTrue(completed.active.isEmpty)
         XCTAssertTrue(completed.queued.isEmpty)
@@ -95,7 +90,7 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         await blocker.releaseAndWait()
     }
 
-    func testHeavyMediaGovernorCarriesVideoFrameTaskAndSessionContext() async throws {
+    func testProcessIsolatedVideoFrameDoesNotWaitForHeavyMediaLane() async throws {
         let invalidVideo = FileManager.default.temporaryDirectory.appendingPathComponent(
             "governed-frame-\(UUID().uuidString).mp4"
         )
@@ -111,28 +106,20 @@ final class MediaStudioImageInteractionTests: XCTestCase {
             try await StoryVideoFrameExtractor.lastFramePNG(
                 from: invalidVideo,
                 ownerUserID: "test-user",
-                taskID: "provider-job",
-                ownerSessionID: "session-a",
-                heavyMediaGovernor: governor,
                 mediaWorker: RejectingVideoFrameWorker()
             )
         }
-        try await waitForHeavyMediaQueue(governor, count: 1)
-        let queued = await governor.snapshot()
-        XCTAssertEqual(queued.queued, [.init(
-            taskID: "video:provider-job:last-frame",
-            ownerSessionID: "session-a",
-            kind: .videoFrameExtraction,
-            estimatedDecodedBytes: 64 * 1_024 * 1_024
-        )])
-
-        await blocker.releaseAndWait()
+        try await Task.sleep(for: .milliseconds(25))
+        let whileBlocked = await governor.snapshot()
+        XCTAssertTrue(whileBlocked.queued.isEmpty)
+        XCTAssertEqual(whileBlocked.active.map(\.taskID), ["blocker"])
         do {
             _ = try await extraction.value
             XCTFail("Invalid video unexpectedly produced a final frame")
         } catch {
-            // Expected after admission; the fixture is intentionally not a video.
+            // Expected from the independent Worker; the fixture is intentionally not a video.
         }
+        await blocker.releaseAndWait()
         let completed = await governor.snapshot()
         XCTAssertTrue(completed.active.isEmpty)
         XCTAssertTrue(completed.queued.isEmpty)
