@@ -160,6 +160,62 @@ final class MediaWorkerProcessClientTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testPetFilePreviewSourceBackedRunsThroughBuiltWorkerWithoutCopy() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run pet-preview integration.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 72,
+            pixelsHigh: 36,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let sourceURL = root.appendingPathComponent("pet-preview-source.png")
+        try png.write(to: sourceURL)
+        let file = ProjectFileContent(
+            path: sourceURL.path,
+            displayPath: sourceURL.path,
+            name: sourceURL.lastPathComponent,
+            contentType: "image/png",
+            isBinary: true,
+            isWritable: true,
+            size: Int64(png.count),
+            modifiedAt: Date(),
+            content: "",
+            sourceFileURL: sourceURL
+        )
+
+        let preview = await PetFileImagePreviewCache.image(
+            for: file,
+            ownerUserID: "pet-process-client-test",
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: MediaWorkerProcessClient(
+                executableURL: URL(fileURLWithPath: path),
+                timeout: 10
+            )
+        )
+
+        XCTAssertEqual(preview?.representations.first?.pixelsWide, 72)
+        XCTAssertEqual(preview?.representations.first?.pixelsHigh, 36)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.path))
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: root.path),
+            [sourceURL.lastPathComponent]
+        )
+    }
+
     func testAgentAvatarNormalizationRunsThroughBuiltWorker() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
               !path.isEmpty else {

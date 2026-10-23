@@ -5,6 +5,8 @@ public enum ChatOSMediaWorkerProtocol {
     public static let maximumVersion = 1
     public static let buildVersion = "media-worker-v1"
     public static let maximumInlineBytes = 512 * 1_024
+    public static let maximumNormalizedImageBytes = 25 * 1_024 * 1_024
+    public static let maximumNormalizedImagePixels = 64_000_000
     public static let normalizePNGOperation = "normalize_png_v1"
     public static let extractLastVideoFramePNGOperation = "extract_last_video_frame_png_v1"
 

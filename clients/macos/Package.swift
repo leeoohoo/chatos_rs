@@ -120,6 +120,8 @@ let package = Package(
                 "ChatOSNetworking",
                 "ChatOSMediaWorkerClient",
                 "ChatOSMediaWorkerProtocol",
+                "ChatOSCodeReadWorkerClient",
+                "ChatOSCodeReadWorkerProtocol",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             linkerSettings: [
@@ -179,6 +181,9 @@ let package = Package(
                 "ChatOSMediaWorkerClient",
                 "ChatOSMediaWorkerCore",
                 "ChatOSMediaWorkerProtocol",
+                "ChatOSCodeReadWorkerClient",
+                "ChatOSCodeReadWorkerCore",
+                "ChatOSCodeReadWorkerProtocol",
             ]
         ),
         .testTarget(

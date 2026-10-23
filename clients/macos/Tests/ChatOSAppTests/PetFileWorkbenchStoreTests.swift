@@ -1,5 +1,11 @@
 import ChatOSCore
+import ChatOSCodeReadWorkerClient
+import ChatOSCodeReadWorkerCore
+import ChatOSCodeReadWorkerProtocol
+import ChatOSMediaWorkerClient
+import ChatOSMediaWorkerProtocol
 import AppKit
+import Darwin
 import Foundation
 import Testing
 @testable import ChatOSApp
@@ -100,7 +106,8 @@ struct PetFileWorkbenchStoreTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let service = NativePetLocalFileService()
+        let worker = PetCoreCodeReadWorker()
+        let service = NativePetLocalFileService(codeReadWorker: worker)
         let fixtures = [
             ("WebDesignApp.jsx", "export default function App() { return <main /> }\n"),
             ("settings.toml", "theme = \"dark\"\n"),
@@ -121,10 +128,15 @@ struct PetFileWorkbenchStoreTests {
             try await service.writeFile(path: url.path, content: edited)
             #expect(try String(contentsOf: url, encoding: .utf8) == edited)
         }
+
+        let invocations = await worker.invocations()
+        #expect(invocations.count == fixtures.count)
+        #expect(invocations.allSatisfy { $0.operation == "read_file_raw" })
+        #expect(invocations.allSatisfy { $0.arguments["with_line_numbers"] == .bool(false) })
     }
 
-    @Test("keeps local image payloads as binary data")
-    func keepsLocalImagePayloadAsData() async throws {
+    @Test("keeps local images source-backed and previews them in the media worker")
+    func keepsLocalImagesSourceBacked() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -145,23 +157,57 @@ struct PetFileWorkbenchStoreTests {
         let pngData = try #require(bitmap.representation(using: .png, properties: [:]))
         try pngData.write(to: url)
 
-        let opened = try await NativePetLocalFileService().readFile(path: url.path)
+        let codeWorker = PetCoreCodeReadWorker()
+        let opened = try await NativePetLocalFileService(
+            codeReadWorker: codeWorker
+        ).readFile(path: url.path)
 
         #expect(opened.isBinary)
         #expect(opened.content.isEmpty)
-        #expect(opened.binaryData == pngData)
+        #expect(opened.binaryData == nil)
+        #expect(opened.sourceFileURL == url)
+        #expect(await codeWorker.invocations().isEmpty)
+
+        let mediaWorker = PetPreviewRecordingWorker()
+        let preview = await PetFileImagePreviewCache.image(
+            for: opened,
+            ownerUserID: "pet-preview-test",
+            temporaryDirectory: directory,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: mediaWorker
+        )
+
+        #expect(preview?.representations.first?.pixelsWide == 1)
+        #expect(preview?.representations.first?.pixelsHigh == 1)
+        #expect(await mediaWorker.sourceURL() == url)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == [
+            url.lastPathComponent,
+        ])
     }
 
-    @Test("rejects image dimensions above the pixel budget")
-    func rejectsExcessiveImageDimensions() {
-        #expect(NativePetLocalFileService.imageDimensionsAreWithinLimit(
-            width: 8_192,
-            height: 8_192
+    @Test("reads local text through the built code-read worker")
+    func readsLocalTextThroughBuiltWorker() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_CODE_READ_WORKER_PATH"],
+              !path.isEmpty else {
+            return
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("real-worker.txt")
+        try Data("isolated pet file\n".utf8).write(to: url)
+        let service = NativePetLocalFileService(codeReadWorker: CodeReadWorkerProcessClient(
+            executableURL: URL(fileURLWithPath: path),
+            timeout: 10
         ))
-        #expect(!NativePetLocalFileService.imageDimensionsAreWithinLimit(
-            width: 16_384,
-            height: 16_384
-        ))
+
+        let opened = try await service.readFile(path: url.path)
+
+        #expect(opened.content == "isolated pet file\n")
+        #expect(!opened.isBinary)
+        #expect(opened.sourceFileURL == nil)
     }
 
     @Test("protects a dirty tab when it is closed")
@@ -308,4 +354,93 @@ private actor MockPetProjectFilesystem: ProjectFilesystemServicing {
 
 private enum MockFilesystemError: Error {
     case missingFile
+}
+
+private actor PetCoreCodeReadWorker: CodeReadWorkerExecuting {
+    struct Invocation: Sendable {
+        let operation: String
+        let arguments: [String: CodeReadWorkerJSONValue]
+        let projectRoot: URL
+    }
+
+    private var recordedInvocations: [Invocation] = []
+
+    func execute(
+        operation: String,
+        arguments: [String: CodeReadWorkerJSONValue],
+        projectRoot: URL,
+        requestCWD: String?,
+        defaultToolRoot: String?,
+        ripgrepURL: URL?
+    ) async throws -> CodeReadWorkerJSONValue {
+        recordedInvocations.append(.init(
+            operation: operation,
+            arguments: arguments,
+            projectRoot: projectRoot
+        ))
+        var status = stat()
+        guard projectRoot.path.withCString({ Darwin.lstat($0, &status) }) == 0 else {
+            throw CodeReadWorkerProcessClientError.invalidResponse
+        }
+        return try ChatOSCodeReadWorkerEngine.execute(.init(
+            protocolVersion: ChatOSCodeReadWorkerProtocol.maximumVersion,
+            requestID: UUID().uuidString,
+            helperInstanceID: UUID().uuidString,
+            deadlineUnixMilliseconds: Int64((Date().timeIntervalSince1970 + 10) * 1_000),
+            operation: operation,
+            arguments: arguments,
+            projectRootPath: projectRoot.path,
+            projectRootIdentity: .init(
+                device: UInt64(status.st_dev),
+                inode: UInt64(status.st_ino)
+            ),
+            requestCWD: requestCWD,
+            defaultToolRoot: defaultToolRoot,
+            ripgrepPath: nil,
+            ripgrepIdentity: nil
+        ))
+    }
+
+    func invocations() -> [Invocation] { recordedInvocations }
+}
+
+private actor PetPreviewRecordingWorker: MediaWorkerImageNormalizing {
+    private var recordedSourceURL: URL?
+
+    func normalizePNG(
+        sourceURL: URL,
+        sourceIdentity: MediaWorkerFileIdentity?,
+        destinationURL: URL,
+        ownerUserID: String,
+        maximumSourceBytes: Int,
+        maximumSourcePixelCount: Int,
+        maximumOutputPixelSize: Int,
+        maximumOutputBytes: Int
+    ) async throws -> MediaWorkerImageDescriptor {
+        _ = sourceIdentity
+        _ = ownerUserID
+        _ = maximumSourceBytes
+        _ = maximumSourcePixelCount
+        _ = maximumOutputPixelSize
+        _ = maximumOutputBytes
+        recordedSourceURL = sourceURL
+        let data = try Data(contentsOf: sourceURL)
+        let bitmap = try #require(NSBitmapImageRep(data: data))
+        let output = try #require(bitmap.representation(using: .png, properties: [:]))
+        let handle = try FileHandle(forWritingTo: destinationURL)
+        try handle.truncate(atOffset: 0)
+        try handle.write(contentsOf: output)
+        try handle.synchronize()
+        try handle.close()
+        return .init(
+            path: destinationURL.path,
+            mimeType: "image/png",
+            byteCount: output.count,
+            sha256: String(repeating: "0", count: 64),
+            pixelWidth: bitmap.pixelsWide,
+            pixelHeight: bitmap.pixelsHigh
+        )
+    }
+
+    func sourceURL() -> URL? { recordedSourceURL }
 }

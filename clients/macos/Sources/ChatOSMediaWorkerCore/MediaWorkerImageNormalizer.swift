@@ -248,13 +248,16 @@ public enum ChatOSMediaWorkerEngine {
               !request.sessionEpoch.isEmpty,
               !request.helperInstanceID.isEmpty,
               request.maximumSourceBytes > 0,
-              request.maximumSourceBytes <= 20 * 1_024 * 1_024,
+              request.maximumSourceBytes
+                <= ChatOSMediaWorkerProtocol.maximumNormalizedImageBytes,
               request.maximumSourcePixelCount > 0,
-              request.maximumSourcePixelCount <= 64_000_000,
+              request.maximumSourcePixelCount
+                <= ChatOSMediaWorkerProtocol.maximumNormalizedImagePixels,
               request.maximumOutputPixelSize > 0,
               request.maximumOutputPixelSize <= 8_192,
               request.maximumOutputBytes > 0,
-              request.maximumOutputBytes <= 20 * 1_024 * 1_024 else {
+              request.maximumOutputBytes
+                <= ChatOSMediaWorkerProtocol.maximumNormalizedImageBytes else {
             throw MediaWorkerCoreError.invalidRequest("The normalize request is outside v1 limits.")
         }
     }

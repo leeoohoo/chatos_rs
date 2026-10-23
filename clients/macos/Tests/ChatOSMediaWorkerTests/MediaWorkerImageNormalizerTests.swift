@@ -22,6 +22,36 @@ final class MediaWorkerImageNormalizerTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fixture.destination).count, descriptor.byteCount)
     }
 
+    func testNormalizePNGAcceptsProtocolByteCeiling() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let descriptor = try ChatOSMediaWorkerEngine.normalizePNG(try request(
+            source: fixture.source,
+            destination: fixture.destination,
+            maximumSourceBytes: ChatOSMediaWorkerProtocol.maximumNormalizedImageBytes,
+            maximumOutputBytes: ChatOSMediaWorkerProtocol.maximumNormalizedImageBytes
+        ))
+
+        XCTAssertEqual(descriptor.pixelWidth, 1)
+        XCTAssertEqual(descriptor.pixelHeight, 1)
+    }
+
+    func testNormalizePNGRejectsByteLimitAboveProtocolCeiling() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        XCTAssertThrowsError(try ChatOSMediaWorkerEngine.normalizePNG(try request(
+            source: fixture.source,
+            destination: fixture.destination,
+            maximumSourceBytes: ChatOSMediaWorkerProtocol.maximumNormalizedImageBytes + 1
+        ))) { error in
+            guard case MediaWorkerCoreError.invalidRequest = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
     func testNormalizePNGRejectsSymlinkSource() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -146,7 +176,9 @@ final class MediaWorkerImageNormalizerTests: XCTestCase {
         destination: URL,
         sourceIdentity: MediaWorkerFileIdentity? = nil,
         destinationIdentity: MediaWorkerFileIdentity? = nil,
-        deadline: Int64? = nil
+        deadline: Int64? = nil,
+        maximumSourceBytes: Int = 20 * 1_024 * 1_024,
+        maximumOutputBytes: Int = 20 * 1_024 * 1_024
     ) throws -> MediaWorkerNormalizePNGRequest {
         .init(
             protocolVersion: ChatOSMediaWorkerProtocol.maximumVersion,
@@ -161,10 +193,10 @@ final class MediaWorkerImageNormalizerTests: XCTestCase {
             sourceIdentity: try sourceIdentity ?? identity(source),
             destinationPath: destination.path,
             destinationIdentity: try destinationIdentity ?? identity(destination),
-            maximumSourceBytes: 20 * 1_024 * 1_024,
+            maximumSourceBytes: maximumSourceBytes,
             maximumSourcePixelCount: 64_000_000,
             maximumOutputPixelSize: 8_192,
-            maximumOutputBytes: 20 * 1_024 * 1_024
+            maximumOutputBytes: maximumOutputBytes
         )
     }
 

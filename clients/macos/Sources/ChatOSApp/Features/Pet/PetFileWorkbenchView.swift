@@ -1,5 +1,6 @@
 import AppKit
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import SwiftUI
 
 struct PetFileWorkbenchView: View {
@@ -509,39 +510,86 @@ private struct PetFileImagePreviewLoader: View {
                     .workspaceFill()
             }
         }
-        .task(id: PetFileImagePreviewCache.key(for: file)) {
+        .task(id: "\(model.authenticatedUserID ?? "signed-out")|\(PetFileImagePreviewCache.key(for: file))") {
             failed = false
-            image = await PetFileImagePreviewCache.image(for: file)
+            guard let ownerUserID = model.authenticatedUserID else {
+                image = nil
+                failed = true
+                return
+            }
+            image = await PetFileImagePreviewCache.image(
+                for: file,
+                ownerUserID: ownerUserID
+            )
+            guard !Task.isCancelled,
+                  model.authenticatedUserID == ownerUserID else { return }
             failed = image == nil
         }
     }
 }
 
 @MainActor
-private enum PetFileImagePreviewCache {
+enum PetFileImagePreviewCache {
     private static let maximumDisplayPixelSize = 2_048
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 48
+        cache.totalCostLimit = 96 * 1_024 * 1_024
+        return cache
+    }()
+    private static let taskPool = AppSharedThumbnailTaskPool()
 
     static func key(for file: ProjectFileContent) -> String {
         let modified = file.modifiedAt?.timeIntervalSince1970 ?? 0
         return "\(file.path)|\(modified)|\(file.size)"
     }
 
-    static func image(for file: ProjectFileContent) async -> NSImage? {
-        let data = file.binaryData ?? Data(file.content.utf8)
-        guard !data.isEmpty else { return nil }
-        let identity = AppImageDataThumbnailCache.dataIdentity(
-            data,
-            identity: key(for: file),
-            maximumSourcePixelCount: Int(NativePetLocalFileService.maximumImagePreviewPixels),
-            maximumDisplayPixelSize: maximumDisplayPixelSize
-        )
-        return await AppImageDataThumbnailCache.image(
-            for: data,
-            cacheKey: identity,
-            maximumBytes: Int(NativePetLocalFileService.maximumImagePreviewBytes),
-            maximumSourcePixelCount: Int(NativePetLocalFileService.maximumImagePreviewPixels),
-            maximumDisplayPixelSize: maximumDisplayPixelSize
-        )
+    static func image(
+        for file: ProjectFileContent,
+        ownerUserID: String,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        availableCapacityOverride: Int64? = nil,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
+    ) async -> NSImage? {
+        guard !ownerUserID.isEmpty else { return nil }
+        let cacheKey = "\(ownerUserID)|\(key(for: file))"
+        if let cached = cache.object(forKey: cacheKey as NSString) {
+            return cached
+        }
+        let displayPixelSize = maximumDisplayPixelSize
+
+        let decoded = await taskPool.value(for: cacheKey) {
+            if let sourceFileURL = file.sourceFileURL {
+                return try? await AppImageThumbnailLoader.loadLocalFileUsingWorker(
+                    sourceFileURL,
+                    ownerUserID: ownerUserID,
+                    maximumBytes: Int(NativePetLocalFileService.maximumImagePreviewBytes),
+                    maximumSourcePixelCount: Int(
+                        NativePetLocalFileService.maximumImagePreviewPixels
+                    ),
+                    maximumDisplayPixelSize: displayPixelSize,
+                    temporaryDirectory: temporaryDirectory,
+                    availableCapacityOverride: availableCapacityOverride,
+                    mediaWorker: mediaWorker
+                )
+            }
+            let data = file.binaryData ?? Data(file.content.utf8)
+            guard !data.isEmpty,
+                  data.count <= Int(NativePetLocalFileService.maximumImagePreviewBytes) else {
+                return nil
+            }
+            return AppImageThumbnailLoader.decode(
+                data,
+                maximumSourcePixelCount: Int(
+                    NativePetLocalFileService.maximumImagePreviewPixels
+                ),
+                maximumDisplayPixelSize: displayPixelSize
+            )
+        }
+        guard let decoded else { return nil }
+        let image = decoded.makeNSImage()
+        cache.setObject(image, forKey: cacheKey as NSString, cost: decoded.memoryCost)
+        return image
     }
 }
 
