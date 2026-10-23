@@ -1,3 +1,4 @@
+import ChatOSNetworking
 import Foundation
 import ImageIO
 import Testing
@@ -5,6 +6,41 @@ import Testing
 
 @Suite("Native Plugin Model Image Normalizer")
 struct NativePluginModelImageNormalizerTests {
+    @Test("PNG normalization waits for the shared heavy-media lane")
+    func pngUsesHeavyMediaGovernor() async throws {
+        let png = try #require(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        ))
+        let governor = ClientHeavyMediaWorkGovernor(limit: 1)
+        let blocker = try await governor.acquire(context: .init(
+            taskID: "blocker",
+            kind: .videoFrameExtraction,
+            estimatedDecodedBytes: 64 * 1_024 * 1_024
+        ))
+        let normalization = Task {
+            try await NativePluginModelImageNormalizer.normalizeForModel(.object([
+                "content": .array([.object([
+                    "type": .string("image"),
+                    "mimeType": .string("image/png"),
+                    "data": .string(png.base64EncodedString()),
+                ])]),
+            ]), taskID: "plugin-call", heavyMediaGovernor: governor)
+        }
+        try await waitForHeavyMediaQueue(governor)
+        let snapshot = await governor.snapshot()
+        #expect(snapshot.queued == [.init(
+            taskID: "plugin-image:plugin-call:normalize",
+            kind: .imageDecode,
+            estimatedDecodedBytes: 4_096 * 4_096 * 4
+        )])
+
+        await blocker.releaseAndWait()
+        let result = try await normalization.value
+        #expect(result.jsonObject?["content"]?.jsonArray?.first?
+            .jsonObject?["mimeType"]?.jsonString == "image/jpeg")
+        #expect(await governor.snapshot().active.isEmpty)
+    }
+
     @Test("PNG image blocks become locally decoded JPEG blocks")
     func pngBecomesJPEG() async throws {
         let png = try #require(Data(base64Encoded:
@@ -61,7 +97,19 @@ struct NativePluginModelImageNormalizerTests {
             ]),
         ])
 
-        #expect(try await NativePluginModelImageNormalizer.normalizeForModel(original) == original)
+        let governor = ClientHeavyMediaWorkGovernor(limit: 1)
+        let blocker = try await governor.acquire(context: .init(
+            taskID: "blocker",
+            kind: .imageDecode,
+            estimatedDecodedBytes: 1
+        ))
+        #expect(try await NativePluginModelImageNormalizer.normalizeForModel(
+            original,
+            taskID: "jpeg",
+            heavyMediaGovernor: governor
+        ) == original)
+        #expect(await governor.snapshot().queued.isEmpty)
+        await blocker.releaseAndWait()
     }
 
     @Test("oversized encoded PNG is rejected before decoding")
@@ -107,5 +155,15 @@ struct NativePluginModelImageNormalizerTests {
         #expect(content.suffix(2).allSatisfy {
             $0.jsonObject?["type"]?.jsonString == "text"
         })
+    }
+
+    private func waitForHeavyMediaQueue(
+        _ governor: ClientHeavyMediaWorkGovernor
+    ) async throws {
+        for _ in 0..<200 {
+            if await governor.snapshot().queued.count == 1 { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Timed out waiting for heavy-media admission")
     }
 }

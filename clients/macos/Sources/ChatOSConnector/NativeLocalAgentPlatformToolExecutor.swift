@@ -138,7 +138,11 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
         let data = try await attachmentVault.verifiedData(
           attachment, ownerUserID: ownerUserID, conversationID: conversationID
         )
-        return try await NativeLocalAgentAttachmentModelInput.result(data, record: attachment)
+        return try await NativeLocalAgentAttachmentModelInput.result(
+          data,
+          record: attachment,
+          taskID: invocation.runID
+        )
       }
       if let workspaceRoot {
         let data = try await attachmentVault.verifiedData(
@@ -150,7 +154,10 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
         ).jsonValue
         guard attachment.mediaType.lowercased().hasPrefix("image/") else { return imported }
         return try await NativeLocalAgentAttachmentModelInput.result(
-          data, record: attachment, imported: imported
+          data,
+          record: attachment,
+          imported: imported,
+          taskID: invocation.runID
         )
       }
       return try await attachmentVault.resolve(

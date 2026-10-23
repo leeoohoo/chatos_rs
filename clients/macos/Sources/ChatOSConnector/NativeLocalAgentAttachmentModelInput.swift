@@ -1,5 +1,6 @@
 import AppKit
 import ChatOSCore
+import ChatOSNetworking
 import Foundation
 import ImageIO
 
@@ -11,40 +12,54 @@ enum NativeLocalAgentAttachmentModelInput {
     static func result(
         _ data: Data,
         record: LocalAgentConversationAttachmentRecord,
-        imported: LocalAgentJSONValue? = nil
+        imported: LocalAgentJSONValue? = nil,
+        taskID: String? = nil,
+        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
     ) async throws -> LocalAgentJSONValue {
-        let task = Task<LocalAgentJSONValue, Error>.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
-            guard record.mediaType.lowercased().hasPrefix("image/") else {
-                throw NativeLocalAgentAttachmentModelInputError.notImage
-            }
-            let image = try modelImage(data)
-            var fields: [String: LocalAgentJSONValue] = [:]
-            if case let .object(value)? = imported { fields = value }
-            fields["display_name"] = .string(record.displayName)
-            fields["media_type"] = .string(record.mediaType)
-            fields["byte_size"] = .number(Double(record.byteSize))
-            fields["sha256"] = .string(record.sha256.lowercased())
-            fields["sha256_verified"] = .bool(true)
-            fields["delivery"] = imported == nil ? .string("model") : .string("workspace")
-            fields["model_image_supplied"] = .bool(true)
-            // Keep binary data out of the text tool result and structured memory.
-            // The shared runtime extracts _model_input into transient image parts.
-            let text = String(decoding: try JSONEncoder().encode(LocalAgentJSONValue.object(fields)), as: UTF8.self)
-            var result = fields
-            result["text"] = .string(text)
-            result["_structured_result"] = .object(fields)
-            result["_model_input"] = .array([.object([
-                    "type": .string("input_image"),
-                    "image_url": .string("data:\(image.mime);base64,\(image.bytes.base64EncodedString())"),
-                    "detail": .string("high"),
-                ])])
-            return .object(result)
+        try Task.checkCancellation()
+        guard record.mediaType.lowercased().hasPrefix("image/") else {
+            throw NativeLocalAgentAttachmentModelInputError.notImage
         }
-        return try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            task.cancel()
+        let attachmentComponent = String(record.attachmentID.prefix(64))
+        let component = taskID.map {
+            "\(String($0.prefix(64))):\(attachmentComponent)"
+        } ?? attachmentComponent
+        return try await heavyMediaGovernor.perform(context: .init(
+            taskID: "local-agent-image:\(component):model",
+            kind: .imageDecode,
+            estimatedDecodedBytes: NativePluginModelImageNormalizer.maximumDisplayPixelSize
+                * NativePluginModelImageNormalizer.maximumDisplayPixelSize * 4
+        )) {
+            let task = Task<LocalAgentJSONValue, Error>.detached(priority: .userInitiated) {
+                try Task.checkCancellation()
+                let image = try modelImage(data)
+                var fields: [String: LocalAgentJSONValue] = [:]
+                if case let .object(value)? = imported { fields = value }
+                fields["display_name"] = .string(record.displayName)
+                fields["media_type"] = .string(record.mediaType)
+                fields["byte_size"] = .number(Double(record.byteSize))
+                fields["sha256"] = .string(record.sha256.lowercased())
+                fields["sha256_verified"] = .bool(true)
+                fields["delivery"] = imported == nil ? .string("model") : .string("workspace")
+                fields["model_image_supplied"] = .bool(true)
+                // Keep binary data out of the text tool result and structured memory.
+                // The shared runtime extracts _model_input into transient image parts.
+                let text = String(decoding: try JSONEncoder().encode(LocalAgentJSONValue.object(fields)), as: UTF8.self)
+                var result = fields
+                result["text"] = .string(text)
+                result["_structured_result"] = .object(fields)
+                result["_model_input"] = .array([.object([
+                        "type": .string("input_image"),
+                        "image_url": .string("data:\(image.mime);base64,\(image.bytes.base64EncodedString())"),
+                        "detail": .string("high"),
+                    ])])
+                return .object(result)
+            }
+            return try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
         }
     }
 

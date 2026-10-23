@@ -1809,6 +1809,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：这仍是主进程内 Media Studio 部分重媒体路径的静态额度，不是整个 App 进程组的动态/跨进程 `ResourceGovernor`。普通 UI 图片解码、Plugin 图片归一化、Local Agent 图片模型输入、粘贴图片归一化和其他 AVFoundation 消费者尚未接入；未来 Media Worker 不能复制一份独立“全局 1”，仍需跨进程 lease、断连回收和 fencing 协议。尚未实现账户公平、排队老化、前台交互降额、热状态/低电量迟滞或诊断指标，也没有用真实超大图片、有效 4K/8K 视频、固定 Release trace、组合负载与长时间 soak 验证峰值和切页 SLO，因此 P0-D/P0-E 和客户端总体 SLO 均不能标记完成。
 
+### 12.68 第六十八批实施记录：模型与粘贴图片共享重解码额度（2026-10-23）
+
+本批扩展 12.67 的主进程重媒体准入，关闭 Plugin 图片结果、Local Agent 图片模型输入和聊天粘贴图片三条 4K 解码链路仍可与 Media Studio/Story 并行的缺口。三者已有 20 MiB、64 MP、4,096 px 等单任务边界，但此前各自创建 detached 解码任务，组合负载仍会叠加像素面和 PNG/JPEG 编码工作集。
+
+已实施：
+
+- Plugin 返回的 PNG 图片块在 Base64 解码、ImageIO downsample 和 JPEG 编码前取得同一个 `ClientHeavyMediaWorkGovernor.shared` permit；一次工具结果最多 8 个图片块并在一个 permit 内顺序处理，按 4,096² × 4，即 64 MiB 预计工作集准入。task ID 使用稳定 plugin call ID；不含待归一化 PNG 的纯文本/JPEG/WebP 结果直接返回，不占重媒体通道。
+- Local Agent 附件向模型提供图片前接入同一 permit，既有 20 MiB 输入、64 MP 源像素、4,096 px downsample、2 MiB 模型输出和有效解码校验不变。task ID 由 run ID 与 attachment ID 组成，避免同一 run 的多个图片无法区分；permit 覆盖 ImageIO 解码、必要的 JPEG 重编码及模型输入结果组装。
+- 聊天粘贴的非 JPEG/PNG/WebP 图片归一化接入同一 permit，使用本次粘贴 UUID 作为 task ID；预计工作集按 `min(sourcePixelLimit, decodePixelSize²) × 4` 计算，并对无效限制及整数乘法溢出 fail-closed。可直接上传的 JPEG/PNG/WebP 继续绕过归一化，不为无需解码的粘贴引入排队。
+- 三条路径继续在 detached task 中执行实际 ImageIO/编码工作，排队与执行取消沿用 12.67 的同步 permit 回收。当前调用链没有可证明等价于认证 session epoch 的值，因此不把 owner user ID、聊天 session ID 或 workspace ID 冒充 `ownerSessionID`；上下文保留为空，后续随统一账户 ResourceGovernor 契约接入。
+
+验证：Debug 与原生 arm64 Release 各选择性运行 `NativePluginModelImageNormalizerTests` 6 项、`NativeLocalAgentAttachmentImageTests` 7 项、`AppPastedImageNormalizerTests` 6 项、`MediaStudioImageInteractionTests` 19 项和 `ClientHeavyMediaWorkGovernorTests` 2 项，共 40 项，全部通过。新增回归使用同一 Governor blocker 验证三条解码路径真实排队、task ID/类别/64 MiB 或动态估算上下文正确、完成后 permit 回收，以及 Plugin JPEG 直通不等待重媒体通道；Swift 6 Debug/Release 编译、优化编译与 `git diff --check` 同步作为门禁。测试只使用内存生成的小图片、独立临时目录和受控替身；不启动或安装正式 App，不访问活动用户数据库。
+
+边界：本批控制的是像素解码/编码工作集，不倒退为完整文件 I/O Governor；Local Agent 已验证的附件 `Data` 和 Plugin 已返回的 Base64 字符串仍可能在等待 permit 时驻留。项目文件 4K 预览和其他普通 UI 图片消费者仍未统一接入；头像与常规缩略图目前限制在 2,048 px 或更小，为保护交互延迟继续不占重媒体通道。Plugin 派生进程自身的解码不受主进程 permit 控制，Media Worker 也尚未建立；跨进程 lease/fencing、账户公平、排队老化、热状态/低电量迟滞、真实多源 4K/64 MP 组合压力、固定 Release trace 与长时间 soak 仍待完成，因此 P0-D/P0-E 和客户端总体 SLO 均不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
@@ -1943,7 +1958,7 @@ Release 验收建议记录：
 
 - 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift/Windows Host 常量与共享 fixture 为 v46；本方案引用版本不能替代实际握手。
 - CI 比较 Swift/Rust 协议版本、payload 边界、支持能力和打包后的真实可执行版本；Schema 兼容矩阵、进程布局及 ADR 随实现更新。
-- 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；大传输静态 Governor 见 12.66，重媒体静态 Governor 见 12.67，跨资源动态/跨进程 Governor、Worker 和剩余门禁仍为待实施项。
+- 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；大传输静态 Governor 见 12.66，重媒体静态 Governor 及其模型/粘贴图片扩展见 12.67–12.68，跨资源动态/跨进程 Governor、Worker 和剩余门禁仍为待实施项。
 
 ### 16.2 ADR：v35 本地命令防重身份（实现范围冻结，生产迁移门禁未通过）
 

@@ -103,7 +103,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ChatOSConnectorTests",
-            dependencies: ["ChatOSConnector", "ChatOSCore"],
+            dependencies: ["ChatOSConnector", "ChatOSCore", "ChatOSNetworking"],
             resources: [.copy("Fixtures")]
         ),
         .testTarget(

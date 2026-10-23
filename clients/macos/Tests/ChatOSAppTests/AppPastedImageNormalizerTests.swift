@@ -1,10 +1,53 @@
 import AppKit
 import ChatOSCore
+import ChatOSNetworking
 import ImageIO
 @testable import ChatOSApp
 import XCTest
 
 final class AppPastedImageNormalizerTests: XCTestCase {
+    func testOffMainNormalizationWaitsForSharedHeavyMediaLane() async throws {
+        let limits = AppPastedImageNormalizationLimits(
+            maximumInputBytes: 1_024 * 1_024,
+            maximumSourcePixelCount: 128 * 64,
+            maximumDecodePixelSize: 32,
+            maximumOutputBytes: 1_024 * 1_024
+        )
+        let governor = ClientHeavyMediaWorkGovernor(limit: 1)
+        let blocker = try await governor.acquire(context: .init(
+            taskID: "blocker",
+            kind: .videoFrameExtraction,
+            estimatedDecodedBytes: 64 * 1_024 * 1_024
+        ))
+        let source = try makeTIFF(width: 128, height: 64)
+        let normalization = Task {
+            try await AppPastedImageNormalizer.normalizeToPNGOffMain(
+                source,
+                limits: limits,
+                taskID: "paste-a",
+                heavyMediaGovernor: governor
+            )
+        }
+        try await waitForHeavyMediaQueue(governor)
+        let snapshot = await governor.snapshot()
+        XCTAssertEqual(snapshot.queued, [.init(
+            taskID: "pasted-image:paste-a:normalize",
+            kind: .imageDecode,
+            estimatedDecodedBytes: 32 * 32 * 4
+        )])
+
+        await blocker.releaseAndWait()
+        let output = try await normalization.value
+        XCTAssertEqual(
+            CGImageSourceGetType(try XCTUnwrap(
+                CGImageSourceCreateWithData(output as CFData, nil)
+            )) as String?,
+            "public.png"
+        )
+        let completed = await governor.snapshot()
+        XCTAssertTrue(completed.active.isEmpty)
+    }
+
     func testDirectUploadFormatsDoNotRequireNormalization() {
         XCTAssertFalse(AppPastedImageNormalizer.requiresPNGNormalization(mimeType: "image/png"))
         XCTAssertFalse(AppPastedImageNormalizer.requiresPNGNormalization(mimeType: "IMAGE/JPEG"))
@@ -104,5 +147,15 @@ final class AppPastedImageNormalizerTests: XCTestCase {
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
         ))
         return try XCTUnwrap(bitmap.representation(using: .tiff, properties: [:]))
+    }
+
+    private func waitForHeavyMediaQueue(
+        _ governor: ClientHeavyMediaWorkGovernor
+    ) async throws {
+        for _ in 0..<200 {
+            if await governor.snapshot().queued.count == 1 { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Timed out waiting for heavy-media admission")
     }
 }

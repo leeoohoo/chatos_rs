@@ -1,11 +1,56 @@
 @testable import ChatOSConnector
 import AppKit
 import ChatOSCore
+import ChatOSNetworking
 import Foundation
 import ImageIO
 import XCTest
 
 final class NativeLocalAgentAttachmentImageTests: XCTestCase {
+    func testModelImageWaitsForSharedHeavyMediaLane() async throws {
+        let bytes = try imageBytes()
+        let governor = ClientHeavyMediaWorkGovernor(limit: 1)
+        let blocker = try await governor.acquire(context: .init(
+            taskID: "blocker",
+            kind: .videoFrameExtraction,
+            estimatedDecodedBytes: 64 * 1_024 * 1_024
+        ))
+        let normalization = Task {
+            try await NativeLocalAgentAttachmentModelInput.result(
+                bytes,
+                record: .init(
+                    attachmentID: "attachment-a",
+                    conversationID: "conversation-a",
+                    turnID: "turn-a",
+                    messageID: "message-a",
+                    ordinal: 0,
+                    displayName: "image.png",
+                    mediaType: "image/png",
+                    byteSize: UInt64(bytes.count),
+                    sha256: String(repeating: "a", count: 64),
+                    authorizedLocalRef: "attachment-ref",
+                    metadata: .object([:]),
+                    createdAtUnixMs: 0
+                ),
+                taskID: "run-a",
+                heavyMediaGovernor: governor
+            )
+        }
+        try await waitForHeavyMediaQueue(governor)
+        let snapshot = await governor.snapshot()
+        XCTAssertEqual(snapshot.queued, [.init(
+            taskID: "local-agent-image:run-a:attachment-a:model",
+            kind: .imageDecode,
+            estimatedDecodedBytes: 4_096 * 4_096 * 4
+        )])
+
+        await blocker.releaseAndWait()
+        let result = try await normalization.value
+        XCTAssertEqual(try suppliedImage(result), bytes)
+        let completed = await governor.snapshot()
+        XCTAssertTrue(completed.active.isEmpty)
+    }
+
     func testMainChatReadsCompleteImageWithoutTaskProjectOrPlugin() async throws {
         let bytes = try imageBytes()
         let fixture = try AttachmentDispatchFixture(bytes: bytes, name: "email.png", mediaType: "image/png")
@@ -119,6 +164,16 @@ final class NativeLocalAgentAttachmentImageTests: XCTestCase {
         let pointer = try XCTUnwrap(bitmap.bitmapData)
         pointer.initialize(repeating: 200, count: width * 32 * 4)
         return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+    }
+
+    private func waitForHeavyMediaQueue(
+        _ governor: ClientHeavyMediaWorkGovernor
+    ) async throws {
+        for _ in 0..<200 {
+            if await governor.snapshot().queued.count == 1 { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Timed out waiting for heavy-media admission")
     }
 
     private enum FixtureError: Error { case invalid }

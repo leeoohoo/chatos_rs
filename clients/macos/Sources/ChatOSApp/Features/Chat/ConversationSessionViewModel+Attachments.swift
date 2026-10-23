@@ -46,7 +46,10 @@ extension ConversationSessionViewModel {
             let result: Result<Data, Error>
             do {
                 result = .success(
-                    try await AppPastedImageNormalizer.normalizeToPNGOffMain(data)
+                    try await AppPastedImageNormalizer.normalizeToPNGOffMain(
+                        data,
+                        taskID: taskID.uuidString.lowercased()
+                    )
                 )
             } catch {
                 result = .failure(error)

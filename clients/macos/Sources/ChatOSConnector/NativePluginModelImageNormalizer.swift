@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSNetworking
 import Foundation
 import ImageIO
 
@@ -9,21 +10,47 @@ enum NativePluginModelImageNormalizer {
     static let maximumSourcePixelCount = 64_000_000
     static let maximumDisplayPixelSize = 4_096
     static let maximumImageBlocks = 8
+    private static let estimatedDecodedBytes = maximumDisplayPixelSize
+        * maximumDisplayPixelSize * 4
 
     /// Normalize image blocks only after the plugin runtime has consumed the
     /// original result for its local visual session. This keeps picture-in-
     /// picture frames lossless while giving model gateways a broadly compatible
     /// baseline JPEG payload.
-    static func normalizeForModel(_ result: NativeJSONValue) async throws -> NativeJSONValue {
-        let task = Task.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
-            return try normalize(result)
+    static func normalizeForModel(
+        _ result: NativeJSONValue,
+        taskID: String? = nil,
+        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
+    ) async throws -> NativeJSONValue {
+        try Task.checkCancellation()
+        guard containsPNGImage(result) else { return result }
+        let component = taskID.map { String($0.prefix(128)) }
+            ?? UUID().uuidString.lowercased()
+        return try await heavyMediaGovernor.perform(context: .init(
+            taskID: "plugin-image:\(component):normalize",
+            kind: .imageDecode,
+            estimatedDecodedBytes: estimatedDecodedBytes
+        )) {
+            let task = Task.detached(priority: .userInitiated) {
+                try Task.checkCancellation()
+                return try normalize(result)
+            }
+            return try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
         }
-        return try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            task.cancel()
-        }
+    }
+
+    private static func containsPNGImage(_ result: NativeJSONValue) -> Bool {
+        result.jsonObject?["content"]?.jsonArray?.contains { item in
+            guard item.jsonObject?["type"]?.jsonString == "image" else { return false }
+            let object = item.jsonObject
+            return object?["mimeType"]?.jsonString == "image/png"
+                || object?["mime_type"]?.jsonString == "image/png"
+                || object?["mime"]?.jsonString == "image/png"
+        } == true
     }
 
     nonisolated private static func normalize(_ result: NativeJSONValue) throws -> NativeJSONValue {

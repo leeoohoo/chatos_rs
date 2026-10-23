@@ -1,3 +1,4 @@
+import ChatOSNetworking
 import Foundation
 import ImageIO
 
@@ -28,15 +29,46 @@ enum AppPastedImageNormalizer {
 
     static func normalizeToPNGOffMain(
         _ data: Data,
-        limits: AppPastedImageNormalizationLimits = .attachment
+        limits: AppPastedImageNormalizationLimits = .attachment,
+        taskID: String? = nil,
+        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
     ) async throws -> Data {
-        let task = Task.detached(priority: .userInitiated) {
-            try normalizeToPNG(data, limits: limits)
+        try Task.checkCancellation()
+        guard limits.maximumInputBytes > 0,
+              limits.maximumSourcePixelCount > 0,
+              limits.maximumDecodePixelSize > 0,
+              limits.maximumOutputBytes > 0 else {
+            throw AppPastedImageNormalizationError.invalidImage
         }
-        return try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            task.cancel()
+        let component = taskID.map { String($0.prefix(128)) }
+            ?? UUID().uuidString.lowercased()
+        let (maximumDecodePixels, pixelOverflow) = limits.maximumDecodePixelSize
+            .multipliedReportingOverflow(by: limits.maximumDecodePixelSize)
+        guard !pixelOverflow else {
+            throw AppPastedImageNormalizationError.imageTooLarge
+        }
+        let decodedPixels = min(
+            limits.maximumSourcePixelCount,
+            maximumDecodePixels
+        )
+        let (estimatedDecodedBytes, byteOverflow) = decodedPixels
+            .multipliedReportingOverflow(by: 4)
+        guard !byteOverflow else {
+            throw AppPastedImageNormalizationError.imageTooLarge
+        }
+        return try await heavyMediaGovernor.perform(context: .init(
+            taskID: "pasted-image:\(component):normalize",
+            kind: .imageDecode,
+            estimatedDecodedBytes: estimatedDecodedBytes
+        )) {
+            let task = Task.detached(priority: .userInitiated) {
+                try normalizeToPNG(data, limits: limits)
+            }
+            return try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
         }
     }
 
