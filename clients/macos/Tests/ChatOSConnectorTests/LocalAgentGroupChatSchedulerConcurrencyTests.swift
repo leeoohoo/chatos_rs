@@ -345,6 +345,94 @@ extension LocalAgentGroupChatSchedulerTests {
         XCTAssertEqual(maximumConcurrentCalls, 2)
     }
 
+    func testConversationDrainRefillsCapacityBeforeSlowIndependentDeliveryFinishes() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-conversation-rolling-window-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let room = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "conversation-rolling-project",
+            draft: .init(name: "会话滚动补位项目")
+        )
+        var agentIDs: [String] = []
+        for index in 0..<3 {
+            let agent = try await store.createAgent(
+                ownerUserID: "alice",
+                draft: .init(
+                    name: "同房间 Agent \(index)",
+                    rolePrompt: "独立处理同一房间内分配给自己的消息。",
+                    modelConfigID: "conversation-rolling-model"
+                )
+            )
+            agentIDs.append(agent.id)
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(role: "并行成员 \(index)")
+            )
+        }
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "请三个 Agent 独立处理",
+                mentionedAgentIDs: agentIDs
+            ),
+            limits: .init()
+        )
+        XCTAssertEqual(post.deliveries.count, 3)
+
+        let probe = RecoveryRollingWindowProbe()
+        let settingsSuite = "local-agent-conversation-rolling-window-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: SchedulerRollingWindowServices(
+                probe: probe,
+                expectedConfigID: "conversation-rolling-model"
+            ),
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2,
+            now: { 1_000 }
+        )
+
+        let drainTask = Task {
+            try await scheduler.drainProject(
+                ownerUserID: "alice",
+                projectID: "conversation-rolling-project",
+                maximumRuns: 3
+            )
+        }
+        await probe.waitUntilFirstStarts()
+
+        var thirdStarted = false
+        for _ in 0..<100 {
+            if await probe.hasThirdStarted() {
+                thirdStarted = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(
+            thirdStarted,
+            "a released conversation slot must refill before the unrelated slow delivery finishes"
+        )
+        await probe.releaseFirst()
+        let results = try await drainTask.value
+
+        XCTAssertEqual(Set(results.map(\.deliveryID)), Set(post.deliveries.map(\.id)))
+        XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })
+        let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
+        XCTAssertEqual(maximumConcurrentCalls, 2)
+    }
+
     func testSchedulerRunsOneAgentsTodosAcrossIndependentTeamsConcurrently() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-cross-team-executors-\(UUID().uuidString)")

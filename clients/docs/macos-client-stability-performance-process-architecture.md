@@ -2123,6 +2123,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：滚动补位消除了单个 drain 内独立长短任务之间的空槽延迟，但不放宽同一会话的因果顺序，也不承诺资源饱和时无限并发；后到任务仍受自适应总额度和交互/后台有界公平策略约束。Host、Media、Plugin 与数据库维护尚未汇入统一跨进程动态资源观测，真实组合负载、内存压力、睡眠唤醒和长期 soak 仍需后续验收。
 
+### 12.89 第十八完整里程碑：单会话多 Agent 调度滚动补位（2026-10-24）
+
+本里程碑移除项目房间和私聊 `drain` 的最后一层整批完成屏障。账户级调度已经可以滚动补位，但显式打开某个项目或会话时仍会先领取一组成员工作，并等待组内最慢 Agent 结束后才领取下一条；同一房间内彼此独立的第三个 Agent 因而仍可能被第一个慢 Agent 阻塞。
+
+已实施：
+
+- 单房间调度改为完成顺序驱动的滚动窗口；任一 Agent 的 manager/executor 工作结束并归还额度后，立即重读当前成员和 pending 状态，从下一位成员继续 round-robin 领取，不等待更早启动的慢工作。
+- 调度仍先通过 runtime admission、取得 execution permit，再做 durable claim；补位只即时取得空闲额度。同一 Agent、同一房间、同一 lane 继续由数据库 `running` 约束严格串行，manager 与 executor 两条独立 lane 仍可在总资源额度内并行。
+- claimed Delivery 的 active ownership 与 executor 取消句柄改为由父调度器在启动任何模型子任务前预登记。manager 即使先获得 CPU 并立即调用 `todo_update(status=cancelled)`，取消请求也会被句柄记住并在 executor task 安装时生效，不因滚动窗口逐条启动而引入时序竞态。
+- 每个 prepared work 仍独立完成 Worker 执行、房间失效通知、permit 回收、active-delivery 注销和 executor 句柄注销；一个任务失败或取消不会借用另一个任务的清理路径，也不会把 Store 写所有权移入 Worker。
+- 新增同项目三 Agent 回归：资源额度为 2，第一条模型调用被故意阻塞；第二条完成后第三条必须在第一条释放前启动，并发峰值严格为 2。账户级同类回归和 manager 主动取消 executor 回归同时覆盖预登记重构。
+
+验证：Debug 与原生 arm64 Release 的针对性矩阵各 37 项全部通过，包括调度器并发/恢复/副作用门禁 28 项和资源预算/Governor 9 项；Release 使用 `warnings-as-errors` 优化编译。构建证据脚本 25 项全部通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：本批保证同一会话内可并行的不同 Agent/lane 不因整批等待而空转，但不会并行执行具有因果冲突的同 Agent、同 room、同 lane Delivery。账户启动入口目前仍先完成 interrupted-run recovery，再进入普通后台新 Delivery drain；交互 communication 有独立优先通道不受此顺序影响，但后台恢复与后台新任务的入口级交错、公平份额和大量积压 soak 仍是下一步审计范围。跨 Helper 动态资源观测、内存压力/热状态迟滞和真实组合负载仍未完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

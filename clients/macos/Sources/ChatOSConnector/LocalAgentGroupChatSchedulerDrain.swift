@@ -266,24 +266,20 @@ extension LocalAgentGroupChatScheduler {
                             executionPermit: executionPermit
                         )
                         nextOrder += 1
+                        guard let prepared = try await prepareClaimedWork(
+                            work,
+                            store: store,
+                            ownerUserID: ownerUserID
+                        ) else {
+                            continue
+                        }
                         inFlightCount += 1
                         group.addTask {
-                            do {
-                                let receipt = try await runClaimedWork(
-                                    [work],
-                                    store: store,
-                                    ownerUserID: ownerUserID
-                                ).first
-                                return .finished(receipt.map {
-                                    OrderedDeliveryAttemptReceipt(
-                                        order: work.order,
-                                        receipt: $0
-                                    )
-                                })
-                            } catch {
-                                await work.executionPermit.releaseAndWait()
-                                return .failed(error)
-                            }
+                            .finished(await runPreparedClaimedWork(
+                                prepared,
+                                store: store,
+                                ownerUserID: ownerUserID
+                            ))
                         }
                     } catch {
                         await executionPermit.releaseAndWait()
@@ -567,37 +563,62 @@ extension LocalAgentGroupChatScheduler {
         maximumRuns: Int,
         lane: LocalAgentRunLane? = nil
     ) async throws -> [DeliveryAttemptReceipt] {
+        guard maximumRuns > 0,
+              try await store.hasPendingDeliveries(
+                  ownerUserID: ownerUserID,
+                  roomID: room.id,
+                  lane: lane
+              ) else {
+            return []
+        }
         let executionPriority: LocalAgentExecutionPriority = lane == .manager
             ? .interactive
             : .background
-        var results: [DeliveryAttemptReceipt] = []
-        while results.count < maximumRuns {
-            if Task.isCancelled { break }
-            guard try await store.hasPendingDeliveries(
-                ownerUserID: ownerUserID,
-                roomID: room.id,
-                lane: lane
-            ) else { break }
-            let members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
-            let remainingCapacity = maximumRuns - results.count
-            var claimedWork: [ClaimedWork] = []
-            claimedWork.reserveCapacity(min(remainingCapacity, members.count * 2))
-            claimingMembers: for member in members where claimedWork.count < remainingCapacity {
-                for _ in 0..<2 where claimedWork.count < remainingCapacity {
-                    if Task.isCancelled { break }
-                    try await runtime.checkExecutionAdmission()
+        var members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
+        return try await withThrowingTaskGroup(
+            of: ScheduledWorkCompletion.self,
+            returning: [DeliveryAttemptReceipt].self
+        ) { group in
+            var completed: [OrderedDeliveryAttemptReceipt] = []
+            var inFlightCount = 0
+            var nextOrder = 0
+            var nextMemberIndex = 0
+            var shouldSchedule = true
+            var firstError: Error?
+
+            while inFlightCount > 0
+                    || (shouldSchedule
+                        && !Task.isCancelled
+                        && completed.count < maximumRuns) {
+                var exhaustedAgentIDs = Set<String>()
+                while shouldSchedule,
+                      !Task.isCancelled,
+                      !members.isEmpty,
+                      exhaustedAgentIDs.count < members.count,
+                      completed.count + inFlightCount < maximumRuns {
+                    let member = members[nextMemberIndex % members.count]
+                    nextMemberIndex = (nextMemberIndex + 1) % members.count
+                    guard !exhaustedAgentIDs.contains(member.agentID) else { continue }
+                    do {
+                        try await runtime.checkExecutionAdmission()
+                    } catch {
+                        if firstError == nil { firstError = error }
+                        shouldSchedule = false
+                        break
+                    }
                     let executionPermit: LocalAgentExecutionPermit?
-                    if claimedWork.isEmpty {
+                    if inFlightCount == 0 {
                         executionPermit = await executionGovernor.acquire(
                             priority: executionPriority
                         )
                     } else {
                         executionPermit = await executionGovernor.tryAcquire()
                     }
-                    guard let executionPermit else { break claimingMembers }
+                    guard let executionPermit else { break }
                     if Task.isCancelled {
                         await executionPermit.releaseAndWait()
-                        break claimingMembers
+                        shouldSchedule = false
+                        break
                     }
                     let delivery: ProjectAgentDelivery?
                     do {
@@ -619,116 +640,176 @@ extension LocalAgentGroupChatScheduler {
                         }
                     } catch {
                         await executionPermit.releaseAndWait()
-                        throw error
+                        if firstError == nil { firstError = error }
+                        shouldSchedule = false
+                        break
                     }
                     guard let delivery else {
                         await executionPermit.releaseAndWait()
-                        break
+                        exhaustedAgentIDs.insert(member.agentID)
+                        continue
                     }
-                    claimedWork.append(.init(
-                        order: claimedWork.count,
+                    let work = ClaimedWork(
+                        order: nextOrder,
                         room: room,
                         member: member,
                         delivery: delivery,
                         executionPermit: executionPermit
-                    ))
+                    )
+                    nextOrder += 1
+                    do {
+                        guard let prepared = try await prepareClaimedWork(
+                            work,
+                            store: store,
+                            ownerUserID: ownerUserID
+                        ) else {
+                            continue
+                        }
+                        inFlightCount += 1
+                        group.addTask {
+                            .finished(await runPreparedClaimedWork(
+                                prepared,
+                                store: store,
+                                ownerUserID: ownerUserID
+                            ))
+                        }
+                    } catch {
+                        if firstError == nil { firstError = error }
+                        shouldSchedule = false
+                        break
+                    }
+                }
+
+                guard inFlightCount > 0 else { break }
+                guard let completion = try await group.next() else { break }
+                inFlightCount -= 1
+                switch completion {
+                case let .finished(receipt):
+                    if let receipt { completed.append(receipt) }
+                case let .failed(error):
+                    if firstError == nil { firstError = error }
+                    shouldSchedule = false
+                }
+                if shouldSchedule, !Task.isCancelled {
+                    do {
+                        guard try await store.hasPendingDeliveries(
+                            ownerUserID: ownerUserID,
+                            roomID: room.id,
+                            lane: lane
+                        ) else {
+                            shouldSchedule = false
+                            continue
+                        }
+                        members = try await store.listMembers(
+                            ownerUserID: ownerUserID,
+                            roomID: room.id
+                        )
+                        if !members.isEmpty {
+                            nextMemberIndex %= members.count
+                        } else {
+                            nextMemberIndex = 0
+                        }
+                    } catch {
+                        if firstError == nil { firstError = error }
+                        shouldSchedule = false
+                    }
                 }
             }
-            if claimedWork.isEmpty { break }
-            results.append(contentsOf: try await runClaimedWork(
-                claimedWork,
-                store: store,
-                ownerUserID: ownerUserID
-            ))
+
+            if let firstError { throw firstError }
+            completed.sort { $0.order < $1.order }
+            return completed.map(\.receipt)
         }
-        return results
     }
 
-    func runClaimedWork(
-        _ claimedWork: [ClaimedWork],
+    private struct PreparedClaimedWork: Sendable {
+        let work: ClaimedWork
+        let todoID: String?
+        let cancellationHandle: LocalAgentExecutorCancellationHandle?
+    }
+
+    /// Registers scheduler ownership and executor cancellation before any model task starts. A
+    /// manager launched in the same rolling-window fill can therefore cancel its executor even if
+    /// the manager reaches `todo_update` before the executor child receives CPU time.
+    private func prepareClaimedWork(
+        _ work: ClaimedWork,
         store: SQLiteAgentGroupChatStore,
         ownerUserID: String
-    ) async throws -> [DeliveryAttemptReceipt] {
-        var running: [(task: Task<OrderedDeliveryAttemptReceipt, Never>, todoID: String?, handle: LocalAgentExecutorCancellationHandle?)] = []
-        running.reserveCapacity(claimedWork.count)
-        // Register executor handles before manager tasks can invoke todo_update(status=cancelled).
-        let launchOrder = claimedWork.sorted {
-            if $0.delivery.lane != $1.delivery.lane {
-                return $0.delivery.lane == .executor
-            }
-            return $0.order < $1.order
-        }
-        let executorTodoIDsByDeliveryID = Dictionary(uniqueKeysWithValues: launchOrder.compactMap {
-            work -> (String, String)? in
-            guard work.delivery.lane == .executor,
-                  let todoID = work.delivery.todoID else { return nil }
-            return (work.delivery.id, todoID)
-        })
-        let executorTodos = try await store.todos(
-            ownerUserID: ownerUserID,
-            todoIDs: Array(executorTodoIDsByDeliveryID.values)
-        )
-        for work in launchOrder {
-            let todoID: String? = executorTodoIDsByDeliveryID[work.delivery.id].flatMap { todoID in
-                guard executorTodos[todoID]?.agentID == work.delivery.targetAgentID else {
-                    return nil
-                }
-                return todoID
+    ) async throws -> PreparedClaimedWork? {
+        do {
+            let todoID: String?
+            if work.delivery.lane == .executor,
+               let candidateTodoID = work.delivery.todoID {
+                let todos = try await store.todos(
+                    ownerUserID: ownerUserID,
+                    todoIDs: [candidateTodoID]
+                )
+                todoID = todos[candidateTodoID]?.agentID == work.delivery.targetAgentID
+                    ? candidateTodoID
+                    : nil
+            } else {
+                todoID = nil
             }
             let handle = todoID == nil ? nil : LocalAgentExecutorCancellationHandle()
             guard await activeDeliveryRegistry.acquire(deliveryID: work.delivery.id) else {
                 await work.executionPermit.releaseAndWait()
-                continue
+                return nil
             }
-            let task: Task<OrderedDeliveryAttemptReceipt, Never> = Task {
-                let receipt: DeliveryAttemptReceipt
-                do {
-                    receipt = try await runClaimedDeliveryHandlingFailure(
-                        store: store,
-                        ownerUserID: ownerUserID,
-                        projectID: work.room.projectID,
-                        room: work.room,
-                        member: work.member,
-                        delivery: work.delivery
-                    )
-                } catch {
-                    receipt = .init(
-                        deliveryID: work.delivery.id,
-                        agentID: work.delivery.targetAgentID,
-                        outcome: .failed,
-                        detail: Self.failureDetail(error)
-                    )
-                }
-                // The failure wrapper itself can fail while persisting its terminal state. Keep
-                // invalidation outside that wrapper so a visible room always reconciles durable
-                // state after this claimed attempt leaves the scheduler.
-                await service.publishChange(.init(
-                    ownerUserID: ownerUserID,
-                    roomID: work.room.id,
-                    agentID: work.delivery.targetAgentID,
-                    kind: .roomUpdated
-                ))
-                await work.executionPermit.releaseAndWait()
-                return OrderedDeliveryAttemptReceipt(order: work.order, receipt: receipt)
-            }
-            handle?.install { task.cancel() }
             if let todoID, let handle {
                 await executorTaskRegistry.register(todoID: todoID, handle: handle)
             }
-            running.append((task, todoID, handle))
+            return .init(work: work, todoID: todoID, cancellationHandle: handle)
+        } catch {
+            await work.executionPermit.releaseAndWait()
+            throw error
         }
-        var round: [OrderedDeliveryAttemptReceipt] = []
-        round.reserveCapacity(running.count)
-        for entry in running {
-            let completed = await entry.task.value
-            round.append(completed)
-            await activeDeliveryRegistry.unregister(deliveryID: completed.receipt.deliveryID)
-            if let todoID = entry.todoID, let handle = entry.handle {
-                await executorTaskRegistry.unregister(todoID: todoID, handle: handle)
+    }
+
+    private func runPreparedClaimedWork(
+        _ prepared: PreparedClaimedWork,
+        store: SQLiteAgentGroupChatStore,
+        ownerUserID: String
+    ) async -> OrderedDeliveryAttemptReceipt {
+        let work = prepared.work
+        let task: Task<OrderedDeliveryAttemptReceipt, Never> = Task {
+            let receipt: DeliveryAttemptReceipt
+            do {
+                receipt = try await runClaimedDeliveryHandlingFailure(
+                    store: store,
+                    ownerUserID: ownerUserID,
+                    projectID: work.room.projectID,
+                    room: work.room,
+                    member: work.member,
+                    delivery: work.delivery
+                )
+            } catch {
+                receipt = .init(
+                    deliveryID: work.delivery.id,
+                    agentID: work.delivery.targetAgentID,
+                    outcome: .failed,
+                    detail: Self.failureDetail(error)
+                )
             }
+            // The failure wrapper itself can fail while persisting its terminal state. Keep
+            // invalidation outside that wrapper so a visible room always reconciles durable
+            // state after this claimed attempt leaves the scheduler.
+            await service.publishChange(.init(
+                ownerUserID: ownerUserID,
+                roomID: work.room.id,
+                agentID: work.delivery.targetAgentID,
+                kind: .roomUpdated
+            ))
+            await work.executionPermit.releaseAndWait()
+            return OrderedDeliveryAttemptReceipt(order: work.order, receipt: receipt)
         }
-        round.sort { $0.order < $1.order }
-        return round.map(\.receipt)
+        prepared.cancellationHandle?.install { task.cancel() }
+        let completed = await task.value
+        await activeDeliveryRegistry.unregister(deliveryID: completed.receipt.deliveryID)
+        if let todoID = prepared.todoID,
+           let handle = prepared.cancellationHandle {
+            await executorTaskRegistry.unregister(todoID: todoID, handle: handle)
+        }
+        return completed
     }
 
     static func memberKey(roomID: String, agentID: String) -> String {
