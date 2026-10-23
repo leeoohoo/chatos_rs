@@ -1760,6 +1760,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批消除的是普通文本/音频附件的无效尾部读取，不是 Agent 模型请求的完全文件原生化。图片和 PDF 仍会形成完整 `Data`、Base64 字符串与 JSON body，多个 20 MiB 输入仍可能叠加；后续需把 Agent 请求改为增量 Base64 临时 body/真正的 file upload，并覆盖 SSE 上传、取消、重定向、磁盘预算和崩溃回收。512 KiB 文本字符串是模型上下文的必要有界消费者，不计为可消除的文件正文副本；全局文件 I/O Governor 和组合压力门禁仍未完成。
 
+### 12.65 第六十五批实施记录：Agent 二进制附件请求文件原生化（2026-10-23）
+
+本批关闭 12.64 保留的 Agent 图片与 Responses PDF 请求组装峰值。此前每份最多 20 MiB 的二进制附件会先完整读取为 `Data`，再生成约 4/3 大小的 Base64 `String`，最后与整份 JSON `Data` 同时驻留；多附件请求会把这些副本叠加在主进程堆中，SSE 路径也没有可直接上传请求文件的入口。
+
+已实施：
+
+- Chat Completions 图片及 Responses 图片/PDF 先在结构化 payload 中写入不可预测的单次 placeholder；`AgentModelRequestBodyFileWriter` 再以固定 48 KiB（可被 3 整除）分块读取源文件、增量 Base64 并直接写出请求文件，不再构造完整附件 `Data`、完整 Base64 `String` 或最终 JSON `Data`。单源继续限制 20 MiB，编码后的整份请求硬限制 64 MiB，并在创建文件前完成溢出安全的精确尺寸预算。
+- 源文件以 `O_NOFOLLOW | O_CLOEXEC` 打开，只接受当前用户所有、单硬链接、1 字节—20 MiB 的普通文件；读写循环处理短读/短写、`EINTR` 与任务取消，结束时复验 device/inode/link/size/mtime/ctime，拒绝 symlink、并发替换与读取期间改写。
+- 请求文件进入系统临时根下私有 `.chatos-agent-model-requests` 目录，目录/文件权限固定为 `0700/0600`，写完执行 `fsync`；发送成功、错误或取消均通过共享 cleanup owner 幂等删除。启动新写入时最多检查 64 个严格 UUID 文件名，只回收超过 24 小时且仍为当前用户单链接普通文件的崩溃遗留，未知文件和 symlink 不删除。
+- 非流式生产路径使用 `BoundedURLSessionDataLoader.upload(fromFile:)`，响应继续受 2 MiB 上限；SSE 生产路径使用私有 `URLSessionUploadTask(fromFile:)`，不会把请求体重新物化。响应桥接采用 16 KiB 分片、256 KiB 高水位/64 KiB 低水位暂停恢复 URLSession task，并设 2 MiB 待消费硬上限；消费者取消或提前释放响应流会取消 task、结束私有 session，不静默丢弃 SSE 字节。
+- 为保持现有单元测试和自定义 provider transport 的注入接口兼容，只有显式注入的兼容 transport 会映射并物化临时请求文件；默认生产 transport 始终走 file upload。没有二进制附件的纯文本请求继续沿用原内存 JSON 路径，避免为小请求引入磁盘往返。
+
+验证：Debug 与原生 arm64 Release 各选择性运行 `AgentChatModelClientTests` 15 项、`AgentURLSessionFileUploadTests` 2 项、`AgentModelRequestBodyFileWriterTests` 4 项及 `AgentAttachmentDataLoaderTests` 4 项，共 25 项，全部通过。新增回归覆盖多附件增量替换、64 MiB 编码预算前置拒绝且零残留、权限与 24 小时保守回收、symlink 拒绝、普通与 SSE 的真实文件上传、512 KiB 快速响应在有界背压下字节无损，以及取消响应消费会停止底层请求；Swift 6 Debug/Release 编译、优化编译与 `git diff --check` 同步作为门禁。测试只使用独立临时文件和受控 URLProtocol，不启动/安装正式 App，不请求真实 provider，不访问活动用户数据库。
+
+边界：本批限制的是 Agent 模型请求附件和 SSE 待消费队列，不替代全局文件 I/O Governor；最多 64 MiB 请求文件仍会占用临时磁盘，容量检查不是空间预留。真实 ENOSPC/只读卷、provider 重定向或认证挑战重放、SIGKILL 各写入/上传窗口、网络切换与签名 Release soak 尚未完成，P0-D/P0-E 组合压力门禁仍不能标记完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

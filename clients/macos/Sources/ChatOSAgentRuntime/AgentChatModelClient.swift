@@ -16,6 +16,14 @@ public struct AgentHTTPStreamResponse: Sendable {
 public struct AgentChatModelClient: AgentModelClient {
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, Int)
     public typealias StreamTransport = @Sendable (URLRequest) async throws -> AgentHTTPStreamResponse
+    private typealias FileTransport = @Sendable (
+        URLRequest,
+        AgentModelRequestBodyFile
+    ) async throws -> (Data, Int)
+    private typealias FileStreamTransport = @Sendable (
+        URLRequest,
+        AgentModelRequestBodyFile
+    ) async throws -> AgentHTTPStreamResponse
 
     private let endpoint: URL
     private let model: String
@@ -25,18 +33,13 @@ public struct AgentChatModelClient: AgentModelClient {
     private let temperature: Double?
     private let transport: Transport
     private let streamTransport: StreamTransport
+    private let fileTransport: FileTransport
+    private let fileStreamTransport: FileStreamTransport
 
     public init(
         baseURL: URL, model: String, apiKey: String, thinking: String? = nil,
         maximumOutputTokens: Int? = nil, temperature: Double? = nil,
-        transport: @escaping Transport = { request in
-            let (data, response) = try await BoundedURLSessionDataLoader.load(
-                request: request,
-                maximumBytes: 2 * 1_024 * 1_024
-            )
-            guard let response = response as? HTTPURLResponse else { throw AgentRuntimeError.invalidResponse }
-            return (data, response.statusCode)
-        },
+        transport: Transport? = nil,
         streamTransport: StreamTransport? = nil
     ) throws {
         guard ["http", "https"].contains(baseURL.scheme?.lowercased() ?? ""), baseURL.host != nil,
@@ -48,20 +51,77 @@ public struct AgentChatModelClient: AgentModelClient {
         if !endpoint.path.hasSuffix("/chat/completions") { endpoint.appendPathComponent("chat/completions") }
         self.endpoint = endpoint; self.model = model; self.apiKey = apiKey
         self.thinking = thinking; self.maximumOutputTokens = maximumOutputTokens
-        self.temperature = temperature; self.transport = transport
-        self.streamTransport = streamTransport ?? AgentURLSessionStream.open
+        self.temperature = temperature
+        let resolvedTransport: Transport = transport ?? { request in
+            let (data, response) = try await BoundedURLSessionDataLoader.load(
+                request: request,
+                maximumBytes: 2 * 1_024 * 1_024
+            )
+            guard let response = response as? HTTPURLResponse else {
+                throw AgentRuntimeError.invalidResponse
+            }
+            return (data, response.statusCode)
+        }
+        self.transport = resolvedTransport
+        self.fileTransport = if transport == nil {
+            AgentModelRequestBodyTransport.upload
+        } else {
+            { request, bodyFile in
+                try await resolvedTransport(
+                    AgentModelRequestBodyTransport.materialize(
+                        request: request,
+                        bodyFile: bodyFile
+                    )
+                )
+            }
+        }
+        let resolvedStreamTransport = streamTransport ?? AgentURLSessionStream.open
+        self.streamTransport = resolvedStreamTransport
+        self.fileStreamTransport = if streamTransport == nil {
+            AgentModelRequestBodyTransport.stream
+        } else {
+            { request, bodyFile in
+                try await resolvedStreamTransport(
+                    AgentModelRequestBodyTransport.materialize(
+                        request: request,
+                        bodyFile: bodyFile
+                    )
+                )
+            }
+        }
     }
 
     public func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) async throws -> AgentMessage {
-        let request = try request(messages: messages, tools: tools, timeout: timeout, stream: false)
-        let (data, status) = try await transport(request)
+        let prepared = try request(
+            messages: messages,
+            tools: tools,
+            timeout: timeout,
+            stream: false
+        )
+        defer { prepared.bodyFile?.removeIfNeeded() }
+        let (data, status) = if let bodyFile = prepared.bodyFile {
+            try await fileTransport(prepared.request, bodyFile)
+        } else {
+            try await transport(prepared.request)
+        }
         try Self.validate(status: status, errorBody: data)
         return try Self.decodeCompleteResponse(data)
     }
 
     public func stream(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
                        onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void) async throws -> AgentMessage {
-        let response = try await streamTransport(try request(messages: messages, tools: tools, timeout: timeout, stream: true))
+        let prepared = try request(
+            messages: messages,
+            tools: tools,
+            timeout: timeout,
+            stream: true
+        )
+        defer { prepared.bodyFile?.removeIfNeeded() }
+        let response = if let bodyFile = prepared.bodyFile {
+            try await fileStreamTransport(prepared.request, bodyFile)
+        } else {
+            try await streamTransport(prepared.request)
+        }
         await onEvent(.responseCreated)
         if !(200..<300).contains(response.statusCode) {
             var body = Data()
@@ -85,13 +145,14 @@ public struct AgentChatModelClient: AgentModelClient {
     }
 
     private func request(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
-                         stream: Bool) throws -> URLRequest {
+                         stream: Bool) throws -> AgentPreparedModelRequest {
+        var sources: [AgentModelRequestBodyFileWriter.Source] = []
         var payload: [String: Any] = [
             "model": model, "stream": stream,
             "messages": try messages.map { message -> [String: Any] in
                 var value: [String: Any] = [
                     "role": message.role.rawValue,
-                    "content": try Self.chatContent(message),
+                    "content": try Self.chatContent(message, sources: &sources),
                 ]
                 if let id = message.toolCallID { value["tool_call_id"] = id }
                 if !message.toolCalls.isEmpty {
@@ -117,11 +178,22 @@ public struct AgentChatModelClient: AgentModelClient {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(stream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        return request
+        if sources.isEmpty {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            return .init(request: request, bodyFile: nil)
+        }
+        let bodyFile = try AgentModelRequestBodyFileWriter.write(
+            payload: payload,
+            sources: sources
+        )
+        request.setValue(String(bodyFile.byteCount), forHTTPHeaderField: "Content-Length")
+        return .init(request: request, bodyFile: bodyFile)
     }
 
-    private static func chatContent(_ message: AgentMessage) throws -> Any {
+    private static func chatContent(
+        _ message: AgentMessage,
+        sources: inout [AgentModelRequestBodyFileWriter.Source]
+    ) throws -> Any {
         guard !message.attachmentItems.isEmpty else { return message.content }
         var content: [[String: Any]] = []
         if !message.content.isEmpty {
@@ -129,11 +201,16 @@ public struct AgentChatModelClient: AgentModelClient {
         }
         for attachment in message.attachmentItems {
             if attachment.kind == .image {
-                let data = try validatedAttachmentData(attachment)
+                let placeholder = "chatos-agent-source-\(UUID().uuidString.lowercased())"
+                sources.append(.init(
+                    placeholder: placeholder,
+                    url: attachment.localFileURL,
+                    mimeType: attachment.mimeType
+                ))
                 content.append([
                     "type": "image_url",
                     "image_url": [
-                        "url": "data:\(attachment.mimeType);base64,\(data.base64EncodedString())",
+                        "url": placeholder,
                         "detail": "auto",
                     ],
                 ])
@@ -152,10 +229,6 @@ public struct AgentChatModelClient: AgentModelClient {
             }
         }
         return content
-    }
-
-    private static func validatedAttachmentData(_ attachment: AgentMessageAttachment) throws -> Data {
-        try AgentAttachmentDataLoader.load(attachment.localFileURL)
     }
 
     private static func boundedText(_ preview: AgentAttachmentDataLoader.TextPreview) -> String {

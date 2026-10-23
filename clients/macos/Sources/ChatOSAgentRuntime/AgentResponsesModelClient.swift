@@ -10,6 +10,14 @@ import Foundation
 public actor AgentResponsesModelClient: AgentModelClient {
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, Int)
     public typealias StreamTransport = @Sendable (URLRequest) async throws -> AgentHTTPStreamResponse
+    private typealias FileTransport = @Sendable (
+        URLRequest,
+        AgentModelRequestBodyFile
+    ) async throws -> (Data, Int)
+    private typealias FileStreamTransport = @Sendable (
+        URLRequest,
+        AgentModelRequestBodyFile
+    ) async throws -> AgentHTTPStreamResponse
 
     public nonisolated let usesServerSideCompaction = true
 
@@ -23,6 +31,8 @@ public actor AgentResponsesModelClient: AgentModelClient {
     private let promptCacheKey: String
     private let transport: Transport
     private let streamTransport: StreamTransport
+    private let fileTransport: FileTransport
+    private let fileStreamTransport: FileStreamTransport
     fileprivate struct ParsedResponse {
         let id: String
         let message: AgentMessage
@@ -32,16 +42,7 @@ public actor AgentResponsesModelClient: AgentModelClient {
         baseURL: URL, model: String, apiKey: String, thinking: String? = nil,
         maximumOutputTokens: Int? = nil, temperature: Double? = nil,
         promptCacheKey: String? = nil,
-        transport: @escaping Transport = { request in
-            let (data, response) = try await BoundedURLSessionDataLoader.load(
-                request: request,
-                maximumBytes: 2 * 1_024 * 1_024
-            )
-            guard let response = response as? HTTPURLResponse else {
-                throw AgentRuntimeError.invalidResponse
-            }
-            return (data, response.statusCode)
-        },
+        transport: Transport? = nil,
         streamTransport: StreamTransport? = nil
     ) throws {
         guard ["http", "https"].contains(baseURL.scheme?.lowercased() ?? ""),
@@ -65,8 +66,43 @@ public actor AgentResponsesModelClient: AgentModelClient {
         self.temperature = temperature
         self.promptCacheKey = promptCacheKey?.trimmingCharacters(in: .whitespacesAndNewlines)
             .nonEmpty ?? "chatos-native:\(model)"
-        self.transport = transport
-        self.streamTransport = streamTransport ?? AgentURLSessionStream.open
+        let resolvedTransport: Transport = transport ?? { request in
+            let (data, response) = try await BoundedURLSessionDataLoader.load(
+                request: request,
+                maximumBytes: 2 * 1_024 * 1_024
+            )
+            guard let response = response as? HTTPURLResponse else {
+                throw AgentRuntimeError.invalidResponse
+            }
+            return (data, response.statusCode)
+        }
+        self.transport = resolvedTransport
+        self.fileTransport = if transport == nil {
+            AgentModelRequestBodyTransport.upload
+        } else {
+            { request, bodyFile in
+                try await resolvedTransport(
+                    AgentModelRequestBodyTransport.materialize(
+                        request: request,
+                        bodyFile: bodyFile
+                    )
+                )
+            }
+        }
+        let resolvedStreamTransport = streamTransport ?? AgentURLSessionStream.open
+        self.streamTransport = resolvedStreamTransport
+        self.fileStreamTransport = if streamTransport == nil {
+            AgentModelRequestBodyTransport.stream
+        } else {
+            { request, bodyFile in
+                try await resolvedStreamTransport(
+                    AgentModelRequestBodyTransport.materialize(
+                        request: request,
+                        bodyFile: bodyFile
+                    )
+                )
+            }
+        }
     }
 
     public nonisolated static func shouldUse(
@@ -80,8 +116,18 @@ public actor AgentResponsesModelClient: AgentModelClient {
     public func complete(
         messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval
     ) async throws -> AgentMessage {
-        let request = try request(messages: messages, tools: tools, timeout: timeout, stream: false)
-        let (data, status) = try await transport(request)
+        let prepared = try request(
+            messages: messages,
+            tools: tools,
+            timeout: timeout,
+            stream: false
+        )
+        defer { prepared.bodyFile?.removeIfNeeded() }
+        let (data, status) = if let bodyFile = prepared.bodyFile {
+            try await fileTransport(prepared.request, bodyFile)
+        } else {
+            try await transport(prepared.request)
+        }
         try validate(status: status, errorBody: data)
         return try Self.decodeResponse(data).message
     }
@@ -90,9 +136,18 @@ public actor AgentResponsesModelClient: AgentModelClient {
         messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
         onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void
     ) async throws -> AgentMessage {
-        let response = try await streamTransport(
-            try request(messages: messages, tools: tools, timeout: timeout, stream: true)
+        let prepared = try request(
+            messages: messages,
+            tools: tools,
+            timeout: timeout,
+            stream: true
         )
+        defer { prepared.bodyFile?.removeIfNeeded() }
+        let response = if let bodyFile = prepared.bodyFile {
+            try await fileStreamTransport(prepared.request, bodyFile)
+        } else {
+            try await streamTransport(prepared.request)
+        }
         await onEvent(.responseCreated)
         if !(200..<300).contains(response.statusCode) {
             var body = Data()
@@ -124,10 +179,11 @@ public actor AgentResponsesModelClient: AgentModelClient {
     private func request(
         messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
         stream: Bool
-    ) throws -> URLRequest {
+    ) throws -> AgentPreparedModelRequest {
+        var sources: [AgentModelRequestBodyFileWriter.Source] = []
         var payload: [String: Any] = [
             "model": model,
-            "input": try Self.inputItems(messages),
+            "input": try Self.inputItems(messages, sources: &sources),
             "stream": stream,
             "store": false,
             "prompt_cache_key": promptCacheKey,
@@ -153,11 +209,22 @@ public actor AgentResponsesModelClient: AgentModelClient {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(stream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        return request
+        if sources.isEmpty {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            return .init(request: request, bodyFile: nil)
+        }
+        let bodyFile = try AgentModelRequestBodyFileWriter.write(
+            payload: payload,
+            sources: sources
+        )
+        request.setValue(String(bodyFile.byteCount), forHTTPHeaderField: "Content-Length")
+        return .init(request: request, bodyFile: bodyFile)
     }
 
-    private static func inputItems(_ messages: [AgentMessage]) throws -> [[String: Any]] {
+    private static func inputItems(
+        _ messages: [AgentMessage],
+        sources: inout [AgentModelRequestBodyFileWriter.Source]
+    ) throws -> [[String: Any]] {
         var items: [[String: Any]] = []
         for message in messages {
             switch message.role {
@@ -167,7 +234,7 @@ public actor AgentResponsesModelClient: AgentModelClient {
                 } else {
                     items.append([
                         "role": message.role.rawValue,
-                        "content": try inputContent(message),
+                        "content": try inputContent(message, sources: &sources),
                     ])
                 }
             case .assistant:
@@ -215,7 +282,10 @@ public actor AgentResponsesModelClient: AgentModelClient {
         return items
     }
 
-    private static func inputContent(_ message: AgentMessage) throws -> [[String: Any]] {
+    private static func inputContent(
+        _ message: AgentMessage,
+        sources: inout [AgentModelRequestBodyFileWriter.Source]
+    ) throws -> [[String: Any]] {
         var content: [[String: Any]] = []
         if !message.content.isEmpty {
             content.append(["type": "input_text", "text": message.content])
@@ -223,18 +293,28 @@ public actor AgentResponsesModelClient: AgentModelClient {
         for attachment in message.attachmentItems {
             switch attachment.kind {
             case .image:
-                let data = try validatedAttachmentData(attachment)
+                let placeholder = "chatos-agent-source-\(UUID().uuidString.lowercased())"
+                sources.append(.init(
+                    placeholder: placeholder,
+                    url: attachment.localFileURL,
+                    mimeType: attachment.mimeType
+                ))
                 content.append([
                     "type": "input_image",
-                    "image_url": "data:\(attachment.mimeType);base64,\(data.base64EncodedString())",
+                    "image_url": placeholder,
                     "detail": "auto",
                 ])
             case .file where attachment.mimeType == "application/pdf":
-                let data = try validatedAttachmentData(attachment)
+                let placeholder = "chatos-agent-source-\(UUID().uuidString.lowercased())"
+                sources.append(.init(
+                    placeholder: placeholder,
+                    url: attachment.localFileURL,
+                    mimeType: attachment.mimeType
+                ))
                 content.append([
                     "type": "input_file",
                     "filename": attachment.name,
-                    "file_data": "data:\(attachment.mimeType);base64,\(data.base64EncodedString())",
+                    "file_data": placeholder,
                 ])
             case .file, .audio:
                 if let preview = try AgentAttachmentDataLoader.textPreview(
@@ -253,10 +333,6 @@ public actor AgentResponsesModelClient: AgentModelClient {
             }
         }
         return content
-    }
-
-    private static func validatedAttachmentData(_ attachment: AgentMessageAttachment) throws -> Data {
-        try AgentAttachmentDataLoader.load(attachment.localFileURL)
     }
 
     private static func boundedText(_ preview: AgentAttachmentDataLoader.TextPreview) -> String {

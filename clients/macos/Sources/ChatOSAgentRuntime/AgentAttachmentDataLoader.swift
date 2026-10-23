@@ -10,17 +10,6 @@ enum AgentAttachmentDataLoader {
         let isTruncated: Bool
     }
 
-    static func load(_ url: URL) throws -> Data {
-        let source = try open(url)
-        defer { Darwin.close(source.descriptor) }
-        let bytes = try readPrefix(
-            descriptor: source.descriptor,
-            count: source.byteCount
-        )
-        try verifyUnchanged(source)
-        return bytes
-    }
-
     static func textPreview(_ url: URL) throws -> TextPreview? {
         let source = try open(url)
         defer { Darwin.close(source.descriptor) }

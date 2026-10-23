@@ -4,15 +4,18 @@ import Testing
 
 @Suite("Agent Attachment Data Loader")
 struct AgentAttachmentDataLoaderTests {
-    @Test("loads an attachment within the model input limit")
-    func loadsBoundedAttachment() throws {
+    @Test("loads an untruncated text preview within the model input limit")
+    func loadsUntruncatedTextPreview() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("agent-attachment-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: url) }
         let expected = Data("bounded attachment".utf8)
         try expected.write(to: url)
 
-        #expect(try AgentAttachmentDataLoader.load(url) == expected)
+        let loaded = try AgentAttachmentDataLoader.textPreview(url)
+        let preview = try #require(loaded)
+        #expect(preview.text == String(decoding: expected, as: UTF8.self))
+        #expect(!preview.isTruncated)
     }
 
     @Test("reads only the bounded text prefix and reports truncation")
@@ -47,9 +50,6 @@ struct AgentAttachmentDataLoaderTests {
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
 
         #expect(throws: AgentRuntimeError.self) {
-            _ = try AgentAttachmentDataLoader.load(link)
-        }
-        #expect(throws: AgentRuntimeError.self) {
             _ = try AgentAttachmentDataLoader.textPreview(link)
         }
     }
@@ -65,7 +65,7 @@ struct AgentAttachmentDataLoaderTests {
         try handle.close()
 
         #expect(throws: AgentRuntimeError.self) {
-            _ = try AgentAttachmentDataLoader.load(url)
+            _ = try AgentAttachmentDataLoader.textPreview(url)
         }
     }
 }

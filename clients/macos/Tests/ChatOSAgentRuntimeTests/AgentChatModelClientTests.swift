@@ -104,6 +104,91 @@ final class AgentChatModelClientTests: XCTestCase {
         _ = try await chat.complete(messages: [message], tools: [], timeout: 20)
     }
 
+    func testBinaryAttachmentsUseFileBackedBodiesInBothAdapters() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "agent-model-binary-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let image = Data(repeating: 0x7f, count: 160 * 1_024 + 1)
+        let pdf = Data("%PDF-1.7\nmodel fixture".utf8)
+        let imageURL = root.appendingPathComponent("image.png")
+        let pdfURL = root.appendingPathComponent("document.pdf")
+        try image.write(to: imageURL)
+        try pdf.write(to: pdfURL)
+        let attachments: [AgentMessageAttachment] = [
+            .init(
+                name: "image.png",
+                mimeType: "image/png",
+                kind: .image,
+                localFileURL: imageURL
+            ),
+            .init(
+                name: "document.pdf",
+                mimeType: "application/pdf",
+                kind: .file,
+                localFileURL: pdfURL
+            ),
+        ]
+
+        let responses = try AgentResponsesModelClient(
+            baseURL: URL(string: "https://api.openai.com/v1")!,
+            model: "gpt-test",
+            apiKey: "secret",
+            transport: { request in
+                XCTAssertNotNil(request.value(forHTTPHeaderField: "Content-Length"))
+                let payload = try Self.body(request)
+                let input = try XCTUnwrap(payload["input"] as? [[String: Any]])
+                let content = try XCTUnwrap(input.first?["content"] as? [[String: Any]])
+                XCTAssertEqual(
+                    content[0]["image_url"] as? String,
+                    "data:image/png;base64,\(image.base64EncodedString())"
+                )
+                XCTAssertEqual(
+                    content[1]["file_data"] as? String,
+                    "data:application/pdf;base64,\(pdf.base64EncodedString())"
+                )
+                return (
+                    Data(#"{"id":"resp","status":"completed","output":[]}"#.utf8),
+                    200
+                )
+            }
+        )
+        _ = try await responses.complete(
+            messages: [.init(role: .user, attachments: attachments)],
+            tools: [],
+            timeout: 20
+        )
+
+        let chat = try AgentChatModelClient(
+            baseURL: URL(string: "https://model.example/v1")!,
+            model: "gpt-test",
+            apiKey: "secret",
+            transport: { request in
+                XCTAssertNotNil(request.value(forHTTPHeaderField: "Content-Length"))
+                let payload = try Self.body(request)
+                let messages = try XCTUnwrap(payload["messages"] as? [[String: Any]])
+                let content = try XCTUnwrap(messages.first?["content"] as? [[String: Any]])
+                let imagePart = try XCTUnwrap(content.first?["image_url"] as? [String: Any])
+                XCTAssertEqual(
+                    imagePart["url"] as? String,
+                    "data:image/png;base64,\(image.base64EncodedString())"
+                )
+                XCTAssertTrue((content[1]["text"] as? String)?.contains("%PDF-1.7") == true)
+                return (
+                    Data(#"{"choices":[{"finish_reason":"stop","message":{"content":"done"}}]}"#.utf8),
+                    200
+                )
+            }
+        )
+        _ = try await chat.complete(
+            messages: [.init(role: .user, attachments: attachments)],
+            tools: [],
+            timeout: 20
+        )
+    }
+
     func testResponsesUsesCompactionAndStatelessFullOutputContinuation() async throws {
         let recorder = ResponsesTransportRecorder()
         let client = try AgentResponsesModelClient(
@@ -358,6 +443,11 @@ final class AgentChatModelClientTests: XCTestCase {
     }
 
     func testStreamingReassemblesTextAndFragmentedToolArguments() async throws {
+        let imageURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-stream-image-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: imageURL) }
+        let image = Data(repeating: 0x5a, count: 80 * 1_024 + 1)
+        try image.write(to: imageURL)
         let raw = """
         data: {"choices":[{"delta":{"content":"正在分析"}}]}
 
@@ -378,12 +468,29 @@ final class AgentChatModelClientTests: XCTestCase {
                 let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
                 XCTAssertEqual(payload["stream"] as? Bool, true)
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "text/event-stream")
+                XCTAssertNotNil(request.value(forHTTPHeaderField: "Content-Length"))
+                let messages = try XCTUnwrap(payload["messages"] as? [[String: Any]])
+                let content = try XCTUnwrap(messages.first?["content"] as? [[String: Any]])
+                let imagePart = try XCTUnwrap(content.last?["image_url"] as? [String: Any])
+                XCTAssertEqual(
+                    imagePart["url"] as? String,
+                    "data:image/png;base64,\(image.base64EncodedString())"
+                )
                 let pair = AsyncThrowingStream<Data, Error>.makeStream()
                 for chunk in chunks { pair.continuation.yield(chunk) }
                 pair.continuation.finish()
                 return AgentHTTPStreamResponse(statusCode: 200, body: pair.stream)
             })
-        let message = try await client.stream(messages: [AgentMessage(role: .user, content: "规划")], tools: runtimeTestTools,
+        let message = try await client.stream(messages: [AgentMessage(
+            role: .user,
+            content: "规划",
+            attachments: [.init(
+                name: "image.png",
+                mimeType: "image/png",
+                kind: .image,
+                localFileURL: imageURL
+            )]
+        )], tools: runtimeTestTools,
                                               timeout: 10, onEvent: { await events.append($0) })
         XCTAssertEqual(message.content, "正在分析")
         XCTAssertEqual(message.toolCalls, [AgentToolCall(id: "call_1", name: "story_finish", arguments: #"{"ok":true}"#)])
