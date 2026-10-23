@@ -5,40 +5,6 @@ import XCTest
 @testable import ChatOSConnector
 
 final class AgentWorkerProcessClientTests: XCTestCase {
-    func testCircuitBreakerQuarantinesRepeatedInfrastructureFailuresAndRecovers() async throws {
-        var configuration = AgentWorkerFailureCircuitBreaker.Configuration()
-        configuration.baseBackoffSeconds = 0
-        configuration.maximumBackoffSeconds = 0
-        configuration.quarantineFailureCount = 2
-        configuration.quarantineSeconds = 60
-        let breaker = AgentWorkerFailureCircuitBreaker(configuration: configuration)
-        let identity = AgentWorkerExecutableIdentity(
-            path: "/test/ChatOSAgentWorker",
-            device: 1,
-            inode: 2,
-            size: 3,
-            modificationSeconds: 4,
-            modificationNanoseconds: 5
-        )
-
-        try await breaker.checkAdmission(for: identity)
-        await breaker.recordAbnormalFailure(for: identity)
-        try await breaker.checkAdmission(for: identity)
-        await breaker.recordAbnormalFailure(for: identity)
-        do {
-            try await breaker.checkAdmission(for: identity)
-            XCTFail("circuit breaker admitted a quarantined worker executable")
-        } catch let error as AgentWorkerProcessClientError {
-            guard case .temporarilyUnavailable = error else { throw error }
-        }
-
-        await breaker.recordSuccess(for: identity)
-        try await breaker.checkAdmission(for: identity)
-        let snapshot = await breaker.snapshot(for: identity)
-        XCTAssertEqual(snapshot.abnormalFailureCount, 0)
-        XCTAssertNil(snapshot.unavailableUntil)
-    }
-
     func testBuiltWorkerRunsAgentLoopAndPersistsThroughParentCallbacks() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_AGENT_WORKER_PATH"],
               !path.isEmpty else {
@@ -363,15 +329,13 @@ final class AgentWorkerProcessClientTests: XCTestCase {
         }
         let processes = AgentWorkerProcessIDs()
         let probe = AgentWorkerCancellationProbe()
-        let breaker = AgentWorkerFailureCircuitBreaker()
         let client = AgentWorkerProcessClient(
             executableURL: URL(fileURLWithPath: path),
             shutdownGraceSeconds: 5,
             resourcePolicy: .init(),
             processObserver: { processID in
                 Task { await processes.append(processID) }
-            },
-            circuitBreaker: breaker
+            }
         )
         let task = Task {
             try await Self.runIsolatedWorker(
@@ -398,8 +362,48 @@ final class AgentWorkerProcessClientTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertFalse(isAlive)
-        let abnormalFailureCount = await breaker.totalAbnormalFailureCount()
-        XCTAssertEqual(abnormalFailureCount, 0)
+    }
+
+    func testKilledWorkerDoesNotQuarantineAnIndependentRun() async throws {
+        let executable = try workerExecutable()
+        let processes = AgentWorkerProcessIDs()
+        let authorizationGate = AgentWorkerAuthorizationGate()
+        let configuration = AgentWorkerModelTransportConfiguration.responses(try .init(
+            baseURL: URL(string: "http://127.0.0.1:1/v1/")!,
+            model: "failure-isolation-model",
+            apiKey: "failure-isolation-secret",
+            thinking: nil,
+            maximumOutputTokens: 1_024,
+            temperature: nil,
+            promptCacheKey: "failure-isolation"
+        ))
+        let client = Self.isolatedClient(executable: executable, processes: processes)
+        let interrupted = Task {
+            try await Self.runIsolatedWorker(
+                client: client,
+                scope: "agent-worker-killed-before-independent-run",
+                model: AgentWorkerBlockingAuthorizationModel(
+                    configuration: configuration,
+                    gate: authorizationGate
+                )
+            )
+        }
+        await authorizationGate.waitUntilWorkerAuthorization()
+        let firstProcessIDs = await processes.waitForCount(1)
+        let firstProcessID = try XCTUnwrap(firstProcessIDs.first)
+        XCTAssertEqual(Darwin.kill(firstProcessID, SIGKILL), 0)
+        await authorizationGate.release()
+        try await assertInfrastructureInterruption(interrupted)
+
+        let independent = try await Self.runIsolatedWorker(
+            client: client,
+            scope: "agent-worker-independent-after-kill",
+            model: AgentWorkerTestModel()
+        )
+        XCTAssertEqual(independent.status, .completed)
+        let processIDs = await processes.waitForCount(2)
+        XCTAssertEqual(processIDs.count, 2)
+        XCTAssertEqual(Set(processIDs).count, 2)
     }
 
     func testMemoryLimitTerminatesOnlyTheOffendingWorker() async throws {
@@ -416,8 +420,7 @@ final class AgentWorkerProcessClientTests: XCTestCase {
             resourcePolicy: .init(),
             processObserver: { processID in
                 Task { await healthyProcesses.append(processID) }
-            },
-            circuitBreaker: AgentWorkerFailureCircuitBreaker()
+            }
         )
         let healthyTask = Task {
             try await Self.runIsolatedWorker(
@@ -444,8 +447,7 @@ final class AgentWorkerProcessClientTests: XCTestCase {
             ),
             processObserver: { processID in
                 Task { await limitedProcesses.append(processID) }
-            },
-            circuitBreaker: AgentWorkerFailureCircuitBreaker()
+            }
         )
         do {
             _ = try await Self.runIsolatedWorker(
@@ -638,8 +640,7 @@ final class AgentWorkerProcessClientTests: XCTestCase {
             resourcePolicy: .init(),
             processObserver: { processID in
                 Task { await processes.append(processID) }
-            },
-            circuitBreaker: AgentWorkerFailureCircuitBreaker()
+            }
         )
     }
 

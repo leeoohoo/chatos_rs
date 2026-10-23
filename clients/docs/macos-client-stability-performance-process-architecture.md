@@ -2032,6 +2032,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：移除共享熔断避免故障传染，也意味着高频调用方不能依赖全局 quarantine 抑制错误风暴。当前每个入口已有输入数量、大小、deadline 与任务生命周期上限；账户级跨 Helper 动态资源预算、连续恶意请求速率限制和发布 soak 仍需后续交付。Agent Worker 使用按可执行身份共享的独立熔断实现，尚需另行核对它是否会让无关 Run 互相隔离，不能把本批结论外推到 Agent/Plugin/Host。
 
+### 12.83 第十二完整里程碑：Agent Worker 故障不再阻塞其他 Run（2026-10-24）
+
+本里程碑完成对 `AgentWorkerProcessClient` 共享准入状态的审计并移除按 Worker 可执行文件身份共享的静态熔断器。此前任一 Run 的 launch、握手、协议、无效响应或资源超限都会写入同一失败序列；下一个不同会话、不同项目甚至不同 Agent 的健康 Run 会在 durable Delivery 领取前被共同退避 1/2/4/8/16/30 秒，累计五次后全部隔离 30 秒。会话 ID 和 checkpoint 即使完全正确，这个执行层共享状态仍会造成用户观察到的“另一个任务一直不执行”。
+
+已实施：
+
+- `checkExecutionAdmission()` 继续在领取 durable Delivery 前验证 Worker 存在且是当前用户拥有、单硬链接、可执行的普通文件，但不读取任何其他 Run 的故障历史。
+- 每个 `executeRun` 仍各自启动独立 `ChatOSAgentWorker` PID，并保留本 Run 的墙钟 timeout、取消、资源采样、`SIGTERM`/`SIGKILL`、版本握手、Run UUID/nonce 绑定和输出校验；失败不再写入进程级共享 backoff/quarantine。
+- 删除已无生产语义的 `temporarilyUnavailable` 错误和熔断器注入测试；调度器的 fail-closed admission 回归改为验证 Worker 确实不可用时仍不得提前领取 Delivery。
+- 新增真实 Worker 回归：一个 Run 在模型授权 IPC 窗口被 `SIGKILL` 后，复用同一个生产 client 和同一个 Worker executable 立即启动独立 Run；第二个 Run 必须获得不同 PID 并完成，不能继承一秒退避。既有强杀副作用窗口继续验证 durable `inFlightCallID` 会进入 `needsReview` 且禁止自动重放。
+
+验证：Debug 与原生 arm64 Release 的针对性矩阵各 38 项全部通过，包括真实 Agent Worker 13 项和调度器并发/恢复/副作用门禁 25 项；Release 使用 `warnings-as-errors` 优化编译。真实回归覆盖授权、网络和写工具三个 `SIGKILL` 窗口、16 个独立 Run/独立 PID、断网重连、账户切换、资源超限和取消隔离。Release 首次紧随九分钟全量链接执行时，16 Worker 压力项受瞬时机器负载影响命中 Run timeout；该项隔离重跑在 0.214 秒通过，随后完整 38 项热态重跑在 8.157 秒全部通过，未发现可重复功能失败。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：本批消除的是共享故障状态，不取消安全监督，也不允许 in-process fallback。移除全局 quarantine 后，错误风暴不能再靠暂停所有会话来抑制；后续账户级 CPU/内存 lease、来源限速与连续异常告警必须跨进程观测并公平分配，不能使用全局单槽锁，也不能让一个 Run 的失败成为其他 Run 的准入条件。Memory 和部分工具 capability 仍由 App 代理，适合迁移的重负载仍需逐项进程化。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

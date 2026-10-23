@@ -5,7 +5,7 @@ import Foundation
 import XCTest
 
 extension LocalAgentGroupChatSchedulerTests {
-    func testRuntimeCircuitBreakerRejectsBeforeDurableDeliveryClaim() async throws {
+    func testRuntimeAdmissionRejectsBeforeDurableDeliveryClaim() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-worker-admission-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -58,9 +58,9 @@ extension LocalAgentGroupChatSchedulerTests {
 
         do {
             _ = try await scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 1)
-            XCTFail("scheduler claimed work while the worker circuit was open")
+            XCTFail("scheduler claimed work while worker admission was unavailable")
         } catch let error as AgentWorkerProcessClientError {
-            guard case .temporarilyUnavailable = error else { throw error }
+            guard case .unavailable = error else { throw error }
         }
 
         let storedDelivery = try await store.delivery(
@@ -369,7 +369,7 @@ private actor RejectingAgentWorkerAdmissionRuntime: AgentRuntimeExecuting {
     private var executions = 0
 
     func checkExecutionAdmission() async throws {
-        throw AgentWorkerProcessClientError.temporarilyUnavailable(retryAfterSeconds: 30)
+        throw AgentWorkerProcessClientError.unavailable
     }
 
     func executeRun(

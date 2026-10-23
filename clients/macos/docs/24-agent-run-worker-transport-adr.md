@@ -29,7 +29,9 @@ Worker 可请求 tool execute、completion check、Memory context prepare、chec
 - Worker 崩溃时，App 以最后一次 durable checkpoint 判断恢复语义。若存在 `inFlightCallID`，结果被视为未知并进入 `needsReview`；Todo 进入 blocked，禁止自动重放副作用。
 - 无 in-flight 副作用的崩溃按普通 Run 失败处理，可由既有业务恢复策略重新领取。
 - 父进程退出由 Worker 的 parent monitor 触发退出，避免孤儿进程继续请求 capability。
+- 一次性 Worker 不共享异常日期、指数退避或 quarantine。一个 Run 的启动、握手、协议、资源超限或异常退出只能失败并终止自己的 PID，不得拒绝后续独立 Run；可执行文件仍在领取 durable Delivery 前做 owner、regular-file、link-count 与 execute 权限校验。
+- 连续异常风暴必须由未来的跨进程资源预算、账户/来源速率限制和可观测告警治理；这些机制必须允许公平并行，不能重新引入进程级单槽锁或把一个 Run 的失败状态传播给其他 Run。
 
 ## 当前边界
 
-v2 已把生产 Agent 的 Responses HTTP/SSE、请求体构造和响应解析迁入 Worker，因此 provider 卡死、畸形响应解析和对应网络缓冲已进入单 Run 进程边界。Memory 和受权工具仍在父进程 capability 端；部分工具本身再委托既有 Host/Plugin 进程，但不能据此宣称所有工具 CPU/内存工作集都已隔离。Worker 当前也不是 App Sandbox/seatbelt 意义上的凭据安全边界。后续演进应加入跨进程动态 CPU/内存 lease、连续崩溃熔断、真实强杀每个授权/网络/工具 IPC 窗口和长时间组合负载验证，并逐项判断 App 内工具是否可安全迁移。
+v2 已把生产 Agent 的 Responses HTTP/SSE、请求体构造和响应解析迁入 Worker，因此 provider 卡死、畸形响应解析和对应网络缓冲已进入单 Run 进程边界。Memory 和受权工具仍在父进程 capability 端；部分工具本身再委托既有 Host/Plugin 进程，但不能据此宣称所有工具 CPU/内存工作集都已隔离。Worker 当前也不是 App Sandbox/seatbelt 意义上的凭据安全边界。后续演进应加入不会跨 Run 传播失败的动态 CPU/内存 lease 与异常风暴限速、真实强杀每个授权/网络/工具 IPC 窗口和长时间组合负载验证，并逐项判断 App 内工具是否可安全迁移。

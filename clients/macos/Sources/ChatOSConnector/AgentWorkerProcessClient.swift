@@ -12,7 +12,6 @@ public enum AgentWorkerProcessClientError: LocalizedError, Equatable {
     case invalidResponse
     case workerFailed(String)
     case timedOut
-    case temporarilyUnavailable(retryAfterSeconds: Int)
     case resourceLimitExceeded(resource: String, observed: UInt64, limit: UInt64)
 
     public var errorDescription: String? {
@@ -24,8 +23,6 @@ public enum AgentWorkerProcessClientError: LocalizedError, Equatable {
         case .invalidResponse: "Agent 独立执行进程返回了无效结果。"
         case let .workerFailed(detail): "Agent 独立执行进程失败：\(detail)"
         case .timedOut: "Agent 独立执行进程超时，已被终止。"
-        case let .temporarilyUnavailable(retryAfterSeconds):
-            "Agent 独立执行进程连续异常，已暂停接收新任务，请在约 \(retryAfterSeconds) 秒后重试。"
         case let .resourceLimitExceeded(resource, observed, limit):
             "Agent 独立执行进程的\(resource)超出限制（\(observed) / \(limit)），已只终止本次任务。"
         }
@@ -48,102 +45,6 @@ public struct AgentWorkerResourcePolicy: Sendable, Equatable {
     }
 }
 
-struct AgentWorkerExecutableIdentity: Hashable, Sendable {
-    let path: String
-    let device: UInt64
-    let inode: UInt64
-    let size: UInt64
-    let modificationSeconds: Int64
-    let modificationNanoseconds: Int64
-}
-
-actor AgentWorkerFailureCircuitBreaker {
-    struct Configuration: Sendable {
-        var failureWindowSeconds: TimeInterval = 300
-        var baseBackoffSeconds: TimeInterval = 1
-        var maximumBackoffSeconds: TimeInterval = 30
-        var quarantineFailureCount = 5
-        var quarantineSeconds: TimeInterval = 30
-    }
-
-    struct Snapshot: Sendable, Equatable {
-        let abnormalFailureCount: Int
-        let unavailableUntil: TimeInterval?
-    }
-
-    private struct State {
-        var failureDates: [TimeInterval] = []
-        var unavailableUntil: TimeInterval?
-    }
-
-    private let configuration: Configuration
-    private var states: [AgentWorkerExecutableIdentity: State] = [:]
-
-    init(configuration: Configuration = .init()) {
-        self.configuration = configuration
-    }
-
-    func checkAdmission(for identity: AgentWorkerExecutableIdentity) throws {
-        let now = Date().timeIntervalSince1970
-        var state = pruned(states[identity] ?? .init(), now: now)
-        let backoffUntil: TimeInterval? = state.failureDates.last.map { lastFailure in
-            let exponent = min(max(0, state.failureDates.count - 1), 20)
-            let delay = min(
-                configuration.maximumBackoffSeconds,
-                configuration.baseBackoffSeconds * pow(2, Double(exponent))
-            )
-            return lastFailure + delay
-        }
-        let blockedUntil = max(state.unavailableUntil ?? 0, backoffUntil ?? 0)
-        if blockedUntil > now {
-            states[identity] = state
-            throw AgentWorkerProcessClientError.temporarilyUnavailable(
-                retryAfterSeconds: max(1, Int(ceil(blockedUntil - now)))
-            )
-        }
-        state.unavailableUntil = nil
-        states[identity] = state
-    }
-
-    func recordSuccess(for identity: AgentWorkerExecutableIdentity) {
-        states.removeValue(forKey: identity)
-    }
-
-    func recordAbnormalFailure(for identity: AgentWorkerExecutableIdentity) {
-        let now = Date().timeIntervalSince1970
-        var state = pruned(states[identity] ?? .init(), now: now)
-        state.failureDates.append(now)
-        if state.failureDates.count >= configuration.quarantineFailureCount {
-            state.unavailableUntil = now + configuration.quarantineSeconds
-        }
-        states[identity] = state
-    }
-
-    func snapshot(for identity: AgentWorkerExecutableIdentity) -> Snapshot {
-        let state = pruned(states[identity] ?? .init(), now: Date().timeIntervalSince1970)
-        return .init(
-            abnormalFailureCount: state.failureDates.count,
-            unavailableUntil: state.unavailableUntil
-        )
-    }
-
-    func totalAbnormalFailureCount() -> Int {
-        let now = Date().timeIntervalSince1970
-        return states.values.reduce(into: 0) { total, value in
-            total += pruned(value, now: now).failureDates.count
-        }
-    }
-
-    private func pruned(_ value: State, now: TimeInterval) -> State {
-        var state = value
-        state.failureDates.removeAll { now - $0 > configuration.failureWindowSeconds }
-        if let unavailableUntil = state.unavailableUntil, unavailableUntil <= now {
-            state.unavailableUntil = nil
-        }
-        return state
-    }
-}
-
 /// Launches exactly one helper process for one Agent Run. Model, Memory, tools and SQLite remain
 /// parent-owned capabilities and are invoked through the versioned pipe protocol; the worker owns
 /// the orchestration loop, timeout state and checkpoint transitions for only this Run.
@@ -154,8 +55,6 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
     public let shutdownGraceSeconds: TimeInterval
     public let resourcePolicy: AgentWorkerResourcePolicy
     private let processObserver: ProcessObserver?
-    private let circuitBreaker: AgentWorkerFailureCircuitBreaker
-    private static let sharedCircuitBreaker = AgentWorkerFailureCircuitBreaker()
 
     public init(
         executableURL: URL? = nil,
@@ -167,27 +66,11 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
         self.shutdownGraceSeconds = shutdownGraceSeconds
         self.resourcePolicy = resourcePolicy
         self.processObserver = processObserver
-        self.circuitBreaker = Self.sharedCircuitBreaker
-    }
-
-    init(
-        executableURL: URL?,
-        shutdownGraceSeconds: TimeInterval,
-        resourcePolicy: AgentWorkerResourcePolicy,
-        processObserver: ProcessObserver? = nil,
-        circuitBreaker: AgentWorkerFailureCircuitBreaker
-    ) {
-        self.executableURL = executableURL
-        self.shutdownGraceSeconds = shutdownGraceSeconds
-        self.resourcePolicy = resourcePolicy
-        self.processObserver = processObserver
-        self.circuitBreaker = circuitBreaker
     }
 
     public func checkExecutionAdmission() async throws {
         let resolvedExecutable = try executableURL ?? Self.resolveExecutable()
-        let identity = try Self.validateExecutable(resolvedExecutable)
-        try await circuitBreaker.checkAdmission(for: identity)
+        try Self.validateExecutable(resolvedExecutable)
     }
 
     public func executeRun(
@@ -215,8 +98,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
             throw AgentWorkerProcessClientError.invalidResponse
         }
         let resolvedExecutable = try executableURL ?? Self.resolveExecutable()
-        let executableIdentity = try Self.validateExecutable(resolvedExecutable)
-        try await circuitBreaker.checkAdmission(for: executableIdentity)
+        try Self.validateExecutable(resolvedExecutable)
         let modelTransportConfiguration = model.workerTransportConfiguration
         if let modelTransportConfiguration {
             guard modelTransportConfiguration.usesServerSideCompaction
@@ -260,13 +142,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
             } onCancel: {
                 controller.terminate()
             }
-            await circuitBreaker.recordSuccess(for: executableIdentity)
             return result
-        } catch {
-            if Self.isAbnormalInfrastructureFailure(error) {
-                await circuitBreaker.recordAbnormalFailure(for: executableIdentity)
-            }
-            throw error
         }
     }
 
@@ -324,17 +200,6 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
         } catch {
             if let violation = controller.resourceViolation() { throw violation }
             throw error
-        }
-    }
-
-    private static func isAbnormalInfrastructureFailure(_ error: Error) -> Bool {
-        guard let error = error as? AgentWorkerProcessClientError else { return false }
-        switch error {
-        case .launchFailed, .incompatibleProtocol, .invalidResponse, .resourceLimitExceeded:
-            return true
-        case .unavailable, .invalidExecutable, .workerFailed, .timedOut,
-             .temporarilyUnavailable:
-            return false
         }
     }
 
@@ -532,7 +397,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
         return bundled
     }
 
-    private static func validateExecutable(_ url: URL) throws -> AgentWorkerExecutableIdentity {
+    private static func validateExecutable(_ url: URL) throws {
         var status = stat()
         guard lstat(url.path, &status) == 0,
               (status.st_mode & S_IFMT) == S_IFREG,
@@ -541,14 +406,6 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
               access(url.path, X_OK) == 0 else {
             throw AgentWorkerProcessClientError.invalidExecutable
         }
-        return .init(
-            path: url.standardizedFileURL.path,
-            device: UInt64(status.st_dev),
-            inode: UInt64(status.st_ino),
-            size: UInt64(status.st_size),
-            modificationSeconds: Int64(status.st_mtimespec.tv_sec),
-            modificationNanoseconds: Int64(status.st_mtimespec.tv_nsec)
-        )
     }
 }
 
