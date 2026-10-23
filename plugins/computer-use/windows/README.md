@@ -2,7 +2,7 @@
 
 这是 macOS Swift 版本的独立 Windows 原生后端，使用 C#、.NET 8、WPF 和 Win32。它只把真实屏幕像素作为 UI 事实来源，不读取 DOM、不读取 UI Automation / Accessibility tree，也不调用目标软件内部接口。
 
-当前目录只包含 Windows 核心与 MCP 工具层，不包含安装器、自动更新或第三方平台打包代码，方便与单独进行的平台适配工作合并。
+Windows 核心由根目录的 ChatOS 打包脚本发布为 x64 与 arm64 两个 self-contained single-file worker。ChatOS 安装器会从统一 Marketplace 包中选择当前架构，不需要目标机器预装 .NET。
 
 ## 实现范围
 
@@ -43,7 +43,20 @@ ARM64 Windows 使用：
 dotnet build .\VisualComputerUse.Windows\VisualComputerUse.Windows.csproj -c Release -r win-arm64
 ```
 
-本项目的安装器和面向具体宿主平台的发布方式由外部打包层决定；MCP 入口是生成的 `visual-computer-use-mcp.exe`。
+从 Plugin 根目录构建两个可发布 worker：
+
+```powershell
+npm run build:windows
+```
+
+产物会经过 PE 架构校验并复制为：
+
+```text
+bin/windows-x64/open-computer-use.exe
+bin/windows-arm64/open-computer-use.exe
+```
+
+完整 Marketplace `.tgz` 由 macOS arm64 打包任务同时组合稳定 `.app` 和这两个 Windows worker；CI 入口是 `.github/workflows/computer-use-package.yml`。MCP 的源码构建入口仍是 `visual-computer-use-mcp.exe`。
 
 ## MCP 工具
 

@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+name: Computer Use Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "computer-use-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build universal ChatOS package
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Select current Xcode toolchain
+        run: sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
+
+      - name: Test package validators
+        run: npm --prefix plugins/computer-use run test:packaging
+
+      - name: Build macOS and Windows workers and pack ChatOS artifact
+        run: npm --prefix plugins/computer-use run pack:chatos
+
+      - name: Write SHA-256 checksum
+        working-directory: plugins/computer-use/dist/chatos-artifacts
+        run: shasum -a 256 open-computer-use-*.tgz > SHA256SUMS
+
+      - name: Upload signed-release input
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-computer-use-${{ github.ref_name }}
+          path: |
+            plugins/computer-use/dist/chatos-artifacts/open-computer-use-*.tgz
+            plugins/computer-use/dist/chatos-artifacts/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

@@ -6,3 +6,5 @@ DerivedData/
 *.xcuserstate
 windows/**/bin/
 windows/**/obj/
+/bin/windows-x64/
+/bin/windows-arm64/

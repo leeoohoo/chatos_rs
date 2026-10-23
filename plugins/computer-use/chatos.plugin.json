@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "name": "open-computer-use",
-  "version": "0.8.22",
-  "description": "Visual-first macOS Computer Use MCP that observes real screenshots and sends real CoreGraphics input events.",
+  "version": "0.9.0",
+  "description": "Visual-first macOS and Windows Computer Use MCP that observes real screenshots and sends native input events.",
   "author": {
     "name": "Open Computer Use"
   },
@@ -10,6 +10,7 @@
   "keywords": [
     "computer-use",
     "macos",
+    "windows",
     "visual-automation",
     "mcp"
   ],
@@ -32,8 +33,8 @@
   ],
   "interface": {
     "displayName": "Visual Computer Use",
-    "shortDescription": "Control macOS from real screenshots",
-    "longDescription": "Uses real macOS screenshots as the UI source of truth, renders a visible virtual cursor, and sends real CoreGraphics mouse, keyboard, paste, and scroll events without reading DOM or Accessibility UI trees.",
+    "shortDescription": "Control macOS or Windows from real screenshots",
+    "longDescription": "Uses real macOS or Windows screenshots as the UI source of truth, renders a visible virtual cursor, and sends native mouse, keyboard, and scroll events without reading DOM or Accessibility/UI Automation trees.",
     "developerName": "Open Computer Use",
     "category": "Developer Tools",
     "capabilities": [
@@ -51,7 +52,9 @@
   },
   "dependencies": {
     "supportedPlatforms": [
-      "macos-arm64"
+      "macos-arm64",
+      "windows-x64",
+      "windows-arm64"
     ]
   },
   "permissions": [
@@ -66,7 +69,7 @@
     {
       "permission": "computer.control",
       "required": true,
-      "reason": "Send user-requested mouse, keyboard, paste, and scroll events to macOS applications.",
+      "reason": "Send user-requested native mouse, keyboard, and scroll events to macOS or Windows applications.",
       "components": [
         "computer-use"
       ]

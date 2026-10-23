@@ -1,6 +1,6 @@
 # Visual Computer Use MCP
 
-macOS 主实现使用 Swift；独立的 Windows 原生核心位于 [`windows/`](./windows/README.md)，使用 C# / .NET 8 / WPF。两端保持同一套 11 个通用 MCP 工具和“真实截图 → 虚拟定位 → 视觉确认 → 真实输入”的工作流。Windows 目录刻意不包含安装器或第三方平台打包代码，避免与单独的平台适配工作冲突。
+macOS 主实现使用 Swift；独立的 Windows 原生核心位于 [`windows/`](./windows/README.md)，使用 C# / .NET 8 / WPF。两端保持同一套 11 个通用 MCP 工具和“真实截图 → 虚拟定位 → 视觉确认 → 真实输入”的工作流。ChatOS Marketplace 包同时携带 macOS arm64、Windows x64 和 Windows arm64 worker，并由宿主按当前平台与架构选择原生入口。
 
 ## macOS（Swift）
 
@@ -108,7 +108,7 @@ tool_timeout_sec = 60
 这个仓库同时提供 ChatOS schema v3 Plugin 包装，并沿用市场中的
 `open-computer-use` Plugin identity，以便从旧实现直接升级到当前视觉实现。
 
-构建标准 npm `.tgz`：
+构建标准、跨平台的 npm `.tgz`。打包机需要 macOS arm64、Xcode/Swift 和 .NET 8 SDK；Windows worker 以 self-contained single-file 方式发布，目标机器不需要另装 .NET：
 
 ```bash
 npm run pack:chatos
@@ -117,10 +117,18 @@ npm run pack:chatos
 产物：
 
 ```text
-dist/chatos-artifacts/open-computer-use-0.8.7.tgz
+dist/chatos-artifacts/open-computer-use-0.9.0.tgz
 ```
 
-包内 `bin/open-computer-use` 会把 `Visual Computer Use.app` 原子复制到稳定目录：
+包内平台入口：
+
+```text
+bin/open-computer-use
+bin/windows-x64/open-computer-use.exe
+bin/windows-arm64/open-computer-use.exe
+```
+
+Windows React/Tauri 安装器会优先选择与当前 CPU 架构精确匹配的 `.exe`；Node/npm 入口也会做相同选择。macOS 的 `bin/open-computer-use` 会把 `Visual Computer Use.app` 原子复制到稳定目录：
 
 ```text
 ~/Library/Application Support/Visual Computer Use/runtime/Visual Computer Use.app
@@ -129,6 +137,8 @@ dist/chatos-artifacts/open-computer-use-0.8.7.tgz
 ChatOS MCP component key 保持为 `computer-use`。Local Connector 调用
 `open-computer-use doctor` 时会检查真实 App 权限；缺少权限时自动打开当前
 managed App 的原生权限引导窗口。
+
+`.github/workflows/computer-use-package.yml` 可手动运行，也会在 `computer-use-v*` tag 上构建、校验并上传 `.tgz` 与 SHA-256 清单，作为 Marketplace 签名发布的输入；它不会绕过 Marketplace 的 Release 签名与可信发布流程。
 
 ## 坐标与 Retina
 

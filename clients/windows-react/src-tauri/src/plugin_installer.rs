@@ -349,11 +349,23 @@ fn validate_extracted_package(
 }
 
 pub(crate) fn resolve_executable(installation_root: &Path, bin: &str) -> Result<PathBuf, String> {
+    resolve_executable_for_arch(
+        installation_root,
+        bin,
+        cfg!(windows).then_some(std::env::consts::ARCH),
+    )
+}
+
+fn resolve_executable_for_arch(
+    installation_root: &Path,
+    bin: &str,
+    windows_arch: Option<&str>,
+) -> Result<PathBuf, String> {
     if !valid_executable_name(bin) {
         return Err(install_error("Plugin 可执行文件名无效"));
     }
     let bin_root = installation_root.join("bin");
-    let candidates = [bin_root.join(bin), bin_root.join(format!("{bin}.exe"))];
+    let candidates = executable_candidates(&bin_root, bin, windows_arch);
     for candidate in candidates {
         let metadata = match fs::symlink_metadata(&candidate) {
             Ok(metadata) => metadata,
@@ -370,6 +382,25 @@ pub(crate) fn resolve_executable(installation_root: &Path, bin: &str) -> Result<
         }
     }
     Err(install_error("Plugin 可执行文件不存在"))
+}
+
+fn executable_candidates(bin_root: &Path, bin: &str, windows_arch: Option<&str>) -> Vec<PathBuf> {
+    let mut candidates = Vec::with_capacity(3);
+    if let Some(runtime_directory) = windows_arch.and_then(|architecture| match architecture {
+        "x86_64" => Some("windows-x64"),
+        "aarch64" => Some("windows-arm64"),
+        _ => None,
+    }) {
+        candidates.push(bin_root.join(runtime_directory).join(format!("{bin}.exe")));
+    }
+    if windows_arch.is_some() {
+        candidates.push(bin_root.join(format!("{bin}.exe")));
+        candidates.push(bin_root.join(bin));
+    } else {
+        candidates.push(bin_root.join(bin));
+        candidates.push(bin_root.join(format!("{bin}.exe")));
+    }
+    candidates
 }
 
 fn read_bounded_text(path: &Path, maximum_bytes: u64) -> Result<String, String> {
@@ -554,5 +585,32 @@ mod tests {
         let encoded = format!("sha512-{}", STANDARD.encode(&expected));
         assert_eq!(parse_npm_integrity(&encoded).unwrap(), expected);
         assert!(parse_npm_integrity("sha256-bad").is_err());
+    }
+
+    #[test]
+    fn executable_resolution_prefers_the_current_windows_architecture() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let bin = root.join("bin");
+        let x64 = bin.join("windows-x64");
+        let arm64 = bin.join("windows-arm64");
+        std::fs::create_dir_all(&x64).unwrap();
+        std::fs::create_dir_all(&arm64).unwrap();
+        std::fs::write(bin.join("open-computer-use"), "launcher").unwrap();
+        std::fs::write(x64.join("open-computer-use.exe"), "x64").unwrap();
+        std::fs::write(arm64.join("open-computer-use.exe"), "arm64").unwrap();
+
+        assert_eq!(
+            resolve_executable_for_arch(&root, "open-computer-use", Some("x86_64")).unwrap(),
+            x64.join("open-computer-use.exe").canonicalize().unwrap()
+        );
+        assert_eq!(
+            resolve_executable_for_arch(&root, "open-computer-use", Some("aarch64")).unwrap(),
+            arm64.join("open-computer-use.exe").canonicalize().unwrap()
+        );
+        assert_eq!(
+            resolve_executable_for_arch(&root, "open-computer-use", None).unwrap(),
+            bin.join("open-computer-use").canonicalize().unwrap()
+        );
     }
 }

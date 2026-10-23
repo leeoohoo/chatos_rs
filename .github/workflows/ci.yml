@@ -152,6 +152,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Setup Node for native plugin contracts
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
       - name: Setup .NET
         if: runner.os == 'Windows'
         uses: actions/setup-dotnet@v4
@@ -171,6 +176,17 @@ jobs:
       - name: Verify native platform contracts
         shell: bash
         run: bash scripts/verify-repository.sh native-platform
+
+      - name: Test Computer Use package validators
+        run: npm --prefix plugins/computer-use run test:packaging
+
+      - name: Publish the Windows x64 Computer Use payload
+        if: runner.os == 'Windows'
+        run: npm --prefix plugins/computer-use run build:windows -- --runtime win-x64
+
+      - name: Smoke-test the packaged Windows Computer Use launcher
+        if: runner.os == 'Windows'
+        run: npm --prefix plugins/computer-use run smoke:windows
 
       - name: Audit Computer Use Plugin Skill gates
         if: runner.os == 'macOS'

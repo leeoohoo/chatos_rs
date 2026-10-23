@@ -219,6 +219,26 @@ function spawnAndExit(executablePath, executableArgs) {
   });
 }
 
+function packagedWindowsExecutable() {
+  const runtimeDirectory = {
+    x64: "windows-x64",
+    arm64: "windows-arm64",
+  }[process.arch];
+  if (!runtimeDirectory) {
+    fail(`Visual Computer Use does not support Windows architecture ${process.arch}.`);
+  }
+  const executablePath = path.join(
+    packageRoot,
+    "bin",
+    runtimeDirectory,
+    "open-computer-use.exe",
+  );
+  if (!fs.existsSync(executablePath)) {
+    fail(`Missing bundled Windows worker at ${executablePath}.`);
+  }
+  return executablePath;
+}
+
 function readDiagnostics(executablePath) {
   const managedApp = path.resolve(executablePath, "..", "..", "..");
   const outputPath = path.join(
@@ -264,26 +284,58 @@ function runDoctor(executablePath) {
   }
 }
 
-if (args.includes("--version") || args.includes("-v") || args[0] === "version") {
-  console.log(packageMetadata.version);
-  process.exit(0);
+function main() {
+  if (args.includes("--version") || args.includes("-v") || args[0] === "version") {
+    console.log(packageMetadata.version);
+    process.exit(0);
+  }
+
+  if (process.platform === "win32") {
+    const executablePath = packagedWindowsExecutable();
+    const command = args[0] ?? "mcp";
+    if (
+      command === "doctor" ||
+      command === "--doctor" ||
+      command === "check-permissions"
+    ) {
+      spawnAndExit(executablePath, ["--doctor"]);
+    } else if (command === "onboarding" || command === "--onboarding") {
+      spawnAndExit(executablePath, ["--onboarding"]);
+    } else if (command === "mcp") {
+      spawnAndExit(executablePath, []);
+    } else {
+      spawnAndExit(executablePath, args);
+    }
+    return;
+  }
+  if (process.platform !== "darwin") {
+    fail("Visual Computer Use supports macOS and Windows only.");
+  }
+
+  const executablePath = ensureManagedApp();
+  const command = args[0] ?? "mcp";
+  if (command === "doctor" || command === "--doctor") {
+    runDoctor(executablePath);
+    process.exit(0);
+  }
+  if (command === "check-permissions") {
+    readDiagnostics(executablePath);
+    process.exit(0);
+  }
+  if (command === "onboarding" || command === "--onboarding") {
+    const managedApp = path.resolve(executablePath, "..", "..", "..");
+    spawnAndExit("/usr/bin/open", [
+      "-W",
+      "-n",
+      managedApp,
+      "--args",
+      "--onboarding",
+    ]);
+  } else if (command === "mcp") {
+    spawnAndExit(executablePath, []);
+  } else {
+    spawnAndExit(executablePath, args);
+  }
 }
 
-const executablePath = ensureManagedApp();
-const command = args[0] ?? "mcp";
-if (command === "doctor" || command === "--doctor") {
-  runDoctor(executablePath);
-  process.exit(0);
-}
-if (command === "check-permissions") {
-  readDiagnostics(executablePath);
-  process.exit(0);
-}
-if (command === "onboarding" || command === "--onboarding") {
-  const managedApp = path.resolve(executablePath, "..", "..", "..");
-  spawnAndExit("/usr/bin/open", ["-W", "-n", managedApp, "--args", "--onboarding"]);
-} else if (command === "mcp") {
-  spawnAndExit(executablePath, []);
-} else {
-  spawnAndExit(executablePath, args);
-}
+main();
