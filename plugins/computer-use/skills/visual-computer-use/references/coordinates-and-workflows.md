@@ -1,24 +1,24 @@
 # Coordinates and reliable targeting
 
-Use this reference when mapping a screenshot target to `move_mouse`, working across Retina or multiple displays, or diagnosing coordinate uncertainty.
+Use this reference when mapping a screenshot target to `move_mouse`, working across Retina/DPI-scaled or multiple displays, or diagnosing coordinate uncertainty.
 
 ## Coordinate spaces
 
 Every observation provides:
 
-- `captureRegionGlobal`: the screenshot rectangle in global macOS display points.
+- `captureRegionGlobal`: the screenshot rectangle in the platform's global desktop coordinates.
 - `screenshotPixelWidth` and `screenshotPixelHeight`: the returned image dimensions in pixels.
-- `globalPointsPerScreenshotPixelX` and `globalPointsPerScreenshotPixelY`: the scale used to map image pixels to global points.
-- `selectedDisplay.frame` and `displays[].frame`: display rectangles in global points.
+- `globalPointsPerScreenshotPixelX` and `globalPointsPerScreenshotPixelY`: the returned scale used to map image pixels to global coordinates.
+- `selectedDisplay.frame` and `displays[].frame`: display rectangles in global coordinates.
 - `globalDesktopBounds`: the union of all display rectangles.
-- `virtualCursorGlobal`: the click hotspot in global points.
+- `virtualCursorGlobal`: the click hotspot in global coordinates.
 - `cursorScreenshotPixel`: that hotspot in screenshot pixels when it is inside the capture, otherwise `null`.
 
-The visible MCP cursor is a blue-purple AI orbit reticle rather than a system arrow. Both coordinate fields refer to the cyan point at the exact center of the reticle. Do not compensate for an arrow-tip offset. The orbit arcs, four ticks, glow, and movement trail are decorative; the physical macOS arrow can remain visible elsewhere and is not represented by `virtualCursorGlobal`.
+The visible MCP cursor is a blue-purple AI orbit reticle rather than a system pointer. Both coordinate fields refer to the cyan point at the exact center of the reticle. Do not compensate for an arrow-tip offset. The orbit arcs, four ticks, glow, and movement trail are decorative; the physical system pointer can remain visible elsewhere and is not represented by `virtualCursorGlobal`.
 
 Both coordinate spaces use a top-left origin: x increases to the right and y increases downward. A display positioned left of or above the main display can have negative global x or y values.
 
-Do not use native Retina pixels directly for mouse movement. `move_mouse` requires global display points.
+Use the coordinate system declared by the current tool result: macOS reports global display points, while Windows reports global virtual-desktop physical pixels. Windows displays positioned left of or above the primary display can produce negative coordinates. Never assume a 1:1 scale or reuse scale metadata from another screenshot; pass the converted global coordinate to `move_mouse`.
 
 ## Pixel-to-global conversion
 
@@ -54,7 +54,7 @@ Move to `(740, 330)`, then confirm the returned `cursorScreenshotPixel` and cyan
 - For text fields, choose an empty interior area or the intended insertion location.
 - For small icons, increase screenshot width or use a tighter region before targeting.
 - If an overlay, tooltip, reticle ring, or cursor trail obscures the target, move away, observe again, then approach the newly measured point.
-- The cyan center hotspot is the actual click coordinate. The surrounding AI orbit rings, reticle ticks, glow, and trail are decorative and intentionally do not resemble the macOS system arrow.
+- The cyan center hotspot is the actual click coordinate. The surrounding AI orbit rings, reticle ticks, glow, and trail are decorative and intentionally do not resemble the platform's system pointer.
 
 ## Region workflow
 

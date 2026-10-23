@@ -2,7 +2,7 @@
 
 ## Positive: text replacement
 
-Observe the field, move the reticle to its center, verify the cyan hotspot, click, verify focus, send Command+A as a deterministic intermediate chord, type replacement text with a returned screenshot, and verify the visible value.
+Observe the field, move the reticle to its center, verify the cyan hotspot, click, and verify focus. Send `Command+A` on macOS or `Control+A` on Windows as a deterministic intermediate chord, type replacement text with a returned screenshot, and verify the visible value.
 
 ## Negative: blind chain
 
