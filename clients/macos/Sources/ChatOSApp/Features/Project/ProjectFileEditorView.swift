@@ -185,7 +185,7 @@ struct ProjectFileEditorView: View {
                     )
                 }
                 Button(model.localized("复制", english: "Copy"), systemImage: "doc.on.doc") {
-                    copyToPasteboard(file)
+                    Task { await copyToPasteboard(file) }
                 }
                 Menu {
                     Button(model.localized("在 Finder 中显示", english: "Show in Finder"), systemImage: "folder") { Task { await viewModel.openSelected(mode: .reveal) } }
@@ -245,11 +245,17 @@ struct ProjectFileEditorView: View {
         }
     }
 
-    private func copyToPasteboard(_ file: ProjectFileContent) {
+    private func copyToPasteboard(_ file: ProjectFileContent) async {
+        let imageData: Data? = if file.supportsImagePreview {
+            await file.loadImagePreviewData()
+        } else {
+            nil
+        }
+        guard !Task.isCancelled else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         if file.supportsImagePreview,
-           let data = file.imagePreviewData,
+           let data = imageData,
            let type = file.imagePasteboardType {
             pasteboard.setData(data, forType: type)
         } else {
@@ -259,7 +265,7 @@ struct ProjectFileEditorView: View {
 }
 
 enum ProjectImagePreviewLoader {
-    private static let maximumSourceBytes = 20 * 1_024 * 1_024
+    static let maximumSourceBytes = 20 * 1_024 * 1_024
     private static let maximumSourcePixelCount = 64_000_000
     private static let maximumDisplayPixelSize = 4_096
 
@@ -278,6 +284,7 @@ enum ProjectImagePreviewLoader {
     static func decode(
         content: String,
         isBinary: Bool,
+        sourceFileURL: URL? = nil,
         taskID: String,
         ownerUserID: String,
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
@@ -293,15 +300,27 @@ enum ProjectImagePreviewLoader {
             estimatedDecodedBytes: maximumDisplayPixelSize
                 * maximumDisplayPixelSize * 4
         )) {
-            let source = try await materializeSource(
-                content: content,
-                isBinary: isBinary,
-                temporaryDirectory: temporaryDirectory,
-                availableCapacityOverride: availableCapacityOverride
-            )
+            let source: GeneratedMediaFile?
+            let sourceURL: URL
+            if let sourceFileURL {
+                guard sourceFileURL.isFileURL else {
+                    throw CocoaError(.fileReadInvalidFileName)
+                }
+                source = nil
+                sourceURL = sourceFileURL
+            } else {
+                let materialized = try await materializeSource(
+                    content: content,
+                    isBinary: isBinary,
+                    temporaryDirectory: temporaryDirectory,
+                    availableCapacityOverride: availableCapacityOverride
+                )
+                source = materialized
+                sourceURL = materialized.url
+            }
             defer { withExtendedLifetime(source) {} }
             return try await AppImageThumbnailLoader.loadLocalFileUsingWorker(
-                source.url,
+                sourceURL,
                 ownerUserID: ownerUserID,
                 maximumBytes: maximumSourceBytes,
                 maximumSourcePixelCount: maximumSourcePixelCount,
@@ -403,6 +422,7 @@ private struct ProjectImagePreview: View {
                 decoded = try await ProjectImagePreviewLoader.decode(
                     content: content,
                     isBinary: isBinary,
+                    sourceFileURL: file.sourceFileURL,
                     taskID: ProjectImagePreviewLoader.taskID(
                         path: file.path,
                         size: file.size,
@@ -464,10 +484,16 @@ private extension ProjectFileContent {
         return false
     }
 
-    var imagePreviewData: Data? {
-        if isBinary {
-            return Data(base64Encoded: content, options: .ignoreUnknownCharacters)
+    func loadImagePreviewData() async -> Data? {
+        if let sourceFileURL {
+            return try? await AppCancellableDetachedWork.run {
+                try AppBoundedFileReader.read(
+                    sourceFileURL,
+                    maximumBytes: ProjectImagePreviewLoader.maximumSourceBytes
+                )
+            }
         }
+        if isBinary { return Data(base64Encoded: content, options: .ignoreUnknownCharacters) }
         return Data(content.utf8)
     }
 

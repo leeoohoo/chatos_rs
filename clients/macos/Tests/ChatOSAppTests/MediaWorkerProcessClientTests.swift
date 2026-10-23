@@ -115,7 +115,7 @@ final class MediaWorkerProcessClientTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
     }
 
-    func testProjectImagePreviewRunsThroughBuiltWorkerAndCleansArtifacts() async throws {
+    func testProjectImagePreviewSourceBackedRunsThroughBuiltWorkerWithoutCopy() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
               !path.isEmpty else {
             throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run project-preview integration.")
@@ -135,10 +135,13 @@ final class MediaWorkerProcessClientTests: XCTestCase {
             bitsPerPixel: 0
         ))
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let sourceURL = root.appendingPathComponent("project-preview-source.png")
+        try png.write(to: sourceURL)
 
         let preview = try await ProjectImagePreviewLoader.decode(
-            content: png.base64EncodedString(),
+            content: "",
             isBinary: true,
+            sourceFileURL: sourceURL,
             taskID: "project-image:worker-test:preview",
             ownerUserID: "process-client-test",
             temporaryDirectory: root,
@@ -151,7 +154,10 @@ final class MediaWorkerProcessClientTests: XCTestCase {
 
         XCTAssertEqual(preview?.image.width, 96)
         XCTAssertEqual(preview?.image.height, 48)
-        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: root.path),
+            [sourceURL.lastPathComponent]
+        )
     }
 
     func testAgentAvatarNormalizationRunsThroughBuiltWorker() async throws {

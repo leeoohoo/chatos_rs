@@ -89,6 +89,52 @@ final class ProjectImagePreviewLoaderTests: XCTestCase {
         XCTAssertFalse(first.contains("private-image.png"))
     }
 
+    func testProjectImagePreviewPassesAuthorizedSourceFileDirectlyToWorker() async throws {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 80,
+            pixelsHigh: 40,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "ProjectImageDirectSourceTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("preview.png")
+        try png.write(to: sourceURL)
+        let worker = ProjectPreviewRecordingWorker()
+
+        let preview = try await ProjectImagePreviewLoader.decode(
+            content: "",
+            isBinary: true,
+            sourceFileURL: sourceURL,
+            taskID: "project-image:direct-source:preview",
+            ownerUserID: "alice",
+            temporaryDirectory: root,
+            availableCapacityOverride: Int64.max,
+            mediaWorker: worker
+        )
+
+        XCTAssertEqual(preview?.image.width, 80)
+        XCTAssertEqual(preview?.image.height, 40)
+        let invocation = await worker.invocation()
+        XCTAssertEqual(invocation?.sourceURL, sourceURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.path))
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: root.path),
+            [sourceURL.lastPathComponent]
+        )
+    }
+
     private func waitForHeavyMediaQueue(
         _ governor: ClientHeavyMediaWorkGovernor
     ) async throws {

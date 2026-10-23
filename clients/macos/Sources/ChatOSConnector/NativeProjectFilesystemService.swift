@@ -4,6 +4,12 @@ import ChatOSCore
 import Foundation
 
 public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendable {
+    private static let maximumImagePreviewBytes: Int64 = 25 * 1_024 * 1_024
+    private static let sourceBackedImageExtensions: Set<String> = [
+        "avif", "bmp", "gif", "heic", "heif", "ico", "jpeg", "jpg",
+        "png", "tif", "tiff", "webp",
+    ]
+
     private let connector: NativeLocalConnectorService
     private let codeReadWorker: any CodeReadWorkerExecuting
 
@@ -107,21 +113,79 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     public func readFile(path: String) async throws -> ProjectFileContent {
         let resolved = try await connector.resolveProjectPath(path)
-        let value = try await Self.runDetached {
-            try NativeWorkspaceFilesystem(workspace: resolved.workspace).read(path: resolved.relativePath)
+        let values = try resolved.absoluteURL.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .fileSizeKey,
+            .contentModificationDateKey,
+        ])
+        guard values.isRegularFile == true else {
+            throw NativeWorkspaceFilesystemError.notFile
         }
-        let object = try value.objectValue()
-        return .init(
-            path: path,
-            displayPath: resolved.relativePath == "." ? resolved.absoluteURL.lastPathComponent : resolved.relativePath,
-            name: resolved.absoluteURL.lastPathComponent,
-            contentType: nil,
-            isBinary: try object.bool("is_binary"),
-            isWritable: FileManager.default.isWritableFile(atPath: resolved.absoluteURL.path),
-            size: object.int64("size") ?? 0,
-            modifiedAt: object.millisecondsDate("modified_at"),
-            content: try object.string("content")
+        let size = Int64(values.fileSize ?? 0)
+        let isSourceBackedImage = Self.sourceBackedImageExtensions.contains(
+            resolved.absoluteURL.pathExtension.lowercased()
         )
+        if isSourceBackedImage {
+            guard size <= Self.maximumImagePreviewBytes else {
+                throw NativeWorkspaceFilesystemError.fileTooLarge(size)
+            }
+            return .init(
+                path: path,
+                displayPath: resolved.relativePath == "."
+                    ? resolved.absoluteURL.lastPathComponent
+                    : resolved.relativePath,
+                name: resolved.absoluteURL.lastPathComponent,
+                contentType: nil,
+                isBinary: true,
+                isWritable: FileManager.default.isWritableFile(atPath: resolved.absoluteURL.path),
+                size: size,
+                modifiedAt: values.contentModificationDate,
+                content: "",
+                sourceFileURL: resolved.absoluteURL
+            )
+        }
+
+        do {
+            let value = try await executeReadWorker(
+                operation: "read_file_raw",
+                arguments: [
+                    "path": .string(resolved.relativePath),
+                    "with_line_numbers": .bool(false),
+                ],
+                resolved: resolved
+            )
+            let object = try value.objectValue()
+            return .init(
+                path: path,
+                displayPath: resolved.relativePath == "."
+                    ? resolved.absoluteURL.lastPathComponent
+                    : resolved.relativePath,
+                name: resolved.absoluteURL.lastPathComponent,
+                contentType: nil,
+                isBinary: false,
+                isWritable: FileManager.default.isWritableFile(atPath: resolved.absoluteURL.path),
+                size: object.int64("size_bytes") ?? size,
+                modifiedAt: values.contentModificationDate,
+                content: try object.string("content")
+            )
+        } catch let error as CodeReadWorkerProcessClientError {
+            guard case let .requestRejected(code, _) = error, code == "binary_file" else {
+                throw error
+            }
+            return .init(
+                path: path,
+                displayPath: resolved.relativePath == "."
+                    ? resolved.absoluteURL.lastPathComponent
+                    : resolved.relativePath,
+                name: resolved.absoluteURL.lastPathComponent,
+                contentType: nil,
+                isBinary: true,
+                isWritable: FileManager.default.isWritableFile(atPath: resolved.absoluteURL.path),
+                size: size,
+                modifiedAt: values.contentModificationDate,
+                content: ""
+            )
+        }
     }
 
     public func writeFile(path: String, content: String) async throws {

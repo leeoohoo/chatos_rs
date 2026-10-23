@@ -17,6 +17,8 @@ final class NativeProjectFilesystemReadWorkerTests: XCTestCase {
         try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
         try Data("let MixedToken = 1\n".utf8)
             .write(to: sources.appendingPathComponent("MixedToken.swift"))
+        let imageURL = sources.appendingPathComponent("preview.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: imageURL)
 
         let connector = try makeConnector(root: root)
         let service = NativeProjectFilesystemService(
@@ -45,6 +47,20 @@ final class NativeProjectFilesystemReadWorkerTests: XCTestCase {
         XCTAssertEqual(content.map(\.path), [projectRoot + "/Sources/MixedToken.swift"])
         XCTAssertEqual(content.first?.line, 1)
         XCTAssertEqual(content.first?.column, 5)
+
+        let textFile = try await service.readFile(
+            path: projectRoot + "/Sources/MixedToken.swift"
+        )
+        XCTAssertEqual(textFile.content, "let MixedToken = 1\n")
+        XCTAssertFalse(textFile.isBinary)
+        XCTAssertNil(textFile.sourceFileURL)
+
+        let imageFile = try await service.readFile(
+            path: projectRoot + "/Sources/preview.png"
+        )
+        XCTAssertTrue(imageFile.isBinary)
+        XCTAssertEqual(imageFile.content, "")
+        XCTAssertEqual(imageFile.sourceFileURL, imageURL)
     }
 
     private func makeConnector(root: URL) throws -> NativeLocalConnectorService {
