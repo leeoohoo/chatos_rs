@@ -151,11 +151,17 @@ body {
 h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .protocol-badge { padding: 5px 9px; border: 1px solid var(--separator); border-radius: 999px; color: var(--secondary); background: rgba(255,255,255,.62); font-size: 11px; }
 .project-workspace-surface { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 12px; }
-.project-workspace-tabs { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); width: min(560px,100%); margin: 0 auto; border-radius: 9px; padding: 2px; background: rgba(118,118,128,.12); box-shadow: inset 0 0 0 1px rgba(60,60,67,.05); }
+.project-workspace-tabs { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); width: min(560px,100%); margin: 0 auto; border-radius: 9px; padding: 2px; background: rgba(118,118,128,.12); box-shadow: inset 0 0 0 1px rgba(60,60,67,.05); }
 .project-workspace-tabs button { min-height: 30px; border: 0; border-radius: 7px; padding: 4px 9px; color: var(--secondary); background: transparent; font: 590 11px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; cursor: pointer; }
 .project-workspace-tabs button.is-selected { color: inherit; background: rgba(255,255,255,.92); box-shadow: 0 1px 4px rgba(0,0,0,.13), 0 0 0 .5px rgba(0,0,0,.05); }
 .project-workspace-tabs button:disabled { cursor: default; opacity: .42; }
 .project-workspace-tabs button:focus-visible { outline: 3px solid rgba(10,132,255,.20); outline-offset: 1px; }
+.project-workspace-tabs__compat-git { position: absolute; width: 1px !important; height: 1px; overflow: hidden; clip: rect(0 0 0 0); margin: -1px; padding: 0 !important; white-space: nowrap; }
+.project-directory-workspace { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; }
+.project-directory-tabs { display: inline-grid; width: fit-content; grid-template-columns: repeat(2,minmax(72px,1fr)); align-self: flex-start; border-radius: 8px; padding: 2px; background: rgba(118,118,128,.10); }
+.project-directory-tabs button { min-height: 26px; border: 0; border-radius: 6px; padding: 3px 10px; color: var(--secondary); background: transparent; font: 590 10px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; cursor: pointer; }
+.project-directory-tabs button.is-selected { color: inherit; background: rgba(255,255,255,.92); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.project-directory-tabs button:focus-visible { outline: 3px solid rgba(10,132,255,.20); outline-offset: 1px; }
 .project-workspace-content { display: flex; flex: 1; min-height: 0; }
 .project-workspace-content > * { flex: 1; min-width: 0; }
 .project-directory { display: grid; min-height: 500px; grid-template-columns: minmax(270px,35%) minmax(420px,1fr); overflow: hidden; border: 1px solid rgba(60,60,67,.13); border-radius: 15px; background: rgba(255,255,255,.66); box-shadow: 0 7px 24px rgba(0,0,0,.045); backdrop-filter: blur(22px) saturate(1.2); }
