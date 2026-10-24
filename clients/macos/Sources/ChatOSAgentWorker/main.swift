@@ -57,17 +57,39 @@ private func writeAll(_ data: Data, descriptor: Int32) throws {
 }
 
 private actor AgentWorkerPeer {
+    /// stdin/stdout are synchronous pipes. Keep their blocking syscalls off this Worker's Swift
+    /// cooperative executor so model streaming, timeout handling and parent-death cleanup retain
+    /// executor capacity while the peer is waiting for its parent.
+    private static let blockingIOQueue = DispatchQueue(
+        label: "com.chatos.agent-worker.peer-io",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
     func send(_ message: AgentWorkerMessage) async throws {
         let data = try AgentWorkerWireCodec.encodeLine(message)
-        try await Task.detached(priority: .userInitiated) {
-            try writeAll(data, descriptor: STDOUT_FILENO)
-        }.value
+        try await withCheckedThrowingContinuation { continuation in
+            Self.blockingIOQueue.async {
+                do {
+                    try writeAll(data, descriptor: STDOUT_FILENO)
+                    continuation.resume(returning: ())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     func receive() async throws -> AgentWorkerMessage {
-        let data = try await Task.detached(priority: .userInitiated) {
-            try readLine(descriptor: STDIN_FILENO)
-        }.value
+        let data: Data = try await withCheckedThrowingContinuation { continuation in
+            Self.blockingIOQueue.async {
+                do {
+                    continuation.resume(returning: try readLine(descriptor: STDIN_FILENO))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
         return try AgentWorkerWireCodec.decode(data)
     }
 }

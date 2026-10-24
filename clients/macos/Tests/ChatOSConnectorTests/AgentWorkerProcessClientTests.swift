@@ -1,5 +1,6 @@
 import ChatOSAgentRuntime
 import Darwin
+import Dispatch
 import Foundation
 import XCTest
 @testable import ChatOSConnector
@@ -1029,6 +1030,15 @@ private actor AgentWorkerHTTPResponseGate {
 }
 
 private final class AgentWorkerHTTPFixture: @unchecked Sendable {
+    /// The fixture deliberately uses a tiny synchronous socket server. Run its blocking syscalls
+    /// on GCD so a cold, high-load integration suite cannot starve the same Swift executor whose
+    /// isolation behavior the test is meant to validate.
+    private static let socketIOQueue = DispatchQueue(
+        label: "com.chatos.tests.agent-worker-http-fixture",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
     let baseURL: URL
     private let descriptor: Int32
 
@@ -1102,10 +1112,10 @@ private final class AgentWorkerHTTPFixture: @unchecked Sendable {
         disconnectCountBeforeResponse: Int
     ) async {
         for attempt in 0...disconnectCountBeforeResponse {
-            let client = accept(descriptor, nil, nil)
+            let client = await acceptClient(descriptor)
             guard client >= 0 else { return }
             _ = fcntl(client, F_SETNOSIGPIPE, 1)
-            guard let request = readRequest(client) else {
+            guard let request = await readRequestFromSocket(client) else {
                 Darwin.close(client)
                 return
             }
@@ -1134,8 +1144,33 @@ private final class AgentWorkerHTTPFixture: @unchecked Sendable {
             \r
 
             """.utf8)
-            writeAll(header + body, descriptor: client)
+            await writeResponse(header + body, descriptor: client)
             Darwin.close(client)
+        }
+    }
+
+    private static func acceptClient(_ descriptor: Int32) async -> Int32 {
+        await withCheckedContinuation { continuation in
+            socketIOQueue.async {
+                continuation.resume(returning: accept(descriptor, nil, nil))
+            }
+        }
+    }
+
+    private static func readRequestFromSocket(_ descriptor: Int32) async -> Data? {
+        await withCheckedContinuation { continuation in
+            socketIOQueue.async {
+                continuation.resume(returning: readRequest(descriptor))
+            }
+        }
+    }
+
+    private static func writeResponse(_ data: Data, descriptor: Int32) async {
+        await withCheckedContinuation { continuation in
+            socketIOQueue.async {
+                writeAll(data, descriptor: descriptor)
+                continuation.resume()
+            }
         }
     }
 

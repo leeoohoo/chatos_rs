@@ -2198,6 +2198,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批治理的是 Worker 父进程等待域，不降低解码/扫描本身的总 CPU、内存或磁盘成本；GCD 上的同步生命周期仍占用系统线程，并发继续受现有 Media 重任务额度及上游调度策略约束。Media 与 Code Read 尚未纳入完整跨进程动态 Governor，真实 UI + Agent + Media + Host 组合压力、热状态/低电量迟滞和长期 soak 仍待完成。
 
+### 12.94 第二十三完整里程碑：Agent Worker 双端管道均脱离 Swift executor（2026-10-24）
+
+本里程碑补齐 Agent IPC 的 Worker 端等待域。12.92 已将 App 父进程的 Agent 管道读写移出 Swift cooperative executor，但 `ChatOSAgentWorker` 内部的 stdin `read` 与 stdout `write` 仍由 `Task.detached` 承载。每个 Run 虽然拥有独立 PID，不会占用其他 Run 所在进程的线程池，但阻塞读取仍会消耗本 Worker 的 cooperative executor 容量，可能拖慢同一 Run 内的模型流解析、超时处理和父进程死亡响应。
+
+已实施：
+
+- Worker 端 `AgentWorkerPeer` 的同步 stdin/stdout 系统调用迁到专用并发 GCD blocking-I/O 队列，通过 checked continuation 回到 actor；Agent IPC 的父进程和子进程两端都不再用 Swift detached task 等待同步管道。
+- `AgentWorkerPeer` actor 继续串行化协议消息；wire codec、消息上限、握手 nonce/Run ID、provider 授权、工具 fencing、取消和父 PID 监视语义均保持不变。
+- 真进程测试使用的本地 HTTP fixture 同步 `accept/read/write` 也迁到测试专用 GCD 队列，避免测试自身阻塞 cooperative executor、在冷编译高负载下伪造 Worker 网络超时；这不改变生产协议或放宽超时断言。
+
+验证：新的 Debug `ChatOSAgentWorker` 构建通过，修正后的真进程矩阵连续两轮各 13 项全部通过；原生 arm64 Release Worker 与测试宿主均在 `warnings-as-errors` 下构建，合并矩阵 82 项全部通过，包括真 Worker 进程 13 项、调度器/Governor 38 项和性能策略 31 项。网络断开重连、挂起会话、16 个不同 PID、取消、SIGKILL、账户切换、资源超限和副作用 fencing 均未回退。构建证据脚本 25 项全部通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：一个 Worker 仍以顺序 request/response 协议服务一个 Run，这属于 Run 内因果约束，不是跨会话全局单槽。GCD 管道操作仍占用系统线程；并发上限继续由 App Governor 与 Worker 资源监督控制。跨进程动态总资源观测、真实 CPU/内存压力下的组合 SLO 和长时间 soak 仍待完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
