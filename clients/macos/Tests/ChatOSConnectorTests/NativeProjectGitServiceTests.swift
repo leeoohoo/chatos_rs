@@ -1,5 +1,6 @@
 @testable import ChatOSConnector
 import ChatOSCore
+import Darwin
 import Foundation
 import XCTest
 
@@ -37,6 +38,95 @@ final class NativeProjectGitServiceTests: XCTestCase {
             XCTAssertEqual(error as? NativeGitError, .commandTimedOut)
         }
         XCTAssertLessThan(ContinuousClock.now - startedAt, .seconds(3))
+    }
+
+    func testGitBlockingWorkIsConcurrentAndCancellationStaysOperationScoped() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-git-isolation-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let parentPIDURL = root.appendingPathComponent("parent.pid")
+        let childPIDURL = root.appendingPathComponent("child.pid")
+        let longScript = root.appendingPathComponent("long.sh")
+        let survivorScript = root.appendingPathComponent("survivor.sh")
+        try """
+        #!/bin/sh
+        trap '' TERM
+        printf '%s' "$$" > '\(parentPIDURL.path)'
+        sleep 30 &
+        printf '%s' "$!" > '\(childPIDURL.path)'
+        wait
+        """.write(to: longScript, atomically: true, encoding: .utf8)
+        try """
+        #!/bin/sh
+        sleep 1
+        printf isolated
+        """.write(to: survivorScript, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: longScript.path
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: survivorScript.path
+        )
+
+        let longRunning = Task {
+            try await NativeGitProcess.performBlockingWork { controller in
+                try NativeGitProcess.run(
+                    arguments: [
+                        "-c", "alias.chatos-long=!\(longScript.path)", "chatos-long",
+                    ],
+                    directory: root,
+                    timeout: 30,
+                    controller: controller
+                )
+            }
+        }
+        for _ in 0..<200
+            where !FileManager.default.fileExists(atPath: parentPIDURL.path)
+                || !FileManager.default.fileExists(atPath: childPIDURL.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let parentPIDText = try String(contentsOf: parentPIDURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let childPIDText = try String(contentsOf: childPIDURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let parentPID = try XCTUnwrap(pid_t(parentPIDText))
+        let childPID = try XCTUnwrap(pid_t(childPIDText))
+
+        let startedAt = ContinuousClock.now
+        let survivor = Task {
+            try await NativeGitProcess.performBlockingWork { controller in
+                try NativeGitProcess.run(
+                    arguments: [
+                        "-c", "alias.chatos-survivor=!\(survivorScript.path)", "chatos-survivor",
+                    ],
+                    directory: root,
+                    timeout: 5,
+                    controller: controller
+                )
+            }
+        }
+        let canceller = Task {
+            try await Task.sleep(for: .milliseconds(200))
+            longRunning.cancel()
+        }
+        let survivorOutput = try await survivor.value
+        XCTAssertEqual(survivorOutput.stdoutString, "isolated")
+        XCTAssertLessThan(ContinuousClock.now - startedAt, .seconds(2))
+        _ = try await canceller.value
+        do {
+            _ = try await longRunning.value
+            XCTFail("expected the owned Git process group to be cancelled")
+        } catch is CancellationError {
+            // Expected: cancellation is scoped to this operation's process group.
+        }
+        for _ in 0..<100 where gitFixtureProcessExists(parentPID) || gitFixtureProcessExists(childPID) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(gitFixtureProcessExists(parentPID))
+        XCTAssertFalse(gitFixtureProcessExists(childPID))
     }
 
     func testLoadsChangesStagesCommitsAndBuildsDiff() async throws {
@@ -178,6 +268,10 @@ final class NativeProjectGitServiceTests: XCTestCase {
         try process.run()
         process.waitUntilExit()
         XCTAssertEqual(process.terminationStatus, 0)
+    }
+
+    private func gitFixtureProcessExists(_ processID: pid_t) -> Bool {
+        Darwin.kill(processID, 0) == 0 || errno == EPERM
     }
 }
 

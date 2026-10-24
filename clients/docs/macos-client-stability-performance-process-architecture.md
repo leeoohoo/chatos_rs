@@ -2271,6 +2271,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批使用确定性的本机 shell fixture 验证进程组、并发、取消、超时和输出上限，没有访问公网 npm registry，也未注入真实 npm 缓存损坏、网络半断开或磁盘满。Git 插件 clone、项目 Git 命令和 Plugin 权限检测仍有各自的 `Task.detached` 同步进程等待，后续里程碑需沿相同原则迁出 cooperative executor，并补齐每操作取消边界。
 
+### 12.99 第二十八完整里程碑：Git 命令并发阻塞域与进程组取消（2026-10-24）
+
+本里程碑治理 Git Plugin 获取和项目 Git 工作台共用的底层命令执行。此前两条链路都以 `Task.detached` 包装同步 `waitpid` 和管道尾读；Plugin 的 shallow fetch 最长等待 5 分钟，项目状态、diff、分支及远端操作也可能因仓库或凭据 helper 卡顿长期占用 Swift cooperative executor。任务取消不会传到当前 Git PID，调用方虽然停止等待，Git 及其 transport/credential/alias 子孙仍可能继续运行。
+
+已实施：
+
+- `NativeGitProcess` 新增专用 concurrent GCD blocking-work 队列。项目 Git 的每条命令和 Git Plugin 的完整 init/remote/fetch/checkout 序列均迁出 Swift cooperative executor；队列允许无关仓库和来源并行，不引入全局串行单槽。
+- 每个异步 Git 操作创建独立 controller，并把当前命令注册为独立 OS process group。Swift task 取消只向所属组发送 `SIGTERM`，2 秒后仍在运行才升级 `SIGKILL`；registration token 防止延迟强杀命中同一序列的下一条命令。
+- Git Plugin clone 的四条命令共享该次操作的 controller：取消 fetch 会终止它的 transport/credential 子孙，且 controller 的取消状态会阻止 checkout 等后续命令再启动。项目 Git 则每个 API 命令拥有自己的取消边界。
+- 原有 120 秒通用超时、5 分钟 shallow fetch 超时、stdout/stderr 有界排空、禁用交互凭据和完整进程组超时清理保持不变；同步底层入口仍供受控内部调用和确定性测试使用。
+- 新增真实 Git alias/脚本回归：一个忽略 TERM 并派生 `sleep` 子进程的 Git 操作被取消时，同期另一 Git 操作仍在 2 秒门禁内完成；取消后的脚本父/子 PID 均被回收。既有输出溢出、超时清组、状态/diff、stage/commit、分支与远端操作回归同步覆盖。
+
+验证：Debug 与原生 arm64 Release 的项目 Git 和自定义 Git Plugin 相关矩阵全部通过，Release 使用 `warnings-as-errors` 优化编译；构建证据脚本同步通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：确定性回归覆盖了本机 Git 命令、alias 子进程和本地仓库功能，但未访问公网 Git 服务器，也未注入真实 HTTPS transport 半断开、credential helper 卡死或大型 pack 解压压力。Plugin 权限检测、项目 Run 分析与若干文件 I/O 仍有 `Task.detached` 同步等待，后续里程碑继续按阻塞域和每操作取消边界清理。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

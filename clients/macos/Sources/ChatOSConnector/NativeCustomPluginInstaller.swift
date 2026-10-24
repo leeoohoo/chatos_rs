@@ -424,11 +424,16 @@ extension NativePluginInstaller {
         reference: String,
         into destination: URL
     ) async throws {
-        try await Task.detached(priority: .utility) {
-            _ = try NativeGitProcess.run(arguments: ["init", "--quiet"], directory: destination)
+        try await NativeGitProcess.performBlockingWork { controller in
+            _ = try NativeGitProcess.run(
+                arguments: ["init", "--quiet"],
+                directory: destination,
+                controller: controller
+            )
             _ = try NativeGitProcess.run(
                 arguments: ["remote", "add", "origin", url],
-                directory: destination
+                directory: destination,
+                controller: controller
             )
             _ = try NativeGitProcess.run(
                 arguments: [
@@ -436,15 +441,17 @@ extension NativePluginInstaller {
                     "fetch", "--quiet", "--depth", "1", "--no-tags", "origin", reference,
                 ],
                 directory: destination,
-                timeout: 5 * 60
+                timeout: 5 * 60,
+                controller: controller
             )
             _ = try NativeGitProcess.run(
                 arguments: [
                     "-c", "core.hooksPath=/dev/null", "checkout", "--quiet", "--detach", "FETCH_HEAD",
                 ],
-                directory: destination
+                directory: destination,
+                controller: controller
             )
-        }.value
+        }
     }
 
     private static func binaryPath(

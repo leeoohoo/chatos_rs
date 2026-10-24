@@ -1,5 +1,6 @@
 import ChatOSProcessRuntime
 import Darwin
+import Dispatch
 import Foundation
 
 struct NativeGitProcessOutput: Sendable {
@@ -12,13 +13,48 @@ struct NativeGitProcessOutput: Sendable {
 }
 
 enum NativeGitProcess {
+    private static let blockingWorkQueue = DispatchQueue(
+        label: "com.chatos.git.blocking-work",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
+    static func performBlockingWork<T: Sendable>(
+        _ operation: @escaping @Sendable (NativeGitProcessController) throws -> T
+    ) async throws -> T {
+        let controller = NativeGitProcessController()
+        return try await withTaskCancellationHandler {
+            do {
+                let value: T = try await withCheckedThrowingContinuation { continuation in
+                    blockingWorkQueue.async {
+                        do {
+                            try controller.throwIfCancelled()
+                            continuation.resume(returning: try operation(controller))
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
+                try Task.checkCancellation()
+                return value
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                throw error
+            }
+        } onCancel: {
+            controller.cancel()
+        }
+    }
+
     static func run(
         arguments: [String],
         directory: URL,
         allowedExitCodes: Set<Int32> = [0],
         timeout: TimeInterval = 120,
-        maximumOutputBytes: Int = 16 * 1_024 * 1_024
+        maximumOutputBytes: Int = 16 * 1_024 * 1_024,
+        controller: NativeGitProcessController = NativeGitProcessController()
     ) throws -> NativeGitProcessOutput {
+        try controller.throwIfCancelled()
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
         environment["LC_ALL"] = "C"
@@ -70,6 +106,8 @@ enum NativeGitProcess {
                 message: "无法启动 Git：\(String(cString: strerror(spawnResult)))"
             )
         }
+        let registration = controller.register(processID)
+        defer { controller.clear(processID, registration: registration) }
         let exitSignal = NativeProcessExitSignal.reap(processID: processID)
         var exitCode = exitSignal.wait(timeout: timeout)
         let timedOut = exitCode == nil
@@ -97,6 +135,7 @@ enum NativeGitProcess {
         stderrBuffer.append(stderrPipe.fileHandleForReading.readDataToEndOfFile())
         let stdout = stdoutBuffer.snapshot
         let stderr = stderrBuffer.snapshot
+        if controller.isCancelled { throw CancellationError() }
         if timedOut {
             throw NativeGitError.commandTimedOut
         }
@@ -124,6 +163,76 @@ enum NativeGitProcess {
         let pointers = values.map { strdup($0) }
         defer { pointers.forEach { free($0) } }
         return try body(pointers + [nil])
+    }
+}
+
+final class NativeGitProcessController: @unchecked Sendable {
+    private static let forceKillQueue = DispatchQueue(
+        label: "com.chatos.git.process-termination",
+        qos: .utility,
+        attributes: .concurrent
+    )
+
+    private let lock = NSLock()
+    private var cancellationRequested = false
+    private var activeProcessID: pid_t?
+    private var activeRegistration: UUID?
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancellationRequested
+    }
+
+    func throwIfCancelled() throws {
+        if isCancelled { throw CancellationError() }
+    }
+
+    func register(_ processID: pid_t) -> UUID {
+        let registration = UUID()
+        lock.lock()
+        activeProcessID = processID
+        activeRegistration = registration
+        let cancelled = cancellationRequested
+        lock.unlock()
+        if cancelled {
+            requestTermination(of: processID, registration: registration)
+        }
+        return registration
+    }
+
+    func clear(_ processID: pid_t, registration: UUID) {
+        lock.lock()
+        if activeProcessID == processID, activeRegistration == registration {
+            activeProcessID = nil
+            activeRegistration = nil
+        }
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        cancellationRequested = true
+        let processID = activeProcessID
+        let registration = activeRegistration
+        lock.unlock()
+        if let processID, let registration {
+            requestTermination(of: processID, registration: registration)
+        }
+    }
+
+    private func requestTermination(of processID: pid_t, registration: UUID) {
+        _ = chatos_signal_process_group(processID, SIGTERM)
+        Self.forceKillQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.owns(processID, registration: registration) else { return }
+            _ = chatos_signal_process_group(processID, SIGKILL)
+        }
+    }
+
+    private func owns(_ processID: pid_t, registration: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return activeProcessID == processID && activeRegistration == registration
     }
 }
 

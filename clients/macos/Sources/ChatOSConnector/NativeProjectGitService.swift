@@ -309,15 +309,16 @@ public actor NativeProjectGitService: ProjectGitServicing {
         timeout: TimeInterval = 120,
         maximumOutputBytes: Int = 16 * 1_024 * 1_024
     ) async throws -> NativeGitProcessOutput {
-        try await Task.detached {
+        try await NativeGitProcess.performBlockingWork { controller in
             try NativeGitProcess.run(
                 arguments: arguments,
                 directory: directory,
                 allowedExitCodes: allowedExitCodes,
                 timeout: timeout,
-                maximumOutputBytes: maximumOutputBytes
+                maximumOutputBytes: maximumOutputBytes,
+                controller: controller
             )
-        }.value
+        }
     }
 
     private func validate(branch: String, in repository: URL) async throws {
