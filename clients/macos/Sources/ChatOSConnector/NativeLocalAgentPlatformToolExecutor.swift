@@ -1,3 +1,4 @@
+import ChatOSCodeReadWorkerClient
 import ChatOSCore
 import ChatOSMediaWorkerClient
 import Foundation
@@ -38,11 +39,12 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
     projectTools: (any NativeLocalAgentProjectToolExecuting)? = nil,
     attachmentWorkspaceResolver: (any NativeLocalAgentAttachmentWorkspaceResolving)? = nil,
     connector: NativeLocalConnectorService? = nil,
-    mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
+    mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared,
+    codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
   ) {
     runtime = .init(host: host)
     conversations = .init(host: host)
-    attachmentVault = .init(rootURL: attachmentRootURL)
+    attachmentVault = .init(rootURL: attachmentRootURL, codeReadWorker: codeReadWorker)
     self.mediaWorker = mediaWorker
     self.projectTools = projectTools
     self.attachmentWorkspaceResolver = attachmentWorkspaceResolver
@@ -150,12 +152,9 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
         )
       }
       if let workspaceRoot {
-        let data = try await attachmentVault.verifiedData(
-          attachment, ownerUserID: ownerUserID, conversationID: conversationID
-        )
-        let imported = try await NativeLocalAgentAttachmentWorkspace.materialize(
-          data, record: attachment, ownerUserID: ownerUserID,
-          conversationID: conversationID, rootURL: workspaceRoot
+        let imported = try await attachmentVault.materialize(
+          attachment, ownerUserID: ownerUserID, conversationID: conversationID,
+          destinationRootURL: workspaceRoot
         ).jsonValue
         guard attachment.mediaType.lowercased().hasPrefix("image/") else { return imported }
         let source = try await attachmentVault.verifiedFile(

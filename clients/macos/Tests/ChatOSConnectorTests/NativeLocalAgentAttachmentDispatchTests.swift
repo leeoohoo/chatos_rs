@@ -179,7 +179,8 @@ struct AttachmentDispatchFixture {
                 conversationID: conversationID
             ), attachmentRootURL: root, projectTools: projectTools,
             attachmentWorkspaceResolver: workspaceResolver,
-            mediaWorker: mediaWorker
+            mediaWorker: mediaWorker,
+            codeReadWorker: ConnectorCoreCodeReadWorker()
         )
     }
 

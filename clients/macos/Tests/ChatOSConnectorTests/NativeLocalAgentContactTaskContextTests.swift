@@ -151,7 +151,8 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
         await host.setAttachment(spec)
         let platform = NativeLocalAgentPlatformToolExecutor(
             host: host, attachmentRootURL: attachmentRoot, projectTools: executor,
-            attachmentWorkspaceResolver: resolver
+            attachmentWorkspaceResolver: resolver,
+            codeReadWorker: ConnectorCoreCodeReadWorker()
         )
         let imported = try await platform.execute(ownerUserID: "user-1", invocation: Self.invocation(
             toolName: "local_attachment_read",

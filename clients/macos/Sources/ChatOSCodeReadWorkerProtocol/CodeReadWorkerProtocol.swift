@@ -10,6 +10,8 @@ public enum ChatOSCodeReadWorkerProtocol {
         "read_file", "search_files", "project_list_v1", "project_search_entries_v1",
         "project_run_analyze_v1", "project_write_file_v1",
         "project_create_directory_v1", "project_delete_entry_v1",
+        "attachment_resolve_v1", "attachment_verify_file_v1",
+        "attachment_materialize_v1",
     ]
 }
 

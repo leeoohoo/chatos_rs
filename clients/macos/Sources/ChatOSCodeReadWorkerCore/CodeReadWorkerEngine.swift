@@ -19,6 +19,11 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
     case alreadyExists
     case directoryNotEmpty
     case filesystemFailure(String)
+    case attachmentInvalid
+    case attachmentReferenceInvalid
+    case attachmentIntegrityMismatch
+    case attachmentWorkspaceUnavailable
+    case attachmentWorkspaceConflict
 
     public var errorDescription: String? {
         switch self {
@@ -37,6 +42,13 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
         case .alreadyExists: "目标已经存在"
         case .directoryNotEmpty: "目录不为空，请使用递归删除"
         case let .filesystemFailure(message): message
+        case .attachmentInvalid: "The local attachment is unavailable or exceeds its safety limit."
+        case .attachmentReferenceInvalid: "The local attachment reference is invalid."
+        case .attachmentIntegrityMismatch: "The local attachment failed its integrity check."
+        case .attachmentWorkspaceUnavailable:
+            "The authorized attachment could not be imported into the task workspace."
+        case .attachmentWorkspaceConflict:
+            "The workspace attachment copy has changed or is unsafe; it was not overwritten."
         }
     }
 
@@ -58,6 +70,11 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
         case .alreadyExists: code = "already_exists"
         case .directoryNotEmpty: code = "directory_not_empty"
         case .filesystemFailure: code = "filesystem_failure"
+        case .attachmentInvalid: code = "attachment_invalid"
+        case .attachmentReferenceInvalid: code = "attachment_reference_invalid"
+        case .attachmentIntegrityMismatch: code = "attachment_integrity_mismatch"
+        case .attachmentWorkspaceUnavailable: code = "attachment_workspace_unavailable"
+        case .attachmentWorkspaceConflict: code = "attachment_workspace_conflict"
         }
         return .init(code: code, message: errorDescription ?? code)
     }
@@ -129,6 +146,12 @@ public enum ChatOSCodeReadWorkerEngine {
             ).analyze(request.arguments)
         case "project_write_file_v1", "project_create_directory_v1", "project_delete_entry_v1":
             return try ProjectFilesystemWorkerMutator(
+                root: root,
+                rootIdentity: request.projectRootIdentity,
+                deadlineUnixMilliseconds: request.deadlineUnixMilliseconds
+            ).execute(operation: request.operation, arguments: request.arguments)
+        case "attachment_resolve_v1", "attachment_verify_file_v1", "attachment_materialize_v1":
+            return try AttachmentWorkerOperations(
                 root: root,
                 rootIdentity: request.projectRootIdentity,
                 deadlineUnixMilliseconds: request.deadlineUnixMilliseconds

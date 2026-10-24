@@ -1,5 +1,6 @@
 import ChatOSCodeReadWorkerCore
 import ChatOSCodeReadWorkerProtocol
+import CryptoKit
 import Darwin
 import Foundation
 import XCTest
@@ -232,6 +233,166 @@ final class CodeReadWorkerEngineTests: XCTestCase {
             atPath: outside.appendingPathComponent("escaped.txt").path
         ))
     }
+
+    func testAttachmentOperationsResolveVerifyAndMaterialize() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let workspace = try Fixture()
+        defer { workspace.dispose() }
+        let attachment = try fixture.makeAttachment(Data("0123456789\n".utf8))
+
+        var resolveArguments = attachment.arguments
+        resolveArguments["offset"] = .number(2)
+        resolveArguments["limit"] = .number(5)
+        let resolved = try fixture.execute("attachment_resolve_v1", resolveArguments).object
+        XCTAssertEqual(try resolved.string("content"), "23456")
+        XCTAssertEqual(try resolved.number("offset"), 2)
+        XCTAssertEqual(try resolved.number("next_offset"), 7)
+
+        let verified = try fixture.execute(
+            "attachment_verify_file_v1",
+            attachment.arguments
+        ).object
+        XCTAssertEqual(try verified.string("relative_path"), attachment.relativePath)
+        XCTAssertEqual(try verified.number("byte_count"), 11)
+
+        var materializeArguments = attachment.arguments
+        materializeArguments.merge(try workspace.identityArguments()) { _, new in new }
+        let materialized = try fixture.execute(
+            "attachment_materialize_v1",
+            materializeArguments
+        ).object
+        let relativePath = try materialized.string("relative_path")
+        XCTAssertEqual(
+            try Data(contentsOf: workspace.root.appendingPathComponent(relativePath)),
+            attachment.data
+        )
+    }
+
+    func testAttachmentOperationsRejectTamperingAndVaultSymlinks() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let attachment = try fixture.makeAttachment(Data("trusted".utf8))
+        try Data("changed".utf8).write(to: attachment.fileURL)
+        XCTAssertThrowsError(try fixture.execute(
+            "attachment_verify_file_v1",
+            attachment.arguments
+        )) { error in
+            XCTAssertEqual(error.localizedDescription, "The local attachment failed its integrity check.")
+        }
+
+        try FileManager.default.removeItem(at: attachment.fileURL)
+        let outside = fixture.root.appendingPathComponent("outside")
+        try attachment.data.write(to: outside)
+        try FileManager.default.createSymbolicLink(
+            at: attachment.fileURL,
+            withDestinationURL: outside
+        )
+        XCTAssertThrowsError(try fixture.execute(
+            "attachment_verify_file_v1",
+            attachment.arguments
+        )) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "The local attachment is unavailable or exceeds its safety limit."
+            )
+        }
+
+        try FileManager.default.removeItem(at: attachment.fileURL.deletingLastPathComponent())
+        try FileManager.default.createSymbolicLink(
+            at: attachment.fileURL.deletingLastPathComponent(),
+            withDestinationURL: fixture.root
+        )
+        XCTAssertThrowsError(try fixture.execute(
+            "attachment_resolve_v1",
+            attachment.arguments.merging([
+                "offset": .number(0), "limit": .number(1),
+            ]) { _, new in new }
+        ))
+    }
+
+    func testAttachmentMaterializeRejectsChangedAndSymlinkTargets() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let workspace = try Fixture()
+        defer { workspace.dispose() }
+        let attachment = try fixture.makeAttachment(Data("immutable\n".utf8))
+        var arguments = attachment.arguments
+        arguments.merge(try workspace.identityArguments()) { _, new in new }
+        let relativePath = try fixture.execute(
+            "attachment_materialize_v1",
+            arguments
+        ).object.string("relative_path")
+        let target = workspace.root.appendingPathComponent(relativePath)
+
+        try Data("user edit\n".utf8).write(to: target)
+        XCTAssertThrowsError(try fixture.execute("attachment_materialize_v1", arguments)) {
+            XCTAssertEqual(
+                $0.localizedDescription,
+                "The workspace attachment copy has changed or is unsafe; it was not overwritten."
+            )
+        }
+
+        try FileManager.default.removeItem(at: target)
+        let outside = workspace.root.appendingPathComponent("outside")
+        try attachment.data.write(to: outside)
+        try FileManager.default.createSymbolicLink(at: target, withDestinationURL: outside)
+        XCTAssertThrowsError(try fixture.execute("attachment_materialize_v1", arguments)) {
+            XCTAssertEqual(
+                $0.localizedDescription,
+                "The workspace attachment copy has changed or is unsafe; it was not overwritten."
+            )
+        }
+        XCTAssertEqual(try Data(contentsOf: outside), attachment.data)
+    }
+
+    func testAttachmentOperationsRejectChangedRootIdentities() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let workspace = try Fixture()
+        defer { workspace.dispose() }
+        let attachment = try fixture.makeAttachment(Data("identity".utf8))
+
+        XCTAssertThrowsError(try fixture.execute(
+            "attachment_resolve_v1",
+            attachment.arguments.merging([
+                "offset": .number(Double(UInt64.max)), "limit": .number(1),
+            ]) { _, new in new }
+        ))
+
+        let base = try fixture.request("attachment_verify_file_v1", attachment.arguments)
+        let changedRoot = CodeReadWorkerRequest(
+            protocolVersion: base.protocolVersion,
+            requestID: base.requestID,
+            helperInstanceID: base.helperInstanceID,
+            deadlineUnixMilliseconds: base.deadlineUnixMilliseconds,
+            operation: base.operation,
+            arguments: base.arguments,
+            projectRootPath: base.projectRootPath,
+            projectRootIdentity: .init(
+                device: base.projectRootIdentity.device,
+                inode: base.projectRootIdentity.inode &+ 1
+            ),
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            ripgrepPath: nil,
+            ripgrepIdentity: nil
+        )
+        XCTAssertThrowsError(try ChatOSCodeReadWorkerEngine.execute(changedRoot))
+
+        var destinationArguments = attachment.arguments
+        destinationArguments.merge(try workspace.identityArguments()) { _, new in new }
+        destinationArguments["destination_root_inode"] = .string("0")
+        XCTAssertThrowsError(try fixture.execute(
+            "attachment_materialize_v1",
+            destinationArguments
+        )) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "The authorized attachment could not be imported into the task workspace."
+            )
+        }
+    }
 }
 
 private struct Fixture {
@@ -275,7 +436,58 @@ private struct Fixture {
         )
     }
 
+    func identityArguments() throws -> [String: CodeReadWorkerJSONValue] {
+        var status = stat()
+        guard root.path.withCString({ Darwin.lstat($0, &status) }) == 0 else {
+            throw ShapeError.invalid
+        }
+        return [
+            "destination_root_path": .string(root.path),
+            "destination_root_device": .string(String(status.st_dev)),
+            "destination_root_inode": .string(String(status.st_ino)),
+        ]
+    }
+
+    func makeAttachment(_ data: Data) throws -> AttachmentFixture {
+        let owner = "owner-user"
+        let conversation = "conversation"
+        let token = UUID().uuidString.lowercased()
+        let ownerComponent = sha256(Data(owner.utf8))
+        let conversationComponent = sha256(Data(conversation.utf8))
+        let directory = root
+            .appendingPathComponent(ownerComponent, isDirectory: true)
+            .appendingPathComponent(conversationComponent, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent(token)
+        try data.write(to: file)
+        return .init(
+            data: data,
+            fileURL: file,
+            relativePath: [ownerComponent, conversationComponent, token].joined(separator: "/"),
+            arguments: [
+                "owner_user_id": .string(owner),
+                "conversation_id": .string(conversation),
+                "token": .string(token),
+                "display_name": .string("notes.txt"),
+                "media_type": .string("text/plain"),
+                "byte_size": .number(Double(data.count)),
+                "sha256": .string(sha256(data)),
+            ]
+        )
+    }
+
     func dispose() { try? FileManager.default.removeItem(at: root) }
+}
+
+private struct AttachmentFixture {
+    let data: Data
+    let fileURL: URL
+    let relativePath: String
+    let arguments: [String: CodeReadWorkerJSONValue]
+}
+
+private func sha256(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
 private enum ShapeError: Error { case invalid }

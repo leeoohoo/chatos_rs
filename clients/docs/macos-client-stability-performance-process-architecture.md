@@ -2351,6 +2351,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：强制终止 Worker 可能在原子提交前留下可识别的 `.chatos-write-*.tmp`，但不会破坏既有目标；后续需增加带年龄门禁的项目临时文件回收。附件 workspace/vault 的若干同步文件 I/O 仍使用 `Task.detached`，真实慢速/只读/空间耗尽移动卷和长期组合压力仍待完成。
 
+### 12.104 第三十三完整里程碑：附件 vault/workspace 一请求一 Worker 进程（2026-10-24）
+
+本里程碑关闭 12.103 保留的附件读取、完整性校验和 workspace 导入阻塞域。此前分段读取、媒体文件校验以及最多 20 MiB 的附件整体读取和复制都在 App 的 `Task.detached` 中执行；慢速移动卷、损坏文件或文件系统卡顿仍会占用 Swift cooperative executor，而且取消调用不能强制终止已进入同步 I/O 的任务。现在三条路径均复用一请求一 Code Read Worker 进程边界，附件任务不会共享全局串行槽。
+
+已实施：
+
+- Worker 协议新增 `attachment_resolve_v1`、`attachment_verify_file_v1` 和 `attachment_materialize_v1`。每次分段读取、完整文件校验或 workspace 导入分别启动独立 Worker PID，沿用认证握手、硬超时、Swift task 取消、独立进程组终止和父进程死亡监视；不同会话、不同任务及同会话中没有因果依赖的附件操作可并行执行。
+- vault 授权根以 device/inode 固定，owner、conversation 和 UUID token 只映射为受控相对路径；Worker 使用目录描述符与 `openat(..., O_NOFOLLOW)` 逐段打开，拒绝 symlink 文件和 symlink 父目录。读取期间流式计算完整 SHA-256，并在前后重新核对 inode、大小、mtime 和 ctime；即使只返回一个分段，也不会跳过整份附件完整性校验。
+- 分段 API 保留 64 KiB 上限，生产 inline 路径继续保留 2 KiB 上限；协议 JSON 整数只接受 IEEE-754 可精确表示的非负整数，避免异常数值在整数转换处触发 Worker 崩溃。媒体链路只接收重新校验后的相对路径和 device/inode/size 身份，再由 Media Worker 独立复核并打开文件。
+- workspace 导入不再把整份附件读回 App 的 `Data`。Worker 先完整验证源文件，再核对 destination root 的 device/inode，按目录描述符创建固定哈希路径，以 64 KiB 缓冲流式复制到 0600 临时文件，复制时再次校验 SHA-256，`fsync` 后通过 `linkat` 原子无覆盖安装；既有目标会重新完整校验，用户修改或 symlink 目标明确返回冲突，损坏 vault 不会先创建 workspace 目录。
+- 测试注入保持与真实进程一致的错误码语义。新增 Core 级正常 resolve/verify/materialize、源篡改、vault 文件/父目录 symlink、workspace 修改/symlink、根身份变化和超大 JSON 整数回归；真实 Worker 跨认证进程边界执行三项操作。并发故障回归让一个附件 Worker 停止响应，同时证明另一附件 Worker 可先完成，取消只终止挂起请求所属进程组。
+
+验证：Debug 与原生 arm64 Release 的附件分发、图片、workspace、联系人任务上下文、平台工具、Code Read Worker Engine 和真实进程隔离联合矩阵各执行 78 项，其中 2 项显式外部集成环境开关跳过，0 失败；Release 使用 `warnings-as-errors` 优化编译。构建证据工具 25 项全部通过，两个打包脚本通过 zsh 语法校验。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：发送消息时把内存中的附件草稿写入 vault 的 `authorize` 仍在 App 同步执行，附件 UI 的 `previewURL` 仍执行同步元数据检查；后续应分别迁移并保留发送事务语义与即时预览体验。Worker 在原子安装前被强杀可能留下 `.import-*` 临时文件，但不会覆盖目标；仍需增加仅清理足够老且不再被活跃 Worker 持有的临时文件回收。真实慢速、只读、空间耗尽移动卷和长期组合压力仍待完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

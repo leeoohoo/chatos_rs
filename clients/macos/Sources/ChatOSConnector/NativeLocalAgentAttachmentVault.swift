@@ -1,3 +1,5 @@
+import ChatOSCodeReadWorkerClient
+import ChatOSCodeReadWorkerProtocol
 import ChatOSCore
 import ChatOSMediaWorkerProtocol
 import CryptoKit
@@ -16,14 +18,11 @@ struct NativeLocalAgentResolvedAttachment: Sendable, Equatable {
 
     var jsonValue: LocalAgentJSONValue {
         .object([
-            "display_name": .string(displayName),
-            "media_type": .string(mediaType),
-            "byte_size": .number(Double(byteSize)),
-            "sha256": .string(sha256),
+            "display_name": .string(displayName), "media_type": .string(mediaType),
+            "byte_size": .number(Double(byteSize)), "sha256": .string(sha256),
             "offset": .number(Double(offset)),
             "next_offset": nextOffset.map { .number(Double($0)) } ?? .null,
-            "encoding": .string(encoding),
-            "content": .string(content),
+            "encoding": .string(encoding), "content": .string(content),
         ])
     }
 }
@@ -40,7 +39,15 @@ struct NativeLocalAgentAttachmentVault: Sendable {
     static let maximumInlineReadBytes = 2 * 1_024
 
     let rootURL: URL
-    private let integrityCache = NativeLocalAgentAttachmentIntegrityCache()
+    private let codeReadWorker: any CodeReadWorkerExecuting
+
+    init(
+        rootURL: URL,
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
+    ) {
+        self.rootURL = rootURL
+        self.codeReadWorker = codeReadWorker
+    }
 
     func authorize(
         _ drafts: [ConversationAttachmentDraft],
@@ -52,10 +59,7 @@ struct NativeLocalAgentAttachmentVault: Sendable {
                 throw NativeLocalAgentAttachmentVaultError.invalidAttachment
             }
             let token = UUID().uuidString.lowercased()
-            let directory = scopedDirectory(
-                ownerUserID: ownerUserID,
-                conversationID: conversationID
-            )
+            let directory = scopedDirectory(ownerUserID: ownerUserID, conversationID: conversationID)
             try FileManager.default.createDirectory(
                 at: directory,
                 withIntermediateDirectories: true,
@@ -68,11 +72,8 @@ struct NativeLocalAgentAttachmentVault: Sendable {
                 ofItemAtPath: file.path
             )
             return .init(
-                attachmentID: draft.id,
-                displayName: draft.name,
-                mediaType: draft.mimeType,
-                byteSize: UInt64(draft.data.count),
-                sha256: Self.sha256(draft.data),
+                attachmentID: draft.id, displayName: draft.name, mediaType: draft.mimeType,
+                byteSize: UInt64(draft.data.count), sha256: Self.sha256(draft.data),
                 authorizedLocalRef: Self.referencePrefix + token,
                 metadata: .object(["kind": .string(draft.kind.rawValue)])
             )
@@ -86,39 +87,30 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         offset: UInt64,
         limit: Int
     ) async throws -> NativeLocalAgentResolvedAttachment {
-        try await Task.detached(priority: .utility) {
-            try resolveSync(
-                record,
-                ownerUserID: ownerUserID,
-                conversationID: conversationID,
-                offset: offset,
-                limit: limit
-            )
-        }.value
-    }
-
-    func verifiedData(
-        _ record: LocalAgentConversationAttachmentRecord,
-        ownerUserID: String,
-        conversationID: String
-    ) async throws -> Data {
-        try await Task.detached(priority: .utility) {
-            let file = try validatedFileURL(record, ownerUserID: ownerUserID, conversationID: conversationID)
-            let handle = try FileHandle(forReadingFrom: file)
-            defer { try? handle.close() }
-            let before = try Self.signature(fileDescriptor: handle.fileDescriptor, sha256: record.sha256.lowercased())
-            guard before.byteSize == record.byteSize else {
-                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
-            }
-            let data = try handle.read(upToCount: Self.maximumAttachmentBytes + 1) ?? Data()
-            guard data.count == Int(record.byteSize),
-                  data.count <= Self.maximumAttachmentBytes,
-                  Self.sha256(data) == record.sha256.lowercased(),
-                  try Self.signature(fileDescriptor: handle.fileDescriptor, sha256: record.sha256.lowercased()) == before else {
-                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
-            }
-            return data
-        }.value
+        guard (1...Self.maximumReadBytes).contains(limit), offset <= record.byteSize else {
+            throw NativeLocalAgentAttachmentVaultError.invalidAttachment
+        }
+        var workerArguments = try arguments(
+            record,
+            ownerUserID: ownerUserID,
+            conversationID: conversationID
+        )
+        workerArguments["offset"] = .number(Double(offset))
+        workerArguments["limit"] = .number(Double(limit))
+        let object = try await execute(
+            operation: "attachment_resolve_v1",
+            arguments: workerArguments
+        ).attachmentObject()
+        return .init(
+            displayName: try object.attachmentString("display_name"),
+            mediaType: try object.attachmentString("media_type"),
+            byteSize: try object.attachmentUInt64("byte_size"),
+            sha256: try object.attachmentString("sha256"),
+            offset: try object.attachmentUInt64("offset"),
+            nextOffset: object.attachmentOptionalUInt64("next_offset"),
+            encoding: try object.attachmentString("encoding"),
+            content: try object.attachmentString("content")
+        )
     }
 
     func verifiedFile(
@@ -126,114 +118,51 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         ownerUserID: String,
         conversationID: String
     ) async throws -> NativeLocalAgentVerifiedAttachmentFile {
-        try await Task.detached(priority: .utility) {
-            let file = try validatedFileURL(
+        let object = try await execute(
+            operation: "attachment_verify_file_v1",
+            arguments: try arguments(
                 record,
                 ownerUserID: ownerUserID,
                 conversationID: conversationID
             )
-            let handle = try FileHandle(forReadingFrom: file)
-            defer { try? handle.close() }
-            let before = try Self.signature(
-                fileDescriptor: handle.fileDescriptor,
-                sha256: record.sha256.lowercased()
+        ).attachmentObject()
+        let relativePath = try object.attachmentString("relative_path")
+        return .init(
+            url: rootURL.appendingPathComponent(relativePath, isDirectory: false),
+            identity: .init(
+                device: try object.attachmentUInt64String("device"),
+                inode: try object.attachmentUInt64String("inode"),
+                byteCount: Int64(try object.attachmentUInt64("byte_count"))
             )
-            guard before.byteSize == record.byteSize,
-                  before.byteSize <= UInt64(Self.maximumAttachmentBytes) else {
-                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
-            }
-            var hasher = SHA256()
-            var total: UInt64 = 0
-            while true {
-                try Task.checkCancellation()
-                let chunk = try handle.read(upToCount: 64 * 1_024) ?? Data()
-                if chunk.isEmpty { break }
-                total += UInt64(chunk.count)
-                guard total <= UInt64(Self.maximumAttachmentBytes) else {
-                    throw NativeLocalAgentAttachmentVaultError.integrityMismatch
-                }
-                hasher.update(data: chunk)
-            }
-            let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-            guard total == record.byteSize,
-                  digest == record.sha256.lowercased(),
-                  try Self.signature(
-                      fileDescriptor: handle.fileDescriptor,
-                      sha256: record.sha256.lowercased()
-                  ) == before else {
-                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
-            }
-            return .init(
-                url: file,
-                identity: .init(
-                    device: before.device,
-                    inode: before.inode,
-                    byteCount: Int64(before.byteSize)
-                )
-            )
-        }.value
+        )
     }
 
-    private func resolveSync(
+    func materialize(
         _ record: LocalAgentConversationAttachmentRecord,
         ownerUserID: String,
         conversationID: String,
-        offset: UInt64,
-        limit: Int
-    ) throws -> NativeLocalAgentResolvedAttachment {
-        guard (1...Self.maximumReadBytes).contains(limit),
-              offset <= record.byteSize else {
-            throw NativeLocalAgentAttachmentVaultError.invalidAttachment
+        destinationRootURL: URL
+    ) async throws -> NativeLocalAgentWorkspaceAttachment {
+        var status = stat()
+        guard destinationRootURL.path.withCString({ Darwin.lstat($0, &status) }) == 0,
+              (status.st_mode & S_IFMT) == S_IFDIR else {
+            throw NativeLocalAgentAttachmentWorkspaceError.unavailable
         }
-        let file = try validatedFileURL(
+        var workerArguments = try arguments(
             record,
             ownerUserID: ownerUserID,
             conversationID: conversationID
         )
-        let handle = try FileHandle(forReadingFrom: file)
-        defer { try? handle.close() }
-        let signature = try Self.signature(
-            fileDescriptor: handle.fileDescriptor,
-            sha256: record.sha256.lowercased()
-        )
-        guard signature.byteSize == record.byteSize else {
-            throw NativeLocalAgentAttachmentVaultError.integrityMismatch
-        }
-        if !integrityCache.contains(signature) {
-            try handle.seek(toOffset: 0)
-            let data = try handle.readToEnd() ?? Data()
-            guard data.count == Int(record.byteSize),
-                  data.count <= Self.maximumAttachmentBytes,
-                  Self.sha256(data) == record.sha256.lowercased() else {
-                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
-            }
-            integrityCache.insert(signature)
-        }
-        let expectedCount = min(limit, Int(record.byteSize - offset))
-        try handle.seek(toOffset: offset)
-        let slice = expectedCount == 0
-            ? Data()
-            : try handle.read(upToCount: expectedCount) ?? Data()
-        guard slice.count == expectedCount,
-              try Self.signature(
-                fileDescriptor: handle.fileDescriptor,
-                sha256: record.sha256.lowercased()
-              ) == signature else {
-            throw NativeLocalAgentAttachmentVaultError.integrityMismatch
-        }
-        let end = offset + UInt64(slice.count)
-        let text = String(data: slice, encoding: .utf8)
-        let encoding = text == nil ? "base64" : "utf-8"
-        let content = text ?? slice.base64EncodedString()
+        workerArguments["destination_root_path"] = .string(destinationRootURL.path)
+        workerArguments["destination_root_device"] = .string(String(status.st_dev))
+        workerArguments["destination_root_inode"] = .string(String(status.st_ino))
+        let object = try await execute(
+            operation: "attachment_materialize_v1",
+            arguments: workerArguments
+        ).attachmentObject()
         return .init(
-            displayName: record.displayName,
-            mediaType: record.mediaType,
-            byteSize: record.byteSize,
-            sha256: record.sha256.lowercased(),
-            offset: offset,
-            nextOffset: end < record.byteSize ? end : nil,
-            encoding: encoding,
-            content: content
+            relativePath: try object.attachmentString("relative_path"),
+            record: record
         )
     }
 
@@ -249,32 +178,74 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         )
     }
 
-    private func validatedFileURL(
+    private func execute(
+        operation: String,
+        arguments: [String: NativeJSONValue]
+    ) async throws -> NativeJSONValue {
+        do {
+            return try await NativeCodeReadWorkerBridge.execute(
+                name: operation,
+                arguments: arguments,
+                projectRoot: rootURL,
+                requestCWD: nil,
+                defaultToolRoot: nil,
+                client: codeReadWorker
+            )
+        } catch let error as CodeReadWorkerProcessClientError {
+            guard case let .requestRejected(code, _) = error else { throw error }
+            switch code {
+            case "attachment_reference_invalid":
+                throw NativeLocalAgentAttachmentVaultError.invalidReference
+            case "attachment_integrity_mismatch":
+                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
+            case "attachment_workspace_unavailable":
+                throw NativeLocalAgentAttachmentWorkspaceError.unavailable
+            case "attachment_workspace_conflict":
+                throw NativeLocalAgentAttachmentWorkspaceError.conflictingFile
+            default:
+                throw NativeLocalAgentAttachmentVaultError.invalidAttachment
+            }
+        }
+    }
+
+    private func arguments(
         _ record: LocalAgentConversationAttachmentRecord,
         ownerUserID: String,
         conversationID: String
-    ) throws -> URL {
-        guard record.authorizedLocalRef.hasPrefix(Self.referencePrefix),
+    ) throws -> [String: NativeJSONValue] {
+        guard record.conversationID == conversationID,
+              record.authorizedLocalRef.hasPrefix(Self.referencePrefix),
               record.byteSize > 0,
               record.byteSize <= Self.maximumAttachmentBytes,
               record.sha256.count == 64 else {
             throw NativeLocalAgentAttachmentVaultError.invalidAttachment
         }
         let token = String(record.authorizedLocalRef.dropFirst(Self.referencePrefix.count))
-        guard let uuid = UUID(uuidString: token),
-              uuid.uuidString.lowercased() == token else {
+        guard let uuid = UUID(uuidString: token), uuid.uuidString.lowercased() == token else {
             throw NativeLocalAgentAttachmentVaultError.invalidReference
         }
-        let directory = scopedDirectory(
-            ownerUserID: ownerUserID,
-            conversationID: conversationID
-        )
+        return [
+            "owner_user_id": .string(ownerUserID), "conversation_id": .string(conversationID),
+            "token": .string(token), "display_name": .string(record.displayName),
+            "media_type": .string(record.mediaType),
+            "byte_size": .number(Double(record.byteSize)),
+            "sha256": .string(record.sha256.lowercased()),
+        ]
+    }
+
+    private func validatedFileURL(
+        _ record: LocalAgentConversationAttachmentRecord,
+        ownerUserID: String,
+        conversationID: String
+    ) throws -> URL {
+        _ = try arguments(record, ownerUserID: ownerUserID, conversationID: conversationID)
+        let token = String(record.authorizedLocalRef.dropFirst(Self.referencePrefix.count))
+        let directory = scopedDirectory(ownerUserID: ownerUserID, conversationID: conversationID)
         let file = directory.appendingPathComponent(token, isDirectory: false)
         let values = try file.resourceValues(forKeys: [
             .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
         ])
-        guard values.isRegularFile == true,
-              values.isSymbolicLink != true,
+        guard values.isRegularFile == true, values.isSymbolicLink != true,
               values.fileSize == Int(record.byteSize),
               Self.isContained(file: file, in: directory) else {
             throw NativeLocalAgentAttachmentVaultError.invalidAttachment
@@ -288,69 +259,15 @@ struct NativeLocalAgentAttachmentVault: Sendable {
             .appendingPathComponent(Self.scopeComponent(conversationID), isDirectory: true)
     }
 
-    private static func scopeComponent(_ value: String) -> String {
-        sha256(Data(value.utf8))
-    }
+    private static func scopeComponent(_ value: String) -> String { sha256(Data(value.utf8)) }
 
     private static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func signature(
-        fileDescriptor: Int32,
-        sha256: String
-    ) throws -> NativeLocalAgentAttachmentFileSignature {
-        var metadata = stat()
-        guard fstat(fileDescriptor, &metadata) == 0,
-              metadata.st_size >= 0 else {
-            throw NativeLocalAgentAttachmentVaultError.invalidAttachment
-        }
-        return .init(
-            device: UInt64(metadata.st_dev),
-            inode: UInt64(metadata.st_ino),
-            byteSize: UInt64(metadata.st_size),
-            modifiedSeconds: Int64(metadata.st_mtimespec.tv_sec),
-            modifiedNanoseconds: Int64(metadata.st_mtimespec.tv_nsec),
-            changedSeconds: Int64(metadata.st_ctimespec.tv_sec),
-            changedNanoseconds: Int64(metadata.st_ctimespec.tv_nsec),
-            sha256: sha256
-        )
-    }
-
     private static func isContained(file: URL, in directory: URL) -> Bool {
-        let parent = file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
-        let expected = directory.resolvingSymlinksInPath().standardizedFileURL
-        return parent == expected
-    }
-}
-
-private struct NativeLocalAgentAttachmentFileSignature: Hashable, Sendable {
-    let device: UInt64
-    let inode: UInt64
-    let byteSize: UInt64
-    let modifiedSeconds: Int64
-    let modifiedNanoseconds: Int64
-    let changedSeconds: Int64
-    let changedNanoseconds: Int64
-    let sha256: String
-}
-
-private final class NativeLocalAgentAttachmentIntegrityCache: @unchecked Sendable {
-    private static let maximumEntries = 256
-    private let lock = NSLock()
-    private var entries: Set<NativeLocalAgentAttachmentFileSignature> = []
-
-    func contains(_ signature: NativeLocalAgentAttachmentFileSignature) -> Bool {
-        lock.withLock { entries.contains(signature) }
-    }
-
-    func insert(_ signature: NativeLocalAgentAttachmentFileSignature) {
-        lock.withLock {
-            if entries.count >= Self.maximumEntries {
-                entries.removeAll(keepingCapacity: true)
-            }
-            entries.insert(signature)
-        }
+        file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+            == directory.resolvingSymlinksInPath().standardizedFileURL
     }
 }
 
@@ -365,5 +282,50 @@ enum NativeLocalAgentAttachmentVaultError: LocalizedError, Equatable {
         case .invalidReference: "The local attachment reference is invalid."
         case .integrityMismatch: "The local attachment failed its integrity check."
         }
+    }
+}
+
+private enum NativeLocalAgentAttachmentWorkerShapeError: Error { case invalid }
+
+private extension NativeJSONValue {
+    func attachmentObject() throws -> [String: NativeJSONValue] {
+        guard case let .object(value) = self else {
+            throw NativeLocalAgentAttachmentWorkerShapeError.invalid
+        }
+        return value
+    }
+}
+
+private extension Dictionary where Key == String, Value == NativeJSONValue {
+    func attachmentString(_ key: String) throws -> String {
+        guard case let .string(value)? = self[key] else {
+            throw NativeLocalAgentAttachmentWorkerShapeError.invalid
+        }
+        return value
+    }
+
+    func attachmentUInt64(_ key: String) throws -> UInt64 {
+        guard case let .number(value)? = self[key], value.isFinite,
+              value >= 0, value.rounded() == value,
+              value <= 9_007_199_254_740_991 else {
+            throw NativeLocalAgentAttachmentWorkerShapeError.invalid
+        }
+        return UInt64(value)
+    }
+
+    func attachmentOptionalUInt64(_ key: String) -> UInt64? {
+        guard case let .number(value)? = self[key], value.isFinite,
+              value >= 0, value.rounded() == value,
+              value <= 9_007_199_254_740_991 else {
+            return nil
+        }
+        return UInt64(value)
+    }
+
+    func attachmentUInt64String(_ key: String) throws -> UInt64 {
+        guard let value = try? attachmentString(key), let parsed = UInt64(value) else {
+            throw NativeLocalAgentAttachmentWorkerShapeError.invalid
+        }
+        return parsed
     }
 }
