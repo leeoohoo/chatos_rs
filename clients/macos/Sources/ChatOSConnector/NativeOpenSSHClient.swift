@@ -100,7 +100,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
     )
 
     func hasReusableConnection(draft: RemoteConnectionDraft) async -> Bool {
-        (try? await Self.performBlockingWork {
+        (try? await Self.performBlockingWork { controller in
             (try? Self.withRuntime(draft: draft) { runtime in
                 let captured = try Self.run(
                     executable: "/usr/bin/ssh",
@@ -108,7 +108,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     environment: runtime.environment,
                     input: nil,
                     timeout: 5,
-                    maximumCapturedBytes: 64 * 1_024
+                    maximumCapturedBytes: 64 * 1_024,
+                    controller: controller
                 )
                 return captured.exitCode == 0 && !captured.timedOut
             }) ?? false
@@ -119,7 +120,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         draft: RemoteConnectionDraft,
         verificationCode: String
     ) async throws {
-        try await Self.performBlockingWork {
+        try await Self.performBlockingWork { controller in
             try Self.withRuntime(
                 draft: draft,
                 verificationCode: verificationCode
@@ -130,7 +131,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     environment: runtime.environment,
                     input: nil,
                     timeout: 30,
-                    maximumCapturedBytes: 256 * 1_024
+                    maximumCapturedBytes: 256 * 1_024,
+                    controller: controller
                 )
                 guard captured.exitCode == 0, !captured.timedOut else {
                     throw NativeOpenSSHError.remoteFailure(Self.failureMessage(captured))
@@ -151,7 +153,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         timeoutSeconds: Int,
         maximumOutputCharacters: Int
     ) async throws -> NativeRemoteCommandResult {
-        try await Self.performBlockingWork {
+        try await Self.performBlockingWork { controller in
             try Self.withRuntime(draft: draft) { runtime in
                 let captured = try Self.run(
                     executable: "/usr/bin/ssh",
@@ -159,7 +161,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     environment: runtime.environment,
                     input: nil,
                     timeout: TimeInterval(timeoutSeconds),
-                    maximumCapturedBytes: max(maximumOutputCharacters * 4, 64 * 1_024)
+                    maximumCapturedBytes: max(maximumOutputCharacters * 4, 64 * 1_024),
+                    controller: controller
                 )
                 let stdout = Self.truncate(String(decoding: captured.stdout, as: UTF8.self), maximum: maximumOutputCharacters)
                 let stderr = Self.truncate(String(decoding: captured.stderr, as: UTF8.self), maximum: maximumOutputCharacters)
@@ -179,7 +182,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         path: String,
         limit: Int
     ) async throws -> [NativeRemoteDirectoryEntry] {
-        try await Self.performBlockingWork {
+        try await Self.performBlockingWork { controller in
             try Self.withRuntime(draft: draft) { runtime in
                 let normalizedLimit = min(max(limit, 1), 1_000)
                 let quotedPath = Self.shellQuote(path)
@@ -211,7 +214,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     environment: runtime.environment,
                     input: nil,
                     timeout: 20,
-                    maximumCapturedBytes: 2 * 1_024 * 1_024
+                    maximumCapturedBytes: 2 * 1_024 * 1_024,
+                    controller: controller
                 )
                 guard captured.exitCode == 0, !captured.timedOut else {
                     throw NativeOpenSSHError.remoteFailure(Self.failureMessage(captured))
@@ -246,7 +250,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         draft: RemoteConnectionDraft,
         path: String
     ) async throws -> String {
-        try await Self.performBlockingWork {
+        try await Self.performBlockingWork { controller in
             try Self.withRuntime(draft: draft) { runtime in
                 let script = """
                 candidate=\(Self.shellQuote(path))
@@ -262,7 +266,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     environment: runtime.environment,
                     input: nil,
                     timeout: 20,
-                    maximumCapturedBytes: 64 * 1_024
+                    maximumCapturedBytes: 64 * 1_024,
+                    controller: controller
                 )
                 guard captured.exitCode == 0, !captured.timedOut else {
                     throw NativeOpenSSHError.remoteFailure(Self.failureMessage(captured))
@@ -282,7 +287,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         path: String,
         maximumBytes: Int
     ) async throws -> Data {
-        try await Self.performBlockingWork {
+        try await Self.performBlockingWork { controller in
             try Self.withRuntime(draft: draft) { runtime in
                 let limit = min(max(maximumBytes, 1), 256 * 1_024)
                 let command = "test -f \(Self.shellQuote(path)) && head -c \(limit + 1) -- \(Self.shellQuote(path))"
@@ -292,7 +297,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     environment: runtime.environment,
                     input: nil,
                     timeout: 20,
-                    maximumCapturedBytes: limit + 1
+                    maximumCapturedBytes: limit + 1,
+                    controller: controller
                 )
                 guard captured.exitCode == 0, !captured.timedOut else {
                     throw NativeOpenSSHError.remoteFailure(Self.failureMessage(captured))
@@ -312,7 +318,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         createParentDirectories: Bool,
         overwrite: Bool
     ) async throws {
-        try await Self.performBlockingWork {
+        try await Self.performBlockingWork { controller in
             try Self.withRuntime(draft: draft) { runtime in
                 let quotedPath = Self.shellQuote(path)
                 let parent = Self.shellQuote(Self.remoteParent(path))
@@ -340,7 +346,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     environment: runtime.environment,
                     input: data,
                     timeout: 30,
-                    maximumCapturedBytes: 256 * 1_024
+                    maximumCapturedBytes: 256 * 1_024,
+                    controller: controller
                 )
                 guard captured.exitCode == 0, !captured.timedOut else {
                     throw NativeOpenSSHError.remoteFailure(Self.failureMessage(captured))
@@ -355,21 +362,27 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         remotePath: String,
         overwrite: Bool
     ) async throws {
-        try await Self.performBlockingWork {
+        try await Self.performBlockingWork { controller in
             guard FileManager.default.isReadableFile(atPath: localURL.path) else {
                 throw NativeOpenSSHError.localFileUnavailable(localURL.path)
             }
             try Self.withRuntime(draft: draft) { runtime in
                 if !overwrite {
-                    try Self.requireRemotePathMissing(remotePath, runtime: runtime)
+                    try Self.requireRemotePathMissing(
+                        remotePath,
+                        runtime: runtime,
+                        controller: controller
+                    )
                 }
                 try Self.runRemoteMutation(
                     "mkdir -p -- \(Self.shellQuote(Self.remoteParent(remotePath)))",
-                    runtime: runtime
+                    runtime: runtime,
+                    controller: controller
                 )
                 try Self.runSFTPTransfer(
                     arguments: [localURL.path, "chatos-target:\(remotePath)"],
-                    runtime: runtime
+                    runtime: runtime,
+                    controller: controller
                 )
             }
         }
@@ -381,7 +394,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         localURL: URL,
         overwrite: Bool
     ) async throws {
-        try await Self.performBlockingWork {
+        try await Self.performBlockingWork { controller in
             if FileManager.default.fileExists(atPath: localURL.path), !overwrite {
                 throw NativeOpenSSHError.localFileExists(localURL.path)
             }
@@ -392,7 +405,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             try Self.withRuntime(draft: draft) { runtime in
                 try Self.runSFTPTransfer(
                     arguments: ["chatos-target:\(remotePath)", localURL.path],
-                    runtime: runtime
+                    runtime: runtime,
+                    controller: controller
                 )
             }
         }
@@ -425,42 +439,64 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
     }
 
     private func mutate(draft: RemoteConnectionDraft, command: String) async throws {
-        try await Self.performBlockingWork {
+        try await Self.performBlockingWork { controller in
             try Self.withRuntime(draft: draft) { runtime in
-                try Self.runRemoteMutation(command, runtime: runtime)
+                try Self.runRemoteMutation(command, runtime: runtime, controller: controller)
             }
         }
     }
 
     static func performBlockingWork<T: Sendable>(
-        _ operation: @escaping @Sendable () throws -> T
+        _ operation: @escaping @Sendable (NativeOpenSSHProcessController) throws -> T
     ) async throws -> T {
-        try await withCheckedThrowingContinuation { continuation in
-            blockingWorkQueue.async {
-                do {
-                    continuation.resume(returning: try operation())
-                } catch {
-                    continuation.resume(throwing: error)
+        let controller = NativeOpenSSHProcessController()
+        return try await withTaskCancellationHandler {
+            do {
+                let value: T = try await withCheckedThrowingContinuation { continuation in
+                    blockingWorkQueue.async {
+                        do {
+                            try controller.throwIfCancelled()
+                            continuation.resume(returning: try operation(controller))
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
                 }
+                try Task.checkCancellation()
+                return value
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                throw error
             }
+        } onCancel: {
+            controller.cancel()
         }
     }
 
-    private static func runRemoteMutation(_ command: String, runtime: SSHRuntime) throws {
+    private static func runRemoteMutation(
+        _ command: String,
+        runtime: SSHRuntime,
+        controller: NativeOpenSSHProcessController
+    ) throws {
         let captured = try run(
             executable: "/usr/bin/ssh",
             arguments: ["-F", runtime.config.path, "chatos-target", "set -e; \(command)"],
             environment: runtime.environment,
             input: nil,
             timeout: 30,
-            maximumCapturedBytes: 256 * 1_024
+            maximumCapturedBytes: 256 * 1_024,
+            controller: controller
         )
         guard captured.exitCode == 0, !captured.timedOut else {
             throw NativeOpenSSHError.remoteFailure(failureMessage(captured))
         }
     }
 
-    private static func requireRemotePathMissing(_ path: String, runtime: SSHRuntime) throws {
+    private static func requireRemotePathMissing(
+        _ path: String,
+        runtime: SSHRuntime,
+        controller: NativeOpenSSHProcessController
+    ) throws {
         let quotedPath = shellQuote(path)
         let captured = try run(
             executable: "/usr/bin/ssh",
@@ -471,14 +507,19 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             environment: runtime.environment,
             input: nil,
             timeout: 20,
-            maximumCapturedBytes: 64 * 1_024
+            maximumCapturedBytes: 64 * 1_024,
+            controller: controller
         )
         guard captured.exitCode == 0, !captured.timedOut else {
             throw NativeOpenSSHError.remoteFileExists(path)
         }
     }
 
-    private static func runSFTPTransfer(arguments: [String], runtime: SSHRuntime) throws {
+    private static func runSFTPTransfer(
+        arguments: [String],
+        runtime: SSHRuntime,
+        controller: NativeOpenSSHProcessController
+    ) throws {
         // Modern OpenSSH scp uses the SFTP protocol by default while preserving
         // reliable exit codes and SSH_ASKPASS support for password connections.
         let captured = try run(
@@ -487,7 +528,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             environment: runtime.environment,
             input: nil,
             timeout: 60 * 60,
-            maximumCapturedBytes: 512 * 1_024
+            maximumCapturedBytes: 512 * 1_024,
+            controller: controller
         )
         guard captured.exitCode == 0, !captured.timedOut else {
             throw NativeOpenSSHError.remoteFailure(failureMessage(captured))
@@ -580,8 +622,10 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         environment: [String: String],
         input: Data?,
         timeout: TimeInterval,
-        maximumCapturedBytes: Int
+        maximumCapturedBytes: Int,
+        controller: NativeOpenSSHProcessController
     ) throws -> CapturedProcessResult {
+        try controller.throwIfCancelled()
         let process = Process()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -617,6 +661,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             stderrPipe.fileHandleForReading.readabilityHandler = nil
             throw NativeOpenSSHError.launchFailed(error.localizedDescription)
         }
+        let registration = controller.register(process)
+        defer { controller.clear(process, registration: registration) }
         if let input, let inputPipe {
             inputPipe.fileHandleForWriting.write(input)
             try? inputPipe.fileHandleForWriting.close()
@@ -679,6 +725,75 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         let stderr = String(decoding: result.stderr, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return stderr.isEmpty ? "远程操作失败（退出码 \(result.exitCode)）" : stderr
+    }
+}
+
+final class NativeOpenSSHProcessController: @unchecked Sendable {
+    private static let forceKillQueue = DispatchQueue(
+        label: "com.chatos.open-ssh.process-termination",
+        qos: .utility,
+        attributes: .concurrent
+    )
+
+    private let lock = NSLock()
+    private var cancellationRequested = false
+    private var activeProcess: Process?
+    private var activeRegistration: UUID?
+
+    func throwIfCancelled() throws {
+        lock.lock()
+        let cancelled = cancellationRequested
+        lock.unlock()
+        if cancelled { throw CancellationError() }
+    }
+
+    func register(_ process: Process) -> UUID {
+        let registration = UUID()
+        lock.lock()
+        activeProcess = process
+        activeRegistration = registration
+        let cancelled = cancellationRequested
+        lock.unlock()
+        if cancelled {
+            requestTermination(of: process, registration: registration)
+        }
+        return registration
+    }
+
+    func clear(_ process: Process, registration: UUID) {
+        lock.lock()
+        if activeProcess === process, activeRegistration == registration {
+            activeProcess = nil
+            activeRegistration = nil
+        }
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        cancellationRequested = true
+        let process = activeProcess
+        let registration = activeRegistration
+        lock.unlock()
+        if let process, let registration {
+            requestTermination(of: process, registration: registration)
+        }
+    }
+
+    private func requestTermination(of process: Process, registration: UUID) {
+        if process.isRunning { process.terminate() }
+        Self.forceKillQueue.asyncAfter(deadline: .now() + 2) { [weak self, process] in
+            guard let self,
+                  self.owns(process, registration: registration),
+                  process.isRunning else { return }
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+        }
+    }
+
+    private func owns(_ process: Process, registration: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return activeProcess === process && activeRegistration == registration
     }
 }
 

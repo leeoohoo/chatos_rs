@@ -325,7 +325,7 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         let secondStarted = expectation(description: "second blocking operation started")
         let releaseFirst = DispatchSemaphore(value: 0)
         let first = Task {
-            try await NativeOpenSSHClient.performBlockingWork {
+            try await NativeOpenSSHClient.performBlockingWork { _ in
                 firstStarted.fulfill()
                 return releaseFirst.wait(timeout: .now() + 5) == .success
             }
@@ -333,7 +333,7 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
 
         await fulfillment(of: [firstStarted], timeout: 2)
         let second = Task {
-            try await NativeOpenSSHClient.performBlockingWork {
+            try await NativeOpenSSHClient.performBlockingWork { _ in
                 secondStarted.fulfill()
                 return 2
             }
@@ -345,6 +345,41 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         let secondResult = try await second.value
         XCTAssertTrue(firstResult, "独立 SSH 操作不应被另一个阻塞生命周期串行化")
         XCTAssertEqual(secondResult, 2)
+    }
+
+    func testCancellingOpenSSHBlockingWorkTerminatesItsRegisteredProcess() async throws {
+        let started = expectation(description: "blocking child started")
+        let terminated = expectation(description: "blocking child terminated")
+        let task = Task {
+            try await NativeOpenSSHClient.performBlockingWork { controller in
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+                process.arguments = ["30"]
+                process.terminationHandler = { _ in terminated.fulfill() }
+                try process.run()
+                let registration = controller.register(process)
+                defer { controller.clear(process, registration: registration) }
+                started.fulfill()
+                process.waitUntilExit()
+                return process.terminationStatus
+            }
+        }
+
+        await fulfillment(of: [started], timeout: 2)
+        let cancellationStarted = ContinuousClock.now
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("被取消的 SSH blocking work 不应正常返回")
+        } catch is CancellationError {
+            // Expected: cancellation is mapped after the owned child exits.
+        }
+        await fulfillment(of: [terminated], timeout: 2)
+        XCTAssertLessThan(
+            cancellationStarted.duration(to: .now),
+            .seconds(3),
+            "取消应终止所属子进程，而不是等待远程操作原始超时"
+        )
     }
 
     func testRemoteTerminalOutputKeepsVisibleTextAndUpdatesWorkingDirectory() {

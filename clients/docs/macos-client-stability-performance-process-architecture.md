@@ -2226,6 +2226,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批改变的是父 App 的阻塞执行域，不等于已为 SSH/SCP 增加 Swift task 的即时取消传播。已有墙钟超时和 TERM/KILL 仍有效，但调用方取消后当前同步操作可能继续到退出或超时；后续需为每次远程操作引入可并发注册的 process controller，把取消只路由到所属 PID，并验证上传临时文件、ControlMaster 和本地下载目标的中断清理。GCD 阻塞操作仍占用系统线程，真实多路大文件传输、睡眠/断网、磁盘满和长期组合压力仍待完成。
 
+### 12.96 第二十五完整里程碑：OpenSSH 每操作取消与 PID 故障边界（2026-10-24）
+
+本里程碑补齐 12.95 明确保留的取消缺口。阻塞工作迁入 GCD 后，取消 Swift task 原本只会标记调用方，已经启动的 `ssh`/`scp` 仍可能继续运行到 30 秒命令超时或一小时文件传输超时，占用网络、文件句柄和阻塞线程；这与“不同任务拥有独立取消域”的目标不符。
+
+已实施：
+
+- 每次顶层远程操作创建独立 `NativeOpenSSHProcessController`，只登记该操作当前启动的一个子进程。Swift task 取消时立即向所属 PID 发送 `SIGTERM`，两秒后仍未退出才升级 `SIGKILL`；并行操作拥有不同 controller，不共享全局 current process。
+- controller 使用锁保护取消标记、活动 `Process` 和随机 registration token。取消发生在启动前会拒绝启动，发生在 `process.run()` 与登记之间会在登记时立即终止；延迟强杀前重新核对对象身份与 registration，已退出的旧进程或同一上传流程的后续步骤不会被过期定时器误杀。
+- blocking continuation 在子进程完成清理后把取消统一映射为 `CancellationError`。连接检查的非 throwing 协议保持返回 `false`，其他命令、目录和文件 API 保持 throwing 取消语义；既有独立超时、输出上限、ControlMaster 和远端命令行为不变。
+
+验证：Debug 与原生 arm64 Release 的远程连接相关矩阵各 29 项全部通过，包括 Remote Connection 18 项、Remote File 4 项及 MCP Remote Controller 7 项；Release 使用 `warnings-as-errors` 优化编译。新增真实子进程回归启动一个原本等待 30 秒的进程，取消后在 3 秒硬门禁内终止并返回 `CancellationError`；并发 lane 回归继续证明另一操作不被串行化。构建证据脚本 25 项全部通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：controller 当前终止直接的 `ssh`/`scp` PID，沿用既有超时路径的进程边界；尚未建立独立 process group 来清理异常残留的 askpass/外部子孙进程。大文件 `scp` 仍直接写最终远端或本地路径，取消、断网或磁盘满可能留下部分文件；下一阶段必须改为同目录临时目标、成功后原子提交，并为失败/取消补回收与不覆盖旧文件回归。真实服务器、多路大文件、睡眠/断网、磁盘满和长期组合压力仍待完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
