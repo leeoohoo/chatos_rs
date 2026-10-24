@@ -1,5 +1,6 @@
 @testable import ChatOSConnector
 import ChatOSCore
+import Dispatch
 import Foundation
 import XCTest
 
@@ -317,6 +318,33 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
 
         XCTAssertTrue(path.hasPrefix("/tmp/chatos-ssh-"))
         XCTAssertLessThan(path.utf8.count + 16, 104)
+    }
+
+    func testOpenSSHBlockingWorkUsesConcurrentLanes() async throws {
+        let firstStarted = expectation(description: "first blocking operation started")
+        let secondStarted = expectation(description: "second blocking operation started")
+        let releaseFirst = DispatchSemaphore(value: 0)
+        let first = Task {
+            try await NativeOpenSSHClient.performBlockingWork {
+                firstStarted.fulfill()
+                return releaseFirst.wait(timeout: .now() + 5) == .success
+            }
+        }
+
+        await fulfillment(of: [firstStarted], timeout: 2)
+        let second = Task {
+            try await NativeOpenSSHClient.performBlockingWork {
+                secondStarted.fulfill()
+                return 2
+            }
+        }
+
+        await fulfillment(of: [secondStarted], timeout: 2)
+        releaseFirst.signal()
+        let firstResult = try await first.value
+        let secondResult = try await second.value
+        XCTAssertTrue(firstResult, "独立 SSH 操作不应被另一个阻塞生命周期串行化")
+        XCTAssertEqual(secondResult, 2)
     }
 
     func testRemoteTerminalOutputKeepsVisibleTextAndUpdatesWorkingDirectory() {

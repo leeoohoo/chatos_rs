@@ -2212,6 +2212,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：一个 Worker 仍以顺序 request/response 协议服务一个 Run，这属于 Run 内因果约束，不是跨会话全局单槽。GCD 管道操作仍占用系统线程；并发上限继续由 App Governor 与 Worker 资源监督控制。跨进程动态总资源观测、真实 CPU/内存压力下的组合 SLO 和长时间 soak 仍待完成。
 
+### 12.95 第二十四完整里程碑：OpenSSH 进程生命周期阻塞脱离 Swift executor（2026-10-24）
+
+本里程碑清理远程连接与文件传输链路的同类父进程阻塞。此前命令执行、目录读取、小文件读写及最长可等待一小时的 `scp` 全部以 `Task.detached` 包装同步 `Process`/pipe/退出等待。每个 SSH/SCP 操作虽然已经拥有独立 OS 进程，父 App 仍可能为每个远程任务长期占用 Swift cooperative executor 线程，多个并发远程任务会间接拖慢其他会话、UI 和 Agent 调度。
+
+已实施：
+
+- `NativeOpenSSHClient` 的连接复用检查、认证准备、远程命令、目录解析、内存有界上传下载、本机文件上传下载以及目录/重命名/删除操作统一迁到专用并发 GCD blocking-work 队列，通过 checked continuation 返回 async 调用方；生产链路不再用 detached Swift task 承载同步 SSH 生命周期。
+- 队列明确为 concurrent；每个操作继续独占自己的 `Process`、pipe 和临时 SSH runtime，OpenSSH `ControlMaster` 只复用底层认证连接，不把 App 侧任务收敛成全局单槽。新增回归让第一个 blocking operation 保持挂起，并证明第二个操作可在其结束前进入独立 lane。
+- 原有 5–30 秒 SSH 超时、最长一小时 SCP 超时、超时后 `SIGTERM`/`SIGKILL`、有界 stdout/stderr、临时运行目录、远端原子替换和覆盖保护语义均保持不变。
+
+验证：Debug 与原生 arm64 Release 的远程连接相关矩阵各 28 项全部通过，包括 Remote Connection 17 项、Remote File 4 项及 MCP Remote Controller 7 项；Release 使用 `warnings-as-errors` 优化编译。新增并发 lane 回归在两种配置下均通过。构建证据脚本 25 项全部通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：本批改变的是父 App 的阻塞执行域，不等于已为 SSH/SCP 增加 Swift task 的即时取消传播。已有墙钟超时和 TERM/KILL 仍有效，但调用方取消后当前同步操作可能继续到退出或超时；后续需为每次远程操作引入可并发注册的 process controller，把取消只路由到所属 PID，并验证上传临时文件、ControlMaster 和本地下载目标的中断清理。GCD 阻塞操作仍占用系统线程，真实多路大文件传输、睡眠/断网、磁盘满和长期组合压力仍待完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

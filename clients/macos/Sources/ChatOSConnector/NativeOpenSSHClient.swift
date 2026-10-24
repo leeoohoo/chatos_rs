@@ -1,6 +1,7 @@
 import ChatOSCore
 import CryptoKit
 import Darwin
+import Dispatch
 import Foundation
 
 protocol NativeRemoteSSHExecuting: Sendable {
@@ -88,8 +89,18 @@ struct NativeRemoteDirectoryEntry: Sendable {
 }
 
 struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
+    /// SSH/SCP lifecycles synchronously wait on Process and FileHandle operations. Keep those
+    /// waits on GCD-owned blocking lanes so multiple remote operations cannot exhaust Swift's
+    /// cooperative executor and stall unrelated conversations. The queue is concurrent because
+    /// each operation owns its Process, pipes and temporary runtime directory.
+    private static let blockingWorkQueue = DispatchQueue(
+        label: "com.chatos.open-ssh.blocking-work",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
     func hasReusableConnection(draft: RemoteConnectionDraft) async -> Bool {
-        await Task.detached(priority: .userInitiated) {
+        (try? await Self.performBlockingWork {
             (try? Self.withRuntime(draft: draft) { runtime in
                 let captured = try Self.run(
                     executable: "/usr/bin/ssh",
@@ -101,14 +112,14 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                 )
                 return captured.exitCode == 0 && !captured.timedOut
             }) ?? false
-        }.value
+        }) ?? false
     }
 
     func prepareAuthenticatedConnection(
         draft: RemoteConnectionDraft,
         verificationCode: String
     ) async throws {
-        try await Task.detached(priority: .userInitiated) {
+        try await Self.performBlockingWork {
             try Self.withRuntime(
                 draft: draft,
                 verificationCode: verificationCode
@@ -131,7 +142,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     )
                 }
             }
-        }.value
+        }
     }
 
     func runCommand(
@@ -140,7 +151,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         timeoutSeconds: Int,
         maximumOutputCharacters: Int
     ) async throws -> NativeRemoteCommandResult {
-        try await Task.detached(priority: .userInitiated) {
+        try await Self.performBlockingWork {
             try Self.withRuntime(draft: draft) { runtime in
                 let captured = try Self.run(
                     executable: "/usr/bin/ssh",
@@ -160,7 +171,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     timedOut: captured.timedOut
                 )
             }
-        }.value
+        }
     }
 
     func listDirectory(
@@ -168,7 +179,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         path: String,
         limit: Int
     ) async throws -> [NativeRemoteDirectoryEntry] {
-        try await Task.detached(priority: .userInitiated) {
+        try await Self.performBlockingWork {
             try Self.withRuntime(draft: draft) { runtime in
                 let normalizedLimit = min(max(limit, 1), 1_000)
                 let quotedPath = Self.shellQuote(path)
@@ -228,14 +239,14 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                 }
                 return entries
             }
-        }.value
+        }
     }
 
     func resolveDirectory(
         draft: RemoteConnectionDraft,
         path: String
     ) async throws -> String {
-        try await Task.detached(priority: .userInitiated) {
+        try await Self.performBlockingWork {
             try Self.withRuntime(draft: draft) { runtime in
                 let script = """
                 candidate=\(Self.shellQuote(path))
@@ -263,7 +274,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                 }
                 return resolved
             }
-        }.value
+        }
     }
 
     func download(
@@ -271,7 +282,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         path: String,
         maximumBytes: Int
     ) async throws -> Data {
-        try await Task.detached(priority: .userInitiated) {
+        try await Self.performBlockingWork {
             try Self.withRuntime(draft: draft) { runtime in
                 let limit = min(max(maximumBytes, 1), 256 * 1_024)
                 let command = "test -f \(Self.shellQuote(path)) && head -c \(limit + 1) -- \(Self.shellQuote(path))"
@@ -291,7 +302,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                 }
                 return captured.stdout
             }
-        }.value
+        }
     }
 
     func upload(
@@ -301,7 +312,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         createParentDirectories: Bool,
         overwrite: Bool
     ) async throws {
-        try await Task.detached(priority: .userInitiated) {
+        try await Self.performBlockingWork {
             try Self.withRuntime(draft: draft) { runtime in
                 let quotedPath = Self.shellQuote(path)
                 let parent = Self.shellQuote(Self.remoteParent(path))
@@ -335,7 +346,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     throw NativeOpenSSHError.remoteFailure(Self.failureMessage(captured))
                 }
             }
-        }.value
+        }
     }
 
     func uploadFile(
@@ -344,7 +355,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         remotePath: String,
         overwrite: Bool
     ) async throws {
-        try await Task.detached(priority: .userInitiated) {
+        try await Self.performBlockingWork {
             guard FileManager.default.isReadableFile(atPath: localURL.path) else {
                 throw NativeOpenSSHError.localFileUnavailable(localURL.path)
             }
@@ -361,7 +372,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     runtime: runtime
                 )
             }
-        }.value
+        }
     }
 
     func downloadFile(
@@ -370,7 +381,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         localURL: URL,
         overwrite: Bool
     ) async throws {
-        try await Task.detached(priority: .userInitiated) {
+        try await Self.performBlockingWork {
             if FileManager.default.fileExists(atPath: localURL.path), !overwrite {
                 throw NativeOpenSSHError.localFileExists(localURL.path)
             }
@@ -384,7 +395,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     runtime: runtime
                 )
             }
-        }.value
+        }
     }
 
     func createDirectory(draft: RemoteConnectionDraft, path: String) async throws {
@@ -414,11 +425,25 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
     }
 
     private func mutate(draft: RemoteConnectionDraft, command: String) async throws {
-        try await Task.detached(priority: .userInitiated) {
+        try await Self.performBlockingWork {
             try Self.withRuntime(draft: draft) { runtime in
                 try Self.runRemoteMutation(command, runtime: runtime)
             }
-        }.value
+        }
+    }
+
+    static func performBlockingWork<T: Sendable>(
+        _ operation: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            blockingWorkQueue.async {
+                do {
+                    continuation.resume(returning: try operation())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     private static func runRemoteMutation(_ command: String, runtime: SSHRuntime) throws {
