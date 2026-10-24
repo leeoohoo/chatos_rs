@@ -2,7 +2,7 @@
 
 > 状态：执行中（阶段 0–3 并行；Host lifecycle 技术样板已落地）
 > 日期：2026-10-20
-> 适用分支：`3.0.9.2` 及后续开发分支
+> 适用分支：`3.0.9.3.1` 及后续开发分支
 > 唯一产品基准：当前实际运行的 macOS 客户端
 > 源码事实矩阵：[`02-macos-source-of-truth-matrix.md`](./02-macos-source-of-truth-matrix.md)
 

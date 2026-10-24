@@ -1,7 +1,7 @@
 # macOS 源码事实矩阵
 
 > 状态：持续更新；Host lifecycle、Shell 与 Authentication 已进入 Windows React
-> 分支：`3.0.9.2`
+> 分支：`3.0.9.3.1`
 > 事实源：`clients/macos` 当前源码与测试、`clients/local_agent_host` 当前契约
 > 用途：约束 macOS 重构与 Windows React 实现，不是界面截图说明书
 
