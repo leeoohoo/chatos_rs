@@ -63,6 +63,35 @@ final class NativeProjectFilesystemReadWorkerTests: XCTestCase {
         XCTAssertEqual(imageFile.sourceFileURL, imageURL)
     }
 
+    func testProjectBrowserMutationsUseWorkerOperations() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-project-mutation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let connector = try makeConnector(root: root)
+        let service = NativeProjectFilesystemService(
+            connector: connector,
+            codeReadWorker: FilesystemCoreCodeReadWorker()
+        )
+        let projectRoot = "local://connector/device/workspace"
+
+        try await service.createDirectory(parentPath: projectRoot, name: "Sources")
+        try await service.createFile(parentPath: projectRoot + "/Sources", name: "Value.swift")
+        try await service.writeFile(
+            path: projectRoot + "/Sources/Value.swift",
+            content: "let isolated = true\n"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: root.appendingPathComponent("Sources/Value.swift")),
+            "let isolated = true\n"
+        )
+
+        try await service.deleteEntry(path: projectRoot + "/Sources", recursive: true)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent("Sources").path
+        ))
+    }
+
     private func makeConnector(root: URL) throws -> NativeLocalConnectorService {
         let stateURL = root.appendingPathComponent("connector-state.json")
         var state = NativeConnectorPersistentState.empty

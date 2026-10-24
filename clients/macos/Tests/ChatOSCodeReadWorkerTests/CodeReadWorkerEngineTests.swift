@@ -146,6 +146,92 @@ final class CodeReadWorkerEngineTests: XCTestCase {
         XCTAssertEqual(try contentMatch.object.string("path"), "Nested/Sources/MixedToken.swift")
         XCTAssertEqual(try contentMatch.object.number("column"), 5)
     }
+
+    func testProjectMutationsCreateOverwriteAndDeleteWithinAuthorizedRoot() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+
+        let directory = try fixture.execute(
+            "project_create_directory_v1",
+            ["path": .string("Sources/Nested")]
+        ).object
+        XCTAssertTrue(try directory.bool("created"))
+
+        let created = try fixture.execute(
+            "project_write_file_v1",
+            [
+                "path": .string("Sources/Nested/Value.swift"),
+                "content": .string("let value = 1\n"),
+                "create_only": .bool(true),
+            ]
+        ).object
+        XCTAssertTrue(try created.bool("created"))
+        XCTAssertEqual(try created.number("size"), 14)
+
+        let overwritten = try fixture.execute(
+            "project_write_file_v1",
+            [
+                "path": .string("Sources/Nested/Value.swift"),
+                "content": .string("let value = 2\n"),
+                "create_only": .bool(false),
+            ]
+        ).object
+        XCTAssertFalse(try overwritten.bool("created"))
+        XCTAssertEqual(
+            try String(contentsOf: fixture.root.appendingPathComponent("Sources/Nested/Value.swift")),
+            "let value = 2\n"
+        )
+
+        XCTAssertThrowsError(try fixture.execute(
+            "project_delete_entry_v1",
+            ["path": .string("Sources"), "recursive": .bool(false)]
+        )) { error in
+            XCTAssertEqual(error.localizedDescription, "目录不为空，请使用递归删除")
+        }
+        let deleted = try fixture.execute(
+            "project_delete_entry_v1",
+            ["path": .string("Sources"), "recursive": .bool(true)]
+        ).object
+        XCTAssertTrue(try deleted.bool("deleted"))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.root.appendingPathComponent("Sources").path
+        ))
+    }
+
+    func testProjectMutationsRejectRootTraversalAndSymbolicLinkParents() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let outside = FileManager.default.temporaryDirectory
+            .appendingPathComponent("outside-mutation-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try FileManager.default.createSymbolicLink(
+            at: fixture.root.appendingPathComponent("escape"),
+            withDestinationURL: outside
+        )
+
+        XCTAssertThrowsError(try fixture.execute(
+            "project_write_file_v1",
+            ["path": .string("../outside.txt"), "content": .string("unsafe")]
+        )) { error in
+            XCTAssertEqual(error.localizedDescription, "路径超出当前项目范围")
+        }
+        XCTAssertThrowsError(try fixture.execute(
+            "project_create_directory_v1",
+            ["path": .string(".")]
+        )) { error in
+            XCTAssertEqual(error.localizedDescription, "不能修改授权工作区根目录")
+        }
+        XCTAssertThrowsError(try fixture.execute(
+            "project_write_file_v1",
+            ["path": .string("escape/escaped.txt"), "content": .string("unsafe")]
+        )) { error in
+            XCTAssertEqual(error.localizedDescription, "操作不能穿过符号链接")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: outside.appendingPathComponent("escaped.txt").path
+        ))
+    }
 }
 
 private struct Fixture {

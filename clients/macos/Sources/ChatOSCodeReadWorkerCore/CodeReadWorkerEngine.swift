@@ -14,6 +14,11 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
     case deadlineExceeded
     case searchFailed(String)
     case unsupportedTool(String)
+    case rootMutation
+    case symbolicLink
+    case alreadyExists
+    case directoryNotEmpty
+    case filesystemFailure(String)
 
     public var errorDescription: String? {
         switch self {
@@ -27,6 +32,11 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
         case .deadlineExceeded: "项目代码读取超时，独立处理进程已终止"
         case let .searchFailed(message): message
         case let .unsupportedTool(name): "暂不支持 MCP 工具：\(name)"
+        case .rootMutation: "不能修改授权工作区根目录"
+        case .symbolicLink: "操作不能穿过符号链接"
+        case .alreadyExists: "目标已经存在"
+        case .directoryNotEmpty: "目录不为空，请使用递归删除"
+        case let .filesystemFailure(message): message
         }
     }
 
@@ -43,6 +53,11 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
         case .deadlineExceeded: code = "deadline_exceeded"
         case .searchFailed: code = "search_failed"
         case .unsupportedTool: code = "unsupported_tool"
+        case .rootMutation: code = "root_mutation"
+        case .symbolicLink: code = "symbolic_link"
+        case .alreadyExists: code = "already_exists"
+        case .directoryNotEmpty: code = "directory_not_empty"
+        case .filesystemFailure: code = "filesystem_failure"
         }
         return .init(code: code, message: errorDescription ?? code)
     }
@@ -112,6 +127,12 @@ public enum ChatOSCodeReadWorkerEngine {
                 root: root,
                 deadlineUnixMilliseconds: request.deadlineUnixMilliseconds
             ).analyze(request.arguments)
+        case "project_write_file_v1", "project_create_directory_v1", "project_delete_entry_v1":
+            return try ProjectFilesystemWorkerMutator(
+                root: root,
+                rootIdentity: request.projectRootIdentity,
+                deadlineUnixMilliseconds: request.deadlineUnixMilliseconds
+            ).execute(operation: request.operation, arguments: request.arguments)
         default:
             throw CodeReadWorkerCoreError.unsupportedTool(request.operation)
         }

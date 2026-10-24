@@ -88,6 +88,51 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
                   case let .string(command)? = fields["command"] else { return false }
             return command == "npm run dev"
         })
+
+        _ = try await CodeReadWorkerProcessClient(
+            executableURL: executable,
+            timeout: 5
+        ).execute(
+            operation: "project_create_directory_v1",
+            arguments: ["path": .string("Generated")],
+            projectRoot: fixture.root,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            ripgrepURL: nil
+        )
+        _ = try await CodeReadWorkerProcessClient(
+            executableURL: executable,
+            timeout: 5
+        ).execute(
+            operation: "project_write_file_v1",
+            arguments: [
+                "path": .string("Generated/result.txt"),
+                "content": .string("worker mutation\n"),
+                "create_only": .bool(true),
+            ],
+            projectRoot: fixture.root,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            ripgrepURL: nil
+        )
+        XCTAssertEqual(
+            try String(contentsOf: fixture.root.appendingPathComponent("Generated/result.txt")),
+            "worker mutation\n"
+        )
+        _ = try await CodeReadWorkerProcessClient(
+            executableURL: executable,
+            timeout: 5
+        ).execute(
+            operation: "project_delete_entry_v1",
+            arguments: ["path": .string("Generated"), "recursive": .bool(true)],
+            projectRoot: fixture.root,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            ripgrepURL: nil
+        )
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: fixture.root.appendingPathComponent("Generated").path
+        ))
     }
 
     func testHungProjectAnalysisDoesNotBlockIndependentWorker() async throws {
@@ -143,6 +188,60 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             XCTFail("cancelled hanging worker should not return")
         } catch is CancellationError {}
     }
+
+    func testHungProjectMutationDoesNotBlockIndependentWorker() async throws {
+        let fixture = try WorkerFixture()
+        defer { fixture.dispose() }
+        let hanging = try fixture.makeWorker(name: "hanging-mutation-worker.py", hangs: true)
+        let responsive = try fixture.makeWorker(name: "responsive-mutation-worker.py", hangs: false)
+        let blockedCompletion = CompletionFlag()
+        let blocked = Task {
+            do {
+                let result = try await CodeReadWorkerProcessClient(
+                    executableURL: hanging,
+                    timeout: 20
+                ).execute(
+                    operation: "project_write_file_v1",
+                    arguments: ["path": .string("blocked.txt"), "content": .string("blocked")],
+                    projectRoot: fixture.root,
+                    requestCWD: nil,
+                    defaultToolRoot: nil,
+                    ripgrepURL: nil
+                )
+                await blockedCompletion.markCompleted()
+                return result
+            } catch {
+                await blockedCompletion.markCompleted()
+                throw error
+            }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+
+        let result = try await CodeReadWorkerProcessClient(
+            executableURL: responsive,
+            timeout: 10
+        ).execute(
+            operation: "project_write_file_v1",
+            arguments: ["path": .string("independent.txt"), "content": .string("independent")],
+            projectRoot: fixture.root,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            ripgrepURL: nil
+        )
+        let hangingWorkerAlreadyCompleted = await blockedCompletion.isCompleted
+        XCTAssertFalse(hangingWorkerAlreadyCompleted)
+        guard case let .object(payload) = result,
+              case let .string(value)? = payload["worker"] else {
+            return XCTFail("responsive worker returned an invalid result")
+        }
+        XCTAssertEqual(value, "independent")
+
+        blocked.cancel()
+        do {
+            _ = try await blocked.value
+            XCTFail("cancelled hanging mutation should not return")
+        } catch is CancellationError {}
+    }
 }
 
 private actor CompletionFlag {
@@ -167,7 +266,7 @@ private struct WorkerFixture {
         let script = """
         #!/bin/zsh
         IFS= read -r hello
-        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":1,"worker_build_version":"code-read-worker-v1","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files","project_list_v1","project_search_entries_v1","project_run_analyze_v1"],"maximum_inline_bytes":16777216,"error":null}'
+        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":1,"worker_build_version":"code-read-worker-v1","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files","project_list_v1","project_search_entries_v1","project_run_analyze_v1","project_write_file_v1","project_create_directory_v1","project_delete_entry_v1"],"maximum_inline_bytes":16777216,"error":null}'
         IFS= read -r request
         \(behavior)
         """

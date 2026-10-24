@@ -23,7 +23,7 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     public func listEntries(path: String, forceRefresh: Bool) async throws -> ProjectDirectoryListing {
         let resolved = try await connector.resolveProjectPath(path)
-        let value = try await executeReadWorker(
+        let value = try await executeWorker(
             operation: "project_list_v1",
             arguments: [
                 "path": .string(resolved.relativePath),
@@ -58,7 +58,7 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     public func searchEntries(path: String, query: String, limit: Int) async throws -> [ProjectFileEntry] {
         let resolved = try await connector.resolveProjectPath(path)
-        let value = try await executeReadWorker(
+        let value = try await executeWorker(
             operation: "project_search_entries_v1",
             arguments: [
                 "path": .string(resolved.relativePath),
@@ -85,7 +85,7 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     public func searchContent(path: String, query: String, limit: Int) async throws -> [ProjectFileContentMatch] {
         let resolved = try await connector.resolveProjectPath(path)
-        let value = try await executeReadWorker(
+        let value = try await executeWorker(
             operation: "search_text",
             arguments: [
                 "path": .string(resolved.relativePath),
@@ -146,7 +146,7 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
         }
 
         do {
-            let value = try await executeReadWorker(
+            let value = try await executeWorker(
                 operation: "read_file_raw",
                 arguments: [
                     "path": .string(resolved.relativePath),
@@ -190,35 +190,51 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     public func writeFile(path: String, content: String) async throws {
         let resolved = try await connector.resolveProjectPath(path)
-        _ = try await Self.runDetached {
-            try NativeWorkspaceFilesystem(workspace: resolved.workspace)
-                .write(path: resolved.relativePath, content: content, createOnly: false)
-        }
+        _ = try await executeFilesystemMutation(
+            operation: "project_write_file_v1",
+            arguments: [
+                "path": .string(resolved.relativePath),
+                "content": .string(content),
+                "create_only": .bool(false),
+            ],
+            resolved: resolved
+        )
     }
 
     public func createFile(parentPath: String, name: String) async throws {
         let resolved = try await connector.resolveProjectPath(parentPath)
         let target = childPath(parent: resolved.relativePath, name: name)
-        _ = try await Self.runDetached {
-            try NativeWorkspaceFilesystem(workspace: resolved.workspace)
-                .write(path: target, content: "", createOnly: true)
-        }
+        _ = try await executeFilesystemMutation(
+            operation: "project_write_file_v1",
+            arguments: [
+                "path": .string(target),
+                "content": .string(""),
+                "create_only": .bool(true),
+            ],
+            resolved: resolved
+        )
     }
 
     public func createDirectory(parentPath: String, name: String) async throws {
         let resolved = try await connector.resolveProjectPath(parentPath)
         let target = childPath(parent: resolved.relativePath, name: name)
-        _ = try await Self.runDetached {
-            try NativeWorkspaceFilesystem(workspace: resolved.workspace).createDirectory(path: target)
-        }
+        _ = try await executeFilesystemMutation(
+            operation: "project_create_directory_v1",
+            arguments: ["path": .string(target)],
+            resolved: resolved
+        )
     }
 
     public func deleteEntry(path: String, recursive: Bool) async throws {
         let resolved = try await connector.resolveProjectPath(path)
-        _ = try await Self.runDetached {
-            try NativeWorkspaceFilesystem(workspace: resolved.workspace)
-                .delete(path: resolved.relativePath, recursive: recursive)
-        }
+        _ = try await executeFilesystemMutation(
+            operation: "project_delete_entry_v1",
+            arguments: [
+                "path": .string(resolved.relativePath),
+                "recursive": .bool(recursive),
+            ],
+            resolved: resolved
+        )
     }
 
     public func openExternally(path: String, mode: ProjectFileExternalOpenMode) async throws {
@@ -246,7 +262,7 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
         parent == "." ? name : parent + "/" + name
     }
 
-    private func executeReadWorker(
+    private func executeWorker(
         operation: String,
         arguments: [String: NativeJSONValue],
         resolved: NativeResolvedProjectPath
@@ -264,17 +280,30 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
         )
     }
 
-    private static func runDetached<Value: Sendable>(
-        _ operation: @escaping @Sendable () throws -> Value
-    ) async throws -> Value {
-        let task = Task.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
-            return try operation()
-        }
-        return try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            task.cancel()
+    private func executeFilesystemMutation(
+        operation: String,
+        arguments: [String: NativeJSONValue],
+        resolved: NativeResolvedProjectPath
+    ) async throws -> NativeJSONValue {
+        do {
+            return try await executeWorker(
+                operation: operation,
+                arguments: arguments,
+                resolved: resolved
+            )
+        } catch let error as CodeReadWorkerProcessClientError {
+            guard case let .requestRejected(code, _) = error else { throw error }
+            switch code {
+            case "path_outside_project": throw NativeWorkspaceFilesystemError.unsafePath
+            case "root_mutation": throw NativeWorkspaceFilesystemError.rootMutation
+            case "not_found": throw NativeWorkspaceFilesystemError.notFound
+            case "not_directory": throw NativeWorkspaceFilesystemError.notDirectory
+            case "not_file": throw NativeWorkspaceFilesystemError.notFile
+            case "symbolic_link": throw NativeWorkspaceFilesystemError.symbolicLink
+            case "already_exists": throw NativeWorkspaceFilesystemError.alreadyExists
+            case "directory_not_empty": throw NativeWorkspaceFilesystemError.directoryNotEmpty
+            default: throw error
+            }
         }
     }
 }

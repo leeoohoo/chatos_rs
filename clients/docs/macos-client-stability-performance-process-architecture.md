@@ -2335,6 +2335,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：项目 Run 分析现在具备独立 PID 与硬故障边界，但一次 Worker 内部仍按确定性顺序扫描单个项目；这是单次结果排序与资源上限的一部分，不会串行化其他项目。项目文件写入/创建/删除及附件 workspace/vault 仍有 `Task.detached` 同步文件 I/O，后续里程碑继续迁移。
 
+### 12.103 第三十二完整里程碑：项目文件 mutation 一请求一 Worker 进程（2026-10-24）
+
+本里程碑关闭 12.102 保留的项目文件写入阻塞域。此前项目浏览器的 `writeFile`、`createFile`、`createDirectory` 和 `deleteEntry` 仍把同步文件系统调用包在 `Task.detached` 中；慢卷、目录递归删除或文件系统卡顿会占用 App 的 Swift cooperative executor，而且取消 Swift task 无法可靠中止已经进入内核的操作。现在这些 mutation 与项目读取、Run 分析共用一请求一 Code Read Worker 进程边界，不再在 App 进程执行。
+
+已实施：
+
+- Worker 协议新增 `project_write_file_v1`、`project_create_directory_v1` 和 `project_delete_entry_v1`。每次写入、创建或删除分别启动独立 Worker PID，沿用认证握手、60 秒硬超时、Swift task 取消、独立进程组终止和父进程死亡监视；不同项目及同项目中没有因果依赖的 mutation 不共享全局串行槽。
+- `NativeProjectFilesystemService` 删除 mutation 的 `Task.detached` 包装，生产链路只向 Worker 发送受控参数；`createOnly`、目标已存在、非递归删除非空目录和既有中文错误语义保持不变。测试可注入进程内引擎，正式客户端默认使用真实独立进程。
+- Worker mutation 使用 `openat`/`mkdirat`/`unlinkat`/`renameat` 和目录描述符逐段解析授权根内的相对路径；拒绝绝对路径、`..`、根目录 mutation 和符号链接父路径。项目根打开后重新核对 device/inode，递归删除在遍历与最终移除之间重新核对目录 inode，避免检查后替换把操作带出授权边界或删除竞争替换项。
+- 覆盖写先在同目录创建独占随机临时文件，完整写入并 `fsync` 后以 `renameat` 原子提交；覆盖既有普通文件时保留权限位，失败路径清理临时文件。create-only 使用 `O_EXCL|O_NOFOLLOW`，不会把并发出现的目标静默覆盖；递归删除按描述符遍历，符号链接本身可删除但不会跟随到项目外。
+- 新增引擎级 mutation、路径逃逸、根目录、symlink 和递归删除回归；服务级回归确认项目逻辑路径正确映射到 Worker；真实 Worker 回归跨认证进程边界创建、写入和删除。并发故障回归让一个 mutation Worker 停止响应，同时证明另一项目 mutation 可先完成，取消只终止挂起 Worker 所属进程组。
+
+验证：Debug 与原生 arm64 Release 的 Code Read Worker Engine、真实进程隔离、项目文件服务和项目 Run 回归联合矩阵各 17 项全部通过，Release 使用 `warnings-as-errors` 优化编译；构建证据脚本 25 项全部通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：强制终止 Worker 可能在原子提交前留下可识别的 `.chatos-write-*.tmp`，但不会破坏既有目标；后续需增加带年龄门禁的项目临时文件回收。附件 workspace/vault 的若干同步文件 I/O 仍使用 `Task.detached`，真实慢速/只读/空间耗尽移动卷和长期组合压力仍待完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
