@@ -2,6 +2,7 @@ import ChatOSAgentRuntime
 import ChatOSAgentWorkerProtocol
 import ChatOSProcessRuntime
 import Darwin
+import Dispatch
 import Foundation
 
 public enum AgentWorkerProcessClientError: LocalizedError, Equatable {
@@ -505,9 +506,25 @@ private final class AgentWorkerLineWriter: @unchecked Sendable {
 }
 
 private final class AgentWorkerProcessController: @unchecked Sendable {
+    /// `getline`, pipe writes and `waitUntilExit` are blocking syscalls. Running them in
+    /// `Task.detached` occupies Swift cooperative-executor threads for the lifetime of a Run and
+    /// can starve unrelated conversations when many Workers are alive. GCD owns these blocking
+    /// lanes and may compensate with kernel threads without consuming Swift executor capacity.
+    private static let protocolIOQueue = DispatchQueue(
+        label: "com.chatos.agent-worker.protocol-io",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+    private static let processWaitQueue = DispatchQueue(
+        label: "com.chatos.agent-worker.process-wait",
+        qos: .utility,
+        attributes: .concurrent
+    )
+
     private let process: Process
     private let reader: AgentWorkerLineReader
     private let writer: AgentWorkerLineWriter
+    private let errorReadHandle: FileHandle
     private let startSeconds: UInt64
     private let startMicroseconds: UInt64
     private let stateLock = NSLock()
@@ -556,29 +573,48 @@ private final class AgentWorkerProcessController: @unchecked Sendable {
         self.process = process
         self.reader = reader
         self.writer = writer
+        self.errorReadHandle = error.fileHandleForReading
         self.startSeconds = startSeconds
         self.startMicroseconds = startMicroseconds
-        Task.detached(priority: .utility) { [weak self] in
-            while let chunk = try? error.fileHandleForReading.read(upToCount: 4_096),
-                  !chunk.isEmpty {
-                self?.appendStderr(chunk)
+        self.errorReadHandle.readabilityHandler = { [weak self] handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            self?.appendStderr(chunk)
+        }
+    }
+
+    deinit {
+        errorReadHandle.readabilityHandler = nil
+        terminateIfRunning()
+    }
+
+    func send(_ message: AgentWorkerMessage) async throws {
+        let data = try AgentWorkerWireCodec.encodeLine(message)
+        try await withCheckedThrowingContinuation { continuation in
+            Self.protocolIOQueue.async { [writer] in
+                do {
+                    try writer.write(data)
+                    continuation.resume(returning: ())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
             }
         }
     }
 
-    deinit { terminateIfRunning() }
-
-    func send(_ message: AgentWorkerMessage) async throws {
-        let data = try AgentWorkerWireCodec.encodeLine(message)
-        try await Task.detached(priority: .userInitiated) { [writer] in
-            try writer.write(data)
-        }.value
-    }
-
     func receive() async throws -> AgentWorkerMessage {
-        let data = try await Task.detached(priority: .userInitiated) { [reader] in
-            try reader.next()
-        }.value
+        let data: Data = try await withCheckedThrowingContinuation { continuation in
+            Self.protocolIOQueue.async { [reader] in
+                do {
+                    continuation.resume(returning: try reader.next())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
         return try AgentWorkerWireCodec.decode(data)
     }
 
@@ -652,10 +688,12 @@ private final class AgentWorkerProcessController: @unchecked Sendable {
     }
 
     func waitForExit() async -> Int32 {
-        await Task.detached(priority: .utility) { [process] in
-            process.waitUntilExit()
-            return process.terminationStatus
-        }.value
+        await withCheckedContinuation { continuation in
+            Self.processWaitQueue.async { [process] in
+                process.waitUntilExit()
+                continuation.resume(returning: process.terminationStatus)
+            }
+        }
     }
 
     func stderrTail() -> String {

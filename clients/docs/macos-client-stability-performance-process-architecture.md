@@ -2170,6 +2170,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：连续排空只移除满批之间最长 30 秒的无工作依据等待，不提高并发、不突破 Governor，也不改变同 Agent/房间/lane 的因果串行约束；每条模型状态机仍运行在独立 `ChatOSAgentWorker` PID。持续到达的无限积压仍依赖 `Task.yield()` 与现有交互优先准入保持响应性；跨账户动态公平、内存压力/热状态调额及真实长期 soak 仍待后续验收。
 
+### 12.92 第二十一完整里程碑：Agent Worker 管道阻塞脱离 Swift cooperative executor（2026-10-24）
+
+本里程碑修复“一任务一 Worker”之后父进程仍可能被阻塞式管道读取拖慢的问题。此前每个活跃 Run 都用 `Task.detached` 包装 stdout `getline`，并另起一个 `Task.detached` 阻塞读取 stderr；它们虽然不在 MainActor，却会长期占用 Swift cooperative executor 线程。并行 Worker 增多或系统正处于重编译等 CPU 压力时，无关会话的异步任务仍可能因执行器线程饥饿而延迟，削弱独立 PID 带来的隔离效果。
+
+已实施：
+
+- Agent Worker 的协议 `getline`、管道写入和 `waitUntilExit` 全部迁到专用并发 GCD blocking-I/O 队列，通过 continuation 返回 async 调用方；不再用 Swift detached task 承载同步系统调用。
+- stderr 改为 `FileHandle.readabilityHandler` 事件驱动读取，EOF 时自动解除 handler；每个 Worker 不再为整个 Run 生命周期常驻一条阻塞 Swift executor 的 stderr task。
+- 消息边界、64 MiB 上限、reader/writer 锁、Run 超时、取消时 `SIGTERM`/`SIGKILL`、资源监控和每 Run 独立进程语义保持不变；这次只改变父进程等待 I/O 的执行域。
+
+验证：Debug 真进程矩阵 13 项全部通过；原生 arm64 Release 在 `warnings-as-errors` 下合并验证 82 项全部通过，包括真 Worker 进程 13 项、调度器/Governor 38 项和性能策略 31 项。真进程回归证明两个并行 Run 使用不同 PID、16 个独立 Run 产生 16 个不同 PID，挂起网络请求不阻塞另一会话，取消、SIGKILL、网络断开重连、账户切换、写工具中断和内存超限只影响所属 Run。构建证据脚本 25 项全部通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：GCD blocking-I/O 队列避免消耗 Swift cooperative executor 容量，但阻塞式 stdio 仍会占用系统线程；实际并发继续受自适应 Governor 限制，不能把 Worker 数量无限放大。未来若需要更高并发，应评估 `DispatchIO`/XPC 异步通道、跨进程动态资源观测和长期组合负载，而不是重新把同步读写塞回 Swift task。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
