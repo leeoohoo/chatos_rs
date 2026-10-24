@@ -84,7 +84,11 @@ extension AppModel {
                         )
                         // A full batch may leave more durable work behind; drain it without waiting
                         // for another event. An empty/partial batch returns to the wake stream.
-                        shouldContinue = results.count == batchSize
+                        shouldContinue = AgentRuntimePollingPolicy.shouldContinueDraining(
+                            processedCount: results.count,
+                            batchSize: batchSize
+                        )
+                        if shouldContinue { await Task.yield() }
                     } catch is CancellationError {
                         return
                     } catch {
@@ -100,6 +104,7 @@ extension AppModel {
                     self?.agentExecutorRecoveryTask = nil
                 }
             }
+            let batchSize = 64
             let changes = await service.changes(ownerUserID: ownerUserID)
             let wakeups = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) { continuation in
                 continuation.yield()
@@ -132,12 +137,24 @@ extension AppModel {
             }
             for await _ in wakeups {
                 guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else { return }
-                do {
-                    _ = try await scheduler.drainAccount(ownerUserID: ownerUserID)
-                } catch is CancellationError {
-                    return
-                } catch {
-                    guard !Task.isCancelled else { return }
+                var shouldContinue = true
+                while shouldContinue, !Task.isCancelled {
+                    do {
+                        let results = try await scheduler.drainAccount(
+                            ownerUserID: ownerUserID,
+                            maximumRuns: batchSize
+                        )
+                        shouldContinue = AgentRuntimePollingPolicy.shouldContinueDraining(
+                            processedCount: results.count,
+                            batchSize: batchSize
+                        )
+                        if shouldContinue { await Task.yield() }
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        shouldContinue = false
+                    }
                 }
             }
         }
@@ -319,6 +336,10 @@ enum AgentRuntimePollingPolicy {
     static let minimumArtifactStorageDelayMilliseconds: Int64 = 1_000
     static let maximumArtifactStorageDelayMilliseconds: Int64 = 300_000
     static let idleArtifactStorageDelayMilliseconds: Int64 = 1_800_000
+
+    static func shouldContinueDraining(processedCount: Int, batchSize: Int) -> Bool {
+        batchSize > 0 && processedCount >= batchSize
+    }
 
     static func heartbeatDelayMilliseconds(
         nextDueUnixMs: Int64?,

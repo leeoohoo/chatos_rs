@@ -191,6 +191,26 @@ struct PerformancePolicyTests {
         #expect(AgentRuntimePollingPolicy.shouldWakeExecutorRecovery(for: .roomUpdated))
         #expect(!AgentRuntimePollingPolicy.shouldWakeExecutorRecovery(for: .runUpdated))
         #expect(!AgentRuntimePollingPolicy.shouldWakeExecutorRecovery(for: .deliveryClaimed))
+        #expect(!AgentRuntimePollingPolicy.shouldContinueDraining(
+            processedCount: 0,
+            batchSize: 64
+        ))
+        #expect(!AgentRuntimePollingPolicy.shouldContinueDraining(
+            processedCount: 63,
+            batchSize: 64
+        ))
+        #expect(AgentRuntimePollingPolicy.shouldContinueDraining(
+            processedCount: 64,
+            batchSize: 64
+        ))
+        #expect(AgentRuntimePollingPolicy.shouldContinueDraining(
+            processedCount: 65,
+            batchSize: 64
+        ))
+        #expect(!AgentRuntimePollingPolicy.shouldContinueDraining(
+            processedCount: 1,
+            batchSize: 0
+        ))
         #expect(AgentRuntimePollingPolicy.heartbeatDelayMilliseconds(
             nextDueUnixMs: nil,
             nowUnixMs: 1_000
