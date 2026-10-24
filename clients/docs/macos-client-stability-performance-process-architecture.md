@@ -2287,6 +2287,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：确定性回归覆盖了本机 Git 命令、alias 子进程和本地仓库功能，但未访问公网 Git 服务器，也未注入真实 HTTPS transport 半断开、credential helper 卡死或大型 pack 解压压力。Plugin 权限检测、项目 Run 分析与若干文件 I/O 仍有 `Task.detached` 同步等待，后续里程碑继续按阻塞域和每操作取消边界清理。
 
+### 12.100 第二十九完整里程碑：Plugin 权限检测并发阻塞域与取消隔离（2026-10-24）
+
+本里程碑治理 Computer Use Plugin 的权限诊断与授权入口。此前 `check-permissions` 和 `doctor` 虽已使用独立进程组、超时及有界输出，却把完整同步生命周期放在 `Task.detached` 上；多个插件或窗口并发刷新权限时仍会长期占用 Swift cooperative executor。调用任务取消也不会终止正在运行的诊断，最长仍需等待 15/35 秒或其自身退出。
+
+已实施：
+
+- 权限诊断的 sandbox 准备、进程启动、同步退出等待和管道尾读迁入专用 concurrent GCD blocking-work 队列。每次检测拥有独立 lane、controller、pipe 和诊断进程组，不与其他插件任务共享串行槽。
+- Swift task 取消只向所属权限诊断进程组发送 `SIGTERM`，2 秒后仍存活才升级 `SIGKILL`；主诊断退出后仍强制收口同组后台子孙。registration token 防止延迟强杀误伤其他或后续检测。
+- controller 在 spawn 前后都检查取消状态，覆盖“排队时已取消”和“进程刚注册即取消”的竞态；异步入口在 continuation 返回后再次检查 Task 取消，统一向上返回 `CancellationError`。
+- 原有 15 秒状态检查、35 秒授权请求、1 MiB stdout、64 KiB stderr、sandbox 最小权限和超时清组语义保持不变。
+- 新增真实 sandbox 子进程回归：一个忽略 TERM 并派生 `sleep` 子进程的权限检测被取消时，另一检测仍在 2 秒门禁内独立完成；取消后的 launcher/child PID 均被回收。全 Plugin Runtime 79 项并行矩阵同时覆盖大输出、超时、权限缓存、stdio 生命周期、sandbox 与视觉会话。
+
+验证：Debug 与原生 arm64 Release 的 `NativePluginRuntimeTests` 79 项全部通过，Release 使用 `warnings-as-errors` 优化编译；构建证据脚本 25 项全部通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：本批验证了本机 sandbox fixture 下的并发、取消、超时与子孙清理，没有实际触发 macOS 系统权限弹窗，也未替用户更改隐私设置。项目 Run 分析、项目文件系统和附件 workspace/vault 的若干同步文件 I/O 仍使用 `Task.detached`，后续继续清理 cooperative executor 阻塞域。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

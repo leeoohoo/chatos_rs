@@ -146,6 +146,99 @@ extension NativePluginRuntimeTests {
         #expect(!processExists(childPID))
     }
 
+    @Test("plugin permission diagnostics run concurrently and cancellation stays operation-scoped")
+    func pluginPermissionDiagnosticsCancellationIsScoped() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PluginPermissionIsolation-\(UUID().uuidString)", isDirectory: true)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launcher = bin.appendingPathComponent("open-computer-use")
+        try Data("""
+        #!/bin/sh
+        # check-permissions
+        if [ "$1" = "long" ]; then
+          trap '' TERM
+          printf '%s' "$$" > "$CHATOS_PLUGIN_DATA_DIR/launcher.pid"
+          sleep 30 &
+          printf '%s' "$!" > "$CHATOS_PLUGIN_DATA_DIR/child.pid"
+          wait
+        else
+          sleep 1
+          printf '%s' '{"permissions":[]}'
+        fi
+        """.utf8).write(to: launcher)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: launcher.path
+        )
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data(#"{"schemaVersion":3,"name":"open-computer-use","version":"1.0.0"}"#.utf8)
+        )
+        let record = try nativePluginTestRecord(
+            installationURL: root,
+            pluginID: "plugin-permission-isolation"
+        )
+        let diagnostic = NativePluginPermissionInspector.diagnosticDirectory(record: record)
+        try? FileManager.default.removeItem(at: diagnostic)
+        defer { try? FileManager.default.removeItem(at: diagnostic) }
+        let launcherPIDURL = diagnostic.appendingPathComponent("launcher.pid")
+        let childPIDURL = diagnostic.appendingPathComponent("child.pid")
+
+        let longRunning = Task {
+            try await NativePluginPermissionInspector.runLauncher(
+                record: record,
+                manifest: manifest,
+                command: "long",
+                timeout: 30
+            )
+        }
+        // The full Plugin suite starts many sandboxed processes in parallel. Allow the fixture
+        // enough time to reach its ready marker without relaxing the concurrency assertion below.
+        for _ in 0..<500
+            where !FileManager.default.fileExists(atPath: launcherPIDURL.path)
+                || !FileManager.default.fileExists(atPath: childPIDURL.path) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let launcherPIDText = try String(contentsOf: launcherPIDURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let childPIDText = try String(contentsOf: childPIDURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let launcherPID = try #require(pid_t(launcherPIDText))
+        let childPID = try #require(pid_t(childPIDText))
+
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        let survivor = Task {
+            try await NativePluginPermissionInspector.runLauncher(
+                record: record,
+                manifest: manifest,
+                command: "survivor",
+                timeout: 5
+            )
+        }
+        let canceller = Task {
+            try await Task.sleep(for: .milliseconds(200))
+            longRunning.cancel()
+        }
+        let survivorOutput = try await survivor.value
+        #expect(String(decoding: survivorOutput, as: UTF8.self) == #"{"permissions":[]}"#)
+        #expect(clock.now - startedAt < .seconds(2))
+        _ = try await canceller.value
+        do {
+            _ = try await longRunning.value
+            Issue.record("expected the owned permission diagnostic process group to be cancelled")
+        } catch is CancellationError {
+            // Expected: the concurrent survivor above must remain unaffected.
+        }
+        for _ in 0..<100 where processExists(launcherPID) || processExists(childPID) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(!processExists(launcherPID))
+        #expect(!processExists(childPID))
+    }
+
     @Test("plugin processes receive a minimal environment without host secrets")
     func pluginProcessEnvironmentDropsHostSecrets() {
         let environment = NativePluginProcessEnvironment.make(

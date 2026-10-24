@@ -1,9 +1,16 @@
 import ChatOSCore
 import ChatOSProcessRuntime
 import Darwin
+import Dispatch
 import Foundation
 
 enum NativePluginPermissionInspector {
+    private static let blockingWorkQueue = DispatchQueue(
+        label: "com.chatos.plugin-permission.blocking-work",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
     static func diagnosticDirectory(record: NativeInstalledPluginRecord) -> URL {
         let identity = NativePluginHash.sha256(Data(
             "\(record.pluginID):\(record.releaseID):\(record.artifactSHA256)".utf8
@@ -128,20 +135,40 @@ enum NativePluginPermissionInspector {
         )
     }
 
-    private static func runLauncher(
+    static func runLauncher(
         record: NativeInstalledPluginRecord,
         manifest: NativePluginManifest,
         command: String,
         timeout: TimeInterval
     ) async throws -> Data {
-        return try await Task.detached(priority: .userInitiated) {
-            try runLauncherBlocking(
-                record: record,
-                manifest: manifest,
-                command: command,
-                timeout: timeout
-            )
-        }.value
+        let controller = NativePluginPermissionProcessController()
+        return try await withTaskCancellationHandler {
+            do {
+                let data: Data = try await withCheckedThrowingContinuation { continuation in
+                    blockingWorkQueue.async {
+                        do {
+                            try controller.throwIfCancelled()
+                            continuation.resume(returning: try runLauncherBlocking(
+                                record: record,
+                                manifest: manifest,
+                                command: command,
+                                timeout: timeout,
+                                controller: controller
+                            ))
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
+                try Task.checkCancellation()
+                return data
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                throw error
+            }
+        } onCancel: {
+            controller.cancel()
+        }
     }
 
     static func runLauncherBlocking(
@@ -150,8 +177,10 @@ enum NativePluginPermissionInspector {
         command: String,
         timeout: TimeInterval,
         diagnosticDirectory: URL? = nil,
-        spawnObserver: ((pid_t) -> Void)? = nil
+        spawnObserver: ((pid_t) -> Void)? = nil,
+        controller: NativePluginPermissionProcessController = .init()
     ) throws -> Data {
+        try controller.throwIfCancelled()
         let installationPath = record.installationPath
         let launcher = URL(fileURLWithPath: installationPath, isDirectory: true)
             .appendingPathComponent("bin/open-computer-use")
@@ -232,6 +261,8 @@ enum NativePluginPermissionInspector {
                 "Plugin 权限检测启动失败：\(String(cString: strerror(spawnResult)))"
             )
         }
+        let registration = controller.register(processID)
+        defer { controller.clear(processID, registration: registration) }
         spawnObserver?(processID)
         let exitSignal = NativeProcessExitSignal.reap(processID: processID)
         var exitCode = exitSignal.wait(timeout: timeout)
@@ -260,6 +291,7 @@ enum NativePluginPermissionInspector {
         errorCapture.append(errors.fileHandleForReading.readDataToEndOfFile())
         let outputSnapshot = outputCapture.snapshot
         let errorSnapshot = errorCapture.snapshot
+        if controller.isCancelled { throw CancellationError() }
         if timedOut {
             throw NativeConnectorError.pluginInstallation("Plugin 权限检测超时")
         }
@@ -343,6 +375,76 @@ enum NativePluginPermissionInspector {
         default:
             (permissionID, "插件安装后提供的功能能力，无需在系统设置中开启。", nil)
         }
+    }
+}
+
+final class NativePluginPermissionProcessController: @unchecked Sendable {
+    private static let forceKillQueue = DispatchQueue(
+        label: "com.chatos.plugin-permission.process-termination",
+        qos: .utility,
+        attributes: .concurrent
+    )
+
+    private let lock = NSLock()
+    private var cancellationRequested = false
+    private var activeProcessID: pid_t?
+    private var activeRegistration: UUID?
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancellationRequested
+    }
+
+    func throwIfCancelled() throws {
+        if isCancelled { throw CancellationError() }
+    }
+
+    func register(_ processID: pid_t) -> UUID {
+        let registration = UUID()
+        lock.lock()
+        activeProcessID = processID
+        activeRegistration = registration
+        let cancelled = cancellationRequested
+        lock.unlock()
+        if cancelled {
+            requestTermination(of: processID, registration: registration)
+        }
+        return registration
+    }
+
+    func clear(_ processID: pid_t, registration: UUID) {
+        lock.lock()
+        if activeProcessID == processID, activeRegistration == registration {
+            activeProcessID = nil
+            activeRegistration = nil
+        }
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        cancellationRequested = true
+        let processID = activeProcessID
+        let registration = activeRegistration
+        lock.unlock()
+        if let processID, let registration {
+            requestTermination(of: processID, registration: registration)
+        }
+    }
+
+    private func requestTermination(of processID: pid_t, registration: UUID) {
+        _ = chatos_signal_process_group(processID, SIGTERM)
+        Self.forceKillQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.owns(processID, registration: registration) else { return }
+            _ = chatos_signal_process_group(processID, SIGKILL)
+        }
+    }
+
+    private func owns(_ processID: pid_t, registration: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return activeProcessID == processID && activeRegistration == registration
     }
 }
 
