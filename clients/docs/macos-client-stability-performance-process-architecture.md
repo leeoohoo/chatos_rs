@@ -2184,6 +2184,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：GCD blocking-I/O 队列避免消耗 Swift cooperative executor 容量，但阻塞式 stdio 仍会占用系统线程；实际并发继续受自适应 Governor 限制，不能把 Worker 数量无限放大。未来若需要更高并发，应评估 `DispatchIO`/XPC 异步通道、跨进程动态资源观测和长期组合负载，而不是重新把同步读写塞回 Swift task。
 
+### 12.93 第二十二完整里程碑：Media 与 Code Read Worker 生命周期阻塞脱离 Swift executor（2026-10-24）
+
+本里程碑横向清理另外两条“一任务一进程”链路的同类父进程阻塞。Media Worker 与 Code Read Worker 原先都把完整的同步生命周期——校验并启动 `Process`、stdio 握手/请求/响应以及退出等待——包进 `Task.detached`。独立子进程已经隔离了解码、视频取帧和代码扫描的崩溃/内存风险，但父进程仍会为每个活跃 Worker 占住一条 Swift cooperative executor 线程，并行预览或代码读取可能间接拖慢 UI 与 Agent 异步任务。
+
+已实施：
+
+- `MediaWorkerProcessClient` 和 `CodeReadWorkerProcessClient` 分别增加专用并发 GCD blocking-work 队列；同步 `Process`/`FileHandle` 生命周期经 checked continuation 返回 async 调用方，不再由 detached Swift task 承载。
+- 每个请求仍创建独立 Worker 进程，媒体归一化、视频尾帧和代码读取不会合并成共享常驻单槽；不同请求可在现有资源额度内并行。
+- 外层结构化超时与取消 handler 保持不变：取消或超时仍只向所属 Worker/进程组发送 `SIGTERM`，宽限后 `SIGKILL`；文件身份、协议握手、输出摘要和原子 artifact 校验均未放宽。
+
+验证：Debug 真进程矩阵 16 项全部通过，包括 Media Worker 14 项和 Code Read Worker 2 项；原生 arm64 Release 在 `warnings-as-errors` 下合并验证 98 项全部通过，包括 Media 14、Code Read 2、Agent Worker 13、调度器/Governor 38 和性能策略 31。回归证明挂起或失败的代码读取不阻塞独立 Worker，媒体失败/取消/超时只影响所属进程，真实图片归一化、视频取帧、项目/Pet/头像预览及父进程死亡清理均正常。构建证据脚本 25 项全部通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：本批治理的是 Worker 父进程等待域，不降低解码/扫描本身的总 CPU、内存或磁盘成本；GCD 上的同步生命周期仍占用系统线程，并发继续受现有 Media 重任务额度及上游调度策略约束。Media 与 Code Read 尚未纳入完整跨进程动态 Governor，真实 UI + Agent + Media + Host 组合压力、热状态/低电量迟滞和长期 soak 仍待完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

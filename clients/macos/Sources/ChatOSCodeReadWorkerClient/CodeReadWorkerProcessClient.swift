@@ -1,5 +1,6 @@
 import ChatOSCodeReadWorkerProtocol
 import Darwin
+import Dispatch
 import Foundation
 
 public protocol CodeReadWorkerExecuting: Sendable {
@@ -38,6 +39,15 @@ public enum CodeReadWorkerProcessClientError: LocalizedError, Equatable {
 public struct CodeReadWorkerProcessClient: CodeReadWorkerExecuting {
     public static let shared = CodeReadWorkerProcessClient()
 
+    /// The helper lifecycle uses synchronous Process/FileHandle calls. Keep those blocking waits
+    /// off Swift's cooperative executor so several independent code reads cannot starve unrelated
+    /// async work in the App process.
+    private static let blockingWorkQueue = DispatchQueue(
+        label: "com.chatos.code-read-worker.blocking-io",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
     public let executableURL: URL?
     public let timeout: TimeInterval
 
@@ -66,7 +76,7 @@ public struct CodeReadWorkerProcessClient: CodeReadWorkerExecuting {
                 try await withThrowingTaskGroup(of: CodeReadWorkerJSONValue.self) { group in
                     group.addTask {
                         try await withTaskCancellationHandler {
-                            try await Task.detached(priority: .userInitiated) {
+                            try await Self.performBlocking {
                                 try controller.run(
                                     executableURL: resolvedExecutable,
                                     operation: operation,
@@ -77,7 +87,7 @@ public struct CodeReadWorkerProcessClient: CodeReadWorkerExecuting {
                                     ripgrepURL: ripgrepURL,
                                     timeout: timeout
                                 )
-                            }.value
+                            }
                         } onCancel: {
                             controller.terminate()
                         }
@@ -128,6 +138,20 @@ public struct CodeReadWorkerProcessClient: CodeReadWorkerExecuting {
         }
         #endif
         throw CodeReadWorkerProcessClientError.unavailable
+    }
+
+    private static func performBlocking(
+        _ operation: @escaping @Sendable () throws -> CodeReadWorkerJSONValue
+    ) async throws -> CodeReadWorkerJSONValue {
+        try await withCheckedThrowingContinuation { continuation in
+            blockingWorkQueue.async {
+                do {
+                    continuation.resume(returning: try operation())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 }
 

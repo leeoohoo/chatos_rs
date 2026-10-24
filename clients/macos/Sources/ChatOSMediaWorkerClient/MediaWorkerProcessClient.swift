@@ -1,6 +1,7 @@
 import ChatOSMediaWorkerProtocol
 import CryptoKit
 import Darwin
+import Dispatch
 import Foundation
 
 public protocol MediaWorkerImageNormalizing: Sendable {
@@ -76,6 +77,14 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
 
     private static let accountSessionID = UUID().uuidString.lowercased()
     private static let sessionEpoch = UUID().uuidString.lowercased()
+    /// Media helpers use synchronous Process/FileHandle calls. GCD owns those blocking lifecycles
+    /// so concurrent decodes do not occupy Swift cooperative-executor threads needed by UI and
+    /// other independent tasks.
+    private static let blockingWorkQueue = DispatchQueue(
+        label: "com.chatos.media-worker.blocking-io",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
     public let executableURL: URL?
     public let timeout: TimeInterval
 
@@ -159,7 +168,7 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
                 try await withThrowingTaskGroup(of: MediaWorkerImageDescriptor.self) { group in
                     group.addTask {
                         try await withTaskCancellationHandler {
-                            try await Task.detached(priority: .userInitiated) {
+                            try await Self.performBlocking {
                                 try controller.run(
                                     executableURL: resolvedExecutable,
                                     sourceURL: sourceURL,
@@ -175,7 +184,7 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
                                     accountSessionID: Self.accountSessionID,
                                     sessionEpoch: Self.sessionEpoch
                                 )
-                            }.value
+                            }
                         } onCancel: {
                             controller.terminate()
                         }
@@ -232,7 +241,7 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
                 try await withThrowingTaskGroup(of: MediaWorkerImageDescriptor.self) { group in
                     group.addTask {
                         try await withTaskCancellationHandler {
-                            try await Task.detached(priority: .userInitiated) {
+                            try await Self.performBlocking {
                                 try controller.run(
                                     executableURL: resolvedExecutable,
                                     sourceURL: sourceURL,
@@ -248,7 +257,7 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
                                     accountSessionID: Self.accountSessionID,
                                     sessionEpoch: Self.sessionEpoch
                                 )
-                            }.value
+                            }
                         } onCancel: {
                             controller.terminate()
                         }
@@ -303,6 +312,20 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
         }
         #endif
         throw MediaWorkerProcessClientError.unavailable
+    }
+
+    private static func performBlocking(
+        _ operation: @escaping @Sendable () throws -> MediaWorkerImageDescriptor
+    ) async throws -> MediaWorkerImageDescriptor {
+        try await withCheckedThrowingContinuation { continuation in
+            blockingWorkQueue.async {
+                do {
+                    continuation.resume(returning: try operation())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 }
 
