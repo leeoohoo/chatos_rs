@@ -34,6 +34,18 @@ final class CodeReadWorkerEngineTests: XCTestCase {
             try searched.array("results").first?.object.string("path"),
             "Sources/Station.swift"
         )
+
+        let presented = try fixture.execute(
+            "open_file_in_pet",
+            [
+                "path": .string("Sources/Station.swift"),
+                "line": .number(2),
+                "mode": .string("edit"),
+            ]
+        ).object
+        XCTAssertEqual(try presented.string("relative_path"), "Sources/Station.swift")
+        XCTAssertEqual(try presented.number("line"), 2)
+        XCTAssertEqual(try presented.string("mode"), "edit")
     }
 
     func testRejectsSymbolicLinkEscapeAndChangedRootIdentity() throws {

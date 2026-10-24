@@ -421,12 +421,6 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                 )
                 return .init(native: result)
             }
-            let tool = NativeMCPCodeReadTools(
-                workspace: context.executionWorkspace,
-                projectRoot: context.executionRootURL,
-                requestCWD: nil,
-                defaultToolRoot: nil
-            )
             let result: NativeJSONValue
             if NativeMCPCodeWriteStore.toolNames.contains(invocation.toolName) {
                 if invocation.toolName == "commit_edit_session" {
@@ -484,20 +478,17 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                     )
                 }
             } else {
-                if NativeMCPCodeReadTools.workerToolNames.contains(invocation.toolName) {
-                    result = try await NativeCodeReadWorkerBridge.execute(
-                        name: invocation.toolName,
-                        arguments: nativeArguments,
-                        projectRoot: context.executionRootURL,
-                        requestCWD: nil,
-                        defaultToolRoot: nil,
-                        client: codeReadWorker
-                    )
-                } else {
-                    result = try await Task.detached {
-                        try tool.call(name: invocation.toolName, arguments: nativeArguments)
-                    }.value
+                guard NativeMCPCodeReadTools.workerToolNames.contains(invocation.toolName) else {
+                    throw NativeLocalAgentPlatformToolError.projectToolFailed
                 }
+                result = try await NativeCodeReadWorkerBridge.execute(
+                    name: invocation.toolName,
+                    arguments: nativeArguments,
+                    projectRoot: context.executionRootURL,
+                    requestCWD: nil,
+                    defaultToolRoot: nil,
+                    client: codeReadWorker
+                )
             }
             return .init(native: result)
         } catch let error as NativeLocalAgentPlatformToolError {

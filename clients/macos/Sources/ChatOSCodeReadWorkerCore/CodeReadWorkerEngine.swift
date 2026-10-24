@@ -135,6 +135,8 @@ public enum ChatOSCodeReadWorkerEngine {
                 mapped["pattern"] = .string(query)
             }
             return try context.searchText(mapped)
+        case "open_file_in_pet":
+            return try context.resolvePetFile(request.arguments)
         case "project_list_v1":
             return try context.projectList(request.arguments)
         case "project_search_entries_v1":
@@ -263,6 +265,43 @@ private struct Context {
             "end_line": .number(Double(end)),
             "total_lines": .number(Double(lines.count)),
             "content": .string(selected.joined(separator: "\n")),
+        ])
+    }
+
+    func resolvePetFile(
+        _ arguments: [String: CodeReadWorkerJSONValue]
+    ) throws -> CodeReadWorkerJSONValue {
+        try checkDeadline()
+        let path = try normalizedToolPath(requiredString(arguments, "path"))
+        let url = try resolveExisting(path)
+        let descriptor = url.path.withCString {
+            Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else { throw CodeReadWorkerCoreError.notFile }
+        defer { _ = Darwin.close(descriptor) }
+        var status = stat()
+        guard Darwin.fstat(descriptor, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFREG else {
+            throw CodeReadWorkerCoreError.notFile
+        }
+        let mode = arguments.string("mode") ?? "preview"
+        guard mode == "preview" || mode == "edit" else {
+            throw CodeReadWorkerCoreError.invalidRequest("mode 必须是 preview 或 edit")
+        }
+        let line: CodeReadWorkerJSONValue
+        if let rawLine = arguments.number("line") {
+            guard rawLine.isFinite, rawLine >= 1, rawLine.rounded() == rawLine,
+                  rawLine <= 9_007_199_254_740_991 else {
+                throw CodeReadWorkerCoreError.invalidRequest("line 必须是正整数")
+            }
+            line = .number(rawLine)
+        } else {
+            line = .null
+        }
+        return .object([
+            "relative_path": .string(relativePath(url)),
+            "line": line,
+            "mode": .string(mode),
         ])
     }
 

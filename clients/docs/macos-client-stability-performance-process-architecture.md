@@ -2381,6 +2381,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：目录创建成功后项目 registry 写入仍是后续独立提交；若 registry 提交失败，会留下一个空的已认领目录，当前不会自动删除，以免在提交结果不明时误删并发写入。需要后续通过明确 ownership 标记和年龄门禁回收这类空目录，不能用无条件递归删除补偿。附件发送授权、附件 UI 预览、Artifact stage/restore 等同步文件路径仍待迁移。
 
+### 12.106 第三十五完整里程碑：Pet 文件打开校验一请求一 Worker 进程（2026-10-24）
+
+本里程碑关闭项目读取工具最后一条 App 内文件系统旁路。`open_file_in_pet` 虽然只在 Human 明确要求打开文件时使用，但此前两个执行入口都会用 `Task.detached` 在 App 进程解析路径、访问文件元数据并发布 UI 通知；慢卷或异常路径仍可能占用 cooperative executor。现在所有项目读取工具都统一经过 Code Read Worker，不再保留非 Worker fallback。
+
+已实施：
+
+- Code Read Worker 协议正式纳入 `open_file_in_pet`。每次调用启动独立 Worker PID，在已认证的项目根 device/inode 边界内规范化 cwd/default root/相对路径，拒绝越界路径，打开并确认目标为普通文件，同时严格验证 `line` 的精确正整数范围以及 `preview`/`edit` mode。
+- Worker 只返回经过验证的相对路径和小型参数，不执行 UI。`NativeCodeReadWorkerBridge` 再次限制返回路径必须位于当前项目根内，恢复为绝对路径后切到 Main Actor 发布 `chatOSPetOpenFileRequested`；既保持原有工具结果形状，也不让子进程直接接触 App 状态。
+- Native Agent builtin provider 与 Local Agent project tool executor 删除旧 `Task.detached` 分支。协议未列出的项目读取工具现在失败关闭，不能因为未来新增定义而静默回退到 App 内同步文件 I/O；现有 read/list/search/open 七个工具全部在 Worker 白名单中。
+- 新增 Engine 级文件解析、真实 Worker 跨认证边界、Worker→Main Actor UI 桥和既有工具目录覆盖回归。真实进程仍是一请求一 PID，因此某个打开文件请求挂起、取消或失败不会复用进程并阻塞其他项目/会话任务。
+
+验证：Debug 与原生 arm64 Release 的 Code Read Worker Engine、真实进程隔离、项目读取、Builtin/Plugin provider 和平台工具联合矩阵各 68 项全部通过，Release 使用 `warnings-as-errors` 优化编译；构建证据工具 25 项全部通过，两个打包脚本通过 zsh 语法校验。静态复核确认两个生产入口均已无 `Task.detached`。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：Worker 校验完成到 UI 真正打开文件之间仍存在文件被同一授权项目内替换的时间窗；当前返回路径会在 App 再次 canonicalize 并拒绝项目外目标，但 Pet 文件台尚未消费 device/inode 身份。若后续允许自动执行或编辑，必须把身份传到最终打开点并再次核对。附件发送授权、附件历史预览、Artifact stage/restore、其他 UI 文件加载器和临时文件回收仍待继续审计。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

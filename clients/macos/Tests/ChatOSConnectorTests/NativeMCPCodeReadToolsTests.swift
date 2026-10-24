@@ -118,6 +118,44 @@ struct NativeMCPCodeReadToolsTests {
     }
 
     @Test
+    func workerBridgePresentsValidatedProjectFileOnMainActor() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let file = fixture.root.appendingPathComponent("worker-preview.png")
+        try Data([0, 1, 2, 3]).write(to: file)
+        let received = PetPresentationNotificationBox()
+        let token = NotificationCenter.default.addObserver(
+            forName: .chatOSPetOpenFileRequested,
+            object: nil,
+            queue: nil
+        ) { notification in
+            received.store(notification.object as? PetFilePresentationRequest)
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        let result = try await NativeCodeReadWorkerBridge.execute(
+            name: "open_file_in_pet",
+            arguments: [
+                "path": .string("worker-preview.png"),
+                "line": .number(7),
+                "mode": .string("edit"),
+            ],
+            projectRoot: fixture.root,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            client: ConnectorCoreCodeReadWorker()
+        ).object()
+
+        #expect(result.bool("presented") == true)
+        #expect(result.string("path") == file.path)
+        #expect(received.value == PetFilePresentationRequest(
+            path: file.path,
+            targetLine: 7,
+            prefersEditing: true
+        ))
+    }
+
+    @Test
     func defaultToolRootScopesRelativeToolPaths() throws {
         let fixture = try Fixture()
         defer { fixture.dispose() }

@@ -18,7 +18,7 @@ struct NativeMCPCodeReadTools: Sendable {
 
     static let workerToolNames: Set<String> = [
         "read_file_raw", "read_file_range", "list_dir", "search_text",
-        "read_file", "search_files",
+        "read_file", "search_files", "open_file_in_pet",
     ]
 
     static var toolDefinitions: [NativeJSONValue] {

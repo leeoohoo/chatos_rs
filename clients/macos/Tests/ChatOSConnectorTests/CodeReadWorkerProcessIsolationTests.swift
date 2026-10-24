@@ -49,6 +49,27 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         }
         XCTAssertEqual(content, "isolated-content\n")
 
+        let presented = try await CodeReadWorkerProcessClient(
+            executableURL: executable,
+            timeout: 5
+        ).execute(
+            operation: "open_file_in_pet",
+            arguments: [
+                "path": .string("README.md"),
+                "line": .number(1),
+                "mode": .string("preview"),
+            ],
+            projectRoot: fixture.root,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            ripgrepURL: nil
+        )
+        guard case let .object(presentationPayload) = presented,
+              case let .string(relativePath)? = presentationPayload["relative_path"] else {
+            return XCTFail("real worker returned an invalid presentation payload")
+        }
+        XCTAssertEqual(relativePath, "README.md")
+
         let listing = try await CodeReadWorkerProcessClient(
             executableURL: executable,
             timeout: 5
@@ -425,7 +446,7 @@ private struct WorkerFixture {
         let script = """
         #!/bin/zsh
         IFS= read -r hello
-        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":1,"worker_build_version":"code-read-worker-v1","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files","project_list_v1","project_search_entries_v1","project_run_analyze_v1","project_write_file_v1","project_create_directory_v1","project_delete_entry_v1","attachment_resolve_v1","attachment_verify_file_v1","attachment_materialize_v1"],"maximum_inline_bytes":16777216,"error":null}'
+        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":1,"worker_build_version":"code-read-worker-v1","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files","open_file_in_pet","project_list_v1","project_search_entries_v1","project_run_analyze_v1","project_write_file_v1","project_create_directory_v1","project_delete_entry_v1","attachment_resolve_v1","attachment_verify_file_v1","attachment_materialize_v1"],"maximum_inline_bytes":16777216,"error":null}'
         IFS= read -r request
         \(behavior)
         """
