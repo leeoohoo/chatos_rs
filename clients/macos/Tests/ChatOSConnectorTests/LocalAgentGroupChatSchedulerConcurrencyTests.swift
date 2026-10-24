@@ -433,6 +433,142 @@ extension LocalAgentGroupChatSchedulerTests {
         XCTAssertEqual(maximumConcurrentCalls, 2)
     }
 
+    func testAccountPassStartsFreshDeliveryWhileInterruptedRunIsStillRecovering() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-recovery-fresh-fairness-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+
+        let recoveringAgent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "恢复中的 Agent",
+                rolePrompt: "恢复中断任务。",
+                modelConfigID: "mixed-account-model"
+            )
+        )
+        let recoveringRoom = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: recoveringAgent.id
+        )
+        let recoveringPost = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: recoveringRoom.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "恢复这条中断消息"
+            ),
+            limits: .init()
+        )
+        let recoveringDeliveryValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            roomID: recoveringRoom.id,
+            agentID: recoveringAgent.id,
+            nowUnixMs: 100
+        )
+        let recoveringDelivery = try XCTUnwrap(recoveringDeliveryValue)
+        let runID = UUID()
+        let context = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: recoveringRoom.projectID,
+            roomID: recoveringRoom.id,
+            agentID: recoveringAgent.id,
+            deliveryID: recoveringDelivery.id,
+            triggerMessageID: recoveringDelivery.messageID,
+            rootMessageID: recoveringDelivery.rootMessageID,
+            runID: runID.uuidString.lowercased(),
+            hopCount: recoveringDelivery.hopCount
+        )
+        var checkpoint = AgentRunCheckpoint(
+            scope: LocalAgentGroupChatRun.runtimeScope(for: context),
+            messages: [
+                .init(role: .system, content: "system"),
+                .init(role: .user, content: recoveringPost.message.content),
+            ]
+        )
+        checkpoint.id = runID
+        checkpoint.status = .ready
+        try await store.saveRun(try LocalAgentGroupChatRun(
+            id: runID,
+            context: context,
+            modelConfigID: recoveringAgent.draft.modelConfigID,
+            policy: .init(),
+            checkpoint: checkpoint,
+            createdAtUnixMs: 100,
+            updatedAtUnixMs: 100
+        ))
+
+        let freshAgent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "新任务 Agent",
+                rolePrompt: "处理新的后台任务。",
+                modelConfigID: "mixed-account-model"
+            )
+        )
+        let freshRoom = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: freshAgent.id
+        )
+        let freshPost = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: freshRoom.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "不要等待恢复任务，立即处理"
+            ),
+            limits: .init()
+        )
+        let freshDelivery = try XCTUnwrap(freshPost.deliveries.first)
+
+        let probe = RecoveryRollingWindowProbe()
+        let settingsSuite = "local-agent-recovery-fresh-fairness-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: SchedulerRollingWindowServices(
+                probe: probe,
+                expectedConfigID: "mixed-account-model"
+            ),
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 2,
+            now: { 1_000 }
+        )
+
+        let drainTask = Task {
+            try await scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 2)
+        }
+        await probe.waitUntilFirstStarts()
+
+        var secondStarted = false
+        for _ in 0..<100 {
+            if await probe.hasSecondStarted() {
+                secondStarted = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(
+            secondStarted,
+            "fresh background work must start before an unrelated interrupted run finishes recovery"
+        )
+        await probe.releaseFirst()
+        let results = try await drainTask.value
+
+        XCTAssertEqual(
+            Set(results.map(\.deliveryID)),
+            Set([recoveringDelivery.id, freshDelivery.id])
+        )
+        XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })
+        let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
+        XCTAssertEqual(maximumConcurrentCalls, 2)
+    }
+
     func testSchedulerRunsOneAgentsTodosAcrossIndependentTeamsConcurrently() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-cross-team-executors-\(UUID().uuidString)")

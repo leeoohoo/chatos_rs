@@ -122,6 +122,72 @@ extension LocalAgentGroupChatScheduler {
         guard try await store.hasOutstandingDeliveries(ownerUserID: ownerUserID) else {
             return []
         }
+        let hasInterruptedRuns = try await store.listInterruptedRuns(
+            ownerUserID: ownerUserID,
+            limit: 1
+        ).isEmpty == false
+        let hasFreshDeliveries = try await store.hasPendingDeliveries(ownerUserID: ownerUserID)
+        if maximumRuns > 1, hasInterruptedRuns, hasFreshDeliveries {
+            let recoveryBudget = max(1, maximumRuns / 2)
+            let freshBudget = maximumRuns - recoveryBudget
+            var recovered: [DeliveryAttemptReceipt] = []
+            var fresh: [DeliveryAttemptReceipt] = []
+            var firstError: Error?
+            await withTaskGroup(of: AccountPassCompletion.self) { group in
+                group.addTask {
+                    do {
+                        return .recovered(try await recoverInterruptedRuns(
+                            store: store,
+                            ownerUserID: ownerUserID,
+                            maximumRuns: recoveryBudget
+                        ))
+                    } catch {
+                        return .failed(error)
+                    }
+                }
+                group.addTask {
+                    do {
+                        return .fresh(try await drainAccountQueue(
+                            store: store,
+                            ownerUserID: ownerUserID,
+                            maximumRuns: freshBudget,
+                            lane: nil
+                        ))
+                    } catch {
+                        return .failed(error)
+                    }
+                }
+                for await completion in group {
+                    switch completion {
+                    case let .recovered(receipts):
+                        recovered = receipts
+                    case let .fresh(receipts):
+                        fresh = receipts
+                    case let .failed(error):
+                        if firstError == nil { firstError = error }
+                    }
+                }
+            }
+            if let firstError { throw firstError }
+
+            var results = recovered + fresh
+            if results.count < maximumRuns {
+                results.append(contentsOf: try await recoverInterruptedRuns(
+                    store: store,
+                    ownerUserID: ownerUserID,
+                    maximumRuns: maximumRuns - results.count
+                ))
+            }
+            if results.count < maximumRuns {
+                results.append(contentsOf: try await drainAccountQueue(
+                    store: store,
+                    ownerUserID: ownerUserID,
+                    maximumRuns: maximumRuns - results.count,
+                    lane: nil
+                ))
+            }
+            return results
+        }
         var results = try await recoverInterruptedRuns(
             store: store,
             ownerUserID: ownerUserID,
@@ -136,6 +202,12 @@ extension LocalAgentGroupChatScheduler {
             ))
         }
         return results
+    }
+
+    private enum AccountPassCompletion: @unchecked Sendable {
+        case recovered([DeliveryAttemptReceipt])
+        case fresh([DeliveryAttemptReceipt])
+        case failed(Error)
     }
 
     func drainAccountQueue(

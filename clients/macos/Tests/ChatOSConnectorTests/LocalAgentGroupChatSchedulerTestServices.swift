@@ -231,6 +231,7 @@ actor RecoveryRollingWindowProbe {
     private var executionCount = 0
     private var firstStarted = false
     private var firstReleased = false
+    private var secondStarted = false
     private var thirdStarted = false
     private var firstStartWaiters: [CheckedContinuation<Void, Never>] = []
     private var firstReleaseWaiters: [CheckedContinuation<Void, Never>] = []
@@ -247,8 +248,9 @@ actor RecoveryRollingWindowProbe {
             if !firstReleased {
                 await withCheckedContinuation { firstReleaseWaiters.append($0) }
             }
-        } else if executionCount == 3 {
-            thirdStarted = true
+        } else {
+            if executionCount == 2 { secondStarted = true }
+            if executionCount == 3 { thirdStarted = true }
         }
         activeCalls -= 1
     }
@@ -260,6 +262,10 @@ actor RecoveryRollingWindowProbe {
 
     func hasThirdStarted() -> Bool {
         thirdStarted
+    }
+
+    func hasSecondStarted() -> Bool {
+        secondStarted
     }
 
     func releaseFirst() {
