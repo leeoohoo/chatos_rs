@@ -1,3 +1,4 @@
+import ChatOSCodeReadWorkerClient
 import ChatOSCore
 import ChatOSProcessRuntime
 import Darwin
@@ -12,6 +13,7 @@ public actor NativeProjectRunService: ProjectRunServicing {
         attributes: .concurrent
     )
     private let connector: NativeLocalConnectorService
+    private let codeReadWorker: any CodeReadWorkerExecuting
     private let preferencesURL: URL
     private let maximumRetainedExitedInstances: Int
     private var rootsByProjectID: [String: String] = [:]
@@ -25,9 +27,11 @@ public actor NativeProjectRunService: ProjectRunServicing {
     public init(
         connector: NativeLocalConnectorService,
         preferencesURL: URL,
-        maximumRetainedExitedInstances: Int = 100
+        maximumRetainedExitedInstances: Int = 100,
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
     ) {
         self.connector = connector
+        self.codeReadWorker = codeReadWorker
         self.preferencesURL = preferencesURL
         self.maximumRetainedExitedInstances = max(1, maximumRetainedExitedInstances)
         self.preferences = (try? Self.loadPreferences(from: preferencesURL)) ?? .init()
@@ -264,9 +268,8 @@ public actor NativeProjectRunService: ProjectRunServicing {
             throw NativeProjectRunError.projectNotRegistered
         }
         let resolved = try await connector.resolveProjectPath(rootPath)
-        let analysis = try await Task.detached {
-            try NativeProjectRunAnalyzer().analyze(root: resolved.absoluteURL)
-        }.value
+        let analysis = try await NativeProjectRunAnalyzer(codeReadWorker: codeReadWorker)
+            .analyze(root: resolved.absoluteURL)
         analyses[projectID] = analysis
         return catalog(projectID: projectID, analysis: analysis)
     }

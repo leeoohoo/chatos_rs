@@ -1,9 +1,13 @@
 @testable import ChatOSConnector
+import ChatOSCodeReadWorkerClient
+import ChatOSCodeReadWorkerCore
+import ChatOSCodeReadWorkerProtocol
+import Darwin
 import Foundation
 import XCTest
 
 final class NativeProjectRunAnalyzerTests: XCTestCase {
-    func testDetectsNodeAndSwiftTargetsLocally() throws {
+    func testDetectsNodeAndSwiftTargetsLocally() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("chatos-swift-run-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -19,7 +23,9 @@ final class NativeProjectRunAnalyzerTests: XCTestCase {
         try Data(#"{"scripts":{"start":"fake-cache-target"}}"#.utf8)
             .write(to: executionCache.appendingPathComponent("package.json"))
 
-        let result = try NativeProjectRunAnalyzer().analyze(root: root)
+        let result = try await NativeProjectRunAnalyzer(
+            codeReadWorker: ProjectRunInProcessCodeReadWorker()
+        ).analyze(root: root)
 
         XCTAssertTrue(result.targets.contains(where: { $0.command == "npm run dev" }))
         XCTAssertTrue(result.targets.contains(where: { $0.command == "swift run" }))
@@ -29,7 +35,7 @@ final class NativeProjectRunAnalyzerTests: XCTestCase {
         XCTAssertFalse(result.configurationFiles.contains(where: { $0.path.contains(".chatos") }))
     }
 
-    func testLargePackageManifestIsNotLoadedForDetectionOrPreview() throws {
+    func testLargePackageManifestIsNotLoadedForDetectionOrPreview() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("chatos-run-analyzer-large-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -37,7 +43,9 @@ final class NativeProjectRunAnalyzerTests: XCTestCase {
         try Data(repeating: UInt8(ascii: "x"), count: 2 * 1_024 * 1_024 + 1)
             .write(to: root.appendingPathComponent("package.json"))
 
-        let result = try NativeProjectRunAnalyzer().analyze(root: root)
+        let result = try await NativeProjectRunAnalyzer(
+            codeReadWorker: ProjectRunInProcessCodeReadWorker()
+        ).analyze(root: root)
 
         XCTAssertFalse(result.targets.contains(where: { $0.kind == "node" }))
         XCTAssertEqual(
@@ -46,7 +54,7 @@ final class NativeProjectRunAnalyzerTests: XCTestCase {
         )
     }
 
-    func testManifestDetectionDoesNotDependOnDirectoryEnumerationBudget() throws {
+    func testManifestDetectionDoesNotDependOnDirectoryEnumerationBudget() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("chatos-run-analyzer-bounded-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -57,9 +65,45 @@ final class NativeProjectRunAnalyzerTests: XCTestCase {
         try Data(#"{"scripts":{"dev":"vite"}}"#.utf8)
             .write(to: root.appendingPathComponent("package.json"))
 
-        let result = try NativeProjectRunAnalyzer(maximumChildrenPerDirectory: 1)
+        let result = try await NativeProjectRunAnalyzer(
+            maximumChildrenPerDirectory: 1,
+            codeReadWorker: ProjectRunInProcessCodeReadWorker()
+        )
             .analyze(root: root)
 
         XCTAssertTrue(result.targets.contains(where: { $0.command == "npm run dev" }))
+    }
+}
+
+struct ProjectRunInProcessCodeReadWorker: CodeReadWorkerExecuting {
+    func execute(
+        operation: String,
+        arguments: [String: CodeReadWorkerJSONValue],
+        projectRoot: URL,
+        requestCWD: String?,
+        defaultToolRoot: String?,
+        ripgrepURL: URL?
+    ) async throws -> CodeReadWorkerJSONValue {
+        var status = stat()
+        guard projectRoot.path.withCString({ Darwin.lstat($0, &status) }) == 0 else {
+            throw CodeReadWorkerProcessClientError.invalidResponse
+        }
+        return try ChatOSCodeReadWorkerEngine.execute(.init(
+            protocolVersion: ChatOSCodeReadWorkerProtocol.maximumVersion,
+            requestID: UUID().uuidString,
+            helperInstanceID: UUID().uuidString,
+            deadlineUnixMilliseconds: Int64((Date().timeIntervalSince1970 + 10) * 1_000),
+            operation: operation,
+            arguments: arguments,
+            projectRootPath: projectRoot.path,
+            projectRootIdentity: .init(
+                device: UInt64(status.st_dev),
+                inode: UInt64(status.st_ino)
+            ),
+            requestCWD: requestCWD,
+            defaultToolRoot: defaultToolRoot,
+            ripgrepPath: ripgrepURL?.path,
+            ripgrepIdentity: nil
+        ))
     }
 }

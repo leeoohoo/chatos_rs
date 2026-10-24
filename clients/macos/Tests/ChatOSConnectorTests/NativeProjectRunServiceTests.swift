@@ -35,7 +35,8 @@ final class NativeProjectRunServiceTests: XCTestCase {
         let service = NativeProjectRunService(
             connector: connector,
             preferencesURL: root.appendingPathComponent("run-preferences.json"),
-            maximumRetainedExitedInstances: 2
+            maximumRetainedExitedInstances: 2,
+            codeReadWorker: ProjectRunInProcessCodeReadWorker()
         )
         let projectID = "project"
         await service.updateProjects([.init(
@@ -198,7 +199,8 @@ final class NativeProjectRunServiceTests: XCTestCase {
         )
         let service = NativeProjectRunService(
             connector: connector,
-            preferencesURL: root.appendingPathComponent("run-preferences.json")
+            preferencesURL: root.appendingPathComponent("run-preferences.json"),
+            codeReadWorker: ProjectRunInProcessCodeReadWorker()
         )
         let projectID = "project"
         await service.updateProjects([.init(

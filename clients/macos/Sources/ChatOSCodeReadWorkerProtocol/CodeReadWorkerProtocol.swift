@@ -8,6 +8,7 @@ public enum ChatOSCodeReadWorkerProtocol {
     public static let operations = [
         "read_file_raw", "read_file_range", "list_dir", "search_text",
         "read_file", "search_files", "project_list_v1", "project_search_entries_v1",
+        "project_run_analyze_v1",
     ]
 }
 

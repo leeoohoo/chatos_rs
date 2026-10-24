@@ -107,6 +107,11 @@ public enum ChatOSCodeReadWorkerEngine {
             return try context.projectList(request.arguments)
         case "project_search_entries_v1":
             return try context.projectSearchEntries(request.arguments)
+        case "project_run_analyze_v1":
+            return try ProjectRunWorkerAnalyzer(
+                root: root,
+                deadlineUnixMilliseconds: request.deadlineUnixMilliseconds
+            ).analyze(request.arguments)
         default:
             throw CodeReadWorkerCoreError.unsupportedTool(request.operation)
         }

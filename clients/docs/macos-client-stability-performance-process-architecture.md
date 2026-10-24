@@ -2319,6 +2319,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批解决项目 Run 的执行、停止、退出等待和子孙清理边界，但项目目标分析仍通过 `Task.detached` 执行同步目录与 manifest I/O；项目文件系统和附件 workspace/vault 也仍有同步文件 I/O。下一阶段继续把这些阻塞域迁到有界并发的专用 blocking-work lane，并补取消和大目录压力回归。
 
+### 12.102 第三十一完整里程碑：项目 Run 分析一请求一 Worker 进程（2026-10-24）
+
+本里程碑关闭 12.101 保留的项目目标分析阻塞域。此前目录遍历、manifest 读取、配置预览和工具链发现整体包在 `Task.detached` 中；大目录、慢卷或文件系统调用卡顿会占用 Swift cooperative executor，且调用任务取消不能终止已经开始的同步扫描。现在分析复用 Code Read Worker 隔离层，不再留在 App 进程执行。
+
+已实施：
+
+- Code Read Worker 协议新增 `project_run_analyze_v1`。每次项目分析都由 `CodeReadWorkerProcessClient` 启动独立 Worker PID，使用已有的认证握手、项目根目录 device/inode 身份校验、60 秒硬超时、任务取消和进程组终止；不同项目没有共享串行单槽。
+- Node、Rust、Python、Go、Java/Kotlin 与 Swift 目标发现，配置预览和工具链候选识别全部迁入 Worker。App 进程只解码有界 JSON 结果并更新所属项目缓存；actor 在等待 Worker 时保持可重入，其他项目可并行启动自己的分析或 Run。
+- 保留最多 2,500 个目录、6 层深度、每目录 10,000 个条目、100 个目标、60 个配置文件、2 MiB manifest 和 128 KiB 预览上限；扫描循环持续检查 deadline，单次文件读取使用 `O_NOFOLLOW` 和描述符级 regular-file/size 校验，避免符号链接与检查后替换绕过 Worker 授权根边界。
+- `NativeProjectRunService` 支持注入 Code Read Worker，测试使用进程内引擎固定业务结果，生产默认使用真实独立进程。真实 Worker 集成回归验证 `package.json` 分析跨认证进程边界返回 `npm run dev`。
+- 并发故障回归直接对 `project_run_analyze_v1` 注入一个停止响应的 Worker；同期另一 Worker 在前者未完成时独立返回，取消只终止挂起分析所属进程组。项目 Run 的进程组启停和退出回收回归同步覆盖。
+
+验证：Debug 与原生 arm64 Release 的 Code Read Worker Engine、真实进程隔离和项目 Run Analyzer/Service 联合矩阵各 12 项全部通过，Release 使用 `warnings-as-errors` 优化编译；构建证据脚本 25 项全部通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：项目 Run 分析现在具备独立 PID 与硬故障边界，但一次 Worker 内部仍按确定性顺序扫描单个项目；这是单次结果排序与资源上限的一部分，不会串行化其他项目。项目文件写入/创建/删除及附件 workspace/vault 仍有 `Task.detached` 同步文件 I/O，后续里程碑继续迁移。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

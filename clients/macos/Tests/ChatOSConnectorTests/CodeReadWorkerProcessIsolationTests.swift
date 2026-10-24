@@ -26,6 +26,8 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         defer { fixture.dispose() }
         try Data("isolated-content\n".utf8)
             .write(to: fixture.root.appendingPathComponent("README.md"))
+        try Data(#"{"scripts":{"dev":"vite"}}"#.utf8)
+            .write(to: fixture.root.appendingPathComponent("package.json"))
 
         let result = try await CodeReadWorkerProcessClient(
             executableURL: executable,
@@ -65,9 +67,30 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
                   case let .string(name)? = fields["name"] else { return false }
             return name == "README.md"
         })
+
+        let analysis = try await CodeReadWorkerProcessClient(
+            executableURL: executable,
+            timeout: 5
+        ).execute(
+            operation: "project_run_analyze_v1",
+            arguments: [:],
+            projectRoot: fixture.root,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            ripgrepURL: nil
+        )
+        guard case let .object(analysisPayload) = analysis,
+              case let .array(targets)? = analysisPayload["targets"] else {
+            return XCTFail("real worker returned an invalid project analysis payload")
+        }
+        XCTAssertTrue(targets.contains { target in
+            guard case let .object(fields) = target,
+                  case let .string(command)? = fields["command"] else { return false }
+            return command == "npm run dev"
+        })
     }
 
-    func testHungReadWorkerDoesNotBlockIndependentReadWorker() async throws {
+    func testHungProjectAnalysisDoesNotBlockIndependentWorker() async throws {
         let fixture = try WorkerFixture()
         defer { fixture.dispose() }
         let hanging = try fixture.makeWorker(name: "hanging-worker.py", hangs: true)
@@ -79,7 +102,7 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
                     executableURL: hanging,
                     timeout: 20
                 ).execute(
-                    operation: "list_dir",
+                    operation: "project_run_analyze_v1",
                     arguments: [:],
                     projectRoot: fixture.root,
                     requestCWD: nil,
@@ -99,7 +122,7 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             executableURL: responsive,
             timeout: 10
         ).execute(
-            operation: "list_dir",
+            operation: "project_run_analyze_v1",
             arguments: [:],
             projectRoot: fixture.root,
             requestCWD: nil,
@@ -144,7 +167,7 @@ private struct WorkerFixture {
         let script = """
         #!/bin/zsh
         IFS= read -r hello
-        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":1,"worker_build_version":"code-read-worker-v1","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files","project_list_v1","project_search_entries_v1"],"maximum_inline_bytes":16777216,"error":null}'
+        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":1,"worker_build_version":"code-read-worker-v1","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files","project_list_v1","project_search_entries_v1","project_run_analyze_v1"],"maximum_inline_bytes":16777216,"error":null}'
         IFS= read -r request
         \(behavior)
         """
