@@ -364,6 +364,7 @@ export function AppShell({
   const start = useHostLifecycleStore((state) => state.start);
   const retry = useHostLifecycleStore((state) => state.retry);
   const workspaceSnapshot = useWorkspaceIndexStore((state) => state.snapshot);
+  const workspaceOwnerUserId = useWorkspaceIndexStore((state) => state.ownerUserId);
   const acceptCreatedProject = useWorkspaceIndexStore((state) => state.acceptCreatedProject);
   const acceptRemovedProject = useWorkspaceIndexStore((state) => state.acceptRemovedProject);
   const resetProjectConversations = useProjectConversationStore((state) => state.reset);
@@ -466,7 +467,11 @@ export function AppShell({
   // could be used.  Select the first trusted project (or contact) once the
   // owner-scoped index arrives.  An explicit user selection is preserved.
   useEffect(() => {
-    if (activeSurface !== "workspace" || selection.kind !== "workbench") return;
+    if (
+      activeSurface !== "workspace"
+      || selection.kind !== "workbench"
+      || workspaceOwnerUserId !== session.user.id
+    ) return;
     const firstResource = workspaceSnapshot.projects[0] ?? workspaceSnapshot.contacts[0];
     if (!firstResource) return;
     setSelection(
@@ -474,7 +479,14 @@ export function AppShell({
         ? { kind: "project", id: firstResource.id }
         : { kind: "contact", id: firstResource.id },
     );
-  }, [activeSurface, selection.kind, workspaceSnapshot.contacts, workspaceSnapshot.projects]);
+  }, [
+    activeSurface,
+    selection.kind,
+    session.user.id,
+    workspaceOwnerUserId,
+    workspaceSnapshot.contacts,
+    workspaceSnapshot.projects,
+  ]);
 
   useEffect(() => {
     if (selection.kind !== "remote"
