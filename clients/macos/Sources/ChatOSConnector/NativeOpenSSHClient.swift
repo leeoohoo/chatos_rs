@@ -367,6 +367,16 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                 throw NativeOpenSSHError.localFileUnavailable(localURL.path)
             }
             try Self.withRuntime(draft: draft) { runtime in
+                let temporaryRemotePath = Self.remoteTransferTemporaryPath(for: remotePath)
+                var committed = false
+                defer {
+                    if !committed {
+                        Self.removeRemoteTransferTemporaryFile(
+                            temporaryRemotePath,
+                            runtime: runtime
+                        )
+                    }
+                }
                 if !overwrite {
                     try Self.requireRemotePathMissing(
                         remotePath,
@@ -375,15 +385,25 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     )
                 }
                 try Self.runRemoteMutation(
-                    "mkdir -p -- \(Self.shellQuote(Self.remoteParent(remotePath)))",
+                    "mkdir -p -- \(Self.shellQuote(Self.remoteParent(remotePath))); "
+                        + "umask 077; : > \(Self.shellQuote(temporaryRemotePath))",
                     runtime: runtime,
                     controller: controller
                 )
                 try Self.runSFTPTransfer(
-                    arguments: [localURL.path, "chatos-target:\(remotePath)"],
+                    arguments: [localURL.path, "chatos-target:\(temporaryRemotePath)"],
                     runtime: runtime,
                     controller: controller
                 )
+                try controller.throwIfCancelled()
+                try Self.commitRemoteTransfer(
+                    temporaryPath: temporaryRemotePath,
+                    destinationPath: remotePath,
+                    overwrite: overwrite,
+                    runtime: runtime,
+                    controller: controller
+                )
+                committed = true
             }
         }
     }
@@ -402,13 +422,21 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                 at: localURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
+            let temporaryURL = Self.localTransferTemporaryURL(for: localURL)
+            defer { try? FileManager.default.removeItem(at: temporaryURL) }
             try Self.withRuntime(draft: draft) { runtime in
                 try Self.runSFTPTransfer(
-                    arguments: ["chatos-target:\(remotePath)", localURL.path],
+                    arguments: ["chatos-target:\(remotePath)", temporaryURL.path],
                     runtime: runtime,
                     controller: controller
                 )
             }
+            try controller.throwIfCancelled()
+            try Self.commitDownloadedFile(
+                temporaryURL: temporaryURL,
+                destinationURL: localURL,
+                overwrite: overwrite
+            )
         }
     }
 
@@ -533,6 +561,103 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         )
         guard captured.exitCode == 0, !captured.timedOut else {
             throw NativeOpenSSHError.remoteFailure(failureMessage(captured))
+        }
+    }
+
+    private static func remoteTransferTemporaryPath(for destinationPath: String) -> String {
+        joinRemotePath(
+            remoteParent(destinationPath),
+            ".chatos-upload-\(UUID().uuidString.lowercased()).tmp"
+        )
+    }
+
+    private static func commitRemoteTransfer(
+        temporaryPath: String,
+        destinationPath: String,
+        overwrite: Bool,
+        runtime: SSHRuntime,
+        controller: NativeOpenSSHProcessController
+    ) throws {
+        let quotedTemporaryPath = shellQuote(temporaryPath)
+        let quotedDestinationPath = shellQuote(destinationPath)
+        var commands = [
+            "tmp=\(quotedTemporaryPath)",
+            "target=\(quotedDestinationPath)",
+            "test -f \"$tmp\" && test ! -L \"$tmp\"",
+        ]
+        if overwrite {
+            commands.append("if [ -e \"$target\" ] && [ ! -L \"$target\" ]; then mode=$(stat -c '%a' -- \"$target\" 2>/dev/null || stat -f '%Lp' \"$target\" 2>/dev/null || true); [ -z \"$mode\" ] || chmod \"$mode\" \"$tmp\"; fi")
+            commands.append("mv -f -- \"$tmp\" \"$target\"")
+        } else {
+            commands.append("ln -- \"$tmp\" \"$target\" 2>/dev/null || exit 73")
+            commands.append("rm -f -- \"$tmp\"")
+        }
+        let captured = try run(
+            executable: "/usr/bin/ssh",
+            arguments: [
+                "-F", runtime.config.path, "chatos-target",
+                "set -e; \(commands.joined(separator: "; "))",
+            ],
+            environment: runtime.environment,
+            input: nil,
+            timeout: 30,
+            maximumCapturedBytes: 256 * 1_024,
+            controller: controller
+        )
+        if !overwrite, captured.exitCode == 73, !captured.timedOut {
+            throw NativeOpenSSHError.remoteFileExists(destinationPath)
+        }
+        guard captured.exitCode == 0, !captured.timedOut else {
+            throw NativeOpenSSHError.remoteFailure(failureMessage(captured))
+        }
+    }
+
+    private static func removeRemoteTransferTemporaryFile(
+        _ temporaryPath: String,
+        runtime: SSHRuntime
+    ) {
+        let cleanupController = NativeOpenSSHProcessController()
+        _ = try? run(
+            executable: "/usr/bin/ssh",
+            arguments: [
+                "-F", runtime.config.path, "chatos-target",
+                "rm -f -- \(shellQuote(temporaryPath))",
+            ],
+            environment: runtime.environment,
+            input: nil,
+            timeout: 5,
+            maximumCapturedBytes: 64 * 1_024,
+            controller: cleanupController
+        )
+    }
+
+    private static func localTransferTemporaryURL(for destinationURL: URL) -> URL {
+        destinationURL.deletingLastPathComponent().appendingPathComponent(
+            ".chatos-download-\(UUID().uuidString.lowercased()).tmp",
+            isDirectory: false
+        )
+    }
+
+    static func commitDownloadedFile(
+        temporaryURL: URL,
+        destinationURL: URL,
+        overwrite: Bool
+    ) throws {
+        let result = overwrite
+            ? Darwin.rename(temporaryURL.path, destinationURL.path)
+            : Darwin.link(temporaryURL.path, destinationURL.path)
+        guard result == 0 else {
+            let failure = errno
+            if !overwrite, failure == EEXIST {
+                throw NativeOpenSSHError.localFileExists(destinationURL.path)
+            }
+            throw NativeOpenSSHError.localFileCommitFailed(
+                destinationURL.path,
+                String(cString: strerror(failure))
+            )
+        }
+        if !overwrite {
+            try? FileManager.default.removeItem(at: temporaryURL)
         }
     }
 
@@ -703,11 +828,15 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    private static func remoteParent(_ path: String) -> String {
+    static func remoteParent(_ path: String) -> String {
+        let isAbsolute = path.hasPrefix("/")
         let value = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let slash = value.lastIndex(of: "/") else { return "." }
+        guard let slash = value.lastIndex(of: "/") else {
+            return isAbsolute ? "/" : "."
+        }
         let parent = String(value[..<slash])
-        return path.hasPrefix("/") ? "/" + parent : parent
+        guard !parent.isEmpty else { return isAbsolute ? "/" : "." }
+        return isAbsolute ? "/" + parent : parent
     }
 
     private static func joinRemotePath(_ directory: String, _ name: String) -> String {
@@ -816,6 +945,7 @@ private enum NativeOpenSSHError: LocalizedError {
     case fileTooLarge(Int)
     case localFileUnavailable(String)
     case localFileExists(String)
+    case localFileCommitFailed(String, String)
     case remoteFileExists(String)
 
     var errorDescription: String? {
@@ -825,6 +955,7 @@ private enum NativeOpenSSHError: LocalizedError {
         case let .fileTooLarge(limit): "远程文件超过读取限制（\(limit) 字节）"
         case let .localFileUnavailable(path): "无法读取本机文件：\(path)"
         case let .localFileExists(path): "本机已有同名文件：\(path)"
+        case let .localFileCommitFailed(path, reason): "无法提交本机文件 \(path)：\(reason)"
         case let .remoteFileExists(path): "远端已有同名文件：\(path)"
         }
     }

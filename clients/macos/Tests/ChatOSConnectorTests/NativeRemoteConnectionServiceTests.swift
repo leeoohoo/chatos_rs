@@ -320,6 +320,13 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertLessThan(path.utf8.count + 16, 104)
     }
 
+    func testRemoteParentKeepsRootedTransferInRootDirectory() {
+        XCTAssertEqual(NativeOpenSSHClient.remoteParent("/result.bin"), "/")
+        XCTAssertEqual(NativeOpenSSHClient.remoteParent("/srv/result.bin"), "/srv")
+        XCTAssertEqual(NativeOpenSSHClient.remoteParent("result.bin"), ".")
+        XCTAssertEqual(NativeOpenSSHClient.remoteParent("build/result.bin"), "build")
+    }
+
     func testOpenSSHBlockingWorkUsesConcurrentLanes() async throws {
         let firstStarted = expectation(description: "first blocking operation started")
         let secondStarted = expectation(description: "second blocking operation started")
@@ -380,6 +387,66 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
             .seconds(3),
             "取消应终止所属子进程，而不是等待远程操作原始超时"
         )
+    }
+
+    func testDownloadedFileCommitAtomicallyReplacesExistingDestination() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-download-commit-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let destination = root.appendingPathComponent("result.bin")
+        let temporary = root.appendingPathComponent(".transfer.tmp")
+        try Data("old".utf8).write(to: destination)
+        try Data("complete-new".utf8).write(to: temporary)
+
+        try NativeOpenSSHClient.commitDownloadedFile(
+            temporaryURL: temporary,
+            destinationURL: destination,
+            overwrite: true
+        )
+
+        XCTAssertEqual(try Data(contentsOf: destination), Data("complete-new".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path))
+    }
+
+    func testDownloadedFileCommitWithoutOverwriteRejectsDestinationRace() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-download-race-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let destination = root.appendingPathComponent("result.bin")
+        let temporary = root.appendingPathComponent(".transfer.tmp")
+        try Data("racing-writer".utf8).write(to: destination)
+        try Data("download".utf8).write(to: temporary)
+
+        XCTAssertThrowsError(
+            try NativeOpenSSHClient.commitDownloadedFile(
+                temporaryURL: temporary,
+                destinationURL: destination,
+                overwrite: false
+            )
+        )
+        XCTAssertEqual(try Data(contentsOf: destination), Data("racing-writer".utf8))
+        XCTAssertEqual(try Data(contentsOf: temporary), Data("download".utf8))
+    }
+
+    func testFailedDownloadedFileCommitPreservesExistingDestination() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-download-failure-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let destination = root.appendingPathComponent("result.bin")
+        let missingTemporary = root.appendingPathComponent(".missing.tmp")
+        try Data("keep-me".utf8).write(to: destination)
+
+        XCTAssertThrowsError(
+            try NativeOpenSSHClient.commitDownloadedFile(
+                temporaryURL: missingTemporary,
+                destinationURL: destination,
+                overwrite: true
+            )
+        )
+        XCTAssertEqual(try Data(contentsOf: destination), Data("keep-me".utf8))
     }
 
     func testRemoteTerminalOutputKeepsVisibleTextAndUpdatesWorkingDirectory() {
