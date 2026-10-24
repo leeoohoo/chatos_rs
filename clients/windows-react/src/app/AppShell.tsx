@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type ComponentProps } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ComponentProps } from "react";
 import type { AuthSession } from "../features/authentication/domain/authentication";
 import type { AskUserPort } from "../features/ask-user/ports/AskUserPort";
 import type { ConversationHistoryPort } from "../features/conversation-history/ports/ConversationHistoryPort";
@@ -378,6 +378,7 @@ export function AppShell({
   const resetPluginApplications = usePluginApplicationStore((state) => state.reset);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
   const [activeSurface, setActiveSurface] = useState<"workspace" | "general-settings" | "wechat-companion" | "pet-settings" | "global-utilities" | "ai-models" | "device-gateway" | "plugin-settings" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
+  const sessionStartedAt = useRef(Date.now());
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [remoteEditorTarget, setRemoteEditorTarget] = useState<"create" | string | null>(null);
   const text = (key: Parameters<typeof interfaceText>[1]) => interfaceText(interfaceLanguage, key);
@@ -407,6 +408,7 @@ export function AppShell({
   }, [petPresentation, session.user.id, snapshot.ready]);
 
   useEffect(() => {
+    sessionStartedAt.current = Date.now();
     setSelection({ kind: "workbench" });
     setActiveSurface("workspace");
     setShowCreateProject(false);
@@ -427,6 +429,11 @@ export function AppShell({
         setSelection({ kind: "contact", id: payload.resourceId });
         setActiveSurface("workspace");
       } else if (payload.destination === "settings") {
+        // A hidden quick-search window can deliver the action that opened it
+        // after the authenticated shell has mounted.  That event belongs to
+        // the previous presentation; it must not override the macOS-style
+        // workspace entry route during the first frame after login.
+        if (Date.now() - sessionStartedAt.current < 750) return;
         setActiveSurface("general-settings");
       } else if (payload.destination === "runtimePermissions") {
         setActiveSurface("runtime-permissions");
@@ -451,6 +458,23 @@ export function AppShell({
       setSelection({ kind: "workbench" });
     }
   }, [selection, workspaceSnapshot.contacts, workspaceSnapshot.projects]);
+
+  // macOS opens the authenticated shell on a real resource workspace.  The
+  // previous Windows shell left the synthetic workbench selected while the
+  // index was loading, which made the first authenticated frame look like a
+  // settings/dashboard page and required an extra click before any resource
+  // could be used.  Select the first trusted project (or contact) once the
+  // owner-scoped index arrives.  An explicit user selection is preserved.
+  useEffect(() => {
+    if (activeSurface !== "workspace" || selection.kind !== "workbench") return;
+    const firstResource = workspaceSnapshot.projects[0] ?? workspaceSnapshot.contacts[0];
+    if (!firstResource) return;
+    setSelection(
+      workspaceSnapshot.projects[0]
+        ? { kind: "project", id: firstResource.id }
+        : { kind: "contact", id: firstResource.id },
+    );
+  }, [activeSurface, selection.kind, workspaceSnapshot.contacts, workspaceSnapshot.projects]);
 
   useEffect(() => {
     if (selection.kind !== "remote"
