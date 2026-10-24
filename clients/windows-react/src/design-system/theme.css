@@ -30,6 +30,7 @@ body {
 }
 
 .app-window {
+  position: relative;
   display: grid;
   grid-template-rows: 46px minmax(0, 1fr);
   grid-template-columns: 230px minmax(0, 1fr);
@@ -148,6 +149,10 @@ body {
 .content-surface { display: flex; flex-direction: column; grid-row: 2; min-width: 0; min-height: 0; overflow: auto; padding: 28px 34px 24px; background: rgba(248,248,250,.72); }
 .content-surface--resource-workspace { overflow: hidden; padding: 8px 12px 12px; }
 .content-surface--resource-workspace > .workspace-header { display: none; }
+.app-window:has(.content-surface--settings)::after { position: fixed; z-index: 20; inset: 46px 0 0; background: rgba(20,20,24,.16); backdrop-filter: blur(1.5px); content: ""; pointer-events: none; }
+.content-surface--settings { position: fixed; z-index: 40; top: 60px; left: 50%; display: flex; width: min(820px, calc(100vw - 280px)); height: min(680px, calc(100vh - 78px)); transform: translateX(-50%); overflow: auto; padding: 18px 20px 24px; border: 1px solid rgba(255,255,255,.82); border-radius: 15px; background: rgba(248,248,250,.96); box-shadow: 0 28px 90px rgba(0,0,0,.25), 0 0 0 1px rgba(60,60,67,.08); backdrop-filter: blur(30px) saturate(1.2); }
+.content-surface--settings > .workspace-header { display: none; }
+.content-surface--settings > :not(.workspace-header) { width: 100%; min-width: 0; }
 .workspace-header { display: flex; align-items: center; justify-content: space-between; max-width: 1040px; margin: 0 auto 28px; }
 .eyebrow { margin: 0 0 4px; color: var(--secondary); font-size: 10px; font-weight: 650; letter-spacing: .13em; }
 h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
@@ -1042,12 +1047,15 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
   .project-run-toolchain select { grid-column: 2; }
   .plugin-application-grid { grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); }
   .plugin-context-picker { padding: 22px; }
+  .content-surface--settings { top: 54px; width: calc(100vw - 32px); height: calc(100vh - 70px); padding: 14px 12px 20px; }
 }
 
 @media (prefers-color-scheme: dark) {
   :root { color: #f5f5f7; background: #151518; --surface: rgba(30,30,33,.86); --surface-solid: #252528; --sidebar: rgba(35,35,39,.9); --separator: rgba(235,235,245,.14); --secondary: rgba(235,235,245,.62); --tertiary: rgba(235,235,245,.3); --shadow: 0 28px 75px rgba(0,0,0,.46); color-scheme: dark; }
   body { background: radial-gradient(circle at 15% 10%, rgba(10,132,255,.17), transparent 32%), #17171a; }
   .content-surface { background: rgba(24,24,27,.72); }
+  .content-surface--settings { border-color: rgba(255,255,255,.1); background: rgba(30,30,33,.97); box-shadow: 0 28px 90px rgba(0,0,0,.52), 0 0 0 1px rgba(235,235,245,.08); }
+  .app-window:has(.content-surface--settings)::after { background: rgba(0,0,0,.36); }
   .project-workspace-tabs button.is-selected { background: rgba(76,76,80,.94); box-shadow: 0 1px 4px rgba(0,0,0,.34); }
   .project-directory { border-color: rgba(235,235,245,.12); background: rgba(42,42,46,.72); box-shadow: 0 7px 24px rgba(0,0,0,.18); }
   .project-directory__sidebar { background: rgba(35,35,39,.72); }

@@ -691,7 +691,7 @@ export function AppShell({
           </span>
         </button>
       </aside>
-      <section className={`content-surface ${activeSurface === "workspace" ? "content-surface--resource-workspace" : ""}`}>
+      <section className={`content-surface ${activeSurface === "workspace" ? "content-surface--resource-workspace" : "content-surface--settings"}`}>
         <header className="workspace-header">
           <div>
             <p className="eyebrow">{
