@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useWorkspaceIndexStore } from "../application/workspaceIndexStore";
 import type { WorkspaceSelection } from "../domain/workspaceIndex";
 import type { WorkspaceIndexPort } from "../ports/WorkspaceIndexPort";
@@ -41,6 +41,7 @@ export function WorkspaceSidebar({
   const suspendRemoteConnections = useRemoteConnectionStore((state) => state.suspend);
   const resetRemoteConnections = useRemoteConnectionStore((state) => state.reset);
   const refreshRemoteConnections = useRemoteConnectionStore((state) => state.refresh);
+  const [showCreateMenu, setShowCreateMenu] = useState(false);
 
   useEffect(() => {
     void load(workspaceIndex, ownerUserId, hostReady);
@@ -67,17 +68,43 @@ export function WorkspaceSidebar({
     <nav className="workspace-navigation" aria-label={text("resourceNavigation")}>
       <div className="workspace-navigation__toolbar">
         <span>{text("resourceNavigation")}</span>
-        <button
-          aria-label={text("refreshResources")}
-          className="workspace-navigation__refresh"
-          disabled={isLoading || remoteIsLoading}
-          onClick={() => {
-            void load(workspaceIndex, ownerUserId, hostReady);
-            if (hostReady) void refreshRemoteConnections(remoteConnection);
-          }}
-          title={text("refreshResources")}
-          type="button"
-        >↻</button>
+        <div className="workspace-navigation__actions">
+          <button
+            aria-label={text("refreshResources")}
+            className="workspace-navigation__refresh"
+            disabled={isLoading || remoteIsLoading}
+            onClick={() => {
+              void load(workspaceIndex, ownerUserId, hostReady);
+              if (hostReady) void refreshRemoteConnections(remoteConnection);
+            }}
+            title={text("refreshResources")}
+            type="button"
+          >↻</button>
+          <button
+            aria-expanded={showCreateMenu}
+            aria-haspopup="menu"
+            aria-label={text("newResource")}
+            className="workspace-navigation__plus"
+            onClick={() => setShowCreateMenu((visible) => !visible)}
+            title={text("newResource")}
+            type="button"
+          >＋</button>
+          {showCreateMenu && (
+            <div className="workspace-navigation__menu" role="menu">
+              <button
+                onClick={() => { setShowCreateMenu(false); onCreateProject(); }}
+                role="menuitem"
+                type="button"
+              >{text("newProject")}</button>
+              <button
+                disabled={!hostReady}
+                onClick={() => { setShowCreateMenu(false); onCreateRemoteConnection(); }}
+                role="menuitem"
+                type="button"
+              >{text("newRemoteConnection")}</button>
+            </div>
+          )}
+        </div>
       </div>
       <button
         className={`nav-item ${selection.kind === "workbench" ? "nav-item--active" : ""}`}
