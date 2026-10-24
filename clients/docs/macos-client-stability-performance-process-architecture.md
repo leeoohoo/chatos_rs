@@ -2256,6 +2256,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批验证了本机原子提交的真实文件系统行为，但没有可用的隔离 SSH 测试服务器，因此远端 `scp` staging/权限继承/原子 link-move 仍需真实 Linux/macOS 远端故障注入。cleanup 是有界 best effort；App 被 `SIGKILL`、远端不可达或 cleanup 自身失败仍可能留下可识别临时文件，后续需增加有年龄门禁的远端孤儿扫描。POSIX rename 保证同目录命名空间原子性，不等同于 `fsync` 后的掉电持久性；磁盘满、网络中断、睡眠和多路大文件压力仍待完成。
 
+### 12.98 第二十七完整里程碑：npm 安装并发阻塞域与每操作进程组取消（2026-10-24）
+
+本里程碑继续清理插件安装链路对 Swift cooperative executor 的占用。此前 npm 查询与依赖安装把完整 `Process` 生命周期包在 `Task.detached` 中，以 50ms 定时轮询等待退出；一次安装最长可占用 5 分钟，并行安装或网络卡顿时会消耗 cooperative executor 线程，间接拖慢无关会话和 Agent Run。取消也只终止直接 npm PID，npm 派生的子进程可能继续持有管道或资源。
+
+已实施：
+
+- npm 查询与安装的同步启动、管道排空、超时及退出等待全部迁到专用 concurrent GCD blocking-work 队列。每个调用拥有独立 lane、stdout/stderr 捕获、controller 和 OS 进程组，不引入全局单槽，也不占用 Swift cooperative executor 等待网络或磁盘。
+- 启动改用独立 process group；取消只向所属操作的进程组发送 `SIGTERM`，2 秒后仍未退出才升级 `SIGKILL`。registration token 与 controller 所有权检查阻止延迟强杀误伤其他或后续操作；主 npm 退出后也会收口同组残留子孙进程。
+- 退出等待改用 kernel-backed `NativeProcessExitSignal`，移除 `isRunning` 与 50ms async 轮询。原查询 60 秒、安装 5 分钟超时，stdout 2 MiB、stderr 分级上限、错误尾部和中文错误语义保持不变。
+- 新增真实本机子进程回归：一个忽略 TERM 且派生 `sleep` 子进程的操作被取消时，同期另一操作仍在 2 秒门禁内独立完成；取消后的父/子 PID 均被回收。另覆盖 2 MiB 输出溢出和超时终止语义，避免迁移后出现无界内存或无限等待。
+
+验证：Debug 与原生 arm64 Release 的自定义 Plugin/npm 相关矩阵全部通过，Release 使用 `warnings-as-errors` 优化编译；构建证据脚本同步通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：本批使用确定性的本机 shell fixture 验证进程组、并发、取消、超时和输出上限，没有访问公网 npm registry，也未注入真实 npm 缓存损坏、网络半断开或磁盘满。Git 插件 clone、项目 Git 命令和 Plugin 权限检测仍有各自的 `Task.detached` 同步进程等待，后续里程碑需沿相同原则迁出 cooperative executor，并补齐每操作取消边界。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

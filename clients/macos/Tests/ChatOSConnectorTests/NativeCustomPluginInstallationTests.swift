@@ -1,4 +1,5 @@
 import ChatOSCore
+import Darwin
 import Foundation
 import Testing
 @testable import ChatOSConnector
@@ -44,6 +45,97 @@ struct NativeCustomPluginInstallationTests {
             _ = try await installer.prepareCustomMCP(draft)
         }
         #expect(!FileManager.default.fileExists(atPath: root.path))
+    }
+
+    @Test("npm operations use concurrent process groups and cancellation stays operation-scoped")
+    func npmOperationsAreConcurrentAndCancellationIsScoped() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NPMProcessIsolation-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let parentPIDURL = root.appendingPathComponent("parent.pid")
+        let childPIDURL = root.appendingPathComponent("child.pid")
+        let longRunning = Task {
+            try await runNPMFixture(
+                arguments: [
+                    "-c",
+                    "trap '' TERM; echo $$ > '\(parentPIDURL.path)'; sleep 30 & echo $! > '\(childPIDURL.path)'; wait",
+                ],
+                timeout: 30
+            )
+        }
+        for _ in 0..<200
+            where !FileManager.default.fileExists(atPath: parentPIDURL.path)
+                || !FileManager.default.fileExists(atPath: childPIDURL.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let parentPIDText = try String(contentsOf: parentPIDURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let childPIDText = try String(contentsOf: childPIDURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let parentPID = try #require(pid_t(parentPIDText))
+        let childPID = try #require(pid_t(childPIDText))
+
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        let survivor = Task {
+            try await runNPMFixture(
+                arguments: ["-c", "sleep 1; printf isolated"],
+                timeout: 5
+            )
+        }
+        let canceller = Task {
+            try await Task.sleep(for: .milliseconds(200))
+            longRunning.cancel()
+        }
+        let survivorOutput = try await survivor.value
+        #expect(String(decoding: survivorOutput, as: UTF8.self) == "isolated")
+        #expect(clock.now - startedAt < .seconds(2))
+        _ = try await canceller.value
+        do {
+            _ = try await longRunning.value
+            Issue.record("expected the owned npm process group to be cancelled")
+        } catch is CancellationError {
+            // Expected: cancellation of this operation must not affect the survivor above.
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+        for _ in 0..<100 where installerProcessExists(parentPID) || installerProcessExists(childPID) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(!installerProcessExists(parentPID))
+        #expect(!installerProcessExists(childPID))
+    }
+
+    @Test("npm process output remains bounded after moving to blocking lanes")
+    func npmProcessOutputRemainsBounded() async throws {
+        do {
+            _ = try await runNPMFixture(
+                arguments: ["-c", "/usr/bin/yes x | /usr/bin/head -c 2200000"],
+                timeout: 5,
+                overflowMessage: "fixture output overflow"
+            )
+            Issue.record("expected oversized npm output to be rejected")
+        } catch let error as NativeConnectorError {
+            #expect(error.localizedDescription.contains("fixture output overflow"))
+        }
+    }
+
+    @Test("npm process timeout terminates its complete process group")
+    func npmProcessTimeoutTerminatesProcessGroup() async throws {
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        do {
+            _ = try await runNPMFixture(
+                arguments: ["-c", "sleep 30"],
+                timeout: 0.1,
+                timeoutMessage: "fixture timed out"
+            )
+            Issue.record("expected the npm fixture to time out")
+        } catch let error as NativeConnectorError {
+            #expect(error.localizedDescription.contains("fixture timed out"))
+        }
+        #expect(clock.now - startedAt < .seconds(3))
     }
 
     @Test("offline REA fixture completes npm preflight, install, persistence and Main Chat discovery")
@@ -134,6 +226,28 @@ struct NativeCustomPluginInstallationTests {
             "artifact.create",
             "workspace.read",
         ]))
+    }
+
+    private func runNPMFixture(
+        arguments: [String],
+        timeout: TimeInterval,
+        overflowMessage: String = "fixture overflow",
+        timeoutMessage: String = "fixture timeout"
+    ) async throws -> Data {
+        try await NativePluginInstaller.runNPMProcess(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: arguments,
+            currentDirectoryURL: nil,
+            timeout: timeout,
+            stderrLimit: 256 * 1_024,
+            overflowMessage: overflowMessage,
+            timeoutMessage: timeoutMessage,
+            failureLabel: "fixture"
+        )
+    }
+
+    private func installerProcessExists(_ processID: pid_t) -> Bool {
+        Darwin.kill(processID, 0) == 0 || errno == EPERM
     }
 
     @Test("local Plugin import rejects symbolic links")
