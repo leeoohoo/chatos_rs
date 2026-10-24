@@ -1,8 +1,16 @@
 import ChatOSCore
+import ChatOSProcessRuntime
+import Darwin
+import Dispatch
 import Foundation
 
 public actor NativeProjectRunService: ProjectRunServicing {
     private static let maximumPreferencesBytes = 4 * 1_024 * 1_024
+    private static let processWaitQueue = DispatchQueue(
+        label: "com.chatos.project-run.process-wait",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
     private let connector: NativeLocalConnectorService
     private let preferencesURL: URL
     private let maximumRetainedExitedInstances: Int
@@ -142,20 +150,50 @@ public actor NativeProjectRunService: ProjectRunServicing {
         guard let target = catalog.targets.first(where: { $0.id == targetID }) else {
             throw NativeProjectRunError.targetNotFound
         }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", target.command]
-        process.currentDirectoryURL = URL(fileURLWithPath: target.cwd, isDirectory: true)
         let outputPipe = Pipe()
         let logBuffer = NativeProjectLogBuffer(initialText: "$ \(target.command)\n")
         NativeProcessPipeReader.install(
             on: outputPipe.fileHandleForReading,
             onData: logBuffer.append
         )
-        process.standardOutput = outputPipe
-        process.standardError = outputPipe
-        process.standardInput = FileHandle.nullDevice
-        process.environment = launchEnvironment(projectID: projectID)
+        let nullInput = open("/dev/null", O_RDONLY)
+        guard nullInput >= 0 else {
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            throw NativeProjectRunError.processLaunchFailed("无法打开项目运行标准输入")
+        }
+        defer { close(nullInput) }
+        let executable = "/bin/zsh"
+        let arguments = [executable, "-lc", target.command]
+        let environment = launchEnvironment(projectID: projectID)
+        var processID: pid_t = 0
+        let spawnResult = Self.withCStringArray(arguments) { argv in
+            Self.withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { envp in
+                chatos_spawn_process_group(
+                    executable,
+                    argv,
+                    envp,
+                    target.cwd,
+                    nullInput,
+                    outputPipe.fileHandleForWriting.fileDescriptor,
+                    outputPipe.fileHandleForWriting.fileDescriptor,
+                    &processID
+                )
+            }
+        }
+        outputPipe.fileHandleForWriting.closeFile()
+        guard spawnResult == 0, processID > 0 else {
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            throw NativeProjectRunError.processLaunchFailed(
+                String(cString: strerror(spawnResult))
+            )
+        }
+        var startSeconds: UInt64 = 0
+        var startMicroseconds: UInt64 = 0
+        let hasProcessIdentity = chatos_process_start_time(
+            processID,
+            &startSeconds,
+            &startMicroseconds
+        ) == 0
         let instanceID = UUID().uuidString
         let instance = NativeProjectProcess(
             id: instanceID,
@@ -163,30 +201,43 @@ public actor NativeProjectRunService: ProjectRunServicing {
             targetID: targetID,
             name: target.label,
             cwd: target.cwd,
-            process: process,
+            processID: processID,
+            hasProcessIdentity: hasProcessIdentity,
+            processStartSeconds: startSeconds,
+            processStartMicroseconds: startMicroseconds,
             outputPipe: outputPipe,
             logBuffer: logBuffer
         )
-        process.terminationHandler = { [weak self] process in
-            let status = process.terminationStatus
-            Task { await self?.processTerminated(id: instanceID, exitCode: status) }
-        }
-        do {
-            try process.run()
-            instance.status = "running"
-            instance.isRunning = true
-            processes[instanceID] = instance
-            notifyStateChanged(projectID: projectID)
-        } catch {
-            throw NativeProjectRunError.processLaunchFailed(error.localizedDescription)
+        instance.status = "running"
+        instance.isRunning = true
+        processes[instanceID] = instance
+        notifyStateChanged(projectID: projectID)
+        Self.processWaitQueue.async { [weak self, instance] in
+            var exitCode: Int32 = 1
+            let reapResult = chatos_reap_process(instance.processID, &exitCode)
+            // The command may exit while descendants still hold stdout or continue running.
+            // Close the complete owned group before tail-draining so one orphan cannot block the
+            // project-run actor or another project's lifecycle.
+            _ = chatos_signal_process_group(instance.processID, SIGKILL)
+            instance.outputPipe.fileHandleForReading.readabilityHandler = nil
+            let remainingOutput = instance.outputPipe.fileHandleForReading.readDataToEndOfFile()
+            if !remainingOutput.isEmpty { instance.logBuffer.append(remainingOutput) }
+            try? instance.outputPipe.fileHandleForReading.close()
+            Task {
+                await self?.processTerminated(
+                    id: instance.id,
+                    exitCode: reapResult == 0 ? exitCode : 1
+                )
+            }
         }
     }
 
     public func stop(instanceID: String) async throws {
         guard let instance = processes[instanceID] else { throw NativeProjectRunError.instanceNotFound }
-        if instance.process.isRunning {
-            instance.process.interrupt()
+        if instance.isRunning {
+            Self.signalProcessGroup(instance, signal: SIGTERM)
             instance.status = "stopping"
+            Self.scheduleForcedTermination(instance)
         } else {
             instance.isRunning = false
             instance.status = "exited"
@@ -198,7 +249,10 @@ public actor NativeProjectRunService: ProjectRunServicing {
         guard let instance = processes.removeValue(forKey: instanceID) else {
             throw NativeProjectRunError.instanceNotFound
         }
-        if instance.process.isRunning { instance.process.terminate() }
+        if instance.isRunning {
+            Self.signalProcessGroup(instance, signal: SIGTERM)
+            Self.scheduleForcedTermination(instance)
+        }
         notifyStateChanged(projectID: instance.projectID)
     }
 
@@ -249,10 +303,6 @@ public actor NativeProjectRunService: ProjectRunServicing {
 
     private func processTerminated(id: String, exitCode: Int32) {
         guard let instance = processes[id] else { return }
-        instance.outputPipe.fileHandleForReading.readabilityHandler = nil
-        let remainingOutput = instance.outputPipe.fileHandleForReading.readDataToEndOfFile()
-        if !remainingOutput.isEmpty { instance.logBuffer.append(remainingOutput) }
-        try? instance.outputPipe.fileHandleForReading.close()
         instance.logBuffer.append("\n[进程已退出，代码 \(exitCode)]\n")
         instance.exitCode = exitCode
         instance.isRunning = false
@@ -307,6 +357,31 @@ public actor NativeProjectRunService: ProjectRunServicing {
             )
         )
     }
+
+    private static func signalProcessGroup(_ instance: NativeProjectProcess, signal: Int32) {
+        guard instance.hasProcessIdentity,
+              chatos_process_matches_start_time(
+            instance.processID,
+            instance.processStartSeconds,
+            instance.processStartMicroseconds
+        ) == 1 else { return }
+        _ = chatos_signal_process_group(instance.processID, signal)
+    }
+
+    private static func scheduleForcedTermination(_ instance: NativeProjectProcess) {
+        processWaitQueue.asyncAfter(deadline: .now() + 1) {
+            signalProcessGroup(instance, signal: SIGKILL)
+        }
+    }
+
+    private static func withCStringArray<Result>(
+        _ values: [String],
+        _ body: ([UnsafeMutablePointer<CChar>?]) throws -> Result
+    ) rethrows -> Result {
+        let pointers = values.map { strdup($0) }
+        defer { pointers.forEach { free($0) } }
+        return try body(pointers + [nil])
+    }
 }
 
 private struct NativeProjectRunPreferences: Codable, Sendable {
@@ -326,7 +401,10 @@ private final class NativeProjectProcess: @unchecked Sendable {
     let targetID: String
     let name: String
     let cwd: String
-    let process: Process
+    let processID: pid_t
+    let hasProcessIdentity: Bool
+    let processStartSeconds: UInt64
+    let processStartMicroseconds: UInt64
     let outputPipe: Pipe
     let logBuffer: NativeProjectLogBuffer
     let startedAt: Date
@@ -340,7 +418,10 @@ private final class NativeProjectProcess: @unchecked Sendable {
         targetID: String,
         name: String,
         cwd: String,
-        process: Process,
+        processID: pid_t,
+        hasProcessIdentity: Bool,
+        processStartSeconds: UInt64,
+        processStartMicroseconds: UInt64,
         outputPipe: Pipe,
         logBuffer: NativeProjectLogBuffer
     ) {
@@ -349,7 +430,10 @@ private final class NativeProjectProcess: @unchecked Sendable {
         self.targetID = targetID
         self.name = name
         self.cwd = cwd
-        self.process = process
+        self.processID = processID
+        self.hasProcessIdentity = hasProcessIdentity
+        self.processStartSeconds = processStartSeconds
+        self.processStartMicroseconds = processStartMicroseconds
         self.outputPipe = outputPipe
         self.logBuffer = logBuffer
         self.startedAt = Date()
@@ -362,7 +446,7 @@ private final class NativeProjectProcess: @unchecked Sendable {
             cwd: cwd,
             status: status,
             isBusy: false,
-            isRunning: isRunning && process.isRunning,
+            isRunning: isRunning,
             log: logBuffer.snapshot(),
             startedAt: startedAt,
             exitCode: exitCode

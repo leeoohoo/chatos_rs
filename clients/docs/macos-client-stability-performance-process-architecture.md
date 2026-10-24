@@ -2303,6 +2303,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批验证了本机 sandbox fixture 下的并发、取消、超时与子孙清理，没有实际触发 macOS 系统权限弹窗，也未替用户更改隐私设置。项目 Run 分析、项目文件系统和附件 workspace/vault 的若干同步文件 I/O 仍使用 `Task.detached`，后续继续清理 cooperative executor 阻塞域。
 
+### 12.101 第三十完整里程碑：项目 Run 独立进程组与非阻塞退出回收（2026-10-24）
+
+本里程碑治理项目 Run 在主命令退出后的跨项目阻塞。此前 `NativeProjectRunService` 在 actor 隔离的 `processTerminated` 中同步执行 `readDataToEndOfFile()`；当 shell 主进程已经退出、后台子孙仍继承 stdout/stderr 写端时，该读取会一直等到最后一个写端关闭，期间同一个 actor 上其他项目的 start、stop 和状态查询全部无法执行。原 stop/delete 也只操作直接 `Process`，不能可靠清理同一 Run 派生的子孙进程。
+
+已实施：
+
+- 每次项目 Run 改用 `chatos_spawn_process_group` 启动，拥有独立 OS process group、pipe、日志缓冲和进程身份，不与其他项目共享进程槽或故障边界。
+- `waitpid`、主进程退出后的整组子孙收口以及 pipe 尾读全部迁入专用 concurrent GCD process-wait 队列；actor 只接收最终退出状态，不再执行阻塞读取，因此一个 Run 的后台子进程不能卡住其他项目的生命周期 API。
+- stop 对所属进程组发送 `SIGTERM`，1 秒后仍运行才升级 `SIGKILL`；delete 同样按组终止，主进程自然退出后仍以 `SIGKILL` 收口继续持有 pipe 或资源的同组子孙。
+- 启动时记录 PID start time，stop/delete/升级强杀前重新核对进程身份，避免 PID 被系统复用后误伤无关进程；若极短命令来不及取得身份，则只由已经持有 wait ownership 的 reaper 完成退出收尾。
+- 新增真实父子进程回归：Python 主进程派生继承 stdout 的后台 `sleep` 后立即退出，actor 必须在 3 秒门禁内恢复响应且清理 child；另验证 stop 在 3 秒内终止所属父子进程组。既有项目 Run 状态发布、Node/Swift 目标识别和大 manifest 有界读取同步覆盖。
+
+验证：Debug 与原生 arm64 Release 的项目 Run Service/Analyzer 联合矩阵各 6 项全部通过，Release 使用 `warnings-as-errors` 优化编译；构建证据脚本 25 项全部通过。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：本批解决项目 Run 的执行、停止、退出等待和子孙清理边界，但项目目标分析仍通过 `Task.detached` 执行同步目录与 manifest I/O；项目文件系统和附件 workspace/vault 也仍有同步文件 I/O。下一阶段继续把这些阻塞域迁到有界并发的专用 blocking-work lane，并补取消和大目录压力回归。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
