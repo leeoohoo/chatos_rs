@@ -65,6 +65,20 @@ export function WorkspaceSidebar({
 
   return (
     <nav className="workspace-navigation" aria-label={text("resourceNavigation")}>
+      <div className="workspace-navigation__toolbar">
+        <span>{text("resourceNavigation")}</span>
+        <button
+          aria-label={text("refreshResources")}
+          className="workspace-navigation__refresh"
+          disabled={isLoading || remoteIsLoading}
+          onClick={() => {
+            void load(workspaceIndex, ownerUserId, hostReady);
+            if (hostReady) void refreshRemoteConnections(remoteConnection);
+          }}
+          title={text("refreshResources")}
+          type="button"
+        >↻</button>
+      </div>
       <button
         className={`nav-item ${selection.kind === "workbench" ? "nav-item--active" : ""}`}
         onClick={() => onSelectionChange({ kind: "workbench" })}

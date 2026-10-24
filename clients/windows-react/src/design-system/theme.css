@@ -85,6 +85,11 @@ body {
 .nav-item--active { background: rgba(10, 132, 255, 0.13); color: #0068d6; font-weight: 580; }
 .nav-symbol { width: 18px; text-align: center; font-size: 17px; }
 .workspace-navigation { display: grid; min-height: 0; gap: 14px; overflow-y: auto; }
+.workspace-navigation__toolbar { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 0 10px; color: var(--secondary); font-size: 10px; font-weight: 650; letter-spacing: .04em; }
+.workspace-navigation__refresh { display: grid; width: 22px; height: 22px; place-items: center; border: 0; border-radius: 6px; padding: 0; color: var(--accent); background: transparent; font-size: 16px; line-height: 1; cursor: pointer; }
+.workspace-navigation__refresh:hover { background: rgba(10,132,255,.10); }
+.workspace-navigation__refresh:disabled { cursor: default; opacity: .45; }
+.workspace-navigation__refresh:focus-visible { outline: 3px solid rgba(10,132,255,.22); outline-offset: 1px; }
 .sidebar-section { display: grid; gap: 5px; }
 .sidebar-section > header { display: flex; min-height: 22px; align-items: center; justify-content: space-between; padding: 0 6px 0 10px; }
 .sidebar-section h2 { margin: 0; color: var(--secondary); font-size: 10px; font-weight: 650; letter-spacing: .04em; }
