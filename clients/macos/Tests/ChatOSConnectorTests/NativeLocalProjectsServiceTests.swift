@@ -25,7 +25,11 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
             configuration: .init(gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL),
             ticketProvider: NoNetworkTicketProvider())
         return Context(root: root, connector: connector,
-                       service: NativeLocalProjectsService(connector: connector, databaseURL: root.appendingPathComponent("projects.db")))
+                       service: NativeLocalProjectsService(
+                           connector: connector,
+                           databaseURL: root.appendingPathComponent("projects.db"),
+                           codeReadWorker: ConnectorCoreCodeReadWorker()
+                       ))
     }
 
     func testCreatesOfflineWithoutGitContactOrActivationAndPersists() async throws {
@@ -69,6 +73,35 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
             Set(records.map(\.draft.relativeRoot)),
             ["Projects/设计---系统", "Projects/设计---系统-2"]
         )
+    }
+
+    func testConcurrentAgentProjectCreationClaimsDistinctDirectories() async throws {
+        let context = try context(rootWorkspaceFirst: true)
+        defer { try? FileManager.default.removeItem(at: context.root) }
+
+        async let first = context.service.createInDefaultWorkspace(
+            ownerUserID: "alice",
+            name: "并行项目"
+        )
+        async let second = context.service.createInDefaultWorkspace(
+            ownerUserID: "alice",
+            name: "并行项目"
+        )
+        let projects = try await [first, second]
+
+        XCTAssertEqual(Set(projects.map(\.name)), ["并行项目"])
+        let registry = try await context.service.registry()
+        let records = try await registry.list(ownerUserID: "alice")
+        XCTAssertEqual(
+            Set(records.map(\.draft.relativeRoot)),
+            ["Projects/并行项目", "Projects/并行项目-2"]
+        )
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: context.root.appendingPathComponent("Projects/并行项目").path
+        ))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: context.root.appendingPathComponent("Projects/并行项目-2").path
+        ))
     }
 
     func testImportsExistingAbsoluteDirectoryWithoutChangingOrLinkingIt() async throws {

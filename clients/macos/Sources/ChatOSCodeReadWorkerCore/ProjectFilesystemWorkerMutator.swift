@@ -19,7 +19,10 @@ struct ProjectFilesystemWorkerMutator {
                 createOnly: arguments.bool("create_only") ?? false
             )
         case "project_create_directory_v1":
-            return try createDirectory(path: requiredString(arguments, "path"))
+            return try createDirectory(
+                path: requiredString(arguments, "path"),
+                createOnly: arguments.bool("create_only") ?? false
+            )
         case "project_delete_entry_v1":
             guard let recursive = arguments.bool("recursive") else {
                 throw CodeReadWorkerCoreError.invalidRequest("缺少布尔字段：recursive")
@@ -100,7 +103,10 @@ struct ProjectFilesystemWorkerMutator {
         ])
     }
 
-    private func createDirectory(path: String) throws -> CodeReadWorkerJSONValue {
+    private func createDirectory(
+        path: String,
+        createOnly: Bool
+    ) throws -> CodeReadWorkerJSONValue {
         let components = try normalizedComponents(path)
         let rootDescriptor = try openRoot()
         defer { _ = Darwin.close(rootDescriptor) }
@@ -108,13 +114,15 @@ struct ProjectFilesystemWorkerMutator {
         var ownsCurrent = false
         var created = false
         defer { if ownsCurrent { _ = Darwin.close(current) } }
-        for component in components {
+        for (index, component) in components.enumerated() {
             try checkDeadline()
             let result = component.withCString { Darwin.mkdirat(current, $0, 0o755) }
             if result == 0 {
                 created = true
             } else if errno != EEXIST {
                 throw mappedErrno(errno)
+            } else if createOnly, index == components.count - 1 {
+                throw CodeReadWorkerCoreError.alreadyExists
             }
             let next = component.withCString {
                 Darwin.openat(current, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)

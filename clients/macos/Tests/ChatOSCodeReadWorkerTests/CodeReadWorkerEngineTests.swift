@@ -154,9 +154,15 @@ final class CodeReadWorkerEngineTests: XCTestCase {
 
         let directory = try fixture.execute(
             "project_create_directory_v1",
-            ["path": .string("Sources/Nested")]
+            ["path": .string("Sources/Nested"), "create_only": .bool(true)]
         ).object
         XCTAssertTrue(try directory.bool("created"))
+        XCTAssertThrowsError(try fixture.execute(
+            "project_create_directory_v1",
+            ["path": .string("Sources/Nested"), "create_only": .bool(true)]
+        )) { error in
+            XCTAssertEqual(error.localizedDescription, "目标已经存在")
+        }
 
         let created = try fixture.execute(
             "project_write_file_v1",

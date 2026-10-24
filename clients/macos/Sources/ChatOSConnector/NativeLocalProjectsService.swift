@@ -1,3 +1,5 @@
+import ChatOSCodeReadWorkerClient
+import ChatOSCodeReadWorkerProtocol
 import ChatOSCore
 import Foundation
 
@@ -15,18 +17,21 @@ public actor NativeLocalProjectsService:
     private let connector: NativeLocalConnectorService
     private let databaseURL: URL
     private let managedProjectsRootURL: URL
+    private let codeReadWorker: any CodeReadWorkerExecuting
     private var store: SQLiteProjectRegistry?
 
     public init(
         connector: NativeLocalConnectorService,
         databaseURL: URL,
-        managedProjectsRootURL: URL? = nil
+        managedProjectsRootURL: URL? = nil,
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
     ) {
         self.connector = connector
         self.databaseURL = databaseURL
         self.managedProjectsRootURL = managedProjectsRootURL
             ?? databaseURL.deletingLastPathComponent()
                 .appendingPathComponent("Projects", isDirectory: true)
+        self.codeReadWorker = codeReadWorker
     }
 
     public func registry() throws -> SQLiteProjectRegistry {
@@ -130,29 +135,42 @@ public actor NativeLocalProjectsService:
         let baseName = Self.safeProjectDirectoryName(name)
         var directoryName = baseName
         var suffix = 2
-        while FileManager.default.fileExists(
-            atPath: managedProjectsRootURL
-                .appendingPathComponent(directoryName, isDirectory: true).path
-        ) {
-            directoryName = "\(baseName)-\(suffix)"
-            suffix += 1
+        while true {
+            let relativeRoot = projectsRelativeRoot == "."
+                ? directoryName
+                : "\(projectsRelativeRoot)/\(directoryName)"
+            do {
+                _ = try await codeReadWorker.execute(
+                    operation: "project_create_directory_v1",
+                    arguments: [
+                        "path": .string(relativeRoot),
+                        "create_only": .bool(true),
+                    ],
+                    projectRoot: URL(
+                        fileURLWithPath: workspace.absoluteRoot,
+                        isDirectory: true
+                    ),
+                    requestCWD: nil,
+                    defaultToolRoot: nil,
+                    ripgrepURL: nil
+                )
+                return try await create(
+                    ownerUserID: ownerUserID,
+                    draft: .init(
+                        name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                        description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+                        workspaceID: workspace.id,
+                        relativeRoot: relativeRoot,
+                        projectTypeKey: projectTypeKey
+                    )
+                )
+            } catch let error as CodeReadWorkerProcessClientError {
+                guard case let .requestRejected(code, _) = error,
+                      code == "already_exists" else { throw error }
+                directoryName = "\(baseName)-\(suffix)"
+                suffix += 1
+            }
         }
-        let relativeRoot = projectsRelativeRoot == "."
-            ? directoryName
-            : "\(projectsRelativeRoot)/\(directoryName)"
-        _ = try await Task.detached {
-            try NativeWorkspaceFilesystem(workspace: workspace).createDirectory(path: relativeRoot)
-        }.value
-        return try await create(
-            ownerUserID: ownerUserID,
-            draft: .init(
-                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                description: description.trimmingCharacters(in: .whitespacesAndNewlines),
-                workspaceID: workspace.id,
-                relativeRoot: relativeRoot,
-                projectTypeKey: projectTypeKey
-            )
-        )
     }
 
     /// Resolves an existing directory into host-owned project metadata without moving, copying,

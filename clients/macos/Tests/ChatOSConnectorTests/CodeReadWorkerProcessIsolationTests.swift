@@ -96,12 +96,35 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
             timeout: 5
         ).execute(
             operation: "project_create_directory_v1",
-            arguments: ["path": .string("Generated")],
+            arguments: [
+                "path": .string("Generated"),
+                "create_only": .bool(true),
+            ],
             projectRoot: fixture.root,
             requestCWD: nil,
             defaultToolRoot: nil,
             ripgrepURL: nil
         )
+        do {
+            _ = try await CodeReadWorkerProcessClient(
+                executableURL: executable,
+                timeout: 5
+            ).execute(
+                operation: "project_create_directory_v1",
+                arguments: [
+                    "path": .string("Generated"),
+                    "create_only": .bool(true),
+                ],
+                projectRoot: fixture.root,
+                requestCWD: nil,
+                defaultToolRoot: nil,
+                ripgrepURL: nil
+            )
+            XCTFail("real worker accepted an existing create-only directory")
+        } catch let error as CodeReadWorkerProcessClientError {
+            guard case let .requestRejected(code, _) = error else { throw error }
+            XCTAssertEqual(code, "already_exists")
+        }
         _ = try await CodeReadWorkerProcessClient(
             executableURL: executable,
             timeout: 5

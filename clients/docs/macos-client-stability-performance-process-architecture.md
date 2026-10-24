@@ -2367,6 +2367,20 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：发送消息时把内存中的附件草稿写入 vault 的 `authorize` 仍在 App 同步执行，附件 UI 的 `previewURL` 仍执行同步元数据检查；后续应分别迁移并保留发送事务语义与即时预览体验。Worker 在原子安装前被强杀可能留下 `.import-*` 临时文件，但不会覆盖目标；仍需增加仅清理足够老且不再被活跃 Worker 持有的临时文件回收。真实慢速、只读、空间耗尽移动卷和长期组合压力仍待完成。
 
+### 12.105 第三十四完整里程碑：Agent 默认项目目录创建复用独立 Worker（2026-10-24）
+
+本里程碑清理项目创建链路在 12.103 之后遗留的一处旁路。Agent 接受方案并在默认 workspace 建项目时，`NativeLocalProjectsService` 仍通过 `Task.detached` 调用旧的 `NativeWorkspaceFilesystem.createDirectory`；慢卷或文件系统阻塞会占用 cooperative executor，且不能被硬终止。现在目录 mutation 也复用一请求一 Code Read Worker，和项目浏览器写入使用同一安全边界。
+
+已实施：
+
+- `NativeLocalProjectsService` 支持注入 Code Read Worker，正式路径默认使用真实独立进程；App actor 在等待 Worker 时可重入，其他会话的项目提案、消息与任务不会被一次目录创建占住执行线程。目录根直接绑定已配对 workspace 的 absolute root，Worker 再核对 device/inode 并以 `openat`/`mkdirat`、`O_NOFOLLOW` 逐段创建。
+- `project_create_directory_v1` 新增可选 `create_only` 语义。默认保持项目浏览器原有的幂等目录创建；默认项目创建显式启用 create-only，最终目录已存在时返回 `already_exists`，不会把两个请求错误绑定到同一个目录。
+- 项目服务不再用 App 内 `fileExists` 循环先检查后创建，而是以 Worker 的原子结果认领基础名；发生并发冲突才递增 `-2`、`-3` 后缀并重试。两个并发同名请求的回归证明最终持久化到两个不同目录；真实 Worker 回归证明跨认证进程边界拒绝重复 create-only。
+
+验证：Debug 与原生 arm64 Release 的 Code Read Worker Engine、真实进程隔离和 Native Local Projects Service 联合矩阵各 28 项全部通过，Release 使用 `warnings-as-errors` 优化编译；构建证据工具 25 项全部通过，两个打包脚本通过 zsh 语法校验。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：目录创建成功后项目 registry 写入仍是后续独立提交；若 registry 提交失败，会留下一个空的已认领目录，当前不会自动删除，以免在提交结果不明时误删并发写入。需要后续通过明确 ownership 标记和年龄门禁回收这类空目录，不能用无条件递归删除补偿。附件发送授权、附件 UI 预览、Artifact stage/restore 等同步文件路径仍待迁移。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
