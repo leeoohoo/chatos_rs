@@ -107,65 +107,57 @@ export function WorkspaceSidebar({
         </div>
       </div>
       <button
-        className={`nav-item ${selection.kind === "workbench" ? "nav-item--active" : ""}`}
-        onClick={() => onSelectionChange({ kind: "workbench" })}
-        type="button"
-      >
-        <span aria-hidden="true" className="nav-symbol">⌂</span>
-        {text("workbench")}
-      </button>
-      <button
-        className={`nav-item ${selection.kind === "agentManagement" ? "nav-item--active" : ""}`}
+        aria-label={text("agentManagement")}
+        className={`nav-item nav-item--agent ${selection.kind === "agentManagement" ? "nav-item--active" : ""}`}
         onClick={() => onSelectionChange({ kind: "agentManagement" })}
         type="button"
       >
         <span aria-hidden="true" className="nav-symbol">◎</span>
-        {text("agentManagement")}
+        <span className="nav-item__copy"><strong>{text("agentManagement")}</strong><small>{language === "en-US" ? "Direct messages and project teams" : "私聊与项目团队"}</small></span>
       </button>
       <button
-        className={`nav-item ${selection.kind === "requirementSurveys" ? "nav-item--active" : ""}`}
+        aria-label={text("requirementSurveys")}
+        className={`nav-item nav-item--surveys ${selection.kind === "requirementSurveys" ? "nav-item--active" : ""}`}
         disabled={!hostReady}
         onClick={() => onSelectionChange({ kind: "requirementSurveys" })}
         type="button"
       >
         <span aria-hidden="true" className="nav-symbol">☷</span>
-        {text("requirementSurveys")}
+        <span className="nav-item__copy"><strong>{text("requirementSurveys")}</strong><small>{language === "en-US" ? "Requirements, solutions, and execution plans" : "需求确认、方案与执行计划"}</small></span>
       </button>
       <button
-        className={`nav-item ${selection.kind === "notepad" ? "nav-item--active" : ""}`}
-        disabled={!hostReady}
-        onClick={() => onSelectionChange({ kind: "notepad" })}
-        type="button"
-      >
-        <span aria-hidden="true" className="nav-symbol">▤</span>
-        {text("notepad")}
-      </button>
-      <button
-        className={`nav-item ${selection.kind === "terminal" ? "nav-item--active" : ""}`}
-        disabled={!hostReady}
-        onClick={() => onSelectionChange({ kind: "terminal" })}
-        type="button"
-      >
-        <span aria-hidden="true" className="nav-symbol">⌘</span>
-        {text("localTerminal")}
-      </button>
-      <button
-        className={`nav-item ${selection.kind === "mediaStudio" ? "nav-item--active" : ""}`}
+        aria-label={text("mediaStudio")}
+        className={`nav-item nav-item--media ${selection.kind === "mediaStudio" ? "nav-item--active" : ""}`}
         onClick={() => onSelectionChange({ kind: "mediaStudio" })}
         type="button"
       >
         <span aria-hidden="true" className="nav-symbol">✦</span>
-        {text("mediaStudio")}
+        <span className="nav-item__copy"><strong>{text("mediaStudio")}</strong><small>{language === "en-US" ? "Generate images and video" : "生成图片与视频"}</small></span>
       </button>
       <button
-        className={`nav-item ${selection.kind === "applications" || selection.kind === "application" ? "nav-item--active" : ""}`}
+        aria-label={text("applications")}
+        className={`nav-item nav-item--applications ${selection.kind === "applications" || selection.kind === "application" ? "nav-item--active" : ""}`}
         disabled={!hostReady}
         onClick={() => onSelectionChange({ kind: "applications" })}
         type="button"
       >
         <span aria-hidden="true" className="nav-symbol">▦</span>
-        {text("applications")}
+        <span className="nav-item__copy"><strong>{text("applications")}</strong><small>{language === "en-US" ? "Installed plugin apps" : "已安装插件应用"}</small></span>
       </button>
+
+      <div className="local-terminal-section">
+        <p>{language === "en-US" ? "Local" : "本机"}</p>
+        <button
+          aria-label={text("localTerminal")}
+          className={`nav-item nav-item--terminal ${selection.kind === "terminal" ? "nav-item--active" : ""}`}
+          disabled={!hostReady}
+          onClick={() => onSelectionChange({ kind: "terminal" })}
+          type="button"
+        >
+          <span aria-hidden="true" className="nav-symbol">⌘</span>
+          <span className="nav-item__copy"><strong>{text("localTerminal")}</strong><small>{hostReady ? (language === "en-US" ? "Available" : "可用") : (language === "en-US" ? "Unavailable" : "暂不可用")}</small></span>
+        </button>
+      </div>
 
       <SidebarSection title={text("contacts")}>
         {isLoading && snapshot.contacts.length === 0 && <LoadingRow title={text("loadingContacts")} />}

@@ -1309,6 +1309,31 @@ impl AgentConversationStore {
         Ok((binding, output))
     }
 
+    pub(crate) fn resolve_dashboard_todo_references(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        references: &[String],
+    ) -> Result<(AgentAssetToolBinding, Vec<String>), String> {
+        validate_identifier(run_id).map_err(|_| team_todo_store_error())?;
+        validate_reference_list(references, 192)?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let binding = load_agent_asset_tool_binding(&connection, owner_user_id, run_id)?;
+        if binding.todo_id.is_some() {
+            return Err("Project dashboard tools are unavailable in an executor Run.".into());
+        }
+        let resolved = resolve_todo_references(
+            &connection,
+            owner_user_id,
+            run_id,
+            &binding.team_id,
+            references,
+            false,
+        )?;
+        Ok((binding, resolved))
+    }
+
     pub(crate) fn todo_planning_progress(
         &self,
         owner_user_id: &str,

@@ -35,18 +35,20 @@ export function WeChatCompanionView({ ownerUserId, port }: { ownerUserId: string
   const binding = state.snapshot?.binding;
   const remaining = Math.max(0, (state.ticket?.expiresAtUnix ?? 0) - now);
 
+  useEffect(() => {
+    if (state.ticket?.status === "issued" && remaining === 0) {
+      state.expireTicket(state.ticket.previewUrl);
+    }
+  }, [remaining, state.expireTicket, state.ticket?.previewUrl, state.ticket?.status]);
+
   return (
     <section className="wechat-companion" aria-label={english ? "WeChat Companion settings" : "微信小程序设置"}>
       <header className="wechat-companion__hero">
-        <span aria-hidden="true">⌗</span>
-        <div><p>WECHAT COMPANION</p><h2>{english ? "WeChat Mini Program" : "微信小程序"}</h2><small>{english ? "Bind WeChat and manage Mini Program sessions." : "绑定微信并管理小程序登录设备。"}</small></div>
+        <h2>{english ? "WeChat Mini Program" : "微信小程序"}</h2>
         {state.isLoading && <div className="wechat-companion__progress"><span className="mini-spinner" />{english ? "Loading…" : "正在读取…"}</div>}
       </header>
 
-      {state.error && <div className="wechat-companion__message wechat-companion__message--error" role="alert"><span>!</span><p>{state.error}</p><button onClick={state.clearError} type="button">×</button></div>}
-      {state.notice && <div className="wechat-companion__message wechat-companion__message--success" role="status"><span>✓</span><p>{state.notice}</p></div>}
-
-      <SettingsCard title={english ? "WeChat Account Binding" : "微信账号绑定"} subtitle={english ? "Scanning still requires confirmation on this signed-in Windows device." : "扫码后仍需在这台已登录的 Windows 设备上确认。"}>
+      <SettingsCard icon="⌗" title={english ? "WeChat Account Binding" : "微信账号绑定"} subtitle={english ? "Scanning still requires confirmation on this signed-in Windows device." : "扫码后仍需在这台已登录的 Windows 设备上确认。"}>
         {state.isLoading && !binding ? <Loading english={english} /> : binding?.bound ? (
           <div className="wechat-binding-state">
             <span className="wechat-binding-state__icon">✓</span>
@@ -73,9 +75,11 @@ export function WeChatCompanionView({ ownerUserId, port }: { ownerUserId: string
             <button className="primary-button" disabled={state.isMutating} onClick={() => void state.issueTicket(port)} type="button">{english ? "Generate Code" : "生成小程序码"}</button>
           </div>
         )}
+        {state.notice && <div className="wechat-companion__message wechat-companion__message--success" role="status"><span>✓</span><p>{state.notice}</p></div>}
+        {state.error && <div className="wechat-companion__message wechat-companion__message--error" role="alert"><span>!</span><p>{state.error}</p><button aria-label={english ? "Dismiss error" : "关闭错误"} onClick={state.clearError} type="button">×</button></div>}
       </SettingsCard>
 
-      <SettingsCard title={english ? "Mini Program Sessions" : "小程序登录设备"} subtitle={english ? "Revoke access for lost devices or sessions you no longer use." : "撤销丢失设备或不再使用的登录。"}>
+      <SettingsCard icon="▯" title={english ? "Mini Program Sessions" : "小程序登录设备"} subtitle={english ? "Revoke access for lost devices or sessions you no longer use." : "撤销丢失设备或不再使用的登录。"}>
         {!state.snapshot || state.snapshot.sessions.length === 0 ? <p className="wechat-empty">{english ? "No Mini Program sessions." : "暂无小程序登录记录。"}</p> : (
           <div className="wechat-sessions">{state.snapshot.sessions.map((session) => <SessionRow english={english} key={session.id} session={session} disabled={state.isMutating} onRevoke={() => void state.revokeSession(port, session.id)} />)}</div>
         )}
@@ -86,8 +90,8 @@ export function WeChatCompanionView({ ownerUserId, port }: { ownerUserId: string
   );
 }
 
-function SettingsCard({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
-  return <section className="wechat-card"><header><span aria-hidden="true">⌁</span><div><h3>{title}</h3><p>{subtitle}</p></div></header><div className="wechat-card__body">{children}</div></section>;
+function SettingsCard({ icon, title, subtitle, children }: { icon: string; title: string; subtitle: string; children: React.ReactNode }) {
+  return <section className="wechat-card"><header><span aria-hidden="true">{icon}</span><h3>{title}</h3></header><div className="wechat-card__body">{children}</div><p className="wechat-card__footnote">{subtitle}</p></section>;
 }
 
 function SessionRow({ session, english, disabled, onRevoke }: { session: WeChatClientSession; english: boolean; disabled: boolean; onRevoke(): void }) {

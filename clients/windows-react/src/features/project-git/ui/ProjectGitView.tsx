@@ -152,11 +152,11 @@ export function ProjectGitView({
             onOpenFile={() => onOpenFile(state.selectedDiff!.path)}
           />
         ) : (
-          <GitEmpty
-            icon="±"
-            title="选择一项变更"
-            description="查看暂存区或工作区的文本差异。"
-          />
+          <div className="project-directory__welcome project-git__file-empty">
+            <span className="project-git__file-empty-icon" aria-hidden="true"><span>▤</span><b>⌕</b></span>
+            <h2>选择一个文件</h2>
+            <p>从左侧项目目录中选择文件以预览或编辑。</p>
+          </div>
         )}
       </section>
       {createBranchOpen && (

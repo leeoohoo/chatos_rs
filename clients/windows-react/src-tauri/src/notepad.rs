@@ -131,6 +131,20 @@ pub(crate) struct NotepadImageInput {
     source: NotepadImageSource,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct NotepadCopyTextInput {
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct NotepadExportMarkdownInput {
+    owner_user_id: String,
+    title: String,
+    content: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NotepadImageInsertion {
@@ -178,6 +192,53 @@ pub(crate) async fn load_notepad(
         folders,
         notes: notes.into_iter().map(project_note).collect(),
     })
+}
+
+#[tauri::command]
+pub(crate) async fn copy_notepad_text(input: NotepadCopyTextInput) -> Result<(), String> {
+    if input.text.len() > LOCAL_NOTEPAD_MAX_CONTENT_BYTES || input.text.contains('\0') {
+        return Err("复制的笔记正文无效。".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let mut clipboard = arboard::Clipboard::new().map_err(|_| "无法访问剪贴板。")?;
+        clipboard
+            .set_text(input.text)
+            .map_err(|_| "无法复制笔记正文。".to_owned())
+    })
+    .await
+    .map_err(|error| format!("无法复制笔记正文：{error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn export_notepad_markdown(
+    input: NotepadExportMarkdownInput,
+    authentication: State<'_, AuthenticationManager>,
+) -> Result<bool, String> {
+    validate_owner(&input.owner_user_id)?;
+    validate_note_fields(&input.title, &input.content, &[])?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let selected = rfd::AsyncFileDialog::new()
+        .set_title("导出 Markdown")
+        .add_filter("Markdown", &["md"])
+        .set_file_name(export_markdown_file_name(&input.title))
+        .save_file()
+        .await;
+    let Some(selected) = selected else {
+        return Ok(false);
+    };
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    let path = selected.path().to_path_buf();
+    let content = input.content;
+    tokio::task::spawn_blocking(move || {
+        fs::write(path, content.as_bytes()).map_err(|_| "无法导出 Markdown。".to_owned())
+    })
+    .await
+    .map_err(|error| format!("无法导出 Markdown：{error}"))??;
+    Ok(true)
 }
 
 #[tauri::command]
@@ -524,10 +585,21 @@ async fn list_folders(manager: &HostManager, owner_user_id: &str) -> Result<Vec<
     let HostResult::NotepadFolders { folders } = result else {
         return Err("Local Agent Host 返回了错误的记事本文件夹列表。".into());
     };
+    // The Host includes the implicit root folder as an empty string.  The
+    // macOS client treats that root as a valid note location but does not
+    // expose it as a child folder, so keep it out of the projected folder
+    // list instead of rejecting an otherwise empty notebook on every load.
+    project_folders(folders)
+}
+
+fn project_folders(folders: Vec<String>) -> Result<Vec<String>, String> {
     let mut projected = folders
         .into_iter()
-        .map(|folder| normalize_folder(&folder, false))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|folder| normalize_folder(&folder, true))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|folder| !folder.is_empty())
+        .collect::<Vec<_>>();
     projected.sort();
     projected.dedup();
     Ok(projected)
@@ -693,6 +765,24 @@ fn validate_note_fields(title: &str, content: &str, tags: &[String]) -> Result<(
         return Err("笔记标签无效。".into());
     }
     Ok(())
+}
+
+fn export_markdown_file_name(title: &str) -> String {
+    let cleaned = title
+        .trim()
+        .chars()
+        .filter(|value| {
+            !value.is_control()
+                && !matches!(value, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        })
+        .collect::<String>();
+    let cleaned = cleaned.trim_end_matches([' ', '.']);
+    let base = if cleaned.is_empty() {
+        "未命名笔记"
+    } else {
+        cleaned
+    };
+    format!("{base}.md")
 }
 
 fn normalize_tags(tags: Vec<String>) -> Vec<String> {
@@ -885,6 +975,13 @@ mod tests {
     }
 
     #[test]
+    fn root_folder_is_not_projected_as_a_child_folder() {
+        let projected =
+            project_folders(vec!["".into(), " 工作\\方案/ ".into(), "工作/方案".into()]).unwrap();
+        assert_eq!(projected, vec!["工作/方案"]);
+    }
+
+    #[test]
     fn detail_validation_checks_identity_version_and_size() {
         let detail = LocalNotepadNoteDetail {
             note: note(),
@@ -917,5 +1014,11 @@ mod tests {
         assert!(image_mime_type(b"<svg></svg>").is_err());
         assert_eq!(sanitize_image_name("../screen[1].png"), "..screen[1].png");
         assert_eq!(markdown_alt("screen[1].png"), "screen\\[1\\]");
+    }
+
+    #[test]
+    fn export_file_name_is_safe_and_keeps_markdown_extension() {
+        assert_eq!(export_markdown_file_name(" 方案/评审:*? "), "方案评审.md");
+        assert_eq!(export_markdown_file_name("..."), "未命名笔记.md");
     }
 }

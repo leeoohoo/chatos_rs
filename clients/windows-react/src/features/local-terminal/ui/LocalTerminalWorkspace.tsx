@@ -4,6 +4,7 @@ import {
   type LocalTerminalPhase,
 } from "../application/localTerminalStore";
 import type { LocalTerminalPort } from "../ports/LocalTerminalPort";
+import { localTerminalDisplayPath } from "../domain/localTerminal";
 import { LocalTerminalSurface, type LocalTerminalSurfaceHandle } from "./LocalTerminalSurface";
 import "./localTerminal.css";
 
@@ -18,6 +19,7 @@ export function LocalTerminalWorkspace({
 }) {
   const state = useLocalTerminalStore();
   const surfaceRef = useRef<LocalTerminalSurfaceHandle>(null);
+  const actionsRef = useRef<HTMLDetailsElement>(null);
   const [searchText, setSearchText] = useState("");
   const selected = state.tabs.find((tab) => tab.id === state.selectedTabId) ?? state.tabs[0];
 
@@ -26,7 +28,16 @@ export function LocalTerminalWorkspace({
     return () => useLocalTerminalStore.getState().deactivate(port);
   }, [hostReady, ownerUserId, port]);
 
-  useEffect(() => setSearchText(""), [selected?.id]);
+  useEffect(() => {
+    setSearchText("");
+    actionsRef.current?.removeAttribute("open");
+  }, [selected?.id]);
+
+  useEffect(() => {
+    const query = searchText.trim();
+    if (query) surfaceRef.current?.findNext(query);
+    else surfaceRef.current?.clearSearch();
+  }, [searchText, selected?.id]);
 
   if (!hostReady) {
     return (
@@ -48,10 +59,53 @@ export function LocalTerminalWorkspace({
     if (!selected) return;
     surfaceRef.current?.clear();
     state.clearOutput(selected.id);
+    actionsRef.current?.removeAttribute("open");
+  };
+  const interrupt = () => {
+    if (!selected) return;
+    actionsRef.current?.removeAttribute("open");
+    void state.interrupt(port, selected.id);
+  };
+  const closeSelected = () => {
+    if (!selected) return;
+    actionsRef.current?.removeAttribute("open");
+    state.closeTerminal(port, selected.id);
   };
 
   return (
     <section className="local-terminal" aria-label="本机终端工作区">
+      <header className="local-terminal-commandbar">
+        <strong title={selected?.title ?? "终端"}>{selected?.title ?? "终端"}</strong>
+        {selected && (
+          <>
+            <label className="local-terminal-search">
+              <span aria-hidden="true">⌕</span>
+              <input
+                aria-label="搜索终端输出"
+                onChange={(event) => setSearchText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") search(event.shiftKey ? "previous" : "next");
+                }}
+                placeholder="搜索终端输出"
+                value={searchText}
+              />
+            </label>
+            <div className="local-terminal-commandbar__actions">
+              <button aria-label="上一个匹配项" disabled={!searchText.trim()} onClick={() => search("previous")} type="button">⌃</button>
+              <button aria-label="下一个匹配项" disabled={!searchText.trim()} onClick={() => search("next")} type="button">⌄</button>
+              <details className="local-terminal-actions" ref={actionsRef}>
+                <summary aria-label="终端操作" role="button" title="终端操作">•••</summary>
+                <div role="menu">
+                  <button onClick={clear} role="menuitem" type="button"><span aria-hidden="true">⌫</span>清屏</button>
+                  <button disabled={selected.phase !== "running" || selected.activeAction != null} onClick={interrupt} role="menuitem" type="button"><span aria-hidden="true">■</span>中断</button>
+                  <hr />
+                  <button onClick={closeSelected} role="menuitem" type="button"><span aria-hidden="true">×</span>关闭终端</button>
+                </div>
+              </details>
+            </div>
+          </>
+        )}
+      </header>
       <header className="local-terminal-tabs" aria-label="终端标签">
         <div className="local-terminal-tabs__items">
           {state.tabs.map((tab) => (
@@ -74,9 +128,8 @@ export function LocalTerminalWorkspace({
           <button
             aria-label="新建终端"
             className="local-terminal-tabs__add"
-            disabled={state.tabs.length >= 4}
             onClick={() => state.createTerminal(port)}
-            title={state.tabs.length >= 4 ? "最多同时打开 4 个终端" : "新建终端"}
+            title="新建终端"
             type="button"
           >＋</button>
         </div>
@@ -87,41 +140,12 @@ export function LocalTerminalWorkspace({
           <header className="local-terminal__toolbar">
             <div className="local-terminal__path">
               <span aria-hidden="true">▱</span>
-              <code>{selected.workingDirectory}</code>
+              <code>{localTerminalDisplayPath(selected.workingDirectory)}</code>
             </div>
             <span className={`local-terminal-status local-terminal-status--${selected.phase}`}>
-              {statusLabel(selected.phase, selected.exitCode)}
+              {selected.shellName}
             </span>
-            <span className="local-terminal-shell">{selected.shellName}</span>
-            <label className="local-terminal-search">
-              <span aria-hidden="true">⌕</span>
-              <input
-                aria-label="搜索终端输出"
-                onChange={(event) => setSearchText(event.target.value)}
-                onKeyDown={(event) => { if (event.key === "Enter") search("next"); }}
-                placeholder="搜索终端输出"
-                value={searchText}
-              />
-            </label>
-            <button
-              aria-label="上一个匹配项"
-              disabled={!searchText.trim()}
-              onClick={() => search("previous")}
-              type="button"
-            >↑</button>
-            <button
-              aria-label="下一个匹配项"
-              disabled={!searchText.trim()}
-              onClick={() => search("next")}
-              type="button"
-            >↓</button>
-            <button onClick={clear} type="button">清屏</button>
-            <button
-              className="danger-link"
-              disabled={selected.phase !== "running" || selected.activeAction != null}
-              onClick={() => void state.interrupt(port, selected.id)}
-              type="button"
-            >中断</button>
+            <span className="local-terminal-shell">{statusLabel(selected.phase, selected.exitCode)}</span>
           </header>
           <LocalTerminalSurface key={selected.id} port={port} ref={surfaceRef} tabId={selected.id} />
           {(selected.errorMessage || selected.warningMessage) && (

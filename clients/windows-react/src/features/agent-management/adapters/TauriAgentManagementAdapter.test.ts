@@ -23,6 +23,37 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     });
   });
 
+  it("binds Agent document list, preview, and save to native integrity fields", async () => {
+    const artifact = {
+      artifactId: "artifact-1", name: "report.md", mimeType: "text/markdown", size: 4,
+      sha256: "a".repeat(64), status: "stored", createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    vi.mocked(invoke)
+      .mockResolvedValueOnce({ artifacts: [artifact], nextCursor: null })
+      .mockResolvedValueOnce({ artifactId: "artifact-1", markdown: "# Report" })
+      .mockResolvedValueOnce(true);
+    const adapter = new TauriAgentManagementAdapter();
+
+    await expect(adapter.listArtifacts("owner-1", 50, null)).resolves.toEqual({
+      artifacts: [artifact], nextCursor: null,
+    });
+    await expect(adapter.previewArtifact("owner-1", "artifact-1", 4, "a".repeat(64)))
+      .resolves.toEqual({ artifactId: "artifact-1", markdown: "# Report" });
+    await expect(adapter.saveArtifact("owner-1", "artifact-1", "report.md", 4, "a".repeat(64)))
+      .resolves.toBe(true);
+    expect(invoke).toHaveBeenNthCalledWith(1, "list_agent_artifacts", {
+      ownerUserId: "owner-1", limit: 50, cursor: null,
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "preview_agent_artifact", {
+      ownerUserId: "owner-1", artifactId: "artifact-1", expectedSize: 4,
+      expectedSha256: "a".repeat(64),
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, "save_agent_artifact", {
+      ownerUserId: "owner-1", artifactId: "artifact-1", name: "report.md", expectedSize: 4,
+      expectedSha256: "a".repeat(64),
+    });
+  });
+
   it("rejects unsafe picker projections and forwards scoped cleanup", async () => {
     vi.mocked(invoke).mockResolvedValueOnce({
       id: `reference_${"a".repeat(32)}`,
@@ -261,7 +292,7 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     vi.mocked(invoke).mockResolvedValueOnce({ teamId: team.id, messages: [], deliveries: [] });
     await adapter.loadTeamConversation("owner-1", team.id);
     expect(invoke).toHaveBeenLastCalledWith("load_agent_team_conversation", {
-      ownerUserId: "owner-1", teamId: team.id,
+      ownerUserId: "owner-1", teamId: team.id, beforeMessageId: null, limit: 50,
     });
 
     vi.mocked(invoke).mockResolvedValueOnce({
@@ -314,6 +345,14 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     });
     await adapter.loadTeamRuns("owner-1", team.id);
     expect(invoke).toHaveBeenLastCalledWith("load_agent_team_runs", {
+      ownerUserId: "owner-1", teamId: team.id,
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce({ dashboard: null, pendingApprovalCount: 0 });
+    await expect(adapter.loadTeamDashboard("owner-1", team.id)).resolves.toEqual({
+      dashboard: null, pendingApprovalCount: 0,
+    });
+    expect(invoke).toHaveBeenLastCalledWith("load_agent_team_dashboard", {
       ownerUserId: "owner-1", teamId: team.id,
     });
 

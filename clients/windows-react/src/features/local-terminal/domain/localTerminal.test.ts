@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  localTerminalDisplayPath,
   localTerminalSessionIdSchema,
   localTerminalTitleForDirectory,
+  localTerminalTitleFromShell,
   localTerminalWirePollSchema,
   localWorkingDirectoryFromOsc,
 } from "./localTerminal";
@@ -33,5 +35,12 @@ describe("local terminal domain", () => {
     expect(localWorkingDirectoryFromOsc("relative/path")).toBeNull();
     expect(localTerminalTitleForDirectory("C:\\Users\\Alice\\Work\\")).toBe("Work");
     expect(localTerminalTitleForDirectory("/Users/alice/project")).toBe("project");
+    expect(localTerminalDisplayPath("\\\\?\\C:\\Users\\Alice")).toBe("C:\\Users\\Alice");
+    expect(localTerminalDisplayPath("\\\\?\\UNC\\server\\share")).toBe("\\\\server\\share");
+    expect(localTerminalTitleFromShell(
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "\\\\?\\C:\\Users\\Alice",
+    )).toBe("Alice");
+    expect(localTerminalTitleFromShell("build logs", "C:\\Users\\Alice")).toBe("build logs");
   });
 });

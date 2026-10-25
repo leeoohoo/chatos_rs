@@ -1,4 +1,5 @@
 mod access_control;
+mod agent_artifacts;
 mod agent_conversation;
 mod agent_management;
 mod agent_plugin_runtime;
@@ -50,6 +51,7 @@ mod wechat_companion;
 mod workspace_index;
 
 use access_control::load_access_control;
+use agent_artifacts::{list_agent_artifacts, preview_agent_artifact, save_agent_artifact};
 use agent_conversation::proposals::{
     list_agent_staffing_proposals, resolve_agent_staffing_proposal,
 };
@@ -61,11 +63,11 @@ use agent_conversation::{
     archive_agent_team_asset, create_agent_team, dispatch_next_agent_team_delivery,
     invite_agent_to_team, list_agent_team_asset_revisions, list_agent_team_assets,
     list_agent_teams, load_agent_conversation_activity, load_agent_profile_activity,
-    load_agent_team, load_agent_team_conversation, load_agent_team_member_activity,
-    load_agent_team_runs, prepare_agent_conversation, queue_agent_team_message,
-    remove_agent_from_team, save_agent_team_asset, send_agent_conversation_draft,
-    set_agent_team_default_agent, set_agent_team_project_manager, update_agent_team_member,
-    AgentConversationStore,
+    load_agent_team, load_agent_team_conversation, load_agent_team_dashboard,
+    load_agent_team_member_activity, load_agent_team_runs, prepare_agent_conversation,
+    queue_agent_team_message, remove_agent_from_team, save_agent_team_asset,
+    send_agent_conversation_draft, set_agent_team_default_agent, set_agent_team_project_manager,
+    update_agent_team_member, AgentConversationStore,
 };
 use agent_management::{
     agent_avatar_protocol, list_agent_profiles, load_agent_profile_editor,
@@ -130,9 +132,9 @@ use media_studio::{
     start_media_studio_video_generation, MediaStudioManager,
 };
 use notepad::{
-    create_notepad_folder, create_notepad_note, delete_notepad_folder, delete_notepad_note,
-    get_notepad_note, import_notepad_image, load_notepad, rename_notepad_folder,
-    update_notepad_note,
+    copy_notepad_text, create_notepad_folder, create_notepad_note, delete_notepad_folder,
+    delete_notepad_note, export_notepad_markdown, get_notepad_note, import_notepad_image,
+    load_notepad, rename_notepad_folder, update_notepad_note,
 };
 use pet::{
     load_pet_preferences, pet_asset_protocol, refresh_pet_presentation, reset_pet_position,
@@ -376,11 +378,15 @@ pub fn run() {
             logout,
             list_local_projects,
             list_agent_profiles,
+            list_agent_artifacts,
+            preview_agent_artifact,
+            save_agent_artifact,
             list_agent_teams,
             create_agent_team,
             load_agent_team,
             load_agent_team_conversation,
             load_agent_team_runs,
+            load_agent_team_dashboard,
             list_agent_team_assets,
             save_agent_team_asset,
             archive_agent_team_asset,
@@ -506,6 +512,8 @@ pub fn run() {
             update_notepad_note,
             delete_notepad_note,
             import_notepad_image,
+            copy_notepad_text,
+            export_notepad_markdown,
             list_tool_approvals,
             decide_tool_approval,
             load_tool_approval_settings,

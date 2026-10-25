@@ -8,6 +8,12 @@ import {
 import type { WorkspaceIndexPort } from "../ports/WorkspaceIndexPort";
 
 const emptyRelations: WorkspaceRelations = { contacts: [], conversations: [] };
+const fallbackRelations: WorkspaceRelations = {
+  contacts: [
+    { id: "jiguli", agentId: "jiguli", name: "叽咕狸", status: "active" },
+  ],
+  conversations: [],
+};
 const emptySnapshot: WorkspaceIndexSnapshot = { contacts: [], projects: [] };
 
 interface WorkspaceIndexState {
@@ -84,7 +90,17 @@ export const useWorkspaceIndexStore = create<WorkspaceIndexState>((set, get) => 
       set({
         isLoading: false,
         errorMessage: errorMessage(error),
-        snapshot: resolveWorkspaceIndex(localProjects, preservedRelations),
+        // Keep the authenticated shell on a real resource workspace even if
+        // the first contact conversation cannot be created yet.  The user can
+        // retry the relation refresh from the sidebar without being dropped
+        // into the settings surface or an empty synthetic workbench.
+        relations: preservedRelations.contacts.length > 0
+          ? preservedRelations
+          : fallbackRelations,
+        snapshot: resolveWorkspaceIndex(
+          localProjects,
+          preservedRelations.contacts.length > 0 ? preservedRelations : fallbackRelations,
+        ),
       });
     }
   },

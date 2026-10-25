@@ -274,6 +274,19 @@ CREATE TABLE IF NOT EXISTS local_agent_team_asset_revisions (
     FOREIGN KEY(owner_user_id, editor_agent_id)
         REFERENCES local_agent_profiles(owner_user_id, id)
 );
+CREATE TABLE IF NOT EXISTS local_agent_project_dashboards (
+    owner_user_id TEXT NOT NULL,
+    team_room_id TEXT NOT NULL,
+    dashboard_json TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    updated_by_agent_id TEXT NOT NULL,
+    updated_at_unix_ms INTEGER NOT NULL CHECK(updated_at_unix_ms >= 0),
+    PRIMARY KEY(owner_user_id, team_room_id),
+    FOREIGN KEY(owner_user_id, team_room_id)
+        REFERENCES project_agent_rooms(owner_user_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(owner_user_id, updated_by_agent_id)
+        REFERENCES local_agent_profiles(owner_user_id, id)
+);
 CREATE TABLE IF NOT EXISTS local_agent_todos (
     owner_user_id TEXT NOT NULL,
     id TEXT NOT NULL,
@@ -776,6 +789,7 @@ pub(crate) struct AgentTeamConversationSnapshot {
     team_id: String,
     messages: Vec<AgentTeamMessageSummary>,
     deliveries: Vec<AgentTeamDeliverySummary>,
+    has_older: bool,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -834,6 +848,71 @@ pub(crate) struct AgentTeamAssetRevision {
     markdown: String,
     editor_agent_id: Option<String>,
     created_at_unix_ms: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AgentProjectMilestone {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    #[serde(default)]
+    pub(crate) detail: String,
+    pub(crate) status: String,
+    pub(crate) progress_percent: i64,
+    #[serde(default)]
+    pub(crate) acceptance_criteria: Vec<String>,
+    #[serde(default)]
+    pub(crate) linked_todo_ids: Vec<String>,
+    pub(crate) target_at_unix_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AgentProjectIssue {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    #[serde(default)]
+    pub(crate) detail: String,
+    pub(crate) requested_action: String,
+    pub(crate) severity: String,
+    pub(crate) owner: String,
+    pub(crate) related_todo_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AgentProjectDashboardUpdate {
+    pub(crate) phase: String,
+    pub(crate) health: String,
+    pub(crate) summary: String,
+    #[serde(default)]
+    pub(crate) next_steps: Vec<String>,
+    #[serde(default)]
+    pub(crate) milestones: Vec<AgentProjectMilestone>,
+    #[serde(default)]
+    pub(crate) issues: Vec<AgentProjectIssue>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentProjectDashboard {
+    team_id: String,
+    phase: String,
+    health: String,
+    summary: String,
+    next_steps: Vec<String>,
+    milestones: Vec<AgentProjectMilestone>,
+    issues: Vec<AgentProjectIssue>,
+    revision: i64,
+    updated_by_agent_id: String,
+    updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentProjectDashboardSnapshot {
+    pub(crate) dashboard: Option<AgentProjectDashboard>,
+    pub(crate) pending_approval_count: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2069,8 +2148,14 @@ impl AgentConversationStore {
         &self,
         owner_user_id: &str,
         team_id: &str,
+        before_message_id: Option<&str>,
+        limit: u32,
     ) -> Result<AgentTeamConversationSnapshot, String> {
         validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        if let Some(message_id) = before_message_id {
+            validate_identifier(message_id).map_err(|_| invalid_team_input())?;
+        }
+        let limit = limit.clamp(1, 200) as i64;
         reject_link_or_non_file(&self.database)?;
         let connection = open_database(&self.database, true)?;
         let exists: bool = connection
@@ -2084,6 +2169,22 @@ impl AgentConversationStore {
         if !exists {
             return Err("Agent 团队不存在或已停用。".into());
         }
+        let before_key = if let Some(message_id) = before_message_id {
+            Some(
+                connection
+                    .query_row(
+                        "SELECT created_at_unix_ms, id FROM project_agent_messages \
+                         WHERE owner_user_id = ?1 AND room_id = ?2 AND id = ?3",
+                        params![owner_user_id, team_id, message_id],
+                        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()
+                    .map_err(|_| team_store_error())?
+                    .ok_or_else(|| "要加载的历史消息不存在。".to_owned())?,
+            )
+        } else {
+            None
+        };
         let message_rows = {
             let mut statement = connection
                 .prepare(
@@ -2093,25 +2194,49 @@ impl AgentConversationStore {
                         SELECT id, sender_kind, sender_id, content, created_at_unix_ms
                         FROM project_agent_messages
                         WHERE owner_user_id = ?1 AND room_id = ?2
-                        ORDER BY created_at_unix_ms DESC, id DESC LIMIT 200
+                          AND (
+                            ?3 IS NULL
+                            OR created_at_unix_ms < ?3
+                            OR (created_at_unix_ms = ?3 AND id < ?4)
+                          )
+                        ORDER BY created_at_unix_ms DESC, id DESC LIMIT ?5
                     ) recent
                     ORDER BY created_at_unix_ms, id
                     "#,
                 )
                 .map_err(|_| team_store_error())?;
+            let (before_created_at, before_id) = before_key
+                .as_ref()
+                .map(|(created_at, id)| (Some(*created_at), Some(id.as_str())))
+                .unwrap_or((None, None));
             let rows = statement
-                .query_map(params![owner_user_id, team_id], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, i64>(4)?,
-                    ))
-                })
+                .query_map(
+                    params![
+                        owner_user_id,
+                        team_id,
+                        before_created_at,
+                        before_id,
+                        limit + 1
+                    ],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, i64>(4)?,
+                        ))
+                    },
+                )
                 .map_err(|_| team_store_error())?;
             rows.collect::<Result<Vec<_>, _>>()
                 .map_err(|_| team_store_error())?
+        };
+        let has_older = message_rows.len() as i64 > limit;
+        let message_rows = if has_older {
+            message_rows.into_iter().skip(1).collect::<Vec<_>>()
+        } else {
+            message_rows
         };
         let message_ids = message_rows
             .iter()
@@ -2251,6 +2376,7 @@ impl AgentConversationStore {
             team_id: team_id.to_owned(),
             messages,
             deliveries,
+            has_older,
         })
     }
 
@@ -2370,6 +2496,124 @@ impl AgentConversationStore {
             failed_delivery_count: delivery_counts.3,
             cancelled_delivery_count: delivery_counts.4,
             runs,
+        })
+    }
+
+    pub(crate) fn load_project_dashboard_snapshot(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+    ) -> Result<AgentProjectDashboardSnapshot, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        require_active_project_team(&connection, owner_user_id, team_id)?;
+        let dashboard = read_project_dashboard(&connection, owner_user_id, team_id)?;
+        let pending_approval_count = connection
+            .query_row(
+                r#"
+                SELECT
+                    (SELECT count(*) FROM local_agent_creation_proposals
+                     WHERE owner_user_id = ?1 AND room_id = ?2 AND status = 'pending') +
+                    (SELECT count(*) FROM local_agent_removal_proposals
+                     WHERE owner_user_id = ?1 AND room_id = ?2 AND status = 'pending') +
+                    (SELECT count(*) FROM local_agent_membership_proposals
+                     WHERE owner_user_id = ?1 AND source_room_id = ?2 AND status = 'pending')
+                "#,
+                params![owner_user_id, team_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| team_store_error())?;
+        Ok(AgentProjectDashboardSnapshot {
+            dashboard,
+            pending_approval_count,
+        })
+    }
+
+    pub(crate) fn save_project_dashboard_as_manager(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        editor_agent_id: &str,
+        expected_revision: Option<i64>,
+        update: AgentProjectDashboardUpdate,
+        now_unix_ms: i64,
+    ) -> Result<AgentProjectDashboard, String> {
+        validate_identifier(team_id).map_err(|_| invalid_project_dashboard_input())?;
+        validate_agent_identifier(editor_agent_id)
+            .map_err(|_| invalid_project_dashboard_input())?;
+        validate_project_dashboard_update(&update)?;
+        if now_unix_ms < 0 {
+            return Err(invalid_project_dashboard_input());
+        }
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        require_project_team_manager(&transaction, owner_user_id, team_id, editor_agent_id)?;
+        let existing = read_project_dashboard(&transaction, owner_user_id, team_id)?;
+        let revision = match existing.as_ref() {
+            Some(current) if expected_revision == Some(current.revision) => current.revision + 1,
+            None if expected_revision.is_none() => 1,
+            _ => return Err(project_dashboard_conflict()),
+        };
+        validate_project_dashboard_todo_links(&transaction, owner_user_id, team_id, &update)?;
+        let encoded = serde_json::to_string(&update).map_err(|_| team_store_error())?;
+        if let Some(current) = existing {
+            let changed = transaction
+                .execute(
+                    r#"
+                    UPDATE local_agent_project_dashboards
+                    SET dashboard_json = ?1, revision = ?2, updated_by_agent_id = ?3,
+                        updated_at_unix_ms = ?4
+                    WHERE owner_user_id = ?5 AND team_room_id = ?6 AND revision = ?7
+                    "#,
+                    params![
+                        encoded,
+                        revision,
+                        editor_agent_id,
+                        now_unix_ms,
+                        owner_user_id,
+                        team_id,
+                        current.revision,
+                    ],
+                )
+                .map_err(|_| team_store_error())?;
+            if changed != 1 {
+                return Err(project_dashboard_conflict());
+            }
+        } else {
+            transaction
+                .execute(
+                    r#"
+                    INSERT INTO local_agent_project_dashboards (
+                        owner_user_id, team_room_id, dashboard_json, revision,
+                        updated_by_agent_id, updated_at_unix_ms
+                    ) VALUES (?1, ?2, ?3, 1, ?4, ?5)
+                    "#,
+                    params![
+                        owner_user_id,
+                        team_id,
+                        encoded,
+                        editor_agent_id,
+                        now_unix_ms,
+                    ],
+                )
+                .map_err(|_| team_store_error())?;
+        }
+        transaction.commit().map_err(|_| team_store_error())?;
+        Ok(AgentProjectDashboard {
+            team_id: team_id.to_owned(),
+            phase: update.phase,
+            health: update.health,
+            summary: update.summary,
+            next_steps: update.next_steps,
+            milestones: update.milestones,
+            issues: update.issues,
+            revision,
+            updated_by_agent_id: editor_agent_id.to_owned(),
+            updated_at_unix_ms: now_unix_ms,
         })
     }
 
@@ -3849,19 +4093,26 @@ pub(crate) async fn load_agent_team(
 pub(crate) async fn load_agent_team_conversation(
     owner_user_id: String,
     team_id: String,
+    before_message_id: Option<String>,
+    limit: Option<u32>,
     authentication: State<'_, AuthenticationManager>,
     conversations: State<'_, AgentConversationStore>,
 ) -> Result<AgentTeamConversationSnapshot, String> {
     validate_owner(&owner_user_id)?;
     validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
+    if let Some(message_id) = before_message_id.as_deref() {
+        validate_identifier(message_id).map_err(|_| invalid_team_input())?;
+    }
+    let limit = limit.unwrap_or(50).clamp(1, 200);
     let generation = authentication
         .session_generation_for_owner(&owner_user_id)
         .await?;
     let store = conversations.inner().clone();
     let owner = owner_user_id.clone();
     let team = team_id.clone();
+    let before = before_message_id.clone();
     let snapshot = tauri::async_runtime::spawn_blocking(move || {
-        store.load_project_team_conversation(&owner, &team)
+        store.load_project_team_conversation(&owner, &team, before.as_deref(), limit)
     })
     .await
     .map_err(|_| "Agent 团队消息读取任务异常退出。".to_owned())??;
@@ -3952,6 +4203,32 @@ pub(crate) async fn load_agent_team_runs(
         tauri::async_runtime::spawn_blocking(move || store.load_project_team_runs(&owner, &team))
             .await
             .map_err(|_| "Agent 团队运行记录读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) async fn load_agent_team_dashboard(
+    owner_user_id: String,
+    team_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentProjectDashboardSnapshot, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = owner_user_id.clone();
+    let team = team_id.clone();
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        store.load_project_dashboard_snapshot(&owner, &team)
+    })
+    .await
+    .map_err(|_| "项目总览读取任务异常退出。".to_owned())??;
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
@@ -5226,6 +5503,12 @@ fn team_agent_execution_metadata(
             "is_project_manager": binding.is_project_manager,
         }
     });
+    if pending.trigger_kind != "todo" && binding.is_project_manager {
+        metadata["agent_project_management"] = json!({
+            "schema_version": 1,
+            "instructions": "你已被明确指定为当前团队的项目经理。请先调用 project_dashboard_get 读取系统事实，再用 project_dashboard_update 建立或更新结构化项目总览、里程碑、风险、下一步和需要 Human 处理的事项。普通成员阻塞由项目经理先行调查、拆单、重派和协调；只有权限、预算、凭据、产品方向决策或外部动作确实只能由 Human 完成时，才登记 Human issue。进度和健康判断必须基于真实任务、Run、调研或 Human 消息，不得用总结文字冒充已验收交付。",
+        });
+    }
     if pending.trigger_kind == "todo" {
         let todo_id = pending.todo_id.as_deref().ok_or_else(team_store_error)?;
         let plan = pending
@@ -5474,6 +5757,154 @@ fn validate_team_member(member: &AgentTeamMemberSummary) -> Result<(), String> {
     validate_text(&member.responsibility, 8_000, true).map_err(|_| team_store_error())?;
     if member.joined_at_unix_ms < 0 {
         return Err(team_store_error());
+    }
+    Ok(())
+}
+
+fn read_project_dashboard(
+    connection: &Connection,
+    owner_user_id: &str,
+    team_id: &str,
+) -> Result<Option<AgentProjectDashboard>, String> {
+    let stored = connection
+        .query_row(
+            r#"
+            SELECT dashboard_json, revision, updated_by_agent_id, updated_at_unix_ms
+            FROM local_agent_project_dashboards
+            WHERE owner_user_id = ?1 AND team_room_id = ?2
+            LIMIT 1
+            "#,
+            params![owner_user_id, team_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| team_store_error())?;
+    let Some((encoded, revision, updated_by_agent_id, updated_at_unix_ms)) = stored else {
+        return Ok(None);
+    };
+    let update = serde_json::from_str::<AgentProjectDashboardUpdate>(&encoded)
+        .map_err(|_| team_store_error())?;
+    validate_project_dashboard_update(&update).map_err(|_| team_store_error())?;
+    validate_agent_identifier(&updated_by_agent_id).map_err(|_| team_store_error())?;
+    if revision <= 0 || updated_at_unix_ms < 0 {
+        return Err(team_store_error());
+    }
+    Ok(Some(AgentProjectDashboard {
+        team_id: team_id.to_owned(),
+        phase: update.phase,
+        health: update.health,
+        summary: update.summary,
+        next_steps: update.next_steps,
+        milestones: update.milestones,
+        issues: update.issues,
+        revision,
+        updated_by_agent_id,
+        updated_at_unix_ms,
+    }))
+}
+
+fn validate_project_dashboard_update(update: &AgentProjectDashboardUpdate) -> Result<(), String> {
+    validate_text(&update.phase, 240, false).map_err(|_| invalid_project_dashboard_input())?;
+    validate_text(&update.summary, 16_000, false).map_err(|_| invalid_project_dashboard_input())?;
+    if !matches!(
+        update.health.as_str(),
+        "on_track" | "at_risk" | "blocked" | "completed"
+    ) || update.next_steps.len() > 32
+        || update.milestones.len() > 64
+        || update.issues.len() > 64
+    {
+        return Err(invalid_project_dashboard_input());
+    }
+    let mut milestone_ids = std::collections::HashSet::new();
+    for step in &update.next_steps {
+        validate_text(step, 2_000, false).map_err(|_| invalid_project_dashboard_input())?;
+    }
+    for milestone in &update.milestones {
+        validate_identifier(&milestone.id).map_err(|_| invalid_project_dashboard_input())?;
+        validate_text(&milestone.title, 240, false)
+            .map_err(|_| invalid_project_dashboard_input())?;
+        validate_text(&milestone.detail, 8_000, true)
+            .map_err(|_| invalid_project_dashboard_input())?;
+        if !milestone_ids.insert(&milestone.id)
+            || !matches!(
+                milestone.status.as_str(),
+                "pending" | "in_progress" | "blocked" | "completed"
+            )
+            || !(0..=100).contains(&milestone.progress_percent)
+            || milestone.acceptance_criteria.len() > 32
+            || milestone.linked_todo_ids.len() > 128
+            || milestone.target_at_unix_ms.is_some_and(|value| value < 0)
+        {
+            return Err(invalid_project_dashboard_input());
+        }
+        let mut linked_ids = std::collections::HashSet::new();
+        for criterion in &milestone.acceptance_criteria {
+            validate_text(criterion, 2_000, false)
+                .map_err(|_| invalid_project_dashboard_input())?;
+        }
+        for todo_id in &milestone.linked_todo_ids {
+            validate_identifier(todo_id).map_err(|_| invalid_project_dashboard_input())?;
+            if !linked_ids.insert(todo_id) {
+                return Err(invalid_project_dashboard_input());
+            }
+        }
+    }
+    let mut issue_ids = std::collections::HashSet::new();
+    for issue in &update.issues {
+        validate_identifier(&issue.id).map_err(|_| invalid_project_dashboard_input())?;
+        validate_text(&issue.title, 240, false).map_err(|_| invalid_project_dashboard_input())?;
+        validate_text(&issue.detail, 8_000, true).map_err(|_| invalid_project_dashboard_input())?;
+        validate_text(&issue.requested_action, 4_000, false)
+            .map_err(|_| invalid_project_dashboard_input())?;
+        if !issue_ids.insert(&issue.id)
+            || !matches!(issue.severity.as_str(), "info" | "warning" | "critical")
+            || !matches!(issue.owner.as_str(), "human" | "agent" | "external")
+        {
+            return Err(invalid_project_dashboard_input());
+        }
+        if let Some(todo_id) = issue.related_todo_id.as_deref() {
+            validate_identifier(todo_id).map_err(|_| invalid_project_dashboard_input())?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_project_dashboard_todo_links(
+    connection: &Connection,
+    owner_user_id: &str,
+    team_id: &str,
+    update: &AgentProjectDashboardUpdate,
+) -> Result<(), String> {
+    let todo_ids = update
+        .milestones
+        .iter()
+        .flat_map(|milestone| milestone.linked_todo_ids.iter())
+        .chain(
+            update
+                .issues
+                .iter()
+                .filter_map(|issue| issue.related_todo_id.as_ref()),
+        )
+        .collect::<std::collections::HashSet<_>>();
+    for todo_id in todo_ids {
+        let exists = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM local_agent_todos WHERE owner_user_id = ?1 \
+                 AND team_room_id = ?2 AND id = ?3)",
+                params![owner_user_id, team_id, todo_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|_| team_store_error())?;
+        if !exists {
+            return Err(invalid_project_dashboard_input());
+        }
     }
     Ok(())
 }
@@ -5800,6 +6231,14 @@ fn invalid_team_asset_input() -> String {
     "团队共享资产内容无效。".into()
 }
 
+fn invalid_project_dashboard_input() -> String {
+    "项目总览内容无效。".into()
+}
+
+fn project_dashboard_conflict() -> String {
+    "项目总览已被更新，请重新读取后合并修改。".into()
+}
+
 fn team_asset_conflict() -> String {
     "团队共享资产已被更新，请刷新后重试。".into()
 }
@@ -6033,6 +6472,111 @@ mod tests {
             .unwrap();
         assert_eq!(removed.team.default_agent_id.as_deref(), Some("agent-2"));
         assert_eq!(removed.team.member_count, 1);
+    }
+
+    #[test]
+    fn project_dashboard_is_revisioned_and_only_the_active_manager_can_write() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "manager", "active");
+        insert_agent(&store, "alice", "member", "active");
+        let connection = Connection::open(store.database()).unwrap();
+        connection
+            .execute(
+                "UPDATE local_agent_profiles SET profession_key = 'project_manager' \
+                 WHERE owner_user_id = 'alice' AND id = 'manager'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        let team = store
+            .create_project_team("alice", "project-1", "Alpha 团队", "交付 Alpha")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "manager")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "member")
+            .unwrap();
+        store
+            .set_project_team_manager("alice", &team.id, "manager")
+            .unwrap();
+
+        let first = AgentProjectDashboardUpdate {
+            phase: "实现".into(),
+            health: "on_track".into(),
+            summary: "核心链路正在实现。".into(),
+            next_steps: vec!["完成回归".into()],
+            milestones: vec![AgentProjectMilestone {
+                id: "milestone-1".into(),
+                title: "Windows 首版".into(),
+                detail: "完成原生打包".into(),
+                status: "in_progress".into(),
+                progress_percent: 60,
+                acceptance_criteria: vec!["安装包可运行".into()],
+                linked_todo_ids: vec![],
+                target_at_unix_ms: None,
+            }],
+            issues: vec![AgentProjectIssue {
+                id: "issue-1".into(),
+                title: "确认发布范围".into(),
+                detail: "需要产品方向决定".into(),
+                requested_action: "请确认是否包含自动更新".into(),
+                severity: "warning".into(),
+                owner: "human".into(),
+                related_todo_id: None,
+            }],
+        };
+        let created = store
+            .save_project_dashboard_as_manager(
+                "alice",
+                &team.id,
+                "manager",
+                None,
+                first.clone(),
+                100,
+            )
+            .unwrap();
+        assert_eq!(created.revision, 1);
+        assert_eq!(created.phase, "实现");
+        assert_eq!(
+            store
+                .load_project_dashboard_snapshot("alice", &team.id)
+                .unwrap()
+                .dashboard,
+            Some(created.clone())
+        );
+        assert!(store
+            .save_project_dashboard_as_manager(
+                "alice",
+                &team.id,
+                "member",
+                Some(1),
+                first.clone(),
+                150,
+            )
+            .is_err());
+
+        let second = AgentProjectDashboardUpdate {
+            phase: "联调".into(),
+            health: "at_risk".into(),
+            summary: "等待产品确认。".into(),
+            ..first.clone()
+        };
+        let updated = store
+            .save_project_dashboard_as_manager(
+                "alice",
+                &team.id,
+                "manager",
+                Some(1),
+                second.clone(),
+                200,
+            )
+            .unwrap();
+        assert_eq!(updated.revision, 2);
+        assert_eq!(updated.phase, "联调");
+        assert!(store
+            .save_project_dashboard_as_manager("alice", &team.id, "manager", Some(1), second, 300,)
+            .is_err());
     }
 
     #[test]
@@ -6779,7 +7323,7 @@ mod tests {
         drop(connection);
 
         let snapshot = store
-            .load_project_team_conversation("alice", &created.id)
+            .load_project_team_conversation("alice", &created.id, None, 50)
             .unwrap();
         assert_eq!(snapshot.team_id, created.id);
         assert_eq!(snapshot.messages.len(), 2);
@@ -6795,6 +7339,43 @@ mod tests {
         assert!(store
             .queue_project_team_message("bob", &created.id, "越权消息", &["agent-1".into()],)
             .is_err());
+    }
+
+    #[test]
+    fn project_team_conversation_pages_older_messages_without_overlap() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "agent-1", "active");
+        let team = store
+            .create_project_team("alice", "project-1", "分页团队", "")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "agent-1")
+            .unwrap();
+        for content in ["第一条", "第二条", "第三条"] {
+            store
+                .queue_project_team_message("alice", &team.id, content, &[])
+                .unwrap();
+        }
+
+        let recent = store
+            .load_project_team_conversation("alice", &team.id, None, 2)
+            .unwrap();
+        assert_eq!(recent.messages.len(), 2);
+        assert!(recent.has_older);
+        let older = store
+            .load_project_team_conversation(
+                "alice",
+                &team.id,
+                recent.messages.first().map(|message| message.id.as_str()),
+                2,
+            )
+            .unwrap();
+        assert_eq!(older.messages.len(), 1);
+        assert!(!older.has_older);
+        assert!(recent
+            .messages
+            .iter()
+            .all(|message| older.messages.iter().all(|item| item.id != message.id)));
     }
 
     #[test]
@@ -9265,7 +9846,7 @@ mod tests {
             )
             .unwrap();
         let snapshot = store
-            .load_project_team_conversation("alice", &team.id)
+            .load_project_team_conversation("alice", &team.id, None, 50)
             .unwrap();
         let message = snapshot
             .messages

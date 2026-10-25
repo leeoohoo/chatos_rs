@@ -44,30 +44,14 @@ describe("ToolApprovalSettingsView", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("请先选择本机审批 Agent 模型。");
   });
 
-  it("updates the owner-scoped approval model and reasoning level", async () => {
-    const settingsPort = stubSettingsPort({
-      updateModel: vi.fn(async (request) => settings({
-        selectedModelId: request.selectedModelId,
-        selectedThinkingLevel: request.selectedThinkingLevel,
-      })),
-    });
-    renderView({ settingsPort });
-    await screen.findByText("本机自动审批 Agent");
-
-    fireEvent.change(screen.getByLabelText("模型"), { target: { value: "model-1" } });
-    await waitFor(() => expect(settingsPort.updateModel).toHaveBeenCalledWith({
-      ownerUserId: "owner-1",
-      selectedModelId: "model-1",
-      selectedThinkingLevel: "medium",
-    }));
-    expect(screen.getByLabelText("推理等级")).toHaveValue("medium");
-
-    fireEvent.change(screen.getByLabelText("推理等级"), { target: { value: "high" } });
-    await waitFor(() => expect(settingsPort.updateModel).toHaveBeenLastCalledWith({
-      ownerUserId: "owner-1",
-      selectedModelId: "model-1",
-      selectedThinkingLevel: "high",
-    }));
+  it("keeps approval-model selection in the unified AI model settings page", async () => {
+    renderView();
+    expect(await screen.findByRole("heading", { name: "命令审批" })).toBeVisible();
+    expect(screen.getByText("默认审批级别")).toBeVisible();
+    expect(screen.getByText("等待处理")).toBeVisible();
+    expect(screen.getByText("审批记录")).toBeVisible();
+    expect(screen.queryByLabelText("模型")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("推理等级")).not.toBeInTheDocument();
   });
 
   it("resolves a pending command and renders durable approval history", async () => {

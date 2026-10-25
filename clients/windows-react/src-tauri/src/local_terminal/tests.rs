@@ -12,6 +12,17 @@ fn local_terminal_identifiers_and_dimensions_fail_closed() {
     assert!(validate_dimensions(80, 1_001).is_err());
 }
 
+#[test]
+fn presented_output_event_uses_the_react_wire_field_name() {
+    let value = serde_json::to_value(PresentedLocalTerminalEvent::Output {
+        cursor: 1,
+        data_base64: "YQ==".into(),
+    })
+    .unwrap();
+    assert_eq!(value["dataBase64"], "YQ==");
+    assert!(value.get("data_base64").is_none());
+}
+
 #[tokio::test]
 async fn registry_limits_each_owner_and_reset_invalidates_pending_starts() {
     let registry = LocalTerminalRegistry::default();

@@ -19,7 +19,11 @@ describe("AccessControlView", () => {
   it("renders the macOS information architecture with truthful read-only Windows capabilities", async () => {
     const port = stubPort();
     render(<AccessControlView hostReady ownerUserId="owner-1" port={port} />);
-    expect(await screen.findByText("默认任务权限")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "权限控制" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "默认任务权限" })).toBeVisible();
+    expect(screen.getByText("新任务在没有项目级覆盖时使用这套策略")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "运行后端" })).toBeVisible();
+    expect(screen.getByText("当前版本只允许使用本机进程后端")).toBeVisible();
     expect(screen.getByText("系统强制 · 只读")).toBeInTheDocument();
     expect(screen.getByText("Windows 账号权限")).toBeInTheDocument();
     expect(screen.getByText("按需审批 · 用户")).toBeInTheDocument();

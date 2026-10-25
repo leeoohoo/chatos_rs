@@ -595,6 +595,7 @@ export const agentTeamConversationSnapshotSchema = z.object({
   teamId: z.string().uuid(),
   messages: z.array(agentTeamMessageSchema).max(200),
   deliveries: z.array(agentTeamDeliverySchema).max(500),
+  hasOlder: z.boolean().optional(),
 }).strict().superRefine((snapshot, context) => {
   const messageIds = new Set<string>();
   snapshot.messages.forEach((message, index) => {
@@ -835,6 +836,58 @@ export const agentTeamAssetRevisionListSchema = z.array(agentTeamAssetRevisionSc
     });
   });
 
+export const agentProjectMilestoneSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  title: z.string().trim().min(1).max(240),
+  detail: z.string().max(8_000),
+  status: z.enum(["pending", "in_progress", "blocked", "completed"]),
+  progressPercent: z.number().int().min(0).max(100),
+  acceptanceCriteria: z.array(z.string().trim().min(1).max(2_000)).max(32),
+  linkedTodoIds: z.array(z.string().trim().min(1).max(512)).max(128),
+  targetAtUnixMs: z.number().int().nonnegative().nullable(),
+}).strict().superRefine((milestone, context) => {
+  if (new Set(milestone.linkedTodoIds).size !== milestone.linkedTodoIds.length) {
+    context.addIssue({ code: "custom", message: "里程碑关联任务不能重复。", path: ["linkedTodoIds"] });
+  }
+});
+
+export const agentProjectIssueSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  title: z.string().trim().min(1).max(240),
+  detail: z.string().max(8_000),
+  requestedAction: z.string().trim().min(1).max(4_000),
+  severity: z.enum(["info", "warning", "critical"]),
+  owner: z.enum(["human", "agent", "external"]),
+  relatedTodoId: z.string().trim().min(1).max(512).nullable(),
+}).strict();
+
+export const agentProjectDashboardSchema = z.object({
+  teamId: z.string().uuid(),
+  phase: z.string().trim().min(1).max(240),
+  health: z.enum(["on_track", "at_risk", "blocked", "completed"]),
+  summary: z.string().trim().min(1).max(16_000),
+  nextSteps: z.array(z.string().trim().min(1).max(2_000)).max(32),
+  milestones: z.array(agentProjectMilestoneSchema).max(64),
+  issues: z.array(agentProjectIssueSchema).max(64),
+  revision: z.number().int().positive(),
+  updatedByAgentId: z.string().trim().min(1).max(512),
+  updatedAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((dashboard, context) => {
+  const milestoneIds = dashboard.milestones.map((milestone) => milestone.id);
+  const issueIds = dashboard.issues.map((issue) => issue.id);
+  if (new Set(milestoneIds).size !== milestoneIds.length) {
+    context.addIssue({ code: "custom", message: "项目总览里程碑不能重复。", path: ["milestones"] });
+  }
+  if (new Set(issueIds).size !== issueIds.length) {
+    context.addIssue({ code: "custom", message: "项目总览问题不能重复。", path: ["issues"] });
+  }
+});
+
+export const agentProjectDashboardSnapshotSchema = z.object({
+  dashboard: agentProjectDashboardSchema.nullable(),
+  pendingApprovalCount: z.number().int().nonnegative(),
+}).strict();
+
 export interface CreateAgentTeamInput {
   projectId: string;
   name: string;
@@ -876,6 +929,10 @@ export type AgentTeamTodoProgress = z.infer<typeof agentTeamTodoProgressSchema>;
 export type AgentTeamAssetCategory = z.infer<typeof agentTeamAssetCategorySchema>;
 export type AgentTeamAsset = z.infer<typeof agentTeamAssetSchema>;
 export type AgentTeamAssetRevision = z.infer<typeof agentTeamAssetRevisionSchema>;
+export type AgentProjectMilestone = z.infer<typeof agentProjectMilestoneSchema>;
+export type AgentProjectIssue = z.infer<typeof agentProjectIssueSchema>;
+export type AgentProjectDashboard = z.infer<typeof agentProjectDashboardSchema>;
+export type AgentProjectDashboardSnapshot = z.infer<typeof agentProjectDashboardSnapshotSchema>;
 
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",

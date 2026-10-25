@@ -141,6 +141,17 @@ fn dimensions_match_macos_bounds() {
 }
 
 #[test]
+fn presented_output_event_uses_the_react_wire_field_name() {
+    let value = serde_json::to_value(PresentedRemoteTerminalEvent::Output {
+        cursor: 1,
+        data_base64: "YQ==".into(),
+    })
+    .unwrap();
+    assert_eq!(value["dataBase64"], "YQ==");
+    assert!(value.get("data_base64").is_none());
+}
+
+#[test]
 fn terminal_output_ring_is_bounded_and_reports_cursor_truncation() {
     let mut state = state();
     for _ in 0..=MAXIMUM_OUTPUT_EVENTS {

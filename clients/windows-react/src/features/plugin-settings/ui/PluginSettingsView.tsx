@@ -37,17 +37,19 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
   if (!snapshot) return <PluginStatus title={english ? "Plugins unavailable" : "Plugin 暂时不可用"} detail={error ?? (english ? "Unable to read the plugin catalog." : "无法读取 Plugin 目录。")} action={english ? "Retry" : "重试"} onAction={() => void load(port, ownerUserId)} />;
 
   return <div className="plugin-settings-page">
+    <header className="plugin-settings-page__title">
+      <h2>{english ? "Plugins & Skills" : "插件与 Skills"}</h2>
+      {isLoading && <div><span className="mini-spinner" />{english ? "Checking…" : "检查中…"}</div>}
+    </header>
     {(error || notice) && <div className={`plugin-settings-banner ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}><span>{error ? "!" : "✓"}</span><p>{error ?? notice}</p><button onClick={clearMessage} type="button">×</button></div>}
 
-    <section className="plugin-settings-hero">
-      <div><span aria-hidden="true">◈</span><div><h2>{english ? "Plugins & Skills" : "插件与 Skills"}</h2><p>{english ? "Search by plugin, Skill, publisher, or category." : "按 Plugin、Skill、发布者或分类查找。"}</p></div></div>
-      <div className="plugin-settings-actions"><button onClick={onOpenInstallationAssistant} type="button">◇ {english ? "Installation Assistant" : "安装助手"}</button><button disabled={isLoading} onClick={() => void load(port, ownerUserId)} type="button">↻ {english ? "Check for Updates" : "检查更新"}</button></div>
-    </section>
-
-    <section className="plugin-settings-search">
-      <span aria-hidden="true">⌕</span>
-      <input aria-label={english ? "Search plugins" : "搜索 Plugin"} onChange={(event) => setQuery(event.target.value)} placeholder={english ? "Search plugins, Skills, or publishers" : "搜索 Plugin、Skill 或发布者"} value={query} />
-      <output>{plugins.length} {english ? "items" : "项"}</output>
+    <section className="plugin-settings-finder">
+      <header><span aria-hidden="true">⌕</span><h3>{english ? "Find Plugins" : "查找 Plugin"}</h3></header>
+      <div className="plugin-settings-finder__body">
+        <div className="plugin-settings-search"><span aria-hidden="true">⌕</span><input aria-label={english ? "Search plugins" : "搜索 Plugin"} onChange={(event) => setQuery(event.target.value)} placeholder={english ? "Search plugins, Skills, or publishers" : "搜索 Plugin、Skill 或发布者"} value={query} /><output>{plugins.length} {english ? "items" : "项"}</output></div>
+        <div className="plugin-settings-actions"><button onClick={onOpenInstallationAssistant} type="button"><span aria-hidden="true">◇</span> {english ? "Installation Assistant" : "安装助手"}</button><button disabled={isLoading} onClick={() => void load(port, ownerUserId)} type="button"><span aria-hidden="true">↻</span> {english ? "Check for Updates" : "检查更新"}</button></div>
+      </div>
+      <p className="plugin-settings-finder__footnote">{english ? "Filter by name, Skill, publisher, or category." : "按名称、Skill、发布者或分类筛选。"}</p>
     </section>
 
     {!snapshot.secureMarketplaceInstallAvailable && <section className="plugin-settings-platform-note"><span aria-hidden="true">i</span><div><strong>{english ? "Windows installation safety gate" : "Windows 安装安全门禁"}</strong><p>{english ? "Marketplace installation is unavailable because the native verification chain is not ready." : "Windows 原生安装校验链尚未就绪，Marketplace 安装暂不可用。"}</p></div></section>}

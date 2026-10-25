@@ -17,6 +17,7 @@ interface WeChatCompanionState {
   activate(port: WeChatCompanionPort, ownerUserId: string): Promise<void>;
   issueTicket(port: WeChatCompanionPort): Promise<void>;
   pollTicket(port: WeChatCompanionPort): Promise<void>;
+  expireTicket(previewUrl: string): void;
   confirmTicket(port: WeChatCompanionPort): Promise<void>;
   revokeSession(port: WeChatCompanionPort, sessionId: string): Promise<void>;
   unbind(port: WeChatCompanionPort): Promise<void>;
@@ -71,7 +72,9 @@ export const useWeChatCompanionStore = create<WeChatCompanionState>((set, get) =
       const ticket = await port.pollTicket(ownerUserId);
       const latest = get();
       if (current(ownerUserId, epoch, latest) && latest.ticket?.previewUrl === previewUrl) {
-        set({ ticket, isPolling: false, pollingDelayMs: 2_000, error: null });
+        set(latest.ticket.status === "issued"
+          ? { ticket, isPolling: false, pollingDelayMs: 2_000, error: null }
+          : { isPolling: false });
       }
     } catch (failure) {
       const latest = get();
@@ -79,6 +82,12 @@ export const useWeChatCompanionStore = create<WeChatCompanionState>((set, get) =
         set({ isPolling: false, pollingDelayMs: Math.min(latest.pollingDelayMs * 2, 8_000), error: message(failure) });
       }
     }
+  },
+
+  expireTicket(previewUrl) {
+    const state = get();
+    if (state.ticket?.previewUrl !== previewUrl || state.ticket.status !== "issued") return;
+    set({ ticket: { ...state.ticket, status: "expired" } });
   },
 
   async confirmTicket(port) {
@@ -90,7 +99,18 @@ export const useWeChatCompanionStore = create<WeChatCompanionState>((set, get) =
       const snapshot = await port.load(context.ownerUserId);
       if (currentOperation(context, get())) set({ snapshot, ticket: null, isMutating: false, notice: "微信小程序绑定已确认。" });
     } catch (failure) {
-      if (currentOperation(context, get())) set({ isMutating: false, error: message(failure) });
+      if (!currentOperation(context, get())) return;
+      try {
+        const snapshot = await port.load(context.ownerUserId);
+        if (!currentOperation(context, get())) return;
+        if (snapshot.binding.bound) {
+          set({ snapshot, ticket: null, isMutating: false, error: null, notice: "微信小程序绑定已确认。" });
+        } else {
+          set({ isMutating: false, error: message(failure) });
+        }
+      } catch {
+        if (currentOperation(context, get())) set({ isMutating: false, error: message(failure) });
+      }
     }
   },
 

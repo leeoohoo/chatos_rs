@@ -15,6 +15,7 @@ interface RequirementSurveyCenterViewProps {
   ownerUserId: string;
   projects: Array<{ id: string; title: string }>;
   port: RequirementSurveyPort;
+  onOpenConversation?(projectId: string, conversationId: string): void;
 }
 
 export function RequirementSurveyCenterView({
@@ -22,6 +23,7 @@ export function RequirementSurveyCenterView({
   ownerUserId,
   projects,
   port,
+  onOpenConversation,
 }: RequirementSurveyCenterViewProps) {
   const surveys = useRequirementSurveyCenterStore((state) => state.surveys);
   const isLoading = useRequirementSurveyCenterStore((state) => state.isLoading);
@@ -33,16 +35,31 @@ export function RequirementSurveyCenterView({
   const reset = useRequirementSurveyCenterStore((state) => state.reset);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedSurveyId, setSelectedSurveyId] = useState<string | null>(null);
+  const [projectPage, setProjectPage] = useState(0);
+  const [projectPageSize, setProjectPageSize] = useState(20);
+  const [surveyPage, setSurveyPage] = useState(0);
+  const [surveyPageSize, setSurveyPageSize] = useState(20);
   const projectIdentity = useMemo(
     () => projects.map((project) => `${project.id}\u0000${project.title}`).join("\u0001"),
     [projects],
   );
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const selectedSurvey = surveys.find((survey) => survey.surveyId === selectedSurveyId) ?? null;
+  const selectedProjectSurveys = selectedProject
+    ? surveys.filter((survey) => survey.projectId === selectedProject.id)
+    : [];
+  const projectPageCount = Math.max(1, Math.ceil(projects.length / projectPageSize));
+  const surveyPageCount = Math.max(1, Math.ceil(selectedProjectSurveys.length / surveyPageSize));
+  const visibleProjects = projects.slice(
+    projectPage * projectPageSize,
+    (projectPage + 1) * projectPageSize,
+  );
 
   useEffect(() => {
     setSelectedProjectId(null);
     setSelectedSurveyId(null);
+    setProjectPage(0);
+    setSurveyPage(0);
     if (hostReady) void activate(port, ownerUserId, projects);
     else reset();
     return reset;
@@ -69,6 +86,14 @@ export function RequirementSurveyCenterView({
     }
   }, [selectedSurveyId, surveys]);
 
+  useEffect(() => {
+    setProjectPage((current) => Math.min(current, projectPageCount - 1));
+  }, [projectPageCount]);
+
+  useEffect(() => {
+    setSurveyPage((current) => Math.min(current, surveyPageCount - 1));
+  }, [surveyPageCount]);
+
   if (!hostReady) {
     return <SurveyState icon="⌁" title="正在连接本机服务" detail="连接就绪后会自动读取需求调研。" />;
   }
@@ -81,6 +106,7 @@ export function RequirementSurveyCenterView({
         port={port}
         survey={selectedSurvey}
         onBack={() => setSelectedSurveyId(null)}
+        onOpenConversation={onOpenConversation}
         onSubmit={(answers) => submit(port, selectedSurvey, answers)}
       />
     );
@@ -92,9 +118,20 @@ export function RequirementSurveyCenterView({
         error={error}
         isLoading={isLoading}
         project={selectedProject}
-        surveys={surveys.filter((survey) => survey.projectId === selectedProject.id)}
-        onBack={() => setSelectedProjectId(null)}
+        surveys={selectedProjectSurveys}
+        page={surveyPage}
+        pageSize={surveyPageSize}
+        onBack={() => {
+          setSelectedProjectId(null);
+          setSelectedSurveyId(null);
+          setSurveyPage(0);
+        }}
         onOpen={setSelectedSurveyId}
+        onPageChange={setSurveyPage}
+        onPageSizeChange={(size) => {
+          setSurveyPageSize(size);
+          setSurveyPage(0);
+        }}
         onRefresh={() => void refresh(port)}
       />
     );
@@ -115,13 +152,17 @@ export function RequirementSurveyCenterView({
             <button aria-label="刷新需求调研" disabled={isLoading} onClick={() => void refresh(port)} type="button">↻</button>
           </div>
           <div className="requirement-survey-project-grid">
-            {projects.map((project) => {
+            {visibleProjects.map((project) => {
               const projectSurveys = surveys.filter((survey) => survey.projectId === project.id);
               const open = projectSurveys.filter((survey) => survey.status === "open").length;
               const resolved = projectSurveys.filter((survey) => survey.status === "resolved").length;
               return (
-                <button key={project.id} onClick={() => setSelectedProjectId(project.id)} type="button">
-                  <span className={`requirement-survey-project-icon ${open > 0 ? "is-open" : ""}`}>▰</span>
+                <button key={project.id} onClick={() => {
+                  setSelectedProjectId(project.id);
+                  setSelectedSurveyId(null);
+                  setSurveyPage(0);
+                }} type="button">
+                  <span aria-hidden="true" className={`requirement-survey-project-icon ${open > 0 ? "is-open" : ""}`}><FolderIcon /></span>
                   <span className="requirement-survey-project-copy">
                     <strong>{project.title}</strong>
                     <small>{projectSurveys.length === 0 ? "暂无需求调研" : `共 ${projectSurveys.length} 张调研单`}</small>
@@ -132,6 +173,18 @@ export function RequirementSurveyCenterView({
               );
             })}
           </div>
+          <SurveyPagination
+            label="项目"
+            page={projectPage}
+            pageCount={projectPageCount}
+            pageSize={projectPageSize}
+            total={projects.length}
+            onPageChange={setProjectPage}
+            onPageSizeChange={(size) => {
+              setProjectPageSize(size);
+              setProjectPage(0);
+            }}
+          />
           {isLoading && surveys.length === 0 && <div className="requirement-survey-loading"><span className="mini-spinner" />正在读取需求调研…</div>}
         </>
       )}
@@ -142,7 +195,7 @@ export function RequirementSurveyCenterView({
 function SurveyHero({ openCount, resolvedCount }: { openCount: number; resolvedCount: number }) {
   return (
     <header className="requirement-survey-hero">
-      <span className="requirement-survey-hero__icon" aria-hidden="true">☷</span>
+      <span className="requirement-survey-hero__icon" aria-hidden="true"><ClipboardListIcon /></span>
       <div><h2>需求调研</h2><p>了解你的需求，整理目标与后续方案</p></div>
       <dl>
         <div><dt>待填写</dt><dd className="is-open">{openCount}</dd></div>
@@ -157,27 +210,39 @@ function ProjectSurveyList({
   surveys,
   isLoading,
   error,
+  page,
+  pageSize,
   onBack,
   onOpen,
+  onPageChange,
+  onPageSizeChange,
   onRefresh,
 }: {
   project: { id: string; title: string };
   surveys: RequirementSurvey[];
   isLoading: boolean;
   error: string | null;
+  page: number;
+  pageSize: number;
   onBack(): void;
   onOpen(id: string): void;
+  onPageChange(page: number): void;
+  onPageSizeChange(size: number): void;
   onRefresh(): void;
 }) {
-  const open = surveys.filter((survey) => survey.status === "open");
-  const resolved = surveys.filter((survey) => survey.status === "resolved");
+  const allOpen = surveys.filter((survey) => survey.status === "open");
+  const allResolved = surveys.filter((survey) => survey.status === "resolved");
+  const pageCount = Math.max(1, Math.ceil(surveys.length / pageSize));
+  const pagedSurveys = surveys.slice(page * pageSize, (page + 1) * pageSize);
+  const open = pagedSurveys.filter((survey) => survey.status === "open");
+  const resolved = pagedSurveys.filter((survey) => survey.status === "resolved");
   return (
     <section aria-label={`${project.title}的需求调研`} className="requirement-survey-center">
       <header className="requirement-survey-project-header">
         <button onClick={onBack} type="button">‹ 返回项目列表</button>
-        <span aria-hidden="true">☑</span>
-        <div><h2>{project.title}</h2><p>填写调研，帮助 AI 理解你的目标、偏好和限制。提交后，原 Run 会继续处理。</p></div>
-        <dl><div><dt>全部</dt><dd>{surveys.length}</dd></div><div><dt>待填写</dt><dd>{open.length}</dd></div><div><dt>已提交</dt><dd>{resolved.length}</dd></div></dl>
+        <span aria-hidden="true"><SurveyCheckIcon /></span>
+        <div><h2>{project.title}</h2><p>填写调研，帮助 AI 理解你的目标、偏好和限制。提交后，AI 会根据你的回答整理需求与后续方案。</p></div>
+        <dl><div><dt>全部调研</dt><dd>{surveys.length}</dd></div><div><dt>待你填写</dt><dd>{allOpen.length}</dd></div><div><dt>已提交</dt><dd>{allResolved.length}</dd></div></dl>
         <button aria-label="刷新当前项目需求调研" disabled={isLoading} onClick={onRefresh} type="button">↻</button>
       </header>
       {error && <SurveyError message={error} onRetry={onRefresh} />}
@@ -189,6 +254,15 @@ function ProjectSurveyList({
         <div className="requirement-survey-list-sections">
           {open.length > 0 && <SurveySection title="待填写" surveys={open} onOpen={onOpen} />}
           {resolved.length > 0 && <SurveySection title="已提交" surveys={resolved} onOpen={onOpen} />}
+          <SurveyPagination
+            label="调研"
+            page={page}
+            pageCount={pageCount}
+            pageSize={pageSize}
+            total={surveys.length}
+            onPageChange={onPageChange}
+            onPageSizeChange={onPageSizeChange}
+          />
         </div>
       )}
     </section>
@@ -198,11 +272,11 @@ function ProjectSurveyList({
 function SurveySection({ title, surveys, onOpen }: { title: string; surveys: RequirementSurvey[]; onOpen(id: string): void }) {
   return (
     <section className="requirement-survey-list-section">
-      <h3><span aria-hidden="true">{title === "待填写" ? "✎" : "✓"}</span>{title}<em>{surveys.length}</em></h3>
+      <h3><span aria-hidden="true">{title === "待填写" ? <PencilIcon /> : <CheckSealIcon />}</span>{title}<em>{surveys.length}</em></h3>
       <div className="requirement-survey-card-grid">
         {surveys.map((survey) => (
           <button key={survey.surveyId} onClick={() => onOpen(survey.surveyId)} type="button">
-            <span className={`requirement-survey-card-icon is-${survey.status}`} aria-hidden="true">{survey.status === "open" ? "✎" : "✓"}</span>
+            <span className={`requirement-survey-card-icon is-${survey.status}`} aria-hidden="true">{survey.status === "open" ? <PencilIcon /> : <CheckSealIcon />}</span>
             <span><strong>{survey.title}</strong>{survey.description && <p>{survey.description}</p>}<small>{survey.questions.length} 个问题 · {survey.sourceTaskId ? "任务" : "主聊天"} · {formatSurveyTime(survey.createdAtUnixMs)}</small></span>
             <em className={`is-${survey.status}`}>{survey.status === "open" ? "待填写" : "已提交"}</em>
             <b aria-hidden="true">›</b>
@@ -213,12 +287,50 @@ function SurveySection({ title, surveys, onOpen }: { title: string; surveys: Req
   );
 }
 
+function SurveyPagination({
+  label,
+  page,
+  pageCount,
+  pageSize,
+  total,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  label: string;
+  page: number;
+  pageCount: number;
+  pageSize: number;
+  total: number;
+  onPageChange(page: number): void;
+  onPageSizeChange(size: number): void;
+}) {
+  const start = total === 0 ? 0 : page * pageSize + 1;
+  const end = Math.min(total, start + pageSize - 1);
+  return (
+    <footer aria-label={`${label}分页`} className="requirement-survey-pagination">
+      <span>{start}–{end} / {total}</span>
+      <div>
+        <label>
+          <span className="sr-only">{label}每页</span>
+          <select aria-label={`${label}每页`} onChange={(event) => onPageSizeChange(Number(event.target.value))} value={pageSize}>
+            {[10, 20, 50].map((size) => <option key={size} value={size}>{size} / 页</option>)}
+          </select>
+        </label>
+        <button aria-label={`${label}上一页`} disabled={page === 0} onClick={() => onPageChange(page - 1)} type="button">‹</button>
+        <span>{page + 1} / {pageCount}</span>
+        <button aria-label={`${label}下一页`} disabled={page + 1 >= pageCount} onClick={() => onPageChange(page + 1)} type="button">›</button>
+      </div>
+    </footer>
+  );
+}
+
 function RequirementSurveyDetail({
   survey,
   isSubmitting,
   ownerUserId,
   port,
   onBack,
+  onOpenConversation,
   onSubmit,
 }: {
   survey: RequirementSurvey;
@@ -226,6 +338,7 @@ function RequirementSurveyDetail({
   ownerUserId: string;
   port: RequirementSurveyPort;
   onBack(): void;
+  onOpenConversation?(projectId: string, conversationId: string): void;
   onSubmit(answers: RequirementSurveyAnswers): Promise<boolean>;
 }) {
   const [answers, setAnswers] = useState<RequirementSurveyAnswers>(survey.answers ?? {});
@@ -238,6 +351,15 @@ function RequirementSurveyDetail({
         return next;
       }
       return { ...current, [questionId]: value };
+    });
+  };
+  const toggleChoiceAnswer = (questionId: string, option: string, required: boolean) => {
+    setAnswers((current) => {
+      const next = toggleRequirementSurveyChoice(current, questionId, option);
+      if (!required && Array.isArray(next[questionId]) && next[questionId].length === 0) {
+        delete next[questionId];
+      }
+      return next;
     });
   };
   return (
@@ -266,7 +388,7 @@ function RequirementSurveyDetail({
                   const selected = multiple
                     ? Array.isArray(answers[question.questionId]) && (answers[question.questionId] as string[]).includes(option)
                     : answers[question.questionId] === option;
-                  return <label className={selected ? "is-selected" : ""} key={option}><input aria-label={option} checked={selected} name={question.questionId} onChange={() => setAnswers((current) => multiple ? toggleRequirementSurveyChoice(current, question.questionId, option) : { ...current, [question.questionId]: option })} type={multiple ? "checkbox" : "radio"} /><span>{option}</span><small>{optionLetter(optionIndex)}</small></label>;
+                  return <label className={selected ? "is-selected" : ""} key={option}><input aria-label={option} checked={selected} name={question.questionId} onChange={() => multiple ? toggleChoiceAnswer(question.questionId, option, question.required) : setAnswers((current) => ({ ...current, [question.questionId]: option }))} type={multiple ? "checkbox" : "radio"} /><span>{option}</span><small>{optionLetter(optionIndex)}</small></label>;
                 })}
               </div>
             )}
@@ -276,8 +398,8 @@ function RequirementSurveyDetail({
           <footer><span>{!canSubmit && "请完成所有必填题"}</span><button className="primary-button" disabled={!canSubmit || isSubmitting} onClick={() => void onSubmit(answers)} type="button">{isSubmitting ? "提交中…" : "提交并继续"}</button></footer>
         ) : (
           <>
-            <div className="requirement-survey-detail__resolved">✓ 你的回答已提交，原 Run 已恢复。</div>
-            <RequirementSurveyFollowUpPanel ownerUserId={ownerUserId} port={port} survey={survey} />
+            <div className="requirement-survey-detail__resolved">✓ 你的回答已提交。下方可查看方案或后续回复。</div>
+            <RequirementSurveyFollowUpPanel ownerUserId={ownerUserId} port={port} survey={survey} onOpenConversation={onOpenConversation} />
           </>
         )}
       </div>
@@ -289,10 +411,12 @@ function RequirementSurveyFollowUpPanel({
   ownerUserId,
   port,
   survey,
+  onOpenConversation,
 }: {
   ownerUserId: string;
   port: RequirementSurveyPort;
   survey: RequirementSurvey;
+  onOpenConversation?(projectId: string, conversationId: string): void;
 }) {
   const snapshot = useRequirementSurveyFollowUpStore((state) => state.snapshot);
   const isLoading = useRequirementSurveyFollowUpStore((state) => state.isLoading);
@@ -338,7 +462,11 @@ function RequirementSurveyFollowUpPanel({
               <button className="primary-button" disabled={!planReady || action != null} onClick={() => void confirm(port)} type="button">{action === "confirm" ? "确认中…" : "确认当前方案"}</button>
             </div>
           ) : (
-            <div className="requirement-survey-plan__confirmed"><strong>方案已确认，本次不会自动执行任何任务</strong><p>需要评审、生成文档或开始实施时，请回到原对话说明下一步。</p></div>
+            <div className="requirement-survey-plan__confirmed">
+              <strong>方案已确认，本次不会自动执行任何任务</strong>
+              <p>确认只表示认可当前方案版本。需要评审、生成文档或开始实施时，请返回原对话说明下一步；新任务会固定使用这个已确认版本。</p>
+              {onOpenConversation && <button className="primary-button" onClick={() => onOpenConversation(snapshot.plan!.projectId, snapshot.plan!.sourceConversationId)} type="button">返回原对话，安排下一步</button>}
+            </div>
           )}
         </div>
       ) : (
@@ -404,4 +532,24 @@ function formatSurveyTime(timestamp: number) {
 
 function optionLetter(index: number) {
   return index >= 0 && index < 26 ? String.fromCharCode(65 + index) : String(index + 1);
+}
+
+function ClipboardListIcon() {
+  return <svg aria-hidden="true" fill="none" viewBox="0 0 24 24"><path d="M9 5.25H6.75A1.75 1.75 0 0 0 5 7v12.25A1.75 1.75 0 0 0 6.75 21h10.5A1.75 1.75 0 0 0 19 19.25V7a1.75 1.75 0 0 0-1.75-1.75H15M9 5.25A2 2 0 0 1 11 3h2a2 2 0 0 1 2 2.25M9 5.25h6M8.5 10h1m2.5 0h3.5M8.5 14h1m2.5 0h3.5M8.5 18h1m2.5 0h3.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" /></svg>;
+}
+
+function FolderIcon() {
+  return <svg aria-hidden="true" fill="currentColor" viewBox="0 0 24 24"><path d="M3.5 6.75c0-1.1.9-2 2-2h4.1c.55 0 1.08.23 1.46.63l1.12 1.17c.19.2.45.3.72.3h5.6c1.1 0 2 .9 2 2v8.4c0 1.1-.9 2-2 2h-13c-1.1 0-2-.9-2-2V6.75Z" /></svg>;
+}
+
+function SurveyCheckIcon() {
+  return <svg aria-hidden="true" fill="none" viewBox="0 0 24 24"><path d="M8.5 5.25h-2A1.75 1.75 0 0 0 4.75 7v12.25A1.75 1.75 0 0 0 6.5 21h11a1.75 1.75 0 0 0 1.75-1.75V7a1.75 1.75 0 0 0-1.75-1.75h-2M8.5 5.25A2 2 0 0 1 10.5 3h3a2 2 0 0 1 2 2.25M8.5 5.25h7M8.25 12l2.25 2.25L16 9" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" /></svg>;
+}
+
+function PencilIcon() {
+  return <svg aria-hidden="true" fill="none" viewBox="0 0 24 24"><path d="m14.75 5.25 4 4M5.5 18.5l1.1-4.35L15.9 4.8a1.75 1.75 0 0 1 2.48 0l.82.82a1.75 1.75 0 0 1 0 2.48l-9.35 9.3-4.35 1.1Z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" /></svg>;
+}
+
+function CheckSealIcon() {
+  return <svg aria-hidden="true" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.25" stroke="currentColor" strokeWidth="1.8" /><path d="m8.25 12.2 2.35 2.35 5.25-5.25" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" /></svg>;
 }

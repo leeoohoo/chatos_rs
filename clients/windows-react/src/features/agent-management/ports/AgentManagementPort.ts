@@ -18,6 +18,7 @@ import type {
   AgentTeamTodoProgress,
   AgentTeamAsset,
   AgentTeamAssetRevision,
+  AgentProjectDashboardSnapshot,
   SaveAgentTeamAssetInput,
   SaveAgentTeamTodoInput,
   CreateAgentTeamInput,
@@ -36,6 +37,7 @@ import type {
   AgentSkillKind,
   AgentSkillMutationInput,
 } from "../domain/agentSkillManagement";
+import type { AgentArtifactPage, AgentArtifactPreview } from "../domain/agentArtifact";
 
 export interface AgentManagementPort {
   listProfiles(ownerUserId: string): Promise<AgentProfileSummary[]>;
@@ -46,6 +48,24 @@ export interface AgentManagementPort {
   loadAvatarHistory(ownerUserId: string): Promise<AgentAvatarHistoryAsset[]>;
   discardAvatarReferences(ownerUserId: string, presentationId: string, referenceIds: string[]): Promise<void>;
   discardAvatarPresentation(ownerUserId: string, presentationId: string): Promise<void>;
+  listArtifacts?(
+    ownerUserId: string,
+    limit: number,
+    cursor: string | null,
+  ): Promise<AgentArtifactPage>;
+  previewArtifact?(
+    ownerUserId: string,
+    artifactId: string,
+    expectedSize: number,
+    expectedSha256: string,
+  ): Promise<AgentArtifactPreview>;
+  saveArtifact?(
+    ownerUserId: string,
+    artifactId: string,
+    name: string,
+    expectedSize: number,
+    expectedSha256: string,
+  ): Promise<boolean>;
   loadSkillCatalog?(ownerUserId: string): Promise<AgentSkillDefinition[]>;
   saveSkillOverride?(ownerUserId: string, input: AgentSkillMutationInput): Promise<AgentSkillDefinition>;
   resetSkillOverride?(ownerUserId: string, kind: AgentSkillKind, key: string): Promise<AgentSkillDefinition>;
@@ -79,7 +99,12 @@ export interface AgentManagementPort {
     kind: AgentStaffingProposal["kind"],
     approved: boolean,
   ): Promise<AgentStaffingResolution>;
-  loadTeamConversation?(ownerUserId: string, teamId: string): Promise<AgentTeamConversationSnapshot>;
+  loadTeamConversation?(
+    ownerUserId: string,
+    teamId: string,
+    beforeMessageId?: string | null,
+    limit?: number,
+  ): Promise<AgentTeamConversationSnapshot>;
   queueTeamMessage?(
     ownerUserId: string,
     teamId: string,
@@ -97,6 +122,7 @@ export interface AgentManagementPort {
     agentId: string,
   ): Promise<AgentTeamMemberActivitySnapshot>;
   loadTeamRuns?(ownerUserId: string, teamId: string): Promise<AgentTeamRunHistorySnapshot>;
+  loadTeamDashboard?(ownerUserId: string, teamId: string): Promise<AgentProjectDashboardSnapshot>;
   retryTeamRun?(
     ownerUserId: string,
     teamId: string,

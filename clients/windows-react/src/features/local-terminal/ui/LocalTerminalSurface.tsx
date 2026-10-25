@@ -16,6 +16,7 @@ import "@xterm/xterm/css/xterm.css";
 
 export interface LocalTerminalSurfaceHandle {
   clear(): void;
+  clearSearch(): void;
   findNext(query: string): void;
   findPrevious(query: string): void;
   focus(): void;
@@ -35,6 +36,7 @@ export const LocalTerminalSurface = forwardRef<
 
   useImperativeHandle(ref, () => ({
     clear() { terminalRef.current?.clear(); },
+    clearSearch() { searchRef.current?.clearDecorations(); },
     findNext(query) { searchRef.current?.findNext(query, { incremental: true }); },
     findPrevious(query) { searchRef.current?.findPrevious(query, { incremental: true }); },
     focus() { terminalRef.current?.focus(); },

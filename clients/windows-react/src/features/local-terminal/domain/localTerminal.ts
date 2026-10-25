@@ -100,9 +100,29 @@ export function localWorkingDirectoryFromOsc(value: string) {
 }
 
 export function localTerminalTitleForDirectory(directory: string) {
-  const normalized = directory.replace(/[\\/]+$/u, "");
+  const normalized = localTerminalDisplayPath(directory).replace(/[\\/]+$/u, "");
   const title = normalized.split(/[\\/]/u).filter(Boolean).at(-1);
   return title || "终端";
+}
+
+export function localTerminalDisplayPath(directory: string) {
+  const extendedUncPrefix = "\\\\?\\UNC\\";
+  const extendedPrefix = "\\\\?\\";
+  if (directory.startsWith(extendedUncPrefix)) {
+    return `\\\\${directory.slice(extendedUncPrefix.length)}`;
+  }
+  return directory.startsWith(extendedPrefix)
+    ? directory.slice(extendedPrefix.length)
+    : directory;
+}
+
+export function localTerminalTitleFromShell(value: string, workingDirectory: string) {
+  const title = value.trim();
+  if (!title) return null;
+  const displayTitle = localTerminalDisplayPath(title);
+  return /^[A-Za-z]:[\\/].*\.exe$/iu.test(displayTitle)
+    ? localTerminalTitleForDirectory(workingDirectory)
+    : title;
 }
 
 function decodeBase64(value: string) {

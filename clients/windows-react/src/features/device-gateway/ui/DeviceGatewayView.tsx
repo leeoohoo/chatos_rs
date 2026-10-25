@@ -32,6 +32,12 @@ export function DeviceGatewayView({ ownerUserId, username, port, hostPort }: { o
 
   const connecting = ["launching", "handshaking", "synchronizing", "restarting"].includes(host.phase);
   const connected = gateway.connectorRunning && host.ready;
+  const connectionSummary = connected
+    ? (english ? "Connected to ChatOS through the authenticated control plane." : "已通过账号认证控制面连接 ChatOS。")
+    : (english ? "Local configuration is retained while disconnected." : "本机配置已保留，当前未连接。");
+  const connectionFootnote = gateway.deviceSignedRelayAvailable
+    ? connectionSummary
+    : `${connectionSummary} ${english ? "Windows uses the signed-in session and local Rust Host; it does not claim the macOS device-signed long-lived Relay." : "当前 Windows 客户端使用登录账号会话与本机 Rust Host，不宣称具备 macOS 的设备签名长连接 Relay。"}`;
   const toggleConnection = async () => {
     if (connected) await stop(hostPort);
     else await start(hostPort, ownerUserId);
@@ -39,8 +45,12 @@ export function DeviceGatewayView({ ownerUserId, username, port, hostPort }: { o
   };
 
   return <div className="device-gateway-page">
+    <header className="device-gateway-page__title">
+      <h2>{english ? "Device & Gateway" : "设备与网关"}</h2>
+      {isLoading && <div><span className="mini-spinner" />{english ? "Refreshing…" : "刷新中…"}</div>}
+    </header>
     {error && <div className="device-gateway-alert" role="alert">! {error}<button onClick={() => void load(port, ownerUserId)} type="button">{english ? "Retry" : "重试"}</button></div>}
-    <GatewayCard icon="⌁" title={english ? "Connection Status" : "连接状态"} subtitle={connected ? (english ? "Connected to ChatOS through the authenticated control plane" : "已通过账号认证控制面连接 ChatOS") : (english ? "Local configuration is retained while disconnected" : "本机配置已保留，当前未连接")}>
+    <GatewayCard icon="⌁" title={english ? "Connection Status" : "连接状态"} subtitle={connectionFootnote}>
       <div className="device-gateway-health"><i className={connected ? "is-online" : ""} /><strong>{connected ? (english ? "Local Agent Host is healthy" : "本机 Agent Host 运行正常") : (connecting ? (english ? "Starting the local service" : "正在启动本机服务") : (english ? "Local service is disconnected" : "本机服务未连接"))}</strong></div>
       <div className="device-gateway-divider" />
       <GatewayValue label={english ? "User" : "用户"} value={username} />
@@ -50,8 +60,6 @@ export function DeviceGatewayView({ ownerUserId, username, port, hostPort }: { o
       <GatewayValue label={english ? "Connection mode" : "连接方式"} value={english ? "Authenticated control plane" : "账号认证控制面"} />
       <div className="device-gateway-actions"><button className={connected ? "is-danger" : "is-primary"} disabled={connecting} onClick={() => void toggleConnection()} type="button">{connecting ? (english ? "Connecting…" : "连接中…") : connected ? (english ? "Disconnect Local Service" : "断开本机服务") : (english ? "Connect Gateway" : "连接网关")}</button><button disabled={isLoading} onClick={() => void load(port, ownerUserId)} type="button">{english ? "Refresh Status" : "刷新状态"}</button></div>
     </GatewayCard>
-
-    {!gateway.deviceSignedRelayAvailable && <section className="device-gateway-difference"><span aria-hidden="true">i</span><div><strong>{english ? "Windows connection model" : "Windows 连接方式"}</strong><p>{english ? "This client uses the signed-in account session and a local Rust Host. The macOS device-signed long-lived Relay is not claimed on Windows." : "当前 Windows 客户端使用登录账号会话与本机 Rust Host，不宣称具备 macOS 的设备签名长连接 Relay。"}</p></div></section>}
 
     <GatewayCard icon="▣" title={english ? "Local Boundaries" : "本机边界"} subtitle={english ? "Files, terminals, and permission policies execute only on this device." : "文件、终端和权限策略只在当前设备执行。"}>
       <BoundaryRow icon="▤" label={english ? "File routing" : "文件路由"} value={gateway.workspaceCount === 0 ? (english ? "No workspaces" : "尚无工作区") : (english ? `${gateway.workspaceCount} workspaces` : `${gateway.workspaceCount} 个工作区`)} />
@@ -64,7 +72,7 @@ export function DeviceGatewayView({ ownerUserId, username, port, hostPort }: { o
   </div>;
 }
 
-function GatewayCard({ icon, title, subtitle, children }: { icon: string; title: string; subtitle: string; children: ReactNode }) { return <section className="device-gateway-card"><header><span aria-hidden="true">{icon}</span><div><h2>{title}</h2><p>{subtitle}</p></div></header><div className="device-gateway-card__body">{children}</div></section>; }
+function GatewayCard({ icon, title, subtitle, children }: { icon: string; title: string; subtitle: string; children: ReactNode }) { return <section className="device-gateway-card"><header><span aria-hidden="true">{icon}</span><h3>{title}</h3></header><div className="device-gateway-card__body">{children}</div><p className="device-gateway-card__footnote">{subtitle}</p></section>; }
 function GatewayValue({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) { return <div className="device-gateway-value"><span>{label}</span><strong className={mono ? "is-mono" : ""}>{value}</strong></div>; }
 function BoundaryRow({ icon, label, value }: { icon: string; label: string; value: string }) { return <div className="device-gateway-boundary"><span aria-hidden="true">{icon}</span><strong>{label}</strong><p>{value}</p></div>; }
 function GatewayStatus({ title, detail, loading, action, onAction }: { title: string; detail: string; loading?: boolean; action?: string; onAction?(): void }) { return <div className="device-gateway-status"><span aria-hidden="true">{loading ? <i className="mini-spinner" /> : "!"}</span><h2>{title}</h2><p>{detail}</p>{action && <button onClick={onAction} type="button">{action}</button>}</div>; }

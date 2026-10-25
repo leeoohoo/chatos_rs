@@ -61,6 +61,16 @@ export class TauriNotepadAdapter implements NotepadPort {
     }));
   }
 
+  async copyText(text: string) {
+    await invoke("copy_notepad_text", { input: { text } });
+  }
+
+  async exportMarkdown(ownerUserId: string, title: string, content: string) {
+    return z.boolean().parse(await invoke("export_notepad_markdown", {
+      input: { ownerUserId, title, content },
+    }));
+  }
+
   async importImage(ownerUserId: string, noteId: string, expectedVersion: number, source: "picker" | "clipboard") {
     return notepadImageInsertionSchema.nullable().parse(await invoke("import_notepad_image", {
       input: { ownerUserId, noteId, expectedVersion, source },

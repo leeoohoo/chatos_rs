@@ -70,39 +70,38 @@ export function GlobalUtilitiesSettingsView({ ownerUserId, port }: GlobalUtiliti
   return (
     <section aria-label={english ? "Global utility settings" : "全局工具设置"} className="global-utilities">
       <header className="global-utilities__hero">
-        <span aria-hidden="true">⌘</span>
-        <div><p>GLOBAL UTILITIES</p><h2>{english ? "Global Utilities" : "全局工具"}</h2><small>{english ? "Local productivity tools that remain available after the main window closes." : "主窗口关闭后仍可使用的本机效率入口。"}</small></div>
+        <h2>{english ? "Global Utilities" : "全局工具"}</h2>
         {(state.isLoading || state.isSaving) && <div className="global-utilities__progress"><span className="mini-spinner" />{state.isLoading ? (english ? "Loading…" : "正在读取…") : (english ? "Saving…" : "正在保存…")}</div>}
       </header>
 
       {state.error && <div className="global-utilities__error" role="alert"><span>!</span><p>{state.error}</p><button aria-label={english ? "Dismiss error" : "关闭错误"} onClick={clearError} type="button">×</button></div>}
 
-      <SettingsCard icon="⌘" title={english ? "Global Utilities" : "全局工具"} subtitle={english ? "Control all registered shortcuts with one switch." : "通过一个总开关管理所有已注册的系统快捷键。"}>
-        <PreferenceRow detail={english ? "Turning this off unregisters every shortcut so ChatOS no longer intercepts keys in the background." : "关闭后会注销全部全局快捷键，不会在后台拦截按键。"} title={english ? "Enable global utilities" : "启用全局快捷工具"}>
+      <SettingsCard icon="⌘" title={english ? "Global Utilities" : "全局工具"} subtitle={english ? "Local productivity tools that remain available after the main window closes." : "主窗口关闭后仍可使用的本机效率入口。"}>
+        <PreferenceRow detail={english ? "Turning this off unregisters every global shortcut." : "关闭后会注销全部全局快捷键，不会在后台拦截按键。"} title={english ? "Enable global utilities" : "启用全局快捷工具"}>
           <Switch checked={state.preferences.isEnabled} disabled={state.isLoading} label={english ? "Enable global utilities" : "启用全局快捷工具"} onChange={setMasterEnabled} />
         </PreferenceRow>
       </SettingsCard>
 
-      <SettingsCard icon="⌨" title={english ? "Global Shortcuts" : "全局快捷键"} subtitle={english ? "Select a shortcut, then press a new modified key combination." : "点击快捷键按钮后，直接按下新的组合键。"}>
+      <SettingsCard icon="⌨" title={english ? "Global Shortcuts" : "全局快捷键"} subtitle={english ? "Click a shortcut button, then press the new key combination." : "点击快捷键按钮后直接按下新的组合键。"}>
         {globalUtilityActions.map((action) => {
           const item = copy[action][english ? "en" : "zh"];
           const registration = state.preferences.registrations[action];
           const enabledKey = `${action}Enabled` as const;
-          return <PreferenceRow key={action} detail={item[1]} icon={item[2]} title={item[0]}>
-            <div className="global-utilities__shortcut-controls">
-              <RegistrationStatus english={english} registration={registration} />
-              <button
-                aria-label={english ? `Record ${item[0]} shortcut` : `录制${item[0]}快捷键`}
-                className={`global-utilities__recorder ${recording === action ? "is-recording" : ""}`}
-                disabled={!state.preferences.isEnabled || !state.preferences[enabledKey] || state.isLoading}
-                onClick={() => setRecording(action)}
-                type="button"
-              >{recording === action ? (english ? "Press keys…" : "请按组合键…") : formatShortcut(state.preferences.hotKeys[action])}</button>
-              <Switch checked={state.preferences[enabledKey]} disabled={state.isLoading} label={item[0]} onChange={(enabled) => updateDraft({ [enabledKey]: enabled })} />
-            </div>
-          </PreferenceRow>;
+          return <div className="global-utilities-shortcut-row" key={action}>
+            <Switch checked={state.preferences[enabledKey]} disabled={state.isLoading} label={item[0]} onChange={(enabled) => updateDraft({ [enabledKey]: enabled })} />
+            <span aria-hidden="true" className="global-utilities-row__icon">{item[2]}</span>
+            <div className="global-utilities-shortcut-row__copy"><strong>{item[0]}</strong><RegistrationStatus english={english} registration={registration} /></div>
+            <button
+              aria-label={english ? `Record ${item[0]} shortcut` : `录制${item[0]}快捷键`}
+              className={`global-utilities__recorder ${recording === action ? "is-recording" : ""}`}
+              disabled={!state.preferences.isEnabled || !state.preferences[enabledKey] || state.isLoading}
+              onClick={() => setRecording(action)}
+              title={item[1]}
+              type="button"
+            >{recording === action ? (english ? "Press keys…" : "请按组合键…") : formatShortcut(state.preferences.hotKeys[action])}</button>
+          </div>;
         })}
-        <div className="global-utilities__footer"><button onClick={() => updateDraft({ hotKeys: defaultGlobalHotKeys, screenshotEnabled: true, screenRecordingEnabled: true, clipboardHistoryEnabled: true, quickSearchEnabled: true })} type="button">{english ? "Restore Defaults" : "恢复默认快捷键"}</button><span>{english ? "Esc cancels recording." : "按 Esc 可取消录制。"}</span></div>
+        <div className="global-utilities__footer"><button onClick={() => updateDraft({ hotKeys: defaultGlobalHotKeys, screenshotEnabled: true, screenRecordingEnabled: true, clipboardHistoryEnabled: true, quickSearchEnabled: true })} type="button">{english ? "Restore Defaults" : "恢复默认快捷键"}</button></div>
       </SettingsCard>
 
       <SettingsCard icon="●" title={english ? "Privacy" : "隐私"} subtitle={english ? "Capture, clipboard, and local search data stays on this PC by default." : "截图、录屏、剪贴板和本地搜索默认只在这台电脑上处理。"}>
@@ -115,11 +114,11 @@ export function GlobalUtilitiesSettingsView({ ownerUserId, port }: GlobalUtiliti
 }
 
 function SettingsCard({ children, icon, subtitle, title }: { children: React.ReactNode; icon: string; subtitle: string; title: string }) {
-  return <section className="global-utilities-card"><header><span aria-hidden="true">{icon}</span><div><h3>{title}</h3><p>{subtitle}</p></div></header><div className="global-utilities-card__body">{children}</div></section>;
+  return <section className="global-utilities-card"><header><span aria-hidden="true">{icon}</span><h3>{title}</h3></header><div className="global-utilities-card__body">{children}</div><p className="global-utilities-card__footnote">{subtitle}</p></section>;
 }
 
-function PreferenceRow({ children, detail, icon, title }: { children: React.ReactNode; detail: string; icon?: string; title: string }) {
-  return <div className="global-utilities-row">{icon && <span className="global-utilities-row__icon" aria-hidden="true">{icon}</span>}<div><strong>{title}</strong><p>{detail}</p></div><div>{children}</div></div>;
+function PreferenceRow({ children, detail, title }: { children: React.ReactNode; detail: string; title: string }) {
+  return <div className="global-utilities-row"><div><strong>{title}</strong><p>{detail}</p></div><div>{children}</div></div>;
 }
 
 function Switch({ checked, disabled, label, onChange }: { checked: boolean; disabled: boolean; label: string; onChange(value: boolean): void }) {
@@ -132,7 +131,8 @@ function RegistrationStatus({ english, registration }: { english: boolean; regis
     : registration.state === "conflict" ? (english ? "In use" : "已被占用")
     : registration.state === "unsupported" ? (english ? "Unsupported" : "不受支持")
     : (english ? "Not registered" : "未注册");
-  return <span className={`global-utilities__status is-${registration.state}`}>{label}</span>;
+  const symbol = registration.state === "registered" ? "●" : registration.state === "disabled" ? "○" : "!";
+  return <span className={`global-utilities__status is-${registration.state}`}><i aria-hidden="true">{symbol}</i>{label}</span>;
 }
 
 function shortcutFromEvent(event: KeyboardEvent): GlobalShortcut | null {

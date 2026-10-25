@@ -1205,6 +1205,7 @@ fn sanitize_remote_url(value: &str) -> (String, bool) {
         }
     }
     if Path::new(without_suffix).is_absolute()
+        || without_suffix.starts_with('/')
         || without_suffix.starts_with('\\')
         || without_suffix
             .as_bytes()

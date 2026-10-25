@@ -31,8 +31,7 @@ export function GeneralSettingsView({ ownerUserId, username, displayName, role, 
   return (
     <section aria-label={english ? "General and account settings" : "常规与账号设置"} className="general-settings">
       <header className="general-settings__hero">
-        <span aria-hidden="true">⚙</span>
-        <div><p>SETTINGS</p><h2>{english ? "General & Account" : "常规与账号"}</h2><small>{english ? "Manage language, display, runtime behavior, and the current account." : "管理语言、显示、运行行为与当前账号。"}</small></div>
+        <h2>{english ? "General & Account" : "常规与账号"}</h2>
         {(state.isLoading || state.isSaving) && <div className="general-settings__progress"><span className="mini-spinner" />{state.isLoading ? (english ? "Loading…" : "正在读取…") : (english ? "Saving…" : "正在保存…")}</div>}
       </header>
       {state.error && <div className="general-settings__error" role="alert"><span>!</span><p>{state.error}</p><button onClick={clearError} type="button">×</button></div>}
@@ -62,7 +61,7 @@ export function GeneralSettingsView({ ownerUserId, username, displayName, role, 
 }
 
 function SettingsCard({ icon, title, subtitle, children }: { icon: string; title: string; subtitle: string; children: React.ReactNode }) {
-  return <section className="general-settings-card"><header><span aria-hidden="true">{icon}</span><div><h3>{title}</h3><p>{subtitle}</p></div></header><div className="general-settings-card__body">{children}</div></section>;
+  return <section className="general-settings-card"><header><span aria-hidden="true">{icon}</span><h3>{title}</h3></header><div className="general-settings-card__body">{children}</div><p className="general-settings-card__footnote">{subtitle}</p></section>;
 }
 
 function PreferenceRow({ title, detail, children }: { title: string; detail: string; children: React.ReactNode }) {

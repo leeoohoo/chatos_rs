@@ -13,6 +13,7 @@ pub struct AuthenticationApiClient {
     client: Client,
     user_service_url: Url,
     gateway_url: Url,
+    connector_url: Url,
 }
 
 #[derive(Debug)]
@@ -227,10 +228,14 @@ struct ErrorPayload {
 
 impl AuthenticationApiClient {
     pub fn from_runtime() -> Result<Self, String> {
-        Self::new(&runtime_api_base_url())
+        Self::new_with_connector(&runtime_api_base_url(), &runtime_connector_base_url())
     }
 
     fn new(base_url: &str) -> Result<Self, String> {
+        Self::new_with_connector(base_url, base_url)
+    }
+
+    fn new_with_connector(base_url: &str, connector_base_url: &str) -> Result<Self, String> {
         let mut url = Url::parse(base_url).map_err(|_| "ChatOS API 地址无效。".to_owned())?;
         if !matches!(url.scheme(), "http" | "https")
             || url.host_str().is_none()
@@ -252,6 +257,26 @@ impl AuthenticationApiClient {
         gateway_url.set_path(&gateway_path);
         gateway_url.set_query(None);
         gateway_url.set_fragment(None);
+        let mut connector_url = Url::parse(connector_base_url)
+            .map_err(|_| "ChatOS Connector API 地址无效。".to_owned())?;
+        if !matches!(connector_url.scheme(), "http" | "https")
+            || connector_url.host_str().is_none()
+            || !connector_url.username().is_empty()
+            || connector_url.password().is_some()
+            || connector_url.query().is_some()
+            || connector_url.fragment().is_some()
+        {
+            return Err("ChatOS Connector API 地址无效。".into());
+        }
+        let connector_prefix = connector_url.path().trim_matches('/').to_owned();
+        let connector_path = if connector_prefix.is_empty() {
+            "/".to_owned()
+        } else {
+            format!("/{connector_prefix}/")
+        };
+        connector_url.set_path(&connector_path);
+        connector_url.set_query(None);
+        connector_url.set_fragment(None);
         let path = if prefix.is_empty() {
             "/api/user/".to_owned()
         } else {
@@ -268,6 +293,7 @@ impl AuthenticationApiClient {
                 .map_err(|_| "无法初始化 ChatOS 网络客户端。".to_owned())?,
             user_service_url: url,
             gateway_url,
+            connector_url,
         })
     }
 
@@ -514,7 +540,7 @@ impl AuthenticationApiClient {
         plugin_id: &str,
         release_id: &str,
     ) -> Result<reqwest::Response, ApiError> {
-        let mut url = self.gateway_url.clone();
+        let mut url = self.connector_url.clone();
         {
             let mut segments = url.path_segments_mut().map_err(|_| ApiError {
                 message: "ChatOS API 地址无效。".into(),
@@ -627,7 +653,7 @@ impl AuthenticationApiClient {
         base_path: &str,
         tail_and_query: Option<(&str, &str)>,
     ) -> Result<Url, ApiError> {
-        let mut url = self.gateway_url.clone();
+        let mut url = self.connector_url.clone();
         {
             let mut segments = url.path_segments_mut().map_err(|_| ApiError {
                 message: "ChatOS API 地址无效。".into(),
@@ -755,6 +781,21 @@ pub(crate) fn runtime_api_base_url() -> String {
     }
 }
 
+pub(crate) fn runtime_connector_base_url() -> String {
+    if let Ok(value) = std::env::var("CHATOS_CONNECTOR_BASE_URL") {
+        if !value.trim().is_empty() {
+            return value;
+        }
+    }
+    if std::env::var("CHATOS_DEPLOYMENT_PROFILE").as_deref() == Ok("production")
+        || !cfg!(debug_assertions)
+    {
+        "https://connector.jgoool.com".into()
+    } else {
+        "http://127.0.0.1:9080".into()
+    }
+}
+
 fn error_message(status: StatusCode, bytes: &[u8]) -> String {
     if let Ok(payload) = serde_json::from_slice::<ErrorPayload>(bytes) {
         if let Some(message) = payload.message.as_deref().and_then(non_empty_owned) {
@@ -812,6 +853,23 @@ mod tests {
             "https://example.test/prefix/api/user/"
         );
         assert_eq!(client.gateway_url.as_str(), "https://example.test/prefix/");
+    }
+
+    #[test]
+    fn keeps_user_auth_and_connector_control_plane_on_separate_hosts() {
+        let client = AuthenticationApiClient::new_with_connector(
+            "https://gateway.example.test",
+            "https://connector.example.test",
+        )
+        .unwrap();
+        assert_eq!(
+            client.user_service_url.as_str(),
+            "https://gateway.example.test/api/user/"
+        );
+        assert_eq!(
+            client.connector_url.as_str(),
+            "https://connector.example.test/"
+        );
     }
 
     #[test]

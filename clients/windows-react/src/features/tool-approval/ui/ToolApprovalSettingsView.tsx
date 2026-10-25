@@ -36,7 +36,6 @@ export function ToolApprovalSettingsView({
   const suspend = useToolApprovalSettingsStore((state) => state.suspend);
   const load = useToolApprovalSettingsStore((state) => state.load);
   const updateMode = useToolApprovalSettingsStore((state) => state.updateMode);
-  const updateModel = useToolApprovalSettingsStore((state) => state.updateModel);
   const clearMutationError = useToolApprovalSettingsStore((state) => state.clearMutationError);
   const reset = useToolApprovalSettingsStore((state) => state.reset);
   const approvals = useToolApprovalStore((state) => state.approvals);
@@ -76,7 +75,6 @@ export function ToolApprovalSettingsView({
     );
   }
 
-  const selectedModel = settings.models.find((model) => model.id === settings.selectedModelId);
   const history = settings.history.slice(
     historyPage * HISTORY_PAGE_SIZE,
     (historyPage + 1) * HISTORY_PAGE_SIZE,
@@ -92,7 +90,11 @@ export function ToolApprovalSettingsView({
   };
 
   return (
-    <div className="settings-page" aria-label="命令审批设置">
+    <div className="settings-page tool-approval-settings-page" aria-label="命令审批设置">
+      <header className="settings-page__title">
+        <h2>命令审批</h2>
+        {(isLoading || isMutating) && <div><span className="mini-spinner" />{isMutating ? "保存中…" : "刷新中…"}</div>}
+      </header>
       {(loadError || mutationError) && (
         <div className="settings-alert" role="alert">
           <span aria-hidden="true">!</span>
@@ -131,59 +133,6 @@ export function ToolApprovalSettingsView({
           ))}
         </div>
         <p className="settings-help">{approvalModePresentation[settings.defaultMode].description}</p>
-      </SettingsCard>
-
-      <SettingsCard
-        icon="✦"
-        title="本机自动审批 Agent"
-        subtitle="模型仅从当前账号已启用且凭据可用的配置中选择"
-      >
-        <div className="approval-model-grid">
-          <label>
-            <span>模型</span>
-            <select
-              disabled={isMutating}
-              onChange={(event) => {
-                const modelId = event.target.value || null;
-                const model = settings.models.find((item) => item.id === modelId);
-                void updateModel(
-                  settingsPort,
-                  modelId,
-                  model?.supportsReasoning ? model.defaultThinkingLevel : null,
-                );
-              }}
-              value={settings.selectedModelId ?? ""}
-            >
-              <option value="">未配置</option>
-              {settings.models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.displayName} · {model.modelName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>推理等级</span>
-            <select
-              disabled={isMutating || !selectedModel?.supportsReasoning}
-              onChange={(event) => void updateModel(
-                settingsPort,
-                settings.selectedModelId,
-                event.target.value || null,
-              )}
-              value={settings.selectedThinkingLevel ?? ""}
-            >
-              {!selectedModel?.supportsReasoning && <option value="">不适用</option>}
-              {selectedModel?.thinkingLevels.map((level) => (
-                <option key={level} value={level}>{thinkingLabel(level)}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <div className={`reviewer-status ${settings.automaticReviewerReady ? "is-ready" : "is-fallback"}`}>
-          <span aria-hidden="true">{settings.automaticReviewerReady ? "✓" : "!"}</span>
-          <p>{settings.automaticReviewerDetail}</p>
-        </div>
       </SettingsCard>
 
       <SettingsCard
@@ -339,10 +288,11 @@ function SettingsCard({
     <section className="settings-card">
       <header className="settings-card__header">
         <span aria-hidden="true">{icon}</span>
-        <div><h2>{title}</h2><p>{subtitle}</p></div>
+        <h3>{title}</h3>
         {trailing}
       </header>
       <div className="settings-card__body">{children}</div>
+      <p className="settings-card__footnote">{subtitle}</p>
     </section>
   );
 }
@@ -370,10 +320,6 @@ function SettingsStatus({
       </div>
     </div>
   );
-}
-
-function thinkingLabel(level: string) {
-  return ({ none: "关闭", low: "低", medium: "中", high: "高", xhigh: "极高" } as Record<string, string>)[level] ?? level;
 }
 
 function decisionLabel(decision: ToolApprovalDecision) {

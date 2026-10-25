@@ -339,8 +339,15 @@ pub enum PresentedRemoteTerminalStart {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PresentedRemoteTerminalEvent {
-    Output { cursor: u64, data_base64: String },
-    Terminated { cursor: u64, exit_code: Option<i32> },
+    Output {
+        cursor: u64,
+        #[serde(rename = "dataBase64")]
+        data_base64: String,
+    },
+    Terminated {
+        cursor: u64,
+        exit_code: Option<i32>,
+    },
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]

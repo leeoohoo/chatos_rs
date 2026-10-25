@@ -28,27 +28,22 @@ export function PetSettingsView({ ownerUserId, port }: PetSettingsViewProps) {
   return (
     <section aria-label={english ? "Pet settings" : "宠物设置"} className="pet-settings">
       <header className="pet-settings__hero">
-        <span aria-hidden="true">🐾</span>
-        <div>
-          <p>DESKTOP PET</p>
-          <h2>{english ? "Pet" : "宠物"}</h2>
-          <small>{english ? "Keep task status close at hand across your Windows workspace." : "让任务状态脱离主窗口，随时陪伴在 Windows 工作区中。"}</small>
-        </div>
+        <h2>{english ? "Pet" : "宠物"}</h2>
         {(state.isLoading || state.isSaving) && <div className="pet-settings__progress"><span className="mini-spinner" />{state.isLoading ? (english ? "Loading…" : "正在读取…") : (english ? "Saving…" : "正在保存…")}</div>}
       </header>
 
       {state.error && <div className="pet-settings__error" role="alert"><span>!</span><p>{state.error}</p><button aria-label={english ? "Dismiss error" : "关闭错误"} onClick={clearError} type="button">×</button></div>}
 
-      <SettingsCard icon="🐾" title={english ? "Global Presence" : "全局展示"} subtitle={english ? "Show the pet outside the main window as a native transparent overlay." : "让宠物脱离主窗口，以原生透明浮窗持续展示。"}>
-        <PreferenceRow detail={english ? "Hides the native pet window immediately while preserving its preferences." : "关闭后原生宠物浮窗会立即隐藏，但偏好会保留。"} title={english ? "Enable global pet" : "启用全局宠物"}>
+      <SettingsCard icon="🐾" title={english ? "Global Presence" : "全局展示"} subtitle={english ? "Keep the pet visible outside the main window to show task status across apps and desktops." : "让宠物脱离主窗口，在其他桌面与应用上持续展示任务状态。"}>
+        <PreferenceRow detail={english ? "Hides the pet window immediately while preserving notification history." : "关闭后宠物窗口会立即隐藏，但提醒记录仍会保留。"} title={english ? "Enable global pet" : "启用全局宠物"}>
           <Switch checked={state.preferences.isEnabled} disabled={state.isLoading} label={english ? "Enable global pet" : "启用全局宠物"} onChange={(isEnabled) => updateDraft({ isEnabled })} />
         </PreferenceRow>
-        <PreferenceRow detail={english ? "Windows keeps the overlay always on top. Pinning one window across every virtual desktop is not exposed by the supported Windows API." : "Windows 会保持浮窗置顶；受系统公开接口限制，暂不能像 macOS Space 一样固定到所有虚拟桌面。"} title={english ? "Show across desktops and full-screen apps" : "跨桌面与全屏应用显示"}>
+        <PreferenceRow detail={english ? "Keeps the pet visible when switching Spaces or entering full-screen apps." : "切换 Space 或进入全屏应用时，宠物仍保持可见。"} title={english ? "Show across desktops and full-screen apps" : "跨桌面与全屏应用显示"}>
           <Switch checked={state.preferences.showAcrossSpaces} disabled={state.isLoading} label={english ? "Show across desktops" : "跨桌面显示"} onChange={(showAcrossSpaces) => updateDraft({ showAcrossSpaces })} />
         </PreferenceRow>
       </SettingsCard>
 
-      <SettingsCard icon="◉" title={english ? "Event Notifications" : "事件提醒"} subtitle={english ? "Choose which trusted native task events may appear beside the pet." : "决定哪些受信任的原生任务事件可以出现在宠物旁边。"}>
+      <SettingsCard icon="🔔" title={english ? "Event Notifications" : "事件提醒"} subtitle={english ? "Choose which task events appear proactively beside the pet." : "决定哪些任务事件会主动出现在宠物旁边。"}>
         <PreferenceRow detail={english ? "Shows active tasks, important steps, and cancellation state." : "显示正在执行的任务、关键步骤和可取消状态。"} title={english ? "Show AI execution progress" : "展示 AI 执行过程"}>
           <Switch checked={state.preferences.showProcess} disabled={state.isLoading} label={english ? "Show AI execution progress" : "展示 AI 执行过程"} onChange={(showProcess) => updateDraft({ showProcess })} />
         </PreferenceRow>
@@ -57,12 +52,12 @@ export function PetSettingsView({ ownerUserId, port }: PetSettingsViewProps) {
         </PreferenceRow>
       </SettingsCard>
 
-      <SettingsCard icon="⌁" title={english ? "Appearance & Position" : "外观与位置"} subtitle={english ? "Adjust the pet size or restore its default position on the primary display." : "调整宠物尺寸，或把它恢复到主屏幕默认位置。"}>
-        <PreferenceRow detail={english ? "Changes only the pet itself; future activity cards keep a readable size." : "只改变宠物本体尺寸，后续任务卡片保持易读。"} title={english ? "Pet size" : "宠物大小"}>
+      <SettingsCard icon="☷" title={english ? "Appearance & Position" : "外观与位置"} subtitle={english ? "Adjust the pet size or restore its default screen position." : "调整宠物尺寸，或把它恢复到默认屏幕位置。"}>
+        <PreferenceRow detail={english ? "Changes only the pet itself; message cards remain readable." : "只改变宠物本体尺寸，消息卡片会保持易读。"} title={english ? "Pet size" : "宠物大小"}>
           <div className="pet-settings__size"><span>🐾</span><input aria-label={english ? "Pet size" : "宠物大小"} disabled={state.isLoading} max="180" min="72" onChange={(event) => updateDraft({ size: Number(event.target.value) })} step="4" type="range" value={state.preferences.size} /><strong>🐾</strong><output>{state.preferences.size}</output></div>
         </PreferenceRow>
         <div className="pet-settings__asset">
-          <span aria-hidden="true">🦊</span>
+          <span aria-hidden="true">◆</span>
           <div><strong>{english ? "Current pet asset" : "当前宠物资源"}</strong><small>{english ? "Fengtuan · Autumn Fox" : "枫团 · 秋日小狐狸"}</small></div>
           <button disabled={state.isLoading || state.isSaving || dirty} onClick={() => void resetPosition(port)} type="button">{english ? "Reset Position" : "恢复默认位置"}</button>
         </div>
@@ -72,7 +67,7 @@ export function PetSettingsView({ ownerUserId, port }: PetSettingsViewProps) {
 }
 
 function SettingsCard({ icon, title, subtitle, children }: { icon: string; title: string; subtitle: string; children: React.ReactNode }) {
-  return <section className="pet-settings-card"><header><span aria-hidden="true">{icon}</span><div><h3>{title}</h3><p>{subtitle}</p></div></header><div className="pet-settings-card__body">{children}</div></section>;
+  return <section className="pet-settings-card"><header><span aria-hidden="true">{icon}</span><h3>{title}</h3></header><div className="pet-settings-card__body">{children}</div><p className="pet-settings-card__footnote">{subtitle}</p></section>;
 }
 
 function PreferenceRow({ title, detail, children }: { title: string; detail: string; children: React.ReactNode }) {

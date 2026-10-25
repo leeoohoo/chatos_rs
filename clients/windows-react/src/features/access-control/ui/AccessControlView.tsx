@@ -51,6 +51,10 @@ export function AccessControlView({
   const { settings } = snapshot;
   return (
     <div className="settings-page access-control-page" aria-label="访问控制">
+      <header className="settings-page__title">
+        <h2>权限控制</h2>
+        {isLoading && <div><span className="mini-spinner" aria-hidden="true" />刷新中…</div>}
+      </header>
       {error && (
         <div className="settings-alert" role="alert">
           <span aria-hidden="true">!</span>
@@ -62,7 +66,7 @@ export function AccessControlView({
       <SettingsCard
         icon="▣"
         title="默认任务权限"
-        subtitle="新任务使用当前 Windows 本机执行边界"
+        subtitle="新任务在没有项目级覆盖时使用这套策略"
         trailing={<button className="settings-link-button" disabled={isLoading} onClick={() => void refresh(port)} type="button">刷新</button>}
       >
         <div className="access-control-readonly">
@@ -87,7 +91,7 @@ export function AccessControlView({
       <SettingsCard
         icon="⌘"
         title="运行后端"
-        subtitle="能力标记只代表当前版本已经实际执行的保护"
+        subtitle="当前版本只允许使用本机进程后端"
       >
         <div className="access-control-backends">
           {snapshot.backends.map((backend) => (
@@ -151,10 +155,11 @@ function SettingsCard({
     <section className="settings-card">
       <header className="settings-card__header">
         <span aria-hidden="true">{icon}</span>
-        <div><h2>{title}</h2><p>{subtitle}</p></div>
+        <h3>{title}</h3>
         {trailing}
       </header>
       <div className="settings-card__body">{children}</div>
+      <p className="settings-card__footnote">{subtitle}</p>
     </section>
   );
 }

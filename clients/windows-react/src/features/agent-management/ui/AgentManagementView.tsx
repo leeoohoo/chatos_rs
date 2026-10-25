@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AskUserPort } from "../../ask-user/ports/AskUserPort";
 import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
 import {
@@ -20,7 +20,6 @@ import { useAgentTeamConversationStore } from "../application/agentTeamConversat
 import { useAgentTeamRunStore } from "../application/agentTeamRunStore";
 import { useAgentTeamAssetStore } from "../application/agentTeamAssetStore";
 import { useAgentTeamTodoStore } from "../application/agentTeamTodoStore";
-import { useProjectRequirementSurveyStore } from "../application/projectRequirementSurveyStore";
 import {
   agentProfessionLabels,
   heartbeatIntervalLabel,
@@ -36,21 +35,26 @@ import {
   type AgentTeamDetail,
   type AgentTeamAsset,
   type AgentTeamAssetCategory,
+  type AgentTeamAssetRevision,
+  type AgentTeamRunSummary,
   type AgentTeamTodo,
   type AgentTeamTodoProgress,
+  type AgentProjectDashboardSnapshot,
   type CreateAgentTeamInput,
   type PreparedAgentConversation,
   type AgentStaffingProposal,
 } from "../domain/agentManagement";
-import {
-  isRequirementSurveySubmissionValid,
-  toggleRequirementSurveyChoice,
-  type RequirementSurvey,
-  type RequirementSurveyAnswers,
-} from "../../requirement-surveys/domain/requirementSurvey";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import { AgentSkillManagementSheet } from "./AgentSkillManagementSheet";
 import type { ChatOSLanguage } from "../../general-settings/domain/generalSettings";
+import type { AgentArtifact } from "../domain/agentArtifact";
+import { SafeMarkdownPreview } from "../../notepad/ui/SafeMarkdownPreview";
+import {
+  removeTrailingAgentTeamMentionQuery,
+  resolveAgentTeamMentionIds,
+  trailingAgentTeamMentionQuery,
+  visibleAgentTeamMentionCandidates,
+} from "../domain/agentTeamMention";
 import "./agentManagement.css";
 
 export function AgentManagementView({
@@ -64,6 +68,7 @@ export function AgentManagementView({
   askUserPort,
   contextLanguage = "zh-CN",
   onContextLanguageChange = async () => undefined,
+  onOpenRequirementSurveys = () => undefined,
   projects = [],
 }: {
   ownerUserId: string;
@@ -76,6 +81,7 @@ export function AgentManagementView({
   askUserPort?: AskUserPort;
   contextLanguage?: ChatOSLanguage;
   onContextLanguageChange?(language: ChatOSLanguage): Promise<void> | void;
+  onOpenRequirementSurveys?(): void;
   projects?: Array<{ id: string; title: string }>;
 }) {
   const profiles = useAgentManagementStore((state) => state.profiles);
@@ -108,7 +114,7 @@ export function AgentManagementView({
   const inviteAgent = useAgentTeamStore((state) => state.inviteAgent);
   const mutateTeamMember = useAgentTeamStore((state) => state.mutateMember);
   const resetTeams = useAgentTeamStore((state) => state.reset);
-  const [surface, setSurface] = useState<"agents" | "teams">("agents");
+  const [surface, setSurface] = useState<"agents" | "documents" | "teams">("agents");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(20);
   const [preparingId, setPreparingId] = useState<string | null>(null);
@@ -120,6 +126,7 @@ export function AgentManagementView({
   const [showsSkillManagement, setShowsSkillManagement] = useState(false);
   const [showsTeamCreator, setShowsTeamCreator] = useState(false);
   const [showsAgentInvite, setShowsAgentInvite] = useState(false);
+  const [documentsRefreshSequence, setDocumentsRefreshSequence] = useState(0);
   const [editingTeamMemberId, setEditingTeamMemberId] = useState<string | null>(null);
   const [editor, setEditor] = useState<{
     catalog: AgentProfileEditorCatalog;
@@ -287,19 +294,46 @@ export function AgentManagementView({
 
   return (
     <div className="agent-management" aria-label="Agent 管理">
-      <section className="agent-management__panel">
-        <header className="agent-management__toolbar">
+      <div className="agent-management__workspace">
+        <aside className="agent-management__navigation" aria-label="Agent 工作区">
+          <div className="agent-management__navigation-heading">
+            <span aria-hidden="true">✦</span>
+            <div><strong>Agent</strong><small>私聊与项目团队</small></div>
+            <button
+              aria-label="创建 Agent 团队"
+              disabled={!port.createTeam || projects.length === 0 || isCreatingTeam}
+              onClick={() => setShowsTeamCreator(true)}
+              type="button"
+            >＋</button>
+          </div>
+          <div className="agent-management__navigation-group">
+            <span>工作区</span>
+            <button aria-current={surface === "agents" ? "page" : undefined} className={surface === "agents" ? "is-active" : ""} onClick={() => setSurface("agents")} type="button">▣ <b>Agent 管理</b><small data-label={`${profiles.length} 个已创建 Agent`} /></button>
+            <button aria-current={surface === "documents" ? "page" : undefined} className={surface === "documents" ? "is-active" : ""} onClick={() => setSurface("documents")} type="button">⌕ <b>本地 Agent 文档</b><small>跨设备发现与预览</small></button>
+          </div>
+          <div className="agent-management__navigation-group">
+            <span>团队</span>
+            {teams.map((team) => (
+              <button key={team.id} aria-label={team.name} aria-current={surface === "teams" && selectedTeamId === team.id ? "page" : undefined} className={surface === "teams" && selectedTeamId === team.id ? "is-active" : ""} onClick={() => { setSurface("teams"); onSelectTeamFromNav(team.id); }} type="button">♣ <b data-label={team.name} /><small data-label={team.projectId} /></button>
+            ))}
+            {teams.length === 0 && <small className="agent-management__navigation-empty">还没有项目团队</small>}
+          </div>
+          <div className="agent-management__navigation-group agent-management__navigation-group--private">
+            <span>私聊</span>
+            {visibleProfiles.slice(0, 10).map((profile) => (
+              <button key={profile.id} onClick={() => void openDirect(profile)} type="button"><span className="agent-management__navigation-avatar">{profile.name.slice(0, 1)}</span><b data-label={profile.name} /><small data-label={agentProfessionLabels[profile.professionKey] ?? "Agent"} /></button>
+            ))}
+            {visibleProfiles.length === 0 && <small className="agent-management__navigation-empty">还没有私聊</small>}
+          </div>
+        </aside>
+        <section className="agent-management__panel">
+        {!(surface === "teams" && selectedTeamId) && <header className="agent-management__toolbar">
           <div>
-            <h2>Agent 管理</h2>
-            <p>{surface === "agents" ? "管理 Agent、模型和权限。" : "按项目组织 Agent 团队。"}</p>
+            <h2>{surface === "documents" ? "本地 Agent 文档" : surface === "teams" ? "项目 Agent 团队" : "Agent 管理"}</h2>
+            <p>{surface === "documents" ? "显示当前账户 Local Agent Host 保存的 Markdown 文档。" : surface === "teams" ? "按项目组织 Agent 团队。" : "管理 Agent、模型和权限。"}</p>
           </div>
           <div className="agent-management__actions">
-            <div className="agent-management__segmented" aria-label="Agent 管理视图">
-              <button aria-pressed={surface === "agents"} onClick={() => setSurface("agents")} type="button">Agent</button>
-              <button aria-pressed={surface === "teams"} onClick={() => setSurface("teams")} type="button">团队</button>
-            </div>
             {surface === "agents" ? <>
-              <span>{isSaving ? "正在保存" : "本机资料"}</span>
               <button
                 disabled={!port.loadSkillCatalog || !port.saveSkillOverride || !port.resetSkillOverride}
                 onClick={() => setShowsSkillManagement(true)}
@@ -311,13 +345,7 @@ export function AgentManagementView({
                 onClick={() => void openEditor(null)}
                 type="button"
               >{preparingId === "new-agent" ? "准备中…" : "＋ 创建 Agent"}</button>
-              <button
-                aria-label="刷新 Agent"
-                disabled={isLoading}
-                onClick={() => void refresh(port)}
-                type="button"
-              >↻</button>
-            </> : <>
+            </> : surface === "documents" ? <button aria-label="刷新本地 Agent 文档" onClick={() => setDocumentsRefreshSequence((value) => value + 1)} type="button">↻ 刷新</button> : <>
               <button
                 className="primary-button"
                 disabled={!port.createTeam || projects.length === 0 || isCreatingTeam}
@@ -332,7 +360,7 @@ export function AgentManagementView({
               >↻</button>
             </>}
           </div>
-        </header>
+        </header>}
 
         {surface === "agents" && error && !editor && (
           <div className="agent-management__error" role="alert">
@@ -348,7 +376,13 @@ export function AgentManagementView({
           </div>
         )}
 
-        {surface === "teams" ? (
+        {surface === "documents" ? (
+          <LocalAgentDocuments
+            ownerUserId={ownerUserId}
+            port={port}
+            refreshSequence={documentsRefreshSequence}
+          />
+        ) : surface === "teams" ? (
           <AgentTeamCatalog
             attachmentPort={attachmentPort}
             detail={teamDetail}
@@ -367,6 +401,7 @@ export function AgentManagementView({
             onCreate={() => setShowsTeamCreator(true)}
             onInvite={() => setShowsAgentInvite(true)}
             onManageMember={setEditingTeamMemberId}
+            onOpenRequirementSurveys={onOpenRequirementSurveys}
             onRetry={() => void refreshTeams(port)}
             onStaffingResolved={async (teamId) => {
               await Promise.all([refresh(port), refreshTeams(port)]);
@@ -383,7 +418,7 @@ export function AgentManagementView({
           <div className="agent-management__empty">
             <span aria-hidden="true">◎</span>
             <h2>还没有 Agent</h2>
-            <p>创建一个 Agent，并为它选择模型、职业、职责和本机权限。</p>
+            <p>创建后可以直接私聊，也可以加入项目团队。</p>
             <button
               className="primary-button"
               disabled={isCatalogLoading || preparingId === "new-agent"}
@@ -429,7 +464,8 @@ export function AgentManagementView({
             )}
           </>
         )}
-      </section>
+        </section>
+      </div>
       {editor && (
         <AgentProfileEditor
           catalog={editor.catalog}
@@ -461,7 +497,11 @@ export function AgentManagementView({
           projects={projects}
           onCancel={() => setShowsTeamCreator(false)}
           onCreate={async (input) => {
-            if (await createTeam(port, input)) setShowsTeamCreator(false);
+            const created = await createTeam(port, input);
+            if (created) {
+              setShowsTeamCreator(false);
+              setSurface("teams");
+            }
           }}
         />
       )}
@@ -500,6 +540,157 @@ export function AgentManagementView({
       })()}
     </div>
   );
+
+  function onSelectTeamFromNav(teamId: string) {
+    setEditingTeamMemberId(null);
+    void selectTeam(port, teamId);
+  }
+}
+
+function LocalAgentDocuments({
+  ownerUserId,
+  port,
+  refreshSequence,
+}: {
+  ownerUserId: string;
+  port: AgentManagementPort;
+  refreshSequence: number;
+}) {
+  const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingArtifactIds, setLoadingArtifactIds] = useState<Set<string>>(() => new Set());
+  const [preview, setPreview] = useState<{ artifact: AgentArtifact; markdown: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const loadingRef = useRef(false);
+
+  const load = useCallback(async (cursor: string | null, reset: boolean) => {
+    if (loadingRef.current) return;
+    if (!port.listArtifacts) {
+      setError("当前客户端未提供 Agent 文档读取能力。");
+      return;
+    }
+    loadingRef.current = true;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const page = await port.listArtifacts(ownerUserId, 50, cursor);
+      setArtifacts((current) => {
+        if (reset) return page.artifacts;
+        const known = new Set(current.map((artifact) => artifact.artifactId));
+        return [...current, ...page.artifacts.filter((artifact) => !known.has(artifact.artifactId))];
+      });
+      setNextCursor(page.nextCursor);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "本地 Agent 文档读取失败。");
+    } finally {
+      loadingRef.current = false;
+      setIsLoading(false);
+    }
+  }, [ownerUserId, port]);
+
+  useEffect(() => {
+    setNotice(null);
+    void load(null, true);
+  }, [load, refreshSequence]);
+
+  const withArtifactLoading = async (artifact: AgentArtifact, operation: () => Promise<void>) => {
+    if (loadingArtifactIds.has(artifact.artifactId)) return;
+    setLoadingArtifactIds((current) => new Set(current).add(artifact.artifactId));
+    setError(null);
+    setNotice(null);
+    try {
+      await operation();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "本地文档操作失败。");
+    } finally {
+      setLoadingArtifactIds((current) => {
+        const next = new Set(current);
+        next.delete(artifact.artifactId);
+        return next;
+      });
+    }
+  };
+
+  const openPreview = (artifact: AgentArtifact) => void withArtifactLoading(artifact, async () => {
+    if (!port.previewArtifact) throw new Error("当前客户端未提供 Agent 文档预览能力。");
+    const result = await port.previewArtifact(
+      ownerUserId, artifact.artifactId, artifact.size, artifact.sha256,
+    );
+    if (result.artifactId !== artifact.artifactId) throw new Error("Agent 文档预览身份不一致。");
+    setPreview({ artifact, markdown: result.markdown });
+  });
+
+  const saveArtifact = (artifact: AgentArtifact) => void withArtifactLoading(artifact, async () => {
+    if (!port.saveArtifact) throw new Error("当前客户端未提供 Agent 文档另存能力。");
+    const saved = await port.saveArtifact(
+      ownerUserId, artifact.artifactId, artifact.name, artifact.size, artifact.sha256,
+    );
+    if (saved) setNotice(`“${artifact.name}”已保存。`);
+  });
+
+  return (
+    <div className="agent-local-documents" aria-label="本地 Agent 文档">
+      {error && <div className="agent-local-documents__error" role="alert"><span>{error}</span><button onClick={() => void load(null, true)} type="button">重试</button></div>}
+      {notice && <div className="agent-local-documents__notice" role="status">{notice}</div>}
+      {isLoading && artifacts.length === 0 ? (
+        <div className="agent-local-documents__loading"><span className="mini-spinner" />正在读取本地文档…</div>
+      ) : artifacts.length === 0 ? (
+        <div className="agent-local-documents__empty">
+          <span aria-hidden="true">▤⌕</span>
+          <h2>还没有本地 Agent 文档</h2>
+          <p>Agent 创建并由 Local Agent Host 保存的 Markdown 会出现在这里。</p>
+        </div>
+      ) : (
+        <div className="agent-local-documents__list" role="list">
+          {artifacts.map((artifact) => {
+            const loading = loadingArtifactIds.has(artifact.artifactId);
+            return (
+              <article className="agent-local-document" key={artifact.artifactId} role="listitem">
+                <span className="agent-local-document__icon" aria-hidden="true">▤</span>
+                <div className="agent-local-document__copy">
+                  <strong>{artifact.name}</strong>
+                  <small>{formatArtifactSize(artifact.size)} · {formatArtifactDate(artifact.createdAtUnixMs)}</small>
+                  <code>SHA-256 {artifact.sha256.slice(0, 12)}…</code>
+                </div>
+                <div className="agent-local-document__actions">
+                  {loading && <span className="mini-spinner" aria-label="正在读取文档" />}
+                  <button disabled={loading} onClick={() => openPreview(artifact)} type="button">◎ 预览</button>
+                  <button aria-label={`另存为 ${artifact.name}`} disabled={loading} onClick={() => saveArtifact(artifact)} title="另存为…" type="button">⇩</button>
+                </div>
+              </article>
+            );
+          })}
+          {nextCursor && <button className="agent-local-documents__more" disabled={isLoading} onClick={() => void load(nextCursor, false)} type="button">{isLoading ? "正在加载…" : "加载更多"}</button>}
+        </div>
+      )}
+      <span className="agent-local-documents__mascot" aria-hidden="true">🦊</span>
+      {preview && (
+        <div className="agent-artifact-preview-backdrop" role="presentation">
+          <section aria-label={`${preview.artifact.name} 文档预览`} aria-modal="true" className="agent-artifact-preview" role="dialog">
+            <header>
+              <div><h2>{preview.artifact.name}</h2><p>{formatArtifactSize(preview.artifact.size)} · Markdown 预览</p></div>
+              <button aria-label="关闭文档预览" onClick={() => setPreview(null)} type="button">×</button>
+            </header>
+            <SafeMarkdownPreview markdown={preview.markdown} />
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatArtifactSize(bytes: number) {
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(bytes < 10 * 1_024 ? 1 : 0)} KB`;
+  return `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`;
+}
+
+function formatArtifactDate(unixMilliseconds: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+  }).format(new Date(unixMilliseconds));
 }
 
 function AgentTeamCatalog({
@@ -520,6 +711,7 @@ function AgentTeamCatalog({
   onCreate,
   onInvite,
   onManageMember,
+  onOpenRequirementSurveys,
   onRetry,
   onStaffingResolved,
   onSelect,
@@ -541,18 +733,23 @@ function AgentTeamCatalog({
   onCreate(): void;
   onInvite(): void;
   onManageMember(agentId: string): void;
+  onOpenRequirementSurveys(): void;
   onRetry(): void;
   onStaffingResolved(teamId: string): Promise<void>;
   onSelect(teamId: string): void;
 }) {
-  const [workspaceSection, setWorkspaceSection] = useState<"overview" | "members" | "conversation" | "todos" | "research" | "assets" | "runs">("members");
-  useEffect(() => setWorkspaceSection("members"), [selectedTeamId]);
+  const [workspaceSection, setWorkspaceSection] = useState<"overview" | "members" | "conversation" | "todos" | "research" | "assets" | "runs">("overview");
+  const [selectedRunAgentId, setSelectedRunAgentId] = useState<string | null>(null);
+  useEffect(() => {
+    setWorkspaceSection("overview");
+    setSelectedRunAgentId(null);
+  }, [selectedTeamId]);
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.title])),
     [projects],
   );
   return (
-    <div className="agent-team-catalog">
+    <div className={selectedTeamId ? "agent-team-catalog agent-team-catalog--selected" : "agent-team-catalog"}>
       {error && (
         <div className="agent-management__error" role="alert">
           <span>{error}</span>
@@ -574,7 +771,7 @@ function AgentTeamCatalog({
         </div>
       ) : (
         <>
-          <div className="agent-team-grid" aria-label="项目 Agent 团队">
+          {!selectedTeamId && <div className="agent-team-grid" aria-label="项目 Agent 团队">
             {teams.map((team) => (
             <article
               className={selectedTeamId === team.id ? "agent-team-card is-selected" : "agent-team-card"}
@@ -601,7 +798,7 @@ function AgentTeamCatalog({
               >查看成员</button>
             </article>
             ))}
-          </div>
+          </div>}
           {selectedTeamId && (
             <section
               aria-label={{
@@ -615,41 +812,25 @@ function AgentTeamCatalog({
             >
               <header>
                 <div>
-                  <h3>{detail?.team.id === selectedTeamId
-                    ? `${detail.team.name} · ${{
-                      overview: "总览", members: "团队成员", conversation: "团队聊天",
-                      todos: "团队任务", research: "需求调研", assets: "共享资产", runs: "运行",
-                    }[workspaceSection]}`
-                    : "正在读取团队空间"}</h3>
-                  <p>{{
-                    overview: "查看团队成员、消息与真实执行状态。",
-                    members: "同一个 Agent 可以加入多个团队；角色和职责按当前团队隔离。",
-                    conversation: "消息、路由与执行状态均来自本机原生事实。",
-                    todos: "创建、分配并跟踪来自本机 SQLite 与 Host 的真实任务。",
-                    research: "填写主聊天或任务为当前项目发起的真实 Host 调研单。",
-                    assets: "维护带版本历史的项目背景、进度、技术栈与架构决策。",
-                    runs: "按更新时间查看通讯与任务执行 Run。",
-                  }[workspaceSection]}</p>
+                  <h3>{detail?.team.id === selectedTeamId ? detail.team.name : "正在读取团队空间"}</h3>
+                  <p>{detail?.team.id === selectedTeamId
+                    ? detail.team.goal || "尚未设置团队目标"
+                    : "正在读取项目团队的真实状态。"}</p>
                 </div>
                 <div>
                   {isDetailLoading && <span aria-label="正在读取团队成员" className="mini-spinner" />}
                   <div className="agent-team-members__segmented" aria-label="团队工作区">
                     <button aria-pressed={workspaceSection === "overview"} onClick={() => setWorkspaceSection("overview")} type="button">总览</button>
-                    <button aria-pressed={workspaceSection === "members"} onClick={() => setWorkspaceSection("members")} type="button">成员</button>
                     <button aria-pressed={workspaceSection === "conversation"} onClick={() => setWorkspaceSection("conversation")} type="button">聊天</button>
                     <button aria-pressed={workspaceSection === "todos"} onClick={() => setWorkspaceSection("todos")} type="button">任务</button>
                     <button aria-pressed={workspaceSection === "research"} onClick={() => setWorkspaceSection("research")} type="button">需求调研</button>
                     <button aria-pressed={workspaceSection === "assets"} onClick={() => setWorkspaceSection("assets")} type="button">共享资产</button>
                     <button aria-pressed={workspaceSection === "runs"} onClick={() => setWorkspaceSection("runs")} type="button">运行</button>
                   </div>
-                  {workspaceSection === "members" && <button
-                    disabled={!detail || detail.team.id !== selectedTeamId || isInviting
-                      || detail.members.length >= profiles.length}
-                    onClick={onInvite}
-                    type="button"
-                  >邀请 Agent</button>}
                 </div>
               </header>
+              <div className="agent-team-workspace__body">
+                <div className="agent-team-workspace__content">
               {detail?.team.id === selectedTeamId && (
                 <AgentStaffingProposalPanel
                   ownerUserId={ownerUserId}
@@ -684,9 +865,9 @@ function AgentTeamCatalog({
                   port={port}
                 />
               ) : workspaceSection === "assets" && detail?.team.id === selectedTeamId ? (
-                <AgentTeamAssetsView detail={detail} ownerUserId={ownerUserId} port={port} />
+                <AgentTeamAssetsView detail={detail} ownerUserId={ownerUserId} port={port} profiles={profiles} />
               ) : workspaceSection === "research" && detail?.team.id === selectedTeamId ? (
-                <ProjectRequirementSurveysView detail={detail} ownerUserId={ownerUserId} port={port} />
+                <ProjectRequirementSurveysView onOpenRequirementSurveys={onOpenRequirementSurveys} />
               ) : workspaceSection === "runs" && detail?.team.id === selectedTeamId ? (
                 <AgentTeamRunsView
                   detail={detail}
@@ -694,6 +875,8 @@ function AgentTeamCatalog({
                   port={port}
                   profiles={profiles}
                   runInspectorPort={runInspectorPort}
+                  selectedAgentId={selectedRunAgentId}
+                  onSelectAgent={setSelectedRunAgentId}
                 />
               ) : detail?.team.id === selectedTeamId && detail.members.length > 0 ? (
                 <div className="agent-team-members__list">
@@ -723,6 +906,48 @@ function AgentTeamCatalog({
               ) : !isDetailLoading && detail?.team.id === selectedTeamId ? (
                 <div className="agent-team-members__empty">团队还没有成员，请邀请一个已有 Agent。</div>
               ) : null}
+                </div>
+                <section aria-label="Agent 团队成员" className="agent-team-member-rail">
+                  <header><div><h4>团队成员</h4><p>点击成员查看运行状态</p></div><strong>{detail?.team.id === selectedTeamId ? detail.members.length : "—"}</strong></header>
+                  <div className="agent-team-member-rail__list">
+                    {detail?.team.id === selectedTeamId && detail.members.map((member) => {
+                      const profile = profiles.find((candidate) => candidate.id === member.agentId);
+                      const label = profile?.name ?? member.role;
+                      return (
+                        <article className={workspaceSection === "runs" && selectedRunAgentId === member.agentId ? "is-selected" : ""} key={member.agentId}>
+                          <button
+                            aria-label={`查看${label}的运行状态`}
+                            aria-pressed={workspaceSection === "runs" && selectedRunAgentId === member.agentId}
+                            className="agent-team-member-rail__summary"
+                            onClick={() => {
+                              setSelectedRunAgentId(member.agentId);
+                              setWorkspaceSection("runs");
+                            }}
+                            type="button"
+                          >
+                            <span aria-hidden="true">{label.slice(0, 1).toUpperCase()}</span>
+                            <div>
+                              <strong>{label}</strong>
+                              <small>{member.responsibility || member.role}</small>
+                              {(detail.team.projectManagerAgentId === member.agentId || detail.team.defaultAgentId === member.agentId) && <em>{detail.team.projectManagerAgentId === member.agentId ? "项目经理" : "默认 Agent"}</em>}
+                            </div>
+                            <i aria-label="在线" />
+                          </button>
+                          <button disabled={isMutatingMember} onClick={() => onManageMember(member.agentId)} type="button">管理</button>
+                        </article>
+                      );
+                    })}
+                    {detail?.team.id === selectedTeamId && detail.members.length === 0 && <p>团队还没有成员</p>}
+                  </div>
+                  <button
+                    aria-label="邀请 Agent"
+                    disabled={!detail || detail.team.id !== selectedTeamId || isInviting
+                      || detail.members.length >= profiles.length}
+                    onClick={onInvite}
+                    type="button"
+                  >♙ 邀请 Agent</button>
+                </section>
+              </div>
             </section>
           )}
         </>
@@ -742,90 +967,160 @@ function AgentTeamOverviewView({
   ownerUserId: string;
   port: AgentManagementPort;
   profiles: AgentProfileSummary[];
-  onOpen(section: "members" | "conversation" | "research" | "assets" | "runs"): void;
+  onOpen(section: "conversation" | "todos" | "research" | "assets" | "runs"): void;
 }) {
+  const [dashboardSnapshot, setDashboardSnapshot] = useState<AgentProjectDashboardSnapshot | null>(null);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [isDashboardLoading, setIsDashboardLoading] = useState(false);
   const snapshot = useAgentTeamRunStore((state) => state.snapshot);
-  const isLoading = useAgentTeamRunStore((state) => state.isLoading);
-  const error = useAgentTeamRunStore((state) => state.error);
-  const activate = useAgentTeamRunStore((state) => state.activate);
-  const refresh = useAgentTeamRunStore((state) => state.refresh);
-  const reset = useAgentTeamRunStore((state) => state.reset);
+  const runError = useAgentTeamRunStore((state) => state.error);
+  const activateRuns = useAgentTeamRunStore((state) => state.activate);
+  const refreshRuns = useAgentTeamRunStore((state) => state.refresh);
+  const resetRuns = useAgentTeamRunStore((state) => state.reset);
+  const todoTeamId = useAgentTeamTodoStore((state) => state.teamId);
+  const todos = useAgentTeamTodoStore((state) => state.todos);
+  const todoError = useAgentTeamTodoStore((state) => state.error);
+  const activateTodos = useAgentTeamTodoStore((state) => state.activate);
+  const refreshTodos = useAgentTeamTodoStore((state) => state.refresh);
+  const resetTodos = useAgentTeamTodoStore((state) => state.reset);
   const visibleSnapshot = snapshot?.teamId === detail.team.id ? snapshot : null;
   const activeCount = (visibleSnapshot?.pendingDeliveryCount ?? 0)
     + (visibleSnapshot?.runningDeliveryCount ?? 0);
+  const visibleTodos = todoTeamId === detail.team.id ? todos : [];
+  const inProgress = visibleTodos.filter((todo) => todo.status === "in_progress");
+  const pending = visibleTodos.filter((todo) => todo.status === "pending");
+  const blocked = visibleTodos.filter((todo) => todo.status === "blocked");
+  const completed = visibleTodos.filter((todo) => todo.status === "completed");
+  const activeTodos = visibleTodos.filter((todo) => !["completed", "cancelled"].includes(todo.status));
+  const dashboard = dashboardSnapshot?.dashboard?.teamId === detail.team.id
+    ? dashboardSnapshot.dashboard
+    : null;
+  const failedRuns = visibleSnapshot?.runs.filter((run) => (
+    run.deliveryStatus === "failed" || run.runStatus === "failed"
+  )) ?? [];
+  const humanIssues = dashboard?.issues.filter((issue) => issue.owner === "human") ?? [];
+  const attentionCount = failedRuns.length
+    + (dashboardSnapshot?.pendingApprovalCount ?? 0)
+    + humanIssues.length;
+  const currentMilestone = dashboard?.milestones.find((milestone) => milestone.status === "in_progress")
+    ?? dashboard?.milestones.find((milestone) => milestone.status === "pending")
+    ?? null;
+  const effectiveHealth = failedRuns.length > 0 || blocked.length > 0
+    ? dashboard?.health === "blocked" ? "blocked" : "at_risk"
+    : dashboard?.health === "completed" && activeTodos.length > 0 ? "at_risk"
+      : dashboard?.health ?? "on_track";
   const profileNames = useMemo(
     () => new Map(profiles.map((profile) => [profile.id, profile.name])),
     [profiles],
   );
 
   useEffect(() => {
-    if (port.loadTeamRuns) void activate(port, ownerUserId, detail.team.id);
-    else reset();
-    return reset;
-  }, [activate, detail.team.id, ownerUserId, port, reset]);
+    if (port.loadTeamRuns) void activateRuns(port, ownerUserId, detail.team.id);
+    else resetRuns();
+    if (port.listTeamTodos) void activateTodos(port, ownerUserId, detail.team.id);
+    else resetTodos();
+    let cancelled = false;
+    if (port.loadTeamDashboard) {
+      setIsDashboardLoading(true);
+      setDashboardError(null);
+      void port.loadTeamDashboard(ownerUserId, detail.team.id).then((value) => {
+        if (!cancelled) setDashboardSnapshot(value);
+      }).catch((error: unknown) => {
+        if (!cancelled) setDashboardError(error instanceof Error ? error.message : "项目总览读取失败。");
+      }).finally(() => {
+        if (!cancelled) setIsDashboardLoading(false);
+      });
+    } else {
+      setDashboardSnapshot(null);
+      setDashboardError(null);
+    }
+    return () => { cancelled = true; resetRuns(); resetTodos(); };
+  }, [activateRuns, activateTodos, detail.team.id, ownerUserId, port, resetRuns, resetTodos]);
 
   useEffect(() => {
     if (!port.loadTeamRuns || activeCount === 0) return undefined;
-    const timer = window.setInterval(() => void refresh(port), 1_000);
+    const timer = window.setInterval(() => {
+      void refreshRuns(port);
+      void refreshTodos(port);
+      if (port.loadTeamDashboard) {
+        void port.loadTeamDashboard(ownerUserId, detail.team.id).then(setDashboardSnapshot).catch(() => undefined);
+      }
+    }, 1_000);
     return () => window.clearInterval(timer);
-  }, [activeCount, port, refresh]);
+  }, [activeCount, detail.team.id, ownerUserId, port, refreshRuns, refreshTodos]);
+
+  const retryDashboard = () => {
+    if (!port.loadTeamDashboard) return;
+    setIsDashboardLoading(true);
+    setDashboardError(null);
+    void port.loadTeamDashboard(ownerUserId, detail.team.id)
+      .then(setDashboardSnapshot)
+      .catch((error: unknown) => setDashboardError(error instanceof Error ? error.message : "项目总览读取失败。"))
+      .finally(() => setIsDashboardLoading(false));
+  };
 
   return (
     <div className="agent-team-overview">
-      <div className="agent-team-overview__metrics">
-        <button onClick={() => onOpen("members")} type="button"><strong>{detail.members.length}</strong><span>团队成员</span></button>
-        <button onClick={() => onOpen("conversation")} type="button"><strong>{visibleSnapshot?.messageCount ?? "—"}</strong><span>团队消息</span></button>
-        <button onClick={() => onOpen("runs")} type="button"><strong>{activeCount}</strong><span>正在处理</span></button>
-        <button onClick={() => onOpen("runs")} type="button"><strong>{visibleSnapshot?.completedDeliveryCount ?? "—"}</strong><span>已完成</span></button>
-        <button onClick={() => onOpen("runs")} type="button"><strong>{visibleSnapshot?.failedDeliveryCount ?? "—"}</strong><span>失败</span></button>
-      </div>
-      {error && (
+      <section className="agent-team-dashboard-summary">
+        <div><small>当前阶段</small><h4>{isDashboardLoading && !dashboardSnapshot ? "正在读取项目总览" : dashboard?.phase ?? "等待项目经理建立总览"} <em className={`is-${effectiveHealth}`}>{dashboardHealthLabel(effectiveHealth)}</em></h4><p>{detail.team.goal || "项目目标尚未填写"}</p></div>
+        <div className="agent-team-dashboard-milestone"><strong><span>{currentMilestone?.title ?? "尚未建立里程碑"}</span><b>{currentMilestone?.progressPercent ?? 0}%</b></strong><i><span style={{ width: `${currentMilestone?.progressPercent ?? 0}%` }} /></i><small>{dashboard ? `项目经理更新于 ${formatDashboardDate(dashboard.updatedAtUnixMs)}` : "等待项目经理首次维护"}</small></div>
+        <div className="agent-team-dashboard-metrics">
+          <button onClick={() => onOpen("todos")} type="button"><strong>{inProgress.length}</strong><span>进行中</span></button>
+          <button onClick={() => onOpen("todos")} type="button"><strong>{pending.length}</strong><span>等待</span></button>
+          <button onClick={() => onOpen("todos")} type="button"><strong>{blocked.length}</strong><span>经理协调</span></button>
+          <button onClick={() => onOpen("runs")} type="button"><strong>{attentionCount}</strong><span>需你处理</span></button>
+        </div>
+      </section>
+      {(runError || todoError || dashboardError) && (
         <div className="agent-team-conversation__error" role="alert">
-          <span>{error}</span><button onClick={() => void refresh(port)} type="button">重试</button>
+          <span>{runError ?? todoError ?? dashboardError}</span><button onClick={() => { void refreshRuns(port); void refreshTodos(port); retryDashboard(); }} type="button">重试</button>
         </div>
       )}
       <div className="agent-team-overview__body">
         <section>
-          <header><div><h4>团队目标</h4><p>{detail.team.goal || "尚未设置团队目标"}</p></div></header>
-          <div className="agent-team-overview__assignments">
-            <div><span>项目经理</span><strong>{detail.team.projectManagerAgentId
-              ? profileNames.get(detail.team.projectManagerAgentId) ?? detail.team.projectManagerAgentId
-              : "未指定"}</strong></div>
-            <div><span>默认 Agent</span><strong>{detail.team.defaultAgentId
-              ? profileNames.get(detail.team.defaultAgentId) ?? detail.team.defaultAgentId
-              : "未指定"}</strong></div>
-          </div>
+          <header><div><h4>需要你处理</h4><p>仅显示必须由你决定或输入的事项</p></div><b>{attentionCount}</b></header>
+          {attentionCount === 0 && <div className="agent-team-dashboard-clear">● <span>当前没有需要你处理的事项</span></div>}
+          {failedRuns.slice(0, 3).map((run) => <button className="agent-team-dashboard-attention" key={run.runId} onClick={() => onOpen("runs")} type="button"><span>!</span><div><strong>检查失败的 Agent Run</strong><small>{profileNames.get(run.agentId) ?? "Agent"} · {run.lastError || "运行需要检查"}</small></div><b>›</b></button>)}
+          {(dashboardSnapshot?.pendingApprovalCount ?? 0) > 0 && <button className="agent-team-dashboard-attention" onClick={() => onOpen("conversation")} type="button"><span>♙</span><div><strong>审批 Agent 提案</strong><small>{dashboardSnapshot?.pendingApprovalCount} 项成员变更等待确认</small></div><b>›</b></button>}
+          {humanIssues.slice(0, 3).map((issue) => <button className={`agent-team-dashboard-attention is-${issue.severity}`} key={issue.id} onClick={() => onOpen(issue.relatedTodoId ? "todos" : "conversation")} type="button"><span>!</span><div><strong>{issue.title}</strong><small>{issue.requestedAction}</small></div><b>›</b></button>)}
         </section>
         <section>
-          <header>
-            <div><h4>最近运行</h4><p>按更新时间展示真实 Host Run</p></div>
-            <button onClick={() => onOpen("runs")} type="button">查看全部</button>
-          </header>
-          {isLoading && !visibleSnapshot ? (
-            <div className="agent-team-overview__empty"><span className="mini-spinner" />正在读取…</div>
-          ) : visibleSnapshot?.runs.length ? visibleSnapshot.runs.slice(0, 4).map((run) => (
-            <article key={run.runId}>
-              <span className={`is-${run.deliveryStatus}`} aria-hidden="true" />
-              <div><strong>{profileNames.get(run.agentId) ?? run.agentId}</strong><small>{teamRunTriggerLabel(run.triggerKind)}</small></div>
-              <em>{teamRunStatusLabel(run.deliveryStatus)}</em>
-            </article>
-          )) : <div className="agent-team-overview__empty">还没有运行记录</div>}
+          <header><div><h4>当前执行</h4><p>任务状态由系统实时汇总</p></div></header>
+          <div className="agent-team-dashboard-status" aria-label="任务状态汇总"><i style={{ flex: Math.max(1, completed.length) }} /><i style={{ flex: inProgress.length }} /><i style={{ flex: blocked.length }} /><i style={{ flex: pending.length }} /></div>
+          {activeTodos.slice(0, 4).map((todo) => <article key={todo.id}><span className={`is-${todo.status}`} /><div><strong>{todo.title}</strong><small>{profileNames.get(todo.agentId) ?? "Agent"}</small></div><em>{todoStatusLabel(todo.status)}</em></article>)}
+          <button onClick={() => onOpen("todos")} type="button">查看完整任务板</button>
+        </section>
+        <section>
+          <header><div><h4>里程碑</h4><p>由项目经理维护，任务事实由系统校验</p></div></header>
+          {!dashboard?.milestones.length && <div className="agent-team-overview__empty">项目经理尚未建立里程碑。</div>}
+          {dashboard?.milestones.slice(0, 5).map((milestone) => <article key={milestone.id}><span className={`is-${milestone.status}`} /><div><strong>{milestone.title}</strong><small>{milestone.detail || dashboardMilestoneStatusLabel(milestone.status)}</small></div><em>{milestone.progressPercent}%</em></article>)}
+        </section>
+        <section>
+          <header><div><h4>项目经理简报</h4><p>{dashboard ? `第 ${dashboard.revision} 版` : "尚未维护"}</p></div></header>
+          <p>{dashboard?.summary ?? "项目经理会在收到任务状态、调研和审批变化后维护阶段判断、风险与下一步。"}</p>
+          {!!dashboard?.nextSteps.length && <div className="agent-team-dashboard-next"><strong>下一步</strong>{dashboard.nextSteps.slice(0, 5).map((step, index) => <span key={`${index}-${step}`}>{index + 1}. {step}</span>)}</div>}
+          <button onClick={() => onOpen("runs")} type="button">查看运行依据</button>
         </section>
       </div>
     </div>
   );
 }
 
-const teamTodoColumns: Array<{
-  key: "pending" | "in_progress" | "blocked" | "done";
-  label: string;
-  note: string;
-}> = [
-  { key: "pending", label: "待处理", note: "等待 executor lane" },
-  { key: "in_progress", label: "执行中", note: "由 Host 对账" },
-  { key: "blocked", label: "已阻塞", note: "需要明确处理" },
-  { key: "done", label: "已结束", note: "完成或取消" },
-];
+function dashboardHealthLabel(health: "on_track" | "at_risk" | "blocked" | "completed") {
+  return ({ on_track: "正常", at_risk: "有风险", blocked: "阻塞", completed: "已完成" })[health];
+}
+
+function dashboardMilestoneStatusLabel(status: "pending" | "in_progress" | "blocked" | "completed") {
+  return ({ pending: "等待", in_progress: "进行中", blocked: "阻塞", completed: "已完成" })[status];
+}
+
+function formatDashboardDate(unixMilliseconds: number) {
+  return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(unixMilliseconds));
+}
+
+function todoStatusLabel(status: AgentTeamTodo["status"]) {
+  return ({ pending: "等待", in_progress: "执行中", blocked: "项目经理协调中", completed: "已完成", cancelled: "已取消" })[status];
+}
 
 function AgentTeamTodosView({
   detail,
@@ -838,23 +1133,23 @@ function AgentTeamTodosView({
 }) {
   const todos = useAgentTeamTodoStore((state) => state.todos);
   const isLoading = useAgentTeamTodoStore((state) => state.isLoading);
-  const mutationTodoId = useAgentTeamTodoStore((state) => state.mutationTodoId);
   const error = useAgentTeamTodoStore((state) => state.error);
   const activate = useAgentTeamTodoStore((state) => state.activate);
   const refresh = useAgentTeamTodoStore((state) => state.refresh);
-  const save = useAgentTeamTodoStore((state) => state.save);
-  const move = useAgentTeamTodoStore((state) => state.move);
-  const cancel = useAgentTeamTodoStore((state) => state.cancel);
   const reset = useAgentTeamTodoStore((state) => state.reset);
-  const [editingTodo, setEditingTodo] = useState<AgentTeamTodo | "new" | null>(null);
+  const [expandedTodoId, setExpandedTodoId] = useState<string | null>(null);
+  const [resultTodo, setResultTodo] = useState<AgentTeamTodo | null>(null);
+  const [page, setPage] = useState(0);
   const cycling = useRef(false);
+  const pageSize = 10;
   const supportsTodos = Boolean(
-    port.listTeamTodos && port.createTeamTodo && port.updateTeamTodo
-    && port.reorderTeamTodos && port.cancelTeamTodo && port.dispatchNextTeamDelivery,
+    port.listTeamTodos && port.dispatchNextTeamDelivery,
   );
 
   useEffect(() => {
-    setEditingTodo(null);
+    setExpandedTodoId(null);
+    setResultTodo(null);
+    setPage(0);
     if (supportsTodos) void activate(port, ownerUserId, detail.team.id);
     else reset();
     return reset;
@@ -884,6 +1179,11 @@ function AgentTeamTodosView({
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [detail.team.id, ownerUserId, port, refresh, supportsTodos]);
 
+  useEffect(() => {
+    const lastPage = Math.max(0, Math.ceil(todos.length / pageSize) - 1);
+    if (page > lastPage) setPage(lastPage);
+  }, [page, todos.length]);
+
   if (!supportsTodos) {
     return (
       <div className="agent-team-todos__state is-error" role="alert">
@@ -892,26 +1192,19 @@ function AgentTeamTodosView({
     );
   }
 
-  const grouped = new Map(teamTodoColumns.map((column) => [column.key, [] as AgentTeamTodo[]]));
-  for (const todo of todos) {
-    const key = todo.status === "completed" || todo.status === "cancelled" ? "done" : todo.status;
-    grouped.get(key)?.push(todo);
-  }
+  const visibleTodos = todos.slice(page * pageSize, (page + 1) * pageSize);
+  const deliveredCount = todos.filter((todo) => todo.status === "completed"
+    && todo.executionPlan.builtinCapabilities.includes("project_write")).length;
+  const summaryOnlyCount = todos.filter((todo) => todo.status === "completed"
+    && !todo.executionPlan.builtinCapabilities.includes("project_write")).length;
+  const reviewCount = todos.filter((todo) => todo.status === "blocked").length;
+  const waitingCount = todos.filter((todo) => todo.status === "pending").length;
+  const firstVisible = todos.length === 0 ? 0 : page * pageSize + 1;
+  const lastVisible = Math.min(todos.length, (page + 1) * pageSize);
+  const pageCount = Math.max(1, Math.ceil(todos.length / pageSize));
 
   return (
     <div className="agent-team-todos">
-      <div className="agent-team-todos__toolbar">
-        <div><strong>团队任务板</strong><span>依赖、优先级、executor Delivery 与 Host Run 均为真实记录。</span></div>
-        <div>
-          <button aria-label="刷新团队任务" disabled={isLoading} onClick={() => void refresh(port)} type="button">↻</button>
-          <button
-            className="primary-button"
-            disabled={detail.members.length === 0 || mutationTodoId != null}
-            onClick={() => setEditingTodo("new")}
-            type="button"
-          >新建任务</button>
-        </div>
-      </div>
       {error && (
         <div className="agent-team-conversation__error" role="alert">
           <span>{error}</span><button onClick={() => void refresh(port)} type="button">刷新</button>
@@ -919,85 +1212,69 @@ function AgentTeamTodosView({
       )}
       {isLoading && todos.length === 0 ? (
         <div className="agent-team-todos__state"><span className="mini-spinner" />正在读取团队任务…</div>
+      ) : todos.length === 0 ? (
+        <div className="agent-team-todos__empty">
+          <span aria-hidden="true">☷</span>
+          <strong>还没有团队任务</strong>
+          <p>项目经理创建的任务会显示在这里。</p>
+        </div>
       ) : (
-        <div className="agent-team-todos__board">
-          {teamTodoColumns.map((column) => {
-            const items = grouped.get(column.key) ?? [];
-            return (
-              <section className={`agent-team-todo-column is-${column.key}`} key={column.key}>
-                <header><div><strong>{column.label}</strong><small>{column.note}</small></div><span>{items.length}</span></header>
-                <div>
-                  {items.map((todo, index) => (
-                    <AgentTeamTodoCard
-                      index={index}
-                      isMutating={mutationTodoId != null}
-                      key={todo.id}
-                      onCancel={() => void cancel(port, todo)}
-                      onEdit={() => setEditingTodo(todo)}
-                      onMove={(direction) => void move(port, todo.id, direction)}
-                      ownerUserId={ownerUserId}
-                      port={port}
-                      siblingCount={items.length}
-                      teamId={detail.team.id}
-                      todo={todo}
-                    />
-                  ))}
-                  {items.length === 0 && <div className="agent-team-todo-column__empty">暂无任务</div>}
-                </div>
-              </section>
-            );
-          })}
+        <div className="agent-team-todos__scroll">
+          <section aria-label="团队交付概览" className="agent-team-todo-overview">
+            <div><strong>{deliveredCount}</strong><span>项目文件交付</span></div>
+            <div><strong>{summaryOnlyCount}</strong><span>管理 / 检查完成</span></div>
+            <div><strong>{reviewCount}</strong><span>需人工处理</span></div>
+            <div><strong>{waitingCount}</strong><span>待执行</span></div>
+            <p>“交付”按已完成且通过 Host 项目写入证据校验的任务统计；计划交付、授权工具和执行总结不会被当作实际项目产出。</p>
+          </section>
+          <div className="agent-team-todos__list">
+            {visibleTodos.map((todo) => (
+              <AgentTeamTodoCard
+                expanded={expandedTodoId === todo.id}
+                key={todo.id}
+                onOpenResult={() => setResultTodo(todo)}
+                onToggle={() => setExpandedTodoId((current) => current === todo.id ? null : todo.id)}
+                ownerUserId={ownerUserId}
+                port={port}
+                teamId={detail.team.id}
+                todo={todo}
+              />
+            ))}
+          </div>
+          <nav aria-label="团队任务分页" className="agent-team-todos__pagination">
+            <span>{firstVisible}–{lastVisible} / {todos.length}</span>
+            <div>
+              <button aria-label="上一页任务" disabled={page === 0} onClick={() => setPage((value) => value - 1)} type="button">‹</button>
+              <span>{page + 1} / {pageCount}</span>
+              <button aria-label="下一页任务" disabled={page + 1 >= pageCount} onClick={() => setPage((value) => value + 1)} type="button">›</button>
+            </div>
+          </nav>
         </div>
       )}
-      {editingTodo && (
-        <AgentTeamTodoEditor
-          detail={detail}
-          isSaving={mutationTodoId != null}
-          onClose={() => setEditingTodo(null)}
-          onSave={async (input) => {
-            const succeeded = await save(port, input);
-            if (succeeded) {
-              setEditingTodo(null);
-              if (port.dispatchNextTeamDelivery) {
-                try { await port.dispatchNextTeamDelivery(ownerUserId, detail.team.id); } catch { /* surfaced by refresh */ }
-              }
-              await refresh(port);
-            }
-          }}
-          todo={editingTodo === "new" ? null : editingTodo}
-          todos={todos}
-        />
-      )}
+      {resultTodo && <AgentTeamTodoResultDialog onClose={() => setResultTodo(null)} todo={resultTodo} />}
     </div>
   );
 }
 
 function AgentTeamTodoCard({
-  index,
-  isMutating,
-  onCancel,
-  onEdit,
-  onMove,
+  expanded,
+  onOpenResult,
+  onToggle,
   ownerUserId,
   port,
-  siblingCount,
   teamId,
   todo,
 }: {
-  index: number;
-  isMutating: boolean;
-  onCancel: () => void;
-  onEdit: () => void;
-  onMove: (direction: -1 | 1) => void;
+  expanded: boolean;
+  onOpenResult: () => void;
+  onToggle: () => void;
   ownerUserId: string;
   port: AgentManagementPort;
-  siblingCount: number;
   teamId: string;
   todo: AgentTeamTodo;
 }) {
   const [progress, setProgress] = useState<AgentTeamTodoProgress[]>([]);
   const [progressError, setProgressError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (!port.listTeamTodoProgress || todo.status === "pending") {
@@ -1028,61 +1305,198 @@ function AgentTeamTodoCard({
   }, [ownerUserId, port, teamId, todo.id, todo.status, todo.updatedAtUnixMs]);
 
   const latest = progress.at(-1) ?? null;
+  const toolCount = todo.executionPlan.builtinCapabilities.reduce(
+    (count, capability) => count + teamTodoCapability(capability).tools.length,
+    0,
+  );
+  const hasProjectFiles = todo.status === "completed"
+    && todo.executionPlan.builtinCapabilities.includes("project_write");
+  const statusColor = todo.status === "blocked" ? "warning" : todo.status;
   return (
-    <article className={`agent-team-todo-card is-${todo.status}`}>
-      <header>
-        <span>优先级 {todo.priority}</span>
-        <em>{todo.agentName}</em>
-      </header>
-      <button onClick={onEdit} type="button">
-        <strong>{todo.title}</strong>
-        <p>{todo.detail || todo.executionContract.objective}</p>
-      </button>
-      {todo.dependencyIds.length > 0 && <small>依赖 {todo.dependencyIds.length} 项</small>}
-      {todo.blockedReason && <div className="agent-team-todo-card__notice">{todo.blockedReason}</div>}
-      {todo.result && <div className="agent-team-todo-card__result">{todo.result}</div>}
-      {latest && (
-        <section className={`agent-team-todo-progress is-${latest.kind}`} aria-label="最新执行记录">
-          <header>
+    <article className={`agent-team-todo-card is-${statusColor}`}>
+      <div className="agent-team-todo-card__identity">
+        <span aria-hidden="true" className="agent-team-todo-card__avatar">{todo.agentName.trim().slice(0, 1) || "A"}</span>
+        <div>
+          <div className="agent-team-todo-card__title-row">
+            <strong>{todo.title}</strong>
+            <span className={`agent-team-todo-card__status is-${statusColor}`}>{todoStatusIcon(todo.status)} {todoStatusLabel(todo.status)}</span>
+          </div>
+          <small>●&nbsp; 负责人 · {todo.agentName}</small>
+          <p>{collapsedTeamTodoText(todo.executionContract.objective, expanded ? Number.POSITIVE_INFINITY : 220)}</p>
+        </div>
+      </div>
+      {todo.status === "blocked" && (
+        <div className="agent-team-todo-card__notice">
+          <span>⚠ {collapsedTeamTodoText(todo.blockedReason || "任务已阻塞，但未记录原因。", expanded ? Number.POSITIVE_INFINITY : 180)}</span>
+          <strong>项目经理协调中</strong>
+        </div>
+      )}
+      {latest && !expanded && (
+        <section className={`agent-team-todo-card__latest is-${latest.kind}`} aria-label="最新执行记录">
+          <div>
             <strong>{todoProgressStageLabel(latest)}</strong>
-            <time>{formatTeamMessageTime(latest.createdAtUnixMs)}</time>
-          </header>
-          <p>{latest.detail}</p>
-          {progress.length > 1 && (
-            <button aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} type="button">
-              {expanded ? "收起执行记录" : `查看全部 ${progress.length} 条`}
-            </button>
-          )}
-          {expanded && (
-            <ol>
-              {[...progress].reverse().map((item) => (
-                <li key={item.sequence}>
-                  <div><strong>{todoProgressStageLabel(item)}</strong><time>{formatTeamMessageTime(item.createdAtUnixMs)}</time></div>
-                  <p>{item.detail}</p>
-                </li>
-              ))}
-            </ol>
-          )}
+            <p>{latest.detail}</p>
+          </div>
+          <time>{formatTeamMessageTime(latest.createdAtUnixMs)}</time>
+          {progress.length > 1 && <button onClick={onToggle} type="button">查看全部 {progress.length} 条</button>}
         </section>
       )}
-      {progressError && <div className="agent-team-todo-progress__error">{progressError}</div>}
-      <footer>
-        {todo.status === "pending" && (
-          <>
-            <button disabled={index === 0 || isMutating} onClick={() => onMove(-1)} type="button">上移</button>
-            <button disabled={index === siblingCount - 1 || isMutating} onClick={() => onMove(1)} type="button">下移</button>
-          </>
-        )}
-        {(todo.status === "pending" || todo.status === "in_progress" || todo.status === "blocked") && (
-          <button className="is-danger" disabled={isMutating} onClick={onCancel} type="button">
-            {todo.status === "in_progress" ? "停止" : "取消"}
-          </button>
-        )}
-        {todo.status === "in_progress" && <span>停止会先终止 Host Run，再更新任务状态</span>}
-        <time>{formatTeamMessageTime(todo.updatedAtUnixMs)}</time>
-      </footer>
+      <div className="agent-team-todo-card__metadata">
+        {todo.executionContract.expectedOutputs.length > 0 && <span>◇ 计划 {todo.executionContract.expectedOutputs.length} 项交付</span>}
+        {todo.executionContract.acceptanceCriteria.length > 0 && <span>◉ {todo.executionContract.acceptanceCriteria.length} 项验收标准</span>}
+        {toolCount > 0 && <span>⌘ 已授权 {toolCount} 个工具</span>}
+        {todo.executionPlan.plugins.length > 0 && <span>◇ {todo.executionPlan.plugins.length} 个插件</span>}
+        {progress.length > 0 && <span>⊙ 实际记录 {progress.length} 次</span>}
+        {hasProjectFiles && <span className="is-delivered">▣ 已记录项目文件交付</span>}
+        {!hasProjectFiles && todo.result && <span className="is-summary">▤ {todo.executionPlan.builtinCapabilities.includes("project_write") ? "有总结，未记录文件提交" : "管理 / 检查结果"}</span>}
+        <button aria-expanded={expanded} onClick={onToggle} type="button">⌄ {expanded ? "收起" : "查看详情"}</button>
+      </div>
+      {expanded && (
+        <div className="agent-team-todo-card__details">
+          {todo.executionContract.scope && <TeamTodoDetailBlock icon="⌖" title="范围"><p>{todo.executionContract.scope}</p></TeamTodoDetailBlock>}
+          <TeamTodoStringList icon="◇" title="交付物" values={todo.executionContract.expectedOutputs} />
+          <TeamTodoStringList icon="✓" title="验收条件" values={todo.executionContract.acceptanceCriteria} />
+          <TeamTodoStringList icon="●" title="约束" values={todo.executionContract.constraints} />
+          <TeamTodoAuthorization plan={todo.executionPlan} />
+          {latest && (
+            <TeamTodoDetailBlock icon="↻" title="执行记录">
+              <ol className="agent-team-todo-progress-list">
+                {[...progress].reverse().map((item) => (
+                  <li key={item.sequence}>
+                    <div><strong>{todoProgressStageLabel(item)}</strong><time>{formatTeamMessageTime(item.createdAtUnixMs)}</time></div>
+                    <p>{item.detail}</p>
+                  </li>
+                ))}
+              </ol>
+            </TeamTodoDetailBlock>
+          )}
+          {progressError && <div className="agent-team-todo-progress__error">{progressError}</div>}
+          {todo.result && (
+            <section className={`agent-team-todo-card__result ${hasProjectFiles ? "is-delivered" : ""}`}>
+              <div><strong>{hasProjectFiles ? "项目交付结果" : "管理 / 检查结果"}</strong><p>{todo.result}</p></div>
+              <button onClick={onOpenResult} type="button">查看完整结果</button>
+            </section>
+          )}
+        </div>
+      )}
     </article>
   );
+}
+
+function TeamTodoDetailBlock({
+  children,
+  icon,
+  title,
+}: {
+  children: ReactNode;
+  icon: string;
+  title: string;
+}) {
+  return (
+    <section className="agent-team-todo-detail-block">
+      <strong><span aria-hidden="true">{icon}</span>{title}</strong>
+      {children}
+    </section>
+  );
+}
+
+function TeamTodoStringList({ icon, title, values }: { icon: string; title: string; values: string[] }) {
+  if (values.length === 0) return null;
+  return (
+    <TeamTodoDetailBlock icon={icon} title={title}>
+      <ul>{values.map((value, index) => <li key={`${index}-${value}`}><span aria-hidden="true" />{value}</li>)}</ul>
+    </TeamTodoDetailBlock>
+  );
+}
+
+function TeamTodoAuthorization({ plan }: { plan: AgentTeamTodo["executionPlan"] }) {
+  const capabilities = plan.builtinCapabilities.map(teamTodoCapability);
+  return (
+    <TeamTodoDetailBlock icon="◆" title="任务授权">
+      <div className="agent-team-todo-authorization__mode">
+        <strong>执行模式</strong><span>{plan.requiresExecution ? "独立执行环境" : "仅协调，无独立执行"}</span>
+      </div>
+      {capabilities.length === 0 ? (
+        <p className="agent-team-todo-authorization__empty">未授权项目文件或终端工具。</p>
+      ) : (
+        <div className="agent-team-todo-authorization__list">
+          <small>内置工具</small>
+          {capabilities.map((capability) => (
+            <section key={capability.key}>
+              <header><strong>{capability.name}</strong><code>{capability.key}</code></header>
+              <p>{capability.detail}</p>
+              <code>{capability.tools.join("  ·  ")}</code>
+            </section>
+          ))}
+        </div>
+      )}
+      <div className="agent-team-todo-authorization__plugins">
+        <small>插件</small>
+        {plan.plugins.length === 0 ? <p>未授权额外插件。</p> : plan.plugins.map((plugin) => (
+          <section key={plugin.pluginId}>
+            <strong>{plugin.displayName}</strong><code>{plugin.pluginId}</code>
+            {plugin.reason && <span>授权理由：{plugin.reason}</span>}
+          </section>
+        ))}
+      </div>
+      <footer>
+        <code>授权快照：{plan.selectionRevision}</code>
+        {plan.selectedAtUnixMs > 0 && <time> · {formatTeamMessageTime(plan.selectedAtUnixMs)}</time>}
+      </footer>
+      <p className="agent-team-todo-authorization__note">这里展示任务创建时锁定的执行授权；Agent 职业与项目规则不属于本任务单独授权。</p>
+    </TeamTodoDetailBlock>
+  );
+}
+
+function AgentTeamTodoResultDialog({ onClose, todo }: { onClose: () => void; todo: AgentTeamTodo }) {
+  return (
+    <div className="agent-editor-backdrop" onMouseDown={onClose} role="presentation">
+      <section aria-label="团队任务完整结果" aria-modal="true" className="agent-team-todo-result-dialog" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <header>
+          <span aria-hidden="true" className="agent-team-todo-card__avatar">{todo.agentName.trim().slice(0, 1) || "A"}</span>
+          <div><h2>{todo.title}</h2><p>●&nbsp; 负责人 · {todo.agentName}</p></div>
+          <button onClick={onClose} type="button">完成</button>
+        </header>
+        <div>
+          <h3>▤ 执行结果</h3>
+          <SafeMarkdownPreview markdown={todo.result} />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function collapsedTeamTodoText(value: string, maximumCharacters: number) {
+  const normalized = value.trim().split(/\s+/u).join(" ");
+  if (!Number.isFinite(maximumCharacters) || normalized.length <= maximumCharacters) return normalized;
+  return `${normalized.slice(0, maximumCharacters).trimEnd()}…`;
+}
+
+function todoStatusIcon(status: AgentTeamTodo["status"]) {
+  return ({ pending: "◷", in_progress: "↻", blocked: "⚠", completed: "●", cancelled: "⊗" })[status];
+}
+
+function teamTodoCapability(capability: AgentTeamTodo["executionPlan"]["builtinCapabilities"][number]) {
+  return {
+    project_read: {
+      key: capability,
+      name: "项目读取",
+      detail: "仅在当前任务绑定的项目目录内读取、列目录和搜索。",
+      tools: ["project_read", "project_list", "project_search"],
+    },
+    project_write: {
+      key: capability,
+      name: "项目写入",
+      detail: "通过暂存与提交会话修改当前项目；提交仍受运行时审批约束。",
+      tools: ["project_write", "project_apply_patch", "project_commit"],
+    },
+    terminal: {
+      key: capability,
+      name: "项目终端",
+      detail: "在当前任务绑定的项目目录内执行和管理命令进程。",
+      tools: ["terminal_execute", "terminal_poll", "terminal_write", "terminal_kill"],
+    },
+  }[capability];
 }
 
 function todoProgressStageLabel(progress: AgentTeamTodoProgress) {
@@ -1186,154 +1600,19 @@ const teamAssetCategoryLabels: Record<AgentTeamAssetCategory, string> = {
 };
 
 function ProjectRequirementSurveysView({
-  detail,
-  ownerUserId,
-  port,
+  onOpenRequirementSurveys,
 }: {
-  detail: AgentTeamDetail;
-  ownerUserId: string;
-  port: AgentManagementPort;
+  onOpenRequirementSurveys(): void;
 }) {
-  const surveys = useProjectRequirementSurveyStore((state) => state.surveys);
-  const isLoading = useProjectRequirementSurveyStore((state) => state.isLoading);
-  const submittingSurveyId = useProjectRequirementSurveyStore((state) => state.submittingSurveyId);
-  const error = useProjectRequirementSurveyStore((state) => state.error);
-  const activate = useProjectRequirementSurveyStore((state) => state.activate);
-  const refresh = useProjectRequirementSurveyStore((state) => state.refresh);
-  const submit = useProjectRequirementSurveyStore((state) => state.submit);
-  const reset = useProjectRequirementSurveyStore((state) => state.reset);
-  const [selectedSurveyId, setSelectedSurveyId] = useState<string | null>(null);
-  const selectedSurvey = surveys.find((survey) => survey.surveyId === selectedSurveyId) ?? null;
-  const supportsSurveys = Boolean(
-    port.listProjectRequirementSurveys && port.resolveProjectRequirementSurvey,
-  );
-
-  useEffect(() => {
-    setSelectedSurveyId(null);
-    if (supportsSurveys) void activate(port, ownerUserId, detail.team.projectId);
-    else reset();
-    return reset;
-  }, [activate, detail.team.projectId, ownerUserId, port, reset, supportsSurveys]);
-
-  useEffect(() => {
-    if (!supportsSurveys) return undefined;
-    const timer = window.setInterval(() => void refresh(port), 30_000);
-    return () => window.clearInterval(timer);
-  }, [port, refresh, supportsSurveys]);
-
-  if (!supportsSurveys) {
-    return (
-      <div className="agent-team-surveys__state is-error" role="alert">
-        <strong>当前版本尚未连接需求调研</strong><span>请更新本机客户端后重试。</span>
-      </div>
-    );
-  }
-
   return (
     <div className="agent-team-surveys">
-      <div className="agent-team-surveys__toolbar">
-        <div><strong>需求调研</strong><span>调研由 Local Agent Host 保存；提交后会恢复原 Run。</span></div>
-        <button aria-label="刷新需求调研" disabled={isLoading} onClick={() => void refresh(port)} type="button">↻</button>
-      </div>
-      {error && (
-        <div className="agent-team-conversation__error" role="alert">
-          <span>{error}</span><button onClick={() => void refresh(port)} type="button">刷新</button>
-        </div>
-      )}
-      <div className="agent-team-surveys__list">
-        {isLoading && surveys.length === 0 ? (
-          <div className="agent-team-surveys__state"><span className="mini-spinner" />正在读取需求调研…</div>
-        ) : surveys.length === 0 ? (
-          <div className="agent-team-surveys__state"><strong>暂无需求调研</strong><span>主聊天或任务发起的项目调研会显示在这里。</span></div>
-        ) : surveys.map((survey) => (
-          <button key={survey.surveyId} onClick={() => setSelectedSurveyId(survey.surveyId)} type="button">
-            <span aria-hidden="true">{survey.status === "open" ? "✎" : "✓"}</span>
-            <div><strong>{survey.title}</strong>{survey.description && <p>{survey.description}</p>}<small>{survey.questions.length} 个问题 · {survey.sourceTaskId ? "任务调研" : "主聊天调研"} · {formatTeamMessageTime(survey.createdAtUnixMs)}</small></div>
-            <em className={`is-${survey.status}`}>{survey.status === "open" ? "待填写" : "已提交"}</em>
-            <b aria-hidden="true">›</b>
-          </button>
-        ))}
-      </div>
-      {selectedSurvey && (
-        <ProjectRequirementSurveySheet
-          isSubmitting={submittingSurveyId === selectedSurvey.surveyId}
-          key={`${selectedSurvey.surveyId}:${selectedSurvey.version}`}
-          survey={selectedSurvey}
-          onClose={() => setSelectedSurveyId(null)}
-          onSubmit={async (answers) => {
-            if (await submit(port, selectedSurvey, answers)) setSelectedSurveyId(null);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function ProjectRequirementSurveySheet({
-  survey,
-  isSubmitting,
-  onClose,
-  onSubmit,
-}: {
-  survey: RequirementSurvey;
-  isSubmitting: boolean;
-  onClose(): void;
-  onSubmit(answers: RequirementSurveyAnswers): Promise<void>;
-}) {
-  const [answers, setAnswers] = useState<RequirementSurveyAnswers>(survey.answers ?? {});
-  const canSubmit = isRequirementSurveySubmissionValid(survey, answers);
-  return (
-    <div className="agent-editor-backdrop" role="presentation" onMouseDown={onClose}>
-      <section aria-label="需求调研详情" aria-modal="true" className="agent-team-survey-sheet" onMouseDown={(event) => event.stopPropagation()} role="dialog">
-        <header>
-          <div><span>{survey.sourceTaskId ? "任务需求调研" : "主聊天需求调研"}</span><h2>{survey.title}</h2>{survey.description && <p>{survey.description}</p>}</div>
-          <button aria-label="关闭需求调研" onClick={onClose} type="button">×</button>
-        </header>
-        <div className="agent-team-survey-sheet__body">
-          {survey.questions.map((question, index) => (
-            <fieldset disabled={survey.status === "resolved" || isSubmitting} key={question.questionId}>
-              <legend>{index + 1}. {question.prompt}{question.required && <em> *</em>}</legend>
-              {question.responseKind === "text" ? (
-                <textarea
-                  aria-label={question.prompt}
-                  maxLength={16_000}
-                  onChange={(event) => setAnswers((current) => {
-                    if (!question.required && event.target.value.length === 0) {
-                      const next = { ...current };
-                      delete next[question.questionId];
-                      return next;
-                    }
-                    return { ...current, [question.questionId]: event.target.value };
-                  })}
-                  value={typeof answers[question.questionId] === "string" ? answers[question.questionId] as string : ""}
-                />
-              ) : question.responseKind === "boolean" ? (
-                <div className="agent-team-survey-sheet__choices">
-                  {[true, false].map((value) => <label key={String(value)}><input checked={answers[question.questionId] === value} name={question.questionId} onChange={() => setAnswers((current) => ({ ...current, [question.questionId]: value }))} type="radio" />{value ? "是" : "否"}</label>)}
-                </div>
-              ) : (
-                <div className="agent-team-survey-sheet__choices">
-                  {question.options.map((option) => {
-                    const multiple = question.responseKind === "multiple_choice";
-                    const selected = multiple
-                      ? Array.isArray(answers[question.questionId]) && (answers[question.questionId] as string[]).includes(option)
-                      : answers[question.questionId] === option;
-                    return <label key={option}><input checked={selected} name={question.questionId} onChange={() => setAnswers((current) => {
-                      if (!multiple) return { ...current, [question.questionId]: option };
-                      return toggleRequirementSurveyChoice(current, question.questionId, option);
-                    })} type={multiple ? "checkbox" : "radio"} />{option}</label>;
-                  })}
-                </div>
-              )}
-            </fieldset>
-          ))}
-          {survey.status === "resolved" && <div className="agent-team-survey-sheet__resolved">✓ 你的回答已提交，原 Run 已恢复。</div>}
-        </div>
-        <footer>
-          <button onClick={onClose} type="button">{survey.status === "resolved" ? "完成" : "取消"}</button>
-          {survey.status === "open" && <button className="primary-button" disabled={!canSubmit || isSubmitting} onClick={() => void onSubmit(answers)} type="button">{isSubmitting ? "提交中…" : "提交并继续"}</button>}
-        </footer>
-      </section>
+      <svg aria-hidden="true" className="agent-team-surveys__icon" viewBox="0 0 24 24">
+        <path d="M9 5.5h6M9.75 3h4.5a1.25 1.25 0 0 1 1.25 1.25v1.5A1.25 1.25 0 0 1 14.25 7h-4.5A1.25 1.25 0 0 1 8.5 5.75v-1.5A1.25 1.25 0 0 1 9.75 3Z" />
+        <path d="M8.5 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1.5M8.5 11h7M8.5 15h7M8.5 18h4" />
+      </svg>
+      <strong>需求调研已迁移</strong>
+      <p>Task 调研现在由 Local Agent Host 保存并恢复原 Run，不再属于 Agent 群聊。</p>
+      <button className="primary-button" onClick={onOpenRequirementSurveys} type="button">打开需求调研</button>
     </div>
   );
 }
@@ -1342,10 +1621,12 @@ function AgentTeamAssetsView({
   detail,
   ownerUserId,
   port,
+  profiles,
 }: {
   detail: AgentTeamDetail;
   ownerUserId: string;
   port: AgentManagementPort;
+  profiles: AgentProfileSummary[];
 }) {
   const assets = useAgentTeamAssetStore((state) => state.assets);
   const revisions = useAgentTeamAssetStore((state) => state.revisions);
@@ -1362,15 +1643,31 @@ function AgentTeamAssetsView({
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [editorAsset, setEditorAsset] = useState<AgentTeamAsset | "new" | null>(null);
   const [historyAsset, setHistoryAsset] = useState<AgentTeamAsset | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
+  const pageCount = Math.max(1, Math.ceil(assets.length / pageSize));
+  const visibleAssets = assets.slice(page * pageSize, (page + 1) * pageSize);
+  const profileNames = useMemo(
+    () => new Map(profiles.map((profile) => [profile.id, profile.name])),
+    [profiles],
+  );
   const supportsAssets = Boolean(
     port.listTeamAssets && port.saveTeamAsset && port.archiveTeamAsset && port.listTeamAssetRevisions,
   );
 
   useEffect(() => {
+    setExpandedIds([]);
+    setEditorAsset(null);
+    setHistoryAsset(null);
+    setPage(0);
     if (supportsAssets) void activate(port, ownerUserId, detail.team.id);
     else reset();
     return reset;
   }, [activate, detail.team.id, ownerUserId, port, reset, supportsAssets]);
+
+  useEffect(() => {
+    if (page >= pageCount) setPage(pageCount - 1);
+  }, [page, pageCount]);
 
   if (!supportsAssets) {
     return (
@@ -1397,15 +1694,17 @@ function AgentTeamAssetsView({
           <div className="agent-team-assets__state"><span className="mini-spinner" />正在读取共享资产…</div>
         ) : assets.length === 0 ? (
           <div className="agent-team-assets__state">
+            <span aria-hidden="true" className="agent-team-assets__empty-icon">▤</span>
             <strong>还没有共享资产</strong><span>在这里维护项目背景、进度、技术栈和架构决策。</span>
           </div>
-        ) : assets.map((asset) => {
+        ) : visibleAssets.map((asset) => {
           const expanded = expandedIds.includes(asset.id);
           return (
             <article key={asset.id}>
               <header>
                 <button
                   aria-expanded={expanded}
+                  aria-label={asset.title}
                   onClick={() => setExpandedIds((current) => expanded
                     ? current.filter((id) => id !== asset.id)
                     : [...current, asset.id])}
@@ -1416,23 +1715,45 @@ function AgentTeamAssetsView({
                   <em>{teamAssetCategoryLabels[asset.category]}</em>
                 </button>
                 <small>r{asset.revision}</small>
-                <div>
-                  <button onClick={() => setEditorAsset(asset)} type="button">编辑</button>
-                  <button onClick={() => {
-                    setHistoryAsset(asset);
-                    void loadRevisions(port, asset);
-                  }} type="button">版本</button>
-                  <button
-                    disabled={mutationAssetId != null}
-                    onClick={() => void archive(port, asset)}
-                    type="button"
-                  >归档</button>
-                </div>
+                <details className="agent-team-asset-menu">
+                  <summary aria-label={`${asset.title}操作`}>•••</summary>
+                  <div role="menu">
+                    <button onClick={(event) => {
+                      event.currentTarget.closest("details")?.removeAttribute("open");
+                      setEditorAsset(asset);
+                    }} role="menuitem" type="button">编辑</button>
+                    <button onClick={(event) => {
+                      event.currentTarget.closest("details")?.removeAttribute("open");
+                      setHistoryAsset(asset);
+                      void loadRevisions(port, asset);
+                    }} role="menuitem" type="button">版本历史</button>
+                    <button
+                      className="is-danger"
+                      disabled={mutationAssetId != null}
+                      onClick={(event) => {
+                        event.currentTarget.closest("details")?.removeAttribute("open");
+                        void archive(port, asset);
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >归档</button>
+                  </div>
+                </details>
               </header>
-              {expanded && <pre>{asset.markdown || "（空文档）"}</pre>}
+              {expanded && <div className="agent-team-asset-markdown"><SafeMarkdownPreview markdown={asset.markdown} /></div>}
             </article>
           );
         })}
+        {assets.length > 0 && (
+          <Pagination
+            onPageChange={setPage}
+            onPageSizeChange={(size) => { setPageSize(size); setPage(0); }}
+            page={page}
+            pageCount={pageCount}
+            pageSize={pageSize}
+            total={assets.length}
+          />
+        )}
       </div>
       {editorAsset && (
         <AgentTeamAssetEditor
@@ -1449,6 +1770,7 @@ function AgentTeamAssetsView({
         <AgentTeamAssetHistory
           asset={historyAsset}
           isLoading={loadingRevisionAssetId === historyAsset.id}
+          profileNames={profileNames}
           revisions={revisions[historyAsset.id] ?? []}
           onClose={() => setHistoryAsset(null)}
         />
@@ -1487,8 +1809,22 @@ function AgentTeamAssetEditor({
         role="dialog"
       >
         <header>
-          <div><h2>{asset ? "编辑共享资产" : "新建共享资产"}</h2><p>Markdown 文档 · {asset ? `当前 r${asset.revision}` : "首次保存为 r1"}</p></div>
-          <button aria-label="关闭共享资产编辑器" onClick={onClose} type="button">×</button>
+          <h2>{asset ? "编辑共享资产" : "新建共享资产"}</h2>
+          <div>
+            <button disabled={isSaving} onClick={onClose} type="button">取消</button>
+            <button
+              className="primary-button"
+              disabled={!title.trim() || isSaving}
+              onClick={() => void onSave({
+                assetId: asset?.id ?? null,
+                category,
+                title: title.trim(),
+                markdown,
+                expectedRevision: asset?.revision ?? null,
+              })}
+              type="button"
+            >{isSaving ? "保存中…" : "保存"}</button>
+          </div>
         </header>
         <div className="agent-team-asset-editor__body">
           <label><span>分类</span><select value={category} onChange={(event) => setCategory(event.target.value as AgentTeamAssetCategory)}>
@@ -1496,23 +1832,8 @@ function AgentTeamAssetEditor({
           </select></label>
           <label><span>标题</span><input maxLength={240} onChange={(event) => setTitle(event.target.value)} value={title} /></label>
           <label><span>Markdown</span><textarea maxLength={128_000} onChange={(event) => setMarkdown(event.target.value)} value={markdown} /></label>
-          <section><strong>预览</strong><pre>{markdown || "（空文档）"}</pre></section>
+          <section><strong>预览</strong><SafeMarkdownPreview markdown={markdown} /></section>
         </div>
-        <footer>
-          <button disabled={isSaving} onClick={onClose} type="button">取消</button>
-          <button
-            className="primary-button"
-            disabled={!title.trim() || isSaving}
-            onClick={() => void onSave({
-              assetId: asset?.id ?? null,
-              category,
-              title: title.trim(),
-              markdown,
-              expectedRevision: asset?.revision ?? null,
-            })}
-            type="button"
-          >{isSaving ? "保存中…" : "保存"}</button>
-        </footer>
       </section>
     </div>
   );
@@ -1521,33 +1842,62 @@ function AgentTeamAssetEditor({
 function AgentTeamAssetHistory({
   asset,
   isLoading,
+  profileNames,
   revisions,
   onClose,
 }: {
   asset: AgentTeamAsset;
   isLoading: boolean;
-  revisions: Array<{ revision: number; title: string; markdown: string; createdAtUnixMs: number }>;
+  profileNames: Map<string, string>;
+  revisions: AgentTeamAssetRevision[];
   onClose(): void;
 }) {
   const [selectedRevision, setSelectedRevision] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
+  const pageCount = Math.max(1, Math.ceil(revisions.length / pageSize));
+  const visibleRevisions = revisions.slice(page * pageSize, (page + 1) * pageSize);
   const selected = revisions.find((revision) => revision.revision === selectedRevision) ?? revisions[0];
+  useEffect(() => {
+    if (page >= pageCount) setPage(pageCount - 1);
+  }, [page, pageCount]);
+  useEffect(() => {
+    if (selected && !visibleRevisions.some((revision) => revision.revision === selected.revision)) {
+      setSelectedRevision(visibleRevisions[0]?.revision ?? null);
+    }
+  }, [selected, visibleRevisions]);
   return (
     <div className="agent-editor-backdrop" role="presentation" onMouseDown={onClose}>
       <section aria-label="共享资产版本历史" aria-modal="true" className="agent-team-asset-history" onMouseDown={(event) => event.stopPropagation()} role="dialog">
-        <header><div><h2>版本历史</h2><p>{asset.title}</p></div><button aria-label="关闭共享资产版本历史" onClick={onClose} type="button">×</button></header>
+        <header><div><h2>版本历史</h2><p>{asset.title}</p></div><button onClick={onClose} type="button">完成</button></header>
         <div className="agent-team-asset-history__body">
           {isLoading && revisions.length === 0 ? <div className="agent-team-assets__state"><span className="mini-spinner" />正在读取版本历史…</div> : revisions.length === 0 ? (
             <div className="agent-team-assets__state"><strong>没有版本记录</strong><span>保存资产后，历史版本会显示在这里。</span></div>
           ) : (
             <>
-              <nav aria-label="共享资产版本">
-                {revisions.map((revision) => <button aria-pressed={selected?.revision === revision.revision} key={revision.revision} onClick={() => setSelectedRevision(revision.revision)} type="button"><strong>r{revision.revision}{revision.revision === asset.revision ? " · 当前" : ""}</strong><span>{revision.title}</span><small>{formatTeamMessageTime(revision.createdAtUnixMs)}</small></button>)}
-              </nav>
-              <section><header><strong>{selected?.title}</strong><span>r{selected?.revision}</span></header><pre>{selected?.markdown}</pre></section>
+              <div className="agent-team-asset-history__sidebar">
+                <nav aria-label="共享资产版本">
+                  {visibleRevisions.map((revision) => <button aria-pressed={selected?.revision === revision.revision} key={revision.revision} onClick={() => setSelectedRevision(revision.revision)} type="button"><strong>r{revision.revision}{revision.revision === asset.revision ? " · 当前" : ""}</strong><span>{revision.title}</span><small>{formatTeamMessageTime(revision.createdAtUnixMs)}</small></button>)}
+                </nav>
+                <Pagination
+                  onPageChange={(nextPage) => { setPage(nextPage); setSelectedRevision(revisions[nextPage * pageSize]?.revision ?? null); }}
+                  onPageSizeChange={(size) => { setPageSize(size); setPage(0); setSelectedRevision(revisions[0]?.revision ?? null); }}
+                  page={page}
+                  pageCount={pageCount}
+                  pageSize={pageSize}
+                  total={revisions.length}
+                />
+              </div>
+              <section>
+                <header>
+                  <strong>{selected?.title}</strong>
+                  <span>{selected && `r${selected.revision} · ${selected.editorAgentId ? profileNames.get(selected.editorAgentId) ?? "Agent" : "你"} · ${formatTeamMessageTime(selected.createdAtUnixMs)}`}</span>
+                </header>
+                {selected && <SafeMarkdownPreview markdown={selected.markdown} />}
+              </section>
             </>
           )}
         </div>
-        <footer><button className="primary-button" onClick={onClose} type="button">完成</button></footer>
       </section>
     </div>
   );
@@ -1559,12 +1909,16 @@ function AgentTeamRunsView({
   port,
   profiles,
   runInspectorPort,
+  selectedAgentId,
+  onSelectAgent,
 }: {
   detail: AgentTeamDetail;
   ownerUserId: string;
   port: AgentManagementPort;
   profiles: AgentProfileSummary[];
   runInspectorPort?: RunInspectorPort;
+  selectedAgentId: string | null;
+  onSelectAgent(agentId: string | null): void;
 }) {
   const snapshot = useAgentTeamRunStore((state) => state.snapshot);
   const isLoading = useAgentTeamRunStore((state) => state.isLoading);
@@ -1572,8 +1926,10 @@ function AgentTeamRunsView({
   const activate = useAgentTeamRunStore((state) => state.activate);
   const refresh = useAgentTeamRunStore((state) => state.refresh);
   const reset = useAgentTeamRunStore((state) => state.reset);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
+  const [runMetrics, setRunMetrics] = useState<Record<string, { eventCount: number; hasMoreEvents: boolean; modelCalls: number }>>({});
   const visibleSnapshot = snapshot?.teamId === detail.team.id ? snapshot : null;
   const hasActiveRun = visibleSnapshot?.runs.some(
     (run) => run.deliveryStatus === "pending" || run.deliveryStatus === "running",
@@ -1581,10 +1937,14 @@ function AgentTeamRunsView({
   const visibleRuns = selectedAgentId
     ? visibleSnapshot?.runs.filter((run) => run.agentId === selectedAgentId) ?? []
     : visibleSnapshot?.runs ?? [];
+  const pageCount = Math.max(1, Math.ceil(visibleRuns.length / pageSize));
+  const pagedRuns = visibleRuns.slice(page * pageSize, (page + 1) * pageSize);
   const profileNames = useMemo(
     () => new Map(profiles.map((profile) => [profile.id, profile.name])),
     [profiles],
   );
+  const selectedAgentName = selectedAgentId ? profileNames.get(selectedAgentId) ?? "Agent" : null;
+  const selectedRun = visibleSnapshot?.runs.find((run) => run.runId === selectedRunId) ?? null;
 
   useEffect(() => {
     if (port.loadTeamRuns) void activate(port, ownerUserId, detail.team.id);
@@ -1598,6 +1958,36 @@ function AgentTeamRunsView({
     return () => window.clearInterval(timer);
   }, [hasActiveRun, port, refresh]);
 
+  useEffect(() => {
+    setPage(0);
+  }, [selectedAgentId]);
+
+  useEffect(() => {
+    if (page >= pageCount) setPage(pageCount - 1);
+  }, [page, pageCount]);
+
+  useEffect(() => {
+    if (!runInspectorPort) return undefined;
+    const pendingRuns = pagedRuns.filter((run) => runMetrics[run.runId] == null);
+    if (pendingRuns.length === 0) return undefined;
+    let active = true;
+    void Promise.allSettled(pendingRuns.map(async (run) => {
+      const loaded = await runInspectorPort.loadRun(ownerUserId, run.runId, 0);
+      return [run.runId, {
+        eventCount: loaded.events.length,
+        hasMoreEvents: loaded.eventsHasMore,
+        modelCalls: loaded.run.iteration,
+      }] as const;
+    })).then((results) => {
+      if (!active) return;
+      const loadedMetrics = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+      if (loadedMetrics.length > 0) {
+        setRunMetrics((current) => ({ ...current, ...Object.fromEntries(loadedMetrics) }));
+      }
+    });
+    return () => { active = false; };
+  }, [ownerUserId, pagedRuns, runInspectorPort, runMetrics]);
+
   if (!port.loadTeamRuns) {
     return (
       <div className="agent-team-runs__state is-error" role="alert">
@@ -1609,18 +1999,22 @@ function AgentTeamRunsView({
 
   return (
     <div className="agent-team-runs">
-      <div className="agent-team-runs__filters" aria-label="按 Agent 筛选运行记录">
-        <button aria-pressed={selectedAgentId == null} onClick={() => setSelectedAgentId(null)} type="button">全部</button>
-        {detail.members.map((member) => (
-          <button
-            aria-pressed={selectedAgentId === member.agentId}
-            key={member.agentId}
-            onClick={() => setSelectedAgentId(member.agentId)}
-            type="button"
-          >{profileNames.get(member.agentId) ?? member.role}</button>
-        ))}
-        <button aria-label="刷新团队运行记录" disabled={isLoading} onClick={() => void refresh(port)} type="button">↻</button>
-      </div>
+      <header className="agent-team-runs__header">
+        <div>
+          <strong>{selectedAgentName ? `${selectedAgentName} 的运行` : "团队全部运行"}</strong>
+          <span>{selectedAgentId == null ? "按更新时间查看团队内所有 Run" : "通讯与任务执行彼此独立，可同时运行"}</span>
+        </div>
+        <div>
+          {selectedAgentId != null && <button onClick={() => onSelectAgent(null)} type="button">查看全部</button>}
+          <button aria-label="刷新团队运行记录" disabled={isLoading} onClick={() => void refresh(port)} type="button">↻</button>
+        </div>
+      </header>
+      {selectedAgentId != null && (
+        <div className="agent-team-runs__lanes">
+          <AgentTeamRunLaneSummary lane="manager" run={visibleRuns.find((run) => run.lane === "manager") ?? null} onInspect={setSelectedRunId} />
+          <AgentTeamRunLaneSummary lane="executor" run={visibleRuns.find((run) => run.lane === "executor") ?? null} onInspect={setSelectedRunId} />
+        </div>
+      )}
       {error && (
         <div className="agent-team-conversation__error" role="alert">
           <span>{error}</span>
@@ -1632,40 +2026,56 @@ function AgentTeamRunsView({
           <div className="agent-team-runs__state"><span className="mini-spinner" />正在读取运行历史…</div>
         ) : visibleRuns.length === 0 ? (
           <div className="agent-team-runs__state">
+            <span aria-hidden="true" className="agent-team-runs__empty-icon">⌁</span>
             <strong>{selectedAgentId ? "这个 Agent 还没有运行记录" : "还没有运行记录"}</strong>
             <span>Agent 被唤醒后，通讯与任务执行 Run 会显示在这里。</span>
           </div>
-        ) : visibleRuns.map((run) => (
-          <article key={run.runId}>
-            <header>
-              <strong>{profileNames.get(run.agentId) ?? run.agentId}</strong>
-              <span className={`agent-team-runs__lane is-${run.lane}`}>
-                {run.lane === "manager" ? "通讯" : "任务执行"}
-              </span>
-              <em className={`is-${run.deliveryStatus}`}>{teamRunStatusLabel(run.deliveryStatus)}</em>
-            </header>
-            <p>{teamRunTriggerLabel(run.triggerKind)} · Run {run.runId}</p>
-            <footer>
-              <time>{formatTeamMessageTime(run.updatedAtUnixMs)}</time>
-              {run.lastError && <span title={run.lastError}>{run.lastError}</span>}
+        ) : pagedRuns.map((run) => {
+          const metrics = runMetrics[run.runId];
+          return (
+            <article key={run.runId}>
               <button
+                aria-label={`查看${profileNames.get(run.agentId) ?? run.agentId}的运行详情`}
                 disabled={!runInspectorPort}
                 onClick={() => setSelectedRunId(run.runId)}
                 type="button"
-              >查看详情</button>
-            </footer>
-          </article>
-        ))}
+              >
+                <header>
+                  <strong>{profileNames.get(run.agentId) ?? run.agentId}</strong>
+                  <span className={`agent-team-runs__lane is-${run.lane}`}>{run.lane === "manager" ? "通讯" : "任务执行"}</span>
+                  <em className={`is-${teamRunStatusClass(run.runStatus)}`}>{teamRunCheckpointStatusLabel(run.runStatus)}</em>
+                  <b aria-hidden="true">›</b>
+                </header>
+                <p>{teamRunTriggerLabel(run.triggerKind)} · {metrics
+                  ? `${metrics.eventCount}${metrics.hasMoreEvents ? "+" : ""} 条事件 · ${metrics.modelCalls} 次模型调用`
+                  : `Run ${run.runId}`}</p>
+                <footer>
+                  <time>{formatTeamMessageTime(run.updatedAtUnixMs)}</time>
+                  <span>Memory {teamRunMemoryThreadId(detail.team.id, run)}</span>
+                </footer>
+                {run.lastError && <small title={run.lastError}>{run.lastError}</small>}
+              </button>
+            </article>
+          );
+        })}
+        {visibleRuns.length > 0 && (
+          <Pagination
+            onPageChange={setPage}
+            onPageSizeChange={(size) => { setPageSize(size); setPage(0); }}
+            page={page}
+            pageCount={pageCount}
+            pageSize={pageSize}
+            total={visibleRuns.length}
+          />
+        )}
       </div>
-      {selectedRunId && runInspectorPort && (
+      {selectedRunId && selectedRun && runInspectorPort && (
         <AgentTeamRunDetailSheet
           agentPort={port}
-          agentName={profileNames.get(
-            visibleSnapshot?.runs.find((run) => run.runId === selectedRunId)?.agentId ?? "",
-          ) ?? "Agent"}
+          agentName={profileNames.get(selectedRun.agentId) ?? "Agent"}
           ownerUserId={ownerUserId}
           port={runInspectorPort}
-          runId={selectedRunId}
+          run={selectedRun}
           teamId={detail.team.id}
           onClose={() => setSelectedRunId(null)}
           onRetried={() => refresh(port)}
@@ -1675,12 +2085,34 @@ function AgentTeamRunsView({
   );
 }
 
+function AgentTeamRunLaneSummary({
+  lane,
+  run,
+  onInspect,
+}: {
+  lane: "manager" | "executor";
+  run: AgentTeamRunSummary | null;
+  onInspect(runId: string): void;
+}) {
+  return (
+    <button disabled={!run} onClick={() => { if (run) onInspect(run.runId); }} type="button">
+      <header>
+        <span className={`agent-team-runs__lane is-${lane}`}>{lane === "manager" ? "通讯" : "任务执行"}</span>
+        {run ? <em className={`is-${teamRunStatusClass(run.runStatus)}`}>{teamRunCheckpointStatusLabel(run.runStatus)}</em> : <em>暂无记录</em>}
+      </header>
+      {run ? <><strong>{teamRunTriggerLabel(run.triggerKind)}</strong><span>更新于 {formatTeamMessageTime(run.updatedAtUnixMs)}</span></> : (
+        <span>{lane === "manager" ? "等待消息、心跳或任务状态唤醒" : "等待已启动的团队任务"}</span>
+      )}
+    </button>
+  );
+}
+
 function AgentTeamRunDetailSheet({
   agentPort,
   agentName,
   ownerUserId,
   port,
-  runId,
+  run,
   teamId,
   onClose,
   onRetried,
@@ -1689,11 +2121,12 @@ function AgentTeamRunDetailSheet({
   agentName: string;
   ownerUserId: string;
   port: RunInspectorPort;
-  runId: string;
+  run: AgentTeamRunSummary;
   teamId: string;
   onClose(): void;
   onRetried(): Promise<void>;
 }) {
+  const runId = run.runId;
   const [detail, setDetail] = useState<RunInspectorDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
@@ -1744,8 +2177,8 @@ function AgentTeamRunDetailSheet({
         role="dialog"
       >
         <header>
-          <div><h2>Run 检查器</h2><p>{agentName} · {runId}</p></div>
-          <button aria-label="关闭团队 Run 检查器" onClick={onClose} type="button">×</button>
+          <div><h2>Run 检查器</h2><p>{agentName} · {run.lane === "manager" ? "通讯" : "任务执行"}</p></div>
+          <button onClick={onClose} type="button">完成</button>
         </header>
         <div className="agent-team-run-detail__body">
           {isLoading ? (
@@ -1755,15 +2188,24 @@ function AgentTeamRunDetailSheet({
           ) : detail ? (
             <>
               {error && <div className="agent-team-run-detail__error" role="alert">{error}</div>}
-              <dl>
-                <Row label="状态" value={detail.run.status} />
-                <Row label="迭代" value={`${detail.run.iteration} / ${detail.run.maxIterations}`} />
-                <Row label="更新时间" value={formatTeamMessageTime(detail.run.updatedAtUnixMs)} />
-              </dl>
-              {detail.run.resultSummary && <div className="agent-team-run-detail__summary"><strong>结果摘要</strong><p>{detail.run.resultSummary}</p></div>}
+              <section className="agent-team-run-detail__section">
+                <h3>运行信息</h3>
+                <dl>
+                  <Row label="状态" value={teamRunCheckpointStatusLabel(run.runStatus)} />
+                  <Row label="触发" value={teamRunTriggerLabel(run.triggerKind)} />
+                  <Row label="Delivery" value={teamRunStatusLabel(run.deliveryStatus)} />
+                  <Row label="Memory" value={run.lane === "manager" ? "Agent 长期通讯" : "Todo 独立执行"} />
+                  <Row label="模型调用" value={`${detail.run.iteration} / ${detail.run.maxIterations}`} />
+                  <Row label="运行耗时" value={formatRunElapsed(detail.run.createdAtUnixMs, detail.run.updatedAtUnixMs)} />
+                  <Row label="开始时间" value={formatTeamMessageTime(detail.run.createdAtUnixMs)} />
+                  <Row label="更新时间" value={formatTeamMessageTime(detail.run.updatedAtUnixMs)} />
+                </dl>
+                {run.lastError && <div className="agent-team-run-detail__error" role="alert">{run.lastError}</div>}
+                {detail.run.resultSummary && <div className="agent-team-run-detail__summary"><strong>结果</strong><SafeMarkdownPreview markdown={detail.run.resultSummary} /></div>}
+              </section>
               {detail.run.errorMessage && <div className="agent-team-run-detail__error" role="alert">{detail.run.errorMessage}</div>}
-              <section>
-                <h3>执行事件</h3>
+              <section className="agent-team-run-detail__section">
+                <h3>运行事件</h3>
                 {detail.events.length === 0 ? (
                   <p className="agent-team-run-detail__empty">本次 Run 还没有执行事件。</p>
                 ) : detail.events.map((event) => (
@@ -1798,7 +2240,7 @@ function AgentTeamRunDetailSheet({
             </>
           ) : null}
         </div>
-        <footer>
+        {detail?.run.status.toLowerCase() === "needs_review" && <footer>
           {detail?.run.status.toLowerCase() === "needs_review" && agentPort.retryTeamRun && (
             <button
               className="is-danger"
@@ -1817,8 +2259,7 @@ function AgentTeamRunDetailSheet({
               type="button"
             >{isRetrying ? "正在重试…" : "重试中断步骤"}</button>
           )}
-          <button className="primary-button" onClick={onClose} type="button">完成</button>
-        </footer>
+        </footer>}
       </section>
     </div>
   );
@@ -1832,6 +2273,30 @@ function teamRunStatusLabel(status: "pending" | "running" | "completed" | "faile
     failed: "失败",
     cancelled: "已取消",
   }[status];
+}
+
+function teamRunCheckpointStatusLabel(status: AgentTeamRunSummary["runStatus"]) {
+  return {
+    ready: "等待开始",
+    running: "运行中",
+    succeeded: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+  }[status];
+}
+
+function teamRunStatusClass(status: AgentTeamRunSummary["runStatus"]) {
+  return status === "succeeded" ? "completed" : status;
+}
+
+function teamRunMemoryThreadId(teamId: string, run: AgentTeamRunSummary) {
+  return run.lane === "executor"
+    ? `agent-team-executor-${run.deliveryId}`
+    : `agent-team-${teamId}-${run.agentId}`;
+}
+
+function formatRunElapsed(createdAtUnixMs: number, updatedAtUnixMs: number) {
+  return `${(Math.max(0, updatedAtUnixMs - createdAtUnixMs) / 1_000).toFixed(1)} 秒`;
 }
 
 function teamRunTriggerLabel(trigger: "mention" | "default_agent" | "agent_mention" | "heartbeat" | "todo" | "todo_status") {
@@ -1860,11 +2325,13 @@ function AgentTeamConversationView({
 }) {
   const snapshot = useAgentTeamConversationStore((state) => state.snapshot);
   const isLoading = useAgentTeamConversationStore((state) => state.isLoading);
+  const isLoadingOlder = useAgentTeamConversationStore((state) => state.isLoadingOlder);
   const isSending = useAgentTeamConversationStore((state) => state.isSending);
   const isCycling = useAgentTeamConversationStore((state) => state.isCycling);
   const error = useAgentTeamConversationStore((state) => state.error);
   const activate = useAgentTeamConversationStore((state) => state.activate);
   const refresh = useAgentTeamConversationStore((state) => state.refresh);
+  const loadOlder = useAgentTeamConversationStore((state) => state.loadOlder);
   const send = useAgentTeamConversationStore((state) => state.send);
   const reset = useAgentTeamConversationStore((state) => state.reset);
   const [content, setContent] = useState("");
@@ -1872,6 +2339,14 @@ function AgentTeamConversationView({
   const [attachments, setAttachments] = useState<ConversationAttachmentDraft[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [isPickingAttachments, setIsPickingAttachments] = useState(false);
+  const [mentionMenuOpen, setMentionMenuOpen] = useState(false);
+  const [mentionError, setMentionError] = useState<string | null>(null);
+  const [mentionSuggestionsSuppressed, setMentionSuggestionsSuppressed] = useState(false);
+  const [highlightedMentionIndex, setHighlightedMentionIndex] = useState(0);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const followsLatestRef = useRef(true);
+  const positionedTeamRef = useRef<string | null>(null);
+  const previousLastMessageRef = useRef<string | null>(null);
   const attachmentScope = useMemo(() => ({
     ownerUserId,
     conversationId: `agent-team-compose-${detail.team.id}`,
@@ -1893,13 +2368,31 @@ function AgentTeamConversationView({
     () => new Map(profiles.map((profile) => [profile.id, profile.name])),
     [profiles],
   );
+  const profilesById = useMemo(
+    () => new Map(profiles.map((profile) => [profile.id, profile])),
+    [profiles],
+  );
+  const mentionCandidates = useMemo(() => memberProfiles.flatMap(({ member, profile }) => profile ? [{
+    id: member.agentId,
+    name: profile.name,
+    subtitle: member.role,
+  }] : []), [memberProfiles]);
+  const visibleMentionCandidates = useMemo(
+    () => (mentionSuggestionsSuppressed ? [] : visibleAgentTeamMentionCandidates(content, mentionCandidates))
+      .filter((candidate) => !mentionedAgentIds.includes(candidate.id)),
+    [content, mentionCandidates, mentionedAgentIds, mentionSuggestionsSuppressed],
+  );
+  const resolvedMention = useMemo(
+    () => resolveAgentTeamMentionIds(content, mentionedAgentIds, mentionCandidates),
+    [content, mentionCandidates, mentionedAgentIds],
+  );
   const visibleSnapshot = snapshot?.teamId === detail.team.id ? snapshot : null;
   const hasActiveDelivery = visibleSnapshot?.deliveries.some(
     (delivery) => delivery.status === "pending" || delivery.status === "running",
   ) ?? false;
-  const canRoute = mentionedAgentIds.length > 0 || detail.team.defaultAgentId != null;
+  const canRoute = resolvedMention.ids.length > 0 || detail.team.defaultAgentId != null;
   const canSend = supportsConversation && (content.trim().length > 0 || attachments.length > 0) && canRoute
-    && !isSending && !isCycling;
+    && resolvedMention.error == null && !isSending && !isCycling;
 
   const acceptAttachmentResult = useCallback((result: AttachmentImportResult) => {
     if (result.scope.ownerUserId !== attachmentScope.ownerUserId
@@ -1927,19 +2420,35 @@ function AgentTeamConversationView({
     };
   }, [attachmentPort, attachmentScope]);
 
-  const sendMessage = () => void send(
-    port,
-    content,
-    mentionedAgentIds,
-    attachments.map((attachment) => attachment.id),
-  ).then((succeeded) => {
+  const sendMessage = () => {
+    if (resolvedMention.error) {
+      setMentionError(resolvedMention.error);
+      return;
+    }
+    followsLatestRef.current = true;
+    void send(
+      port,
+      content,
+      resolvedMention.ids,
+      attachments.map((attachment) => attachment.id),
+    ).then((succeeded) => {
     if (succeeded) {
       setContent("");
       setMentionedAgentIds([]);
       setAttachments([]);
       setAttachmentError(null);
+      setMentionError(null);
     }
-  });
+    });
+  };
+
+  const selectMention = (agentId: string) => {
+    setMentionedAgentIds((current) => current.includes(agentId) ? current : [...current, agentId]);
+    setContent((current) => removeTrailingAgentTeamMentionQuery(current));
+    setMentionError(null);
+    setMentionSuggestionsSuppressed(false);
+    setMentionMenuOpen(false);
+  };
 
   useEffect(() => {
     if (supportsConversation) void activate(port, ownerUserId, detail.team.id);
@@ -1957,6 +2466,29 @@ function AgentTeamConversationView({
     const memberIds = new Set(detail.members.map((member) => member.agentId));
     setMentionedAgentIds((current) => current.filter((agentId) => memberIds.has(agentId)));
   }, [detail.members]);
+
+  useEffect(() => {
+    setHighlightedMentionIndex(0);
+    setMentionSuggestionsSuppressed(false);
+    if (trailingAgentTeamMentionQuery(content)) setMentionMenuOpen(false);
+  }, [content]);
+
+  useLayoutEffect(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript || !visibleSnapshot || positionedTeamRef.current === detail.team.id) return;
+    positionedTeamRef.current = detail.team.id;
+    transcript.scrollTop = transcript.scrollHeight;
+    followsLatestRef.current = true;
+  }, [detail.team.id, visibleSnapshot]);
+
+  const lastMessageId = visibleSnapshot?.messages.at(-1)?.id ?? null;
+  useLayoutEffect(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript || !lastMessageId || previousLastMessageRef.current === lastMessageId) return;
+    const hadPrevious = previousLastMessageRef.current != null;
+    previousLastMessageRef.current = lastMessageId;
+    if (!hadPrevious || followsLatestRef.current) transcript.scrollTop = transcript.scrollHeight;
+  }, [lastMessageId]);
 
   if (!supportsConversation) {
     return (
@@ -1976,7 +2508,34 @@ function AgentTeamConversationView({
 
   return (
     <div className="agent-team-conversation">
-      <div aria-live="polite" className="agent-team-conversation__messages">
+      <div
+        aria-live="polite"
+        className="agent-team-conversation__messages"
+        onScroll={(event) => {
+          const target = event.currentTarget;
+          followsLatestRef.current = target.scrollHeight - target.scrollTop - target.clientHeight <= 32;
+        }}
+        ref={transcriptRef}
+      >
+        {visibleSnapshot?.hasOlder && (
+          <button
+            className="agent-team-conversation__older"
+            disabled={isLoadingOlder}
+            onClick={() => {
+              const transcript = transcriptRef.current;
+              const beforeHeight = transcript?.scrollHeight ?? 0;
+              const beforeTop = transcript?.scrollTop ?? 0;
+              void loadOlder(port).then((loaded) => {
+                if (!loaded) return;
+                window.requestAnimationFrame(() => {
+                  const current = transcriptRef.current;
+                  if (current) current.scrollTop = beforeTop + current.scrollHeight - beforeHeight;
+                });
+              });
+            }}
+            type="button"
+          >{isLoadingOlder ? "正在加载…" : "↻ 加载更早消息"}</button>
+        )}
         {isLoading && !visibleSnapshot ? (
           <div className="agent-team-conversation__state"><span className="mini-spinner" />正在读取团队消息…</div>
         ) : visibleSnapshot?.messages.length ? visibleSnapshot.messages.map((message) => {
@@ -1986,42 +2545,52 @@ function AgentTeamConversationView({
               ? "系统"
               : profileNames.get(message.senderId) ?? message.senderId;
           const deliveries = deliveriesByMessage.get(message.id) ?? [];
+          const senderProfile = message.senderKind === "agent" ? profilesById.get(message.senderId) : null;
+          if (message.senderKind === "system") {
+            return <div className="agent-team-message agent-team-message--system" key={message.id}>{message.content}</div>;
+          }
           return (
-            <article className={`agent-team-message agent-team-message--${message.senderKind}`} key={message.id}>
-              <div className="agent-team-message__meta">
-                <strong>{senderName}</strong>
-                <time>{formatTeamMessageTime(message.createdAtUnixMs)}</time>
+            <div className={`agent-team-message-row agent-team-message-row--${message.senderKind}`} key={message.id}>
+              {message.senderKind === "agent" && <TeamMessageAvatar name={senderName} profile={senderProfile} />}
+              <div className="agent-team-message-column">
+                <div className="agent-team-message__meta">
+                  <strong>{senderName}</strong>
+                  <time>{formatTeamMessageTime(message.createdAtUnixMs)}</time>
+                </div>
+                <div className={`agent-team-message agent-team-message--${message.senderKind}`}>
+                  {message.content && <SafeMarkdownPreview markdown={message.content} />}
+                  {message.attachments.length > 0 && (
+                    <div className="agent-team-message__attachments" aria-label="消息附件">
+                      {message.attachments.map((attachment) => (
+                        <span key={attachment.id}>
+                          <b>{attachment.kind === "image" ? "▧" : attachment.kind === "audio" ? "♪" : "↗"}</b>
+                          {attachment.name}<small>{formatAttachmentSize(attachment.size)}</small>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {message.mentionedAgentIds.length > 0 && (
+                    <div className="agent-team-message__mentions">
+                      {message.mentionedAgentIds.map((agentId) => (
+                        <span key={agentId}>@{profileNames.get(agentId) ?? agentId}</span>
+                      ))}
+                    </div>
+                  )}
+                  {deliveries.length > 0 && (
+                    <div className="agent-team-message__deliveries" aria-label="消息执行状态">
+                      {deliveries.map((delivery) => (
+                        <span className={`is-${delivery.status}`} key={delivery.id} title={delivery.lastError ?? undefined}>
+                          {profileNames.get(delivery.targetAgentId) ?? delivery.targetAgentId}
+                          {` · ${teamDeliveryStatusLabel(delivery.status)}`}
+                          {delivery.lastError ? `：${delivery.lastError}` : ""}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-              <p>{message.content}</p>
-              {message.attachments.length > 0 && (
-                <div className="agent-team-message__attachments" aria-label="消息附件">
-                  {message.attachments.map((attachment) => (
-                    <span key={attachment.id}>
-                      <b>{attachment.kind === "image" ? "▧" : attachment.kind === "audio" ? "♪" : "↗"}</b>
-                      {attachment.name}<small>{formatAttachmentSize(attachment.size)}</small>
-                    </span>
-                  ))}
-                </div>
-              )}
-              {message.mentionedAgentIds.length > 0 && (
-                <div className="agent-team-message__mentions">
-                  {message.mentionedAgentIds.map((agentId) => (
-                    <span key={agentId}>@{profileNames.get(agentId) ?? agentId}</span>
-                  ))}
-                </div>
-              )}
-              {deliveries.length > 0 && (
-                <div className="agent-team-message__deliveries" aria-label="消息执行状态">
-                  {deliveries.map((delivery) => (
-                    <span className={`is-${delivery.status}`} key={delivery.id} title={delivery.lastError ?? undefined}>
-                      {profileNames.get(delivery.targetAgentId) ?? delivery.targetAgentId}
-                      {` · ${teamDeliveryStatusLabel(delivery.status)}`}
-                      {delivery.lastError ? `：${delivery.lastError}` : ""}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </article>
+              {message.senderKind === "human" && <TeamMessageAvatar human name="你" />}
+            </div>
           );
         }) : (
           <div className="agent-team-conversation__state">
@@ -2037,20 +2606,16 @@ function AgentTeamConversationView({
         </div>
       )}
       <div className="agent-team-composer">
-        <div aria-label="选择接收消息的 Agent" className="agent-team-composer__mentions">
-          {memberProfiles.map(({ member, profile }) => {
-            const selected = mentionedAgentIds.includes(member.agentId);
-            return (
-              <button
-                aria-pressed={selected}
-                key={member.agentId}
-                onClick={() => setMentionedAgentIds((current) => selected
-                  ? current.filter((agentId) => agentId !== member.agentId)
-                  : [...current, member.agentId])}
-                type="button"
-              >@{profile?.name ?? member.role}</button>
-            );
-          })}
+        {hasActiveDelivery && <div className="agent-team-composer__activity"><span className="mini-spinner" />Agent 正在处理群聊…</div>}
+        <div aria-label="已选择的 Agent" className="agent-team-composer__mentions">
+          {mentionedAgentIds.map((agentId) => (
+            <button
+              aria-label={`移除 @${profileNames.get(agentId) ?? agentId}`}
+              key={agentId}
+              onClick={() => setMentionedAgentIds((current) => current.filter((id) => id !== agentId))}
+              type="button"
+            >@{profileNames.get(agentId) ?? agentId}<span aria-hidden="true">×</span></button>
+          ))}
           {mentionedAgentIds.length === 0 && detail.team.defaultAgentId && (
             <span>默认发送给 {profileNames.get(detail.team.defaultAgentId) ?? "默认 Agent"}</span>
           )}
@@ -2072,9 +2637,50 @@ function AgentTeamConversationView({
             ))}
           </div>
         )}
-        {attachmentError && <div className="agent-team-conversation__error" role="alert">{attachmentError}</div>}
-        <div className="agent-team-composer__input">
-          {attachmentPort && (
+        {(attachmentError || mentionError) && (
+          <div className="agent-team-conversation__error" role="alert">{attachmentError ?? mentionError}</div>
+        )}
+        <div className="agent-team-composer__surface">
+          <div className="agent-team-composer__tools">
+            <div
+              className="agent-team-mention-picker"
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setMentionMenuOpen(false);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setMentionMenuOpen(false);
+              }}
+            >
+              <button
+                aria-expanded={mentionMenuOpen}
+                aria-label="选择要 @ 的 Agent"
+                disabled={mentionCandidates.length === 0}
+                onClick={() => setMentionMenuOpen((open) => !open)}
+                type="button"
+              >@</button>
+              {mentionMenuOpen && (
+                <div className="agent-team-mention-picker__menu" role="menu">
+                  {mentionCandidates.map((candidate) => {
+                    const selected = mentionedAgentIds.includes(candidate.id);
+                    return (
+                      <button
+                        key={candidate.id}
+                        aria-checked={selected}
+                        onClick={() => {
+                          setMentionedAgentIds((current) => selected
+                            ? current.filter((id) => id !== candidate.id)
+                            : [...current, candidate.id]);
+                          setMentionError(null);
+                        }}
+                        role="menuitemcheckbox"
+                        type="button"
+                      ><span>{selected ? "✓" : "○"}</span><strong>{candidate.name}</strong><small>{candidate.subtitle}</small></button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            {attachmentPort && (
             <button
               aria-label="添加团队附件"
               disabled={isPickingAttachments || isSending}
@@ -2089,35 +2695,85 @@ function AgentTeamConversationView({
                   .finally(() => setIsPickingAttachments(false));
               }}
               type="button"
-            >＋</button>
-          )}
-          <textarea
-            aria-label="团队消息"
-            disabled={isSending}
-            maxLength={1_000_000}
-            onChange={(event) => setContent(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && canSend) {
-                event.preventDefault();
-                sendMessage();
-              }
-            }}
-            placeholder={canRoute ? "给团队发送消息…" : "请先选择一个 Agent"}
-            rows={2}
-            value={content}
-          />
-          <button
-            aria-label="发送团队消息"
-            className="primary-button"
-            disabled={!canSend}
-            onClick={sendMessage}
-            type="button"
-          >{isSending ? "发送中…" : "发送"}</button>
+            >📎</button>
+            )}
+          </div>
+          <div className="agent-team-composer__input">
+            {visibleMentionCandidates.length > 0 && (
+              <div className="agent-team-mention-suggestions" role="listbox">
+                {visibleMentionCandidates.map((candidate, index) => (
+                  <button
+                    aria-selected={index === highlightedMentionIndex}
+                    key={candidate.id}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => selectMention(candidate.id)}
+                    role="option"
+                    type="button"
+                  ><TeamMessageAvatar compact name={candidate.name} profile={profilesById.get(candidate.id)} /><span><strong>@{candidate.name}</strong><small>{candidate.subtitle}</small></span></button>
+                ))}
+              </div>
+            )}
+            <textarea
+              aria-label="团队消息"
+              disabled={isSending}
+              maxLength={1_000_000}
+              onChange={(event) => { setContent(event.target.value); setMentionError(null); }}
+              onKeyDown={(event) => {
+                if (visibleMentionCandidates.length > 0 && ["ArrowDown", "ArrowUp"].includes(event.key)) {
+                  event.preventDefault();
+                  setHighlightedMentionIndex((current) => (
+                    current + (event.key === "ArrowDown" ? 1 : -1) + visibleMentionCandidates.length
+                  ) % visibleMentionCandidates.length);
+                  return;
+                }
+                if (event.key === "Escape" && visibleMentionCandidates.length > 0) {
+                  event.preventDefault();
+                  setMentionSuggestionsSuppressed(true);
+                  return;
+                }
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  if (visibleMentionCandidates.length > 0) selectMention(
+                    visibleMentionCandidates[Math.min(highlightedMentionIndex, visibleMentionCandidates.length - 1)]!.id,
+                  );
+                  else if (canSend) sendMessage();
+                }
+              }}
+              placeholder={canRoute
+                ? "输入消息；不选择 @ 时交给默认 Agent，也可添加图片、文档和长文本…"
+                : "请先选择一个 Agent"}
+              rows={2}
+              value={content}
+            />
+            <button
+              aria-label="发送团队消息"
+              className="primary-button"
+              disabled={!canSend}
+              onClick={sendMessage}
+              type="button"
+            >{isSending ? <span className="mini-spinner" /> : "↑"}</button>
+          </div>
         </div>
         {!canRoute && <small>当前团队没有默认 Agent，请先选择一个接收者。</small>}
       </div>
     </div>
   );
+}
+
+function TeamMessageAvatar({
+  compact = false,
+  human = false,
+  name,
+  profile,
+}: {
+  compact?: boolean;
+  human?: boolean;
+  name: string;
+  profile?: AgentProfileSummary | null;
+}) {
+  const className = `agent-team-message-avatar${compact ? " is-compact" : ""}${human ? " is-human" : ""}`;
+  if (profile?.avatarPreviewUrl) return <img alt="" className={className} src={profile.avatarPreviewUrl} />;
+  return <span aria-hidden="true" className={className}>{human ? "你" : name.trim().slice(0, 1) || "A"}</span>;
 }
 
 function teamDeliveryStatusLabel(status: "pending" | "running" | "completed" | "failed" | "cancelled") {
@@ -2784,11 +3440,6 @@ function AgentCard({
         >
           {preparingDirect ? "准备中…" : "私聊"}
         </button>
-        <button
-          aria-pressed={isSelected}
-          onClick={(event) => { event.stopPropagation(); onSelect(); }}
-          type="button"
-        >运行动态</button>
         <button
           disabled={preparing}
           onClick={(event) => { event.stopPropagation(); onEdit(); }}

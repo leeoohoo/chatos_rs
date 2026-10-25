@@ -43,6 +43,14 @@ describe("ProjectGitView", () => {
     }));
   });
 
+  it("keeps the macOS file-editor empty state until a diff is selected", async () => {
+    renderView();
+
+    expect(await screen.findByRole("heading", { name: "选择一个文件" })).toBeInTheDocument();
+    expect(screen.getByText("从左侧项目目录中选择文件以预览或编辑。")).toBeInTheDocument();
+    expect(screen.queryByText("选择一项变更")).not.toBeInTheDocument();
+  });
+
   it("loads a diff and opens the matching project-relative file", async () => {
     const port = stubProjectGitPort();
     const onOpenFile = vi.fn();

@@ -8,6 +8,7 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout},
     time::timeout,
 };
+use uuid::Uuid;
 
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -45,6 +46,7 @@ pub(crate) struct ManagedHost {
     pub(super) input: ChildStdin,
     output: ChildStdout,
     pub(super) owner_user_id: String,
+    request_namespace: Uuid,
     request_sequence: u64,
 }
 
@@ -60,6 +62,7 @@ impl ManagedHost {
             input,
             output,
             owner_user_id,
+            request_namespace: Uuid::new_v4(),
             request_sequence: 0,
         }
     }
@@ -97,8 +100,9 @@ async fn request_with_timeout(
     let request = HostRequestEnvelope {
         protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
         command_id: format!(
-            "windows-ipc-{}-{}",
+            "windows-ipc-{}-{}-{}",
             std::process::id(),
+            host.request_namespace,
             host.request_sequence
         ),
         command,

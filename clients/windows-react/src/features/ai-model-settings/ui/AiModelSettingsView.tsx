@@ -45,6 +45,11 @@ export function AiModelSettingsView({ ownerUserId, port }: { ownerUserId: string
   const dirty = isAiModelSettingsDirty({ snapshot, draft });
   return (
     <div className="ai-model-page" aria-label={english ? "AI model settings" : "AI 模型设置"}>
+      <header className="ai-model-page__title">
+        <h2>{english ? "AI Model Configuration" : "AI 模型配置"}</h2>
+        {(isLoading || isMutating) && <div><span className="mini-spinner" />{isLoading ? (english ? "Syncing…" : "同步中…") : (english ? "Saving…" : "保存中…")}</div>}
+      </header>
+
       {(error || notice) && (
         <div className={`ai-model-banner ${error ? "is-error" : "is-success"}`} role={error ? "alert" : "status"}>
           <span aria-hidden="true">{error ? "!" : "✓"}</span>
@@ -53,17 +58,9 @@ export function AiModelSettingsView({ ownerUserId, port }: { ownerUserId: string
         </div>
       )}
 
-      <section className="ai-model-hero">
-        <div>
-          <span className="ai-model-hero__icon" aria-hidden="true">✦</span>
-          <div><h2>{english ? "Unified Model Configuration" : "统一模型配置"}</h2><p>{english ? "Providers and cloud defaults are stored in ChatOS. The approval model stays on this Windows device." : "供应商与云端默认模型保存在 ChatOS；本机审批模型只保存在这台 Windows 设备。"}</p></div>
-        </div>
-        <div className="ai-model-actions">
-          <button onClick={() => setProvidersOpen(true)} type="button">{english ? "Manage Providers" : "管理供应商"}</button>
-          <button disabled={isLoading || isMutating} onClick={() => void load(port, ownerUserId, true)} type="button">{english ? "Sync" : "同步"}</button>
-          <button className="is-primary" disabled={!dirty || isMutating} onClick={() => void save(port)} type="button">{isMutating ? (english ? "Saving…" : "保存中…") : (english ? "Save All" : "保存全部")}</button>
-        </div>
-      </section>
+      <ModelCard icon="☷" title={english ? "Unified Model Configuration" : "统一模型配置"} subtitle={english ? "Providers and cloud defaults are stored in ChatOS. The approval model stays on this Windows device." : "供应商与云端默认模型保存在 ChatOS；本机审批模型只保存在这台 Windows 设备。"}>
+        <div className="ai-model-actions"><div><button onClick={() => setProvidersOpen(true)} type="button"><span aria-hidden="true">▤</span> {english ? "Manage Providers" : "管理供应商"}</button><button disabled={isLoading || isMutating} onClick={() => void load(port, ownerUserId, true)} type="button"><span aria-hidden="true">↻</span> {english ? "Sync" : "同步"}</button></div><button className="is-primary" disabled={!dirty || isMutating} onClick={() => void save(port)} type="button"><span aria-hidden="true">✓</span> {isMutating ? (english ? "Saving…" : "保存中…") : (english ? "Save All" : "保存全部")}</button></div>
+      </ModelCard>
 
       <ModelCard icon="⇄" title={english ? "Default Models" : "默认模型"} subtitle={english ? "Only enabled models with available credentials can be selected." : "默认模型只从已启用且凭据可用的配置中选择。"}>
         <DefaultModelRow
@@ -139,6 +136,6 @@ function ProviderEditor({ english, draft, disabled, onBack, onSave }: { english:
 }
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange(value: boolean): void }) { return <label className="ai-model-toggle"><span>{label}</span><input checked={checked} onChange={(event) => onChange(event.target.checked)} type="checkbox" /><i /></label>; }
-function ModelCard({ icon, title, subtitle, children }: { icon: string; title: string; subtitle: string; children: ReactNode }) { return <section className="ai-model-card"><header><span aria-hidden="true">{icon}</span><div><h3>{title}</h3><p>{subtitle}</p></div></header><div className="ai-model-card__body">{children}</div></section>; }
+function ModelCard({ icon, title, subtitle, children }: { icon: string; title: string; subtitle: string; children: ReactNode }) { return <section className="ai-model-card"><header><span aria-hidden="true">{icon}</span><h3>{title}</h3></header><div className="ai-model-card__body">{children}</div><p className="ai-model-card__footnote">{subtitle}</p></section>; }
 function ModelStatus({ title, detail, loading, action, onAction }: { title: string; detail: string; loading?: boolean; action?: string; onAction?(): void }) { return <div className="ai-model-status"><span aria-hidden="true">{loading ? <i className="mini-spinner" /> : "!"}</span><h2>{title}</h2><p>{detail}</p>{action && <button onClick={onAction} type="button">{action}</button>}</div>; }
 function thinkingLabel(value: string, english: boolean) { return value === "none" ? (english ? "Off" : "关闭") : value; }

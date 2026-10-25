@@ -24,6 +24,58 @@ describe("RequirementSurveyCenterView", () => {
     expect(screen.getByRole("button", { name: /Beta/ })).toBeVisible();
     expect(port.listProjectRequirementSurveys).toHaveBeenCalledWith("owner-1", "project-1");
     expect(port.listProjectRequirementSurveys).toHaveBeenCalledWith("owner-1", "project-2");
+    expect(screen.getByRole("contentinfo", { name: "项目分页" })).toHaveTextContent("1–2 / 2");
+  });
+
+  it("paginates projects with the macOS 10, 20 and 50 item sizes", async () => {
+    const projects = Array.from({ length: 25 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      title: `项目 ${String(index + 1).padStart(2, "0")}`,
+    }));
+    const port = stubPort({ listProjectRequirementSurveys: vi.fn(async () => []) });
+    render(<RequirementSurveyCenterView hostReady ownerUserId="owner-1" projects={projects} port={port} />);
+
+    expect(await screen.findByRole("button", { name: /项目 01/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /项目 21/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("contentinfo", { name: "项目分页" })).toHaveTextContent("1–20 / 25");
+
+    fireEvent.click(screen.getByRole("button", { name: "项目下一页" }));
+    expect(screen.getByRole("button", { name: /项目 21/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /项目 01/ })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "项目每页" }), { target: { value: "10" } });
+    expect(screen.getByRole("button", { name: /项目 01/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /项目 11/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("contentinfo", { name: "项目分页" })).toHaveTextContent("1–10 / 25");
+  });
+
+  it("paginates project surveys and preserves the page while inspecting one survey", async () => {
+    const surveys = Array.from({ length: 25 }, (_, index) => survey({
+      surveyId: `survey-${index + 1}`,
+      title: `调研 ${String(index + 1).padStart(2, "0")}`,
+      createdAtUnixMs: index + 1,
+      updatedAtUnixMs: index + 1,
+    }));
+    const port = stubPort({ listProjectRequirementSurveys: vi.fn(async () => surveys) });
+    render(<RequirementSurveyCenterView hostReady ownerUserId="owner-1" projects={[
+      { id: "project-1", title: "Alpha" },
+    ]} port={port} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Alpha/ }));
+    expect(screen.getByRole("button", { name: /调研 25/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /调研 05/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("contentinfo", { name: "调研分页" })).toHaveTextContent("1–20 / 25");
+
+    fireEvent.click(screen.getByRole("button", { name: "调研下一页" }));
+    fireEvent.click(screen.getByRole("button", { name: /调研 05/ }));
+    fireEvent.click(screen.getByRole("button", { name: "‹ 返回调研列表" }));
+    expect(screen.getByRole("button", { name: /调研 05/ })).toBeVisible();
+    expect(screen.getByRole("contentinfo", { name: "调研分页" })).toHaveTextContent("21–25 / 25");
+
+    fireEvent.click(screen.getByRole("button", { name: "‹ 返回项目列表" }));
+    fireEvent.click(screen.getByRole("button", { name: /Alpha/ }));
+    expect(screen.getByRole("button", { name: /调研 25/ })).toBeVisible();
+    expect(screen.getByRole("contentinfo", { name: "调研分页" })).toHaveTextContent("1–20 / 25");
   });
 
   it("opens a project, answers every question kind and resumes the exact survey", async () => {
@@ -32,6 +84,7 @@ describe("RequirementSurveyCenterView", () => {
         { questionId: "goal", prompt: "需要交付什么？", responseKind: "text", required: true, options: [] },
         { questionId: "mode", prompt: "选择模式", responseKind: "single_choice", required: true, options: ["A", "B"] },
         { questionId: "areas", prompt: "选择范围", responseKind: "multiple_choice", required: true, options: ["UI", "Host"] },
+        { questionId: "optional", prompt: "可选范围", responseKind: "multiple_choice", required: false, options: ["文档"] },
         { questionId: "ship", prompt: "是否发布", responseKind: "boolean", required: true, options: [] },
       ],
     });
@@ -62,6 +115,8 @@ describe("RequirementSurveyCenterView", () => {
     fireEvent.click(within(detail).getByLabelText("A"));
     fireEvent.click(within(detail).getByLabelText("UI"));
     fireEvent.click(within(detail).getByLabelText("Host"));
+    fireEvent.click(within(detail).getByLabelText("文档"));
+    fireEvent.click(within(detail).getByLabelText("文档"));
     fireEvent.click(within(detail).getByLabelText("否"));
     fireEvent.click(within(detail).getByRole("button", { name: "提交并继续" }));
 
@@ -69,7 +124,7 @@ describe("RequirementSurveyCenterView", () => {
       "owner-1", "project-1", "survey-1", 1,
       { goal: "交付 Alpha", mode: "A", areas: ["UI", "Host"], ship: false },
     ));
-    expect(await within(detail).findByText(/原 Run 已恢复/)).toBeVisible();
+    expect(await within(detail).findByText(/下方可查看方案或后续回复/)).toBeVisible();
   });
 
   it("does not load surveys until the Host is ready", () => {
@@ -88,6 +143,7 @@ describe("RequirementSurveyCenterView", () => {
     });
     const currentPlan = plan({ markdown: "# 实施方案" });
     const confirmPlan = vi.fn(async () => ({ ...currentPlan, confirmedAtUnixMs: 50 }));
+    const onOpenConversation = vi.fn();
     const port = stubPort({
       listProjectRequirementSurveys: vi.fn(async () => [resolved]),
       loadFollowUp: vi.fn(async () => ({
@@ -98,7 +154,7 @@ describe("RequirementSurveyCenterView", () => {
       })),
       confirmPlan,
     });
-    render(<RequirementSurveyCenterView hostReady ownerUserId="owner-1" projects={[
+    render(<RequirementSurveyCenterView hostReady ownerUserId="owner-1" onOpenConversation={onOpenConversation} projects={[
       { id: "project-1", title: "Alpha" },
     ]} port={port} />);
     fireEvent.click(await screen.findByRole("button", { name: /Alpha/ }));
@@ -109,6 +165,8 @@ describe("RequirementSurveyCenterView", () => {
       "owner-1", "project-1", "survey-1", 1,
     ));
     expect(await screen.findByText("方案已确认，本次不会自动执行任何任务")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "返回原对话，安排下一步" }));
+    expect(onOpenConversation).toHaveBeenCalledWith("project-1", "conversation-1");
   });
 });
 
