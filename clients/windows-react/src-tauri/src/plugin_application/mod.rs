@@ -26,6 +26,7 @@ use runtime::{
 const MAXIMUM_INSTALLATIONS: usize = 1_000;
 const MAXIMUM_MANIFEST_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAXIMUM_UI_CONTRIBUTIONS: usize = 64;
+const MAXIMUM_UI_ASSETS: usize = 256;
 const MAXIMUM_BRIDGE_CAPABILITIES: usize = 64;
 const MAXIMUM_MCP_SERVERS: usize = 64;
 
@@ -440,6 +441,8 @@ struct PluginUiContribution {
     surface: Option<String>,
     #[serde(default)]
     bridge_capabilities: Vec<String>,
+    #[serde(default)]
+    assets: Vec<PathReference>,
     runtime: Option<PluginUiRuntime>,
 }
 
@@ -901,6 +904,7 @@ fn project_application(
     if !source.is_file() {
         return Err(plugin_catalog_error());
     }
+    validate_ui_files(plugin_root, installation_root, contribution)?;
     if contribution.bridge_capabilities.len() > MAXIMUM_BRIDGE_CAPABILITIES {
         return Err(plugin_catalog_error());
     }
@@ -968,6 +972,54 @@ fn project_application(
         release_id: record.spec.release_id.clone(),
         release_digest: record.spec.release_digest.clone(),
     })
+}
+
+fn validate_ui_files(
+    plugin_root: &Path,
+    installation_root: &Path,
+    contribution: &PluginUiContribution,
+) -> Result<(), String> {
+    let source = contribution.source.path();
+    if !source.starts_with("./ui/")
+        || !source
+            .rsplit_once('.')
+            .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("html"))
+        || contribution.assets.len() > MAXIMUM_UI_ASSETS
+    {
+        return Err(plugin_catalog_error());
+    }
+    let mut observed = BTreeSet::new();
+    for asset in &contribution.assets {
+        let path = asset.path();
+        let extension = path
+            .rsplit_once('.')
+            .map(|(_, extension)| extension.to_ascii_lowercase());
+        let supported = extension.as_deref().is_some_and(|extension| {
+            matches!(
+                extension,
+                "js" | "mjs"
+                    | "css"
+                    | "json"
+                    | "svg"
+                    | "png"
+                    | "jpg"
+                    | "jpeg"
+                    | "webp"
+                    | "gif"
+                    | "woff"
+                    | "woff2"
+            )
+        });
+        if !path.starts_with("./ui/")
+            || !supported
+            || path == source
+            || !observed.insert(path)
+            || !resolve_installed_file(plugin_root, installation_root, path)?.is_file()
+        {
+            return Err(plugin_catalog_error());
+        }
+    }
+    Ok(())
 }
 
 fn resolve_installed_file(

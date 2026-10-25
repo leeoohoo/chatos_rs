@@ -24,9 +24,10 @@ use std::{
     },
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener as TokioTcpListener, TcpStream},
     process::{Child, Command},
-    sync::{Mutex, Notify},
+    sync::{Mutex, Notify, Semaphore},
     time::{sleep, timeout, Duration, Instant},
 };
 use uuid::Uuid;
@@ -41,6 +42,11 @@ const HEALTH_REQUEST_TIMEOUT_MS: u64 = 700;
 const HEALTH_RETRY_MS: u64 = 80;
 const TERMINATION_GRACE_MS: u64 = 2_000;
 const MAXIMUM_BRIDGE_REQUEST_BYTES: usize = 256 * 1_024;
+const MAXIMUM_STATIC_ENTRY_BYTES: u64 = 2 * 1_024 * 1_024;
+const MAXIMUM_STATIC_ASSET_BYTES: u64 = 8 * 1_024 * 1_024;
+const MAXIMUM_STATIC_TOTAL_BYTES: u64 = 32 * 1_024 * 1_024;
+const MAXIMUM_STATIC_REQUEST_BYTES: usize = 16 * 1_024;
+const MAXIMUM_STATIC_CONNECTIONS: usize = 64;
 const HOST_CONTEXT_READ_CAPABILITY: &str = "host.context.read";
 
 #[derive(Clone, Debug, Deserialize)]
@@ -158,9 +164,33 @@ struct RunningPluginApplication {
     version: String,
     base_url: String,
     health_path: String,
-    termination: ProcessTermination,
+    termination: RuntimeTermination,
     alive: AtomicBool,
     finished: Notify,
+}
+
+enum RuntimeTermination {
+    Process(ProcessTermination),
+    Static(Arc<StaticServerShutdown>),
+}
+
+#[derive(Default)]
+struct StaticServerShutdown {
+    requested: AtomicBool,
+    wake: Notify,
+}
+
+impl StaticServerShutdown {
+    fn request(&self) {
+        self.requested.store(true, Ordering::SeqCst);
+        self.wake.notify_one();
+    }
+}
+
+#[derive(Clone)]
+struct StaticAsset {
+    bytes: Arc<Vec<u8>>,
+    content_type: &'static str,
 }
 
 #[derive(Clone)]
@@ -286,21 +316,14 @@ impl PluginApplicationRuntime {
             self.release_reservation(&key).await;
             return Err(stale_launch_error());
         }
-        let prepared = match prepare_runtime_process(&resolved, &runtime_context) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.release_reservation(&key).await;
-                return Err(error);
-            }
-        };
-        let launch_timeout = prepared.launch_timeout_ms;
-        let process = match spawn_runtime_process(&resolved, prepared).await {
-            Ok(process) => process,
-            Err(error) => {
-                self.release_reservation(&key).await;
-                return Err(error);
-            }
-        };
+        let (process, launch_timeout) =
+            match spawn_application_runtime(&resolved, &runtime_context).await {
+                Ok(result) => result,
+                Err(error) => {
+                    self.release_reservation(&key).await;
+                    return Err(error);
+                }
+            };
         self.install_reserved_process(key.clone(), process.clone())
             .await;
         if let Err(error) = self.wait_until_healthy(&process, launch_timeout).await {
@@ -640,14 +663,24 @@ impl PluginApplicationRuntime {
 
 impl RunningPluginApplication {
     fn terminate_now(&self) {
-        let _ = self.termination.terminate(true);
+        match &self.termination {
+            RuntimeTermination::Process(termination) => {
+                let _ = termination.terminate(true);
+            }
+            RuntimeTermination::Static(shutdown) => shutdown.request(),
+        }
     }
 
     async fn stop(&self) {
         if !self.alive.load(Ordering::SeqCst) {
             return;
         }
-        let _ = self.termination.terminate(false);
+        match &self.termination {
+            RuntimeTermination::Process(termination) => {
+                let _ = termination.terminate(false);
+            }
+            RuntimeTermination::Static(shutdown) => shutdown.request(),
+        }
         if timeout(
             Duration::from_millis(TERMINATION_GRACE_MS),
             self.wait_finished(),
@@ -657,7 +690,12 @@ impl RunningPluginApplication {
         {
             return;
         }
-        let _ = self.termination.terminate(true);
+        match &self.termination {
+            RuntimeTermination::Process(termination) => {
+                let _ = termination.terminate(true);
+            }
+            RuntimeTermination::Static(shutdown) => shutdown.request(),
+        }
         let _ = timeout(
             Duration::from_millis(TERMINATION_GRACE_MS),
             self.wait_finished(),
@@ -974,6 +1012,255 @@ fn resolve_runtime_context(
     })
 }
 
+async fn spawn_application_runtime(
+    resolved: &ResolvedPluginApplication,
+    context: &ResolvedRuntimeContext,
+) -> Result<(Arc<RunningPluginApplication>, u64), String> {
+    if resolved.contribution.runtime.is_none() {
+        return spawn_static_runtime(resolved)
+            .await
+            .map(|process| (process, 2_000));
+    }
+    let prepared = prepare_runtime_process(resolved, context)?;
+    let launch_timeout = prepared.launch_timeout_ms;
+    let process = spawn_runtime_process(resolved, prepared).await?;
+    Ok((process, launch_timeout))
+}
+
+async fn spawn_static_runtime(
+    resolved: &ResolvedPluginApplication,
+) -> Result<Arc<RunningPluginApplication>, String> {
+    let assets = Arc::new(load_static_assets(resolved)?);
+    let listener = TokioTcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .await
+        .map_err(|_| "无法启动静态 Plugin 应用服务。".to_owned())?;
+    let address = listener
+        .local_addr()
+        .map_err(|_| "无法读取静态 Plugin 应用地址。".to_owned())?;
+    let shutdown = Arc::new(StaticServerShutdown::default());
+    let process = Arc::new(RunningPluginApplication {
+        release_id: resolved.record.spec.release_id.clone(),
+        release_digest: resolved.record.spec.release_digest.clone(),
+        version: resolved.manifest.version.clone(),
+        base_url: format!("http://127.0.0.1:{}/", address.port()),
+        health_path: "/".into(),
+        termination: RuntimeTermination::Static(shutdown.clone()),
+        alive: AtomicBool::new(true),
+        finished: Notify::new(),
+    });
+    tokio::spawn(run_static_server(
+        process.clone(),
+        listener,
+        assets,
+        shutdown,
+    ));
+    Ok(process)
+}
+
+fn load_static_assets(
+    resolved: &ResolvedPluginApplication,
+) -> Result<HashMap<String, StaticAsset>, String> {
+    let source_path = resolved.contribution.source.path();
+    let source = static_asset(
+        &resolved.installation_root,
+        source_path,
+        MAXIMUM_STATIC_ENTRY_BYTES,
+    )?;
+    if source.content_type != "text/html; charset=utf-8" {
+        return Err(plugin_catalog_error());
+    }
+    let mut total_bytes = source.bytes.len() as u64;
+    let mut routes = HashMap::new();
+    routes.insert("/".to_owned(), source.clone());
+    insert_static_route(&mut routes, encoded_static_route(source_path)?, source)?;
+
+    let source_directory = source_path
+        .rsplit_once('/')
+        .map(|(directory, _)| directory)
+        .ok_or_else(plugin_catalog_error)?;
+    let source_prefix = format!("{source_directory}/");
+    for reference in &resolved.contribution.assets {
+        let path = reference.path();
+        let asset = static_asset(
+            &resolved.installation_root,
+            path,
+            MAXIMUM_STATIC_ASSET_BYTES,
+        )?;
+        total_bytes = total_bytes
+            .checked_add(asset.bytes.len() as u64)
+            .filter(|total| *total <= MAXIMUM_STATIC_TOTAL_BYTES)
+            .ok_or_else(plugin_catalog_error)?;
+        insert_static_route(&mut routes, encoded_static_route(path)?, asset.clone())?;
+        if let Some(relative) = path.strip_prefix(&source_prefix) {
+            insert_static_route(&mut routes, encoded_static_route(relative)?, asset)?;
+        }
+    }
+    Ok(routes)
+}
+
+fn static_asset(root: &Path, relative: &str, maximum: u64) -> Result<StaticAsset, String> {
+    let path = resolve_non_linked_file(root, relative)?;
+    let content_type = static_content_type(&path).ok_or_else(plugin_catalog_error)?;
+    Ok(StaticAsset {
+        bytes: Arc::new(bounded_file(&path, maximum)?),
+        content_type,
+    })
+}
+
+fn static_content_type(path: &Path) -> Option<&'static str> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "html" => Some("text/html; charset=utf-8"),
+        "js" | "mjs" => Some("text/javascript; charset=utf-8"),
+        "css" => Some("text/css; charset=utf-8"),
+        "json" => Some("application/json; charset=utf-8"),
+        "svg" => Some("image/svg+xml"),
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        "woff" => Some("font/woff"),
+        "woff2" => Some("font/woff2"),
+        _ => None,
+    }
+}
+
+fn encoded_static_route(relative: &str) -> Result<String, String> {
+    let relative = relative.strip_prefix("./").unwrap_or(relative);
+    let base = reqwest::Url::parse("http://127.0.0.1/").map_err(|_| plugin_catalog_error())?;
+    let url = base.join(relative).map_err(|_| plugin_catalog_error())?;
+    if url.host_str() != Some("127.0.0.1") || url.path().contains("..") {
+        return Err(plugin_catalog_error());
+    }
+    Ok(url.path().to_owned())
+}
+
+fn insert_static_route(
+    routes: &mut HashMap<String, StaticAsset>,
+    route: String,
+    asset: StaticAsset,
+) -> Result<(), String> {
+    if route == "/" || routes.insert(route, asset).is_some() {
+        return Err(plugin_catalog_error());
+    }
+    Ok(())
+}
+
+async fn run_static_server(
+    process: Arc<RunningPluginApplication>,
+    listener: TokioTcpListener,
+    assets: Arc<HashMap<String, StaticAsset>>,
+    shutdown: Arc<StaticServerShutdown>,
+) {
+    let connections = Arc::new(Semaphore::new(MAXIMUM_STATIC_CONNECTIONS));
+    loop {
+        if shutdown.requested.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::select! {
+            _ = shutdown.wake.notified() => break,
+            accepted = listener.accept() => {
+                let Ok((stream, peer)) = accepted else { break };
+                if !peer.ip().is_loopback() {
+                    continue;
+                }
+                let Ok(permit) = connections.clone().try_acquire_owned() else {
+                    continue;
+                };
+                let assets = assets.clone();
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    let _ = serve_static_request(stream, &assets).await;
+                });
+            }
+        }
+    }
+    process.alive.store(false, Ordering::SeqCst);
+    process.finished.notify_waiters();
+}
+
+async fn serve_static_request(
+    mut stream: TcpStream,
+    assets: &HashMap<String, StaticAsset>,
+) -> Result<(), String> {
+    let mut request = Vec::with_capacity(1_024);
+    let mut buffer = [0_u8; 1_024];
+    loop {
+        let count = timeout(Duration::from_secs(2), stream.read(&mut buffer))
+            .await
+            .map_err(|_| plugin_runtime_error())?
+            .map_err(|_| plugin_runtime_error())?;
+        if count == 0 {
+            return Err(plugin_runtime_error());
+        }
+        request.extend_from_slice(&buffer[..count]);
+        if request.len() > MAXIMUM_STATIC_REQUEST_BYTES {
+            return write_static_response(
+                &mut stream,
+                "431 Request Header Fields Too Large",
+                None,
+                false,
+            )
+            .await;
+        }
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    let first_line = request
+        .split(|byte| *byte == b'\n')
+        .next()
+        .and_then(|line| std::str::from_utf8(line).ok())
+        .map(str::trim_end)
+        .unwrap_or_default();
+    let mut parts = first_line.split_ascii_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let target = parts.next().unwrap_or_default();
+    let version = parts.next().unwrap_or_default();
+    if parts.next().is_some() || !matches!(version, "HTTP/1.0" | "HTTP/1.1") {
+        return write_static_response(&mut stream, "400 Bad Request", None, false).await;
+    }
+    if !matches!(method, "GET" | "HEAD") {
+        return write_static_response(&mut stream, "405 Method Not Allowed", None, false).await;
+    }
+    let route = target.split_once('?').map_or(target, |(path, _)| path);
+    if route.contains('#') || !route.starts_with('/') || route.contains("..") {
+        return write_static_response(&mut stream, "400 Bad Request", None, false).await;
+    }
+    match assets.get(route) {
+        Some(asset) => {
+            write_static_response(&mut stream, "200 OK", Some(asset), method == "HEAD").await
+        }
+        None => write_static_response(&mut stream, "404 Not Found", None, method == "HEAD").await,
+    }
+}
+
+async fn write_static_response(
+    stream: &mut TcpStream,
+    status: &str,
+    asset: Option<&StaticAsset>,
+    head_only: bool,
+) -> Result<(), String> {
+    let empty = Vec::new();
+    let bytes = asset.map_or(empty.as_slice(), |asset| asset.bytes.as_slice());
+    let content_type = asset.map_or("text/plain; charset=utf-8", |asset| asset.content_type);
+    let headers = format!(
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'\r\nCross-Origin-Resource-Policy: same-origin\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
+        bytes.len()
+    );
+    stream
+        .write_all(headers.as_bytes())
+        .await
+        .map_err(|_| plugin_runtime_error())?;
+    if !head_only {
+        stream
+            .write_all(bytes)
+            .await
+            .map_err(|_| plugin_runtime_error())?;
+    }
+    let _ = stream.shutdown().await;
+    Ok(())
+}
+
 fn prepare_runtime_process(
     resolved: &ResolvedPluginApplication,
     context: &ResolvedRuntimeContext,
@@ -982,7 +1269,7 @@ fn prepare_runtime_process(
         .contribution
         .runtime
         .as_ref()
-        .ok_or_else(|| "Windows 尚未准入静态 Plugin 应用页面。".to_owned())?;
+        .ok_or_else(plugin_runtime_error)?;
     let (executable, prefix_arguments) =
         resolve_package_executable(&resolved.installation_root, &runtime.bin)?;
     let port = available_loopback_port()?;
@@ -1092,7 +1379,7 @@ async fn spawn_runtime_process(
         version: resolved.manifest.version.clone(),
         base_url: prepared.base_url,
         health_path: prepared.health_path,
-        termination,
+        termination: RuntimeTermination::Process(termination),
         alive: AtomicBool::new(true),
         finished: Notify::new(),
     });
@@ -1412,7 +1699,9 @@ fn plugin_runtime_error() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin_application::{load_manifest, project_application, PluginRuntimeContext};
+    use crate::plugin_application::{
+        load_manifest, project_application, PathReference, PluginRuntimeContext,
+    };
     use chatos_local_agent_protocol::{LocalPluginInstallationRecord, LocalPluginInstallationSpec};
     use serde_json::json;
     use std::io::Write as _;
@@ -1667,6 +1956,86 @@ mod tests {
             .contains("失效"));
         runtime.reset().await;
         assert_ne!(runtime.epoch(), epoch);
+        assert!(runtime.state.lock().await.processes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn static_application_serves_only_declared_bounded_assets_and_keeps_bridge_binding() {
+        let mut fixture = RuntimeFixture::new();
+        fs::write(
+            fixture.installation.join("ui/index.html"),
+            "<script type=\"module\" src=\"./app.js\"></script><main>Static Plugin</main>",
+        )
+        .unwrap();
+        fs::write(
+            fixture.installation.join("ui/app.js"),
+            "window.staticReady = true;",
+        )
+        .unwrap();
+        fs::write(fixture.installation.join("ui/private.txt"), "not declared").unwrap();
+        fixture.resolved.contribution.runtime = None;
+        fixture.resolved.contribution.assets = vec![PathReference::Text("./ui/app.js".into())];
+        fixture.resolved.application.requires_local_runtime = false;
+        let runtime = fixture.runtime();
+        let launch = runtime
+            .launch(
+                runtime.epoch(),
+                fixture.request(1),
+                fixture.resolved.clone(),
+            )
+            .await
+            .unwrap();
+
+        let client = Client::builder().no_proxy().build().unwrap();
+        let entry = client.get(&launch.url).send().await.unwrap();
+        assert!(entry.status().is_success());
+        assert_eq!(
+            entry.headers()["x-content-type-options"].to_str().unwrap(),
+            "nosniff"
+        );
+        assert!(entry.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("connect-src 'none'"));
+        assert!(entry.text().await.unwrap().contains("Static Plugin"));
+
+        let script = client
+            .get(format!("{}app.js", launch.url))
+            .send()
+            .await
+            .unwrap();
+        assert!(script.status().is_success());
+        assert_eq!(
+            script.headers()["content-type"].to_str().unwrap(),
+            "text/javascript; charset=utf-8"
+        );
+        assert!(script.text().await.unwrap().contains("staticReady"));
+        assert_eq!(
+            client
+                .get(format!("{}private.txt", launch.url))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::NOT_FOUND
+        );
+
+        let response = runtime
+            .bridge_request(PluginApplicationBridgeRequest {
+                owner_user_id: "owner-1".into(),
+                presentation_id: "presentation-1".into(),
+                generation: 1,
+                session_id: launch.session_id,
+                host_session_nonce: launch.host_session_nonce,
+                origin: launch.bridge_origin,
+                request_id: "static-context".into(),
+                method: "host.context.read".into(),
+                payload: json!({}),
+            })
+            .await
+            .unwrap();
+        assert_eq!(response.request_id, "static-context");
+        runtime.reset().await;
         assert!(runtime.state.lock().await.processes.is_empty());
     }
 

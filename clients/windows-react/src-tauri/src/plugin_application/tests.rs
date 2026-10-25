@@ -554,6 +554,50 @@ async fn local_http_application_requires_component_scoped_process_spawn() {
 }
 
 #[tokio::test]
+async fn catalog_admits_static_workbench_with_only_declared_ui_assets() {
+    let fixture = CatalogFixture::new();
+    fs::write(
+        fixture.installation.join("ui/app.js"),
+        "window.ready = true;",
+    )
+    .unwrap();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["ui"][0].as_object_mut().unwrap().remove("runtime");
+    manifest["ui"][0]["assets"] = json!(["./ui/app.js"]);
+    manifest["permissions"] = json!([]);
+    fixture.write_manifest(manifest);
+    let record = fixture.record();
+    let client = catalog_client(&record);
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let applications = manager.list(&client, "owner-1").await.unwrap();
+
+    assert_eq!(applications.len(), 1);
+    assert!(!applications[0].requires_local_runtime);
+}
+
+#[tokio::test]
+async fn catalog_rejects_static_assets_outside_the_declared_ui_tree() {
+    let fixture = CatalogFixture::new();
+    fs::write(
+        fixture.installation.join("private.js"),
+        "window.secret = true;",
+    )
+    .unwrap();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["ui"][0].as_object_mut().unwrap().remove("runtime");
+    manifest["ui"][0]["assets"] = json!(["./private.js"]);
+    fixture.write_manifest(manifest);
+    let record = fixture.record();
+    let client = catalog_client(&record);
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let applications = manager.list(&client, "owner-1").await.unwrap();
+
+    assert!(applications.is_empty());
+}
+
+#[tokio::test]
 async fn unsafe_runtime_health_path_is_not_admitted() {
     let fixture = CatalogFixture::new();
     let mut manifest = CatalogFixture::valid_manifest();
