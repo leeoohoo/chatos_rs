@@ -26,8 +26,9 @@ use crate::{
     host_lifecycle::HostManager,
     plugin_application::PluginApplicationManager,
     plugin_installer::{
-        install_git_package, install_local_package, install_marketplace_package,
-        install_npm_package_source, resolve_executable, CommittedPluginPackage,
+        install_git_package, install_local_package, install_marketplace_package, install_npm_mcp,
+        install_npm_package_source, resolve_executable, CommittedPluginPackage, NpmMcpDraft,
+        NpmMcpInspection,
     },
     plugin_integrity::{
         requires_installation_integrity, secure_component_revision, verify_installation_integrity,
@@ -346,6 +347,33 @@ pub(crate) async fn install_npm_plugin_source(
         package,
     )
     .await
+}
+
+pub(crate) async fn install_custom_npm_mcp(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    draft: NpmMcpDraft,
+    expected_fingerprint: String,
+) -> Result<(LocalPluginInstallResult, NpmMcpInspection), String> {
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
+    let (package, inspection) =
+        install_npm_mcp(&settings.plugin_root, &draft, &expected_fingerprint).await?;
+    let result = finish_local_plugin_install(
+        authentication,
+        host,
+        settings,
+        applications,
+        owner_user_id,
+        generation,
+        package,
+    )
+    .await?;
+    Ok((result, inspection))
 }
 
 async fn finish_local_plugin_install(

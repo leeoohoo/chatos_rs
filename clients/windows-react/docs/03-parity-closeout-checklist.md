@@ -20,17 +20,18 @@ Windows 产品版本：`3.0.9`
 - [x] Plugin 安装助手不再只是提示文案：专用 `main_chat` capability、精确联系人/Run/capability 复验以及 `plugin_installer_inspect_source/install_source` worker 已接通。本机 ChatOS Plugin 目录执行稳定内容指纹、显式安装意图、重新复制复验、逐文件完整性、Host 元数据事务与目录回滚；链接、reparse、特殊文件、越界/重叠目录、超限内容和未准入环境变量均失败关闭。
 - [x] Plugin 安装助手的 Git 来源已闭环：只接受用户当前消息明确给出的无凭据 HTTPS URL 和安全 ref/subdirectory；使用隔离 bare fetch，禁用交互、Hook、文件协议和子模块，不 checkout 工作树或运行仓库脚本；archive、文件数、解包体积、路径和文件类型均有界，安装时重新获取并复验预检指纹后进入同一原子提交/回滚链。
 - [x] Plugin 安装助手的固定版本 npm 来源已闭环：`search_npm/resolve_npm` 读取公共 Registry 的有界不可信元数据并固定精确语义版本；source 获取只接受 `registry.npmjs.org` HTTPS tarball，限制 512 MiB 并复验 sha512 integrity，不读取用户 npm 配置、凭据或运行生命周期脚本；安装时重新下载并复验内容指纹后进入同一原子提交/回滚链。
+- [x] 普通 npm MCP 的 `inspect_npm/install_npm` 已闭环：使用隔离 npm 配置和私有 cache，禁用 lifecycle scripts/audit/fund，审计 v3 lockfile 的 Registry HTTPS + sha512 固定依赖；移除链接/shim、冻结 Node 运行时并生成 ChatOS 清单后，在 Job Object 中真实执行 initialize/tools/list。内容、启动参数、access profile 与完整工具 schema 共同形成指纹，安装时全部重做并复验后进入 Host 元数据事务和目录回滚链；公网官方 MCP Everything 已完成预检与重复安装 smoke。
 
 ## B. 本次交付前必须关闭
 
 - [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（132 个测试文件、489 项测试）。
-- [x] Windows Tauri Rust 全量测试、两项真实 sidecar 集成测试、一次公网 HTTPS Git 获取 smoke、一次公网 npm Registry 获取 smoke、Rustfmt 和 Clippy 全部通过（447 项常规测试 + 2 项真实 sidecar 测试 + 1 项 Git smoke + 1 项 npm smoke）。
+- [x] Windows Tauri Rust 全量测试、两项真实 sidecar 集成测试、一次公网 HTTPS Git 获取 smoke、一次公网 npm Registry 获取 smoke、一次公网 npm MCP 隔离预检与安装 smoke、Rustfmt 和 Clippy 全部通过（449 项常规测试 + 2 项真实 sidecar 测试 + 1 项 Git smoke + 1 项 npm Registry smoke + 1 项 npm MCP smoke）。
 - [x] 重新生成版本为 `3.0.9` 的 Release EXE、MSI、NSIS，并记录 SHA-256：
-  - `chatos-windows-react.exe`：`afa7c882126a1409608f9c84fc1e98dcb60b5213ddbb93e93f11b5e984251bea`
+  - `chatos-windows-react.exe`：`7cd32afe5aab3b538cd0992bccbb0a6c9976b2e85cd1cbe064a4769beb8e396a`
   - `chatos_local_agent_host.exe`：`5f697fced2658ac59a3f9fb4ff5d167ac033545ed0f0c995363c754fcc0ebf66`
-  - `ChatOS_3.0.9_x64_en-US.msi`：`be5d3437289803bda2481d0d29cf729275c39cfa89efa2b5b3bfb565f23629d2`
-  - `ChatOS_3.0.9_x64-setup.exe`：`bfecb5550b3e20555d540f218c78d72ba851c9b1bfbeffc3a7cd6936ce3e8023`
-- [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、启动、正常退出、卸载和残留清理；固定版本 npm 来源构建产物连续两次通过 20 秒门限，成功报告为 `%TEMP%\chatos-windows-install-smoke-3.0.9-npm-source-1.json` 和 `%TEMP%\chatos-windows-install-smoke-3.0.9-npm-source-2.json`。
+  - `ChatOS_3.0.9_x64_en-US.msi`：`057102c1bb1e0c6d03e25049572fed17be25748064cc46d53a146c97aa002dba`
+  - `ChatOS_3.0.9_x64-setup.exe`：`a933a9c2ea2ec5d990a33b14633275b15c1a7c635f2ca981152104741e35b47c`
+- [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、启动、正常退出、卸载和残留清理；普通 npm MCP 构建产物连续两次通过 20 秒门限，成功报告为 `%TEMP%\chatos-windows-install-smoke-3.0.9-npm-mcp-1.json` 和 `%TEMP%\chatos-windows-install-smoke-3.0.9-npm-mcp-2.json`。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [ ] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息。代码默认状态与自动回归均为 workspace/首个消息资源，但原生窗口视觉取证仍受下一项工具故障阻塞。
 - [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。
@@ -41,7 +42,6 @@ Windows 产品版本：`3.0.9`
 
 - [ ] Computer Use / 屏幕采集的受信发布闭环。Windows Worker 源码、x64/arm64 构建和 smoke 已通过，但当前用户 Plugin 目录为空；还需产出跨平台 `.tgz`、进入签名 Marketplace Release，并从 Windows 客户端完成安装、启用、`doctor`、屏幕采集和输入实测。
 - [ ] 访问控制的文件与网络隔离。当前 Windows 后端只真实提供账号/项目边界、审批前置校验和 Job Object 进程树回收；没有操作系统级文件沙箱或网络隔离，因此第 31 页只能只读，尚未达到 macOS 截图中的可编辑策略与“文件隔离/网络隔离已就绪”。
-- [ ] 普通 npm MCP 隔离预检。npm search/resolve 与固定版本 ChatOS Plugin source acquire 已闭环；仍缺 macOS 的 `inspect_npm/install_npm` 包装器生成、隔离启动、真实工具列表检查和 access profile 安装链。
 - [ ] Plugin 兼容格式导入。原生 `chatos.plugin.json` + Windows stdio component 已支持；portable Agent、Codex、Claude、独立 Skill 和常见 stdio MCP 配置仍需经过同一指纹和回滚链转换，设置页直接导入也尚未开放。
 - [ ] Plugin 的 skills-only 与 Secret 支持。Windows Host 安装模型目前要求可执行 stdio component；纯 Skills 包和含 `environment_secret_refs` 的 Plugin 会失败关闭。
 
@@ -63,7 +63,7 @@ Windows 产品版本：`3.0.9`
 
 1. [已完成] 关闭 B 组中不依赖 Computer Use 原生管道的构建、测试、重新打包、安装 smoke 和原生进程启动门禁。
 2. [已完成] Plugin 安装助手专用 capability、受限平台工具与原生 ChatOS Plugin 本地目录 inspect/install 闭环。
-3. [进行中] Git 与固定版本 npm 来源已完成；继续补普通 npm MCP 隔离预检、兼容格式、skills-only 与 Secret resolver，逐种格式单独测试，不合并成一个不可审计的大开关。
+3. [进行中] Git、固定版本 npm 来源和普通 npm MCP 隔离预检/安装已完成；继续补兼容格式、skills-only 与 Secret resolver，逐种格式单独测试，不合并成一个不可审计的大开关。
 4. [外部依赖] 完成 Computer Use `.tgz`、Marketplace 签名发布/客户端安装闭环，以及 Windows 安装包正式代码签名。
 5. [待开始] 设计并实现 Windows 文件/网络隔离后，再开放第 31 页策略编辑。
 6. [待验证] 工具恢复后完成 31 页原生逐页视觉、缩放和无障碍验收；随后执行升级/回滚及性能稳定性基线。

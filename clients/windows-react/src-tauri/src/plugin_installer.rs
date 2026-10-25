@@ -8,7 +8,7 @@ use reqwest::Response;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256, Sha512};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -17,8 +17,8 @@ use std::{
 };
 use tar::Archive;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    process::Command,
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader},
+    process::{Child, ChildStdin, ChildStdout, Command},
     time::timeout,
 };
 use uuid::Uuid;
@@ -38,6 +38,16 @@ const GIT_OPERATION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const PROCESS_TERMINATION_GRACE: Duration = Duration::from_secs(1);
 const NPM_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
 const NPM_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const NPM_INSTALL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const MCP_INSPECTION_TIMEOUT: Duration = Duration::from_secs(30);
+const MAXIMUM_NPM_LOCK_BYTES: u64 = 16 * 1_024 * 1_024;
+const MAXIMUM_MCP_RESPONSE_BYTES: usize = 4 * 1_024 * 1_024;
+const MAXIMUM_NPM_PROCESS_OUTPUT_BYTES: usize = 1_024 * 1_024;
+const MAXIMUM_MCP_TOOL_SCHEMA_BYTES: usize = 256 * 1_024;
+const MAXIMUM_MCP_TOOL_CATALOG_BYTES: usize = 16 * 1_024 * 1_024;
+const MAXIMUM_MCP_TOOL_PAGES: usize = 100;
+const MAXIMUM_MCP_TOOLS: usize = 512;
+const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 #[derive(Clone)]
 pub(crate) struct LocalPluginInspection {
@@ -51,6 +61,29 @@ pub(crate) struct CommittedPluginPackage {
     pub(crate) manifest: PluginManifest,
     pub(crate) artifact_sha256: String,
     backup_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NpmMcpDraft {
+    pub(crate) display_name: String,
+    pub(crate) description: String,
+    pub(crate) component_key: String,
+    pub(crate) package_name: String,
+    pub(crate) package_version: String,
+    pub(crate) binary_name: String,
+    pub(crate) arguments: Vec<String>,
+    pub(crate) access_profile: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NpmMcpInspection {
+    pub(crate) fingerprint: String,
+    pub(crate) display_name: String,
+    pub(crate) version: String,
+    pub(crate) source_summary: String,
+    pub(crate) component_key: String,
+    pub(crate) tools: Vec<Value>,
+    content_fingerprint: String,
 }
 
 struct AcquiredPluginSource {
@@ -306,6 +339,37 @@ pub(crate) async fn install_npm_package_source(
     install_copied_package(&acquired.plugin_root, &source_root, expected_fingerprint)
 }
 
+pub(crate) async fn inspect_npm_mcp(
+    plugin_root: &Path,
+    draft: &NpmMcpDraft,
+) -> Result<NpmMcpInspection, String> {
+    let acquired = prepare_npm_mcp_package(plugin_root, draft).await?;
+    inspect_prepared_npm_mcp(&acquired.package_root, draft).await
+}
+
+pub(crate) async fn install_npm_mcp(
+    plugin_root: &Path,
+    draft: &NpmMcpDraft,
+    expected_fingerprint: &str,
+) -> Result<(CommittedPluginPackage, NpmMcpInspection), String> {
+    if !valid_sha256(expected_fingerprint) {
+        return Err(install_error("npm MCP 预检指纹无效"));
+    }
+    let acquired = prepare_npm_mcp_package(plugin_root, draft).await?;
+    let inspection = inspect_prepared_npm_mcp(&acquired.package_root, draft).await?;
+    if inspection.fingerprint != expected_fingerprint {
+        return Err(install_error(
+            "npm MCP package 或工具清单在确认后发生变化，请重新预检",
+        ));
+    }
+    let package = install_copied_package(
+        &acquired.plugin_root,
+        &acquired.package_root,
+        &inspection.content_fingerprint,
+    )?;
+    Ok((package, inspection))
+}
+
 fn install_copied_package(
     plugin_root: &Path,
     source_root: &Path,
@@ -485,6 +549,910 @@ async fn acquire_npm_package(
         return Err(install_error("npm Plugin 解包身份与固定版本不一致"));
     }
     Ok(acquired)
+}
+
+async fn prepare_npm_mcp_package(
+    plugin_root: &Path,
+    draft: &NpmMcpDraft,
+) -> Result<AcquiredPluginSource, String> {
+    validate_npm_mcp_draft(draft)?;
+    let plugin_root = canonical_plugin_root(plugin_root)?;
+    let staging_root = plugin_root
+        .join(".source-staging")
+        .join(Uuid::new_v4().to_string());
+    let package_root = staging_root.join("package");
+    fs::create_dir_all(&package_root).map_err(|_| install_error("无法创建 npm MCP 临时目录"))?;
+    let acquired = AcquiredPluginSource {
+        plugin_root,
+        staging_root,
+        package_root,
+    };
+
+    let dependencies =
+        BTreeMap::from([(draft.package_name.clone(), draft.package_version.clone())]);
+    write_json_file(
+        &acquired.package_root.join("package.json"),
+        &json!({
+            "name": "chatos-custom-mcp-host",
+            "private": true,
+            "version": "1.0.0",
+            "dependencies": dependencies
+        }),
+    )?;
+    let node = find_system_executable("node")
+        .ok_or_else(|| install_error("npm MCP 需要本机 Node.js 运行时"))?;
+    let npm_cli = resolve_npm_cli(&node)?;
+    let npm_config_root = acquired.staging_root.join("npm-config");
+    fs::create_dir_all(&npm_config_root).map_err(|_| install_error("无法创建隔离 npm 配置目录"))?;
+    let user_config = npm_config_root.join("user.npmrc");
+    let global_config = npm_config_root.join("global.npmrc");
+    File::create(&user_config).map_err(|_| install_error("无法创建隔离 npm 配置"))?;
+    File::create(&global_config).map_err(|_| install_error("无法创建隔离 npm 配置"))?;
+    run_isolated_npm(
+        &node,
+        &npm_cli,
+        &acquired.package_root,
+        &acquired.staging_root,
+        &user_config,
+        &global_config,
+        &[
+            "install",
+            "--package-lock-only",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+            "--registry=https://registry.npmjs.org/",
+        ],
+    )
+    .await?;
+    validate_npm_lock(&acquired.package_root.join("package-lock.json"))?;
+    run_isolated_npm(
+        &node,
+        &npm_cli,
+        &acquired.package_root,
+        &acquired.staging_root,
+        &user_config,
+        &global_config,
+        &[
+            "ci",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+            "--registry=https://registry.npmjs.org/",
+        ],
+    )
+    .await?;
+    sanitize_npm_tree(&acquired.package_root)?;
+
+    let dependency_root = draft
+        .package_name
+        .split('/')
+        .fold(acquired.package_root.join("node_modules"), |path, part| {
+            path.join(part)
+        });
+    let dependency_manifest = read_bounded_text(
+        &dependency_root.join("package.json"),
+        MAXIMUM_PACKAGE_JSON_BYTES,
+    )?;
+    let dependency_manifest: Value = serde_json::from_str(&dependency_manifest)
+        .map_err(|_| install_error("npm MCP package.json 无效"))?;
+    if dependency_manifest.get("name").and_then(Value::as_str) != Some(draft.package_name.as_str())
+        || dependency_manifest.get("version").and_then(Value::as_str)
+            != Some(draft.package_version.as_str())
+    {
+        return Err(install_error("npm 安装结果与固定包名和版本不一致"));
+    }
+    let binary_path = npm_binary_path(
+        dependency_manifest.get("bin"),
+        &draft.package_name,
+        &draft.binary_name,
+    )?;
+    let entry_relative = safe_relative_path(Path::new(&binary_path))?;
+    let entry = dependency_root.join(&entry_relative);
+    let entry_metadata =
+        fs::symlink_metadata(&entry).map_err(|_| install_error("npm MCP 可执行入口不存在"))?;
+    if !entry_metadata.is_file() || is_symlink_or_reparse(&entry_metadata) {
+        return Err(install_error("npm MCP 可执行入口无效"));
+    }
+    let entry = entry
+        .canonicalize()
+        .map_err(|_| install_error("npm MCP 可执行入口无效"))?;
+    let dependency_root = dependency_root
+        .canonicalize()
+        .map_err(|_| install_error("npm MCP 安装目录无效"))?;
+    if !entry.starts_with(&dependency_root) {
+        return Err(install_error("npm MCP 可执行入口越界"));
+    }
+    let canonical_package_root = acquired
+        .package_root
+        .canonicalize()
+        .map_err(|_| install_error("npm MCP 安装目录无效"))?;
+    let relative_entry = entry
+        .strip_prefix(&canonical_package_root)
+        .map_err(|_| install_error("npm MCP 可执行入口越界"))?
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    let bin_root = acquired.package_root.join("bin");
+    fs::create_dir_all(&bin_root).map_err(|_| install_error("无法创建 npm MCP 启动目录"))?;
+    let launcher = bin_root.join(format!("{}.exe", draft.component_key));
+    fs::copy(&node, &launcher).map_err(|_| install_error("无法冻结 npm MCP Node.js 运行时"))?;
+    let mut launch_arguments = vec![relative_entry];
+    launch_arguments.extend(draft.arguments.iter().cloned());
+    let permissions = npm_access_permissions(&draft.access_profile, &draft.component_key)?;
+    let manifest_name = npm_mcp_manifest_name(&draft.package_name, &draft.component_key);
+    let description = if draft.description.trim().is_empty() {
+        format!("Custom npm MCP package {}", draft.package_name)
+    } else {
+        draft.description.clone()
+    };
+    let mcp_servers = BTreeMap::from([(
+        draft.component_key.clone(),
+        json!({
+            "type": "stdio",
+            "bin": draft.component_key,
+            "args": launch_arguments,
+            "env": {}
+        }),
+    )]);
+    write_json_file(
+        &acquired.package_root.join("chatos.plugin.json"),
+        &json!({
+            "schemaVersion": 3,
+            "name": manifest_name,
+            "version": draft.package_version,
+            "description": description,
+            "author": {"name": "npm"},
+            "interface": {
+                "displayName": draft.display_name,
+                "shortDescription": description,
+                "longDescription": description,
+                "developerName": "npm",
+                "category": "Developer Tools"
+            },
+            "mcpServers": mcp_servers,
+            "permissions": permissions
+        }),
+    )?;
+    validate_local_package(&acquired.package_root)?;
+    Ok(acquired)
+}
+
+async fn inspect_prepared_npm_mcp(
+    package_root: &Path,
+    draft: &NpmMcpDraft,
+) -> Result<NpmMcpInspection, String> {
+    let local = inspect_local_package(package_root, None)?;
+    let server = local
+        .manifest
+        .mcp_servers
+        .iter()
+        .find(|server| server.component_key() == draft.component_key)
+        .ok_or_else(|| install_error("npm MCP 组件清单无效"))?;
+    let PluginMcpServer::Stdio { bin, args, env, .. } = server else {
+        return Err(install_error("npm MCP 必须使用 stdio transport"));
+    };
+    let executable = resolve_executable(package_root, bin)?;
+    let tools = inspect_mcp_tools(package_root, &executable, args, env).await?;
+    let source_summary = format!(
+        "npm {}@{} · {} {} · {}",
+        draft.package_name,
+        draft.package_version,
+        draft.binary_name,
+        draft.arguments.join(" "),
+        draft.access_profile
+    );
+    let fingerprint = npm_mcp_fingerprint(&local.fingerprint, draft, &tools)?;
+    Ok(NpmMcpInspection {
+        fingerprint,
+        display_name: draft.display_name.clone(),
+        version: draft.package_version.clone(),
+        source_summary,
+        component_key: draft.component_key.clone(),
+        tools,
+        content_fingerprint: local.fingerprint,
+    })
+}
+
+fn validate_npm_mcp_draft(draft: &NpmMcpDraft) -> Result<(), String> {
+    validate_npm_package_name(&draft.package_name)?;
+    validate_exact_version(&draft.package_version)?;
+    validate_npm_binary_name(&draft.binary_name)?;
+    if !valid_executable_name(&draft.component_key)
+        || draft.display_name.trim().is_empty()
+        || draft.display_name.len() > 120
+        || draft.description.len() > 2_000
+        || draft.display_name.contains('\0')
+        || draft.description.contains('\0')
+        || draft.arguments.len() > 64
+        || draft
+            .arguments
+            .iter()
+            .any(|value| value.len() > 2_048 || value.contains('\0'))
+        || !matches!(
+            draft.access_profile.as_str(),
+            "restricted" | "network_client" | "developer_analysis"
+        )
+    {
+        return Err(install_error("npm MCP 安装参数无效"));
+    }
+    Ok(())
+}
+
+fn npm_mcp_manifest_name(package_name: &str, component_key: &str) -> String {
+    let mut stem = package_name
+        .chars()
+        .chain(['-'])
+        .chain(component_key.chars())
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while stem.contains("--") {
+        stem = stem.replace("--", "-");
+    }
+    stem = stem.trim_matches('-').chars().take(40).collect();
+    if stem.is_empty() {
+        stem = "custom-mcp".into();
+    }
+    let identity = format!("{package_name}\0{component_key}");
+    let digest = format!("{:x}", Sha256::digest(identity.as_bytes()));
+    format!("npm-{stem}-{}", &digest[..12])
+}
+
+fn npm_binary_path(
+    value: Option<&Value>,
+    package_name: &str,
+    binary_name: &str,
+) -> Result<String, String> {
+    let value = value.ok_or_else(|| install_error("npm package 没有声明 bin"))?;
+    let path = if let Some(path) = value.as_str() {
+        let implicit_name = package_name.rsplit('/').next().unwrap_or(package_name);
+        (implicit_name == binary_name).then_some(path)
+    } else {
+        value
+            .as_object()
+            .and_then(|values| values.get(binary_name))
+            .and_then(Value::as_str)
+    }
+    .ok_or_else(|| install_error("npm package 没有声明所选 bin"))?;
+    bounded_npm_binary_path(path.trim_start_matches("./"))
+}
+
+fn npm_access_permissions(profile: &str, component_key: &str) -> Result<Vec<Value>, String> {
+    let permissions: &[(&str, &str)] = match profile {
+        "restricted" => &[("process.spawn", "启动用户确认安装的本机 MCP Server")],
+        "network_client" => &[
+            ("process.spawn", "启动用户确认安装的本机 MCP Server"),
+            ("network.client", "允许 MCP 发起出站网络请求"),
+        ],
+        "developer_analysis" => &[
+            ("process.spawn", "启动用户确认安装的本机 MCP Server"),
+            ("network.client", "允许分析工具发起出站网络请求"),
+            ("system.developer-tools.read", "读取并调用本机开发工具链"),
+            ("browser.managed.launch", "启动受控本机浏览器进行动态分析"),
+            ("artifact.create", "在 ChatOS 管理目录中保存分析证据"),
+            ("workspace.read", "读取当前任务绑定的项目文件"),
+        ],
+        _ => return Err(install_error("npm MCP access profile 无效")),
+    };
+    Ok(permissions
+        .iter()
+        .map(|(permission, reason)| {
+            json!({
+                "permission": permission,
+                "required": true,
+                "reason": reason,
+                "components": [component_key]
+            })
+        })
+        .collect())
+}
+
+fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
+    let bytes =
+        serde_json::to_vec_pretty(value).map_err(|_| install_error("无法生成 npm MCP 安装清单"))?;
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| install_error("无法保存 npm MCP 安装清单"))?;
+    file.write_all(&bytes)
+        .map_err(|_| install_error("无法保存 npm MCP 安装清单"))?;
+    file.sync_all()
+        .map_err(|_| install_error("无法保存 npm MCP 安装清单"))
+}
+
+fn find_system_executable(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let extensions: &[&str] = if cfg!(windows) { &[".exe", ""] } else { &[""] };
+    for directory in std::env::split_paths(&path) {
+        for extension in extensions {
+            let candidate = directory.join(format!("{name}{extension}"));
+            let Ok(metadata) = fs::symlink_metadata(&candidate) else {
+                continue;
+            };
+            if !metadata.is_file() || is_symlink_or_reparse(&metadata) {
+                continue;
+            }
+            let Ok(canonical) = candidate.canonicalize() else {
+                continue;
+            };
+            if canonical.is_file() {
+                return Some(external_process_path(&canonical));
+            }
+        }
+    }
+    None
+}
+
+fn resolve_npm_cli(node: &Path) -> Result<PathBuf, String> {
+    let parent = node
+        .parent()
+        .ok_or_else(|| install_error("Node.js 安装目录无效"))?;
+    let candidates = [
+        parent.join("node_modules/npm/bin/npm-cli.js"),
+        parent.join("../lib/node_modules/npm/bin/npm-cli.js"),
+    ];
+    for candidate in candidates {
+        let Ok(metadata) = fs::symlink_metadata(&candidate) else {
+            continue;
+        };
+        if metadata.is_file() && !is_symlink_or_reparse(&metadata) {
+            let canonical = candidate
+                .canonicalize()
+                .map_err(|_| install_error("npm CLI 路径无效"))?;
+            if canonical.is_file() {
+                return Ok(external_process_path(&canonical));
+            }
+        }
+    }
+    Err(install_error("没有找到与 Node.js 配套的 npm CLI"))
+}
+
+#[cfg(windows)]
+fn external_process_path(path: &Path) -> PathBuf {
+    let value = path.to_string_lossy();
+    if let Some(value) = value.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{value}"));
+    }
+    value
+        .strip_prefix(r"\\?\")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+#[cfg(not(windows))]
+fn external_process_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
+async fn run_isolated_npm(
+    node: &Path,
+    npm_cli: &Path,
+    package_root: &Path,
+    staging_root: &Path,
+    user_config: &Path,
+    global_config: &Path,
+    arguments: &[&str],
+) -> Result<(), String> {
+    let node_directory = node
+        .parent()
+        .ok_or_else(|| install_error("Node.js 安装目录无效"))?;
+    let cache = staging_root.join("npm-cache");
+    fs::create_dir_all(&cache).map_err(|_| install_error("无法创建隔离 npm 缓存"))?;
+    let mut command = Command::new(node);
+    command
+        .arg(npm_cli)
+        .args(arguments)
+        .current_dir(package_root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(false)
+        .env_clear()
+        .env("PATH", node_directory)
+        .env("npm_config_userconfig", user_config)
+        .env("npm_config_globalconfig", global_config)
+        .env("npm_config_cache", cache)
+        .env("npm_config_registry", "https://registry.npmjs.org/")
+        .env("npm_config_ignore_scripts", "true")
+        .env("npm_config_audit", "false")
+        .env("npm_config_fund", "false")
+        .env("npm_config_update_notifier", "false")
+        .env("npm_config_fetch_retries", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "Never");
+    for key in ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|_| install_error("无法启动隔离 npm 安装"))?;
+    let termination = ProcessTermination::attach(&child).map_err(|_| {
+        let _ = child.start_kill();
+        install_error("无法隔离 npm 安装进程")
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| install_error("无法读取 npm 安装输出"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| install_error("无法读取 npm 安装错误"))?;
+    let stdout_task = tokio::spawn(read_bounded_process_output(stdout));
+    let stderr_task = tokio::spawn(read_bounded_process_output(stderr));
+    let status = match timeout(NPM_INSTALL_TIMEOUT, child.wait()).await {
+        Ok(result) => result.map_err(|_| install_error("npm 安装进程异常退出"))?,
+        Err(_) => {
+            terminate_child(&mut child, &termination).await;
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+            return Err(install_error("npm 安装超过 5 分钟，已终止"));
+        }
+    };
+    let _ = termination.terminate(true);
+    let stdout = stdout_task.await.unwrap_or_default();
+    let stderr = stderr_task.await.unwrap_or_default();
+    if status.success() {
+        Ok(())
+    } else {
+        #[cfg(test)]
+        eprintln!(
+            "isolated npm diagnostic: {}",
+            safe_process_diagnostic(&stderr, &stdout)
+        );
+        #[cfg(not(test))]
+        let _ = (stdout, stderr);
+        Err(install_error(&format!(
+            "npm 安装失败（退出码 {}）",
+            status.code().unwrap_or(-1)
+        )))
+    }
+}
+
+async fn read_bounded_process_output(mut pipe: impl AsyncRead + Unpin) -> Vec<u8> {
+    let mut output = Vec::new();
+    let mut buffer = [0_u8; 8 * 1_024];
+    loop {
+        let Ok(count) = pipe.read(&mut buffer).await else {
+            return output;
+        };
+        if count == 0 {
+            return output;
+        }
+        let remaining = MAXIMUM_NPM_PROCESS_OUTPUT_BYTES.saturating_sub(output.len());
+        output.extend_from_slice(&buffer[..count.min(remaining)]);
+    }
+}
+
+#[cfg(test)]
+fn safe_process_diagnostic(stderr: &[u8], stdout: &[u8]) -> String {
+    let source = if stderr.is_empty() { stdout } else { stderr };
+    let sanitized = String::from_utf8_lossy(source)
+        .chars()
+        .map(|character| {
+            if character.is_control() && !matches!(character, '\n' | '\r' | '\t') {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let lines = sanitized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .rev()
+        .take(12)
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        "无可用诊断".into()
+    } else {
+        lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
+    }
+}
+
+fn validate_npm_lock(path: &Path) -> Result<(), String> {
+    let raw = read_bounded_text(path, MAXIMUM_NPM_LOCK_BYTES)?;
+    let lock: Value = serde_json::from_str(&raw).map_err(|_| install_error("npm lockfile 无效"))?;
+    if lock.get("lockfileVersion").and_then(Value::as_u64) != Some(3) {
+        return Err(install_error("npm lockfile 版本不受支持"));
+    }
+    let packages = lock
+        .get("packages")
+        .and_then(Value::as_object)
+        .filter(|packages| !packages.is_empty() && packages.len() <= MAXIMUM_ARCHIVE_ENTRIES)
+        .ok_or_else(|| install_error("npm lockfile 包数量无效"))?;
+    for (path, package) in packages {
+        if path.is_empty() {
+            continue;
+        }
+        let package = package
+            .as_object()
+            .ok_or_else(|| install_error("npm lockfile 包记录无效"))?;
+        if package.get("link").and_then(Value::as_bool) == Some(true) {
+            return Err(install_error("npm lockfile 包含链接依赖"));
+        }
+        let resolved = package
+            .get("resolved")
+            .and_then(Value::as_str)
+            .ok_or_else(|| install_error("npm lockfile 缺少固定 tarball"))?;
+        validate_npm_tarball_url(resolved)?;
+        let integrity = package
+            .get("integrity")
+            .and_then(Value::as_str)
+            .ok_or_else(|| install_error("npm lockfile 缺少 sha512 integrity"))?;
+        parse_npm_integrity(integrity)?;
+    }
+    Ok(())
+}
+
+fn sanitize_npm_tree(root: &Path) -> Result<(), String> {
+    let shim_directory = root.join("node_modules").join(".bin");
+    if shim_directory.exists() {
+        remove_tree_without_following_links(&shim_directory)?;
+    }
+    sanitize_npm_directory(root)
+}
+
+fn sanitize_npm_directory(directory: &Path) -> Result<(), String> {
+    for entry in fs::read_dir(directory).map_err(|_| install_error("无法检查 npm 安装目录"))?
+    {
+        let entry = entry.map_err(|_| install_error("无法检查 npm 安装目录"))?;
+        let path = entry.path();
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|_| install_error("无法检查 npm 安装文件"))?;
+        if is_symlink_or_reparse(&metadata) {
+            if metadata.is_dir() {
+                fs::remove_dir(&path).map_err(|_| install_error("无法移除 npm 链接目录"))?;
+            } else {
+                fs::remove_file(&path).map_err(|_| install_error("无法移除 npm 链接文件"))?;
+            }
+        } else if metadata.is_dir() {
+            sanitize_npm_directory(&path)?;
+        } else if !metadata.is_file() {
+            return Err(install_error("npm 安装包含特殊文件"));
+        }
+    }
+    Ok(())
+}
+
+fn remove_tree_without_following_links(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| install_error("无法清理 npm shim"))?;
+    if is_symlink_or_reparse(&metadata) {
+        return if metadata.is_dir() {
+            fs::remove_dir(path).map_err(|_| install_error("无法清理 npm shim"))
+        } else {
+            fs::remove_file(path).map_err(|_| install_error("无法清理 npm shim"))
+        };
+    }
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path).map_err(|_| install_error("无法清理 npm shim"))? {
+            remove_tree_without_following_links(
+                &entry
+                    .map_err(|_| install_error("无法清理 npm shim"))?
+                    .path(),
+            )?;
+        }
+        fs::remove_dir(path).map_err(|_| install_error("无法清理 npm shim"))
+    } else {
+        fs::remove_file(path).map_err(|_| install_error("无法清理 npm shim"))
+    }
+}
+
+fn npm_mcp_fingerprint(
+    content_fingerprint: &str,
+    draft: &NpmMcpDraft,
+    tools: &[Value],
+) -> Result<String, String> {
+    let mut tools = tools.to_vec();
+    tools.sort_by(|left, right| {
+        left.get("name")
+            .and_then(Value::as_str)
+            .cmp(&right.get("name").and_then(Value::as_str))
+    });
+    let draft = json!({
+        "display_name": draft.display_name,
+        "description": draft.description,
+        "component_key": draft.component_key,
+        "package_name": draft.package_name,
+        "package_version": draft.package_version,
+        "binary_name": draft.binary_name,
+        "arguments": draft.arguments,
+        "access_profile": draft.access_profile
+    });
+    let encoded_draft =
+        serde_json::to_vec(&draft).map_err(|_| install_error("无法冻结 npm MCP 安装请求"))?;
+    let encoded_tools =
+        serde_json::to_vec(&tools).map_err(|_| install_error("无法冻结 npm MCP 工具清单"))?;
+    let mut digest = Sha256::new();
+    digest.update(content_fingerprint.as_bytes());
+    digest.update([0]);
+    digest.update(encoded_draft);
+    digest.update([0]);
+    digest.update(encoded_tools);
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+async fn inspect_mcp_tools(
+    package_root: &Path,
+    executable: &Path,
+    arguments: &[String],
+    manifest_environment: &BTreeMap<String, String>,
+) -> Result<Vec<Value>, String> {
+    if !manifest_environment.is_empty() {
+        return Err(install_error("npm MCP 预检不接受环境变量"));
+    }
+    let package_root = package_root
+        .canonicalize()
+        .map_err(|_| install_error("npm MCP 预检目录无效"))?;
+    let executable = executable
+        .canonicalize()
+        .map_err(|_| install_error("npm MCP 启动器无效"))?;
+    if !executable.is_file() || !executable.starts_with(&package_root) {
+        return Err(install_error("npm MCP 启动器越界"));
+    }
+    let mut command = Command::new(&executable);
+    command
+        .args(arguments)
+        .current_dir(&package_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(false)
+        .env_clear()
+        .env("CHATOS_PLUGIN_ROOT", &package_root);
+    for key in ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|_| install_error("无法启动 npm MCP 隔离预检"))?;
+    let termination = ProcessTermination::attach(&child).map_err(|_| {
+        let _ = child.start_kill();
+        install_error("无法隔离 npm MCP 预检进程")
+    })?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| install_error("npm MCP 标准输入不可用"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| install_error("npm MCP 标准输出不可用"))?;
+    let mut stdout = BufReader::new(stdout);
+    let inspection = async {
+        let initialization = mcp_request(
+            &mut stdin,
+            &mut stdout,
+            1,
+            "initialize",
+            json!({
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "chatos-windows-installer", "version": env!("CARGO_PKG_VERSION")}
+            }),
+        )
+        .await?;
+        if initialization
+            .get("protocolVersion")
+            .and_then(Value::as_str)
+            != Some(MCP_PROTOCOL_VERSION)
+            || !initialization
+                .get("serverInfo")
+                .is_some_and(Value::is_object)
+        {
+            return Err(install_error("npm MCP 初始化响应无效"));
+        }
+        mcp_notify(&mut stdin, "notifications/initialized", json!({})).await?;
+        let mut tools = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut observed_cursors = BTreeSet::new();
+        for page in 0..MAXIMUM_MCP_TOOL_PAGES {
+            let parameters = cursor
+                .as_ref()
+                .map(|cursor| json!({"cursor": cursor}))
+                .unwrap_or_else(|| json!({}));
+            let result = mcp_request(
+                &mut stdin,
+                &mut stdout,
+                2 + page as u64,
+                "tools/list",
+                parameters,
+            )
+            .await?;
+            let returned = result
+                .get("tools")
+                .and_then(Value::as_array)
+                .ok_or_else(|| install_error("npm MCP tools/list 响应无效"))?;
+            if tools.len().saturating_add(returned.len()) > MAXIMUM_MCP_TOOLS {
+                return Err(install_error("npm MCP 工具数量超过限制"));
+            }
+            tools.extend(returned.iter().cloned());
+            cursor = result
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned);
+            let Some(next) = cursor.as_ref() else {
+                return validate_mcp_tools(tools);
+            };
+            if !observed_cursors.insert(next.clone()) {
+                return Err(install_error("npm MCP 返回了重复工具游标"));
+            }
+        }
+        Err(install_error("npm MCP 工具分页超过限制"))
+    };
+    let result = match timeout(MCP_INSPECTION_TIMEOUT, inspection).await {
+        Ok(result) => result,
+        Err(_) => Err(install_error("npm MCP 预检超过 30 秒")),
+    };
+    terminate_child(&mut child, &termination).await;
+    result
+}
+
+async fn mcp_request(
+    stdin: &mut ChildStdin,
+    stdout: &mut BufReader<ChildStdout>,
+    request_id: u64,
+    method: &str,
+    parameters: Value,
+) -> Result<Value, String> {
+    mcp_write(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": parameters
+        }),
+    )
+    .await?;
+    loop {
+        let response = mcp_read(stdout).await?;
+        if response.get("id").and_then(Value::as_u64) != Some(request_id) {
+            continue;
+        }
+        if response.get("error").is_some() {
+            return Err(install_error(&format!("npm MCP {method} 调用失败")));
+        }
+        return response
+            .get("result")
+            .cloned()
+            .filter(Value::is_object)
+            .ok_or_else(|| install_error("npm MCP 响应缺少 result"));
+    }
+}
+
+async fn mcp_notify(stdin: &mut ChildStdin, method: &str, parameters: Value) -> Result<(), String> {
+    mcp_write(
+        stdin,
+        &json!({"jsonrpc": "2.0", "method": method, "params": parameters}),
+    )
+    .await
+}
+
+async fn mcp_write(stdin: &mut ChildStdin, value: &Value) -> Result<(), String> {
+    let mut payload =
+        serde_json::to_vec(value).map_err(|_| install_error("无法编码 npm MCP 请求"))?;
+    payload.push(b'\n');
+    stdin
+        .write_all(&payload)
+        .await
+        .map_err(|_| install_error("无法写入 npm MCP 请求"))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|_| install_error("无法刷新 npm MCP 请求"))
+}
+
+async fn mcp_read(stdout: &mut BufReader<ChildStdout>) -> Result<Value, String> {
+    let mut payload = Vec::new();
+    loop {
+        let available = stdout
+            .fill_buf()
+            .await
+            .map_err(|_| install_error("无法读取 npm MCP 响应"))?;
+        if available.is_empty() {
+            return Err(install_error("npm MCP 进程在响应前退出"));
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let consumed = newline.map_or(available.len(), |index| index + 1);
+        let content_length = newline.unwrap_or(available.len());
+        if payload.len().saturating_add(content_length) > MAXIMUM_MCP_RESPONSE_BYTES {
+            return Err(install_error("npm MCP 响应超过限制"));
+        }
+        payload.extend_from_slice(&available[..content_length]);
+        stdout.consume(consumed);
+        if newline.is_some() {
+            break;
+        }
+    }
+    while matches!(payload.last(), Some(b'\n' | b'\r')) {
+        payload.pop();
+    }
+    serde_json::from_slice(&payload).map_err(|_| install_error("npm MCP 响应不是有效 JSON"))
+}
+
+fn validate_mcp_tools(tools: Vec<Value>) -> Result<Vec<Value>, String> {
+    let mut names = BTreeSet::new();
+    let mut total_schema_bytes = 0_usize;
+    for tool in &tools {
+        let name = tool
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|value| {
+                !value.is_empty()
+                    && value.len() <= 1_024
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:|".contains(&byte))
+            })
+            .ok_or_else(|| install_error("npm MCP 工具名称无效"))?;
+        if !names.insert(name.to_owned()) {
+            return Err(install_error("npm MCP 工具名称重复"));
+        }
+        let description = tool
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if description.chars().count() > 16_000 || description.contains('\0') {
+            return Err(install_error("npm MCP 工具说明无效"));
+        }
+        let schema = tool
+            .get("inputSchema")
+            .cloned()
+            .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+        let schema_bytes =
+            serde_json::to_vec(&schema).map_err(|_| install_error("npm MCP 工具 schema 无效"))?;
+        total_schema_bytes = total_schema_bytes
+            .checked_add(schema_bytes.len())
+            .filter(|value| *value <= MAXIMUM_MCP_TOOL_CATALOG_BYTES)
+            .ok_or_else(|| install_error("npm MCP 工具目录超过限制"))?;
+        if !schema.is_object() || schema_bytes.len() > MAXIMUM_MCP_TOOL_SCHEMA_BYTES {
+            return Err(install_error("npm MCP 工具 schema 无效或超过限制"));
+        }
+    }
+    let mut tools = tools;
+    tools.sort_by(|left, right| {
+        left.get("name")
+            .and_then(Value::as_str)
+            .cmp(&right.get("name").and_then(Value::as_str))
+    });
+    Ok(tools)
+}
+
+async fn terminate_child(child: &mut Child, termination: &ProcessTermination) {
+    let _ = termination.terminate(false);
+    if timeout(PROCESS_TERMINATION_GRACE, child.wait())
+        .await
+        .is_err()
+    {
+        let _ = termination.terminate(true);
+        let _ = timeout(PROCESS_TERMINATION_GRACE, child.wait()).await;
+    }
 }
 
 async fn fetch_npm_version_metadata(package_name: &str, version: &str) -> Result<Value, String> {
@@ -1002,9 +1970,16 @@ fn validate_local_package(package_root: &Path) -> Result<PluginManifest, String>
         &package_root.join("chatos.plugin.json"),
         MAXIMUM_MANIFEST_BYTES,
     )?;
-    let manifest =
-        parse_plugin_manifest(&raw).map_err(|_| install_error("本地 Plugin 清单无效"))?;
-    validate_plugin_manifest(&manifest).map_err(|_| install_error("本地 Plugin 清单无效"))?;
+    let manifest = parse_plugin_manifest(&raw).map_err(|_error| {
+        #[cfg(test)]
+        eprintln!("local plugin manifest parse diagnostic: {_error}");
+        install_error("本地 Plugin 清单无效")
+    })?;
+    validate_plugin_manifest(&manifest).map_err(|_error| {
+        #[cfg(test)]
+        eprintln!("local plugin manifest validation diagnostic: {_error}");
+        install_error("本地 Plugin 清单无效")
+    })?;
     if !windows_compatible(&manifest.dependencies.supported_platforms) {
         return Err(install_error("本地 Plugin 不支持 Windows"));
     }
@@ -1917,6 +2892,85 @@ mod tests {
         .is_err());
     }
 
+    #[test]
+    fn npm_mcp_bin_access_profiles_lockfile_and_fingerprint_are_strict() {
+        let manifest = json!({"bin": {"safe": "./dist/cli.js"}});
+        assert_eq!(
+            npm_binary_path(manifest.get("bin"), "safe-package", "safe").unwrap(),
+            "dist/cli.js"
+        );
+        assert_eq!(
+            npm_access_permissions("restricted", "safe").unwrap().len(),
+            1
+        );
+        assert_eq!(
+            npm_access_permissions("developer_analysis", "safe")
+                .unwrap()
+                .len(),
+            6
+        );
+        assert!(npm_access_permissions("unbounded", "safe").is_err());
+
+        let directory = tempfile::tempdir().unwrap();
+        let lock = directory.path().join("package-lock.json");
+        fs::write(
+            &lock,
+            serde_json::to_vec(&json!({
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {},
+                    "node_modules/safe": {
+                        "resolved": "https://registry.npmjs.org/safe/-/safe-1.0.0.tgz",
+                        "integrity": format!("sha512-{}", STANDARD.encode([7_u8; 64]))
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        validate_npm_lock(&lock).unwrap();
+        fs::write(
+            &lock,
+            serde_json::to_vec(&json!({
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {},
+                    "node_modules/unsafe": {
+                        "resolved": "https://example.com/unsafe.tgz",
+                        "integrity": format!("sha512-{}", STANDARD.encode([7_u8; 64]))
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(validate_npm_lock(&lock).is_err());
+
+        let draft = NpmMcpDraft {
+            display_name: "Safe".into(),
+            description: "Safe MCP".into(),
+            component_key: "safe".into(),
+            package_name: "safe-package".into(),
+            package_version: "1.0.0".into(),
+            binary_name: "safe".into(),
+            arguments: vec!["mcp".into()],
+            access_profile: "restricted".into(),
+        };
+        let one = npm_mcp_fingerprint(
+            &"1".repeat(64),
+            &draft,
+            &[json!({"name": "ping", "inputSchema": {"type": "object"}})],
+        )
+        .unwrap();
+        let two = npm_mcp_fingerprint(
+            &"1".repeat(64),
+            &draft,
+            &[json!({"name": "pong", "inputSchema": {"type": "object"}})],
+        )
+        .unwrap();
+        assert_ne!(one, two);
+    }
+
     #[tokio::test]
     #[ignore = "requires public npm Registry access"]
     async fn npm_registry_acquisition_smoke() {
@@ -1936,5 +2990,48 @@ mod tests {
             .unwrap();
         assert!(acquired.package_root.join("package.json").is_file());
         assert!(acquired.package_root.join("index.js").is_file());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires public npm Registry access and local Node.js/npm"]
+    async fn npm_mcp_isolated_preflight_smoke() {
+        let package_name = "@modelcontextprotocol/server-everything";
+        let resolved = resolve_npm_package(package_name, None).await.unwrap();
+        let package_version = resolved["package_version"].as_str().unwrap().to_owned();
+        let binaries = resolved["binaries"].as_object().unwrap();
+        let binary_name = binaries.keys().next().unwrap().to_owned();
+        let draft = NpmMcpDraft {
+            display_name: "MCP Everything".into(),
+            description: "Public MCP protocol fixture".into(),
+            component_key: "mcp-everything".into(),
+            package_name: package_name.into(),
+            package_version,
+            binary_name,
+            arguments: Vec::new(),
+            access_profile: "restricted".into(),
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let inspection = inspect_npm_mcp(&directory.path().join("plugins"), &draft)
+            .await
+            .unwrap();
+        assert!(!inspection.tools.is_empty());
+        assert!(valid_sha256(&inspection.fingerprint));
+        let (package, repeated) = install_npm_mcp(
+            &directory.path().join("plugins"),
+            &draft,
+            &inspection.fingerprint,
+        )
+        .await
+        .unwrap();
+        assert_eq!(repeated.fingerprint, inspection.fingerprint);
+        assert!(package
+            .installation_root
+            .join("chatos.plugin.json")
+            .is_file());
+        assert!(package
+            .installation_root
+            .join("bin/mcp-everything.exe")
+            .is_file());
+        package.finish().unwrap();
     }
 }
