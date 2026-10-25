@@ -25,7 +25,10 @@ use crate::{
     connector_state,
     host_lifecycle::HostManager,
     plugin_application::PluginApplicationManager,
-    plugin_installer::{install_local_package, install_marketplace_package, resolve_executable},
+    plugin_installer::{
+        install_git_package, install_local_package, install_marketplace_package,
+        resolve_executable, CommittedPluginPackage,
+    },
     plugin_integrity::{
         requires_installation_integrity, secure_component_revision, verify_installation_integrity,
     },
@@ -57,6 +60,10 @@ impl PluginSettingsManager {
         Self {
             plugin_root: app_data_directory.join("NativeConnector").join("Plugins"),
         }
+    }
+
+    pub(crate) fn plugin_root(&self) -> &Path {
+        &self.plugin_root
     }
 }
 
@@ -261,6 +268,61 @@ pub(crate) async fn install_local_plugin_source(
     })
     .await
     .map_err(|_| "本地 Plugin 安装任务异常退出。".to_owned())??;
+    finish_local_plugin_install(
+        authentication,
+        host,
+        settings,
+        applications,
+        owner_user_id,
+        generation,
+        package,
+    )
+    .await
+}
+
+pub(crate) async fn install_git_plugin_source(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    repository_url: String,
+    git_reference: Option<String>,
+    subdirectory: Option<String>,
+    expected_fingerprint: String,
+) -> Result<LocalPluginInstallResult, String> {
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
+    let package = install_git_package(
+        &settings.plugin_root,
+        &repository_url,
+        git_reference.as_deref(),
+        subdirectory.as_deref(),
+        &expected_fingerprint,
+    )
+    .await?;
+    finish_local_plugin_install(
+        authentication,
+        host,
+        settings,
+        applications,
+        owner_user_id,
+        generation,
+        package,
+    )
+    .await
+}
+
+async fn finish_local_plugin_install(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    generation: u64,
+    package: CommittedPluginPackage,
+) -> Result<LocalPluginInstallResult, String> {
     if let Err(error) = authentication
         .require_session_generation(owner_user_id, generation)
         .await

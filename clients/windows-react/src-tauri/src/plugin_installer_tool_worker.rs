@@ -11,8 +11,10 @@ use crate::{
     authentication::AuthenticationManager,
     host_lifecycle::HostManager,
     plugin_application::PluginApplicationManager,
-    plugin_installer::inspect_local_package,
-    plugin_settings::{install_local_plugin_source, PluginSettingsManager},
+    plugin_installer::{inspect_git_package, inspect_local_package},
+    plugin_settings::{
+        install_git_plugin_source, install_local_plugin_source, PluginSettingsManager,
+    },
 };
 
 pub(crate) const PLUGIN_INSTALLER_CONTACT_ID: &str = "plugin-installer";
@@ -23,11 +25,11 @@ pub(crate) const PLUGIN_INSTALLER_TOOL_NAMES: [&str; 2] = [
     PLUGIN_INSTALLER_INSTALL_SOURCE,
 ];
 
-pub(crate) const PLUGIN_INSTALLER_INSTRUCTIONS: &str = r#"你是 ChatOS 的插件安装助手，只负责检查和安装用户明确指定的本机 ChatOS Plugin 目录。
+pub(crate) const PLUGIN_INSTALLER_INSTRUCTIONS: &str = r#"你是 ChatOS 的插件安装助手，只负责检查和安装用户明确指定的 ChatOS Plugin。
 
-当前 Windows 准入范围只包含 source_kind=local_folder，目录必须是用户在当前消息中明确给出的绝对路径，并且必须包含有效的 chatos.plugin.json 和 Windows stdio MCP 可执行组件。不要声称支持 Git、npm、Codex、Claude、skills-only 或需要 Secret 的包。
+当前 Windows 准入范围包含 source_kind=local_folder 和 source_kind=git_repository。本地目录必须是用户在当前消息中明确给出的绝对路径；Git 必须是用户明确给出的、不含凭据/查询参数/片段的 HTTPS URL，可带安全的 git_reference 和 monorepo subdirectory。来源必须包含有效的 chatos.plugin.json 和 Windows stdio MCP 可执行组件。Git 获取禁用交互、Hook、文件协议和子模块，不运行仓库脚本。不要声称支持 npm、Codex、Claude、skills-only 或需要 Secret 的包。
 
-必须先调用 plugin_installer_inspect_source。只有用户当前消息明确要求安装、添加、配置使用或启用时，才可以把完全相同的 location、subdirectory 和检查得到的 fingerprint 传给 plugin_installer_install_source。检查不是安装；目录内容变化后必须重新检查。"#;
+必须先调用 plugin_installer_inspect_source。只有用户当前消息明确要求安装、添加、配置使用或启用时，才可以把完全相同的 source_kind、location、git_reference、subdirectory 和检查得到的 fingerprint 传给 plugin_installer_install_source。检查不是安装；重新获取后的内容变化时必须拒绝并重新检查。"#;
 
 pub(crate) fn plugin_installer_revision(main_revision: &str) -> String {
     let mut digest = Sha256::new();
@@ -41,20 +43,27 @@ pub(crate) fn plugin_installer_revision(main_revision: &str) -> String {
 
 pub(crate) fn plugin_installer_tool_schemas() -> Vec<Value> {
     let source_properties = json!({
-        "source_kind": {"type": "string", "enum": ["local_folder"]},
-        "location": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "source_kind": {"type": "string", "enum": ["local_folder", "git_repository"]},
+        "location": {
+            "type": "string", "minLength": 1, "maxLength": 4096,
+            "description": "An absolute local folder or a credential-free HTTPS Git repository URL according to source_kind."
+        },
+        "git_reference": {
+            "type": "string", "maxLength": 256,
+            "description": "Optional branch, tag, or commit for git_repository; forbidden for local_folder."
+        },
         "subdirectory": {"type": "string", "maxLength": 1024}
     });
     vec![
         tool_schema(
             PLUGIN_INSTALLER_INSPECT_SOURCE,
-            "Inspect a user-specified absolute local ChatOS Plugin folder and return its bounded content fingerprint. This does not install it.",
+            "Acquire and inspect a user-specified local folder or HTTPS Git ChatOS Plugin and return its bounded content fingerprint. This does not install it or run repository scripts.",
             source_properties.clone(),
             &["source_kind", "location"],
         ),
         tool_schema(
             PLUGIN_INSTALLER_INSTALL_SOURCE,
-            "Install the exact local ChatOS Plugin folder only after a matching inspection and an explicit install request in this dedicated conversation.",
+            "Re-acquire and install the exact local or HTTPS Git ChatOS Plugin only after a matching inspection and an explicit install request in this dedicated conversation.",
             {
                 let mut properties = source_properties.as_object().cloned().unwrap_or_default();
                 properties.insert("expected_fingerprint".into(), json!({"type": "string", "pattern": "^[a-f0-9]{64}$"}));
@@ -92,15 +101,39 @@ pub(crate) async fn execute_plugin_installer_tool(
         .arguments
         .as_object()
         .ok_or_else(|| "Plugin 安装工具参数无效。".to_owned())?;
+    validate_argument_keys(
+        arguments,
+        claim.invocation.tool_name == PLUGIN_INSTALLER_INSTALL_SOURCE,
+    )?;
     let source = source_arguments(arguments, &authorized_message)?;
     match claim.invocation.tool_name.as_str() {
         PLUGIN_INSTALLER_INSPECT_SOURCE => {
-            let inspection = tauri::async_runtime::spawn_blocking({
-                let source = source.clone();
-                move || inspect_local_package(&source.location, source.subdirectory.as_deref())
-            })
-            .await
-            .map_err(|_| "Plugin 检查任务异常退出。".to_owned())??;
+            let inspection = match &source {
+                PluginSourceArguments::Local {
+                    location,
+                    subdirectory,
+                } => tauri::async_runtime::spawn_blocking({
+                    let location = location.clone();
+                    let subdirectory = subdirectory.clone();
+                    move || inspect_local_package(&location, subdirectory.as_deref())
+                })
+                .await
+                .map_err(|_| "Plugin 检查任务异常退出。".to_owned())??,
+                PluginSourceArguments::Git {
+                    location,
+                    git_reference,
+                    subdirectory,
+                } => {
+                    let settings = app.state::<PluginSettingsManager>();
+                    inspect_git_package(
+                        settings.plugin_root(),
+                        location,
+                        git_reference.as_deref(),
+                        subdirectory.as_deref(),
+                    )
+                    .await?
+                }
+            };
             let components = inspection
                 .manifest
                 .mcp_servers
@@ -110,12 +143,8 @@ pub(crate) async fn execute_plugin_installer_tool(
             Ok(LocalAgentToolOutcome::Succeeded {
                 output: json!({
                     "status": "inspected",
-                    "source_kind": "local_folder",
-                    "resolved_source": {
-                        "source_kind": "local_folder",
-                        "location": source.location.to_string_lossy(),
-                        "subdirectory": source.subdirectory
-                    },
+                    "source_kind": source.kind(),
+                    "resolved_source": source.resolved_source(),
                     "fingerprint": inspection.fingerprint,
                     "plugin": {
                         "name": inspection.manifest.name,
@@ -131,17 +160,42 @@ pub(crate) async fn execute_plugin_installer_tool(
                 return Err("当前用户消息没有明确授权安装 Plugin。".into());
             }
             let fingerprint = required_string(arguments, "expected_fingerprint", 64)?;
-            let result = install_local_plugin_source(
-                app.state::<AuthenticationManager>().inner(),
-                app.state::<HostManager>().inner(),
-                app.state::<PluginSettingsManager>().inner(),
-                app.state::<PluginApplicationManager>().inner(),
-                owner_user_id,
-                source.location.to_string_lossy().into_owned(),
-                source.subdirectory,
-                fingerprint,
-            )
-            .await?;
+            let result = match source {
+                PluginSourceArguments::Local {
+                    location,
+                    subdirectory,
+                } => {
+                    install_local_plugin_source(
+                        app.state::<AuthenticationManager>().inner(),
+                        app.state::<HostManager>().inner(),
+                        app.state::<PluginSettingsManager>().inner(),
+                        app.state::<PluginApplicationManager>().inner(),
+                        owner_user_id,
+                        location.to_string_lossy().into_owned(),
+                        subdirectory,
+                        fingerprint,
+                    )
+                    .await?
+                }
+                PluginSourceArguments::Git {
+                    location,
+                    git_reference,
+                    subdirectory,
+                } => {
+                    install_git_plugin_source(
+                        app.state::<AuthenticationManager>().inner(),
+                        app.state::<HostManager>().inner(),
+                        app.state::<PluginSettingsManager>().inner(),
+                        app.state::<PluginApplicationManager>().inner(),
+                        owner_user_id,
+                        location,
+                        git_reference,
+                        subdirectory,
+                        fingerprint,
+                    )
+                    .await?
+                }
+            };
             Ok(LocalAgentToolOutcome::Succeeded {
                 output: serde_json::to_value(result)
                     .map_err(|_| "Plugin 安装结果无效。".to_owned())?,
@@ -152,32 +206,110 @@ pub(crate) async fn execute_plugin_installer_tool(
 }
 
 #[derive(Clone)]
-struct LocalSourceArguments {
-    location: PathBuf,
-    subdirectory: Option<String>,
+enum PluginSourceArguments {
+    Local {
+        location: PathBuf,
+        subdirectory: Option<String>,
+    },
+    Git {
+        location: String,
+        git_reference: Option<String>,
+        subdirectory: Option<String>,
+    },
+}
+
+impl PluginSourceArguments {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Local { .. } => "local_folder",
+            Self::Git { .. } => "git_repository",
+        }
+    }
+
+    fn resolved_source(&self) -> Value {
+        match self {
+            Self::Local {
+                location,
+                subdirectory,
+            } => json!({
+                "source_kind": "local_folder",
+                "location": location.to_string_lossy(),
+                "subdirectory": subdirectory
+            }),
+            Self::Git {
+                location,
+                git_reference,
+                subdirectory,
+            } => json!({
+                "source_kind": "git_repository",
+                "location": location,
+                "git_reference": git_reference,
+                "subdirectory": subdirectory
+            }),
+        }
+    }
 }
 
 fn source_arguments(
     arguments: &Map<String, Value>,
     authorized_message: &str,
-) -> Result<LocalSourceArguments, String> {
-    if required_string(arguments, "source_kind", 32)? != "local_folder" {
-        return Err("Windows 当前只准入本机目录 Plugin。".into());
-    }
+) -> Result<PluginSourceArguments, String> {
+    let source_kind = required_string(arguments, "source_kind", 32)?;
     let location = required_string(arguments, "location", 4_096)?;
-    let path = Path::new(&location);
-    if !path.is_absolute()
-        || !authorized_message
-            .to_lowercase()
-            .contains(&location.to_lowercase())
+    if !authorized_message
+        .to_lowercase()
+        .contains(&location.to_lowercase())
     {
-        return Err("Plugin 目录必须由用户在当前消息中明确给出。".into());
+        return Err("Plugin 来源必须由用户在当前消息中明确给出。".into());
     }
     let subdirectory = optional_string(arguments, "subdirectory", 1_024)?;
-    Ok(LocalSourceArguments {
-        location: path.to_path_buf(),
-        subdirectory,
-    })
+    let git_reference = optional_string(arguments, "git_reference", 256)?;
+    match source_kind.as_str() {
+        "local_folder" => {
+            let path = Path::new(&location);
+            if !path.is_absolute() || git_reference.is_some() {
+                return Err("本地 Plugin 必须使用绝对目录且不能提供 Git ref。".into());
+            }
+            Ok(PluginSourceArguments::Local {
+                location: path.to_path_buf(),
+                subdirectory,
+            })
+        }
+        "git_repository" => {
+            if git_reference.as_ref().is_some_and(|reference| {
+                !authorized_message
+                    .to_lowercase()
+                    .contains(&reference.to_lowercase())
+            }) {
+                return Err(
+                    "Git ref 必须由用户在当前消息中明确给出；否则请省略并使用远端 HEAD。".into(),
+                );
+            }
+            Ok(PluginSourceArguments::Git {
+                location,
+                git_reference,
+                subdirectory,
+            })
+        }
+        _ => Err("Windows 当前只准入本机目录或 HTTPS Git Plugin。".into()),
+    }
+}
+
+fn validate_argument_keys(arguments: &Map<String, Value>, install: bool) -> Result<(), String> {
+    let allowed = [
+        "source_kind",
+        "location",
+        "git_reference",
+        "subdirectory",
+        "expected_fingerprint",
+    ];
+    if arguments
+        .keys()
+        .any(|key| !allowed.contains(&key.as_str()) || (!install && key == "expected_fingerprint"))
+    {
+        return Err("Plugin 安装工具包含未准入字段。".into());
+    }
+    Ok(())
 }
 
 async fn authorize(
@@ -336,6 +468,10 @@ mod tests {
             plugin_installer_revision("main-1"),
             plugin_installer_revision("main-2")
         );
+        assert_eq!(
+            schemas[0]["function"]["parameters"]["properties"]["source_kind"]["enum"],
+            json!(["local_folder", "git_repository"])
+        );
     }
 
     #[test]
@@ -344,5 +480,56 @@ mod tests {
         assert!(!has_explicit_install_intent(
             "先不要安装，只检查 C:\\safe\\plugin"
         ));
+    }
+
+    #[test]
+    fn source_arguments_bind_git_url_to_the_current_user_message() {
+        let arguments = json!({
+            "source_kind": "git_repository",
+            "location": "https://example.com/team/plugin.git",
+            "git_reference": "release/3.0.9",
+            "subdirectory": "packages/windows"
+        });
+        let source = source_arguments(
+            arguments.as_object().unwrap(),
+            "请检查 https://example.com/team/plugin.git 的 release/3.0.9，插件在 packages/windows",
+        )
+        .unwrap();
+        assert!(matches!(
+            source,
+            PluginSourceArguments::Git {
+                git_reference: Some(reference),
+                subdirectory: Some(subdirectory),
+                ..
+            } if reference == "release/3.0.9" && subdirectory == "packages/windows"
+        ));
+        assert!(source_arguments(
+            arguments.as_object().unwrap(),
+            "请检查 https://example.com/team/plugin.git"
+        )
+        .is_err());
+        assert!(source_arguments(arguments.as_object().unwrap(), "请检查那个插件").is_err());
+    }
+
+    #[test]
+    fn local_sources_reject_git_fields_and_unknown_arguments() {
+        let root = std::env::current_dir().unwrap().join("plugin-source");
+        let arguments = json!({
+            "source_kind": "local_folder",
+            "location": root.to_string_lossy(),
+            "git_reference": "main"
+        });
+        assert!(source_arguments(
+            arguments.as_object().unwrap(),
+            &format!("请检查 {}", root.display())
+        )
+        .is_err());
+
+        let arguments = json!({
+            "source_kind": "git_repository",
+            "location": "https://example.com/plugin.git",
+            "exact_version": "1.0.0"
+        });
+        assert!(validate_argument_keys(arguments.as_object().unwrap(), false).is_err());
     }
 }

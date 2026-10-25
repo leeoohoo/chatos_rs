@@ -77,7 +77,7 @@ Windows 只读索引实现（2026-10-20）：
 
 - macOS `ContactConversationView` 不建立第二套消息服务：选中联系人后从 `WorkspaceResourceResolver` 取得公开 Conversation ID，激活同一 `ConversationSessionViewModel` 并展示 `ConversationTimelineView`；切换资源时停用旧 session；
 - 联系人没有公开 Conversation 时只展示“还没有公开会话”空状态，不从 UI 发明 Conversation。Workspace Index 已按 Host 真值确保“叽咕狸”和“插件安装助手”两个系统联系人及其会话存在；
-- “插件安装助手”使用由原生 Control Plane 发布的独立 `main_chat` capability revision；发送时按 Conversation 的精确 contact resource 选择并复验该 revision，worker 再复验 owner、Run、Conversation、capability 和用户当前消息。本机 ChatOS Plugin 目录已接入 `plugin_installer_inspect_source/install_source`；Git、npm 与兼容格式仍不在 Windows 当前工具目录中；
+- “插件安装助手”使用由原生 Control Plane 发布的独立 `main_chat` capability revision；发送时按 Conversation 的精确 contact resource 选择并复验该 revision，worker 再复验 owner、Run、Conversation、capability 和用户当前消息。本机 ChatOS Plugin 目录与无凭据 HTTPS Git 仓库已接入 `plugin_installer_inspect_source/install_source`：Git 使用无工作树的 bare fetch、禁用交互/Hook/文件协议/子模块，将有界 archive 解包后检查；安装时重新获取并复验同一指纹。npm 与兼容格式仍不在 Windows 当前工具目录中；
 - Windows 新增薄 `ContactConversationView` 组合层，直接复用已准入的 History、Composer、Attachment、Realtime、Runtime Settings、Run Inspector 与 Ask User Ports；AppShell 不再显示占位卡。3 项入口测试覆盖普通联系人复用、安装助手提示和无会话空态；React 全量为 47 个测试文件、188 项通过。
 
 ### 2.2 项目目录只读树、文件预览与搜索

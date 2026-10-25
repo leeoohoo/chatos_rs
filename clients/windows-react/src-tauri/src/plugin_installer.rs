@@ -12,18 +12,29 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
+    process::Stdio,
+    time::Duration,
 };
 use tar::Archive;
-use tokio::io::AsyncWriteExt;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
+    time::timeout,
+};
 use uuid::Uuid;
 
-use crate::plugin_integrity::{remove_installation_integrity, write_installation_integrity};
+use crate::{
+    plugin_integrity::{remove_installation_integrity, write_installation_integrity},
+    terminal_runtime::process::ProcessTermination,
+};
 
 const MAXIMUM_ARCHIVE_BYTES: u64 = 512 * 1_024 * 1_024;
 const MAXIMUM_UNPACKED_BYTES: u64 = 512 * 1_024 * 1_024;
 const MAXIMUM_ARCHIVE_ENTRIES: usize = 20_000;
 const MAXIMUM_PACKAGE_JSON_BYTES: u64 = 1_024 * 1_024;
 const MAXIMUM_MANIFEST_BYTES: u64 = 2 * 1_024 * 1_024;
+const GIT_OPERATION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const PROCESS_TERMINATION_GRACE: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
 pub(crate) struct LocalPluginInspection {
@@ -37,6 +48,18 @@ pub(crate) struct CommittedPluginPackage {
     pub(crate) manifest: PluginManifest,
     pub(crate) artifact_sha256: String,
     backup_root: Option<PathBuf>,
+}
+
+struct AcquiredGitPackage {
+    plugin_root: PathBuf,
+    staging_root: PathBuf,
+    package_root: PathBuf,
+}
+
+impl Drop for AcquiredGitPackage {
+    fn drop(&mut self) {
+        let _ = remove_confined_directory(&self.plugin_root, &self.staging_root);
+    }
 }
 
 impl CommittedPluginPackage {
@@ -122,13 +145,46 @@ pub(crate) fn install_local_package(
     {
         return Err(install_error("Plugin 来源目录与安装目录不能重叠"));
     }
+    install_copied_package(&plugin_root, &source_root, expected_fingerprint)
+}
+
+pub(crate) async fn inspect_git_package(
+    plugin_root: &Path,
+    repository_url: &str,
+    git_reference: Option<&str>,
+    subdirectory: Option<&str>,
+) -> Result<LocalPluginInspection, String> {
+    let acquired = acquire_git_package(plugin_root, repository_url, git_reference).await?;
+    inspect_local_package(&acquired.package_root, subdirectory)
+}
+
+pub(crate) async fn install_git_package(
+    plugin_root: &Path,
+    repository_url: &str,
+    git_reference: Option<&str>,
+    subdirectory: Option<&str>,
+    expected_fingerprint: &str,
+) -> Result<CommittedPluginPackage, String> {
+    if !valid_sha256(expected_fingerprint) {
+        return Err(install_error("Plugin 预检指纹无效"));
+    }
+    let acquired = acquire_git_package(plugin_root, repository_url, git_reference).await?;
+    let source_root = local_source_root(&acquired.package_root, subdirectory)?;
+    install_copied_package(&acquired.plugin_root, &source_root, expected_fingerprint)
+}
+
+fn install_copied_package(
+    plugin_root: &Path,
+    source_root: &Path,
+    expected_fingerprint: &str,
+) -> Result<CommittedPluginPackage, String> {
     let staging_container = plugin_root
         .join(".staging")
         .join(Uuid::new_v4().to_string());
     let package_root = staging_container.join("package");
     fs::create_dir_all(&package_root).map_err(|_| install_error("无法创建 Plugin 临时安装目录"))?;
     let staged = (|| {
-        let fingerprint = snapshot_local_tree(&source_root, Some(&package_root))?;
+        let fingerprint = snapshot_local_tree(source_root, Some(&package_root))?;
         if fingerprint != expected_fingerprint {
             return Err(install_error("Plugin 内容自预检后已变化，请重新检查"));
         }
@@ -138,7 +194,7 @@ pub(crate) fn install_local_package(
     let (manifest, fingerprint) = match staged {
         Ok(value) => value,
         Err(error) => {
-            let _ = remove_confined_directory(&plugin_root, &staging_container);
+            let _ = remove_confined_directory(plugin_root, &staging_container);
             return Err(error);
         }
     };
@@ -159,24 +215,361 @@ pub(crate) fn install_local_package(
         if let Some(backup) = &backup_root {
             let _ = fs::rename(backup, &final_root);
         }
-        let _ = remove_confined_directory(&plugin_root, &staging_container);
+        let _ = remove_confined_directory(plugin_root, &staging_container);
         return Err(install_error(&format!("无法提交 Plugin 安装：{error}")));
     }
-    let _ = remove_confined_directory(&plugin_root, &staging_container);
-    if let Err(error) = write_installation_integrity(&plugin_root, &final_root, &fingerprint) {
-        let _ = remove_confined_directory(&plugin_root, &final_root);
+    let _ = remove_confined_directory(plugin_root, &staging_container);
+    if let Err(error) = write_installation_integrity(plugin_root, &final_root, &fingerprint) {
+        let _ = remove_confined_directory(plugin_root, &final_root);
         if let Some(backup) = &backup_root {
             let _ = fs::rename(backup, &final_root);
         }
         return Err(error);
     }
     Ok(CommittedPluginPackage {
-        plugin_root,
+        plugin_root: plugin_root.to_path_buf(),
         installation_root: final_root,
         manifest,
         artifact_sha256: fingerprint,
         backup_root,
     })
+}
+
+async fn acquire_git_package(
+    plugin_root: &Path,
+    repository_url: &str,
+    git_reference: Option<&str>,
+) -> Result<AcquiredGitPackage, String> {
+    validate_git_repository_url(repository_url)?;
+    let reference = validate_git_reference(git_reference)?;
+    let plugin_root = canonical_plugin_root(plugin_root)?;
+    let staging_root = plugin_root
+        .join(".source-staging")
+        .join(Uuid::new_v4().to_string());
+    let git_root = staging_root.join("repository.git");
+    let archive_path = staging_root.join("repository.tar");
+    let package_root = staging_root.join("package");
+    fs::create_dir_all(&git_root).map_err(|_| install_error("无法创建 Git Plugin 临时目录"))?;
+    let acquired = AcquiredGitPackage {
+        plugin_root,
+        staging_root,
+        package_root,
+    };
+
+    run_plugin_git(
+        &["init", "--bare", "--quiet", "."],
+        &git_root,
+        "无法初始化 Git Plugin 临时仓库",
+    )
+    .await?;
+    run_plugin_git(
+        &[
+            "-c",
+            git_null_hooks_config(),
+            "-c",
+            "credential.helper=",
+            "-c",
+            "protocol.file.allow=never",
+            "-c",
+            "submodule.recurse=false",
+            "fetch",
+            "--quiet",
+            "--depth",
+            "1",
+            "--no-tags",
+            repository_url,
+            &reference,
+        ],
+        &git_root,
+        "Git Plugin 获取失败，请检查仓库地址和 ref",
+    )
+    .await?;
+    run_plugin_git_archive(&git_root, &archive_path).await?;
+    extract_git_archive(&archive_path, &acquired.package_root)?;
+    Ok(acquired)
+}
+
+fn validate_git_repository_url(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 4_096
+        || value.contains(['\0', '\r', '\n'])
+        || value.trim() != value
+    {
+        return Err(install_error("Git Plugin 来源无效"));
+    }
+    let url = reqwest::Url::parse(value).map_err(|_| install_error("Git Plugin 来源无效"))?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(install_error(
+            "Git Plugin 只接受不含凭据、查询参数或片段的 HTTPS 仓库 URL",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_git_reference(value: Option<&str>) -> Result<String, String> {
+    let value = value.unwrap_or("HEAD");
+    if value.is_empty()
+        || value.len() > 256
+        || value.starts_with('-')
+        || value.contains("..")
+        || value.contains("@{")
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'/' | b'-'))
+    {
+        return Err(install_error("Git Plugin ref 无效"));
+    }
+    Ok(value.to_owned())
+}
+
+#[cfg(windows)]
+fn git_null_hooks_config() -> &'static str {
+    "core.hooksPath=NUL"
+}
+
+#[cfg(not(windows))]
+fn git_null_hooks_config() -> &'static str {
+    "core.hooksPath=/dev/null"
+}
+
+async fn run_plugin_git(
+    arguments: &[&str],
+    directory: &Path,
+    failure_message: &str,
+) -> Result<(), String> {
+    let mut command = plugin_git_command(arguments, directory);
+    command.stdout(Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|_| install_error("无法启动 Git；请先安装 Git for Windows"))?;
+    let termination = ProcessTermination::attach(&child).map_err(|_| {
+        let _ = child.start_kill();
+        install_error("无法隔离 Git Plugin 获取进程")
+    })?;
+    let status = match timeout(GIT_OPERATION_TIMEOUT, child.wait()).await {
+        Ok(result) => result.map_err(|_| install_error("Git Plugin 获取失败"))?,
+        Err(_) => {
+            terminate_git_process(&mut child, &termination).await;
+            return Err(install_error("Git Plugin 获取超过 5 分钟，已终止"));
+        }
+    };
+    let _ = termination.terminate(true);
+    if !status.success() {
+        return Err(install_error(&format!(
+            "{failure_message}（Git 退出码 {}）",
+            status.code().unwrap_or(-1)
+        )));
+    }
+    Ok(())
+}
+
+async fn run_plugin_git_archive(directory: &Path, destination: &Path) -> Result<(), String> {
+    let mut command = plugin_git_command(&["archive", "--format=tar", "FETCH_HEAD"], directory);
+    command.stdout(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|_| install_error("无法启动 Git；请先安装 Git for Windows"))?;
+    let termination = ProcessTermination::attach(&child).map_err(|_| {
+        let _ = child.start_kill();
+        install_error("无法隔离 Git Plugin 获取进程")
+    })?;
+    let Some(mut stdout) = child.stdout.take() else {
+        terminate_git_process(&mut child, &termination).await;
+        return Err(install_error("无法读取 Git Plugin 快照"));
+    };
+    let output = tokio::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(destination)
+        .await;
+    let mut output = match output {
+        Ok(output) => output,
+        Err(_) => {
+            terminate_git_process(&mut child, &termination).await;
+            return Err(install_error("无法保存 Git Plugin 快照"));
+        }
+    };
+    let operation = async {
+        let mut written = 0_u64;
+        let mut buffer = vec![0_u8; 64 * 1_024];
+        loop {
+            let count = stdout
+                .read(&mut buffer)
+                .await
+                .map_err(|_| install_error("Git Plugin 快照读取失败"))?;
+            if count == 0 {
+                break;
+            }
+            written = written
+                .checked_add(count as u64)
+                .filter(|value| *value <= MAXIMUM_ARCHIVE_BYTES)
+                .ok_or_else(|| install_error("Git Plugin 快照大小超过限制"))?;
+            output
+                .write_all(&buffer[..count])
+                .await
+                .map_err(|_| install_error("无法保存 Git Plugin 快照"))?;
+        }
+        output
+            .flush()
+            .await
+            .map_err(|_| install_error("无法保存 Git Plugin 快照"))?;
+        output
+            .sync_all()
+            .await
+            .map_err(|_| install_error("无法保存 Git Plugin 快照"))?;
+        let status = child
+            .wait()
+            .await
+            .map_err(|_| install_error("无法冻结 Git Plugin 仓库快照"))?;
+        if written == 0 {
+            return Err(install_error("Git Plugin 快照为空"));
+        }
+        Ok(status)
+    };
+    let result = match timeout(GIT_OPERATION_TIMEOUT, operation).await {
+        Ok(result) => result,
+        Err(_) => Err(install_error("Git Plugin 快照超过 5 分钟，已终止")),
+    };
+    if result.is_err() {
+        terminate_git_process(&mut child, &termination).await;
+        let _ = tokio::fs::remove_file(destination).await;
+    } else {
+        let _ = termination.terminate(true);
+    }
+    let status = result?;
+    if !status.success() {
+        let _ = tokio::fs::remove_file(destination).await;
+        return Err(install_error(&format!(
+            "无法冻结 Git Plugin 仓库快照（Git 退出码 {}）",
+            status.code().unwrap_or(-1)
+        )));
+    }
+    Ok(())
+}
+
+fn plugin_git_command(arguments: &[&str], directory: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
+        .args(arguments)
+        .current_dir(directory)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "Never")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", git_null_device())
+        .env("GIT_LFS_SKIP_SMUDGE", "1")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.as_std_mut().process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
+async fn terminate_git_process(
+    child: &mut tokio::process::Child,
+    termination: &ProcessTermination,
+) {
+    let _ = termination.terminate(false);
+    if timeout(PROCESS_TERMINATION_GRACE, child.wait())
+        .await
+        .is_err()
+    {
+        let _ = termination.terminate(true);
+        let _ = timeout(PROCESS_TERMINATION_GRACE, child.wait()).await;
+    }
+}
+
+#[cfg(windows)]
+fn git_null_device() -> &'static str {
+    "NUL"
+}
+
+#[cfg(not(windows))]
+fn git_null_device() -> &'static str {
+    "/dev/null"
+}
+
+fn extract_git_archive(archive_path: &Path, package_root: &Path) -> Result<(), String> {
+    fs::create_dir_all(package_root).map_err(|_| install_error("无法创建 Git Plugin 解包目录"))?;
+    let file = File::open(archive_path).map_err(|_| install_error("无法读取 Git Plugin 快照"))?;
+    let mut archive = Archive::new(file);
+    let mut observed = BTreeSet::new();
+    let mut count = 0_usize;
+    let mut total_bytes = 0_u64;
+    for entry in archive
+        .entries()
+        .map_err(|_| install_error("Git Plugin 快照格式无效"))?
+    {
+        let mut entry = entry.map_err(|_| install_error("Git Plugin 快照格式无效"))?;
+        count += 1;
+        if count > MAXIMUM_ARCHIVE_ENTRIES {
+            return Err(install_error("Git Plugin 文件数量超过限制"));
+        }
+        let kind = entry.header().entry_type();
+        if matches!(
+            kind,
+            tar::EntryType::XGlobalHeader
+                | tar::EntryType::XHeader
+                | tar::EntryType::GNULongName
+                | tar::EntryType::GNULongLink
+        ) {
+            if entry.size() > 64 * 1_024 {
+                return Err(install_error("Git Plugin 元数据超过限制"));
+            }
+            continue;
+        }
+        let path = entry
+            .path()
+            .map_err(|_| install_error("Git Plugin 路径无效"))?
+            .into_owned();
+        let relative = safe_relative_path(&path)?;
+        if relative.as_os_str().len() > 4_096 {
+            return Err(install_error("Git Plugin 路径过长"));
+        }
+        if !observed.insert(relative_path_identity(&relative)?) {
+            return Err(install_error("Git Plugin 包含大小写冲突路径"));
+        }
+        if kind.is_file() {
+            total_bytes = total_bytes
+                .checked_add(entry.size())
+                .filter(|value| *value <= MAXIMUM_UNPACKED_BYTES)
+                .ok_or_else(|| install_error("Git Plugin 体积超过限制"))?;
+        } else if !kind.is_dir() {
+            return Err(install_error("Git Plugin 包含链接或特殊文件"));
+        }
+        let destination = package_root.join(&relative);
+        if kind.is_dir() {
+            fs::create_dir_all(&destination)
+                .map_err(|_| install_error("无法创建 Git Plugin 目录"))?;
+        } else {
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|_| install_error("无法创建 Git Plugin 目录"))?;
+            }
+            entry
+                .unpack(&destination)
+                .map_err(|_| install_error("无法解包 Git Plugin 文件"))?;
+        }
+    }
+    if observed.is_empty() {
+        return Err(install_error("Git Plugin 仓库为空"));
+    }
+    Ok(())
 }
 
 fn validate_local_package(package_root: &Path) -> Result<PluginManifest, String> {
@@ -987,5 +1380,95 @@ mod tests {
         fs::create_dir_all(&source).unwrap();
         fs::write(source.join("chatos.plugin.json"), b"{}").unwrap();
         assert!(inspect_local_package(&source, Some("../escape")).is_err());
+    }
+
+    #[test]
+    fn git_sources_require_credential_free_https_and_safe_refs() {
+        assert!(validate_git_repository_url("https://example.com/team/plugin.git").is_ok());
+        assert!(validate_git_repository_url("http://example.com/team/plugin.git").is_err());
+        assert!(validate_git_repository_url("https://user@example.com/team/plugin.git").is_err());
+        assert!(
+            validate_git_repository_url("https://example.com/team/plugin.git?token=x").is_err()
+        );
+        assert!(validate_git_repository_url("file:///C:/plugin").is_err());
+
+        assert_eq!(validate_git_reference(None).unwrap(), "HEAD");
+        assert_eq!(
+            validate_git_reference(Some("release/3.0.9")).unwrap(),
+            "release/3.0.9"
+        );
+        assert!(validate_git_reference(Some("--upload-pack=evil")).is_err());
+        assert!(validate_git_reference(Some("refs/heads/../secret")).is_err());
+        assert!(validate_git_reference(Some("main@{1}")).is_err());
+        assert!(validate_git_reference(Some("main branch")).is_err());
+    }
+
+    #[test]
+    fn git_archive_extraction_rejects_links_and_case_collisions() {
+        let directory = tempfile::tempdir().unwrap();
+        let safe_archive = directory.path().join("safe.tar");
+        {
+            let file = File::create(&safe_archive).unwrap();
+            let mut archive = tar::Builder::new(file);
+            append_test_tar_file(&mut archive, "chatos.plugin.json", b"{}");
+            append_test_tar_file(&mut archive, "bin/tool.exe", b"tool");
+            archive.finish().unwrap();
+        }
+        let safe_root = directory.path().join("safe");
+        extract_git_archive(&safe_archive, &safe_root).unwrap();
+        assert_eq!(fs::read(safe_root.join("bin/tool.exe")).unwrap(), b"tool");
+
+        let link_archive = directory.path().join("link.tar");
+        {
+            let file = File::create(&link_archive).unwrap();
+            let mut archive = tar::Builder::new(file);
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_mode(0o777);
+            header.set_link_name("outside").unwrap();
+            header.set_cksum();
+            archive
+                .append_data(&mut header, "link", std::io::empty())
+                .unwrap();
+            archive.finish().unwrap();
+        }
+        assert!(extract_git_archive(&link_archive, &directory.path().join("link")).is_err());
+
+        let collision_archive = directory.path().join("collision.tar");
+        {
+            let file = File::create(&collision_archive).unwrap();
+            let mut archive = tar::Builder::new(file);
+            append_test_tar_file(&mut archive, "Tool", b"one");
+            append_test_tar_file(&mut archive, "tool", b"two");
+            archive.finish().unwrap();
+        }
+        assert!(
+            extract_git_archive(&collision_archive, &directory.path().join("collision")).is_err()
+        );
+    }
+
+    fn append_test_tar_file(archive: &mut tar::Builder<File>, path: &str, bytes: &[u8]) {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive.append_data(&mut header, path, bytes).unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires public HTTPS Git access"]
+    async fn git_https_acquisition_smoke() {
+        let directory = tempfile::tempdir().unwrap();
+        let acquired = acquire_git_package(
+            &directory.path().join("plugins"),
+            "https://github.com/octocat/Hello-World.git",
+            Some("master"),
+        )
+        .await
+        .unwrap();
+        assert!(acquired.package_root.join("README").is_file());
+        assert!(!acquired.package_root.join(".git").exists());
     }
 }
