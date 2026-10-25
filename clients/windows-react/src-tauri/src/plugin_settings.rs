@@ -27,7 +27,7 @@ use crate::{
     plugin_application::PluginApplicationManager,
     plugin_installer::{
         install_git_package, install_local_package, install_marketplace_package,
-        resolve_executable, CommittedPluginPackage,
+        install_npm_package_source, resolve_executable, CommittedPluginPackage,
     },
     plugin_integrity::{
         requires_installation_integrity, secure_component_revision, verify_installation_integrity,
@@ -298,6 +298,40 @@ pub(crate) async fn install_git_plugin_source(
         &settings.plugin_root,
         &repository_url,
         git_reference.as_deref(),
+        subdirectory.as_deref(),
+        &expected_fingerprint,
+    )
+    .await?;
+    finish_local_plugin_install(
+        authentication,
+        host,
+        settings,
+        applications,
+        owner_user_id,
+        generation,
+        package,
+    )
+    .await
+}
+
+pub(crate) async fn install_npm_plugin_source(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    package_name: String,
+    exact_version: String,
+    subdirectory: Option<String>,
+    expected_fingerprint: String,
+) -> Result<LocalPluginInstallResult, String> {
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
+    let package = install_npm_package_source(
+        &settings.plugin_root,
+        &package_name,
+        &exact_version,
         subdirectory.as_deref(),
         &expected_fingerprint,
     )
