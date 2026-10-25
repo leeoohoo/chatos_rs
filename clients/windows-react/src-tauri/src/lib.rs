@@ -28,6 +28,7 @@ mod pet;
 mod platform_execution_context;
 mod plugin_application;
 mod plugin_installer;
+mod plugin_installer_tool_worker;
 mod plugin_integrity;
 mod plugin_settings;
 mod product_skill_runtime;

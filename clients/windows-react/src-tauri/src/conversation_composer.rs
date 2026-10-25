@@ -2,8 +2,9 @@ use chatos_local_agent_protocol::{
     GetConversationCommand, GetConversationRuntimeSettingsCommand,
     GetLatestCapabilityPolicySnapshotCommand, GuideConversationTurnCommand, HostCommand,
     HostResult, ListLatestModelConfigSnapshotsCommand, LocalConversationAttachmentSpec,
-    LocalConversationDetail, LocalConversationRuntimeSettings, LocalConversationTurnStatus,
-    LocalModelConfigSnapshot, PutConversationRuntimeSettingsCommand, StartConversationTurnCommand,
+    LocalConversationDetail, LocalConversationResourceKind, LocalConversationRuntimeSettings,
+    LocalConversationTurnStatus, LocalModelConfigSnapshot, PutConversationRuntimeSettingsCommand,
+    StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -13,6 +14,10 @@ use crate::{
     attachment_tool_worker::AttachmentToolWorker,
     conversation_attachments::{AttachmentManager, AttachmentScope},
     host_lifecycle::{HostExecutionError, HostManager},
+    plugin_installer_tool_worker::{
+        plugin_installer_revision, plugin_installer_tool_schemas, PLUGIN_INSTALLER_CONTACT_ID,
+        PLUGIN_INSTALLER_INSTRUCTIONS,
+    },
     terminal_tool_worker::TerminalToolWorker,
 };
 
@@ -189,7 +194,7 @@ async fn start_new_turn(
     attachments: Vec<LocalConversationAttachmentSpec>,
 ) -> Result<ConversationSendAck, String> {
     let settings = ensure_runtime_settings(manager, owner_user_id, conversation_id).await?;
-    let capability_revision = latest_main_chat_capability(manager, owner_user_id).await?;
+    let capability_revision = conversation_capability(manager, owner_user_id, &detail).await?;
     let turn_id = identifier("turn");
     let message_id = identifier("message");
     let mut metadata = Map::from_iter([
@@ -337,6 +342,47 @@ async fn latest_main_chat_capability(
         return Err("Local Agent Host 返回了不匹配的能力配置。".into());
     }
     Ok(snapshot.capability_policy_revision)
+}
+
+async fn conversation_capability(
+    manager: &HostManager,
+    owner_user_id: &str,
+    detail: &LocalConversationDetail,
+) -> Result<String, String> {
+    let main_revision = latest_main_chat_capability(manager, owner_user_id).await?;
+    let installer = detail
+        .conversation
+        .resource
+        .as_ref()
+        .is_some_and(|resource| {
+            resource.kind == LocalConversationResourceKind::Contact
+                && resource.resource_id == PLUGIN_INSTALLER_CONTACT_ID
+        });
+    if !installer {
+        return Ok(main_revision);
+    }
+    let revision = plugin_installer_revision(&main_revision);
+    let result = manager
+        .execute(HostCommand::GetCapabilityPolicySnapshot(
+            chatos_local_agent_protocol::GetCapabilityPolicySnapshotCommand {
+                owner_user_id: owner_user_id.to_owned(),
+                profile_key: MAIN_CHAT_PROFILE.into(),
+                capability_policy_revision: revision.clone(),
+            },
+        ))
+        .await?;
+    let HostResult::CapabilityPolicySnapshot { snapshot } = result else {
+        return Err("Local Agent Host 返回了错误的安装能力配置。".into());
+    };
+    if snapshot.owner_user_id != owner_user_id
+        || snapshot.profile_key != MAIN_CHAT_PROFILE
+        || snapshot.capability_policy_revision != revision
+        || snapshot.instructions.as_deref() != Some(PLUGIN_INSTALLER_INSTRUCTIONS)
+        || snapshot.tools != plugin_installer_tool_schemas()
+    {
+        return Err("插件安装助手能力未通过本机校验。".into());
+    }
+    Ok(revision)
 }
 
 fn default_conversation_model(

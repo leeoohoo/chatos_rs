@@ -2,7 +2,7 @@ use super::transport::ManagedHost;
 use std::{collections::BTreeMap, path::Path, process::Stdio};
 use tokio::process::Command;
 
-const READ_ONLY_TOOL_NAMES: [&str; 23] = [
+const READ_ONLY_TOOL_NAMES: [&str; 24] = [
     "local_attachment_read",
     "read_file_raw",
     "read_file_range",
@@ -17,6 +17,7 @@ const READ_ONLY_TOOL_NAMES: [&str; 23] = [
     "todo_read_progress",
     "capability_search",
     "capability_describe",
+    "plugin_installer_inspect_source",
     "agent_skill_activate",
     "agent_skill_read_resource",
     "agent_workspace_snapshot",
@@ -27,7 +28,7 @@ const READ_ONLY_TOOL_NAMES: [&str; 23] = [
     "process_log",
     "process_wait",
 ];
-const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 16] = [
+const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 17] = [
     "open_edit_session",
     "stage_edit_batch",
     "abort_edit_session",
@@ -44,6 +45,7 @@ const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 16] = [
     "chat_send_message",
     "chat_heartbeat_complete",
     "agent_cycle_complete",
+    "plugin_installer_install_source",
 ];
 
 pub(super) async fn spawn(

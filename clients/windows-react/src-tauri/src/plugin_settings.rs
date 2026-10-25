@@ -9,6 +9,7 @@ use chatos_plugin_management_sdk::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -24,7 +25,7 @@ use crate::{
     connector_state,
     host_lifecycle::HostManager,
     plugin_application::PluginApplicationManager,
-    plugin_installer::{install_marketplace_package, resolve_executable},
+    plugin_installer::{install_local_package, install_marketplace_package, resolve_executable},
     plugin_integrity::{
         requires_installation_integrity, secure_component_revision, verify_installation_integrity,
     },
@@ -221,6 +222,103 @@ pub struct PluginEnabledInput {
     owner_user_id: String,
     plugin_id: String,
     enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct LocalPluginInstallResult {
+    pub(crate) plugin_id: String,
+    pub(crate) display_name: String,
+    pub(crate) version: String,
+    pub(crate) component_count: usize,
+    pub(crate) fingerprint: String,
+}
+
+pub(crate) async fn install_local_plugin_source(
+    authentication: &AuthenticationManager,
+    host: &HostManager,
+    settings: &PluginSettingsManager,
+    applications: &PluginApplicationManager,
+    owner_user_id: &str,
+    source_path: String,
+    subdirectory: Option<String>,
+    expected_fingerprint: String,
+) -> Result<LocalPluginInstallResult, String> {
+    let generation = authentication
+        .session_generation_for_owner(owner_user_id)
+        .await?;
+    if source_path.is_empty() || source_path.len() > 4_096 || source_path.contains('\0') {
+        return Err("本地 Plugin 来源路径无效。".into());
+    }
+    let plugin_root = settings.plugin_root.clone();
+    let package = tauri::async_runtime::spawn_blocking(move || {
+        install_local_package(
+            &plugin_root,
+            Path::new(&source_path),
+            subdirectory.as_deref(),
+            &expected_fingerprint,
+        )
+    })
+    .await
+    .map_err(|_| "本地 Plugin 安装任务异常退出。".to_owned())??;
+    if let Err(error) = authentication
+        .require_session_generation(owner_user_id, generation)
+        .await
+    {
+        package.rollback();
+        return Err(error);
+    }
+    let plugin_id = format!(
+        "local-plugin-{:x}",
+        Sha256::digest(package.manifest.name.as_bytes())
+    );
+    let release_id = format!("local-release-{}", package.artifact_sha256);
+    let records = match list_installation_records(host, owner_user_id).await {
+        Ok(records) => records,
+        Err(error) => {
+            package.rollback();
+            return Err(error);
+        }
+    };
+    let previous = records
+        .into_iter()
+        .filter(|record| record.spec.plugin_id == plugin_id)
+        .collect::<Vec<_>>();
+    let previous_roots = installation_roots(&settings.plugin_root, &previous).unwrap_or_default();
+    let specs =
+        match local_installation_specs(owner_user_id, &plugin_id, &release_id, &package, &previous)
+        {
+            Ok(specs) => specs,
+            Err(error) => {
+                package.rollback();
+                return Err(error);
+            }
+        };
+    let component_count = specs.len();
+    applications.reset().await;
+    if let Err(error) = replace_installation_records(host, previous, specs).await {
+        package.rollback();
+        return Err(error);
+    }
+    let result = LocalPluginInstallResult {
+        plugin_id,
+        display_name: safe_text(
+            &package.manifest.interface.display_name,
+            &package.manifest.name,
+        ),
+        version: package.manifest.version.clone(),
+        component_count,
+        fingerprint: package.artifact_sha256.clone(),
+    };
+    let installed_root = package.installation_root.clone();
+    let _ = package.finish();
+    let stale_roots = previous_roots
+        .into_iter()
+        .filter(|path| path != &installed_root)
+        .collect();
+    let _ = remove_installation_roots(&settings.plugin_root, stale_roots).await;
+    applications.reset().await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -496,6 +594,59 @@ fn installation_specs(
             tool_prefix: None,
             allowed_tools: None,
             enabled,
+        };
+        spec.validate()
+            .map_err(|_| "Plugin 安装记录无效。".to_owned())?;
+        specs.push(spec);
+    }
+    if specs.is_empty() {
+        return Err("Plugin 没有 Windows 可运行的 stdio MCP 组件。".into());
+    }
+    Ok(specs)
+}
+
+fn local_installation_specs(
+    owner_user_id: &str,
+    plugin_id: &str,
+    release_id: &str,
+    package: &crate::plugin_installer::CommittedPluginPackage,
+    previous: &[LocalPluginInstallationRecord],
+) -> Result<Vec<LocalPluginInstallationSpec>, String> {
+    let mut previous_by_component = BTreeMap::<String, &LocalPluginInstallationRecord>::new();
+    for record in previous {
+        previous_by_component.insert(record.spec.server_id.clone(), record);
+    }
+    let mut specs = Vec::new();
+    for server in &package.manifest.mcp_servers {
+        let PluginMcpServer::Stdio {
+            component_key,
+            bin,
+            args,
+            ..
+        } = server
+        else {
+            continue;
+        };
+        let executable = resolve_executable(&package.installation_root, bin)?;
+        let spec = LocalPluginInstallationSpec {
+            installation_id: previous_by_component
+                .get(component_key)
+                .map(|record| record.spec.installation_id.clone())
+                .unwrap_or_else(|| format!("plugin-install-{}", uuid::Uuid::new_v4().simple())),
+            owner_user_id: owner_user_id.to_owned(),
+            plugin_id: plugin_id.to_owned(),
+            release_id: release_id.to_owned(),
+            release_digest: format!("sha256:{}", package.artifact_sha256),
+            component_id: component_key.clone(),
+            component_revision: secure_component_revision(&package.artifact_sha256)?,
+            server_id: component_key.clone(),
+            executable_path: executable.to_string_lossy().into_owned(),
+            args: args.clone(),
+            working_directory: Some(package.installation_root.to_string_lossy().into_owned()),
+            environment_secret_refs: BTreeMap::new(),
+            tool_prefix: None,
+            allowed_tools: None,
+            enabled: true,
         };
         spec.validate()
             .map_err(|_| "Plugin 安装记录无效。".to_owned())?;

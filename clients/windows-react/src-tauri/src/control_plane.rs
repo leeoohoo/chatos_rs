@@ -10,6 +10,9 @@ use crate::{
         team_chat_read_tool_schemas, team_chat_write_tool_schemas, todo_execution_tool_schemas,
         todo_planning_read_tool_schemas, todo_planning_write_tool_schemas,
     },
+    plugin_installer_tool_worker::{
+        plugin_installer_revision, plugin_installer_tool_schemas, PLUGIN_INSTALLER_INSTRUCTIONS,
+    },
     terminal_tool_worker::{
         project_read_tool_schemas, project_write_tool_schemas, terminal_tool_schemas,
     },
@@ -184,6 +187,24 @@ async fn persisted_capabilities_are_complete(host: &mut ManagedHost, owner_user_
     if !valid_main_chat_snapshot(&main, owner_user_id) {
         return false;
     }
+    let installer_revision = plugin_installer_revision(&main.capability_policy_revision);
+    let Ok(HostResult::CapabilityPolicySnapshot {
+        snapshot: installer,
+    }) = request(
+        host,
+        HostCommand::GetCapabilityPolicySnapshot(GetCapabilityPolicySnapshotCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            profile_key: MAIN_CHAT_PROFILE.into(),
+            capability_policy_revision: installer_revision,
+        }),
+    )
+    .await
+    else {
+        return false;
+    };
+    if !valid_plugin_installer_snapshot(&installer, owner_user_id) {
+        return false;
+    }
     for profile_key in [TASK_EXECUTION_PROFILE, TASK_POLICY_PROFILE] {
         let result = request(
             host,
@@ -207,6 +228,19 @@ async fn persisted_capabilities_are_complete(host: &mut ManagedHost, owner_user_
         }
     }
     true
+}
+
+fn valid_plugin_installer_snapshot(
+    snapshot: &LocalCapabilityPolicySnapshot,
+    owner_user_id: &str,
+) -> bool {
+    snapshot.owner_user_id == owner_user_id
+        && snapshot.profile_key == MAIN_CHAT_PROFILE
+        && snapshot
+            .capability_policy_revision
+            .starts_with("plugin-installer-")
+        && snapshot.instructions.as_deref() == Some(PLUGIN_INSTALLER_INSTRUCTIONS)
+        && snapshot.tools == plugin_installer_tool_schemas()
 }
 
 fn valid_main_chat_snapshot(snapshot: &LocalCapabilityPolicySnapshot, owner_user_id: &str) -> bool {
@@ -619,6 +653,14 @@ async fn publish_capabilities(
     })
     .to_string();
     for snapshot in [
+        LocalCapabilityPolicySnapshot {
+            owner_user_id: owner_user_id.to_owned(),
+            profile_key: MAIN_CHAT_PROFILE.into(),
+            capability_policy_revision: plugin_installer_revision(&revision),
+            instructions: Some(PLUGIN_INSTALLER_INSTRUCTIONS.into()),
+            prefixed_input_items: Vec::new(),
+            tools: plugin_installer_tool_schemas(),
+        },
         LocalCapabilityPolicySnapshot {
             owner_user_id: owner_user_id.to_owned(),
             profile_key: MAIN_CHAT_PROFILE.into(),

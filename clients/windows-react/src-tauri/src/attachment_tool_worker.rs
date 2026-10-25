@@ -44,6 +44,7 @@ use crate::{
     host_lifecycle::HostManager,
     platform_execution_context::resolve_platform_execution_context,
     plugin_application::{PluginApplicationManager, TrustedAgentPluginOption},
+    plugin_installer_tool_worker::{execute_plugin_installer_tool, PLUGIN_INSTALLER_TOOL_NAMES},
     product_skill_runtime::ProductSkillRuntime,
     terminal_tool_worker::TerminalToolWorker,
 };
@@ -221,6 +222,7 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
                     .chain(TEAM_CHAT_READ_TOOL_NAMES)
                     .chain(TEAM_CHAT_WRITE_TOOL_NAMES)
                     .chain(TODO_PLANNING_WRITE_TOOL_NAMES)
+                    .chain(PLUGIN_INSTALLER_TOOL_NAMES)
                     .map(str::to_owned)
                     .collect(),
             ),
@@ -252,6 +254,8 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
             } else if TODO_PLANNING_WRITE_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str())
             {
                 execute_todo_planning_write_tool(app, owner_user_id, &claim).await
+            } else if PLUGIN_INSTALLER_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+                execute_plugin_installer_tool(app, owner_user_id, &claim).await
             } else {
                 execute_team_asset_tool(app, owner_user_id, &claim).await
             };
