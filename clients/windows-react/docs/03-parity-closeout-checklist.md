@@ -37,9 +37,9 @@ Windows 产品版本：`3.0.9`
 
 - [ ] Computer Use / 屏幕采集的受信发布闭环。Windows Worker 源码、x64/arm64 构建和 smoke 已通过，但当前用户 Plugin 目录为空；还需产出跨平台 `.tgz`、进入签名 Marketplace Release，并从 Windows 客户端完成安装、启用、`doctor`、屏幕采集和输入实测。
 - [ ] 访问控制的文件与网络隔离。当前 Windows 后端只真实提供账号/项目边界、审批前置校验和 Job Object 进程树回收；没有操作系统级文件沙箱或网络隔离，因此第 31 页只能只读，尚未达到 macOS 截图中的可编辑策略与“文件隔离/网络隔离已就绪”。
-- [ ] Plugin 手动本地导入。签名 Marketplace 安装/更新已经实现；任意本地包导入仍关闭，缺少与 macOS 等价的本地信任确认、完整性记录和安全回滚链。
+- [ ] Plugin 安装助手真实能力。Windows 已有联系人、会话和提示文案，但新 Turn 仍使用普通 `main_chat` capability；尚未发布 macOS 的专用 installer capability，也没有 `plugin_installer_search/resolve/inspect/install` 平台工具执行器。当前入口只能聊天，不能据此宣称已经支持 npm、本地目录或 Git Plugin 安装。
+- [ ] Plugin 手动本地导入。签名 Marketplace 安装/更新已经实现；任意本地包导入仍关闭。需先实现与 macOS 相同的 inspect→fingerprint→显式安装意图→重新获取并复验→原子提交/失败回滚链，并支持 ChatOS、portable Agent、Codex、Claude、独立 Skill 和常见 stdio MCP 配置格式。
 - [ ] Plugin 的 skills-only 与 Secret 支持。Windows Host 安装模型目前要求可执行 stdio component；纯 Skills 包和含 `environment_secret_refs` 的 Plugin 会失败关闭。
-- [ ] Plugin 应用 Bridge 兼容面。静态页面与 `local_http` UI 均已准入；当前 Windows 与 macOS UI Host 都只真正实现 `host.context.read`，Manifest 已声明但尚未闭环的 `artifact.list/read/download/create/update` 仍需结合 Artifact 存储、权限和下载交付语义实现，不能只开放空接口。
 
 ### P2：平台/发布质量
 
@@ -53,11 +53,13 @@ Windows 产品版本：`3.0.9`
 - 宠物浮窗当前使用 Windows 置顶窗口；Tauri 公共 API 不提供 macOS 同等的“固定到所有虚拟桌面”。
 - Windows 设备网关使用账号认证控制面与本地 Rust Host，不宣称具有 macOS 设备签名长连接 Relay。
 - Windows 文件访问遵循当前账号 ACL 和用户显式授权工作区，不存在 macOS“完全磁盘访问”的同名总开关。
+- Plugin 应用静态页面与 `local_http` UI 已在 Windows 准入；Windows 和 macOS UI Host 目前都只真正实现 `host.context.read`。Manifest 中尚未闭环的 `artifact.list/read/download/create/update` 是两端共同待办，不列为 Windows 落后于 macOS 的差距。
 
 ## E. 执行顺序
 
-1. 关闭 B 组构建、测试、安装和原生启动门禁。
-2. 完成 Computer Use 签名发布/安装闭环。
-3. 设计并实现 Windows 文件/网络隔离后，再开放第 31 页策略编辑。
-4. 依次补 Plugin 手动导入、skills-only/Secret、静态 UI/bridge 能力。
-5. 完成签名、升级回滚、缩放/无障碍和性能稳定性验收。
+1. [已完成] 关闭 B 组中不依赖 Computer Use 原生管道的构建、测试、重新打包、安装 smoke 和原生进程启动门禁。
+2. [进行中] 先补 Plugin 安装助手专用 capability 与受限平台工具，再实现本地目录 inspect/install 闭环；没有工具执行器前不再把联系人提示计为功能完成。
+3. [待开始] 在同一安装链上补 Git、固定版本 npm、兼容格式、skills-only 与 Secret resolver，逐种格式单独测试，不合并成一个不可审计的大开关。
+4. [外部依赖] 完成 Computer Use `.tgz`、Marketplace 签名发布/客户端安装闭环，以及 Windows 安装包正式代码签名。
+5. [待开始] 设计并实现 Windows 文件/网络隔离后，再开放第 31 页策略编辑。
+6. [待验证] 工具恢复后完成 31 页原生逐页视觉、缩放和无障碍验收；随后执行升级/回滚及性能稳定性基线。
