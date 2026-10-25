@@ -12,6 +12,7 @@ const MAXIMUM_PLUGIN_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub struct AuthenticationApiClient {
     client: Client,
     user_service_url: Url,
+    #[cfg_attr(not(test), allow(dead_code))]
     gateway_url: Url,
     connector_url: Url,
 }
@@ -231,6 +232,7 @@ impl AuthenticationApiClient {
         Self::new_with_connector(&runtime_api_base_url(), &runtime_connector_base_url())
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn new(base_url: &str) -> Result<Self, String> {
         Self::new_with_connector(base_url, base_url)
     }

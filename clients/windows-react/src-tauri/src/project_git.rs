@@ -1379,7 +1379,9 @@ fn invalid_git_output() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, process::Command as StdCommand, time::Instant};
+    #[cfg(unix)]
+    use std::time::Instant;
+    use std::{fs, process::Command as StdCommand};
 
     fn context(root: &Path) -> GitProjectContext {
         let root = fs::canonicalize(root).unwrap();

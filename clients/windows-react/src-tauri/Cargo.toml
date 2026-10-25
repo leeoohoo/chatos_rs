@@ -1,6 +1,6 @@
 [package]
 name = "chatos-windows-react"
-version = "0.1.0"
+version = "3.0.9"
 description = "ChatOS Windows client"
 authors = ["AI Chat Team"]
 edition = "2021"

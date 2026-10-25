@@ -2,8 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::fs::File;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -1175,6 +1177,8 @@ fn set_private_directory_permissions(path: &Path) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|_| store_error())?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
@@ -1234,6 +1238,8 @@ fn sync_directory(path: &Path) -> Result<(), String> {
             .and_then(|directory| directory.sync_all())
             .map_err(|_| store_error())?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 

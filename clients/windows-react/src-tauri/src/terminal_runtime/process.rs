@@ -421,6 +421,7 @@ impl ProcessTermination {
         {
             use std::os::windows::io::AsRawHandle;
             use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+            let _ = force;
             let Self::WindowsJob(job) = self;
             let result = unsafe { TerminateJobObject(job.as_raw_handle() as _, 1) };
             if result == 0 {

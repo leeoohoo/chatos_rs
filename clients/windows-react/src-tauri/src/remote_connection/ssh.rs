@@ -1509,6 +1509,8 @@ fn set_private_directory_permissions(path: &Path) -> Result<(), String> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
             .map_err(|_| runtime_error())?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
@@ -2194,6 +2196,7 @@ mod tests {
         assert!(!session_path.exists());
     }
 
+    #[cfg(unix)]
     fn shell_quote(value: &str) -> String {
         format!("'{}'", value.replace('\'', "'\\''"))
     }

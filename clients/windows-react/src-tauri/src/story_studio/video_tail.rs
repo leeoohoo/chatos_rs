@@ -386,8 +386,8 @@ mod tests {
             .expect("decoded tail PNG")
             .to_rgba8();
 
-        assert_eq!(decoded.dimensions(), (16, 16));
-        let center = decoded.get_pixel(8, 8).0;
+        assert_eq!(decoded.dimensions(), (64, 64));
+        let center = decoded.get_pixel(32, 32).0;
         assert!(
             center[2] > 150 && center[2] > center[0].saturating_add(100),
             "expected the blue final frame, got rgba={center:?}"

@@ -1,6 +1,7 @@
+#[cfg(unix)]
+use super::process::ManagedRemoteTerminal;
 use super::process::{
-    snapshot_state, trim_events, ManagedRemoteTerminal, RemoteTerminalEvent,
-    RemoteTerminalSessionState,
+    snapshot_state, trim_events, RemoteTerminalEvent, RemoteTerminalSessionState,
 };
 use super::*;
 use crate::remote_connection::{
