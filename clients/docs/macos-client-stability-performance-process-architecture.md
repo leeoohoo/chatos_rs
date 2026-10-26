@@ -2428,6 +2428,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：普通非图片附件当前只显示名称与大小，不提供点击导出，因此不会触发按需文件校验；未来增加打开/导出必须复用 Worker identity，不得直接信任候选 URL。每张可见图片当前需要校验 Worker、Media Worker、复核 Worker 三个短进程，这是优先保证隔离和列表无阻塞的模型；真实快速滚动、20 MiB 图片列表和低端机器 trace 应决定是否增加带硬上限的可取消批处理，但不能退回全局单槽或历史全量预热。Artifact stage/restore、临时文件安全回收和跨 Helper 动态资源预算仍待实施。
 
+### 12.109 第三十八完整里程碑：Artifact stage/restore 独立进程化（2026-10-26）
+
+本里程碑关闭 Agent Artifact 上传暂存与缺失附件恢复的 App 内阻塞文件路径。此前两条路径虽然使用 `Task.detached` 离开 Store actor，却仍在主 App 进程的 Swift cooperative executor 中执行最多 2 MiB 的分块读取、SHA-256、写盘、`fsync` 和原子安装；慢卷、磁盘故障或大量并行文档仍可能占住 App 线程，并让不同会话的无关任务相互等待。
+
+已实施：
+
+- Code Read Worker 新增 `artifact_stage_v1` 与 `artifact_restore_v1`，每次请求继续采用一请求一 PID。`AgentArtifactUploadStager` 和 `AgentArtifactFileRestorer` 删除同步实现及 `Task.detached`，App 只校验内存元数据、计算同一受控状态根下的相对路径并等待对应 Worker；Store 与 Local Agent Artifact Client 支持注入 Worker，生产默认使用真实子进程。
+- Worker 以已认证的共同根 device/inode 为边界，逐级使用 `openat`/`mkdirat` 和 `O_NOFOLLOW`，拒绝绝对路径、`..`、反斜线、symlink、非当前用户文件和变化的根身份。上传源继续要求单硬链接；stage token 继续要求 canonical lowercase UUID，目标文件名必须精确为 `<token>.staged`。
+- stage/restore 均以固定 256 KiB 缓冲流式复制并增量计算完整 SHA-256，读取前后核对 device、inode、size、mtime、ctime，目标目录与文件权限固定为 `0700/0600`。写入前在 Worker 内执行保留 256 MiB 的容量门禁，写完 `fsync`，通过无覆盖 `linkat` 安装并同步目录；并发已安装目标只有完整摘要一致才视为成功。
+- 取消、deadline、Worker 崩溃或慢盘只终止当前 artifact 子进程，不占用主 App cooperative executor，也不经过全局单槽。新增真实进程回归同时发起两份 stage，再由另一 Worker restore，证明两条独立请求可并发完成且最终内容、摘要和 `0600` 权限正确。
+
+验证：Debug 与原生 arm64 Release `warnings-as-errors` 矩阵各执行 34 项，包含 10 项真实进程隔离、12 项 Worker Core、7 项 Artifact Storage、3 项 Upload Stager 和 2 项 Local Artifact Client 回归，0 跳过、0 失败；静态检索确认两处生产实现不再包含 `Task.detached`、`stageSynchronously` 或 `restoreSynchronously`。构建证据工具 25 项全部通过，两个正式打包脚本通过 zsh 语法校验，`git diff --check` 通过；正式包和签名复核在本阶段提交后执行。不会运行 launch smoke，不启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：Host 请求结束后的 staging token `unlink` 仍是 App 内一次常数级元数据清理，不读取正文；Worker 在安装前被 `SIGKILL` 可能留下 `.chatos-artifact-copy-*.tmp`，必须与附件临时文件一起通过 ownership、命名、年龄和活跃 Worker 门禁回收，不能无条件递归删除。两路径按产品约束要求源和目标位于同一受控状态树；不为跨卷任意复制扩大根能力。临时文件安全回收、其他 App 内文件加载器以及跨 Helper 动态资源预算仍待实施。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

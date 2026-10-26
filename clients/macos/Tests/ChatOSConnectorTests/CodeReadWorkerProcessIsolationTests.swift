@@ -415,6 +415,61 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         XCTAssertEqual(byteCount, Double(data.count))
     }
 
+    func testRealWorkersStageAndRestoreArtifactsIndependently() async throws {
+        let executable = try realWorkerExecutable()
+        let fixture = try WorkerFixture()
+        defer { fixture.dispose() }
+        let client = CodeReadWorkerProcessClient(executableURL: executable, timeout: 10)
+        let firstData = Data(repeating: 0x41, count: 512 * 1_024)
+        let secondData = Data(repeating: 0x42, count: 640 * 1_024)
+        let firstSource = fixture.root.appendingPathComponent("first-source.bin")
+        let secondSource = fixture.root.appendingPathComponent("second-source.bin")
+        try firstData.write(to: firstSource)
+        try secondData.write(to: secondSource)
+        let staging = fixture.root.appendingPathComponent("staging", isDirectory: true)
+
+        async let first = AgentArtifactUploadStager.stage(
+            from: firstSource,
+            in: staging,
+            expectedBytes: firstData.count,
+            expectedSHA256: processSHA256(firstData),
+            codeReadWorker: client
+        )
+        async let second = AgentArtifactUploadStager.stage(
+            from: secondSource,
+            in: staging,
+            expectedBytes: secondData.count,
+            expectedSHA256: processSHA256(secondData),
+            codeReadWorker: client
+        )
+        let (firstStaged, secondStaged) = try await (first, second)
+        defer {
+            AgentArtifactUploadStager.discard(firstStaged)
+            AgentArtifactUploadStager.discard(secondStaged)
+        }
+        XCTAssertNotEqual(firstStaged.token, secondStaged.token)
+        XCTAssertEqual(try Data(contentsOf: firstStaged.fileURL), firstData)
+        XCTAssertEqual(try Data(contentsOf: secondStaged.fileURL), secondData)
+
+        let restored = fixture.root
+            .appendingPathComponent("restored", isDirectory: true)
+            .appendingPathComponent("first.bin")
+        try await AgentArtifactFileRestorer.restore(
+            .init(
+                fileURL: firstStaged.fileURL,
+                size: firstData.count,
+                sha256: processSHA256(firstData)
+            ),
+            to: restored,
+            expectedBytes: firstData.count,
+            expectedSHA256: processSHA256(firstData),
+            codeReadWorker: client
+        )
+        XCTAssertEqual(try Data(contentsOf: restored), firstData)
+        let attributes = try FileManager.default.attributesOfItem(atPath: restored.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
     func testAttachmentVaultProductionAuthorizationUsesBinaryWorker() async throws {
         let executable = try realWorkerExecutable()
         let fixture = try WorkerFixture()

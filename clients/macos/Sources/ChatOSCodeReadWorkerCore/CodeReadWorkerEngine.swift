@@ -25,6 +25,8 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
     case attachmentWriteFailed
     case attachmentWorkspaceUnavailable
     case attachmentWorkspaceConflict
+    case artifactInvalid
+    case artifactWriteFailed
 
     public var errorDescription: String? {
         switch self {
@@ -51,6 +53,8 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
             "The authorized attachment could not be imported into the task workspace."
         case .attachmentWorkspaceConflict:
             "The workspace attachment copy has changed or is unsafe; it was not overwritten."
+        case .artifactInvalid: "The artifact file failed its integrity check."
+        case .artifactWriteFailed: "The artifact file could not be stored safely."
         }
     }
 
@@ -78,6 +82,8 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
         case .attachmentWriteFailed: code = "attachment_write_failed"
         case .attachmentWorkspaceUnavailable: code = "attachment_workspace_unavailable"
         case .attachmentWorkspaceConflict: code = "attachment_workspace_conflict"
+        case .artifactInvalid: code = "artifact_invalid"
+        case .artifactWriteFailed: code = "artifact_write_failed"
         }
         return .init(code: code, message: errorDescription ?? code)
     }
@@ -143,6 +149,12 @@ public enum ChatOSCodeReadWorkerEngine {
             return try context.resolvePetFile(request.arguments)
         case "verify_file_identity_v1":
             return try context.verifyFileIdentity(request.arguments)
+        case "artifact_stage_v1", "artifact_restore_v1":
+            return try ArtifactWorkerOperations(
+                root: root,
+                rootIdentity: request.projectRootIdentity,
+                deadlineUnixMilliseconds: request.deadlineUnixMilliseconds
+            ).execute(operation: request.operation, arguments: request.arguments)
         case "project_list_v1":
             return try context.projectList(request.arguments)
         case "project_search_entries_v1":

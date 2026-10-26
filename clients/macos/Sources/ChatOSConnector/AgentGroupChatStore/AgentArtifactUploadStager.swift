@@ -1,5 +1,6 @@
+import ChatOSCodeReadWorkerClient
+import ChatOSCodeReadWorkerProtocol
 import ChatOSCore
-import CryptoKit
 import Darwin
 import Foundation
 
@@ -9,13 +10,12 @@ struct StagedAgentArtifact: Sendable, Equatable {
 }
 
 enum AgentArtifactUploadStager {
-    private static let chunkSize = 256 * 1_024
-
     static func stage(
         from sourceURL: URL,
         in stagingDirectoryURL: URL,
         expectedBytes: Int,
-        expectedSHA256: String
+        expectedSHA256: String,
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
     ) async throws -> StagedAgentArtifact {
         guard sourceURL.isFileURL,
               stagingDirectoryURL.isFileURL,
@@ -25,18 +25,48 @@ enum AgentArtifactUploadStager {
             throw AgentArtifactUploadStagingError.invalidSource
         }
         try Task.checkCancellation()
-        let task = Task.detached(priority: .utility) {
-            try stageSynchronously(
-                from: sourceURL,
-                in: stagingDirectoryURL,
-                expectedBytes: expectedBytes,
-                expectedSHA256: expectedSHA256.lowercased()
-            )
+        let token = UUID().uuidString.lowercased()
+        let finalURL = stagingDirectoryURL.appendingPathComponent("\(token).staged")
+        let scope: AgentArtifactWorkerPathScope
+        do {
+            scope = try AgentArtifactWorkerPathScope(source: sourceURL, destination: finalURL)
+        } catch {
+            throw AgentArtifactUploadStagingError.stagingUnavailable
         }
-        return try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            task.cancel()
+        do {
+            let result = try await codeReadWorker.execute(
+                operation: "artifact_stage_v1",
+                arguments: [
+                    "source_path": .string(scope.sourcePath),
+                    "destination_path": .string(scope.destinationPath),
+                    "token": .string(token),
+                    "byte_size": .number(Double(expectedBytes)),
+                    "sha256": .string(expectedSHA256.lowercased()),
+                ],
+                projectRoot: scope.root,
+                requestCWD: nil,
+                defaultToolRoot: nil,
+                ripgrepURL: nil
+            )
+            guard case let .object(fields) = result,
+                  case let .string(returnedToken)? = fields["token"],
+                  returnedToken == token,
+                  case let .string(relativePath)? = fields["relative_path"],
+                  relativePath == scope.destinationPath else {
+                throw AgentArtifactUploadStagingError.stagingUnavailable
+            }
+            return .init(token: token, fileURL: finalURL)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as CodeReadWorkerProcessClientError {
+            if case let .requestRejected(code, _) = error, code == "artifact_invalid" {
+                throw AgentArtifactUploadStagingError.invalidSource
+            }
+            throw AgentArtifactUploadStagingError.stagingUnavailable
+        } catch let error as AgentArtifactUploadStagingError {
+            throw error
+        } catch {
+            throw AgentArtifactUploadStagingError.stagingUnavailable
         }
     }
 
@@ -48,182 +78,6 @@ enum AgentArtifactUploadStager {
         }
     }
 
-    private nonisolated static func stageSynchronously(
-        from sourceURL: URL,
-        in stagingDirectoryURL: URL,
-        expectedBytes: Int,
-        expectedSHA256: String
-    ) throws -> StagedAgentArtifact {
-        try Task.checkCancellation()
-        try preparePrivateDirectory(stagingDirectoryURL)
-        let token = UUID().uuidString.lowercased()
-        let temporaryURL = stagingDirectoryURL.appendingPathComponent(".\(token).tmp")
-        let finalURL = stagingDirectoryURL.appendingPathComponent("\(token).staged")
-
-        let source = sourceURL.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-        }
-        guard source >= 0 else { throw AgentArtifactUploadStagingError.invalidSource }
-        defer { Darwin.close(source) }
-
-        var initialStatus = stat()
-        guard fstat(source, &initialStatus) == 0,
-              (initialStatus.st_mode & S_IFMT) == S_IFREG,
-              initialStatus.st_nlink == 1,
-              initialStatus.st_size == expectedBytes else {
-            throw AgentArtifactUploadStagingError.invalidSource
-        }
-
-        let destination = temporaryURL.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return Darwin.open(
-                path,
-                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-                mode_t(0o600)
-            )
-        }
-        guard destination >= 0 else { throw AgentArtifactUploadStagingError.stagingUnavailable }
-        var published = false
-        defer {
-            Darwin.close(destination)
-            if !published {
-                _ = temporaryURL.withUnsafeFileSystemRepresentation { path in
-                    path.map(Darwin.unlink) ?? -1
-                }
-                _ = finalURL.withUnsafeFileSystemRepresentation { path in
-                    path.map(Darwin.unlink) ?? -1
-                }
-            }
-        }
-
-        var hasher = SHA256()
-        var buffer = [UInt8](repeating: 0, count: chunkSize)
-        var remaining = expectedBytes
-        while remaining > 0 {
-            try Task.checkCancellation()
-            let requested = min(buffer.count, remaining)
-            let count = buffer.withUnsafeMutableBytes { bytes in
-                Darwin.read(source, bytes.baseAddress, requested)
-            }
-            if count < 0, errno == EINTR { continue }
-            guard count > 0 else { throw AgentArtifactUploadStagingError.invalidSource }
-            buffer.withUnsafeBytes { bytes in
-                hasher.update(bufferPointer: UnsafeRawBufferPointer(rebasing: bytes.prefix(count)))
-            }
-            try writeAll(buffer, count: count, descriptor: destination)
-            remaining -= count
-        }
-
-        var trailingByte: UInt8 = 0
-        while true {
-            let count = Darwin.read(source, &trailingByte, 1)
-            if count == 0 { break }
-            if count < 0, errno == EINTR { continue }
-            throw AgentArtifactUploadStagingError.invalidSource
-        }
-        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-        guard digest == expectedSHA256 else {
-            throw AgentArtifactUploadStagingError.invalidSource
-        }
-
-        var finalStatus = stat()
-        guard fstat(source, &finalStatus) == 0,
-              sameIdentity(initialStatus, finalStatus),
-              Darwin.fsync(destination) == 0 else {
-            throw AgentArtifactUploadStagingError.invalidSource
-        }
-        try Task.checkCancellation()
-        let renamed: Int32 = temporaryURL.withUnsafeFileSystemRepresentation { temporaryPath in
-            finalURL.withUnsafeFileSystemRepresentation { finalPath -> Int32 in
-                guard let temporaryPath, let finalPath else { return Int32(-1) }
-                return Darwin.rename(temporaryPath, finalPath)
-            }
-        }
-        guard renamed == 0 else { throw AgentArtifactUploadStagingError.stagingUnavailable }
-        try syncDirectory(stagingDirectoryURL)
-        published = true
-        return .init(token: token, fileURL: finalURL)
-    }
-
-    private static func preparePrivateDirectory(_ directoryURL: URL) throws {
-        let result = directoryURL.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            if Darwin.mkdir(path, mode_t(0o700)) == 0 || errno == EEXIST {
-                return 0
-            }
-            return -1
-        }
-        guard result == 0 else { throw AgentArtifactUploadStagingError.stagingUnavailable }
-        var status = stat()
-        let inspected = directoryURL.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return Darwin.lstat(path, &status)
-        }
-        guard inspected == 0,
-              (status.st_mode & S_IFMT) == S_IFDIR,
-              status.st_uid == geteuid() else {
-            throw AgentArtifactUploadStagingError.stagingUnavailable
-        }
-        let restricted = directoryURL.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return Int32(-1) }
-            return Darwin.chmod(path, mode_t(0o700))
-        }
-        guard restricted == 0 else {
-            throw AgentArtifactUploadStagingError.stagingUnavailable
-        }
-        var finalStatus = stat()
-        let rechecked = directoryURL.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return Int32(-1) }
-            return Darwin.lstat(path, &finalStatus)
-        }
-        guard rechecked == 0,
-              (finalStatus.st_mode & S_IFMT) == S_IFDIR,
-              finalStatus.st_uid == geteuid(),
-              finalStatus.st_mode & 0o077 == 0 else {
-            throw AgentArtifactUploadStagingError.stagingUnavailable
-        }
-    }
-
-    private static func syncDirectory(_ directoryURL: URL) throws {
-        let descriptor = directoryURL.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        }
-        guard descriptor >= 0 else { throw AgentArtifactUploadStagingError.stagingUnavailable }
-        defer { Darwin.close(descriptor) }
-        guard Darwin.fsync(descriptor) == 0 else {
-            throw AgentArtifactUploadStagingError.stagingUnavailable
-        }
-    }
-
-    private static func writeAll(
-        _ buffer: [UInt8],
-        count: Int,
-        descriptor: Int32
-    ) throws {
-        var offset = 0
-        while offset < count {
-            try Task.checkCancellation()
-            let written = buffer.withUnsafeBytes { bytes in
-                Darwin.write(descriptor, bytes.baseAddress?.advanced(by: offset), count - offset)
-            }
-            if written < 0, errno == EINTR { continue }
-            guard written > 0 else { throw AgentArtifactUploadStagingError.stagingUnavailable }
-            offset += written
-        }
-    }
-
-    private static func sameIdentity(_ lhs: stat, _ rhs: stat) -> Bool {
-        lhs.st_dev == rhs.st_dev
-            && lhs.st_ino == rhs.st_ino
-            && lhs.st_size == rhs.st_size
-            && lhs.st_mtimespec.tv_sec == rhs.st_mtimespec.tv_sec
-            && lhs.st_mtimespec.tv_nsec == rhs.st_mtimespec.tv_nsec
-            && lhs.st_ctimespec.tv_sec == rhs.st_ctimespec.tv_sec
-            && lhs.st_ctimespec.tv_nsec == rhs.st_ctimespec.tv_nsec
-    }
-
     private static func isSHA256(_ value: String) -> Bool {
         value.utf8.count == 64 && value.utf8.allSatisfy {
             (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0)
@@ -233,6 +87,43 @@ enum AgentArtifactUploadStager {
     private static func isTokenByte(_ byte: UInt8) -> Bool {
         (48...57).contains(byte) || (97...102).contains(byte) || byte == 45
     }
+}
+
+struct AgentArtifactWorkerPathScope {
+    let root: URL
+    let sourcePath: String
+    let destinationPath: String
+
+    init(source: URL, destination: URL) throws {
+        let source = source.standardizedFileURL
+        let destination = destination.standardizedFileURL
+        guard source.isFileURL, destination.isFileURL else {
+            throw AgentArtifactWorkerPathError.invalidScope
+        }
+        let sourceComponents = source.pathComponents
+        let destinationComponents = destination.pathComponents
+        var sharedCount = 0
+        while sharedCount < min(sourceComponents.count, destinationComponents.count),
+              sourceComponents[sharedCount] == destinationComponents[sharedCount] {
+            sharedCount += 1
+        }
+        guard sharedCount > 1,
+              sharedCount < sourceComponents.count,
+              sharedCount < destinationComponents.count else {
+            throw AgentArtifactWorkerPathError.invalidScope
+        }
+        let rootPath = NSString.path(withComponents: Array(sourceComponents.prefix(sharedCount)))
+        root = URL(fileURLWithPath: rootPath, isDirectory: true)
+        sourcePath = sourceComponents.dropFirst(sharedCount).joined(separator: "/")
+        destinationPath = destinationComponents.dropFirst(sharedCount).joined(separator: "/")
+        guard !sourcePath.isEmpty, !destinationPath.isEmpty else {
+            throw AgentArtifactWorkerPathError.invalidScope
+        }
+    }
+}
+
+private enum AgentArtifactWorkerPathError: Error {
+    case invalidScope
 }
 
 enum AgentArtifactUploadStagingError: Error {

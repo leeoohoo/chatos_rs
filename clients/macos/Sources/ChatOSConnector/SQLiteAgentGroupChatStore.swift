@@ -1,4 +1,5 @@
 import ChatOSAgentRuntime
+import ChatOSCodeReadWorkerClient
 import ChatOSCore
 import CryptoKit
 import Foundation
@@ -29,17 +30,20 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     nonisolated(unsafe) var database: OpaquePointer?
     let attachmentsRootURL: URL
     let agentArtifactStore: (any AgentArtifactServing)?
+    let codeReadWorker: any CodeReadWorkerExecuting
 #if DEBUG
     var debugPreparedStatementCount = 0
 #endif
 
     public init(
         databaseURL: URL,
-        agentArtifactStore: (any AgentArtifactServing)? = nil
+        agentArtifactStore: (any AgentArtifactServing)? = nil,
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
     ) throws {
         attachmentsRootURL = databaseURL.deletingLastPathComponent()
             .appendingPathComponent("AgentGroupChatAttachments", isDirectory: true)
         self.agentArtifactStore = agentArtifactStore
+        self.codeReadWorker = codeReadWorker
         database = try AgentGroupChatDatabase.open(at: databaseURL)
     }
 

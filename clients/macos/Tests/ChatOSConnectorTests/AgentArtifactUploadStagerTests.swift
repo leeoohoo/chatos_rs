@@ -13,7 +13,8 @@ struct AgentArtifactUploadStagerTests {
             from: fixture.source,
             in: fixture.staging,
             expectedBytes: fixture.data.count,
-            expectedSHA256: fixture.sha256
+            expectedSHA256: fixture.sha256,
+            codeReadWorker: ConnectorCoreCodeReadWorker()
         )
         defer { AgentArtifactUploadStager.discard(staged) }
 
@@ -33,7 +34,8 @@ struct AgentArtifactUploadStagerTests {
                 from: fixture.source,
                 in: fixture.staging,
                 expectedBytes: fixture.data.count,
-                expectedSHA256: String(repeating: "0", count: 64)
+                expectedSHA256: String(repeating: "0", count: 64),
+                codeReadWorker: ConnectorCoreCodeReadWorker()
             )
         }
         let children = try FileManager.default.contentsOfDirectory(
@@ -58,7 +60,8 @@ struct AgentArtifactUploadStagerTests {
                 from: link,
                 in: fixture.staging,
                 expectedBytes: fixture.data.count,
-                expectedSHA256: fixture.sha256
+                expectedSHA256: fixture.sha256,
+                codeReadWorker: ConnectorCoreCodeReadWorker()
             )
         }
     }

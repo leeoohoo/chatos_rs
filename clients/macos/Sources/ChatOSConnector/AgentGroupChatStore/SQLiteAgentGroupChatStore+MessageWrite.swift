@@ -250,7 +250,8 @@ extension SQLiteAgentGroupChatStore {
                         reference,
                         to: fileURL,
                         expectedBytes: stored.attachment.size,
-                        expectedSHA256: expectedSHA256
+                        expectedSHA256: expectedSHA256,
+                        codeReadWorker: codeReadWorker
                     )
                 } else {
                     let data = try await agentArtifactStore.read(

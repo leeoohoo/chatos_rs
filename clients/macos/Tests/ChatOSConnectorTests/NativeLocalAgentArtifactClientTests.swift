@@ -18,7 +18,8 @@ final class NativeLocalAgentArtifactClientTests: XCTestCase {
         let client = NativeLocalAgentArtifactClient(
             host: host,
             artifactDirectoryURL: artifacts,
-            stagingDirectoryURL: staging
+            stagingDirectoryURL: staging,
+            codeReadWorker: ConnectorCoreCodeReadWorker()
         )
         let data = Data("# Local\n".utf8)
         let source = root.appendingPathComponent("source.md")

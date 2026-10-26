@@ -424,7 +424,8 @@ final class AgentArtifactStorageTests: XCTestCase {
     ) {
         let service = NativeAgentGroupChatService(
             databaseURL: databaseURL,
-            agentArtifactStore: artifactStore
+            agentArtifactStore: artifactStore,
+            codeReadWorker: ConnectorCoreCodeReadWorker()
         )
         let store = try await service.store()
         let agent = try await store.createAgent(
