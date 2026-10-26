@@ -57,6 +57,8 @@ pub enum HostResult {
         recovered_claims: u64,
         max_frame_bytes: usize,
         max_message_bytes: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scheduler: Option<LocalAgentHostSchedulerSnapshot>,
     },
     MemorySyncStatus {
         status: LocalMemorySyncStatus,
@@ -215,6 +217,14 @@ pub enum HostResult {
     RequirementPlan {
         plan: Option<crate::LocalRequirementPlan>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalAgentHostSchedulerSnapshot {
+    pub maximum_concurrent_work_items: usize,
+    pub active_work_items: usize,
+    pub idle_workers: usize,
+    pub queued_ready_work_items: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

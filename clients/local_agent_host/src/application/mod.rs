@@ -31,6 +31,7 @@ mod task_tool_support;
 mod task_tools;
 mod tool_result_tools;
 mod tool_scheduler;
+mod work_activity;
 
 pub use ask_user_tools::{
     ask_user_model_tools, LocalAskUserToolExecutor, ASK_USER_CHOICES_TOOL,

@@ -9,13 +9,15 @@ use crate::{
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     validate_identifier, HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope,
-    HostResult, LocalAgentToolExecutionRoute,
+    HostResult, LocalAgentHostSchedulerSnapshot, LocalAgentToolExecutionRoute,
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use futures::future::join_all;
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::{watch, Notify};
+
+use super::work_activity::HostWorkActivity;
 
 const MIN_CONCURRENT_WORK_ITEMS: usize = 1;
 const MAX_CONCURRENT_WORK_ITEMS: usize = 16;
@@ -44,6 +46,7 @@ pub struct LocalAgentHostCoordinator {
     wakeup: Arc<Notify>,
     memory_wakeup: Arc<Notify>,
     activity: watch::Sender<u64>,
+    work_activity: HostWorkActivity,
     reserved_ipc_tools: Vec<String>,
     maximum_concurrent_work_items: usize,
 }
@@ -72,15 +75,19 @@ impl LocalAgentHostCoordinator {
             );
         }
         let (activity, _) = watch::channel(0);
+        let work_activity = HostWorkActivity::default();
         Ok(Self {
             runtime,
             owner_user_id,
-            model_scheduler,
-            tool_scheduler,
+            model_scheduler: model_scheduler
+                .map(|scheduler| scheduler.with_work_activity(work_activity.clone())),
+            tool_scheduler: tool_scheduler
+                .map(|scheduler| scheduler.with_work_activity(work_activity.clone())),
             memory_sync_worker: None,
             wakeup: Arc::new(Notify::new()),
             memory_wakeup: Arc::new(Notify::new()),
             activity,
+            work_activity,
             reserved_ipc_tools: Vec::new(),
             maximum_concurrent_work_items: default_maximum_concurrent_work_items(),
         })
@@ -426,6 +433,54 @@ impl LocalAgentHostCoordinator {
                 )
             })
     }
+
+    async fn health_response(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
+        let mut response = self.runtime.handle(request.clone()).await;
+        if !response.ok {
+            return response;
+        }
+        let empty_tool_names: &[String] = &[];
+        let (include_tool_names, exclude_tool_names, execution_route) = self
+            .tool_scheduler
+            .as_ref()
+            .map(LocalToolScheduler::claim_filter)
+            .unwrap_or((None, empty_tool_names, None));
+        let queued_ready_work_items = match self
+            .runtime
+            .ready_host_work_count(
+                &self.owner_user_id,
+                include_tool_names,
+                exclude_tool_names,
+                execution_route,
+            )
+            .await
+        {
+            Ok(count) => count,
+            Err(error) => {
+                return HostResponseEnvelope::failure(
+                    request.command_id,
+                    HostError::new("host_snapshot_failed", error.to_string(), true),
+                );
+            }
+        };
+        let active_work_items = self.work_activity.active_count();
+        let scheduler = LocalAgentHostSchedulerSnapshot {
+            maximum_concurrent_work_items: self.maximum_concurrent_work_items,
+            active_work_items,
+            idle_workers: self
+                .maximum_concurrent_work_items
+                .saturating_sub(active_work_items),
+            queued_ready_work_items,
+        };
+        if let Some(HostResult::Health {
+            scheduler: result_scheduler,
+            ..
+        }) = response.result.as_mut()
+        {
+            *result_scheduler = Some(scheduler);
+        }
+        response
+    }
 }
 
 fn default_maximum_concurrent_work_items() -> usize {
@@ -438,6 +493,9 @@ fn default_maximum_concurrent_work_items() -> usize {
 #[async_trait]
 impl HostRequestHandler for LocalAgentHostCoordinator {
     async fn handle_request(&self, mut request: HostRequestEnvelope) -> HostResponseEnvelope {
+        if matches!(request.command, HostCommand::Health) {
+            return self.health_response(request).await;
+        }
         if request
             .command
             .owner_user_id()

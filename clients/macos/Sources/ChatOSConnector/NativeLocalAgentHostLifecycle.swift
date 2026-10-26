@@ -13,7 +13,14 @@ public extension Notification.Name {
 }
 
 enum NativeLocalAgentHostProtocol {
-    static let version = 46
+    static let version = 47
+}
+
+public struct NativeLocalAgentHostResourceSnapshot: Sendable, Equatable {
+    public let maximumConcurrentWorkItems: Int
+    public let activeWorkItems: Int
+    public let idleWorkers: Int
+    public let queuedReadyWorkItems: Int
 }
 
 public enum NativeLocalAgentConcurrencyPolicy {
@@ -185,6 +192,17 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     public var processIdentifier: Int32? {
         guard managedProcess?.process.isRunning == true else { return nil }
         return managedProcess?.process.processIdentifier
+    }
+
+    /// Returns a point-in-time Host scheduler view without launching or recovering the Host.
+    /// Observation failures remain unknown to callers and never take down healthy task traffic.
+    public func resourceSnapshot() async -> NativeLocalAgentHostResourceSnapshot? {
+        guard let process = managedProcess, process.process.isRunning else { return nil }
+        let identity = process.identity
+        let snapshot = try? await process.resourceSnapshot(timeoutMilliseconds: 1_000)
+        guard managedProcess?.identity == identity,
+              managedProcess?.process.isRunning == true else { return nil }
+        return snapshot
     }
 
     public func start(ownerUserID: String) async throws {

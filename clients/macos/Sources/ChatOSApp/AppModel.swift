@@ -475,7 +475,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.agentGroupChatScheduler = agentGroupChatScheduler
         self.machineResourceSnapshotProvider = NativeClientMachineResourceSnapshotProvider(
             scheduler: agentGroupChatScheduler,
-            logicalJobBudget: RuntimeConfiguration.clientResourceBudget
+            logicalJobBudget: RuntimeConfiguration.clientResourceBudget,
+            hostSnapshot: {
+                await localAgentHost?.resourceSnapshot()
+            }
         )
         self.agentGroupChatBuilderService = LocalAgentBuilderService(
             groupChatService: agentGroupChatService,

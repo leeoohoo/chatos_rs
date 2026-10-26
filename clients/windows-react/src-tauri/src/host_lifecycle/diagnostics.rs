@@ -64,7 +64,7 @@ pub(super) fn classify_error(error: &str) -> &'static str {
         "timeout"
     } else if error.contains("response frame") || error.contains("early eof") {
         "invalid_transport"
-    } else if error.contains("protocol v46") || error.contains("protocol_version") {
+    } else if error.contains("protocol v47") || error.contains("protocol_version") {
         "protocol_mismatch"
     } else {
         "failed"

@@ -27,7 +27,7 @@ function port(
 const unusedSnapshot = Promise.resolve<HostLifecycleSnapshot>({
   phase: "stopped",
   ready: false,
-  protocolVersion: 46,
+  protocolVersion: 47,
   detail: "unused",
   retryable: false,
 });
@@ -41,7 +41,7 @@ describe("hostLifecycleStore", () => {
       snapshot: {
         phase: "stopped",
         ready: false,
-        protocolVersion: 46,
+        protocolVersion: 47,
         detail: "stopped",
         retryable: false,
         label: "本地服务未启动",
@@ -55,7 +55,7 @@ describe("hostLifecycleStore", () => {
     const secondRefresh = useHostLifecycleStore.getState().refresh(port(Promise.resolve({
       phase: "ready",
       ready: true,
-      protocolVersion: 46,
+      protocolVersion: 47,
       detail: "ready",
       retryable: false,
     })));
@@ -64,7 +64,7 @@ describe("hostLifecycleStore", () => {
     first.resolve({
       phase: "degraded",
       ready: false,
-      protocolVersion: 46,
+      protocolVersion: 47,
       detail: "stale failure",
       retryable: true,
     });
@@ -86,7 +86,7 @@ describe("hostLifecycleStore", () => {
     start.resolve({
       phase: "ready",
       ready: true,
-      protocolVersion: 46,
+      protocolVersion: 47,
       detail: "ready",
       retryable: false,
     });
@@ -110,14 +110,14 @@ describe("hostLifecycleStore", () => {
     first.resolve({
       phase: "ready",
       ready: true,
-      protocolVersion: 46,
+      protocolVersion: 47,
       detail: "stale ready",
       retryable: false,
     });
     second.resolve({
       phase: "degraded",
       ready: false,
-      protocolVersion: 46,
+      protocolVersion: 47,
       detail: "current failure",
       retryable: true,
     });
@@ -134,7 +134,7 @@ describe("hostLifecycleStore", () => {
       .mockResolvedValueOnce({
         phase: "ready",
         ready: true,
-        protocolVersion: 46,
+        protocolVersion: 47,
         detail: "ready",
         retryable: false,
       });
@@ -159,7 +159,7 @@ describe("hostLifecycleStore", () => {
     first.resolve({
       phase: "ready",
       ready: true,
-      protocolVersion: 46,
+      protocolVersion: 47,
       detail: "stale ready",
       retryable: false,
     });

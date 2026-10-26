@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use sqlx::{QueryBuilder, Sqlite};
 
 #[async_trait]
 impl LocalAgentRunStore for SqliteClientStorage {
@@ -273,6 +274,92 @@ impl LocalAgentRunStore for SqliteClientStorage {
         .fetch_one(&mut *connection)
         .await
         .db()?)
+    }
+
+    async fn ready_host_work_count(
+        &self,
+        owner_user_id: &str,
+        now_unix_ms: i64,
+        include_tool_names: Option<&[String]>,
+        exclude_tool_names: &[String],
+        tool_execution_route: Option<chatos_local_agent_protocol::LocalAgentToolExecutionRoute>,
+    ) -> Result<u64, ClientStorageError> {
+        let mut connection = self.pool.acquire().await.db()?;
+        let run_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM local_agent_runs \
+             WHERE owner_user_id = ? AND iteration < max_iterations AND (\
+                status IN ('queued', 'model_ready', 'continuation_ready') OR \
+                (status = 'retry_scheduled' AND next_attempt_at_unix_ms <= ?)\
+             ) AND NOT EXISTS (SELECT 1 FROM local_task_followup_reviews f \
+               WHERE local_agent_runs.owner_entity_type = 'task' \
+                 AND f.task_id = local_agent_runs.owner_entity_id \
+                 AND f.state IN ('pending','held'))",
+        )
+        .bind(owner_user_id)
+        .bind(now_unix_ms)
+        .fetch_one(&mut *connection)
+        .await
+        .db()?;
+        let task_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM local_tasks t \
+             INNER JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+             WHERE g.owner_user_id = ? AND t.status = 'ready' AND t.active_run_id IS NULL \
+             AND NOT EXISTS (SELECT 1 FROM local_task_followup_reviews f \
+               WHERE f.task_id = t.task_id AND f.state IN ('pending','held')) \
+             AND (json_extract(t.input_json, '$.schedule.run_at_unix_ms') IS NULL \
+               OR json_extract(t.input_json, '$.schedule.run_at_unix_ms') <= ?)",
+        )
+        .bind(owner_user_id)
+        .bind(now_unix_ms)
+        .fetch_one(&mut *connection)
+        .await
+        .db()?;
+
+        let mut tool_query = QueryBuilder::<Sqlite>::new(
+            "SELECT COUNT(*) FROM local_agent_tool_invocations i \
+             INNER JOIN local_agent_runs r ON r.run_id = i.run_id \
+             WHERE r.owner_user_id = ",
+        );
+        tool_query.push_bind(owner_user_id).push(
+            " AND i.status = 'pending' \
+              AND i.approval_status IN ('not_required','approved') \
+              AND r.status = 'waiting_tool_result' \
+              AND NOT EXISTS (SELECT 1 FROM local_task_followup_reviews f \
+                WHERE r.owner_entity_type = 'task' AND f.task_id = r.owner_entity_id \
+                  AND f.state IN ('pending','held'))",
+        );
+        if let Some(tool_names) = include_tool_names {
+            tool_query.push(" AND i.tool_name IN (");
+            let mut separated = tool_query.separated(", ");
+            for tool_name in tool_names {
+                separated.push_bind(tool_name);
+            }
+            separated.push_unseparated(")");
+        }
+        if !exclude_tool_names.is_empty() {
+            tool_query.push(" AND i.tool_name NOT IN (");
+            let mut separated = tool_query.separated(", ");
+            for tool_name in exclude_tool_names {
+                separated.push_bind(tool_name);
+            }
+            separated.push_unseparated(")");
+        }
+        if let Some(execution_route) = tool_execution_route {
+            tool_query
+                .push(" AND i.execution_route = ")
+                .push_bind(execution_route.as_str());
+        }
+        let tool_count: i64 = tool_query
+            .build_query_scalar()
+            .fetch_one(&mut *connection)
+            .await
+            .db()?;
+        let total = run_count
+            .saturating_add(task_count)
+            .saturating_add(tool_count);
+        u64::try_from(total).map_err(|_| {
+            ClientStorageError::InvalidState("ready Host work count is negative".to_string())
+        })
     }
 
     async fn apply_transition(

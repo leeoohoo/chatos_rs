@@ -1,5 +1,5 @@
 {
-  "protocol_version": 46,
+  "protocol_version": 47,
   "command_id": "contract-health-1",
   "ok": true,
   "result": {
@@ -8,6 +8,12 @@
     "storage_ready": true,
     "recovered_claims": 0,
     "max_frame_bytes": 4194304,
-    "max_message_bytes": 67108864
+    "max_message_bytes": 67108864,
+    "scheduler": {
+      "maximum_concurrent_work_items": 4,
+      "active_work_items": 2,
+      "idle_workers": 2,
+      "queued_ready_work_items": 3
+    }
   }
 }

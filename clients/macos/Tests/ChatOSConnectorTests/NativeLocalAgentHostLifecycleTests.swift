@@ -25,7 +25,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let lifecycle = NativeLocalAgentHostLifecycle(configuration: .init(
             executableURL: wrapper.executable,
             databaseURL: root.appendingPathComponent("agent.sqlite3"),
-            startupTimeout: .seconds(10)
+            startupTimeout: .seconds(10),
+            maximumConcurrentWorkItems: 3
         ))
 
         do {
@@ -38,6 +39,12 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: wrapper.overlapLog.path))
             let processIdentifier = await lifecycle.processIdentifier
             XCTAssertNotNil(processIdentifier)
+            let resourceSnapshot = await lifecycle.resourceSnapshot()
+            let resources = try XCTUnwrap(resourceSnapshot)
+            XCTAssertEqual(resources.maximumConcurrentWorkItems, 3)
+            XCTAssertEqual(resources.activeWorkItems, 0)
+            XCTAssertEqual(resources.idleWorkers, 3)
+            XCTAssertEqual(resources.queuedReadyWorkItems, 0)
             await lifecycle.stop()
         } catch {
             await lifecycle.stop()

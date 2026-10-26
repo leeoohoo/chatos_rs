@@ -144,6 +144,18 @@ pub trait LocalAgentRunStore: Send + Sync {
     /// wake the owner-scoped coordinator.
     async fn next_retry_at(&self, owner_user_id: &str) -> Result<Option<i64>, ClientStorageError>;
 
+    /// Counts durable model, task, and tool work that is ready for a Host worker to claim.
+    /// The tool filters must match the built-in tool scheduler so platform-owned work is not
+    /// reported as queued behind Host capacity.
+    async fn ready_host_work_count(
+        &self,
+        owner_user_id: &str,
+        now_unix_ms: i64,
+        include_tool_names: Option<&[String]>,
+        exclude_tool_names: &[String],
+        tool_execution_route: Option<chatos_local_agent_protocol::LocalAgentToolExecutionRoute>,
+    ) -> Result<u64, ClientStorageError>;
+
     async fn apply_transition(
         &self,
         command: &IdempotentCommand,

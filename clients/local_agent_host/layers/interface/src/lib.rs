@@ -92,7 +92,7 @@ pub use requirement_survey::{
     ResolveRequirementSurveyCommand, LOCAL_REQUIREMENT_SURVEY_CREATE_TOOL_NAME,
     LOCAL_REQUIREMENT_SURVEY_MAX_LIST_LIMIT, LOCAL_REQUIREMENT_SURVEY_MAX_QUESTIONS,
 };
-pub use response::{HostError, HostResponseEnvelope, HostResult};
+pub use response::{HostError, HostResponseEnvelope, HostResult, LocalAgentHostSchedulerSnapshot};
 pub use run_query::{
     ListRunsCommand, LocalAgentRunListScope, LocalAgentRunPage, LocalAgentRunSummary,
 };
@@ -126,7 +126,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 46;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 47;
 /// Maximum bytes in one physical IPC frame. The high bit of the frame prefix is reserved
 /// as the continuation flag, so this limit must stay below `i32::MAX`.
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;

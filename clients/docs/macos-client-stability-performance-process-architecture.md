@@ -2519,13 +2519,29 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批关闭 Swift Agent 内部绕过，是 12.114 的第一部分，不宣称 Host、Agent、Media、Code Read 已能动态借用同一机器额度。Host 仍靠固定 worker 数在 claim 前限流，App 只能看到配置上限；跨所有权域的加权准入和 Host 实际 in-flight 观测仍属 12.114b。Large Transfer、进程内重媒体和 Plugin 仍禁止在已有 durable 身份外机械增加 permit。
 
-### 12.114b—12.120 剩余完整交付路径
+### 12.114b 第四十四完整里程碑：Host claim 边界真实观测（2026-10-26）
+
+本里程碑关闭 Rust Host 只能由 App 根据配置额度“猜测并发”的缺口。Host 固定 worker pool 原本已经在 durable claim 前限制并发，但 Health 只返回存储和帧协议状态；机器级 Snapshot 因而无法区分“Host 空闲”“Host 已占满”和“已有跨会话任务排队”，也无法为后续动态调额提供可信输入。
+
+已实施：
+
+- model 与 tool scheduler 共用进程内 claim activity tracker；只有成功取得 durable claim 后才计入 active，guard 覆盖正常提交、执行错误、取消、lease 丢失和提前返回，任一路径离开 `run_once` 都会归还，不把短暂的数据库探测冒充长期占用。
+- Host 从同一 SQLite 事实源只读统计当前 owner 的 queued/model-ready/continuation-ready/到期 retry Run、尚未 materialize 的 ready Task，以及符合内置 tool scheduler 名称与 execution-route 过滤器的 pending Tool。追加要求 review/hold、未到计划时间、待批准和 platform-owned Tool 不计入 Host ready queue。
+- Local Agent Host 协议升级到 v47；Health 增加最大 worker 数、active、idle 和 queued-ready 数，Rust、Swift、Windows、TypeScript Zod 与共享 fixture 同步迁移。macOS 和 Windows 启动握手都校验 `active + idle == maximum`，旧 Helper 不会被新版客户端误接纳。
+- macOS `NativeLocalAgentHostLifecycle.resourceSnapshot()` 只观察已运行的同一进程 identity；Host 未启动或观测失败返回 unknown，不触发启动或恢复，也不影响正常任务 IPC。`NativeClientMachineResourceSnapshotProvider` 取得 v47 数据后把 Host 从 `configuredLimitOnly` 提升为 `exact`，否则保持未知而非伪造为零。
+- 新增真实 claim 边界回归：两个 Host worker 同时执行两个不同 conversation 的阻塞 Run，第三个 Run 保持 durable-ready 队列；Health 必须报告 `maximum=2 / active=2 / idle=0 / queued=1`。该用例直接证明一个长会话不会占住整个 Host，且排队发生在第三个任务领取 lease 之前。
+
+验证：Host protocol/runtime/storage/process Debug 全量 432 项通过；Swift Debug 与原生 arm64 Release 的 Host 生命周期、共享契约和机器快照各 19 项通过，Release 使用 `warnings-as-errors` 并完成完整 App 优化依赖图；Windows Host 受影响单元测试 8 项通过，2 项仅因缺少 Windows sidecar 环境按既有门禁跳过，Rust `cargo check` 通过；TypeScript 4 个受影响文件 15 项和完整 typecheck 通过。`cargo fmt --check`、`git diff --check`、正式包签名、包内 SHA 与安装结果在本阶段提交后复核；不会主动启动正式 App 或访问活动用户数据库。
+
+边界：本批使 Host 的 claim 前容量成为可验证事实，没有在 App 外层再套第二个 permit，也没有改变既有静态并发额度。Agent、Host 与 Media/Code Read 之间仍是静态分区而非可借用的加权机器池；动态共享准入单列为 12.114c，必须使用本批 v47 反馈并保持所有等待点位于 durable claim/process spawn 之前。
+
+### 12.114c—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
 | --- | --- | --- |
-| 12.114b claim 前统一准入 | Agent 和可安全接入的 Helper 在领取持久任务前取得加权额度；Host 通过明确协议报告/约束实际 in-flight，不能靠 App 猜测 | 跨会话长短任务、Agent + Media + Code Read 组合测试通过；等待额度的任务不持有 delivery lease；取消只移除所属 waiter |
+| 12.114c claim 前加权共享准入 | 在 v47 Host 真实占用反馈基础上，让 Agent 与可安全接入的 Media/Code Read 使用可借用的机器额度；Host 保留硬槽，任何等待都位于 durable claim/process spawn 之前 | 跨会话长短任务、Agent + Host + Media + Code Read 组合测试通过；等待额度的任务不持有 delivery lease；取消只移除所属 waiter；无嵌套 permit |
 | 12.115 动态压力调额 | 接入 memory pressure、thermal state、低电量和电源模式；压力升高只阻止新 claim，不强杀已提交副作用的任务，并用迟滞恢复 | 压力注入测试验证降额、恢复、防抖和最小保留槽；交互任务不被后台恢复无限饿死 |
 | 12.116 文件生命周期收口 | 安全回收 workspace `.import-*`、UI exporter 临时文件和 registry 失败遗留空目录；补最终打开点 device/inode 再校验 | ownership、命名、年龄、锁/活跃 Worker、symlink、hardlink、跨账户和取消/SIGKILL 回归全部通过；不递归清理任意用户目录 |
 | 12.117 Agent/存储强杀矩阵 | 覆盖凭据交付、provider 网络、工具副作用、checkpoint、SQLite COMMIT/VACUUM 等不确定窗口 | 每个停点只有“安全重试、明确失败、待对账”三类结果；无重复副作用、跨账户写入或静默丢失；连续崩溃有隔离熔断 |
@@ -2672,7 +2688,7 @@ Release 验收建议记录：
 
 ### 16.1 源码与文档漂移治理
 
-- 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift/Windows Host 常量与共享 fixture 为 v46；本方案引用版本不能替代实际握手。
+- 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift/Windows Host 常量与共享 fixture 为 v47；本方案引用版本不能替代实际握手。
 - CI 比较 Swift/Rust 协议版本、payload 边界、支持能力和打包后的真实可执行版本；Schema 兼容矩阵、进程布局及 ADR 随实现更新。
 - 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；大传输静态 Governor 见 12.66，重媒体静态 Governor 及其主进程 4K 解码扩展见 12.67–12.69，跨资源动态/跨进程 Governor、Worker 和剩余门禁仍为待实施项。
 

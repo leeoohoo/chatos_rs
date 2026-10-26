@@ -268,7 +268,8 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         guard response.result?.type == "health",
               response.result?.storageReady == true,
               response.result?.maxFrameBytes == LocalAgentHostFrameCodec.maximumFrameBytes,
-              response.result?.maxMessageBytes == LocalAgentHostFrameCodec.maximumMessageBytes else {
+              response.result?.maxMessageBytes == LocalAgentHostFrameCodec.maximumMessageBytes,
+              response.result?.scheduler.isValid == true else {
             throw NativeLocalAgentHostError.invalidResponse
         }
     }
@@ -296,9 +297,42 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
                 && response.result?.storageReady == true
                 && response.result?.maxFrameBytes == LocalAgentHostFrameCodec.maximumFrameBytes
                 && response.result?.maxMessageBytes == LocalAgentHostFrameCodec.maximumMessageBytes
+                && response.result?.scheduler.isValid == true
         } catch {
             return false
         }
+    }
+
+    func resourceSnapshot(
+        timeoutMilliseconds: Int
+    ) async throws -> NativeLocalAgentHostResourceSnapshot {
+        let commandID = "native-health-\(UUID().uuidString.lowercased())"
+        let request = NativeLocalAgentHealthRequest(
+            protocolVersion: NativeLocalAgentHostProtocol.version,
+            commandId: commandID,
+            command: .init(type: "health")
+        )
+        let payload = try await roundTripAsync(
+            try JSONEncoder.localAgent.encode(request),
+            timeoutMilliseconds: timeoutMilliseconds
+        )
+        let response = try JSONDecoder.localAgent.decode(
+            NativeLocalAgentHealthResponse.self,
+            from: payload
+        )
+        guard response.protocolVersion == NativeLocalAgentHostProtocol.version,
+              response.commandId == commandID,
+              response.ok,
+              let scheduler = response.result?.scheduler,
+              scheduler.isValid else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        return .init(
+            maximumConcurrentWorkItems: scheduler.maximumConcurrentWorkItems,
+            activeWorkItems: scheduler.activeWorkItems,
+            idleWorkers: scheduler.idleWorkers,
+            queuedReadyWorkItems: scheduler.queuedReadyWorkItems
+        )
     }
 
     func roundTrip(
@@ -784,6 +818,22 @@ struct NativeLocalAgentHealthResult: Codable, Equatable {
     let recoveredClaims: UInt64
     let maxFrameBytes: Int
     let maxMessageBytes: Int
+    let scheduler: NativeLocalAgentHealthScheduler
+}
+
+struct NativeLocalAgentHealthScheduler: Codable, Equatable {
+    let maximumConcurrentWorkItems: Int
+    let activeWorkItems: Int
+    let idleWorkers: Int
+    let queuedReadyWorkItems: Int
+
+    var isValid: Bool {
+        NativeLocalAgentConcurrencyPolicy.validated(maximumConcurrentWorkItems) != nil
+            && (0...maximumConcurrentWorkItems).contains(activeWorkItems)
+            && (0...maximumConcurrentWorkItems).contains(idleWorkers)
+            && queuedReadyWorkItems >= 0
+            && activeWorkItems + idleWorkers == maximumConcurrentWorkItems
+    }
 }
 
 struct NativeLocalAgentHealthError: Codable, Equatable {

@@ -103,19 +103,24 @@ public struct NativeClientMachineResourceSnapshotProvider: Sendable {
     private let fileWorkerGovernor: ClientFileWorkerResourceGovernor
     private let largeTransferGovernor: ClientLargeTransferGovernor
     private let heavyMediaGovernor: ClientHeavyMediaWorkGovernor
+    private let hostSnapshot: @Sendable () async -> NativeLocalAgentHostResourceSnapshot?
 
     public init(
         scheduler: LocalAgentGroupChatScheduler,
         logicalJobBudget: NativeClientResourceBudget,
         fileWorkerGovernor: ClientFileWorkerResourceGovernor = .shared,
         largeTransferGovernor: ClientLargeTransferGovernor = .shared,
-        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared
+        heavyMediaGovernor: ClientHeavyMediaWorkGovernor = .shared,
+        hostSnapshot: @escaping @Sendable () async -> NativeLocalAgentHostResourceSnapshot? = {
+            nil
+        }
     ) {
         self.scheduler = scheduler
         self.logicalJobBudget = logicalJobBudget
         self.fileWorkerGovernor = fileWorkerGovernor
         self.largeTransferGovernor = largeTransferGovernor
         self.heavyMediaGovernor = heavyMediaGovernor
+        self.hostSnapshot = hostSnapshot
     }
 
     public func snapshot() async -> NativeClientMachineResourceSnapshot {
@@ -123,16 +128,19 @@ public struct NativeClientMachineResourceSnapshotProvider: Sendable {
         async let files = fileWorkerGovernor.snapshot()
         async let transfers = largeTransferGovernor.snapshot()
         async let heavyMedia = heavyMediaGovernor.snapshot()
-        let (agentSnapshot, fileSnapshot, transferSnapshot, heavyMediaSnapshot) = await (
+        async let host = hostSnapshot()
+        let (agentSnapshot, fileSnapshot, transferSnapshot, heavyMediaSnapshot, hostSnapshot) = await (
             agent,
             files,
             transfers,
-            heavyMedia
+            heavyMedia,
+            host
         )
 
         return Self.assemble(
             logicalJobBudget: logicalJobBudget,
             agentSnapshot: agentSnapshot,
+            hostSnapshot: hostSnapshot,
             fileSnapshot: fileSnapshot,
             transferSnapshot: transferSnapshot,
             heavyMediaSnapshot: heavyMediaSnapshot
@@ -142,6 +150,7 @@ public struct NativeClientMachineResourceSnapshotProvider: Sendable {
     static func assemble(
         logicalJobBudget: NativeClientResourceBudget,
         agentSnapshot: LocalAgentExecutionGovernorSnapshot,
+        hostSnapshot: NativeLocalAgentHostResourceSnapshot? = nil,
         fileSnapshot: ClientFileWorkerGovernorSnapshot,
         transferSnapshot: ClientLargeTransferGovernorSnapshot,
         heavyMediaSnapshot: ClientHeavyMediaWorkGovernorSnapshot
@@ -165,13 +174,14 @@ public struct NativeClientMachineResourceSnapshotProvider: Sendable {
                 owner: .rustHostCoordinator,
                 admissionBoundary: .dedicatedWorkerBeforeDurableClaim,
                 durableClaimStateWhileQueued: .unclaimed,
-                observationLevel: .configuredLimitOnly,
+                observationLevel: hostSnapshot == nil ? .configuredLimitOnly : .exact,
                 processModel: .hostWorkerPool,
-                configuredLimit: logicalJobBudget.localAgentHostWorkItems,
+                configuredLimit: hostSnapshot?.maximumConcurrentWorkItems
+                    ?? logicalJobBudget.localAgentHostWorkItems,
                 sharedPoolID: "background-logical-jobs",
                 sharedPoolLimit: logicalJobBudget.totalLogicalJobs,
-                activeCount: nil,
-                queuedCount: nil
+                activeCount: hostSnapshot?.activeWorkItems,
+                queuedCount: hostSnapshot?.queuedReadyWorkItems
             ),
             Self.fileDomain(
                 .mediaWorker,

@@ -1,6 +1,6 @@
-# Local Agent Host protocol v46 fixtures
+# Local Agent Host protocol v47 fixtures
 
-This directory is the client-neutral wire-contract baseline for Local Agent Host protocol 46.
+This directory is the client-neutral wire-contract baseline for Local Agent Host protocol 47.
 
 - Rust owns the serialized protocol types.
 - Swift and TypeScript clients must decode the same JSON fixtures.

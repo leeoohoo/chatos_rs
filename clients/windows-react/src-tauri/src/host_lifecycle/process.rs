@@ -154,7 +154,7 @@ mod tests {
         .await
         .expect("spawn prepared Host");
 
-        health_check(&mut host).await.expect("v46 health handshake");
+        health_check(&mut host).await.expect("v47 health handshake");
         terminate(&mut host).await;
 
         assert!(host.child.try_wait().expect("child status").is_some());
@@ -179,7 +179,7 @@ mod tests {
         .await
         .expect("spawn prepared Host");
 
-        health_check(&mut host).await.expect("v46 health handshake");
+        health_check(&mut host).await.expect("v47 health handshake");
         let result = request(
             &mut host,
             HostCommand::ListConversations(ListConversationsCommand {

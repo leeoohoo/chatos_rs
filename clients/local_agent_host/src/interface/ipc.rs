@@ -539,6 +539,7 @@ mod tests {
                         recovered_claims: 0,
                         max_frame_bytes: LOCAL_AGENT_MAX_FRAME_BYTES,
                         max_message_bytes: LOCAL_AGENT_MAX_MESSAGE_BYTES,
+                        scheduler: None,
                     },
                 )
             }
@@ -622,6 +623,7 @@ mod tests {
                         recovered_claims: 0,
                         max_frame_bytes: LOCAL_AGENT_MAX_FRAME_BYTES,
                         max_message_bytes: LOCAL_AGENT_MAX_MESSAGE_BYTES,
+                        scheduler: None,
                     },
                 )
             }

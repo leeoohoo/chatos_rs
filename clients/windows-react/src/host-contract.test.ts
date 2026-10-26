@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import healthFailure from "../../contracts/local-agent/v46/fixtures/health-failure.json";
-import healthRequest from "../../contracts/local-agent/v46/fixtures/health-request.json";
-import healthSuccess from "../../contracts/local-agent/v46/fixtures/health-success.json";
+import healthFailure from "../../contracts/local-agent/v47/fixtures/health-failure.json";
+import healthRequest from "../../contracts/local-agent/v47/fixtures/health-request.json";
+import healthSuccess from "../../contracts/local-agent/v47/fixtures/health-success.json";
 import {
   healthRequestSchema,
   healthResponseSchema,
@@ -9,7 +9,7 @@ import {
   LOCAL_AGENT_MAX_MESSAGE_BYTES,
 } from "./features/host-lifecycle/domain/hostContract";
 
-describe("Local Agent Host v46 shared fixtures", () => {
+describe("Local Agent Host v47 shared fixtures", () => {
   it("parses the canonical health request", () => {
     expect(healthRequestSchema.parse(healthRequest).command.type).toBe("health");
   });
@@ -20,6 +20,12 @@ describe("Local Agent Host v46 shared fixtures", () => {
     if (response.ok) {
       expect(response.result.max_frame_bytes).toBe(LOCAL_AGENT_MAX_FRAME_BYTES);
       expect(response.result.max_message_bytes).toBe(LOCAL_AGENT_MAX_MESSAGE_BYTES);
+      expect(response.result.scheduler).toEqual({
+        maximum_concurrent_work_items: 4,
+        active_work_items: 2,
+        idle_workers: 2,
+        queued_ready_work_items: 3,
+      });
     }
   });
 

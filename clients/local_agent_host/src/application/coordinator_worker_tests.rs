@@ -16,11 +16,32 @@ use chatos_local_agent_protocol::{
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry, LocalAgentRuntime};
 use serde_json::json;
 use std::sync::Arc;
-use tokio::sync::{watch, Notify};
+use tokio::sync::{mpsc, watch, Notify};
 
 struct UnusedProfile;
 
 struct SuccessProfile;
+
+struct BlockingProfile {
+    started: mpsc::UnboundedSender<String>,
+    release: Arc<Notify>,
+}
+
+#[async_trait]
+impl LocalAgentProfile for BlockingProfile {
+    async fn execute_step(
+        &self,
+        claim: &LocalAgentRunClaim,
+    ) -> Result<LocalAgentStepOutcome, String> {
+        self.started
+            .send(claim.run.run_id.clone())
+            .map_err(|_| "start observer closed".to_string())?;
+        self.release.notified().await;
+        Ok(LocalAgentStepOutcome::Succeed {
+            output: json!({"run_id": claim.run.run_id}),
+        })
+    }
+}
 
 #[async_trait]
 impl LocalAgentProfile for SuccessProfile {
@@ -326,6 +347,97 @@ async fn slow_remote_memory_sync_does_not_block_local_model_scheduling() {
 
     memory_release.notify_one();
     shutdown_sender.send(true).expect("shutdown");
+    coordinator.wake();
+    coordinator_task
+        .await
+        .expect("coordinator task")
+        .expect("coordinator shutdown");
+}
+
+#[tokio::test]
+async fn health_reports_active_idle_and_durable_queue_at_the_claim_boundary() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = Arc::new(LocalAgentRuntime::new(storage));
+    runtime.initialize("user-1").await.expect("initialize");
+    for index in 0..3 {
+        runtime
+            .try_handle(envelope(
+                &format!("create-run-{index}"),
+                HostCommand::CreateRun(CreateRunCommand {
+                    run_id: format!("parallel-run-{index}"),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation".to_string(),
+                    owner_entity_id: format!("conversation-{index}"),
+                    profile_key: "blocking".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"message": index}),
+                    max_iterations: 4,
+                }),
+            ))
+            .await
+            .expect("create Run");
+    }
+    let (started_sender, mut started_receiver) = mpsc::unbounded_channel();
+    let release = Arc::new(Notify::new());
+    let mut profiles = LocalAgentProfileRegistry::new();
+    profiles
+        .register(
+            "blocking",
+            BlockingProfile {
+                started: started_sender,
+                release: Arc::clone(&release),
+            },
+        )
+        .expect("profile");
+    let scheduler = LocalAgentScheduler::new(
+        Arc::clone(&runtime),
+        profiles,
+        "user-1",
+        "local-model-worker",
+    )
+    .expect("scheduler");
+    let coordinator = Arc::new(
+        LocalAgentHostCoordinator::new(Arc::clone(&runtime), "user-1", Some(scheduler), None)
+            .expect("coordinator")
+            .with_maximum_concurrent_work_items(2)
+            .expect("concurrency"),
+    );
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let coordinator_task = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move { coordinator.run_until_shutdown(shutdown_receiver).await }
+    });
+    coordinator.wake();
+    for _ in 0..2 {
+        tokio::time::timeout(std::time::Duration::from_secs(1), started_receiver.recv())
+            .await
+            .expect("worker started before timeout")
+            .expect("worker start");
+    }
+
+    let health = coordinator
+        .handle_request(envelope("health-during-work", HostCommand::Health))
+        .await;
+    let Some(HostResult::Health {
+        scheduler: Some(snapshot),
+        ..
+    }) = health.result
+    else {
+        panic!("expected scheduler health snapshot: {health:?}")
+    };
+    assert_eq!(snapshot.maximum_concurrent_work_items, 2);
+    assert_eq!(snapshot.active_work_items, 2);
+    assert_eq!(snapshot.idle_workers, 0);
+    assert_eq!(snapshot.queued_ready_work_items, 1);
+
+    shutdown_sender.send(true).expect("shutdown");
+    release.notify_waiters();
     coordinator.wake();
     coordinator_task
         .await

@@ -4,6 +4,37 @@ import ChatOSWorkerRuntime
 import XCTest
 
 final class NativeClientMachineResourceSnapshotTests: XCTestCase {
+    func testHostProtocolSnapshotReplacesConfiguredOnlyEstimate() async throws {
+        let agentGovernor = LocalAgentExecutionGovernor(limit: 2)
+        let fileGovernor = ClientFileWorkerResourceGovernor(
+            budget: .init(
+                totalConcurrentWorkers: 3,
+                maximumMediaWorkers: 2,
+                maximumCodeReadWorkers: 2
+            )
+        )
+        let snapshot = NativeClientMachineResourceSnapshotProvider.assemble(
+            logicalJobBudget: .init(totalLogicalJobs: 5, localAgentHostWorkItems: 2),
+            agentSnapshot: await agentGovernor.snapshot(),
+            hostSnapshot: .init(
+                maximumConcurrentWorkItems: 3,
+                activeWorkItems: 2,
+                idleWorkers: 1,
+                queuedReadyWorkItems: 4
+            ),
+            fileSnapshot: await fileGovernor.snapshot(),
+            transferSnapshot: await ClientLargeTransferGovernor(limit: 1).snapshot(),
+            heavyMediaSnapshot: await ClientHeavyMediaWorkGovernor(limit: 1).snapshot()
+        )
+
+        let host = try XCTUnwrap(snapshot.domain(.localAgentHostWorkItem))
+        XCTAssertEqual(host.observationLevel, .exact)
+        XCTAssertEqual(host.configuredLimit, 3)
+        XCTAssertEqual(host.activeCount, 2)
+        XCTAssertEqual(host.queuedCount, 4)
+        XCTAssertFalse(snapshot.domainsMissingExactObservation.contains(.localAgentHostWorkItem))
+    }
+
     func testSnapshotFreezesEveryResourceOwnerWithoutHidingObservationGaps() async throws {
         let agentGovernor = LocalAgentExecutionGovernor(limit: 2)
         let firstAgentValue = await agentGovernor.acquire()

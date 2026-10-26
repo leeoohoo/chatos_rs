@@ -3,6 +3,7 @@
 
 //! One-step scheduler for registered Local Agent business profiles.
 
+use crate::application::work_activity::HostWorkActivity;
 use chatos_local_agent_protocol::{
     ClaimNextRunCommand, CommitStepCommand, GetRunCommand, HostCommand, HostRequestEnvelope,
     HostResult, LocalAgentRunRecord, LocalAgentStepOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
@@ -35,6 +36,7 @@ pub struct LocalAgentScheduler {
     owner_user_id: String,
     worker_id: String,
     lease_duration_ms: u64,
+    work_activity: HostWorkActivity,
 }
 
 impl LocalAgentScheduler {
@@ -63,7 +65,13 @@ impl LocalAgentScheduler {
             owner_user_id: owner_user_id.to_string(),
             worker_id: worker_id.to_string(),
             lease_duration_ms: 300_000,
+            work_activity: HostWorkActivity::default(),
         })
+    }
+
+    pub(crate) fn with_work_activity(mut self, work_activity: HostWorkActivity) -> Self {
+        self.work_activity = work_activity;
+        self
     }
 
     pub fn with_lease_duration_ms(mut self, lease_duration_ms: u64) -> Result<Self, String> {
@@ -100,6 +108,7 @@ impl LocalAgentScheduler {
             HostResult::Claim { claim: None } => return Ok(SchedulerTick::Idle),
             _ => return Err(LocalAgentSchedulerError::UnexpectedResult("claim")),
         };
+        let _activity = self.work_activity.begin();
         let outcome = match self.profiles.profile_for(&claim.run.profile_key) {
             Some(profile) => match self.execute_with_heartbeat(profile, &claim).await? {
                 None => {
