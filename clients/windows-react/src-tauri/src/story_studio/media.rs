@@ -291,9 +291,13 @@ impl StoryStudioManager {
 
     pub(crate) async fn cleanup_stale_temporaries(&self) -> usize {
         let store = self.store.clone();
-        tauri::async_runtime::spawn_blocking(move || store.cleanup_stale_temporaries())
-            .await
-            .unwrap_or_default()
+        tauri::async_runtime::spawn_blocking(move || {
+            store
+                .cleanup_stale_temporaries()
+                .saturating_add(super::video_tail::cleanup_stale_temporaries())
+        })
+        .await
+        .unwrap_or_default()
     }
 
     pub(super) fn present_project(

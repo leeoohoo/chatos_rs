@@ -1372,4 +1372,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 101. [部分完成] Windows AppContainer workspace ACL lease 与 runtime profile lease journal 已迁移到公共无覆盖 AppData 事务：分别使用 `.appcontainer-workspace-<小写 UUID>.tmp` 和 `.appcontainer-profile-<小写 UUID>.tmp` 独占写入、flush/fsync、普通非 reparse 与长度复验，再以 Windows `MoveFileExW(WRITE_THROUGH)` 发布到新的 journal，目标即使在校验后并发出现也不会被覆盖。启动恢复只丢弃 canonical 新版临时名与兼容旧版 `<小写 UUID>.tmp`，畸形/未知临时文件失败关闭；workspace 已提交 `.json` 继续由严格 schema/version/对象身份恢复器兼容 v1/v2/v3 历史名称，避免旧 ACL 授权无法撤销，profile 已提交记录保持 UUID 限定。Windows AppContainer 13 项真实隔离/恢复测试通过；Tauri 全量 512 项发现、506 项通过、6 条环境集成测试 ignored，Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 和 NSIS 隔离原生启动 smoke 均通过。其余事务根继续按恢复语义逐项审计。
 
+102. [部分完成] Windows Story 视频尾帧解码已移除运行路径中最后一处无归属 `NamedTempFile`：输入 MP4 改为系统临时目录下 `chatos-story-tail-<小写 UUID>.mp4`，以零共享、`OPEN_REPARSE_POINT` 和 `create_new` 独占创建，分块写入、flush/fsync，并在交给 Media Foundation 前复验普通非 reparse 文件与精确长度；成功、解码失败和任务异常均由 RAII 删除。Story 既有后台维护链在同一个受资源压力治理的 permit 内，最多检查系统临时目录前 20,000 项，只回收超过 24 小时的 canonical 名称；畸形 UUID、其他前缀、目录、symlink、Windows reparse 与多硬链接均不处理。真实 H.264 尾帧解码、业务连续性和清理边界测试通过；Windows Tauri 513 项发现、507 项通过、6 条环境集成测试 ignored，Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 和 NSIS 隔离原生启动 smoke 均通过。其余直接写入点继续按“新建不可变素材、数据库事务或需原子替换”的实际语义分类审计。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

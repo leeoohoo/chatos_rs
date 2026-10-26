@@ -7,6 +7,10 @@ pub(super) fn last_frame_png(video_bytes: &[u8]) -> Result<Vec<u8>, String> {
     platform::decode_last_frame(video_bytes).and_then(encode_png)
 }
 
+pub(super) fn cleanup_stale_temporaries() -> usize {
+    platform::cleanup_stale_temporaries()
+}
+
 struct BgraFrame {
     width: u32,
     height: u32,
@@ -133,7 +137,18 @@ fn rotate_rgba(
 #[cfg(target_os = "windows")]
 mod platform {
     use super::{BgraFrame, VIDEO_TAIL_ERROR};
-    use std::{ffi::OsStr, io::Write, os::windows::ffi::OsStrExt, path::Path};
+    use crate::app_owned_export::try_remove_stale_owned_file;
+    use std::{
+        ffi::OsStr,
+        fs::{self, OpenOptions},
+        io::Write,
+        os::windows::{
+            ffi::OsStrExt,
+            fs::{MetadataExt, OpenOptionsExt},
+        },
+        path::{Path, PathBuf},
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
     use windows::{
         core::{GUID, PCWSTR},
         Win32::{
@@ -156,19 +171,96 @@ mod platform {
 
     const HUNDRED_NANOSECONDS_PER_SECOND: i64 = 10_000_000;
     const MAXIMUM_TAIL_SAMPLES: usize = 600;
+    const TEMPORARY_PREFIX: &str = "chatos-story-tail-";
+    const TEMPORARY_SUFFIX: &str = ".mp4";
+    const MAXIMUM_TEMPORARY_DIRECTORY_ENTRIES: usize = 20_000;
+    const STALE_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
     pub(super) fn decode_last_frame(video_bytes: &[u8]) -> Result<BgraFrame, String> {
-        let mut temporary = tempfile::Builder::new()
-            .prefix("chatos-story-tail-")
-            .suffix(".mp4")
-            .tempfile()
-            .map_err(|_| VIDEO_TAIL_ERROR.to_owned())?;
-        temporary
-            .write_all(video_bytes)
-            .and_then(|_| temporary.flush())
-            .map_err(|_| VIDEO_TAIL_ERROR.to_owned())?;
-        let temporary_path = temporary.into_temp_path();
-        decode_file(&temporary_path)
+        let temporary = TemporaryVideo::create(video_bytes)?;
+        decode_file(&temporary.path)
+    }
+
+    pub(super) fn cleanup_stale_temporaries() -> usize {
+        let cutoff = SystemTime::now()
+            .checked_sub(STALE_TEMPORARY_AGE)
+            .unwrap_or(UNIX_EPOCH);
+        cleanup_stale_temporaries_in(&std::env::temp_dir(), cutoff)
+    }
+
+    pub(super) fn cleanup_stale_temporaries_in(directory: &Path, cutoff: SystemTime) -> usize {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return 0;
+        };
+        entries
+            .take(MAXIMUM_TEMPORARY_DIRECTORY_ENTRIES)
+            .filter_map(Result::ok)
+            .filter(|entry| canonical_temporary_name(&entry.file_name()))
+            .filter(|entry| try_remove_stale_owned_file(&entry.path(), cutoff))
+            .count()
+    }
+
+    fn canonical_temporary_name(name: &OsStr) -> bool {
+        let Some(value) = name
+            .to_str()
+            .and_then(|value| value.strip_prefix(TEMPORARY_PREFIX))
+            .and_then(|value| value.strip_suffix(TEMPORARY_SUFFIX))
+        else {
+            return false;
+        };
+        uuid::Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value)
+    }
+
+    struct TemporaryVideo {
+        path: PathBuf,
+    }
+
+    impl TemporaryVideo {
+        fn create(bytes: &[u8]) -> Result<Self, String> {
+            let path = std::env::temp_dir().join(format!(
+                "{TEMPORARY_PREFIX}{}{TEMPORARY_SUFFIX}",
+                uuid::Uuid::new_v4()
+            ));
+            let mut options = OpenOptions::new();
+            const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+            options
+                .write(true)
+                .create_new(true)
+                .share_mode(0)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            let mut file = options
+                .open(&path)
+                .map_err(|_| VIDEO_TAIL_ERROR.to_owned())?;
+            let result = (|| -> Result<(), String> {
+                for chunk in bytes.chunks(256 * 1_024) {
+                    file.write_all(chunk)
+                        .map_err(|_| VIDEO_TAIL_ERROR.to_owned())?;
+                }
+                file.flush().map_err(|_| VIDEO_TAIL_ERROR.to_owned())?;
+                file.sync_all().map_err(|_| VIDEO_TAIL_ERROR.to_owned())?;
+                let metadata = file.metadata().map_err(|_| VIDEO_TAIL_ERROR.to_owned())?;
+                const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+                if !metadata.file_type().is_file()
+                    || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+                    || metadata.len() != bytes.len() as u64
+                {
+                    return Err(VIDEO_TAIL_ERROR.to_owned());
+                }
+                Ok(())
+            })();
+            drop(file);
+            if let Err(error) = result {
+                let _ = fs::remove_file(&path);
+                return Err(error);
+            }
+            Ok(Self { path })
+        }
+    }
+
+    impl Drop for TemporaryVideo {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 
     fn decode_file(path: &Path) -> Result<BgraFrame, String> {
@@ -326,6 +418,10 @@ mod platform {
     pub(super) fn decode_last_frame(_video_bytes: &[u8]) -> Result<BgraFrame, String> {
         Err(VIDEO_TAIL_ERROR.into())
     }
+
+    pub(super) fn cleanup_stale_temporaries() -> usize {
+        0
+    }
 }
 
 #[cfg(test)]
@@ -336,6 +432,9 @@ mod tests {
     use super::last_frame_png;
     #[cfg(target_os = "windows")]
     use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    #[cfg(target_os = "windows")]
+    use std::{fs, time::Duration};
 
     fn two_by_two(rotation: u32, stride: i32) -> BgraFrame {
         let top = [[0, 0, 255, 0], [0, 255, 0, 0]];
@@ -392,5 +491,38 @@ mod tests {
             center[2] > 150 && center[2] > center[0].saturating_add(100),
             "expected the blue final frame, got rgba={center:?}"
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn cleanup_removes_only_canonical_stale_story_tail_videos() {
+        let directory = tempfile::tempdir().unwrap();
+        let token = "00000000-0000-0000-0000-000000000000";
+        let owned = directory
+            .path()
+            .join(format!("chatos-story-tail-{token}.mp4"));
+        let malformed = directory.path().join("chatos-story-tail-not-a-uuid.mp4");
+        let unrelated = directory
+            .path()
+            .join(format!("other-story-tail-{token}.mp4"));
+        let owned_directory = directory
+            .path()
+            .join("chatos-story-tail-11111111-1111-1111-1111-111111111111.mp4");
+        fs::write(&owned, b"owned").unwrap();
+        fs::write(&malformed, b"malformed").unwrap();
+        fs::write(&unrelated, b"unrelated").unwrap();
+        fs::create_dir(&owned_directory).unwrap();
+
+        assert_eq!(
+            super::platform::cleanup_stale_temporaries_in(
+                directory.path(),
+                std::time::SystemTime::now() + Duration::from_secs(1),
+            ),
+            1
+        );
+        assert!(!owned.exists());
+        assert!(malformed.exists());
+        assert!(unrelated.exists());
+        assert!(owned_directory.exists());
     }
 }
