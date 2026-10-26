@@ -488,7 +488,7 @@ fn normalize_compatible_mcp_package(package_root: &Path) -> Result<(), String> {
                         .is_some_and(serde_json::Map::is_empty)
                 {
                     return Err(install_error(
-                        "兼容 MCP 配置包含环境变量；Secret resolver 完成前拒绝导入",
+                        "兼容 MCP 配置不能安全区分凭据模板与明文环境变量，已拒绝导入",
                     ));
                 }
             }
@@ -2611,12 +2611,7 @@ fn validate_local_package(package_root: &Path) -> Result<PluginManifest, String>
     .map_err(|_| install_error("本地 Plugin Skill 无效"))?;
     let mut executable_count = 0_usize;
     for server in &manifest.mcp_servers {
-        if let PluginMcpServer::Stdio { bin, env, .. } = server {
-            if !env.is_empty() {
-                return Err(install_error(
-                    "本地 Plugin 声明了环境变量；Secret resolver 完成前不会准入",
-                ));
-            }
+        if let PluginMcpServer::Stdio { bin, .. } = server {
             resolve_executable(package_root, bin)?;
             executable_count += 1;
         }

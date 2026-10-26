@@ -7,6 +7,11 @@ export const pluginPermissionSchema = z.object({
   status: z.literal("declared_not_checked"),
 });
 
+export const pluginCredentialSchema = z.object({
+  name: z.string().min(1).max(128).regex(/^[A-Za-z0-9._-]+$/),
+  configured: z.boolean(),
+});
+
 export const managedPluginSchema = z.object({
   id: z.string().min(1),
   packageName: z.string().nullable(),
@@ -29,6 +34,7 @@ export const managedPluginSchema = z.object({
   installationIssue: z.enum(["metadata_invalid", "integrity_check_failed"]).nullable(),
   windowsCompatible: z.boolean(),
   installActionAvailable: z.boolean(),
+  credentials: z.array(pluginCredentialSchema).max(256),
 });
 
 export const pluginSettingsSnapshotSchema = z.object({

@@ -27,6 +27,7 @@ mod notepad;
 mod pet;
 mod platform_execution_context;
 mod plugin_application;
+mod plugin_credentials;
 mod plugin_installer;
 mod plugin_installer_tool_worker;
 mod plugin_integrity;
@@ -148,7 +149,8 @@ use plugin_application::{
 use plugin_settings::{
     discard_manual_plugin_directory, inspect_manual_plugin_directory,
     install_manual_plugin_directory, install_marketplace_plugin, load_plugin_settings,
-    pick_manual_plugin_directory, uninstall_plugin, update_plugin_enabled, PluginSettingsManager,
+    pick_manual_plugin_directory, uninstall_plugin, update_plugin_credentials,
+    update_plugin_enabled, PluginSettingsManager,
 };
 use project_conversation::prepare_project_conversation;
 use project_creation::{
@@ -578,6 +580,7 @@ pub fn run() {
             install_marketplace_plugin,
             load_plugin_settings,
             update_plugin_enabled,
+            update_plugin_credentials,
             uninstall_plugin,
             list_media_studio_models,
             load_media_studio_image_history,

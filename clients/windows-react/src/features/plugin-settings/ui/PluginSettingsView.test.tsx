@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useGeneralSettingsStore } from "../../general-settings/application/generalSettingsStore";
 import { pluginSettingsPort } from "../../../test/pluginSettingsFixture";
+import { pluginSettingsSnapshot } from "../../../test/pluginSettingsFixture";
 import { usePluginSettingsStore } from "../application/pluginSettingsStore";
 import { PluginSettingsView } from "./PluginSettingsView";
 
@@ -38,6 +39,28 @@ describe("PluginSettingsView", () => {
     const toggle = await screen.findByLabelText("Diagram Studio enabled");
     fireEvent.click(toggle);
     await waitFor(() => expect(toggle).not.toBeChecked());
+  });
+
+  it("keeps plugin secrets local to the password dialog and clears them when closed", async () => {
+    const snapshot = pluginSettingsSnapshot();
+    snapshot.plugins[0]!.credentials = [{ name: "primary-token", configured: false }];
+    const port = pluginSettingsPort({ load: vi.fn(async () => snapshot), updateCredentials: vi.fn(async () => ({ ...snapshot, plugins: snapshot.plugins.map((plugin) => ({ ...plugin, credentials: [{ name: "primary-token", configured: true }] })) })) });
+    render(<PluginSettingsView ownerUserId="owner-1" port={port} onOpenInstallationAssistant={vi.fn()} />);
+    await screen.findByText("需要配置凭据");
+    fireEvent.click(screen.getByRole("button", { name: "配置凭据…" }));
+    const input = screen.getByLabelText("primary-token");
+    expect(input).toHaveValue("");
+    fireEvent.change(input, { target: { value: "secret-value" } });
+    fireEvent.click(screen.getByRole("button", { name: "关闭凭据配置" }));
+    fireEvent.click(screen.getByRole("button", { name: "配置凭据…" }));
+    expect(screen.getByLabelText("primary-token")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("primary-token"), { target: { value: "new-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "安全保存" }));
+    await waitFor(() => expect(port.updateCredentials).toHaveBeenCalledWith(
+      "owner-1",
+      "plugin-1",
+      { "primary-token": "new-secret" },
+    ));
   });
 
   it("preflights a native folder before enabling manual installation", async () => {

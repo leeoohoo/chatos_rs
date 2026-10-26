@@ -18,6 +18,7 @@ interface PluginSettingsState {
   install(port: PluginSettingsPort, pluginId: string): Promise<boolean>;
   updateEnabled(port: PluginSettingsPort, pluginId: string, enabled: boolean): Promise<boolean>;
   uninstall(port: PluginSettingsPort, pluginId: string): Promise<boolean>;
+  updateCredentials(port: PluginSettingsPort, pluginId: string, credentials: Record<string, string | null>): Promise<boolean>;
   pickManualDirectory(port: PluginSettingsPort, presentationId: string): Promise<boolean>;
   inspectManualDirectory(port: PluginSettingsPort, presentationId: string): Promise<boolean>;
   installManualDirectory(port: PluginSettingsPort, presentationId: string): Promise<boolean>;
@@ -73,6 +74,12 @@ export const usePluginSettingsStore = create<PluginSettingsState>((set, get) => 
   async uninstall(port, pluginId) {
     return runMutation(set, get, pluginId, "Plugin 已从本机卸载。", (ownerUserId) => (
       port.uninstall(ownerUserId, pluginId)
+    ));
+  },
+
+  async updateCredentials(port, pluginId, credentials) {
+    return runMutation(set, get, pluginId, "Plugin 凭据已安全保存。", (ownerUserId) => (
+      port.updateCredentials(ownerUserId, pluginId, credentials)
     ));
   },
 

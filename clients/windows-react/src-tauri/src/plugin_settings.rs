@@ -26,6 +26,7 @@ use crate::{
     connector_state,
     host_lifecycle::HostManager,
     plugin_application::PluginApplicationManager,
+    plugin_credentials::{environment_secret_references, secret_name},
     plugin_installer::{
         inspect_local_package_source, install_git_package, install_local_package,
         install_marketplace_package, install_npm_mcp, install_npm_package_source,
@@ -366,6 +367,14 @@ struct PresentedPlugin {
     installation_issue: Option<&'static str>,
     windows_compatible: bool,
     install_action_available: bool,
+    credentials: Vec<PresentedPluginCredential>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct PresentedPluginCredential {
+    name: String,
+    configured: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -390,6 +399,14 @@ pub struct PluginEnabledInput {
     owner_user_id: String,
     plugin_id: String,
     enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginCredentialsInput {
+    owner_user_id: String,
+    plugin_id: String,
+    credentials: BTreeMap<String, Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -653,6 +670,7 @@ pub async fn load_plugin_settings(
     authentication: State<'_, AuthenticationManager>,
     host: State<'_, HostManager>,
     manager: State<'_, PluginSettingsManager>,
+    applications: State<'_, PluginApplicationManager>,
     owner_user_id: String,
 ) -> Result<PluginSettingsSnapshot, String> {
     let owner_user_id = required_identifier("owner_user_id", owner_user_id)?;
@@ -676,6 +694,7 @@ pub async fn load_plugin_settings(
         sources.map_err(|error| error.message),
         records,
         &owner_user_id,
+        &applications,
     )
 }
 
@@ -822,6 +841,7 @@ pub async fn install_manual_plugin_directory(
         &*host,
         &settings.plugin_root,
         &selection_input.owner_user_id,
+        &applications,
     )
     .await
 }
@@ -905,6 +925,50 @@ pub async fn update_plugin_enabled(
         &*host,
         &settings.plugin_root,
         &owner_user_id,
+        &applications,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn update_plugin_credentials(
+    authentication: State<'_, AuthenticationManager>,
+    host: State<'_, HostManager>,
+    settings: State<'_, PluginSettingsManager>,
+    applications: State<'_, PluginApplicationManager>,
+    input: PluginCredentialsInput,
+) -> Result<PluginSettingsSnapshot, String> {
+    let owner_user_id = required_identifier("owner_user_id", input.owner_user_id)?;
+    let plugin_id = required_identifier("plugin_id", input.plugin_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let records = matching_records(
+        list_installation_records(&*host, &owner_user_id).await?,
+        &plugin_id,
+    )?;
+    let manifest = records
+        .iter()
+        .max_by_key(|record| record.updated_at_unix_ms)
+        .ok_or_else(|| "Plugin 尚未安装。".to_owned())
+        .and_then(|record| load_installed_manifest(&settings.plugin_root, record))?;
+    let declared = declared_secret_names(&manifest)?;
+    if declared.is_empty() || input.credentials.keys().cloned().collect::<BTreeSet<_>>() != declared
+    {
+        return Err("提交的 Plugin 凭据名称与已安装清单不一致。".into());
+    }
+    validate_secret_bindings(&owner_user_id, &plugin_id, &manifest, &records)?;
+    applications.update_credentials(&owner_user_id, &plugin_id, &input.credentials)?;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    applications.reset().await;
+    load_snapshot(
+        &authentication,
+        &*host,
+        &settings.plugin_root,
+        &owner_user_id,
+        &applications,
     )
     .await
 }
@@ -924,9 +988,18 @@ pub async fn uninstall_plugin(
         .await?;
     let records = list_installation_records(&*host, &owner_user_id).await?;
     let targets = matching_records(records, &plugin_id)?;
+    let manifest = targets
+        .iter()
+        .max_by_key(|record| record.updated_at_unix_ms)
+        .ok_or_else(|| "Plugin 尚未安装。".to_owned())
+        .and_then(|record| load_installed_manifest(&settings.plugin_root, record))?;
+    let credential_names = declared_secret_names(&manifest)?;
+    validate_secret_bindings(&owner_user_id, &plugin_id, &manifest, &targets)?;
     let installation_roots = installation_roots(&settings.plugin_root, &targets)?;
+    let deleted_credentials =
+        applications.delete_credentials(&owner_user_id, &plugin_id, &credential_names)?;
     for record in &targets {
-        let result = host
+        let result = match host
             .execute(HostCommand::RemovePluginInstallation(
                 RemovePluginInstallationCommand {
                     owner_user_id: owner_user_id.clone(),
@@ -934,14 +1007,41 @@ pub async fn uninstall_plugin(
                     expected_version: record.version,
                 },
             ))
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                let restored = applications
+                    .update_credentials(&owner_user_id, &plugin_id, &deleted_credentials)
+                    .is_ok();
+                return Err(if restored {
+                    error
+                } else {
+                    "Plugin 卸载失败，且系统凭据回滚未完全成功。".into()
+                });
+            }
+        };
         let HostResult::PluginInstallation { installation } = result else {
-            return Err(metadata_response_error());
+            let restored = applications
+                .update_credentials(&owner_user_id, &plugin_id, &deleted_credentials)
+                .is_ok();
+            return Err(if restored {
+                metadata_response_error()
+            } else {
+                "Plugin 卸载响应无效，且系统凭据回滚未完全成功。".into()
+            });
         };
         if installation.spec.installation_id != record.spec.installation_id
             || installation.spec.owner_user_id != owner_user_id
         {
-            return Err(metadata_response_error());
+            let restored = applications
+                .update_credentials(&owner_user_id, &plugin_id, &deleted_credentials)
+                .is_ok();
+            return Err(if restored {
+                metadata_response_error()
+            } else {
+                "Plugin 卸载响应无效，且系统凭据回滚未完全成功。".into()
+            });
         }
     }
     applications.reset().await;
@@ -954,6 +1054,7 @@ pub async fn uninstall_plugin(
         &*host,
         &settings.plugin_root,
         &owner_user_id,
+        &applications,
     )
     .await
 }
@@ -1023,6 +1124,7 @@ pub async fn install_marketplace_plugin(
         &*host,
         &settings.plugin_root,
         &owner_user_id,
+        &applications,
     )
     .await
 }
@@ -1319,6 +1421,7 @@ async fn load_snapshot(
     host: &dyn PluginSettingsHost,
     plugin_root: &Path,
     owner_user_id: &str,
+    applications: &PluginApplicationManager,
 ) -> Result<PluginSettingsSnapshot, String> {
     let (sources, records) = tokio::join!(
         authentication.plugin_install_sources_for_owner(owner_user_id),
@@ -1329,6 +1432,7 @@ async fn load_snapshot(
         sources.map_err(|error| error.message),
         records,
         owner_user_id,
+        applications,
     )
 }
 
@@ -1337,6 +1441,7 @@ fn project_snapshot(
     sources: Result<PluginInstallSourceList, String>,
     records: Result<Vec<LocalPluginInstallationRecord>, String>,
     owner_user_id: &str,
+    applications: &PluginApplicationManager,
 ) -> Result<PluginSettingsSnapshot, String> {
     let marketplace_available = sources.is_ok();
     let local_catalog_available = records.is_ok();
@@ -1351,14 +1456,20 @@ fn project_snapshot(
             .map_err(|_| "Marketplace 返回了无效的 Plugin 清单。".to_owned())?;
         plugins.insert(
             source.catalog.id.clone(),
-            project_marketplace_plugin(source, grouped.get(&source.catalog.id), plugin_root),
+            project_marketplace_plugin(
+                source,
+                grouped.get(&source.catalog.id),
+                plugin_root,
+                owner_user_id,
+                applications,
+            )?,
         );
     }
     for (plugin_id, records) in &grouped {
         if !plugins.contains_key(plugin_id) {
             plugins.insert(
                 plugin_id.clone(),
-                project_local_plugin(plugin_id, records, plugin_root),
+                project_local_plugin(plugin_id, records, plugin_root, owner_user_id, applications)?,
             );
         }
     }
@@ -1389,7 +1500,9 @@ fn project_marketplace_plugin(
     source: &PluginInstallSource,
     installed: Option<&Vec<LocalPluginInstallationRecord>>,
     plugin_root: &Path,
-) -> PresentedPlugin {
+    owner_user_id: &str,
+    applications: &PluginApplicationManager,
+) -> Result<PresentedPlugin, String> {
     let manifest = &source.release.normalized_manifest;
     let installed_projection = installed.map(|records| installed_projection(plugin_root, records));
     let installed_version = installed_projection.as_ref().and_then(|projection| {
@@ -1404,7 +1517,19 @@ fn project_marketplace_plugin(
     let installed = installed.is_some();
     let compatible = windows_compatible(&source.release.supported_platforms)
         && windows_compatible(&manifest.dependencies.supported_platforms);
-    PresentedPlugin {
+    let credentials = match installed_projection
+        .as_ref()
+        .and_then(|projection| projection.manifest.as_ref())
+    {
+        Some(installed_manifest) => presented_credentials(
+            installed_manifest,
+            owner_user_id,
+            &source.catalog.id,
+            applications,
+        )?,
+        None => Vec::new(),
+    };
+    Ok(PresentedPlugin {
         id: source.catalog.id.clone(),
         package_name: Some(source.catalog.name.clone()),
         plugin_key: Some(source.catalog.plugin_key.clone()),
@@ -1431,17 +1556,24 @@ fn project_marketplace_plugin(
                 .mcp_servers
                 .iter()
                 .any(|server| matches!(server, PluginMcpServer::Stdio { .. })),
-    }
+        credentials,
+    })
 }
 
 fn project_local_plugin(
     plugin_id: &str,
     records: &[LocalPluginInstallationRecord],
     plugin_root: &Path,
-) -> PresentedPlugin {
+    owner_user_id: &str,
+    applications: &PluginApplicationManager,
+) -> Result<PresentedPlugin, String> {
     let projection = installed_projection(plugin_root, records);
     let manifest = projection.manifest.as_ref();
-    PresentedPlugin {
+    let credentials = match manifest {
+        Some(manifest) => presented_credentials(manifest, owner_user_id, plugin_id, applications)?,
+        None => Vec::new(),
+    };
+    Ok(PresentedPlugin {
         id: plugin_id.to_owned(),
         package_name: manifest.map(|manifest| manifest.name.clone()),
         plugin_key: None,
@@ -1476,7 +1608,72 @@ fn project_local_plugin(
         windows_compatible: manifest
             .is_none_or(|manifest| windows_compatible(&manifest.dependencies.supported_platforms)),
         install_action_available: false,
+        credentials,
+    })
+}
+
+fn presented_credentials(
+    manifest: &PluginManifest,
+    owner_user_id: &str,
+    plugin_id: &str,
+    applications: &PluginApplicationManager,
+) -> Result<Vec<PresentedPluginCredential>, String> {
+    declared_secret_names(manifest)?
+        .into_iter()
+        .map(|name| {
+            Ok(PresentedPluginCredential {
+                configured: applications.credential_is_configured(
+                    owner_user_id,
+                    plugin_id,
+                    &name,
+                )?,
+                name,
+            })
+        })
+        .collect()
+}
+
+fn declared_secret_names(manifest: &PluginManifest) -> Result<BTreeSet<String>, String> {
+    let mut names = BTreeSet::new();
+    for server in &manifest.mcp_servers {
+        let PluginMcpServer::Stdio { env, .. } = server else {
+            continue;
+        };
+        for template in env.values() {
+            names.insert(secret_name(template)?.to_owned());
+        }
     }
+    Ok(names)
+}
+
+fn validate_secret_bindings(
+    owner_user_id: &str,
+    plugin_id: &str,
+    manifest: &PluginManifest,
+    records: &[LocalPluginInstallationRecord],
+) -> Result<(), String> {
+    for record in records {
+        let environment = manifest.mcp_servers.iter().find_map(|server| match server {
+            PluginMcpServer::Stdio {
+                component_key, env, ..
+            } if component_key == &record.spec.server_id => Some(env),
+            _ => None,
+        });
+        let expected = match environment {
+            Some(environment) => {
+                environment_secret_references(owner_user_id, plugin_id, environment)?
+            }
+            None if record.spec.server_id == "skills-only" => BTreeMap::new(),
+            None => return Err("Plugin 凭据绑定与已安装清单不一致。".into()),
+        };
+        if record.spec.owner_user_id != owner_user_id
+            || record.spec.plugin_id != plugin_id
+            || record.spec.environment_secret_refs != expected
+        {
+            return Err("Plugin 凭据绑定与已安装清单不一致。".into());
+        }
+    }
+    Ok(())
 }
 
 struct InstalledProjection {
@@ -1900,39 +2097,6 @@ fn required_identifier(field: &str, value: String) -> Result<String, String> {
         return Err(format!("{field} is invalid"));
     }
     Ok(value.to_owned())
-}
-
-fn environment_secret_references(
-    owner_user_id: &str,
-    plugin_id: &str,
-    environment: &BTreeMap<String, String>,
-) -> Result<BTreeMap<String, String>, String> {
-    environment
-        .iter()
-        .map(|(variable, template)| {
-            let secret_name = template
-                .strip_prefix("${credential:")
-                .and_then(|value| value.strip_suffix('}'))
-                .filter(|value| {
-                    !value.is_empty()
-                        && value.len() <= 128
-                        && value.bytes().all(|byte| {
-                            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
-                        })
-                })
-                .ok_or_else(|| "Plugin 凭据引用无效。".to_owned())?;
-            let mut digest = Sha256::new();
-            digest.update(owner_user_id.as_bytes());
-            digest.update([0]);
-            digest.update(plugin_id.as_bytes());
-            digest.update([0]);
-            digest.update(secret_name.as_bytes());
-            Ok((
-                variable.clone(),
-                format!("plugin-secret-{:x}", digest.finalize()),
-            ))
-        })
-        .collect()
 }
 
 fn validated_manual_selection_input(

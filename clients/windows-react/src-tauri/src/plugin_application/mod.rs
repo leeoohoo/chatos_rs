@@ -5,17 +5,23 @@ use chatos_local_agent_protocol::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt,
     fs::File,
     future::Future,
     io::Read,
     path::{Path, PathBuf},
     pin::Pin,
+    sync::Arc,
 };
 use tauri::State;
 
 mod runtime;
 use crate::agent_plugin_runtime::{
     load_agent_plugin_skill_snapshot, AgentPluginRuntime, AgentPluginSkillSnapshot,
+};
+use crate::plugin_credentials::{
+    environment_secret_references, platform_plugin_credential_store, secret_name, secret_reference,
+    validate_secret, PluginCredentialStore,
 };
 use crate::plugin_integrity::{requires_installation_integrity, verify_installation_integrity};
 use runtime::{
@@ -46,15 +52,24 @@ impl PluginInstallationMetadataClient for crate::host_lifecycle::HostManager {
 #[derive(Clone)]
 pub(crate) struct PluginApplicationManager {
     plugin_root: PathBuf,
+    credentials: Arc<dyn PluginCredentialStore>,
     runtime: PluginApplicationRuntime,
     pub(crate) agent_runtime: AgentPluginRuntime,
 }
 
 impl PluginApplicationManager {
     pub(crate) fn new(app_data_directory: PathBuf) -> Self {
+        Self::with_credential_store(app_data_directory, platform_plugin_credential_store())
+    }
+
+    fn with_credential_store(
+        app_data_directory: PathBuf,
+        credentials: Arc<dyn PluginCredentialStore>,
+    ) -> Self {
         let plugin_root = app_data_directory.join("NativeConnector").join("Plugins");
         Self {
             plugin_root: plugin_root.clone(),
+            credentials,
             runtime: PluginApplicationRuntime::new(
                 app_data_directory
                     .join("NativeConnector")
@@ -86,7 +101,6 @@ impl PluginApplicationManager {
         record.spec.validate().map_err(|_| plugin_unavailable())?;
         if record.spec.owner_user_id != owner_user_id
             || !record.spec.enabled
-            || !record.spec.environment_secret_refs.is_empty()
             || record.spec.plugin_id != expected.plugin_id
             || record.spec.server_id != expected.component_key
             || record.spec.component_revision != expected.component_revision
@@ -115,8 +129,7 @@ impl PluginApplicationManager {
             return Err(plugin_unavailable());
         }
         let server = manifest.mcp_servers.get(&expected.component_key);
-        if server.is_some_and(|server| !server.env.is_empty())
-            || server.is_some_and(|server| record.spec.args != server.args)
+        if server.is_some_and(|server| record.spec.args != server.args)
             || (server.is_none()
                 && (expected.component_key != SKILLS_ONLY_COMPONENT_KEY
                     || !record.spec.args.is_empty()))
@@ -138,12 +151,16 @@ impl PluginApplicationManager {
             }
             None => None,
         };
+        let environment = match server {
+            Some(server) => self.resolve_environment(owner_user_id, &record, &server.env)?,
+            None => BTreeMap::new(),
+        };
         Ok(ResolvedAgentPluginExecution {
             identity: projected,
             executable: server.map(|_| PathBuf::from(&record.spec.executable_path)),
             args: record.spec.args,
             working_directory,
-            environment: server.map(|server| server.env.clone()).unwrap_or_default(),
+            environment,
             allowed_tools: record.spec.allowed_tools,
             skill_snapshot,
         })
@@ -183,9 +200,6 @@ impl PluginApplicationManager {
             if validate_record(&record, &summary, owner_user_id).is_err() {
                 continue;
             }
-            if !record.spec.environment_secret_refs.is_empty() {
-                continue;
-            }
             let Ok((installation_root, manifest)) = load_manifest(&plugin_root, &record) else {
                 continue;
             };
@@ -202,12 +216,17 @@ impl PluginApplicationManager {
                 continue;
             };
             let server = manifest.mcp_servers.get(&option.component_key);
-            if server.is_some_and(|server| !server.env.is_empty())
-                || server.is_some_and(|server| record.spec.args != server.args)
+            if server.is_some_and(|server| record.spec.args != server.args)
                 || (server.is_none()
                     && (option.component_key != SKILLS_ONLY_COMPONENT_KEY
                         || !record.spec.args.is_empty()))
             {
+                continue;
+            }
+            if server.is_some_and(|server| {
+                self.resolve_environment(owner_user_id, &record, &server.env)
+                    .is_err()
+            }) {
                 continue;
             }
             options.insert(option.selection_id(), option);
@@ -220,6 +239,118 @@ impl PluginApplicationManager {
                 .then_with(|| left.selection_id().cmp(&right.selection_id()))
         });
         Ok(options)
+    }
+
+    fn resolve_environment(
+        &self,
+        owner_user_id: &str,
+        record: &LocalPluginInstallationRecord,
+        environment: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, String> {
+        let expected =
+            environment_secret_references(owner_user_id, &record.spec.plugin_id, environment)
+                .map_err(|_| plugin_unavailable())?;
+        if record.spec.environment_secret_refs != expected {
+            return Err(plugin_unavailable());
+        }
+        environment
+            .iter()
+            .map(|(variable, template)| {
+                let reference = expected.get(variable).ok_or_else(plugin_unavailable)?;
+                let value = self
+                    .credentials
+                    .load(reference)
+                    .map_err(|_| plugin_unavailable())?
+                    .ok_or_else(plugin_unavailable)?;
+                validate_secret(&value).map_err(|_| plugin_unavailable())?;
+                secret_name(template).map_err(|_| plugin_unavailable())?;
+                Ok((variable.clone(), value))
+            })
+            .collect()
+    }
+
+    pub(crate) fn credential_is_configured(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        name: &str,
+    ) -> Result<bool, String> {
+        let reference = secret_reference(owner_user_id, plugin_id, name)?;
+        Ok(self.credentials.load(&reference)?.is_some())
+    }
+
+    pub(crate) fn update_credentials(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        values: &BTreeMap<String, Option<String>>,
+    ) -> Result<(), String> {
+        let mut previous = Vec::new();
+        for (name, value) in values {
+            let reference = secret_reference(owner_user_id, plugin_id, name)?;
+            let old = self.credentials.load(&reference)?;
+            if value.is_none() && old.is_none() {
+                return Err(format!("Plugin 凭据 {name} 尚未配置。"));
+            }
+            if let Some(value) = value {
+                validate_secret(value)?;
+            }
+            previous.push((reference, old, value.as_deref()));
+        }
+        for (applied, (reference, _, value)) in previous.iter().enumerate() {
+            let result = value.map_or(Ok(()), |value| self.credentials.save(reference, value));
+            if let Err(error) = result {
+                let mut rollback_ok = true;
+                for (reference, old, _) in previous[..applied].iter().rev() {
+                    rollback_ok &= match old {
+                        Some(value) => self.credentials.save(reference, value).is_ok(),
+                        None => self.credentials.delete(reference).is_ok(),
+                    };
+                }
+                return Err(if rollback_ok {
+                    error
+                } else {
+                    "Plugin 凭据保存失败，且系统凭据回滚未完全成功。".into()
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn delete_credentials(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        names: &BTreeSet<String>,
+    ) -> Result<BTreeMap<String, Option<String>>, String> {
+        let mut previous = Vec::new();
+        for name in names {
+            let reference = secret_reference(owner_user_id, plugin_id, name)?;
+            previous.push((
+                name.clone(),
+                reference.clone(),
+                self.credentials.load(&reference)?,
+            ));
+        }
+        for (index, (_, reference, _)) in previous.iter().enumerate() {
+            if self.credentials.delete(reference).is_err() {
+                let mut rollback_ok = true;
+                for (_, reference, old) in previous[..index].iter().rev() {
+                    if let Some(value) = old {
+                        rollback_ok &= self.credentials.save(reference, value).is_ok();
+                    }
+                }
+                return Err(if rollback_ok {
+                    "无法从系统凭据存储删除 Plugin 凭据。".into()
+                } else {
+                    "Plugin 凭据删除失败，且系统凭据回滚未完全成功。".into()
+                });
+            }
+        }
+        Ok(previous
+            .into_iter()
+            .filter_map(|(name, _, value)| value.map(|value| (name, Some(value))))
+            .collect())
     }
 
     async fn list(
@@ -359,7 +490,7 @@ pub(crate) struct TrustedAgentPluginOption {
     pub(crate) description: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct ResolvedAgentPluginExecution {
     pub(crate) identity: TrustedAgentPluginOption,
     pub(crate) executable: Option<PathBuf>,
@@ -368,6 +499,24 @@ pub(crate) struct ResolvedAgentPluginExecution {
     pub(crate) environment: BTreeMap<String, String>,
     pub(crate) allowed_tools: Option<Vec<String>>,
     pub(crate) skill_snapshot: AgentPluginSkillSnapshot,
+}
+
+impl fmt::Debug for ResolvedAgentPluginExecution {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ResolvedAgentPluginExecution")
+            .field("identity", &self.identity)
+            .field("executable", &self.executable)
+            .field("args", &self.args)
+            .field("working_directory", &self.working_directory)
+            .field(
+                "environment_keys",
+                &self.environment.keys().collect::<Vec<_>>(),
+            )
+            .field("allowed_tools", &self.allowed_tools)
+            .field("skill_snapshot", &self.skill_snapshot)
+            .finish()
+    }
 }
 
 impl TrustedAgentPluginOption {

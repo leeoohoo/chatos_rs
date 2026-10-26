@@ -4,8 +4,68 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, VecDeque},
     fs,
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
+
+#[derive(Default)]
+struct MemoryPluginCredentialStore {
+    values: Mutex<BTreeMap<String, String>>,
+    fail_save_for: Mutex<Option<String>>,
+}
+
+impl PluginCredentialStore for MemoryPluginCredentialStore {
+    fn load(&self, reference: &str) -> Result<Option<String>, String> {
+        Ok(self.values.lock().unwrap().get(reference).cloned())
+    }
+
+    fn save(&self, reference: &str, value: &str) -> Result<(), String> {
+        if self.fail_save_for.lock().unwrap().as_deref() == Some(reference) {
+            return Err("injected credential failure".into());
+        }
+        self.values
+            .lock()
+            .unwrap()
+            .insert(reference.to_owned(), value.to_owned());
+        Ok(())
+    }
+
+    fn delete(&self, reference: &str) -> Result<(), String> {
+        self.values.lock().unwrap().remove(reference);
+        Ok(())
+    }
+}
+
+#[test]
+fn credential_update_rolls_back_values_when_a_later_save_fails() {
+    let fixture = CatalogFixture::new();
+    let credentials = Arc::new(MemoryPluginCredentialStore::default());
+    let alpha = secret_reference("owner-1", "plugin-1", "alpha").unwrap();
+    let beta = secret_reference("owner-1", "plugin-1", "beta").unwrap();
+    credentials.values.lock().unwrap().extend([
+        (alpha.clone(), "old-alpha".into()),
+        (beta.clone(), "old-beta".into()),
+    ]);
+    *credentials.fail_save_for.lock().unwrap() = Some(beta.clone());
+    let manager = PluginApplicationManager::with_credential_store(
+        fixture.app_data.clone(),
+        credentials.clone(),
+    );
+
+    assert!(manager
+        .update_credentials(
+            "owner-1",
+            "plugin-1",
+            &BTreeMap::from([
+                ("alpha".into(), Some("new-alpha".into())),
+                ("beta".into(), Some("new-beta".into())),
+            ]),
+        )
+        .is_err());
+
+    let values = credentials.values.lock().unwrap();
+    assert_eq!(values[&alpha], "old-alpha");
+    assert_eq!(values[&beta], "old-beta");
+}
 
 struct ScriptedMetadataClient {
     responses: Mutex<VecDeque<Result<HostResult, String>>>,
@@ -452,6 +512,53 @@ async fn agent_runtime_fails_closed_without_a_windows_secret_resolver() {
         .resolve_agent_plugin(&client, "owner-1", &expected)
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn configured_secret_is_resolved_only_into_the_runtime_environment() {
+    let fixture = CatalogFixture::new();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["mcpServers"]["server-1"]["env"] = json!({"API_TOKEN": "${credential:primary-token}"});
+    fixture.write_manifest(manifest);
+    let mut record = fixture.record();
+    record.spec.args = vec!["mcp".into()];
+    record.spec.environment_secret_refs = environment_secret_references(
+        "owner-1",
+        "plugin-1",
+        &BTreeMap::from([(
+            "API_TOKEN".to_owned(),
+            "${credential:primary-token}".to_owned(),
+        )]),
+    )
+    .unwrap();
+    let credentials = Arc::new(MemoryPluginCredentialStore::default());
+    let reference = record.spec.environment_secret_refs["API_TOKEN"].clone();
+    credentials
+        .save(&reference, "runtime-secret-value")
+        .unwrap();
+    let manager =
+        PluginApplicationManager::with_credential_store(fixture.app_data.clone(), credentials);
+
+    let options = manager
+        .list_agent_plugins(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+    assert_eq!(options.len(), 1);
+    let resolved = manager
+        .resolve_agent_plugin(
+            &ScriptedMetadataClient::new(vec![Ok(record_result(record))]),
+            "owner-1",
+            &options[0],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resolved.environment["API_TOKEN"], "runtime-secret-value");
+    let public_projection = format!("{options:?}");
+    assert!(!public_projection.contains("runtime-secret-value"));
+    assert!(!public_projection.contains(&reference));
+    assert!(!public_projection.contains("primary-token"));
+    assert!(!format!("{resolved:?}").contains("runtime-secret-value"));
 }
 
 #[tokio::test]

@@ -25,6 +25,7 @@ export function pluginSettingsSnapshot(): PluginSettingsSnapshot {
       installationIssue: null,
       windowsCompatible: true,
       installActionAvailable: true,
+      credentials: [],
     }],
     marketplaceAvailable: true,
     localCatalogAvailable: true,
@@ -54,6 +55,13 @@ export function pluginSettingsPort(overrides: Partial<PluginSettingsPort> = {}):
     uninstall: async () => ({
       ...pluginSettingsSnapshot(),
       plugins: pluginSettingsSnapshot().plugins.map((plugin) => ({ ...plugin, installed: false, installedVersion: null })),
+    }),
+    updateCredentials: async (_ownerUserId, _pluginId, credentials) => ({
+      ...pluginSettingsSnapshot(),
+      plugins: pluginSettingsSnapshot().plugins.map((plugin) => ({
+        ...plugin,
+        credentials: Object.keys(credentials).map((name) => ({ name, configured: true })),
+      })),
     }),
     pickManualDirectory: async () => ({ selectionId: "selection-1", directoryName: "my-plugin" }),
     inspectManualDirectory: async (_ownerUserId, _presentationId, selectionId) => ({

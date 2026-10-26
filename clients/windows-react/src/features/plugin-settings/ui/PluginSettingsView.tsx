@@ -22,6 +22,7 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
   const install = usePluginSettingsStore((state) => state.install);
   const updateEnabled = usePluginSettingsStore((state) => state.updateEnabled);
   const uninstall = usePluginSettingsStore((state) => state.uninstall);
+  const updateCredentials = usePluginSettingsStore((state) => state.updateCredentials);
   const pickManualDirectory = usePluginSettingsStore((state) => state.pickManualDirectory);
   const inspectManualDirectory = usePluginSettingsStore((state) => state.inspectManualDirectory);
   const installManualDirectory = usePluginSettingsStore((state) => state.installManualDirectory);
@@ -33,6 +34,8 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [uninstallTarget, setUninstallTarget] = useState<ManagedPlugin | null>(null);
+  const [credentialTarget, setCredentialTarget] = useState<ManagedPlugin | null>(null);
+  const [credentialValues, setCredentialValues] = useState<Record<string, string>>({});
   const [showsManualInstaller, setShowsManualInstaller] = useState(false);
   const [manualPresentationId] = useState(newManualPresentationId);
 
@@ -47,6 +50,11 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
   const closeManualInstaller = () => {
     setShowsManualInstaller(false);
     void discardManualDirectory(port, manualPresentationId);
+  };
+
+  const closeCredentialEditor = () => {
+    setCredentialTarget(null);
+    setCredentialValues({});
   };
 
   const plugins = useMemo(() => filterPlugins(snapshot?.plugins ?? [], query), [query, snapshot?.plugins]);
@@ -78,22 +86,33 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
       {plugins.length === 0 ? <div className="plugin-settings-empty"><span>◇</span><strong>{english ? "No matching plugins" : "没有匹配的 Plugin"}</strong><p>{query ? (english ? "Try another search term." : "请尝试其他搜索词。") : (english ? "No plugins are currently available." : "当前没有可用的 Plugin。")}</p></div> : plugins.map((plugin) => {
         const busy = operatingPluginId === plugin.id;
         const isExpanded = expanded === plugin.id;
+        const credentialsReady = plugin.credentials.every((credential) => credential.configured);
         return <article className={`plugin-settings-card ${plugin.enabled ? "" : "is-disabled"}`} key={plugin.id}>
           <header>
             <span className="plugin-settings-icon" aria-hidden="true">{plugin.hasUi ? "▣" : "◇"}</span>
-            <div className="plugin-settings-title"><div><h3>{plugin.displayName}</h3>{plugin.hasUi && <em>{english ? "App" : "应用"}</em>}{plugin.installed && <RuntimeBadge english={english} status={plugin.runtimeStatus} />}{plugin.installationIssue && <em className="is-warning">{english ? "Reinstall required" : "需要安全重装"}</em>}</div><p>{plugin.publisher} · {plugin.installedVersion ? (english ? `Installed ${plugin.installedVersion}` : `已安装 ${plugin.installedVersion}`) : plugin.latestVersion}{plugin.updateAvailable && (english ? ` · Latest ${plugin.latestVersion}` : ` · 最新 ${plugin.latestVersion}`)}</p></div>
+            <div className="plugin-settings-title"><div><h3>{plugin.displayName}</h3>{plugin.hasUi && <em>{english ? "App" : "应用"}</em>}{plugin.installed && <RuntimeBadge english={english} status={plugin.runtimeStatus} />}{plugin.credentials.length > 0 && !credentialsReady && <em className="is-warning">{english ? "Credentials required" : "需要配置凭据"}</em>}{plugin.installationIssue && <em className="is-warning">{english ? "Reinstall required" : "需要安全重装"}</em>}</div><p>{plugin.publisher} · {plugin.installedVersion ? (english ? `Installed ${plugin.installedVersion}` : `已安装 ${plugin.installedVersion}`) : plugin.latestVersion}{plugin.updateAvailable && (english ? ` · Latest ${plugin.latestVersion}` : ` · 最新 ${plugin.latestVersion}`)}</p></div>
             {busy && <i className="mini-spinner" />}
             {plugin.installed && !plugin.installationIssue && <label className="plugin-settings-switch"><input aria-label={`${plugin.displayName} enabled`} checked={plugin.enabled} disabled={Boolean(operatingPluginId)} onChange={(event) => void updateEnabled(port, plugin.id, event.target.checked)} type="checkbox" /><span /></label>}
           </header>
           <p className="plugin-settings-description">{plugin.description}</p>
           <div className="plugin-settings-meta"><span>{plugin.category}</span><span>{plugin.source === "marketplace" ? "Marketplace" : (english ? "Local" : "本机")}</span><span>{plugin.mcpServerCount} MCP</span><span>{plugin.skills.length} Skills</span>{!plugin.windowsCompatible && <span className="is-warning">{english ? "Not for Windows" : "不支持 Windows"}</span>}</div>
           {isExpanded && <PluginDetails english={english} plugin={plugin} />}
-          <footer><button onClick={() => setExpanded(isExpanded ? null : plugin.id)} type="button">{isExpanded ? (english ? "Hide Details" : "收起详情") : (english ? "Skills & Permissions" : "Skills 与权限")}</button><div>{plugin.updateAvailable && <button disabled={Boolean(operatingPluginId) || !plugin.installActionAvailable} onClick={() => void install(port, plugin.id)} type="button">{plugin.installActionAvailable ? plugin.installationIssue ? (english ? "Reinstall" : "安全重装") : (english ? "Update" : "安全更新") : (english ? "Update unavailable" : "更新未准入")}</button>}{!plugin.installed && <button className="is-primary" disabled={Boolean(operatingPluginId) || !plugin.installActionAvailable} onClick={() => void install(port, plugin.id)} type="button">{!plugin.windowsCompatible ? (english ? "Unsupported" : "平台不支持") : plugin.installActionAvailable ? (english ? "Install" : "安全安装") : (english ? "Install unavailable" : "安装未准入")}</button>}{plugin.installed && <button className="is-danger" disabled={Boolean(operatingPluginId)} onClick={() => setUninstallTarget(plugin)} type="button">{english ? "Uninstall" : "卸载"}</button>}</div></footer>
+          <footer><button onClick={() => setExpanded(isExpanded ? null : plugin.id)} type="button">{isExpanded ? (english ? "Hide Details" : "收起详情") : (english ? "Skills & Permissions" : "Skills 与权限")}</button><div>{plugin.installed && plugin.credentials.length > 0 && <button disabled={Boolean(operatingPluginId)} onClick={() => { setCredentialValues({}); setCredentialTarget(plugin); }} type="button">{credentialsReady ? (english ? "Update Credentials…" : "更新凭据…") : (english ? "Configure Credentials…" : "配置凭据…")}</button>}{plugin.updateAvailable && <button disabled={Boolean(operatingPluginId) || !plugin.installActionAvailable} onClick={() => void install(port, plugin.id)} type="button">{plugin.installActionAvailable ? plugin.installationIssue ? (english ? "Reinstall" : "安全重装") : (english ? "Update" : "安全更新") : (english ? "Update unavailable" : "更新未准入")}</button>}{!plugin.installed && <button className="is-primary" disabled={Boolean(operatingPluginId) || !plugin.installActionAvailable} onClick={() => void install(port, plugin.id)} type="button">{!plugin.windowsCompatible ? (english ? "Unsupported" : "平台不支持") : plugin.installActionAvailable ? (english ? "Install" : "安全安装") : (english ? "Install unavailable" : "安装未准入")}</button>}{plugin.installed && <button className="is-danger" disabled={Boolean(operatingPluginId)} onClick={() => setUninstallTarget(plugin)} type="button">{english ? "Uninstall" : "卸载"}</button>}</div></footer>
         </article>;
       })}
     </section>
 
     {uninstallTarget && <div className="plugin-settings-confirm"><section aria-modal="true" role="alertdialog"><span>!</span><h3>{english ? "Uninstall plugin?" : "卸载 Plugin？"}</h3><p>{english ? `${uninstallTarget.displayName} will be disabled, its runtime stopped, and its native installation files removed.` : `${uninstallTarget.displayName} 将被停用，运行进程会终止，本机安装文件也会删除。`}</p><footer><button onClick={() => setUninstallTarget(null)} type="button">{english ? "Cancel" : "取消"}</button><button className="is-danger" disabled={Boolean(operatingPluginId)} onClick={async () => { if (await uninstall(port, uninstallTarget.id)) setUninstallTarget(null); }} type="button">{english ? "Uninstall" : "卸载"}</button></footer></section></div>}
+    {credentialTarget && <div className="plugin-settings-credentials" onMouseDown={(event) => { if (event.currentTarget === event.target) closeCredentialEditor(); }}>
+      <section aria-labelledby="plugin-credentials-title" aria-modal="true" role="dialog">
+        <header><div><span aria-hidden="true">⌘</span><div><h3 id="plugin-credentials-title">{english ? "Plugin Credentials" : "配置 Plugin 凭据"}</h3><p>{credentialTarget.displayName}</p></div></div><button aria-label={english ? "Close credentials" : "关闭凭据配置"} onClick={closeCredentialEditor} type="button">×</button></header>
+        <div className="plugin-settings-credentials__content">
+          <p>{english ? "Secrets are written directly to Windows Credential Manager. Existing values are never returned to this page." : "凭据会直接写入 Windows 凭据管理器；已有值不会回传到这个页面。"}</p>
+          {credentialTarget.credentials.map((credential) => <label key={credential.name}><span><strong>{credential.name}</strong><small>{credential.configured ? (english ? "Configured · leave blank to keep" : "已配置 · 留空则保持原值") : (english ? "Required" : "必填")}</small></span><input aria-label={credential.name} autoComplete="off" onChange={(event) => setCredentialValues((values) => ({ ...values, [credential.name]: event.target.value }))} type="password" value={credentialValues[credential.name] ?? ""} /></label>)}
+        </div>
+        <footer><button onClick={closeCredentialEditor} type="button">{english ? "Cancel" : "取消"}</button><button className="is-primary" disabled={Boolean(operatingPluginId) || credentialTarget.credentials.some((credential) => !credential.configured && !(credentialValues[credential.name]?.length))} onClick={async () => { const values = Object.fromEntries(credentialTarget.credentials.map((credential) => [credential.name, credentialValues[credential.name] || null])); if (await updateCredentials(port, credentialTarget.id, values)) closeCredentialEditor(); }} type="button">{operatingPluginId === credentialTarget.id ? (english ? "Saving…" : "保存中…") : (english ? "Save Securely" : "安全保存")}</button></footer>
+      </section>
+    </div>}
     {showsManualInstaller && <div className="plugin-settings-manual" onMouseDown={(event) => { if (event.currentTarget === event.target) closeManualInstaller(); }}>
       <section aria-labelledby="manual-plugin-title" aria-modal="true" role="dialog">
         <header><div><span aria-hidden="true">◇</span><div><h3 id="manual-plugin-title">{english ? "Install a Local Plugin" : "安装本机 Plugin"}</h3><p>{english ? "Choose a Plugin, MCP, Agent plugin, or standalone Skill folder." : "选择 Plugin、MCP、Agent Plugin 或独立 Skill 的根目录。"}</p></div></div><button aria-label={english ? "Close manual installer" : "关闭手动安装"} onClick={closeManualInstaller} type="button">×</button></header>

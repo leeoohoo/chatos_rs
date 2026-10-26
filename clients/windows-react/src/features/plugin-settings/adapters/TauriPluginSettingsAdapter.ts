@@ -25,6 +25,12 @@ export class TauriPluginSettingsAdapter implements PluginSettingsPort {
     }));
   }
 
+  async updateCredentials(ownerUserId: string, pluginId: string, credentials: Record<string, string | null>) {
+    return pluginSettingsSnapshotSchema.parse(await invoke("update_plugin_credentials", {
+      input: { ownerUserId, pluginId, credentials },
+    }));
+  }
+
   async pickManualDirectory(ownerUserId: string, presentationId: string) {
     const result = await invoke("pick_manual_plugin_directory", { ownerUserId, presentationId });
     return result == null ? null : manualPluginDirectorySelectionSchema.parse(result);
