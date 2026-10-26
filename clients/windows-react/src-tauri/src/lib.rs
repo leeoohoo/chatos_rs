@@ -5,6 +5,7 @@ mod agent_management;
 mod agent_plugin_runtime;
 mod agent_skill_management;
 mod ai_model_settings;
+mod app_owned_export;
 mod ask_user;
 mod attachment_tool_worker;
 mod authentication;

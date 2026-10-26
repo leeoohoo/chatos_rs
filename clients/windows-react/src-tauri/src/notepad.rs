@@ -18,8 +18,12 @@ use std::{
 use tauri::State;
 
 use crate::{
+    app_owned_export,
     authentication::AuthenticationManager,
     host_lifecycle::{validate_owner, HostManager},
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
 };
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -213,6 +217,7 @@ pub(crate) async fn copy_notepad_text(input: NotepadCopyTextInput) -> Result<(),
 pub(crate) async fn export_notepad_markdown(
     input: NotepadExportMarkdownInput,
     authentication: State<'_, AuthenticationManager>,
+    resources: State<'_, MachineResourceGovernor>,
 ) -> Result<bool, String> {
     validate_owner(&input.owner_user_id)?;
     validate_note_fields(&input.title, &input.content, &[])?;
@@ -231,10 +236,16 @@ pub(crate) async fn export_notepad_markdown(
     authentication
         .require_session_generation(&input.owner_user_id, generation)
         .await?;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let path = selected.path().to_path_buf();
     let content = input.content;
     tokio::task::spawn_blocking(move || {
-        fs::write(path, content.as_bytes()).map_err(|_| "无法导出 Markdown。".to_owned())
+        app_owned_export::export_bytes(&path, ".chatos-notepad-export-", content.as_bytes())
     })
     .await
     .map_err(|error| format!("无法导出 Markdown：{error}"))??;

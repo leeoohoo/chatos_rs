@@ -1,4 +1,5 @@
 use crate::{
+    app_owned_export,
     authentication::AuthenticationManager,
     host_lifecycle::{validate_owner, HostManager},
     machine_resource_governor::{
@@ -176,9 +177,12 @@ pub async fn save_agent_artifact(
             MachineResourcePriority::Interactive,
         )
         .await?;
-    tokio::fs::write(selected.path(), bytes)
-        .await
-        .map_err(|error| format!("保存 Agent 文档失败：{error}"))?;
+    let destination = selected.path().to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        app_owned_export::export_bytes(&destination, ".chatos-artifact-export-", &bytes)
+    })
+    .await
+    .map_err(|_| "保存 Agent 文档任务异常退出。".to_string())??;
     Ok(true)
 }
 
