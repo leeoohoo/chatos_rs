@@ -48,6 +48,16 @@ zsh clients/macos/scripts/compare-performance-baselines.sh \
 
 比较器要求两份结果都完整、源码采集期间未变化，并且夹具规则、夹具源码、硬件、macOS、架构和供电来源一致。它检查全部存储指标的 P50/P95/P99；默认允许最多 15% 相对波动或 0.25 ms 绝对噪声（取较大者），超限返回非零状态并在 JSON 中列出失败项。阈值可显式覆盖，但不能用更宽阈值把不同机器或夹具强行合并。该门禁仍只代表存储工程基准，不会把它误标成完整 App 性能验收。
 
+## 固定 App CPU 组合场景
+
+```sh
+zsh clients/macos/scripts/run-app-performance-scenario.sh
+```
+
+该入口使用 Release XCTest 和纯内存合成数据，并行执行 1,000-turn 时间线构建、100 项任务板 presentation、超过 1 MB 的 Markdown 后台解析以及超过 600,000 UTF-16 字符的代码预览回退。它同时测量 MainActor 最大调度间隙，默认执行三轮并把原始样本、环境、测试二进制身份、P50/P95/P99 与宽松安全上限写入 `.build/performance/app-scenario-release-*/run.json`。
+
+此场景不会登录、打开活动账户数据库或控制当前 App，适合成为每次 Release 性能回归的快速 CPU 门禁。它不能替代真实窗口导航、滚动帧率、WindowServer、内存或进程组 soak；这些仍需在隔离 Release 实例上验收。
+
 ## App 性能 Signpost
 
 Release 与 Debug 客户端都在 `com.chatos.native / Performance` 下发布以下稳定 interval，可在 Instruments 的 Time Profiler、SwiftUI 或 Logging 录制中对齐交互和主线程热点：
@@ -104,6 +114,7 @@ zsh clients/macos/scripts/run-process-group-soak.sh \
 ```sh
 /usr/bin/arch -arm64 /usr/bin/python3 -B -m unittest discover -s clients/macos/scripts/tests -v
 zsh -n clients/macos/scripts/compare-performance-baselines.sh
+zsh -n clients/macos/scripts/run-app-performance-scenario.sh
 zsh -n clients/macos/scripts/package-app.sh
 zsh -n clients/macos/scripts/verify-app-build.sh
 zsh -n clients/macos/scripts/run-process-group-soak.sh
