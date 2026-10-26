@@ -1380,4 +1380,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 105. [部分完成] Windows 对话 Timeline 已补齐任务级状态摘要：每条拥有 Task Graph 的用户消息在“运行详情”入口旁展示最高优先级状态胶囊，`waiting_confirmation` 和 `reviewing_followup` 优先覆盖陈旧的 `running/pending` 并使用注意色。检查器未打开时，只要图中仍有活动任务就每 1.5 秒刷新；每条消息使用独立 probe request identity，迟到响应不能覆盖新状态，刷新期间继续保留最后可信图，临时空结果或请求错误不会让入口闪退。稳定身份依赖避免 React 对象重建触发重复 probe。React 全量 137 个测试文件、509 项测试，类型检查、生产构建、架构/Bundle 审计、Release EXE/MSI/NSIS 与 `%TEMP%\chatos-windows-task-timeline-final-nsis.json` 安装版隔离原生启动 smoke 均通过。Task Graph、Run Inspector 与 Timeline 状态胶囊已完成；宠物活动摘要和原生窗口逐态视觉取证仍未完成，不能据此声称任务审查体验已完全与 macOS 一致。
 
+106. [部分完成] Windows 宠物活动摘要已按 macOS `PetTaskLiveActivityBubble` 补齐 Task 门禁优先级：原生层在既有 2 秒、无重叠 Run 轮询中，仅对活动 task Run 查询 owner-scoped 活动 Task Graph，并复用 Run Inspector 的统一展示状态映射；`reviewing_followup` 与 `waiting_confirmation` 通过安全 detail code 覆盖旧 Run 标题和说明，显示橙色暂停图标。Task Graph 查询失败、返回类型错误或越界时不投影门禁，也不删除已取得的 Run 摘要；Run 的真实 kind、宠物动画和进行中计数保持不变。查询最多检查 100 个活动图，找到所有当前 task Run 后立即停止。React 全量 137 个测试文件、510 项测试；Tauri 全量 516 项发现、510 项通过、6 项 ignored；类型检查、生产构建、Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 与 `%TEMP%\chatos-windows-pet-task-gates-final-nsis.json` 安装版隔离原生启动 smoke 均通过。Task Graph、Run Inspector、Timeline 与宠物摘要的任务门禁逻辑已完成；原生窗口逐态视觉取证仍未完成。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

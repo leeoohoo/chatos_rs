@@ -3,15 +3,21 @@ import type { PetActivityKind, PetPresentation } from "../domain/petPresentation
 import type { PetPresentationPort } from "../ports/PetPresentationPort";
 import "./pet.css";
 
+type PetActivity = NonNullable<PetPresentation["primaryActivity"]>;
+
 export function PetActivitySurface({ port }: { port: PetPresentationPort }) {
   const presentation = usePetPresentation(port);
   const activity = presentation.primaryActivity;
   if (!activity) return <main className="pet-activity-overlay" />;
   const english = presentation.language === "en-US";
   const copy = activityCopy(presentation, english);
+  const taskGate = activity.detailCode === "reviewing_followup" || activity.detailCode === "waiting_confirmation";
   return (
-    <main aria-label={copy.title} className={`pet-activity-overlay pet-activity-overlay--${activity.kind}`}>
-      <span aria-hidden="true">{activityIcon(activity.kind)}</span>
+    <main
+      aria-label={copy.title}
+      className={`pet-activity-overlay pet-activity-overlay--${activity.kind} ${taskGate ? "pet-activity-overlay--task-gate" : ""}`}
+    >
+      <span aria-hidden="true">{taskGate ? "Ⅱ" : activityIcon(activity.kind)}</span>
       <div><strong>{copy.title}</strong><p>{copy.detail}</p></div>
       {presentation.activeWorkCount > 1 && <em>{english ? `${presentation.activeWorkCount} active` : `${presentation.activeWorkCount} 项进行中`}</em>}
     </main>
@@ -28,6 +34,12 @@ function activityCopy(presentation: PetPresentation, english: boolean) {
     waiting_tool: english ? "Running a local tool" : "正在执行本地工具",
     retry_scheduled: english ? "Waiting for a local retry" : "等待本地重试",
     needs_review: english ? "Review the execution result" : "需要检查执行结果",
+    reviewing_followup: english
+      ? "Further execution is paused while the follow-up is reviewed"
+      : "后续执行已暂停，正在审查追加要求",
+    waiting_confirmation: english
+      ? "Further execution is paused awaiting your confirmation"
+      : "后续执行已暂停，等待你确认要求",
   } as const;
   const fallback = {
     working: english ? "AI is still working. Open ChatOS for the full progress." : "AI 仍在执行，可打开 ChatOS 查看完整过程。",
@@ -38,9 +50,15 @@ function activityCopy(presentation: PetPresentation, english: boolean) {
     cancelled: english ? "The run was cancelled." : "任务已经取消。",
   } satisfies Record<PetActivityKind, string>;
   return {
-    title: `${source} · ${titleForKind(activity.kind, english)}`,
+    title: `${source} · ${titleForActivity(activity.kind, activity.detailCode, english)}`,
     detail: activity.detailCode ? detailByCode[activity.detailCode] : fallback[activity.kind],
   };
+}
+
+function titleForActivity(kind: PetActivityKind, detailCode: PetActivity["detailCode"], english: boolean) {
+  if (detailCode === "reviewing_followup") return english ? "Reviewing Follow-up" : "审查追加要求";
+  if (detailCode === "waiting_confirmation") return english ? "Awaiting Confirmation" : "等待确认";
+  return titleForKind(kind, english);
 }
 
 function titleForKind(kind: PetActivityKind, english: boolean) {

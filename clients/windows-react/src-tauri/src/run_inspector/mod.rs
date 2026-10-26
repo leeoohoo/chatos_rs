@@ -1,6 +1,8 @@
 mod models;
 mod projection;
 
+pub(crate) use projection::display_status;
+
 use chatos_local_agent_protocol::{
     CancelTaskCommand, GetMessageTaskGraphCommand, GetRunCommand, GetTaskRunsCommand, HostCommand,
     HostResult, ListEventsCommand, LocalAgentEventPayloadMode, LocalAgentEventRecord,

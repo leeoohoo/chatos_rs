@@ -24,7 +24,14 @@ export const petPresentationSchema = z.object({
   primaryActivity: z.object({
     source: z.enum(["chat", "task_execution"]),
     kind: petActivityKindSchema,
-    detailCode: z.enum(["waiting_user", "waiting_tool", "retry_scheduled", "needs_review"]).nullable(),
+    detailCode: z.enum([
+      "waiting_user",
+      "waiting_tool",
+      "retry_scheduled",
+      "needs_review",
+      "reviewing_followup",
+      "waiting_confirmation",
+    ]).nullable(),
     updatedAtUnixMs: z.number().int().nonnegative(),
   }).strict().nullable(),
   activeWorkCount: z.number().int().nonnegative(),

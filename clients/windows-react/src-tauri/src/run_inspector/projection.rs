@@ -102,7 +102,7 @@ fn process_entry(
     }
 }
 
-pub(super) fn display_status(task: &LocalTaskRecord) -> String {
+pub(crate) fn display_status(task: &LocalTaskRecord) -> String {
     if matches!(task.status.as_str(), "pending" | "ready" | "running") {
         match string_field(&task.input, &["followup_review_state"]).as_deref() {
             Some("pending") => return "reviewing_followup".to_owned(),
