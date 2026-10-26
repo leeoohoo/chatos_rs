@@ -39,12 +39,12 @@ Windows 产品版本：`3.0.9`
 ## B. 本次交付前必须关闭
 
 - [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（134 个测试文件、504 项测试）。
-- [x] Windows 原子导出切片完成后，Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：498 项测试被发现，492 项通过、0 项失败、6 项环境集成测试按预期 ignored；其中 2 项 sidecar 集成测试又以新 v49 Release Host 实际运行通过。Local Agent Host 全量 135 项测试及 Host 自身 Clippy `-D warnings` 通过；Windows 对锁中文件的新开句柄读取限制已进入跨平台测试语义，不再误报数据库所有权回归。
+- [x] Windows 附件 vault 启动清理切片完成后，Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：499 项测试被发现，493 项通过、0 项失败、6 项环境集成测试按预期 ignored；其中 2 项 sidecar 集成测试此前已以新 v49 Release Host 实际运行通过。Local Agent Host 全量 135 项测试及 Host 自身 Clippy `-D warnings` 保持通过；Windows 对锁中文件的新开句柄读取限制已进入跨平台测试语义，不再误报数据库所有权回归。
 - [x] 重新生成版本为 `3.0.9` 的 Release EXE、MSI、NSIS，并记录 SHA-256：
-  - `chatos-windows-react.exe`：`36718d9655ec655b580db2566df2334d996d8501a0637f62240df44c025db81a`
+  - `chatos-windows-react.exe`：`fde5a01469b4abaaa323c2267ff8949fa03239e84c93e45b6679de3c9dea0c77`
   - `chatos_local_agent_host.exe`：`b6737311ae2b9739d496503007a635c2e97a38a8bfc4a9e17bd87a00520e6187`
-  - `ChatOS_3.0.9_x64_en-US.msi`：`dbe2394aca44e2460ce89d7ec2f7d55569381b1f187dc7448793e43db75977db`
-  - `ChatOS_3.0.9_x64-setup.exe`：`380fb30694c6415a3895afe6269f6296a11388a8fc5e837442c744c5f47bf173`
+  - `ChatOS_3.0.9_x64_en-US.msi`：`46aebca895540a9564dbd8662e7bbab50d4c698431df5f964df285725cbcdc03`
+  - `ChatOS_3.0.9_x64-setup.exe`：`430556c813e520a1698b3955474b903f821ac77c50d36c66b9e554fabba5c87c`
 - [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、隔离 AppData 原生启动、正常退出、卸载和残留清理；当前事务安全构建产物先连续两次通过单次启动门限，再完成两轮各 5 次冷启动基线，最新报告为 `%TEMP%\chatos-windows-nsis-startup-performance-1.json` 和 `%TEMP%\chatos-windows-nsis-startup-performance-2.json`。
 - [x] MSI 升级 smoke 在既有四轮基础上，以事务安全模板再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-1.json` 和 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-2.json` 同时记录 `0.1.0 → 3.0.9`、两代原生启动退出、截断包 `1620` 失败、事务中途故障 `1603` 回滚、AppData 哨兵保留、卸载以及降级检测规则。
 - [x] MSI 运行中客户端升级 smoke 再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-running-upgrade-1.json` 和 `%TEMP%\chatos-windows-msi-running-upgrade-2.json` 记录旧版原生窗口进程、Installer 正常关闭、无重启升级、新版原生启动、数据保留、卸载和系统待重启队列不变。
@@ -53,6 +53,7 @@ Windows 产品版本：`3.0.9`
 - [x] 资源压力治理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-resource-pressure-final-nsis.json`：全新目录安装 `2,052 ms`、安装版原生启动 `3,144 ms`、卸载 `610 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] App 共享资源准入版本的新 NSIS 已通过 `%TEMP%\chatos-windows-machine-governor-final-nsis.json`：全新目录安装 `2,174 ms`、安装版隔离冷启动并由应用自身退出 `16,086 ms`、卸载 `621 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] 原子导出版本的新 NSIS 已通过 `%TEMP%\chatos-windows-atomic-export-final-nsis.json`：全新目录安装 `2,220 ms`、安装版隔离冷启动并由应用自身退出 `15,070 ms`、卸载 `612 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
+- [x] 附件 vault 启动清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-attachment-temp-cleanup-final-nsis.json`：全新目录安装 `2,220 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,167 ms`、卸载 `631 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [ ] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息。代码默认状态与自动回归均为 workspace/首个消息资源，但原生窗口视觉取证仍受下一项工具故障阻塞。
 - [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。
@@ -69,7 +70,7 @@ Windows 产品版本：`3.0.9`
 ### P2：平台/发布质量
 
 - [ ] Windows App 的统一容量治理已完成基础共享 permit 和第一批安全接入，但仍需逐项审计剩余的 process-spawn/重型 in-process 入口，并补齐机器资源诊断 snapshot。Host v49 与 App pool 已响应同一系统压力；已经领取 durable claim 的附件/终端 tool work 必须继续排除在外层等待之外。
-- [ ] `3.0.9.4` 的文件 worker 隔离和临时文件生命周期仍需 Windows 继续拉齐：公共原子导出与安全的 24 小时残留回收已覆盖 Agent Artifact、记事本 Markdown，远程下载已有独立原子提交；附件授权/预览、各 app-owned vault、确定性 manifest `.tmp` 与 per-run crash recovery 仍需按所有权逐项审计。禁止用全盘后缀清理冒充统一治理。
+- [ ] `3.0.9.4` 的文件 worker 隔离和临时文件生命周期仍需 Windows 继续拉齐：公共原子导出与安全的 24 小时残留回收已覆盖 Agent Artifact、记事本 Markdown；附件 vault 的 `<小写 UUID>.tmp` / `.json.tmp` 已使用受资源压力治理的启动后台清理，远程下载已有独立原子提交。Media History 的 `record.json.tmp`、Story 确定性 manifest `.tmp`、其余 app-owned vault 与 per-run crash recovery 仍需按所有权逐项审计；禁止用全盘后缀清理冒充统一治理。
 - [ ] Windows 安装包代码签名、发布证书、签名校验和 SmartScreen 信誉验证。仓库可生成安装包，但本机未配置正式签名身份。
 - [ ] Windows Installer 无法由 Restart Manager 正常关闭的强制文件锁及需重启场景仍需在一次性 Windows VM 中补验；客户端正常运行造成的文件占用、事务中途故障回滚均已关闭。本机已有其他软件留下的待重启文件操作，不能为了测试篡改系统队列。历史 `0.1.0` 安装包自身允许降级，已发布二进制无法由新版本追溯修改。
 - [ ] 固定分辨率与 100%/125%/150% 缩放的原生截图对照、键盘导航、焦点顺序、屏幕阅读器标签和对比度验收。

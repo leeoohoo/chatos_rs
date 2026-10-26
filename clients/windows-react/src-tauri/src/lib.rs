@@ -316,6 +316,20 @@ pub fn run() {
             app.state::<PetAssetStore>()
                 .load(&resource_directory)
                 .map_err(std::io::Error::other)?;
+            let attachment_manager = app.state::<AttachmentManager>().inner().clone();
+            let machine_resources = app.state::<MachineResourceGovernor>().inner().clone();
+            tauri::async_runtime::spawn(async move {
+                let Ok(_permit) = machine_resources
+                    .acquire(
+                        machine_resource_governor::MachineResourceKind::CodeReadWorker,
+                        machine_resource_governor::MachineResourcePriority::Background,
+                    )
+                    .await
+                else {
+                    return;
+                };
+                let _ = attachment_manager.cleanup_stale_temporaries().await;
+            });
             resource_pressure::start_monitor(app.handle().clone());
             #[cfg(target_os = "windows")]
             if std::env::var_os("CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP").as_deref()

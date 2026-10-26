@@ -97,13 +97,13 @@ fn cleanup_stale_exports(parent: &Path, prefix: &str) {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if canonical_temporary_name(&name, prefix) {
-            try_remove_stale_file(&entry.path(), cutoff);
+            let _ = try_remove_stale_owned_file(&entry.path(), cutoff);
         }
     }
 }
 
 #[cfg(windows)]
-fn try_remove_stale_file(path: &Path, cutoff: SystemTime) {
+pub(crate) fn try_remove_stale_owned_file(path: &Path, cutoff: SystemTime) -> bool {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::{
         Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
@@ -139,7 +139,7 @@ fn try_remove_stale_file(path: &Path, cutoff: SystemTime) {
         )
     };
     if handle == INVALID_HANDLE_VALUE {
-        return;
+        return false;
     }
     let mut information = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
     let valid = unsafe { GetFileInformationByHandle(handle, &mut information) } != 0;
@@ -158,30 +158,34 @@ fn try_remove_stale_file(path: &Path, cutoff: SystemTime) {
             == 0
         && information.nNumberOfLinks == 1
         && modified <= cutoff;
-    if safe {
+    let removed = if safe {
         let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
-        let _ = unsafe {
+        (unsafe {
             SetFileInformationByHandle(
                 handle,
                 FileDispositionInfo,
                 (&raw const disposition).cast(),
                 u32::try_from(std::mem::size_of::<FILE_DISPOSITION_INFO>()).unwrap_or_default(),
             )
-        };
-    }
+        }) != 0
+    } else {
+        false
+    };
     let _ = unsafe { CloseHandle(handle) };
+    removed
 }
 
 #[cfg(not(windows))]
-fn try_remove_stale_file(path: &Path, cutoff: SystemTime) {
+pub(crate) fn try_remove_stale_owned_file(path: &Path, cutoff: SystemTime) -> bool {
     let Ok(metadata) = fs::symlink_metadata(path) else {
-        return;
+        return false;
     };
     if is_regular_non_reparse(&metadata)
         && metadata.modified().is_ok_and(|modified| modified <= cutoff)
     {
-        let _ = fs::remove_file(path);
+        return fs::remove_file(path).is_ok();
     }
+    false
 }
 
 fn canonical_temporary_name(name: &str, prefix: &str) -> bool {
@@ -315,7 +319,10 @@ mod tests {
             .join(".chatos-artifact-export-not-owned.tmp");
         fs::write(&owned, b"owned").unwrap();
         fs::write(&unrelated, b"unrelated").unwrap();
-        try_remove_stale_file(&owned, SystemTime::now() + Duration::from_secs(1));
+        assert!(try_remove_stale_owned_file(
+            &owned,
+            SystemTime::now() + Duration::from_secs(1)
+        ));
         assert!(!owned.exists());
         assert!(unrelated.exists());
         assert!(canonical_temporary_name(

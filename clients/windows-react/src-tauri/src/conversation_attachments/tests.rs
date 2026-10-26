@@ -182,6 +182,40 @@ mod tests {
     }
 
     #[test]
+    fn stale_cleanup_is_bounded_to_owned_attachment_temporary_names() {
+        let (_directory, manager) = manager();
+        let scope_directory = manager.inner.root.join("owner").join("conversation");
+        fs::create_dir_all(&scope_directory).unwrap();
+        let token = "00000000-0000-0000-0000-000000000000";
+        let payload_temporary = scope_directory.join(format!("{token}.tmp"));
+        let metadata_temporary = scope_directory.join(format!("{token}.json.tmp"));
+        let final_payload = scope_directory.join(token);
+        let unrelated = scope_directory.join("notes.tmp");
+        for path in [
+            &payload_temporary,
+            &metadata_temporary,
+            &final_payload,
+            &unrelated,
+        ] {
+            fs::write(path, b"value").unwrap();
+        }
+        let too_deep = scope_directory.join("nested").join(format!("{token}.tmp"));
+        fs::create_dir_all(too_deep.parent().unwrap()).unwrap();
+        fs::write(&too_deep, b"value").unwrap();
+
+        let removed = cleanup_attachment_temporaries(
+            &manager.inner.root,
+            SystemTime::now() + Duration::from_secs(1),
+        );
+        assert_eq!(removed, 2);
+        assert!(!payload_temporary.exists());
+        assert!(!metadata_temporary.exists());
+        assert!(final_payload.exists());
+        assert!(unrelated.exists());
+        assert!(too_deep.exists());
+    }
+
+    #[test]
     fn gives_each_agent_conversation_an_independent_authorized_reference() {
         let (_directory, manager) = manager();
         let data = b"verified image bytes".to_vec();

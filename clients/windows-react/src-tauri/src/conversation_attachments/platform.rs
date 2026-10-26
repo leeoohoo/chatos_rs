@@ -145,7 +145,10 @@ fn ensure_private_directory(path: &Path) -> Result<(), String> {
     }
     let metadata =
         fs::symlink_metadata(path).map_err(|error| format!("无法验证附件保险库：{error}"))?;
-    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+    if !metadata.file_type().is_dir()
+        || metadata.file_type().is_symlink()
+        || is_windows_reparse_point(&metadata)
+    {
         return Err("附件保险库目录无效。".into());
     }
     #[cfg(unix)]

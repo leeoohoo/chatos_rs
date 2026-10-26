@@ -11,13 +11,14 @@ use std::{
     io::{Cursor, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{http, State};
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 use crate::{
+    app_owned_export::try_remove_stale_owned_file,
     host_lifecycle::HostManager,
     machine_resource_governor::{
         MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
@@ -30,6 +31,9 @@ const LONG_PASTE_CHARACTER_THRESHOLD: usize = 4_000;
 const LONG_PASTE_BYTE_THRESHOLD: usize = 8_000;
 const MAXIMUM_TEXT_PREVIEW_BYTES: usize = 16 * 1_024;
 const REFERENCE_PREFIX: &str = "local-attachment:";
+const STALE_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_CLEANUP_ENTRIES: usize = 20_000;
+const MAXIMUM_CLEANUP_DEPTH: usize = 2;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
@@ -269,6 +273,18 @@ impl AttachmentManager {
 
     pub fn active_scope(&self) -> Option<AttachmentScope> {
         self.state().ok()?.active_scope.clone()
+    }
+
+    pub async fn cleanup_stale_temporaries(&self) -> usize {
+        let root = self.inner.root.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let cutoff = SystemTime::now()
+                .checked_sub(STALE_TEMPORARY_AGE)
+                .unwrap_or(UNIX_EPOCH);
+            cleanup_attachment_temporaries(&root, cutoff)
+        })
+        .await
+        .unwrap_or_default()
     }
 
     pub fn discard_import_result(&self, result: &AttachmentImportResult) {
@@ -851,6 +867,91 @@ impl AttachmentManager {
             .lock()
             .map_err(|_| "附件状态不可用。".to_string())
     }
+}
+
+fn cleanup_attachment_temporaries(root: &Path, cutoff: SystemTime) -> usize {
+    let mut visited = 0;
+    let mut removed = 0;
+    cleanup_attachment_directory(root, 0, cutoff, &mut visited, &mut removed);
+    removed
+}
+
+fn cleanup_attachment_directory(
+    directory: &Path,
+    depth: usize,
+    cutoff: SystemTime,
+    visited: &mut usize,
+    removed: &mut usize,
+) {
+    if *visited >= MAXIMUM_CLEANUP_ENTRIES || validate_cleanup_directory(directory).is_err() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if *visited >= MAXIMUM_CLEANUP_ENTRIES {
+            return;
+        }
+        *visited += 1;
+        let path = entry.path();
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.file_type().is_dir()
+            && !metadata.file_type().is_symlink()
+            && !is_windows_reparse_point(&metadata)
+            && depth < MAXIMUM_CLEANUP_DEPTH
+        {
+            cleanup_attachment_directory(&path, depth + 1, cutoff, visited, removed);
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !canonical_attachment_temporary_name(&name)
+            || !metadata.file_type().is_file()
+            || metadata.file_type().is_symlink()
+            || is_windows_reparse_point(&metadata)
+            || !metadata.modified().is_ok_and(|modified| modified <= cutoff)
+        {
+            continue;
+        }
+        if try_remove_stale_owned_file(&path, cutoff) {
+            *removed += 1;
+        }
+    }
+}
+
+fn validate_cleanup_directory(path: &Path) -> Result<(), ()> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| ())?;
+    if metadata.file_type().is_dir()
+        && !metadata.file_type().is_symlink()
+        && !is_windows_reparse_point(&metadata)
+    {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+fn canonical_attachment_temporary_name(name: &str) -> bool {
+    let token = name
+        .strip_suffix(".json.tmp")
+        .or_else(|| name.strip_suffix(".tmp"));
+    token.is_some_and(|value| Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value))
+}
+
+#[cfg(windows)]
+fn is_windows_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_windows_reparse_point(_: &fs::Metadata) -> bool {
+    false
 }
 
 include!("conversation_attachments/platform.rs");
