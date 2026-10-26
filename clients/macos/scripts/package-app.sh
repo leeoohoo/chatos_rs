@@ -289,6 +289,7 @@ native_python "$SCRIPT_DIR/build_evidence.py" finish \
   "$APP_DIR" \
   "$BUILD_CONFIGURATION" \
   "$BUILD_GIT_COMMIT" \
-  "${CHATOS_VERIFY_LAUNCH_SMOKE:-0}"
+  "${CHATOS_VERIFY_LAUNCH_SMOKE:-0}" \
+  1
 
 echo "$APP_DIR"
