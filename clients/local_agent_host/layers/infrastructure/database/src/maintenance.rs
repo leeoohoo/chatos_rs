@@ -159,6 +159,12 @@ pub(super) async fn create_migration_backup(
     #[cfg(all(test, unix))]
     super::migration_crash_tests::checkpoint("backup_reserved").await;
     let mut connection = pool.acquire().await.db()?;
+    #[cfg(all(test, unix))]
+    super::migration_crash_tests::install_progress_checkpoint(
+        &mut connection,
+        "backup_vacuum_inside",
+    )
+    .await;
     let backup_result = sqlx::query("VACUUM INTO ?")
         .bind(backup_text)
         .execute(&mut *connection)
@@ -358,6 +364,12 @@ pub(super) async fn compact_database(pool: &SqlitePool) -> Result<(), ClientStor
         .execute(&mut *connection)
         .await
         .db()?;
+    #[cfg(all(test, unix))]
+    super::migration_crash_tests::install_progress_checkpoint(
+        &mut connection,
+        "main_vacuum_inside",
+    )
+    .await;
     sqlx::query("VACUUM").execute(&mut *connection).await.db()?;
     sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
         .execute(&mut *connection)

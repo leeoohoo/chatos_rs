@@ -137,6 +137,12 @@ impl SqliteClientStorage {
         };
         let error = match result {
             Ok(value) => {
+                #[cfg(all(test, unix))]
+                super::migration_crash_tests::install_commit_checkpoint(
+                    &mut *completion.connection,
+                    "business_commit_inside",
+                )
+                .await;
                 match sqlx::query("COMMIT")
                     .execute(&mut **completion.connection)
                     .await
@@ -144,6 +150,8 @@ impl SqliteClientStorage {
                 {
                     Ok(_) => {
                         completion.clean = true;
+                        #[cfg(all(test, unix))]
+                        super::migration_crash_tests::checkpoint("business_commit_returned").await;
                         return Ok(value);
                     }
                     Err(error) => error,

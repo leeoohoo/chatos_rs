@@ -2601,13 +2601,26 @@ Code Read Worker 协议升至 v3；Agent 默认项目目录创建现在接收 Wo
 
 边界：回收仍是精确目录内的机会式维护，不递归扫描任意用户目录；24 小时宽限优先保护暂停、睡眠和慢卷上的活跃导出。真实移动盘 ENOSPC/只读/睡眠与外部 SSH 环境属于 12.118，8 小时组合 soak 和正式分发分别属于 12.119、12.120。
 
-### 12.117—12.120 剩余完整交付路径
+### 12.117 第四十九完整里程碑：Agent/存储强杀分类与隔离熔断（2026-10-26）
+
+本里程碑把 Agent 恢复与 SQLite 不确定提交窗口统一收敛为代码级三分类，不再由不同调用方自行猜测。`ready`、尚无 `inFlightCallID` 的 `running` 以及仅因 Memory 暂不可用/同步结果不确定而暂停的 checkpoint 是“安全重试”；已经持久化 `inFlightCallID` 或 `needsReview` 的 checkpoint 是“待对账”，恢复扫描直接持久化 `needsReview`，不再启动新 Worker；其他不可恢复终态是“明确失败”。工具开始前被杀可继续，工具开始标记已提交但结果未确认时绝不自动重放，已提交 receipt/checkpoint 则继续依靠稳定 call ID 与本地防重结果恢复。
+
+自动恢复现在在启动 Worker 前为该 Run 持久化 `automatic_recovery_started`。同一 Run 连续三次在自动恢复中终止后写入 `automatic_recovery_circuit_open`，只失败该 Delivery/Todo 并通知其管理链；Human 显式 retry 是计数边界。该计数不放在 `AgentWorkerProcessClient` 全局状态中，因此一个坏任务不会 quarantine 其他会话、Agent、项目或账户。恢复滚动窗口也不再因为一个独立 Run 返回 suspended/needs-review/局部熔断而停止后续调度，保留共享资源额度但消除故障传播。
+
+存储层的真实子进程 SIGKILL 矩阵新增四个不确定窗口：SQLite commit hook 内部、COMMIT 已返回但业务调用方尚未收到确认、`VACUUM INTO` progress handler 内部、主库 `VACUUM` progress handler 内部。停点先同步发布带 PID 的 marker，再由父进程发送真实 SIGKILL；所有注入仍限定在 `#[cfg(all(test, unix))]`，正常 Host/Release 不读取环境变量或安装 hook。业务 COMMIT 强杀后允许完整旧状态或完整新状态，随后用同一 idempotency key 重试并精确验证 Run/Event 只有一份；两类 VACUUM 强杀后重开执行完整 integrity/foreign-key 检查，原业务行必须保留，迁移备份内部强杀只留下明确 `.incomplete` 文件，不能冒充可恢复快照。
+
+Agent 侧继续保留此前 13 项真实 Worker 进程用例，覆盖凭据授权、provider 网络、写工具 IPC、账户切换、取消、资源超限、独立 Run 与 16 Worker 并行；本批新增 scheduler 的三分类、局部熔断和“熔断 Run 不阻塞后续独立 Run”回归。SQLite 新停点与原 12 个迁移停点共同证明进程强杀后只有安全重试、明确失败或待对账三种结果，不存在自动重复外部副作用、跨账户落盘或静默丢失已提交业务行。
+
+验收：存储包 209 项全量测试通过，其中真实子进程强杀矩阵 16 个父级场景全部使用 signal 9；Scheduler 32 项通过；13 项 Agent Worker 真实进程集成测试在显式绑定 Debug Worker 后 0 跳过通过。存储包 all-targets 严格 Clippy、macOS 全优化依赖图 Release `warnings-as-errors`、Rust 格式与 `git diff --check` 均通过。
+
+边界：SIGKILL 进程测试不是断电/控制器缓存持久性证明；真实 ENOSPC、只读卷、移动盘拔出、睡眠和 SSH 断网属于 12.118。VACUUM 测试使用 SQLite progress/commit hook 锁定真实引擎执行窗口，但不穷举每个底层 sector 写入顺序。8 小时组合崩溃风暴与长期资源曲线仍属于 12.119。本阶段没有停止、替换、启动、打包或安装当前 ChatOS，也没有访问活动用户数据库。
+
+### 12.118—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
 | --- | --- | --- |
-| 12.117 Agent/存储强杀矩阵 | 覆盖凭据交付、provider 网络、工具副作用、checkpoint、SQLite COMMIT/VACUUM 等不确定窗口 | 每个停点只有“安全重试、明确失败、待对账”三类结果；无重复副作用、跨账户写入或静默丢失；连续崩溃有隔离熔断 |
 | 12.118 外部环境故障门禁 | 在真实 Linux/macOS SSH 端和移动盘验证 staging、权限继承、原子提交、孤儿扫描、断网、睡眠、只读卷与 ENOSPC | 旧目标不被失败写覆盖；临时文件可识别回收；取消只终止所属进程组；远端不可确认结果进入待对账 |
 | 12.119 Release 组合 SLO 与 8 小时 soak | 固定硬件运行 UI + Agent + Host + Media + Plugin 组合负载，完成 200 次切页、20 次账户循环、崩溃/取消风暴和 8 小时 soak | 暖切页 p95 < 100 ms、无 >250 ms 主线程 hang；进程组 footprint/CPU/磁盘写入有基线；Task/FD/observer/临时文件不单调增长 |
 | 12.120 正式分发关闭 | 完成 Developer ID、hardened runtime、嵌套 Helper 从内到外签名、notarization、stapling 和最终兼容矩阵 | 安装包在干净机器验证通过；包内 Git SHA、架构、签名、协议/Schema 和回滚说明一致；不再以 ad-hoc 本地包冒充正式外部分发 |

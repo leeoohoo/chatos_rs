@@ -23,9 +23,52 @@ const ROOT_ENV: &str = "CHATOS_STORAGE_UNIT_TEST_CRASH_ROOT";
 const DEADLINE: Duration = Duration::from_secs(20);
 
 pub(super) async fn checkpoint(point: &str) {
-    if std::env::var(POINT_ENV).ok().as_deref() != Some(point) {
+    if !is_selected(point) {
         return;
     }
+    publish_and_block(point);
+}
+
+pub(super) async fn install_commit_checkpoint(
+    connection: &mut SqliteConnection,
+    point: &'static str,
+) {
+    if !is_selected(point) {
+        return;
+    }
+    connection
+        .lock_handle()
+        .await
+        .expect("lock SQLite handle for commit crash checkpoint")
+        .set_commit_hook(move || publish_and_block(point));
+}
+
+pub(super) async fn install_progress_checkpoint(
+    connection: &mut SqliteConnection,
+    point: &'static str,
+) {
+    if !is_selected(point) {
+        return;
+    }
+    let mut reached = false;
+    connection
+        .lock_handle()
+        .await
+        .expect("lock SQLite handle for progress crash checkpoint")
+        .set_progress_handler(1, move || {
+            if !reached {
+                reached = true;
+                publish_and_block(point);
+            }
+            true
+        });
+}
+
+fn is_selected(point: &str) -> bool {
+    std::env::var(POINT_ENV).ok().as_deref() == Some(point)
+}
+
+fn publish_and_block(point: &str) -> ! {
     let root = PathBuf::from(std::env::var_os(ROOT_ENV).expect("unit-test crash fixture root"));
     let mut marker = fs::OpenOptions::new()
         .write(true)
@@ -41,7 +84,9 @@ pub(super) async fn checkpoint(point: &str) {
     marker.sync_all().unwrap();
     // The parent must send SIGKILL. Never return through Rust destructors or
     // finish_write(), which would only test a graceful transaction rollback.
-    std::future::pending::<()>().await;
+    loop {
+        std::thread::park();
+    }
 }
 
 #[tokio::test]
@@ -142,70 +187,167 @@ impl Fixture {
     }
 
     async fn kill_at(&self, point: &str) {
-        let marker = self.directory.path().join("reached.json");
-        if marker.exists() {
-            fs::remove_file(&marker).unwrap();
-        }
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "migration_crash_tests::migration_child",
-                "--nocapture",
-                "--test-threads=1",
-            ])
-            .env(POINT_ENV, point)
-            .env(ROOT_ENV, self.directory.path())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let pid = child.id().unwrap();
-        let reached = timeout(DEADLINE, async {
-            loop {
-                if let Ok(bytes) = tokio::fs::read(&marker).await {
-                    if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
-                        return Ok(value);
-                    }
-                }
-                if let Some(status) = child.try_wait().unwrap() {
-                    return Err(status);
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
+        kill_child(
+            self.directory.path(),
+            point,
+            "migration_crash_tests::migration_child",
+        )
         .await;
-        let reached = match reached {
-            Ok(Ok(value)) => value,
-            outcome => {
-                let failure = match outcome {
-                    Ok(Err(status)) => format!("exited early: {status}"),
-                    Err(_) => {
-                        timeout(DEADLINE, child.kill()).await.unwrap().unwrap();
-                        "checkpoint timed out".to_string()
-                    }
-                    Ok(Ok(_)) => unreachable!(),
-                };
-                let output = timeout(DEADLINE, child.wait_with_output())
-                    .await
-                    .unwrap()
-                    .unwrap();
-                panic!(
-                    "crash worker {point} {failure}\nstdout: {}\nstderr: {}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-        };
-        assert_eq!(reached["point"], point);
-        assert_eq!(reached["pid"], pid);
-        timeout(DEADLINE, child.kill()).await.unwrap().unwrap();
-        assert_eq!(
-            child.wait().await.unwrap().signal(),
-            Some(9),
-            "must actually use SIGKILL"
-        );
     }
+}
+
+async fn kill_child(root: &Path, point: &str, child_test: &str) {
+    let marker = root.join("reached.json");
+    if marker.exists() {
+        fs::remove_file(&marker).unwrap();
+    }
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", child_test, "--nocapture", "--test-threads=1"])
+        .env(POINT_ENV, point)
+        .env(ROOT_ENV, root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let reached = timeout(DEADLINE, async {
+        loop {
+            if let Ok(bytes) = tokio::fs::read(&marker).await {
+                if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+                    return Ok(value);
+                }
+            }
+            if let Some(status) = child.try_wait().unwrap() {
+                return Err(status);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    let reached = match reached {
+        Ok(Ok(value)) => value,
+        outcome => {
+            let failure = match outcome {
+                Ok(Err(status)) => format!("exited early: {status}"),
+                Err(_) => {
+                    timeout(DEADLINE, child.kill()).await.unwrap().unwrap();
+                    "checkpoint timed out".to_string()
+                }
+                Ok(Ok(_)) => unreachable!(),
+            };
+            let output = timeout(DEADLINE, child.wait_with_output())
+                .await
+                .unwrap()
+                .unwrap();
+            panic!(
+                "crash worker {point} {failure}\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    };
+    assert_eq!(reached["point"], point);
+    assert_eq!(reached["pid"], pid);
+    timeout(DEADLINE, child.kill()).await.unwrap().unwrap();
+    assert_eq!(
+        child.wait().await.unwrap().signal(),
+        Some(9),
+        "must actually use SIGKILL"
+    );
+}
+
+fn uncertain_business_command() -> IdempotentCommand {
+    IdempotentCommand {
+        command_id: "uncertain-business-create".into(),
+        request_fingerprint: r#"{"type":"create_run","owner_user_id":"user-1","case":"uncertain"}"#
+            .into(),
+        persist_receipt: true,
+    }
+}
+
+fn uncertain_business_run() -> chatos_local_agent_protocol::LocalAgentRunRecord {
+    let mut run = super::tests::run(2_000);
+    run.run_id = "uncertain-business-run".into();
+    run
+}
+
+async fn current_database(root: &Path) -> PathBuf {
+    let database = root.join("client.sqlite");
+    let storage = SqliteClientStorage::connect_file(&database).await.unwrap();
+    storage
+        .create_run(
+            &business_command(),
+            &super::tests::run(1_000),
+            "original-event",
+        )
+        .await
+        .unwrap();
+    storage.pool.close().await;
+    database
+}
+
+#[tokio::test]
+async fn business_commit_child() {
+    let Some(root) = std::env::var_os(ROOT_ENV) else {
+        return;
+    };
+    if !matches!(
+        std::env::var(POINT_ENV).ok().as_deref(),
+        Some("business_commit_inside" | "business_commit_returned")
+    ) {
+        return;
+    }
+    let storage = SqliteClientStorage::connect_file(&PathBuf::from(root).join("client.sqlite"))
+        .await
+        .unwrap();
+    storage
+        .create_run(
+            &uncertain_business_command(),
+            &uncertain_business_run(),
+            "uncertain-event",
+        )
+        .await
+        .expect("parent must kill inside SQLite COMMIT");
+    panic!("business COMMIT completed without reaching its crash checkpoint");
+}
+
+#[tokio::test]
+async fn main_vacuum_child() {
+    let Some(root) = std::env::var_os(ROOT_ENV) else {
+        return;
+    };
+    if std::env::var(POINT_ENV).ok().as_deref() != Some("main_vacuum_inside") {
+        return;
+    }
+    let storage = SqliteClientStorage::connect_file(&PathBuf::from(root).join("client.sqlite"))
+        .await
+        .unwrap();
+    super::maintenance::compact_database(&storage.pool)
+        .await
+        .expect("parent must kill inside SQLite VACUUM");
+    panic!("main VACUUM completed without reaching its crash checkpoint");
+}
+
+async fn assert_current_database_health(path: &Path) {
+    let mut connection = open_read_only(path).await;
+    let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+    assert_eq!(integrity, "ok");
+    assert!(sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(&mut connection)
+        .await
+        .unwrap()
+        .is_empty());
+    let original_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_runs WHERE run_id = 'run-1'")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+    assert_eq!(original_count, 1);
+    connection.close().await.unwrap();
 }
 
 async fn open_read_only(path: &Path) -> SqliteConnection {
@@ -482,6 +624,7 @@ macro_rules! crash_case {
 }
 
 crash_case!(kill_after_backup_reservation, "backup_reserved", 34, true);
+crash_case!(kill_inside_backup_vacuum, "backup_vacuum_inside", 34, true);
 crash_case!(
     kill_after_backup_write_before_verification,
     "backup_written",
@@ -528,3 +671,75 @@ crash_case!(
     false
 );
 crash_case!(kill_after_v37_commit, "schema_v37_after_commit", 37, false);
+
+async fn kill_business_commit_and_reconcile(point: &str) {
+    let directory = tempfile::tempdir().unwrap();
+    let database = current_database(directory.path()).await;
+    kill_child(
+        directory.path(),
+        point,
+        "migration_crash_tests::business_commit_child",
+    )
+    .await;
+
+    let storage = SqliteClientStorage::connect_file(&database).await.unwrap();
+    let expected = uncertain_business_run();
+    assert_eq!(
+        storage
+            .create_run(
+                &uncertain_business_command(),
+                &expected,
+                "uncertain-event-retry",
+            )
+            .await
+            .unwrap(),
+        expected
+    );
+    let mut connection = storage.pool.acquire().await.unwrap();
+    let run_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM local_agent_runs WHERE run_id = 'uncertain-business-run'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .unwrap();
+    let event_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM local_agent_events WHERE run_id = 'uncertain-business-run'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .unwrap();
+    assert_eq!(run_count, 1, "retry must not duplicate the business row");
+    assert_eq!(
+        event_count, 1,
+        "retry must not duplicate the business event"
+    );
+    drop(connection);
+    storage.pool.close().await;
+    assert_current_database_health(&database).await;
+}
+
+#[tokio::test]
+async fn kill_inside_business_commit_is_idempotently_reconcilable() {
+    kill_business_commit_and_reconcile("business_commit_inside").await;
+}
+
+#[tokio::test]
+async fn kill_after_business_commit_before_caller_confirmation_replays_receipt() {
+    kill_business_commit_and_reconcile("business_commit_returned").await;
+}
+
+#[tokio::test]
+async fn kill_inside_main_vacuum_preserves_complete_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = current_database(directory.path()).await;
+    kill_child(
+        directory.path(),
+        "main_vacuum_inside",
+        "migration_crash_tests::main_vacuum_child",
+    )
+    .await;
+
+    let storage = SqliteClientStorage::connect_file(&database).await.unwrap();
+    storage.pool.close().await;
+    assert_current_database_health(&database).await;
+}
