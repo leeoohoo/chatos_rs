@@ -5,7 +5,10 @@ use std::{
     io::Write,
     mem::{size_of, zeroed},
     net::TcpListener,
-    os::windows::ffi::{OsStrExt, OsStringExt},
+    os::windows::{
+        ffi::{OsStrExt, OsStringExt},
+        fs::MetadataExt,
+    },
     path::{Path, PathBuf},
     ptr::{null, null_mut},
     sync::{Arc, Mutex, MutexGuard, OnceLock},
@@ -16,20 +19,22 @@ use windows_sys::Win32::{
     Foundation::{CloseHandle, GetLastError, LocalFree, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT},
     Security::{
         Authorization::{
-            ConvertSecurityDescriptorToStringSecurityDescriptorW,
-            ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW,
-            SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W, GRANT_ACCESS,
-            SDDL_REVISION_1, SE_FILE_OBJECT, TRUSTEE_IS_SID, TRUSTEE_IS_WELL_KNOWN_GROUP,
+            ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertSidToStringSidW,
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW,
+            GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W,
+            GRANT_ACCESS, REVOKE_ACCESS, SDDL_REVISION_1, SE_FILE_OBJECT, TRUSTEE_IS_SID,
+            TRUSTEE_IS_WELL_KNOWN_GROUP,
         },
         CreateWellKnownSid, FreeSid, GetTokenInformation,
         Isolation::{CreateAppContainerProfile, DeleteAppContainerProfile},
-        SetFileSecurityW, TokenCapabilities, WinCapabilityInternetClientSid, ACL,
+        SetFileSecurityW, TokenCapabilities, WinCapabilityInternetClientSid,
         DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_CAPABILITIES,
         SECURITY_MAX_SID_SIZE, SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
         TOKEN_GROUPS, TOKEN_QUERY,
     },
     Storage::FileSystem::{
-        FILE_DELETE_CHILD, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_DELETE_CHILD, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ,
+        FILE_GENERIC_WRITE,
     },
     System::Threading::{
         CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
@@ -47,12 +52,14 @@ pub(crate) struct AppContainerProbe {
     pub workspace_lease_verified: bool,
     pub workspace_recovery_verified: bool,
     pub workspace_permission_tiers_verified: bool,
-    pub nonempty_workspace_rejected: bool,
+    pub nonempty_workspace_tree_verified: bool,
     pub network_capability_policy_verified: bool,
 }
 
 static PROBE: OnceLock<Result<AppContainerProbe, String>> = OnceLock::new();
 static PROFILE_LOCK: Mutex<()> = Mutex::new(());
+const MAXIMUM_LEASE_TREE_ENTRIES: usize = 100_000;
+const MAXIMUM_LEASE_JOURNAL_BYTES: usize = 64 * 1_024 * 1_024;
 
 #[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -170,17 +177,6 @@ impl WorkspaceLeaseManager {
             .map_err(|error| format!("Resolving the AppContainer workspace failed: {error}"))?;
         if !workspace.is_dir() {
             return Err("The AppContainer workspace is not a directory.".to_owned());
-        }
-        let has_existing_content = std::fs::read_dir(&workspace)
-            .map_err(|error| format!("Inspecting the AppContainer workspace failed: {error}"))?
-            .next()
-            .transpose()
-            .map_err(|error| format!("Inspecting the AppContainer workspace failed: {error}"))?
-            .is_some();
-        if has_existing_content {
-            return Err(
-                "The AppContainer lease only supports an empty staging directory.".to_owned(),
-            );
         }
         {
             let mut active = self.active_workspaces.lock().map_err(|_| {
@@ -339,24 +335,29 @@ fn run_probe() -> Result<AppContainerProbe, String> {
         .map(|value| value.trim() == "lease-written")
         .unwrap_or(false);
     read_write_lease.restore()?;
+    let after_read_write_restore_read_exit = read_probe_file(&profile, &reader, &read_write_file)?;
     std::fs::remove_file(&read_write_file)
         .map_err(|error| format!("无法清理 AppContainer 读写探测文件：{error}"))?;
     let after_read_write_restore_exit =
         write_probe_file(&profile, Path::new(&system_root), &read_write_file)?;
     let nonempty_workspace = tempfile::tempdir()
         .map_err(|error| format!("无法创建 AppContainer 非空目录探测：{error}"))?;
-    std::fs::write(
-        nonempty_workspace.path().join("existing.txt"),
-        b"host-owned",
-    )
-    .map_err(|error| format!("无法写入 AppContainer 非空目录探测文件：{error}"))?;
-    let nonempty_workspace_rejected = lease_manager
-        .grant(
-            nonempty_workspace.path(),
-            profile.sid,
-            WorkspaceAccess::ReadOnly,
-        )
-        .is_err();
+    let existing_directory = nonempty_workspace.path().join("existing");
+    std::fs::create_dir(&existing_directory)
+        .map_err(|error| format!("无法创建 AppContainer 既有子目录：{error}"))?;
+    let existing_file = existing_directory.join("existing.txt");
+    std::fs::write(&existing_file, b"lease-readable")
+        .map_err(|error| format!("无法写入 AppContainer 非空目录探测文件：{error}"))?;
+    let nonempty_lease = lease_manager.grant(
+        nonempty_workspace.path(),
+        profile.sid,
+        WorkspaceAccess::ReadOnly,
+    )?;
+    let nonempty_granted_exit = read_probe_file(&profile, &reader, &existing_file)?;
+    nonempty_lease.restore()?;
+    let nonempty_restored_exit = read_probe_file(&profile, &reader, &existing_file)?;
+    let nonempty_workspace_tree_verified =
+        nonempty_granted_exit == 0 && nonempty_restored_exit != 0;
     Ok(AppContainerProbe {
         filesystem_denied: disabled_network_process.exit_code != 0
             && controlled_network_process.exit_code != 0,
@@ -370,9 +371,10 @@ fn run_probe() -> Result<AppContainerProbe, String> {
             && !read_only_write_file.exists()
             && read_write_exit == 0
             && read_write_created
+            && after_read_write_restore_read_exit != 0
             && after_read_write_restore_exit != 0
             && !read_write_file.exists(),
-        nonempty_workspace_rejected,
+        nonempty_workspace_tree_verified,
         network_capability_policy_verified: disabled_network_process.capability_policy_verified
             && controlled_network_process.capability_policy_verified,
     })
@@ -642,11 +644,8 @@ fn process_capabilities_match(process: HANDLE, expected: Option<PSID>) -> Result
 
 struct DirectoryLease {
     workspace: PathBuf,
-    path: Vec<u16>,
     journal_path: PathBuf,
     active_workspaces: Arc<Mutex<HashSet<PathBuf>>>,
-    original_descriptor: PSECURITY_DESCRIPTOR,
-    original_dacl: *mut ACL,
     restored: bool,
 }
 
@@ -656,7 +655,20 @@ struct DirectoryLeaseJournal {
     version: u32,
     access: WorkspaceAccess,
     workspace_path_utf16: Vec<u16>,
+    #[serde(default)]
     original_dacl_sddl: String,
+    #[serde(default)]
+    sid_sddl: String,
+    #[serde(default)]
+    entries: Vec<DirectoryLeaseJournalEntry>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct DirectoryLeaseJournalEntry {
+    relative_path_utf16: Vec<u16>,
+    original_dacl_sddl: String,
+    is_directory: bool,
 }
 
 impl DirectoryLease {
@@ -670,122 +682,48 @@ impl DirectoryLease {
         if journal_path.exists() {
             Self::recover(journal_path)?;
         }
-        let workspace_path_utf16: Vec<u16> = path.as_os_str().encode_wide().collect();
-        let path = wide_os(path.as_os_str());
-        let mut original_dacl = null_mut();
-        let mut original_descriptor = null_mut();
-        let read_result = unsafe {
-            GetNamedSecurityInfoW(
-                path.as_ptr(),
-                SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION,
-                null_mut(),
-                null_mut(),
-                &mut original_dacl,
-                null_mut(),
-                &mut original_descriptor,
-            )
-        };
-        if read_result != 0 || original_descriptor.is_null() {
-            return Err(format!(
-                "Reading the workspace ACL failed (Win32 error {read_result})."
-            ));
+        let tree = lease_tree_paths(path)?;
+        let mut entries = Vec::with_capacity(tree.len());
+        for (entry_path, is_directory) in &tree {
+            let relative = entry_path
+                .strip_prefix(path)
+                .map_err(|_| "The workspace ACL lease tree escaped its root.".to_owned())?;
+            entries.push(DirectoryLeaseJournalEntry {
+                relative_path_utf16: relative.as_os_str().encode_wide().collect(),
+                original_dacl_sddl: read_dacl_sddl(entry_path)?,
+                is_directory: *is_directory,
+            });
         }
-        let original_dacl_sddl = match descriptor_to_sddl(original_descriptor) {
-            Ok(sddl) => sddl,
-            Err(error) => {
-                unsafe {
-                    LocalFree(original_descriptor.cast());
-                }
-                return Err(error);
-            }
-        };
         let journal = DirectoryLeaseJournal {
-            version: 1,
+            version: 2,
             access,
-            workspace_path_utf16,
-            original_dacl_sddl,
+            workspace_path_utf16: path.as_os_str().encode_wide().collect(),
+            original_dacl_sddl: String::new(),
+            sid_sddl: sid_to_sddl(sid)?,
+            entries,
         };
-        if let Err(error) = write_lease_journal(journal_path, &journal) {
-            unsafe {
-                LocalFree(original_descriptor.cast());
-            }
-            return Err(error);
-        }
+        write_lease_journal(journal_path, &journal)?;
 
-        let mut entry: EXPLICIT_ACCESS_W = unsafe { zeroed() };
-        entry.grfAccessPermissions = match access {
-            WorkspaceAccess::ReadOnly => FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
-            WorkspaceAccess::ReadWrite => {
-                FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | FILE_DELETE_CHILD
+        for (entry_path, is_directory) in &tree {
+            if let Err(failure) = grant_sid_access(entry_path, sid, access, *is_directory) {
+                return match restore_lease_journal(journal_path) {
+                    Ok(()) => Err(failure),
+                    Err(restore_failure) => Err(format!(
+                        "{failure} Restoring the partial workspace ACL lease also failed: {restore_failure}"
+                    )),
+                };
             }
-        };
-        entry.grfAccessMode = GRANT_ACCESS;
-        entry.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
-        entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-        entry.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
-        entry.Trustee.ptstrName = sid.cast();
-        let mut updated_dacl = null_mut();
-        let update_result =
-            unsafe { SetEntriesInAclW(1, &entry, original_dacl, &mut updated_dacl) };
-        if update_result != 0 || updated_dacl.is_null() {
-            unsafe {
-                LocalFree(original_descriptor.cast());
-            }
-            let _ = std::fs::remove_file(journal_path);
-            return Err(format!(
-                "Building the workspace ACL lease failed (Win32 error {update_result})."
-            ));
-        }
-        let apply_result = unsafe {
-            SetNamedSecurityInfoW(
-                path.as_ptr() as *mut u16,
-                SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION,
-                null_mut(),
-                null_mut(),
-                updated_dacl,
-                null(),
-            )
-        };
-        unsafe {
-            LocalFree(updated_dacl.cast());
-        }
-        if apply_result != 0 {
-            unsafe {
-                LocalFree(original_descriptor.cast());
-            }
-            let _ = std::fs::remove_file(journal_path);
-            return Err(format!(
-                "Applying the workspace ACL lease failed (Win32 error {apply_result})."
-            ));
         }
         Ok(Self {
-            workspace: path_from_wide(&path),
-            path,
-            journal_path: journal_path.to_path_buf(),
+            workspace: path.to_owned(),
+            journal_path: journal_path.to_owned(),
             active_workspaces,
-            original_descriptor,
-            original_dacl,
             restored: false,
         })
     }
 
     fn recover(journal_path: &Path) -> Result<(), String> {
-        let bytes = std::fs::read(journal_path)
-            .map_err(|error| format!("Reading the workspace ACL journal failed: {error}"))?;
-        let journal: DirectoryLeaseJournal = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("Parsing the workspace ACL journal failed: {error}"))?;
-        if journal.version != 1
-            || journal.workspace_path_utf16.is_empty()
-            || journal.workspace_path_utf16.contains(&0)
-        {
-            return Err("The workspace ACL journal is invalid.".to_owned());
-        }
-        let workspace = PathBuf::from(OsString::from_wide(&journal.workspace_path_utf16));
-        restore_dacl_from_sddl(&workspace, &journal.original_dacl_sddl)?;
-        std::fs::remove_file(journal_path)
-            .map_err(|error| format!("Removing the restored workspace ACL journal failed: {error}"))
+        restore_lease_journal(journal_path)
     }
 
     fn restore(mut self) -> Result<(), String> {
@@ -793,11 +731,6 @@ impl DirectoryLease {
     }
 
     fn abandon_for_recovery(mut self) {
-        unsafe {
-            LocalFree(self.original_descriptor.cast());
-        }
-        self.original_descriptor = null_mut();
-        self.original_dacl = null_mut();
         self.restored = true;
         self.release_active_workspace();
     }
@@ -806,31 +739,10 @@ impl DirectoryLease {
         if self.restored {
             return Ok(());
         }
-        let result = unsafe {
-            SetNamedSecurityInfoW(
-                self.path.as_mut_ptr(),
-                SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION,
-                null_mut(),
-                null_mut(),
-                self.original_dacl,
-                null(),
-            )
-        };
-        if result != 0 {
-            return Err(format!(
-                "Restoring the workspace ACL failed (Win32 error {result})."
-            ));
-        }
-        unsafe {
-            LocalFree(self.original_descriptor.cast());
-        }
-        self.original_descriptor = null_mut();
-        self.original_dacl = null_mut();
+        restore_lease_journal(&self.journal_path)?;
         self.restored = true;
         self.release_active_workspace();
-        std::fs::remove_file(&self.journal_path)
-            .map_err(|error| format!("Removing the restored workspace ACL journal failed: {error}"))
+        Ok(())
     }
 
     fn release_active_workspace(&self) {
@@ -843,11 +755,392 @@ impl DirectoryLease {
 impl Drop for DirectoryLease {
     fn drop(&mut self) {
         let _ = self.restore_inner();
-        if !self.original_descriptor.is_null() {
-            unsafe {
-                LocalFree(self.original_descriptor.cast());
+    }
+}
+
+fn restore_lease_journal(journal_path: &Path) -> Result<(), String> {
+    let bytes = std::fs::read(journal_path)
+        .map_err(|error| format!("Reading the workspace ACL journal failed: {error}"))?;
+    if bytes.len() > MAXIMUM_LEASE_JOURNAL_BYTES {
+        return Err("The workspace ACL journal exceeds its safety limit.".to_owned());
+    }
+    let journal: DirectoryLeaseJournal = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Parsing the workspace ACL journal failed: {error}"))?;
+    match journal.version {
+        1 => {
+            if journal.workspace_path_utf16.is_empty()
+                || journal.workspace_path_utf16.contains(&0)
+                || journal.original_dacl_sddl.is_empty()
+                || !journal.entries.is_empty()
+                || !journal.sid_sddl.is_empty()
+            {
+                return Err("The workspace ACL journal is invalid.".to_owned());
             }
-            self.original_descriptor = null_mut();
+            let workspace = PathBuf::from(OsString::from_wide(&journal.workspace_path_utf16));
+            if !workspace.is_absolute() {
+                return Err("The workspace ACL journal root is invalid.".to_owned());
+            }
+            match std::fs::symlink_metadata(&workspace) {
+                Ok(metadata) => {
+                    if !metadata.is_dir() || is_reparse_point(&metadata) {
+                        return Err("The workspace ACL journal root is invalid.".to_owned());
+                    }
+                    restore_dacl_from_sddl(&workspace, &journal.original_dacl_sddl)?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "Inspecting the workspace ACL journal root failed: {error}"
+                    ))
+                }
+            }
+        }
+        2 => restore_tree_lease(&journal)?,
+        _ => return Err("The workspace ACL journal version is unsupported.".to_owned()),
+    }
+    std::fs::remove_file(journal_path)
+        .map_err(|error| format!("Removing the restored workspace ACL journal failed: {error}"))
+}
+
+fn restore_tree_lease(journal: &DirectoryLeaseJournal) -> Result<(), String> {
+    if journal.workspace_path_utf16.is_empty()
+        || journal.workspace_path_utf16.contains(&0)
+        || journal.sid_sddl.is_empty()
+        || !journal.original_dacl_sddl.is_empty()
+        || journal.entries.is_empty()
+        || journal.entries.len() > MAXIMUM_LEASE_TREE_ENTRIES
+    {
+        return Err("The workspace ACL tree journal is invalid.".to_owned());
+    }
+    let workspace = PathBuf::from(OsString::from_wide(&journal.workspace_path_utf16));
+    if !workspace.is_absolute() {
+        return Err("The workspace ACL tree journal root is invalid.".to_owned());
+    }
+    match std::fs::symlink_metadata(&workspace) {
+        Ok(metadata) => {
+            if !metadata.is_dir() || is_reparse_point(&metadata) {
+                return Err("The workspace ACL tree journal root is invalid.".to_owned());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Inspecting the workspace ACL recovery root failed: {error}"
+            ))
+        }
+    }
+    let workspace = std::fs::canonicalize(&workspace)
+        .map_err(|error| format!("Resolving the workspace ACL recovery root failed: {error}"))?;
+    let current_before_restore = lease_tree_paths(&workspace)?;
+    let sid = LocalSid::from_sddl(&journal.sid_sddl)?;
+    let mut original_paths = HashSet::with_capacity(journal.entries.len());
+    let mut restored_paths = Vec::with_capacity(journal.entries.len());
+    for entry in &journal.entries {
+        if entry.original_dacl_sddl.is_empty() || entry.relative_path_utf16.contains(&0) {
+            return Err("The workspace ACL tree journal entry is invalid.".to_owned());
+        }
+        let relative = PathBuf::from(OsString::from_wide(&entry.relative_path_utf16));
+        if !safe_relative_lease_path(&relative) {
+            return Err("The workspace ACL tree journal path is invalid.".to_owned());
+        }
+        if !original_paths.insert(relative.clone()) {
+            return Err("The workspace ACL tree journal contains duplicate paths.".to_owned());
+        }
+        restored_paths.push((
+            workspace.join(relative),
+            entry.is_directory,
+            entry.original_dacl_sddl.as_str(),
+        ));
+    }
+    if !original_paths.contains(Path::new("")) {
+        return Err("The workspace ACL tree journal does not contain its root.".to_owned());
+    }
+    if !journal
+        .entries
+        .iter()
+        .any(|entry| entry.relative_path_utf16.is_empty() && entry.is_directory)
+    {
+        return Err("The workspace ACL tree journal root entry is invalid.".to_owned());
+    }
+
+    restored_paths.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| {
+                left.0
+                    .components()
+                    .count()
+                    .cmp(&right.0.components().count())
+            })
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    for (path, _, sddl) in restored_paths {
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                if is_reparse_point(&metadata) {
+                    return Err(
+                        "A reparse point appeared inside the workspace ACL lease.".to_owned()
+                    );
+                }
+                restore_dacl_from_sddl(&path, sddl)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "Inspecting a workspace ACL recovery entry failed: {error}"
+                ))
+            }
+        }
+    }
+
+    for (path, _) in current_before_restore {
+        let relative = path
+            .strip_prefix(&workspace)
+            .map_err(|_| "The workspace ACL recovery tree escaped its root.".to_owned())?;
+        if !original_paths.contains(relative) {
+            revoke_sid_access(&path, sid.0)?;
+        }
+    }
+    Ok(())
+}
+
+fn safe_relative_lease_path(path: &Path) -> bool {
+    path.as_os_str().is_empty()
+        || (!path.is_absolute()
+            && path
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_))))
+}
+
+fn lease_tree_paths(root: &Path) -> Result<Vec<(PathBuf, bool)>, String> {
+    let metadata = std::fs::symlink_metadata(root)
+        .map_err(|error| format!("Inspecting the workspace ACL tree failed: {error}"))?;
+    if !metadata.is_dir() || is_reparse_point(&metadata) {
+        return Err("The workspace ACL tree root is invalid.".to_owned());
+    }
+    let mut result = vec![(root.to_owned(), true)];
+    let mut pending = vec![root.to_owned()];
+    while let Some(directory) = pending.pop() {
+        let mut children = std::fs::read_dir(&directory)
+            .map_err(|error| format!("Reading the workspace ACL tree failed: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Reading the workspace ACL tree failed: {error}"))?;
+        children.sort_by_key(std::fs::DirEntry::file_name);
+        for child in children {
+            let path = child.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .map_err(|error| format!("Inspecting the workspace ACL tree failed: {error}"))?;
+            if is_reparse_point(&metadata) {
+                return Err("The workspace ACL tree contains a reparse point.".to_owned());
+            }
+            let is_directory = metadata.is_dir();
+            if !is_directory && !metadata.is_file() {
+                return Err("The workspace ACL tree contains an unsupported entry.".to_owned());
+            }
+            result.push((path.clone(), is_directory));
+            if result.len() > MAXIMUM_LEASE_TREE_ENTRIES {
+                return Err("The workspace ACL tree exceeds its entry limit.".to_owned());
+            }
+            if is_directory {
+                pending.push(path);
+            }
+        }
+    }
+    result.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| {
+                left.0
+                    .components()
+                    .count()
+                    .cmp(&right.0.components().count())
+            })
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    Ok(result)
+}
+
+fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+fn read_dacl_sddl(path: &Path) -> Result<String, String> {
+    let path = wide_os(path.as_os_str());
+    let mut descriptor = null_mut();
+    let result = unsafe {
+        GetNamedSecurityInfoW(
+            path.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut descriptor,
+        )
+    };
+    if result != 0 || descriptor.is_null() {
+        return Err(format!(
+            "Reading a workspace ACL tree entry failed (Win32 error {result})."
+        ));
+    }
+    let sddl = descriptor_to_sddl(descriptor);
+    unsafe {
+        LocalFree(descriptor.cast());
+    }
+    sddl
+}
+
+fn grant_sid_access(
+    path: &Path,
+    sid: PSID,
+    access: WorkspaceAccess,
+    is_directory: bool,
+) -> Result<(), String> {
+    change_sid_access(path, sid, Some(access), is_directory, GRANT_ACCESS)
+}
+
+fn revoke_sid_access(path: &Path, sid: PSID) -> Result<(), String> {
+    let is_directory = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata.is_dir(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Inspecting a new workspace ACL entry failed: {error}"
+            ))
+        }
+    };
+    change_sid_access(path, sid, None, is_directory, REVOKE_ACCESS)
+}
+
+fn change_sid_access(
+    path: &Path,
+    sid: PSID,
+    access: Option<WorkspaceAccess>,
+    is_directory: bool,
+    mode: i32,
+) -> Result<(), String> {
+    let mut path = wide_os(path.as_os_str());
+    let mut original_dacl = null_mut();
+    let mut descriptor = null_mut();
+    let read_result = unsafe {
+        GetNamedSecurityInfoW(
+            path.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            &mut original_dacl,
+            null_mut(),
+            &mut descriptor,
+        )
+    };
+    if read_result != 0 || descriptor.is_null() {
+        return Err(format!(
+            "Reading a workspace ACL entry failed (Win32 error {read_result})."
+        ));
+    }
+    let mut entry: EXPLICIT_ACCESS_W = unsafe { zeroed() };
+    entry.grfAccessPermissions = match access {
+        Some(WorkspaceAccess::ReadOnly) => FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+        Some(WorkspaceAccess::ReadWrite) => {
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | FILE_DELETE_CHILD
+        }
+        None => 0,
+    };
+    entry.grfAccessMode = mode;
+    entry.grfInheritance = if is_directory {
+        SUB_CONTAINERS_AND_OBJECTS_INHERIT
+    } else {
+        0
+    };
+    entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    entry.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+    entry.Trustee.ptstrName = sid.cast();
+    let mut updated_dacl = null_mut();
+    let update_result = unsafe { SetEntriesInAclW(1, &entry, original_dacl, &mut updated_dacl) };
+    if update_result != 0 || updated_dacl.is_null() {
+        unsafe {
+            LocalFree(descriptor.cast());
+        }
+        return Err(format!(
+            "Building a workspace ACL entry failed (Win32 error {update_result})."
+        ));
+    }
+    let apply_result = unsafe {
+        SetNamedSecurityInfoW(
+            path.as_mut_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            updated_dacl,
+            null(),
+        )
+    };
+    unsafe {
+        LocalFree(updated_dacl.cast());
+        LocalFree(descriptor.cast());
+    }
+    if apply_result != 0 {
+        Err(format!(
+            "Applying a workspace ACL entry failed (Win32 error {apply_result})."
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn sid_to_sddl(sid: PSID) -> Result<String, String> {
+    let mut value = null_mut();
+    if unsafe { ConvertSidToStringSidW(sid, &mut value) } == 0 || value.is_null() {
+        return Err(last_error("Encoding the workspace ACL SID failed"));
+    }
+    let mut length = 0usize;
+    while length < 256 && unsafe { *value.add(length) } != 0 {
+        length += 1;
+    }
+    if length == 256 {
+        unsafe {
+            LocalFree(value.cast());
+        }
+        return Err("The workspace ACL SID is invalid.".to_owned());
+    }
+    let result = String::from_utf16(unsafe { std::slice::from_raw_parts(value, length) })
+        .map_err(|_| "The workspace ACL SID is invalid.".to_owned());
+    unsafe {
+        LocalFree(value.cast());
+    }
+    result
+}
+
+struct LocalSid(PSID);
+
+impl LocalSid {
+    fn from_sddl(value: &str) -> Result<Self, String> {
+        if !value.starts_with("S-1-15-2-")
+            || value.len() > 256
+            || value[1..]
+                .chars()
+                .any(|character| !character.is_ascii_digit() && character != '-')
+        {
+            return Err("The workspace ACL SID is invalid.".to_owned());
+        }
+        let value = wide(value);
+        let mut sid = null_mut();
+        if unsafe { ConvertStringSidToSidW(value.as_ptr(), &mut sid) } == 0 || sid.is_null() {
+            return Err(last_error("Decoding the workspace ACL SID failed"));
+        }
+        Ok(Self(sid))
+    }
+}
+
+impl Drop for LocalSid {
+    fn drop(&mut self) {
+        unsafe {
+            LocalFree(self.0.cast());
         }
     }
 }
@@ -922,6 +1215,9 @@ fn write_lease_journal(journal_path: &Path, journal: &DirectoryLeaseJournal) -> 
     }
     let payload = serde_json::to_vec(journal)
         .map_err(|error| format!("Encoding the workspace ACL journal failed: {error}"))?;
+    if payload.len() > MAXIMUM_LEASE_JOURNAL_BYTES {
+        return Err("The workspace ACL journal exceeds its safety limit.".to_owned());
+    }
     let result = (|| -> Result<(), String> {
         let mut file = OpenOptions::new()
             .create_new(true)
@@ -1065,11 +1361,6 @@ fn wide_os(value: &std::ffi::OsStr) -> Vec<u16> {
     value.encode_wide().chain(std::iter::once(0)).collect()
 }
 
-fn path_from_wide(value: &[u16]) -> PathBuf {
-    let value = value.strip_suffix(&[0]).unwrap_or(value);
-    PathBuf::from(OsString::from_wide(value))
-}
-
 fn last_error(context: &str) -> String {
     let code = unsafe { GetLastError() };
     format!("{context} (Win32 error {code}).")
@@ -1099,7 +1390,7 @@ mod tests {
         assert!(probe.workspace_lease_verified);
         assert!(probe.workspace_recovery_verified);
         assert!(probe.workspace_permission_tiers_verified);
-        assert!(probe.nonempty_workspace_rejected);
+        assert!(probe.nonempty_workspace_tree_verified);
         assert!(probe.network_capability_policy_verified);
         assert_eq!(
             NetworkAccess::from_policy("disabled").unwrap(),
@@ -1158,18 +1449,76 @@ mod tests {
         assert_ne!(read_file_exit_code(&profile, &recovery_file).unwrap(), 0);
 
         let nonempty_workspace = tempfile::tempdir().unwrap();
-        std::fs::write(
-            nonempty_workspace.path().join("existing.txt"),
-            b"host-owned",
-        )
-        .unwrap();
-        assert!(manager
+        let nested = nonempty_workspace.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let existing_file = nested.join("existing.txt");
+        std::fs::write(&existing_file, b"lease-readable").unwrap();
+        let lease = manager
             .grant(
                 nonempty_workspace.path(),
                 profile.sid,
                 WorkspaceAccess::ReadOnly,
             )
+            .unwrap();
+        assert_eq!(read_file_exit_code(&profile, &existing_file).unwrap(), 0);
+        lease.restore().unwrap();
+        assert_ne!(read_file_exit_code(&profile, &existing_file).unwrap(), 0);
+    }
+
+    #[test]
+    fn legacy_root_journal_is_recovered_without_leaving_inherited_access() {
+        let app_data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
+        let profile = AppContainerProfile::create("ChatOS.AppContainer.Probe").unwrap();
+        let original_dacl_sddl = read_dacl_sddl(workspace.path()).unwrap();
+        grant_sid_access(
+            workspace.path(),
+            profile.sid,
+            WorkspaceAccess::ReadOnly,
+            true,
+        )
+        .unwrap();
+        let inherited_file = workspace.path().join("legacy.txt");
+        std::fs::write(&inherited_file, b"lease-readable").unwrap();
+        assert_eq!(read_file_exit_code(&profile, &inherited_file).unwrap(), 0);
+        let journal_path = manager.journal_root.join("legacy.json");
+        write_lease_journal(
+            &journal_path,
+            &DirectoryLeaseJournal {
+                version: 1,
+                access: WorkspaceAccess::ReadOnly,
+                workspace_path_utf16: workspace.path().as_os_str().encode_wide().collect(),
+                original_dacl_sddl,
+                sid_sddl: String::new(),
+                entries: Vec::new(),
+            },
+        )
+        .unwrap();
+        drop(manager);
+
+        let recovered = WorkspaceLeaseManager::open(app_data.path()).unwrap();
+        assert_eq!(recovered.journal_count(), 0);
+        assert_ne!(read_file_exit_code(&profile, &inherited_file).unwrap(), 0);
+    }
+
+    #[test]
+    fn workspace_tree_rejects_reparse_points_before_publishing_a_journal() {
+        let app_data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("outside.txt");
+        std::fs::write(&target, b"outside").unwrap();
+        let link = workspace.path().join("link.txt");
+        if std::os::windows::fs::symlink_file(&target, &link).is_err() {
+            return;
+        }
+        let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
+        let profile = AppContainerProfile::create("ChatOS.AppContainer.Probe").unwrap();
+        assert!(manager
+            .grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly,)
             .is_err());
+        assert_eq!(manager.journal_count(), 0);
     }
 
     #[test]
