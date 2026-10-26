@@ -16,15 +16,19 @@ from run_performance_baseline import execute, test_product
 
 MARKER = "CHATOS_APP_SCENARIO_BASELINE "
 TEST = "AppPerformanceScenarioBaselineTests.testFixedCompositeScenario"
-FIXTURE = {"turns": 1_000, "todos": 100, "minimum_markdown_bytes": 1_000_000,
-           "minimum_code_utf16": 600_000, "timeline_items": 2_000}
+FIXTURE = {"turns": 1_000, "todos": 100, "native_timeline_rows": 1_000,
+           "minimum_markdown_bytes": 1_000_000, "minimum_code_utf16": 600_000,
+           "timeline_items": 2_000}
 TIMINGS = (
-    "timeline1000BuildMilliseconds", "todo100ProjectionMilliseconds",
+    "timeline1000BuildMilliseconds", "nativeTimelineInitialLayoutMilliseconds",
+    "nativeTimelineScrollLayoutMilliseconds", "todo100ProjectionMilliseconds",
     "megabyteMarkdownParseMilliseconds", "largeCodeFallbackMilliseconds",
     "mainActorMaximumGapMilliseconds", "concurrentWallMilliseconds",
 )
 CEILINGS = {
     "timeline1000BuildMilliseconds": 100,
+    "nativeTimelineInitialLayoutMilliseconds": 100,
+    "nativeTimelineScrollLayoutMilliseconds": 100,
     "todo100ProjectionMilliseconds": 100,
     "megabyteMarkdownParseMilliseconds": 2_000,
     "largeCodeFallbackMilliseconds": 100,
@@ -44,15 +48,18 @@ def measurements(log):
     result = records[0]
     required = {
         "buildConfiguration", "fixtureTurns", "fixtureTodos", "markdownBytes",
-        "codeUTF16Count", "timelineItemCount", "megabyteMarkdownBlockCount",
-        "largeCodeSpanCount", *TIMINGS,
+        "codeUTF16Count", "timelineItemCount", "nativeTimelineRows",
+        "nativeTimelineInitialConstructedRows", "nativeTimelineScrolledConstructedRows",
+        "megabyteMarkdownBlockCount", "largeCodeSpanCount", *TIMINGS,
     }
     if not isinstance(result, dict) or not required.issubset(result):
         raise ValueError("Malformed/incomplete App scenario record")
     if result["buildConfiguration"] != "release":
         raise ValueError("Expected an optimized Release App scenario")
     expected = {"fixtureTurns": FIXTURE["turns"], "fixtureTodos": FIXTURE["todos"],
-                "timelineItemCount": FIXTURE["timeline_items"], "largeCodeSpanCount": 0}
+                "timelineItemCount": FIXTURE["timeline_items"],
+                "nativeTimelineRows": FIXTURE["native_timeline_rows"],
+                "largeCodeSpanCount": 0}
     for key, value in expected.items():
         if result[key] != value or type(result[key]) is not int:
             raise ValueError(f"Unexpected App scenario fixture/result: {key}")
@@ -65,6 +72,11 @@ def measurements(log):
     if type(result["megabyteMarkdownBlockCount"]) is not int \
             or result["megabyteMarkdownBlockCount"] < 1:
         raise ValueError("Markdown scenario produced no blocks")
+    initial_rows = result["nativeTimelineInitialConstructedRows"]
+    scrolled_rows = result["nativeTimelineScrolledConstructedRows"]
+    if type(initial_rows) is not int or type(scrolled_rows) is not int \
+            or not 0 < initial_rows < 30 or not initial_rows < scrolled_rows < 60:
+        raise ValueError("Native timeline did not retain bounded visible-row construction")
     for key in TIMINGS:
         value = result[key]
         if isinstance(value, bool) or not isinstance(value, (int, float)) \
@@ -124,7 +136,8 @@ def run_scenario(repository, output, rounds, timeout):
         "ceilings_milliseconds": CEILINGS,
         "limitations": [
             "Synthetic in-memory CPU scenario; no account or production database access.",
-            "Does not measure real window navigation, frame pacing, WindowServer, or footprint.",
+            "Mounts a synthetic AppKit timeline window; no account navigation or production data.",
+            "Does not measure frame pacing, WindowServer, or process footprint.",
             "Background Markdown wall time is descriptive; MainActor gap is the responsiveness gate.",
         ],
         "rounds": run_records, "scenario_acceptance": "running",

@@ -14,8 +14,11 @@ class AppPerformanceScenarioTests(unittest.TestCase):
         return {
             "buildConfiguration": "release", "fixtureTurns": 1_000, "fixtureTodos": 100,
             "markdownBytes": 1_088_018, "codeUTF16Count": 620_000,
-            "timelineItemCount": 2_000, "megabyteMarkdownBlockCount": 16_001,
-            "largeCodeSpanCount": 0, **{key: value for key in scenario.TIMINGS},
+            "timelineItemCount": 2_000, "nativeTimelineRows": 1_000,
+            "nativeTimelineInitialConstructedRows": 8,
+            "nativeTimelineScrolledConstructedRows": 16,
+            "megabyteMarkdownBlockCount": 16_001, "largeCodeSpanCount": 0,
+            **{key: value for key in scenario.TIMINGS},
         }
 
     def read(self, records):
@@ -36,7 +39,8 @@ class AppPerformanceScenarioTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Expected one"):
             self.read([self.valid_result(), self.valid_result()])
         for key, value in (("buildConfiguration", "debug"), ("fixtureTurns", 1),
-                           ("largeCodeSpanCount", 1), ("markdownBytes", 1)):
+                           ("largeCodeSpanCount", 1), ("markdownBytes", 1),
+                           ("nativeTimelineScrolledConstructedRows", 100)):
             with self.subTest(key=key):
                 result = self.valid_result()
                 result[key] = value

@@ -54,9 +54,9 @@ zsh clients/macos/scripts/compare-performance-baselines.sh \
 zsh clients/macos/scripts/run-app-performance-scenario.sh
 ```
 
-该入口使用 Release XCTest 和纯内存合成数据，并行执行 1,000-turn 时间线构建、100 项任务板 presentation、超过 1 MB 的 Markdown 后台解析以及超过 600,000 UTF-16 字符的代码预览回退。它同时测量 MainActor 最大调度间隙，默认执行三轮并把原始样本、环境、测试二进制身份、P50/P95/P99 与宽松安全上限写入 `.build/performance/app-scenario-release-*/run.json`。
+该入口使用 Release XCTest 和纯内存合成数据，并行执行 1,000-turn 时间线构建、真实 AppKit/SwiftUI 千行时间线的首次布局与滚动、100 项任务板 presentation、超过 1 MB 的 Markdown 后台解析以及超过 600,000 UTF-16 字符的代码预览回退。它验证千行时间线始终只构造可见行，同时测量 MainActor 最大调度间隙；默认执行三轮并把原始样本、环境、测试二进制身份、P50/P95/P99 与宽松安全上限写入 `.build/performance/app-scenario-release-*/run.json`。
 
-此场景不会登录、打开活动账户数据库或控制当前 App，适合成为每次 Release 性能回归的快速 CPU 门禁。它不能替代真实窗口导航、滚动帧率、WindowServer、内存或进程组 soak；这些仍需在隔离 Release 实例上验收。
+此场景不会登录、打开活动账户数据库或控制当前 App，适合成为每次 Release 性能回归的快速 CPU/UI 虚拟化门禁。它不能替代真实账户窗口导航、滚动帧率、WindowServer、内存或进程组 soak；这些仍需在隔离 Release 实例上验收。
 
 ## App 性能 Signpost
 
