@@ -2443,6 +2443,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：Host 请求结束后的 staging token `unlink` 仍是 App 内一次常数级元数据清理，不读取正文；Worker 在安装前被 `SIGKILL` 可能留下 `.chatos-artifact-copy-*.tmp`，必须与附件临时文件一起通过 ownership、命名、年龄和活跃 Worker 门禁回收，不能无条件递归删除。两路径按产品约束要求源和目标位于同一受控状态树；不为跨卷任意复制扩大根能力。临时文件安全回收、其他 App 内文件加载器以及跨 Helper 动态资源预算仍待实施。
 
+### 12.110 第三十九完整里程碑：Worker 临时文件安全回收（2026-10-26）
+
+本里程碑关闭附件和 Artifact Worker 被强杀后临时文件长期占盘的问题，同时保持并行任务的文件所有权边界。App 启动后只发起一次 utility 优先级维护请求，目录枚举、身份复核、锁探测和删除全部在独立 Code Read Worker 进程执行；慢卷、目录项过多或单个异常文件不会把扫描工作放回主 App cooperative executor，维护失败也不阻塞启动。
+
+已实施：
+
+- Worker 端将清理范围固化为三个 App-owned scope 及其最大深度：`LocalAgent/Attachments` 两层、`LocalAgent/local-agent.artifact-staging` 当前层、`AgentGroupChatAttachments` 两层；调用方必须完整提供这三项且不能改路径、深度、重复或追加自定义目录。逐级 `openat(..., O_NOFOLLOW)` 并核对根 device/inode，不跟随 symlink，也不扫描用户项目 workspace。
+- 候选文件必须精确匹配 `.chatos-write-<canonical-lowercase-UUID>.tmp` 或 `.chatos-artifact-copy-<canonical-lowercase-UUID>.tmp`，同时为当前用户所有的单硬链接普通文件且修改时间至少超过 24 小时。打开后再次核对 device、inode、size、mtime 和 ctime，未知名称、新文件、身份变化或不满足 ownership 的文件全部保留。
+- 写入侧在创建上述临时文件后立即持有非阻塞独占 `flock`，直至内容同步并完成安装或失败收尾；清理侧只有取得同一独占锁后才复核并删除。因此正在写入的并行请求即使时间属性异常也不会被回收，Worker 崩溃后由内核释放锁，超过宽限期才成为候选。
+- 单次最多访问 20,000 个目录项，并继承 Worker 请求 deadline；达到上限返回 `truncated`，而不是无界遍历。Connector 校验 visited/eligible/deleted/locked/truncated 报告的形状与计数关系，App 不依赖维护成功才能继续初始化。
+
+验证：Debug 与原生 arm64 Release 的 `warnings-as-errors` 联合矩阵各执行 38 项，包含 11 项真实 Code Read Worker 进程隔离、13 项 Worker Engine、Artifact Storage/Upload/Client 及维护服务回归，0 跳过、0 失败。真实进程用例确认过期未锁文件被删除、过期被锁文件和新文件被保留；Core 回归确认调用方不能选择任意 scope。构建证据、脚本语法、差异格式、正式包签名和架构结果见本里程碑提交后的发布验证；不会运行 launch smoke，不启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：本批只回收上述三个状态目录中的 `.chatos-write-*` 与 `.chatos-artifact-copy-*`；项目 workspace 内的 `.import-*` 和其他 UI exporter 临时文件没有纳入，也不会为了释放空间扩大为任意目录递归清理。24 小时宽限优先保护跨睡眠、暂停和长时 I/O，不承诺崩溃后立即释放空间。跨 Helper 动态资源预算、8 小时 soak、真实磁盘满/只读卷、低端机器组合负载和发布级 SLO 仍待后续里程碑完成。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

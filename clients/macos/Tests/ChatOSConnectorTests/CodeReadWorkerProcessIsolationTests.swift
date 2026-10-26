@@ -470,6 +470,47 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
 
+    func testRealWorkerCleanupPreservesLockedAndFreshTemporaryFiles() async throws {
+        let executable = try realWorkerExecutable()
+        let fixture = try WorkerFixture()
+        defer { fixture.dispose() }
+        let staging = fixture.root
+            .appendingPathComponent("LocalAgent/local-agent.artifact-staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        let stale = staging.appendingPathComponent(
+            ".chatos-artifact-copy-\(UUID().uuidString.lowercased()).tmp"
+        )
+        let locked = staging.appendingPathComponent(
+            ".chatos-artifact-copy-\(UUID().uuidString.lowercased()).tmp"
+        )
+        let fresh = staging.appendingPathComponent(
+            ".chatos-artifact-copy-\(UUID().uuidString.lowercased()).tmp"
+        )
+        try Data("stale".utf8).write(to: stale)
+        try Data("locked".utf8).write(to: locked)
+        try Data("fresh".utf8).write(to: fresh)
+        let oldDate = Date(timeIntervalSinceNow: -(25 * 60 * 60))
+        try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: stale.path)
+        try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: locked.path)
+        let descriptor = locked.path.withCString {
+            Darwin.open($0, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        }
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        defer { if descriptor >= 0 { _ = Darwin.close(descriptor) } }
+        XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+
+        let report = try await NativeLocalTemporaryFileMaintenanceService(
+            rootURL: fixture.root,
+            codeReadWorker: CodeReadWorkerProcessClient(executableURL: executable, timeout: 10)
+        ).cleanupStaleFiles()
+
+        XCTAssertEqual(report.deletedEntries, 1)
+        XCTAssertEqual(report.lockedEntries, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: locked.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fresh.path))
+    }
+
     func testAttachmentVaultProductionAuthorizationUsesBinaryWorker() async throws {
         let executable = try realWorkerExecutable()
         let fixture = try WorkerFixture()

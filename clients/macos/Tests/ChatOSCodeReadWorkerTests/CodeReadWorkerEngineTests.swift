@@ -502,6 +502,30 @@ final class CodeReadWorkerEngineTests: XCTestCase {
             ).isEmpty)
         }
     }
+
+    func testTemporaryCleanupRejectsCallerSelectedScope() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let arguments: [String: CodeReadWorkerJSONValue] = [
+            "minimum_age_seconds": .number(24 * 60 * 60),
+            "scopes": .array([
+                .object([
+                    "path": .string("LocalAgent/Attachments"),
+                    "maximum_depth": .number(2),
+                ]),
+                .object([
+                    "path": .string("LocalAgent/local-agent.artifact-staging"),
+                    "maximum_depth": .number(0),
+                ]),
+                .object([
+                    "path": .string("untrusted-project-directory"),
+                    "maximum_depth": .number(2),
+                ]),
+            ]),
+        ]
+
+        XCTAssertThrowsError(try fixture.execute("cleanup_stale_temporary_files_v1", arguments))
+    }
 }
 
 private struct Fixture {

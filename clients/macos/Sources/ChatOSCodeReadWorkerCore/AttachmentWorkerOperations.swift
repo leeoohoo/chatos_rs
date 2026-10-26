@@ -158,6 +158,11 @@ struct AttachmentWorkerOperations {
             )
         }
         guard temporary >= 0 else { throw CodeReadWorkerCoreError.attachmentWriteFailed }
+        guard flock(temporary, LOCK_EX | LOCK_NB) == 0 else {
+            _ = Darwin.close(temporary)
+            temporaryName.withCString { _ = Darwin.unlinkat(directory, $0, 0) }
+            throw CodeReadWorkerCoreError.attachmentWriteFailed
+        }
         defer {
             _ = Darwin.close(temporary)
             temporaryName.withCString { _ = Darwin.unlinkat(directory, $0, 0) }
@@ -258,6 +263,11 @@ struct AttachmentWorkerOperations {
             )
         }
         guard temporary >= 0 else {
+            throw CodeReadWorkerCoreError.attachmentWorkspaceUnavailable
+        }
+        guard flock(temporary, LOCK_EX | LOCK_NB) == 0 else {
+            _ = Darwin.close(temporary)
+            temporaryName.withCString { _ = Darwin.unlinkat(directory, $0, 0) }
             throw CodeReadWorkerCoreError.attachmentWorkspaceUnavailable
         }
         defer {

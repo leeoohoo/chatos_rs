@@ -103,6 +103,11 @@ struct ArtifactWorkerOperations {
             )
         }
         guard destination >= 0 else { throw CodeReadWorkerCoreError.artifactWriteFailed }
+        guard flock(destination, LOCK_EX | LOCK_NB) == 0 else {
+            _ = Darwin.close(destination)
+            temporary.withCString { _ = Darwin.unlinkat(destinationParent, $0, 0) }
+            throw CodeReadWorkerCoreError.artifactWriteFailed
+        }
         var temporaryPresent = true
         defer {
             _ = Darwin.close(destination)

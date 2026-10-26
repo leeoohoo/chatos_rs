@@ -173,6 +173,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var agentExecutorRecoveryTask: Task<Void, Never>?
     var agentRuntimeCoordinatorGeneration: UInt64 = 0
     var agentArtifactStorageTask: Task<Void, Never>?
+    var temporaryFileMaintenanceTask: Task<Void, Never>?
     var agentArtifactStorageOwnerUserID: String?
     var agentArtifactStorageGeneration: UInt64 = 0
     var localConnectorRecoveryTask: Task<Void, Never>?
@@ -605,6 +606,12 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             }
             .store(in: &cancellables)
         startVisualSessionMonitoring()
+        let temporaryFileMaintenance = NativeLocalTemporaryFileMaintenanceService(
+            rootURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+        )
+        temporaryFileMaintenanceTask = Task(priority: .utility) {
+            _ = try? await temporaryFileMaintenance.cleanupStaleFiles()
+        }
         let connectorServicePreparationTask = Task { [weak self, localConnectorService] in
             await localConnectorService.setLocalAgentCompanionServices(
                 host: localAgentHost,

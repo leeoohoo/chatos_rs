@@ -155,6 +155,12 @@ public enum ChatOSCodeReadWorkerEngine {
                 rootIdentity: request.projectRootIdentity,
                 deadlineUnixMilliseconds: request.deadlineUnixMilliseconds
             ).execute(operation: request.operation, arguments: request.arguments)
+        case "cleanup_stale_temporary_files_v1":
+            return try TemporaryFileCleanupWorkerOperations(
+                root: root,
+                rootIdentity: request.projectRootIdentity,
+                deadlineUnixMilliseconds: request.deadlineUnixMilliseconds
+            ).execute(arguments: request.arguments)
         case "project_list_v1":
             return try context.projectList(request.arguments)
         case "project_search_entries_v1":
