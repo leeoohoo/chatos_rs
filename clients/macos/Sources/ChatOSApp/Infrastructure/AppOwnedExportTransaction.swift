@@ -101,6 +101,21 @@ final class AppOwnedExportTransaction {
               Self.sameFile(openedFile, namedFile) else {
             throw CocoaError(.fileWriteUnknown)
         }
+        var existingDestination = stat()
+        let destinationStatus = destinationName.withCString {
+            Darwin.fstatat(descriptor, $0, &existingDestination, AT_SYMLINK_NOFOLLOW)
+        }
+        if destinationStatus == 0 {
+            guard (existingDestination.st_mode & S_IFMT) == S_IFREG,
+                  Darwin.fchmod(fileDescriptor, existingDestination.st_mode & 0o7777) == 0 else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+        } else if errno != ENOENT {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        guard Darwin.fsync(fileDescriptor) == 0 else {
+            throw CocoaError(.fileWriteOutOfSpace)
+        }
         let result = temporaryName.withCString { source in
             destinationName.withCString { destination in
                 Darwin.renameat(descriptor, source, descriptor, destination)

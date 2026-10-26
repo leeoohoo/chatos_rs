@@ -2615,13 +2615,30 @@ Agent 侧继续保留此前 13 项真实 Worker 进程用例，覆盖凭据授�
 
 边界：SIGKILL 进程测试不是断电/控制器缓存持久性证明；真实 ENOSPC、只读卷、移动盘拔出、睡眠和 SSH 断网属于 12.118。VACUUM 测试使用 SQLite progress/commit hook 锁定真实引擎执行窗口，但不穷举每个底层 sector 写入顺序。8 小时组合崩溃风暴与长期资源曲线仍属于 12.119。本阶段没有停止、替换、启动、打包或安装当前 ChatOS，也没有访问活动用户数据库。
 
-### 12.118—12.120 剩余完整交付路径
+### 12.118 第五十完整里程碑：外部卷、SSH 与不可确认提交门禁（2026-10-26）
+
+本里程碑把本机导出、SCP 下载和远端 SSH 写入统一收敛为“提交前可明确失败、提交后无法确认必须对账”的边界。App-owned 导出和下载只在目标目录的同一文件系统内 staging，提交前校验目录、普通文件、owner、link count 与 device，继承已有目标权限并 `fsync` 文件；提交使用 descriptor 绑定的 `renameat`/`linkat`，随后 `fsync` 目录。提交前失败保留旧目标，提交后目录持久化或临时名移除失败则明确报告结果不确定，不把已经可能可见的新文件当成未执行而自动重试。
+
+远端上传先在目标目录创建规范 `.chatos-upload-<uuid>.tmp`，上传完成后校验 owner、普通文件、单硬链接，继承已有目标权限并执行文件/父目录持久化，再原子安装。机会式清理仅扫描同一父目录内超过 24 小时、规范 UUID 名、当前用户拥有且单硬链接的普通文件；实现使用有界 `find`，修复了 macOS 默认 zsh 在 glob 无匹配时以 `no matches found` 中断首次上传的问题。远端写入结果显式分为 `notApplied` 和 `reconciliationRequired`；连接在最终命名空间操作后中断、超时或取消时只进入待对账，不自动重放副作用。
+
+SSH、SCP、连接测试/MFA 和远程终端统一使用 ChatOS 私有持久化 host-key 文件 `~/Library/Application Support/ChatOSSwift/NativeConnector/SSH/known_hosts`，目录和文件分别强制为 `0700`/`0600`，并校验类型、owner 和单硬链接。生成配置同时固定 `UserKnownHostsFile` 到该文件、`GlobalKnownHostsFile /dev/null`，临时 config 为 `0600`；真实连接前后用户全局 `~/.ssh/known_hosts` 的 SHA-256 均为 `62a8af3be9fb95b040143184b91975a3e210181b1761fa3b866a95225164cedc`，没有把测试主机写入用户 SSH 状态。
+
+所有 OpenSSH 阻塞调用改为独立进程组。取消或超时先向所属进程组发送 `SIGTERM`，有界等待后才发送 `SIGKILL`，不会只杀父 `ssh` 而遗留 askpass/代理孙进程，也不会终止其他并行会话。进程组被 `SIGSTOP` 暂停时，独立 SSH 工作仍能取得自己的执行 lane；恢复 `SIGCONT` 后原调用可继续完成。
+
+验收：在 `/Volumes/MacPortable` 真实外置 APFS 上完成同卷原子替换；在 96 MiB APFS 镜像上分别完成只读挂载和真实 ENOSPC，失败后旧目标均保持完整，镜像、挂载点和填充文件已清理。macOS 一次性 sshd 与 Linux Docker sshd 均通过 staging、权限继承、原子替换、过期 orphan 回收、下载和提交后确认丢失待对账；Docker 用 `docker stop --time 0` 在远端已经提交而确认尚未返回时真实断开服务，客户端不误报成功、不重试副作用，重启后核对目标完整且只提交一次。取消测试证明所属孙进程被清理、无关进程继续运行；暂停/恢复测试证明一个挂起 SSH 生命周期不阻塞独立工作。测试 sshd、容器、control master、密钥和测试 host key 均已清理。
+
+受影响的 Debug 回归共通过 Remote File 4 项、SSH/远端连接 30 项、App-owned 导出 6 项和任务恢复界面 17 项；其中普通无 fixture 运行按设计跳过 3 项显式 SSH 和 2 项显式卷测试，前述真实环境运行已分别通过。完整 Debug 横向回归中的 Agent Worker 13 项、Code Read Worker 13 项、Scheduler 32 项和 App 449 项通过；现有未改动基线仍有三项确定性计数漂移：Tool/Skill catalog 实际 87、旧断言 86，数据库 migration 实际 33、旧断言 32，以及 Memory Engine 的 401/403 请求实际 2 次、旧断言 1 次。一次全 Connector 复跑还在高负载下出现 Agent Worker 网络用例和本地 HTTP Plugin 启动超时，两项随后单独复验分别在 0.177 秒和 1.375 秒通过。因此本阶段不把整仓 Debug 误记为全绿，也不把无关基线漂移混入 12.118。原生 arm64 Release 在 `warnings-as-errors` 下完成完整依赖图编译，Rust 全仓格式与 `git diff --check` 通过。
+
+整机 sleep/wake 没有伪造为已执行：当前用户正在运行的 ChatOS 持有 `PreventUserIdleSystemSleep`，非交互 sudo 不可用，且本轮明确不得停止当前客户端；本阶段以真实链路断开/重连和 OpenSSH 进程组 `SIGSTOP`/`SIGCONT` 作为可重复的暂停恢复证据。完整系统睡眠唤醒仍须在不干扰用户运行实例的专用验收窗口执行。本阶段没有停止、替换、启动、打包或安装当前 ChatOS，也没有访问活动用户数据库。
+
+边界：本阶段证明文件和网络边界的正确性，不替代 12.119 的固定硬件组合 SLO、200 次切页、20 次账户循环和 8 小时 soak，也不替代 12.120 的 Developer ID 签名、公证、stapling 与干净机器安装验收。
+
+### 12.119—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
 | --- | --- | --- |
-| 12.118 外部环境故障门禁 | 在真实 Linux/macOS SSH 端和移动盘验证 staging、权限继承、原子提交、孤儿扫描、断网、睡眠、只读卷与 ENOSPC | 旧目标不被失败写覆盖；临时文件可识别回收；取消只终止所属进程组；远端不可确认结果进入待对账 |
 | 12.119 Release 组合 SLO 与 8 小时 soak | 固定硬件运行 UI + Agent + Host + Media + Plugin 组合负载，完成 200 次切页、20 次账户循环、崩溃/取消风暴和 8 小时 soak | 暖切页 p95 < 100 ms、无 >250 ms 主线程 hang；进程组 footprint/CPU/磁盘写入有基线；Task/FD/observer/临时文件不单调增长 |
 | 12.120 正式分发关闭 | 完成 Developer ID、hardened runtime、嵌套 Helper 从内到外签名、notarization、stapling 和最终兼容矩阵 | 安装包在干净机器验证通过；包内 Git SHA、架构、签名、协议/Schema 和回滚说明一致；不再以 ad-hoc 本地包冒充正式外部分发 |
 

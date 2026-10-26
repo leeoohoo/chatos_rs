@@ -232,7 +232,7 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.retryErrorMessage, "重试被拒绝")
     }
 
-    func testStalledToolTaskCanBeRestartedFromProcessInspector() async throws {
+    func testStalledToolTaskRequiresDiagnosisBeforeAnyForceRestart() async throws {
         let service = TaskReplyInspectorServiceStub(
             taskStatus: "running",
             stalledTool: true
@@ -245,11 +245,15 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         try await waitUntilLoaded(viewModel)
 
         XCTAssertTrue(viewModel.canCancelActiveTask)
-        XCTAssertTrue(viewModel.canRestartActiveTask)
+        XCTAssertTrue(
+            MessageTaskRecoveryPolicy.shouldOfferDiagnosis(try XCTUnwrap(viewModel.task))
+        )
+        XCTAssertFalse(viewModel.canRestartActiveTask)
         viewModel.restartActiveTask()
-        try await waitUntilCondition { await service.restartCount() == 1 }
-        try await waitUntilCondition { !viewModel.isRestarting }
+        try await Task.sleep(for: .milliseconds(30))
 
+        let restartCount = await service.restartCount()
+        XCTAssertEqual(restartCount, 0)
         XCTAssertNil(viewModel.recoveryErrorMessage)
         XCTAssertEqual(viewModel.task?.normalizedStatus, "running")
     }

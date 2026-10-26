@@ -168,6 +168,28 @@ public struct RemoteFileMutationResult: Sendable, Equatable {
     }
 }
 
+/// Separates a mutation that is known not to have reached the final namespace from one whose
+/// acknowledgement was lost after execution may have started. Callers must never automatically
+/// replay `reconciliationRequired`: refresh or otherwise reconcile the remote path first.
+public enum RemoteFileMutationFailure: Error, LocalizedError, Sendable, Equatable {
+    case notApplied(String)
+    case reconciliationRequired(String)
+
+    public var requiresReconciliation: Bool {
+        if case .reconciliationRequired = self { return true }
+        return false
+    }
+
+    public var errorDescription: String? {
+        switch self {
+        case let .notApplied(message):
+            message
+        case let .reconciliationRequired(message):
+            "远端结果尚未确认，请先刷新并核对目标后再决定是否重试。\(message)"
+        }
+    }
+}
+
 /// Application boundary for the remote file workspace. Side effects and their
 /// best-effort presentation refresh are deliberately separate, so a committed
 /// upload/rename/delete is never reported as though it did not happen.

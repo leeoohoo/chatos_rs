@@ -119,11 +119,17 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
             let targetConnectTimeoutSeconds = draft.jumpEnabled
                 ? NativeSSHConnectionTester.interactiveVerificationTimeoutSeconds
                 : 10
+            let knownHostsURL = try NativeSSHConnectionTester.privateKnownHostsFile()
             try NativeSSHConnectionTester.sshConfig(
                 for: draft,
+                knownHostsPath: knownHostsURL.path,
                 targetConnectTimeoutSeconds: targetConnectTimeoutSeconds
             )
                 .write(to: configURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: configURL.path
+            )
             try NativeSSHConnectionTester.askpassScript
                 .write(to: askpassURL, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes(
@@ -443,6 +449,7 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
 
     static func sshConfig(
         for draft: RemoteConnectionDraft,
+        knownHostsPath: String,
         controlPath: String? = nil,
         targetConnectTimeoutSeconds: Int = 10
     ) throws -> String {
@@ -453,6 +460,7 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
             port: draft.port,
             username: draft.username,
             policy: draft.hostKeyPolicy,
+            knownHostsPath: knownHostsPath,
             connectTimeoutSeconds: targetConnectTimeoutSeconds
         )
         target.append(contentsOf: authenticationLines(
@@ -477,6 +485,7 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
                 port: draft.jumpPort ?? 22,
                 username: jumpUsername,
                 policy: draft.hostKeyPolicy,
+                knownHostsPath: knownHostsPath,
                 connectTimeoutSeconds: 10
             )
             let jumpType: RemoteAuthenticationType = draft.jumpPrivateKeyPath?.trimmedNonEmpty == nil
@@ -501,6 +510,7 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
         port: Int,
         username: String,
         policy: RemoteHostKeyPolicy,
+        knownHostsPath: String,
         connectTimeoutSeconds: Int
     ) -> [String] {
         [
@@ -513,10 +523,74 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
             "  ServerAliveInterval 5",
             "  ServerAliveCountMax 1",
             "  StrictHostKeyChecking \(policy == .strict ? "yes" : "accept-new")",
+            "  UserKnownHostsFile \(sshConfigValue(knownHostsPath))",
+            "  GlobalKnownHostsFile /dev/null",
             "  BatchMode no",
             "  RequestTTY no",
             "  LogLevel ERROR",
         ]
+    }
+
+    /// Returns the persistent host-key store owned exclusively by ChatOS. OpenSSH must never
+    /// fall back to ~/.ssh/known_hosts: doing so couples unrelated sessions to user SSH state
+    /// and lets connection tests modify files outside ChatOS storage.
+    static func privateKnownHostsFile(rootDirectory: URL? = nil) throws -> URL {
+        let directory: URL
+        if let rootDirectory {
+            directory = rootDirectory
+        } else {
+            let support = FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first ?? FileManager.default.homeDirectoryForCurrentUser
+            directory = support
+                .appendingPathComponent("ChatOSSwift", isDirectory: true)
+                .appendingPathComponent("NativeConnector", isDirectory: true)
+                .appendingPathComponent("SSH", isDirectory: true)
+        }
+
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        var directoryStatus = stat()
+        guard lstat(directory.path, &directoryStatus) == 0,
+              (directoryStatus.st_mode & S_IFMT) == S_IFDIR,
+              directoryStatus.st_uid == getuid() else {
+            throw NativeRemoteConnectionError("ChatOS SSH 主机密钥目录的类型或归属不安全。")
+        }
+        try fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: directory.path
+        )
+
+        let knownHostsURL = directory.appendingPathComponent("known_hosts", isDirectory: false)
+        let descriptor = open(
+            knownHostsURL.path,
+            O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else {
+            throw NativeRemoteConnectionError(
+                "无法创建 ChatOS SSH 主机密钥文件：\(String(cString: strerror(errno)))"
+            )
+        }
+        defer { _ = close(descriptor) }
+        var fileStatus = stat()
+        guard fstat(descriptor, &fileStatus) == 0,
+              (fileStatus.st_mode & S_IFMT) == S_IFREG,
+              fileStatus.st_uid == getuid(),
+              fileStatus.st_nlink == 1 else {
+            throw NativeRemoteConnectionError("ChatOS SSH 主机密钥文件的类型或归属不安全。")
+        }
+        guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
+            throw NativeRemoteConnectionError(
+                "无法保护 ChatOS SSH 主机密钥文件：\(String(cString: strerror(errno)))"
+            )
+        }
+        return knownHostsURL
     }
 
     private static func authenticationLines(

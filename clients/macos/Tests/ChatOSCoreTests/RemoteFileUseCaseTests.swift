@@ -54,6 +54,30 @@ struct RemoteFileUseCaseTests {
         #expect(listing.path == "/srv")
         #expect(await service.calls == ["authenticate:654321", "initial", "list:/srv"])
     }
+
+    @Test
+    func uncertainMutationIsReturnedForReconciliationWithoutAutomaticReplay() async {
+        let service = RemoteFileUseCaseStub(
+            mutationFailure: .reconciliationRequired("（connection lost）")
+        )
+        let useCase = RemoteFileUseCase(service: service)
+
+        do {
+            _ = try await useCase.delete(
+                connectionID: "c",
+                path: "/srv/possibly-deleted",
+                recursively: false,
+                parentPath: "/srv"
+            )
+            Issue.record("Expected an uncertain mutation failure")
+        } catch let failure as RemoteFileMutationFailure {
+            #expect(failure.requiresReconciliation)
+            #expect(failure.localizedDescription.contains("核对目标"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(await service.deleteAttempts == 1)
+    }
 }
 
 private enum RemoteFileUseCaseTestError: Error {
@@ -62,12 +86,18 @@ private enum RemoteFileUseCaseTestError: Error {
 
 private actor RemoteFileUseCaseStub: RemoteFileServicing {
     let failListingAfterMutation: Bool
+    let mutationFailure: RemoteFileMutationFailure?
     private(set) var calls: [String] = []
     private(set) var deletedPaths: [String] = []
     private var didMutate = false
+    private(set) var deleteAttempts = 0
 
-    init(failListingAfterMutation: Bool = false) {
+    init(
+        failListingAfterMutation: Bool = false,
+        mutationFailure: RemoteFileMutationFailure? = nil
+    ) {
         self.failListingAfterMutation = failListingAfterMutation
+        self.mutationFailure = mutationFailure
     }
 
     func authenticate(connectionID: String, verificationCode: String?) async throws {
@@ -116,6 +146,8 @@ private actor RemoteFileUseCaseStub: RemoteFileServicing {
     }
 
     func deleteEntry(connectionID: String, path: String, recursively: Bool) async throws {
+        deleteAttempts += 1
+        if let mutationFailure { throw mutationFailure }
         deletedPaths.append(path)
         didMutate = true
     }
