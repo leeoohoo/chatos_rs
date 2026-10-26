@@ -69,7 +69,7 @@ Release 与 Debug 客户端都在 `com.chatos.native / Performance` 下发布以
 - `ActivationRecoveryDispatch`：应用重新激活时幂等恢复任务的同步调度成本。
 - `CodeHighlightScan`、`CodeHighlightApply`：后台语法扫描和主线程最小样式提交。
 
-例如在不停止当前客户端的情况下附加 60 秒 Time Profiler：
+在不停止当前客户端的情况下，可附加 60 秒 Time Profiler 检查主线程热点、Hangs 和 SwiftUI invalidation：
 
 ```sh
 xcrun xctrace record \
@@ -79,7 +79,19 @@ xcrun xctrace record \
   --output /tmp/ChatOS-performance.trace
 ```
 
-录制期间按固定验证矩阵执行对应操作；结束后按上述 interval 过滤并同时检查 Hangs、主线程调用栈与 SwiftUI invalidation。Signpost 只提供精确边界，不会自动生成输入、判断 P95/P99 是否达标，也不替代固定机器上的基线/候选对照。
+后附加适合检查 Hangs 和调用栈，但不能把自定义 interval 缺失解释为业务路径没有执行：`OSLog` 可能已在 Instruments 附加前初始化，后附加不保证启用 `Performance` 类别。需要 Signpost 证据时，应让 Logging 模板从验收进程启动前开始录制；隔离启动示例：
+
+```sh
+xcrun xctrace record \
+  --template 'Logging' \
+  --time-limit 60s \
+  --output /tmp/ChatOS-signposts.trace \
+  --env CFFIXED_USER_HOME=/绝对路径/isolated-home \
+  --env CHATOS_BUILD_SMOKE_TEST=1 \
+  --launch -- /绝对路径/ChatOS.app/Contents/MacOS/ChatOSSwift
+```
+
+录制期间按固定验证矩阵执行对应操作；结束后在 `com.chatos.native / Performance` 下检查上述 interval。真实账户导航的 Signpost 录制必须从目标客户端启动前开始，因此需要明确的重启验收窗口；隔离 smoke 只能验证启动、激活和空闲路径，不能替代真实账户窗口。Signpost 只提供精确边界，不会自动生成输入、判断 P95/P99 是否达标，也不替代固定机器上的基线/候选对照。
 
 ## 进程组资源曲线与 8 小时 soak
 
