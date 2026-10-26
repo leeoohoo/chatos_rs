@@ -1,4 +1,6 @@
-use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalTaskRecord};
+use chatos_local_agent_protocol::{
+    LocalAgentRunRecord, LocalMessageTaskGraph, LocalMessageTaskGraphEdge, LocalTaskRecord,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -28,6 +30,51 @@ pub struct TaskMutationInput {
     pub instruction: Option<String>,
     #[serde(default)]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MessageTaskGraphProjection {
+    pub root_task_ids: Vec<String>,
+    pub nodes: Vec<MessageTaskGraphNodeProjection>,
+    pub edges: Vec<LocalMessageTaskGraphEdge>,
+    pub source_conversation_id: String,
+    pub source_turn_id: String,
+    pub source_user_message_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MessageTaskGraphNodeProjection {
+    pub task: LocalTaskRecord,
+    pub display_status: String,
+    pub depth: u32,
+    pub is_root: bool,
+    pub is_current_message: bool,
+}
+
+impl MessageTaskGraphProjection {
+    pub fn from_graph(graph: LocalMessageTaskGraph) -> Self {
+        Self {
+            root_task_ids: graph.root_task_ids,
+            nodes: graph
+                .nodes
+                .into_iter()
+                .map(|node| {
+                    let display_status = super::projection::display_status(&node.task);
+                    MessageTaskGraphNodeProjection {
+                        task: node.task,
+                        display_status,
+                        depth: node.depth,
+                        is_root: node.is_root,
+                        is_current_message: node.is_current_message,
+                    }
+                })
+                .collect(),
+            edges: graph.edges,
+            source_conversation_id: graph.source_conversation_id,
+            source_turn_id: graph.source_turn_id,
+            source_user_message_id: graph.source_user_message_id,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

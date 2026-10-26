@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import { useRunInspectorStore } from "../application/runInspectorStore";
-import { graphHasActiveTasks, type RunInspectorSection } from "../domain/runInspector";
+import {
+  graphHasActiveTasks,
+  isTaskAttentionStatus,
+  type RunInspectorSection,
+} from "../domain/runInspector";
 import type { RunInspectorLookup, RunInspectorPort } from "../ports/RunInspectorPort";
 import { InspectorHeaderActions, InspectorRecoveryActions } from "./RunInspectorActions";
 import {
@@ -92,16 +96,20 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
         </header>
         <div className="run-inspector__body">
           <nav className="run-task-list" aria-label="任务列表">
-            {phase.graph.nodes.map(({ task, depth }) => (
+            {phase.graph.nodes.map(({ task, display_status: displayStatus, depth }) => (
               <button
-                className={task.task_id === phase.selectedTaskId ? "run-task run-task--active" : "run-task"}
+                className={[
+                  "run-task",
+                  task.task_id === phase.selectedTaskId ? "run-task--active" : "",
+                  isTaskAttentionStatus(displayStatus) ? "run-task--attention" : "",
+                ].filter(Boolean).join(" ")}
                 key={task.task_id}
                 onClick={() => void selectTask(port, task.task_id)}
                 style={{ paddingLeft: 10 + Math.min(depth, 4) * 12 }}
                 type="button"
               >
                 <strong>{task.title}</strong>
-                <span>{statusLabel(task.status)}</span>
+                <span>{statusLabel(displayStatus)}</span>
               </button>
             ))}
           </nav>

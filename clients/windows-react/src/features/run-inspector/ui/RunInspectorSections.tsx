@@ -1,9 +1,14 @@
 import type { OpenInspectorPhase } from "../application/runInspectorStore";
+import {
+  isTaskExecutionActive,
+  taskExecutionPendingMessage,
+} from "../domain/runInspector";
 
 export function TaskDetailSection({ phase }: { phase: OpenInspectorPhase }) {
   const detail = phase.taskDetail;
   if (!detail) return <InspectorState loading={phase.isLoadingTask} message="正在加载任务详情…" />;
   const { task, run } = detail;
+  const executionActive = isTaskExecutionActive(task.status);
   return (
     <div className="inspector-section">
       <InfoCard title="任务目标">
@@ -12,10 +17,15 @@ export function TaskDetailSection({ phase }: { phase: OpenInspectorPhase }) {
       {task.description && task.description !== task.objective ? (
         <InfoCard title="说明"><TextValue value={task.description} /></InfoCard>
       ) : null}
-      {run?.reportContent ? (
+      {executionActive ? (
+        <InfoCard tone="attention" title={statusLabel(task.status)}>
+          <TextValue value={taskExecutionPendingMessage(task.status)} />
+        </InfoCard>
+      ) : null}
+      {!executionActive && run?.reportContent ? (
         <InfoCard title="模型输出"><TextValue value={run.reportContent} /></InfoCard>
       ) : null}
-      {task.resultSummary && task.resultSummary.trim() !== run?.reportContent?.trim() ? (
+      {!executionActive && task.resultSummary && task.resultSummary.trim() !== run?.reportContent?.trim() ? (
         <InfoCard title="结果摘要"><TextValue value={task.resultSummary} /></InfoCard>
       ) : null}
       <InfoCard title="任务信息">
@@ -147,11 +157,11 @@ function InfoCard({
   children,
 }: {
   title: string;
-  tone?: "error";
+  tone?: "attention" | "error";
   children: React.ReactNode;
 }) {
   return (
-    <section className={tone === "error" ? "inspector-card inspector-card--error" : "inspector-card"}>
+    <section className={tone ? `inspector-card inspector-card--${tone}` : "inspector-card"}>
       <h4>{title}</h4>
       {children}
     </section>

@@ -1376,4 +1376,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 103. [部分完成] Windows AppContainer 隔离自检已从 6 个匿名 `tempfile::tempdir` 收敛为单个系统临时目录 `chatos-appcontainer-probe-<小写 UUID>`，内部只创建固定的 filesystem/workspace/lease-data/recovery/read-write/nonempty 子目录；根目录以 `create_dir` 独占创建并复验普通非 reparse 目录，正常成功、返回错误或 panic unwind 由 RAII 整体清理，进程崩溃残留由下一轮自检按 24 小时规则治理。新一轮自检前最多检查系统临时目录前 20,000 项，只回收超过 24 小时且整棵树不超过 20,000 项、全部无 symlink/Windows reparse、普通文件均为单链接且没有近期写入的 canonical 残留；畸形 UUID、其他前缀或任一不安全项均保留。公共安全目录树判定同时复用于 Plugin staging 清理，避免两套删除规则漂移。Windows AppContainer 14 项真实隔离/恢复测试通过；Tauri 全量 514 项发现、508 项通过、6 条环境集成测试 ignored，Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 和 NSIS 隔离原生启动 smoke 均通过。其余运行时临时目录继续按所有权和恢复语义审计。
 
+104. [部分完成] Windows 已按 macOS `MessageTaskRunActivityPresentation` 与任务详情优先级修正任务审查投影：原生 Task Graph DTO 在保留 Host 原始 `pending/running` 状态的同时，为每个节点独立发布由 `followup_review_state` 推导的 `reviewing_followup` 或 `waiting_confirmation`，React 不再自行猜测。Task Graph 节点、详情标题与 Run Inspector 轮询统一消费展示状态；追加要求正在审查或等待确认时，新的任务级暂停门禁会以注意色覆盖旧 Run 活动，继续轮询状态变化，并隐藏上一轮可能仍存在的模型输出与结果摘要，明确说明后续执行已暂停。React 全量 136 个测试文件、506 项测试，Tauri 全量 515 项发现、509 项通过、6 项 ignored，类型检查、生产构建、Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 与 NSIS 隔离原生启动 smoke 均通过。对话 Timeline 内联活动、宠物活动摘要和原生窗口逐态视觉取证仍未完成，不能据此声称任务审查体验已完全与 macOS 一致。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

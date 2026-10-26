@@ -33,6 +33,7 @@ const graph: RunInspectorGraph = {
       created_at_unix_ms: 1,
       updated_at_unix_ms: 1,
     },
+    display_status: "running",
     depth: 0,
     is_root: true,
     is_current_message: true,

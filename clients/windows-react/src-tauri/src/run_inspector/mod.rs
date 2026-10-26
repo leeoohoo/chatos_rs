@@ -11,8 +11,8 @@ use tauri::State;
 
 use crate::{host_lifecycle::HostManager, terminal_tool_worker::TerminalToolWorker};
 use models::{
-    MessageTaskGraphInput, RunInspectorDetail, RunInspectorRun, TaskInspectorDetail,
-    TaskInspectorInput, TaskMutationInput, TaskMutationReceipt,
+    MessageTaskGraphInput, MessageTaskGraphProjection, RunInspectorDetail, RunInspectorRun,
+    TaskInspectorDetail, TaskInspectorInput, TaskMutationInput, TaskMutationReceipt,
 };
 
 const LATEST_EVENT_LIMIT: usize = 40;
@@ -24,8 +24,10 @@ const MAXIMUM_PROCESS_EVENT_PAGES: usize = 10;
 pub async fn load_message_task_graph(
     manager: State<'_, HostManager>,
     input: MessageTaskGraphInput,
-) -> Result<Option<LocalMessageTaskGraph>, String> {
-    message_graph(&manager, &validate_lookup(input)?).await
+) -> Result<Option<MessageTaskGraphProjection>, String> {
+    Ok(message_graph(&manager, &validate_lookup(input)?)
+        .await?
+        .map(MessageTaskGraphProjection::from_graph))
 }
 
 #[tauri::command]

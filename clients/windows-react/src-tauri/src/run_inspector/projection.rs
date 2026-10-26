@@ -102,7 +102,7 @@ fn process_entry(
     }
 }
 
-fn display_status(task: &LocalTaskRecord) -> String {
+pub(super) fn display_status(task: &LocalTaskRecord) -> String {
     if matches!(task.status.as_str(), "pending" | "ready" | "running") {
         match string_field(&task.input, &["followup_review_state"]).as_deref() {
             Some("pending") => return "reviewing_followup".to_owned(),
@@ -149,7 +149,7 @@ pub fn execution_error(outcome: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use chatos_local_agent_protocol::LocalAgentEventRecord;
+    use chatos_local_agent_protocol::{LocalAgentEventRecord, LocalTaskRecord, LocalTaskStatus};
     use serde_json::json;
 
     use super::*;
@@ -195,5 +195,45 @@ mod tests {
         };
         let projected = event(&record);
         assert_eq!(projected.summary.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn followup_gates_override_stale_execution_status() {
+        let task = |status, followup_review_state: &str| LocalTaskRecord {
+            graph_id: "graph-1".to_owned(),
+            owner_user_id: "owner-1".to_owned(),
+            source_entity_type: "conversation_turn".to_owned(),
+            source_entity_id: "turn-1".to_owned(),
+            task_id: "task-1".to_owned(),
+            title: "Task".to_owned(),
+            profile_key: "main_chat".to_owned(),
+            model_config_ref: "model-1".to_owned(),
+            model_config_revision: "revision-1".to_owned(),
+            capability_policy_revision: "policy-1".to_owned(),
+            input: json!({"followup_review_state": followup_review_state}),
+            max_iterations: 8,
+            status,
+            active_run_id: Some("run-1".to_owned()),
+            cancel_reason: None,
+            replacement_task_ids: Vec::new(),
+            cancelled_because_task_id: None,
+            result_summary: None,
+            version: 1,
+            created_at_unix_ms: 1,
+            updated_at_unix_ms: 2,
+        };
+
+        assert_eq!(
+            display_status(&task(LocalTaskStatus::Running, "pending")),
+            "reviewing_followup"
+        );
+        assert_eq!(
+            display_status(&task(LocalTaskStatus::Pending, "held")),
+            "waiting_confirmation"
+        );
+        assert_eq!(
+            display_status(&task(LocalTaskStatus::Succeeded, "pending")),
+            "succeeded"
+        );
     }
 }

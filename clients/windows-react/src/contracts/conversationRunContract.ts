@@ -95,6 +95,11 @@ const taskSchema = z.object({
   updated_at_unix_ms: z.number().int().nonnegative(),
 });
 
+export const taskDisplayStatusSchema = z.enum([
+  "pending", "ready", "queued", "running", "succeeded", "failed", "cancelled", "blocked",
+  "reviewing_followup", "waiting_confirmation",
+]);
+
 export const messageTaskGraphSchema = z.object({
       root_task_ids: z.array(z.string().min(1)),
       nodes: z.array(

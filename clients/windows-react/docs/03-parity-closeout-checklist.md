@@ -44,13 +44,13 @@ Windows 产品版本：`3.0.9`
 
 ## B. 本次交付前必须关闭
 
-- [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（134 个测试文件、504 项测试）。
-- [x] Windows AppContainer 自检临时目录治理完成后，Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：514 项测试被发现，508 项通过、0 项失败、6 项环境集成测试按预期 ignored；其中 2 项 sidecar 集成测试此前已以新 v49 Release Host 实际运行通过。Local Agent Host 全量 135 项测试及 Host 自身 Clippy `-D warnings` 保持通过；Windows 对锁中文件的新开句柄读取限制已进入跨平台测试语义，不再误报数据库所有权回归。
+- [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（136 个测试文件、506 项测试）。
+- [x] Windows 任务审查优先级投影完成后，Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：515 项测试被发现，509 项通过、0 项失败、6 项环境集成测试按预期 ignored；其中 2 项 sidecar 集成测试此前已以新 v49 Release Host 实际运行通过。Local Agent Host 全量 135 项测试及 Host 自身 Clippy `-D warnings` 保持通过；Windows 对锁中文件的新开句柄读取限制已进入跨平台测试语义，不再误报数据库所有权回归。
 - [x] 重新生成版本为 `3.0.9` 的 Release EXE、MSI、NSIS，并记录 SHA-256：
-  - `chatos-windows-react.exe`：`0efda8ee011e837deb33bc78470f96da893fd52bf9cf7a11870970ba57b642b4`
+  - `chatos-windows-react.exe`：`e1722c397788c3c0c32a5d79a4b7700bf06cb831d2eda89e7d3bcad68a22849f`
   - `chatos_local_agent_host.exe`：`b6737311ae2b9739d496503007a635c2e97a38a8bfc4a9e17bd87a00520e6187`
-  - `ChatOS_3.0.9_x64_en-US.msi`：`20473aca9e213485fa070ac6a9b0d45029690e54df7360ea03ba8f689713dcf2`
-  - `ChatOS_3.0.9_x64-setup.exe`：`926b081b8752a00935afd3e5a190d3010fd97933893ec2b7ee149338ea3ef837`
+  - `ChatOS_3.0.9_x64_en-US.msi`：`ebea5607b8e36ebe3c7ef177f8b42069e0645da76952d573b2dc31919dc39184`
+  - `ChatOS_3.0.9_x64-setup.exe`：`608cf9898ddc77c347b6e3c08e658cfc7bc8be9342dbb978757e11c9aafa9ad9`
 - [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、隔离 AppData 原生启动、正常退出、卸载和残留清理；当前事务安全构建产物先连续两次通过单次启动门限，再完成两轮各 5 次冷启动基线，最新报告为 `%TEMP%\chatos-windows-nsis-startup-performance-1.json` 和 `%TEMP%\chatos-windows-nsis-startup-performance-2.json`。
 - [x] MSI 升级 smoke 在既有四轮基础上，以事务安全模板再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-1.json` 和 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-2.json` 同时记录 `0.1.0 → 3.0.9`、两代原生启动退出、截断包 `1620` 失败、事务中途故障 `1603` 回滚、AppData 哨兵保留、卸载以及降级检测规则。
 - [x] MSI 运行中客户端升级 smoke 再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-running-upgrade-1.json` 和 `%TEMP%\chatos-windows-msi-running-upgrade-2.json` 记录旧版原生窗口进程、Installer 正常关闭、无重启升级、新版原生启动、数据保留、卸载和系统待重启队列不变。
@@ -72,6 +72,7 @@ Windows 产品版本：`3.0.9`
 - [x] AppContainer workspace/profile journal 原子事务版本的新 NSIS 已通过 `%TEMP%\chatos-windows-appcontainer-journal-final-nsis.json`：全新目录安装 `2,183 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,151 ms`、卸载 `636 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Story 尾帧临时媒体治理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-story-tail-temp-final-nsis.json`：全新目录安装 `2,196 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `16,970 ms`、卸载 `619 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。首次启动耗时继续计入未签名包性能波动，不据此声称稳定达到 20 秒基线。
 - [x] AppContainer 自检临时目录治理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-appcontainer-probe-temp-final-nsis.json`：全新目录安装 `2,244 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,194 ms`、卸载 `635 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
+- [x] 任务审查优先级投影版本的新 NSIS 已通过 `%TEMP%\chatos-windows-task-priority-final-nsis.json`：全新目录安装 `2,205 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `15,637 ms`、卸载 `654 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [ ] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息。代码默认状态与自动回归均为 workspace/首个消息资源，但原生窗口视觉取证仍受下一项工具故障阻塞。
 - [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。
@@ -81,7 +82,7 @@ Windows 产品版本：`3.0.9`
 ### P1：用户能直接感知
 
 - [ ] Codex/Ponytail Hook 的 Windows 端完整闭环。共享 Host v49 已合入可信 bundle 持久化、prompt/tool gate、durable event、session context 和更新后参数校验；macOS 已有 Codex Plugin 预检、bundle 注册/启用与 Seatbelt 隔离 runner。Windows 目前没有对应的 Plugin Hook 预检/状态 UI，也没有 AppContainer Hook runner；非 macOS runner 会明确失败关闭，因此不能把“Host 已理解 Hook 协议”写成“Windows 已可运行 Hook”。
-- [ ] `3.0.9.4` 新增的任务审查优先级展示仍需原生窗口逐态核对。Windows 已投影 `needs_review`、`reviewing_followup`、`waiting_confirmation` 等 Host 状态并提供 Run Inspector/团队 Run 操作，但尚未证明与 macOS 新的 Task Graph、Timeline、回复检查器和宠物活动摘要在优先级、文案与入口可见性上完全一致。
+- [ ] `3.0.9.4` 新增的任务审查优先级展示仍需原生窗口逐态核对。Windows 原生任务图 DTO 现同时保留 Host 原始状态和 `reviewing_followup` / `waiting_confirmation` 展示状态，Task Graph 节点与 Run Inspector 已让新门禁覆盖旧 Run 活动、保持轮询并隐藏上一轮陈旧输出；`needs_review` 的恢复操作继续保留。对话 Timeline 的内联活动、宠物活动摘要和各入口的原生视觉优先级仍需继续拉齐并取证，当前不声称完全一致。
 - [ ] Computer Use / 屏幕采集的受信发布闭环。Windows Worker 源码、x64/arm64 构建和 smoke 已通过，但当前用户 Plugin 目录为空；还需产出跨平台 `.tgz`、进入签名 Marketplace Release，并从 Windows 客户端完成安装、启用、`doctor`、屏幕采集和输入实测。
 - [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、disabled/controlled capability token、句柄绑定的非空目录逐项 DACL 快照、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 拒绝，带最小环境、一次性输出捕获、长驻交互 stdio、多 workspace 租约、超时与 Job Object 回收的可复用启动器，以及独立 profile SID/journal 崩溃恢复已经通过；Agent Plugin MCP 已迁移并以安装目录只读、项目目录读写、禁网策略实测。仍需实现目标级出站规则，并迁移任务终端和 Plugin 应用后端后才能开放第 31 页开关。迁移完成前继续只发布账号/项目边界、审批策略和现有 Job Object 进程树回收。
 

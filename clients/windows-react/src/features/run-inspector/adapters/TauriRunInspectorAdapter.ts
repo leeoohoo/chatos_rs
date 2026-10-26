@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { messageTaskGraphSchema } from "../../../contracts/conversationRunContract";
 import {
+  runInspectorGraphSchema,
   runInspectorDetailSchema,
   taskInspectorDetailSchema,
   taskMutationReceiptSchema,
@@ -10,7 +10,7 @@ import type { RunInspectorPort, TaskMutationRequest } from "../ports/RunInspecto
 export class TauriRunInspectorAdapter implements RunInspectorPort {
   async loadGraph(lookup: Parameters<RunInspectorPort["loadGraph"]>[0]) {
     const value = await invoke("load_message_task_graph", { input: lookup });
-    return value == null ? null : messageTaskGraphSchema.parse(value);
+    return value == null ? null : runInspectorGraphSchema.parse(value);
   }
 
   async loadTask(

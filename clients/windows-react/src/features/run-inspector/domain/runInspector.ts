@@ -1,7 +1,16 @@
 import { z } from "zod";
-import type { MessageTaskGraph } from "../../../contracts/conversationRunContract";
+import {
+  messageTaskGraphSchema,
+  taskDisplayStatusSchema,
+} from "../../../contracts/conversationRunContract";
 
-export type RunInspectorGraph = MessageTaskGraph;
+export const runInspectorGraphSchema = messageTaskGraphSchema.extend({
+  nodes: z.array(messageTaskGraphSchema.shape.nodes.element.extend({
+    display_status: taskDisplayStatusSchema,
+  })),
+});
+
+export type RunInspectorGraph = z.infer<typeof runInspectorGraphSchema>;
 export type RunInspectorSection = "detail" | "process" | "run";
 
 export const runInspectorProcessEntrySchema = z.object({
@@ -85,5 +94,31 @@ export function isRecoverableTaskStatus(status: string) {
 }
 
 export function graphHasActiveTasks(graph: RunInspectorGraph) {
-  return graph.nodes.some(({ task }) => ["pending", "ready", "running"].includes(task.status));
+  return graph.nodes.some(({ display_status: status }) => [
+    "pending", "ready", "queued", "running", "reviewing_followup", "waiting_confirmation",
+  ].includes(normalizedTaskStatus(status)));
+}
+
+export function normalizedTaskStatus(status: string) {
+  return status.trim().toLowerCase();
+}
+
+export function isTaskExecutionActive(status: string) {
+  return ["queued", "running", "reviewing_followup", "waiting_confirmation"]
+    .includes(normalizedTaskStatus(status));
+}
+
+export function taskExecutionPendingMessage(status: string) {
+  switch (normalizedTaskStatus(status)) {
+    case "reviewing_followup":
+      return "后续执行已暂停，正在审查追加要求。";
+    case "waiting_confirmation":
+      return "后续执行已暂停，等待你确认要求。";
+    default:
+      return "本次运行仍在执行，模型输出将在完成后显示。";
+  }
+}
+
+export function isTaskAttentionStatus(status: string) {
+  return ["reviewing_followup", "waiting_confirmation"].includes(normalizedTaskStatus(status));
 }
