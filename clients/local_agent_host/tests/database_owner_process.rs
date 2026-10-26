@@ -83,7 +83,6 @@ async fn real_hosts_reject_duplicate_keep_first_healthy_and_release_after_kill()
     let database = directory.path().join("client.sqlite");
     let mut first = spawn(&database);
     health(&mut first).await;
-    let owner = fs::read(lock_path(&database)).unwrap();
     let sqlite = fs::read(&database).unwrap();
     let duplicate = timeout(
         DEADLINE,
@@ -98,17 +97,17 @@ async fn real_hosts_reject_duplicate_keep_first_healthy_and_release_after_kill()
         duplicate.stdout.is_empty(),
         "ownership errors must not corrupt IPC stdout"
     );
-    assert_eq!(fs::read(lock_path(&database)).unwrap(), owner);
     assert_eq!(fs::read(&database).unwrap(), sqlite);
     health(&mut first).await;
-    let old_epoch = owner_description(&database)["owner_epoch"].clone();
     timeout(DEADLINE, first.kill()).await.unwrap().unwrap();
     // A stale description is harmless: only the kernel lock decides ownership.
-    assert_eq!(fs::read(lock_path(&database)).unwrap(), owner);
+    let owner = fs::read(lock_path(&database)).unwrap();
+    let old_epoch: serde_json::Value = serde_json::from_slice(&owner).unwrap();
+    let old_epoch = old_epoch["owner_epoch"].clone();
     let mut next = spawn(&database);
     health(&mut next).await;
-    assert_ne!(owner_description(&database)["owner_epoch"], old_epoch);
     timeout(DEADLINE, next.kill()).await.unwrap().unwrap();
+    assert_ne!(owner_description(&database)["owner_epoch"], old_epoch);
 }
 
 #[tokio::test]
@@ -117,7 +116,6 @@ async fn normal_stdio_eof_releases_owner_after_process_exit() {
     let database = directory.path().join("client.sqlite");
     let mut first = spawn(&database);
     health(&mut first).await;
-    let epoch = owner_description(&database)["owner_epoch"].clone();
     drop(first.stdin.take());
     let result = timeout(DEADLINE, first.wait_with_output())
         .await
@@ -129,10 +127,11 @@ async fn normal_stdio_eof_releases_owner_after_process_exit() {
         String::from_utf8_lossy(&result.stderr)
     );
     assert!(lock_path(&database).exists());
+    let epoch = owner_description(&database)["owner_epoch"].clone();
     let mut second = spawn(&database);
     health(&mut second).await;
-    assert_ne!(owner_description(&database)["owner_epoch"], epoch);
     timeout(DEADLINE, second.kill()).await.unwrap().unwrap();
+    assert_ne!(owner_description(&database)["owner_epoch"], epoch);
 }
 
 #[tokio::test]

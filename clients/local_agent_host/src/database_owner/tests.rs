@@ -2,6 +2,15 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use std::io::Read;
+
+fn read_locked_owner(owner: &DatabaseOwner) -> Vec<u8> {
+    let mut file = owner._file.try_clone().unwrap();
+    file.rewind().unwrap();
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).unwrap();
+    bytes
+}
 
 #[test]
 fn contention_does_not_create_database_or_truncate_live_owner_description() {
@@ -9,7 +18,7 @@ fn contention_does_not_create_database_or_truncate_live_owner_description() {
     let database = directory.path().join("client.sqlite");
     let first = DatabaseOwner::acquire(&database).unwrap();
     let path = lock_path(first.database());
-    let before = fs::read(&path).unwrap();
+    let before = read_locked_owner(&first);
     let description: serde_json::Value = serde_json::from_slice(&before).unwrap();
     assert_eq!(description["format_version"], 1);
     assert_eq!(description["pid"], std::process::id());
@@ -26,12 +35,12 @@ fn contention_does_not_create_database_or_truncate_live_owner_description() {
     assert!(Uuid::parse_str(description["owner_epoch"].as_str().unwrap()).is_ok());
     let error = DatabaseOwner::acquire(&database).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
-    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(read_locked_owner(&first), before);
     assert!(!database.exists(), "ownership precedes SQLite creation");
     drop(first);
     assert!(path.exists(), "never unlink the lock file to release it");
     let second = DatabaseOwner::acquire(&database).unwrap();
-    let after: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let after: serde_json::Value = serde_json::from_slice(&read_locked_owner(&second)).unwrap();
     assert_ne!(after["owner_epoch"], description["owner_epoch"]);
     assert_eq!(second.database(), database);
 }
@@ -47,7 +56,7 @@ fn stale_or_invalid_metadata_never_prevents_kernel_lock_reacquisition() {
         fs::write(lock_path(&database), bytes).unwrap();
         let owner = DatabaseOwner::acquire(&database).unwrap();
         let description: serde_json::Value =
-            serde_json::from_slice(&fs::read(lock_path(owner.database())).unwrap()).unwrap();
+            serde_json::from_slice(&read_locked_owner(&owner)).unwrap();
         assert_eq!(description["pid"], std::process::id());
     }
 }

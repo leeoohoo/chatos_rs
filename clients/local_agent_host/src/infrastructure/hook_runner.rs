@@ -3,23 +3,32 @@
 
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{LocalPluginHookBundleSpec, LocalPluginHookDefinition};
+#[cfg(target_os = "macos")]
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
+#[cfg(target_os = "macos")]
 use std::{
     collections::BTreeMap,
-    path::{Path, PathBuf},
+    path::Path,
     process::Stdio,
     time::{Duration, Instant},
 };
+#[cfg(target_os = "macos")]
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     process::Command,
     time::timeout,
 };
 
+#[cfg(target_os = "macos")]
 const SANDBOX_EXECUTABLE: &str = "/usr/bin/sandbox-exec";
+#[cfg(target_os = "macos")]
 const SHELL_EXECUTABLE: &str = "/bin/sh";
+#[cfg(target_os = "macos")]
 const MAXIMUM_STDOUT_BYTES: usize = 512 * 1_024;
+#[cfg(target_os = "macos")]
 const MAXIMUM_STDERR_BYTES: usize = 64 * 1_024;
+#[cfg(target_os = "macos")]
 const TERMINATION_GRACE: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone)]
@@ -51,6 +60,7 @@ pub trait LocalHookRunner: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct MacOsSeatbeltHookRunner {
+    #[cfg(target_os = "macos")]
     data_root: PathBuf,
 }
 
@@ -59,9 +69,18 @@ impl MacOsSeatbeltHookRunner {
         if !data_root.is_absolute() {
             return Err("Hook data root must be absolute".to_string());
         }
-        Ok(Self { data_root })
+        #[cfg(target_os = "macos")]
+        {
+            Ok(Self { data_root })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = data_root;
+            Ok(Self {})
+        }
     }
 
+    #[cfg(target_os = "macos")]
     fn plugin_data_path(&self, bundle: &LocalPluginHookBundleSpec) -> PathBuf {
         let mut digest = Sha256::new();
         for value in [
@@ -229,6 +248,7 @@ impl MacOsSeatbeltHookRunner {
     }
 }
 
+#[cfg(target_os = "macos")]
 async fn read_bounded<R>(mut reader: R, limit: usize) -> Result<(Vec<u8>, bool), String>
 where
     R: AsyncRead + Unpin,
@@ -251,6 +271,7 @@ where
     Ok((output, overflow))
 }
 
+#[cfg(target_os = "macos")]
 fn hook_environment(
     installation_root: &Path,
     data_root: &Path,

@@ -10,8 +10,9 @@ Windows 产品版本：`3.0.9`
 
 ## A. 本轮已关闭
 
+- [x] 已拉取并合并 `origin/3.0.9.4`（远端头 `fa8a80477`，合并提交 `1a2bede43`）；Local Agent 协议升级到 v49，Windows React 的共享契约、Tauri transport 与打包 sidecar 已同步。
 - [x] 31 个 macOS 一级页面均有 Windows React 路由和对应业务入口；默认登录后进入用户消息，而不是设置页。
-- [x] Local Agent Host 打包资源完成真实 v46 健康握手，并通过账号隔离业务请求测试；此前两个 ignored 集成测试已实际运行通过。
+- [x] Local Agent Host 打包资源完成真实 v49 健康握手，并通过账号隔离业务请求测试；此前两个 ignored 集成测试已实际运行通过。
 - [x] Story H.264 实际尾帧回归修复。旧 `16×16` 夹具低于 Windows Media Foundation H.264 有效尺寸，已替换为 `64×64` Baseline/YUV420P 红到蓝视频，继续断言最后一帧为蓝色。
 - [x] Windows Rust 条件编译警告收口，避免发布测试输出掩盖新问题。
 - [x] Windows 客户端、Cargo、Tauri 和 npm 产品版本从占位的 `0.1.0` 统一为 `3.0.9`。
@@ -35,16 +36,17 @@ Windows 产品版本：`3.0.9`
 ## B. 本次交付前必须关闭
 
 - [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（134 个测试文件、504 项测试）。
-- [x] 本批“Agent Plugin MCP AppContainer 迁移”修改后，Windows Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：487 项测试被发现，481 项通过、0 项失败、6 项环境集成测试按预期 ignored。
+- [x] 合并 `3.0.9.4` 后，Windows Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：487 项测试被发现，481 项通过、0 项失败、6 项环境集成测试按预期 ignored；其中 2 项 sidecar 集成测试又以新 v49 Release Host 实际运行通过。Local Agent Host 全量 135 项测试及 Host 自身 Clippy `-D warnings` 通过；Windows 对锁中文件的新开句柄读取限制已进入跨平台测试语义，不再误报数据库所有权回归。
 - [x] 重新生成版本为 `3.0.9` 的 Release EXE、MSI、NSIS，并记录 SHA-256：
-  - `chatos-windows-react.exe`：`bc559077f64c67d2e615dd05ba22c53cdf4be374efda60910dbbf87eab87c182`
-  - `chatos_local_agent_host.exe`：`5f697fced2658ac59a3f9fb4ff5d167ac033545ed0f0c995363c754fcc0ebf66`
-  - `ChatOS_3.0.9_x64_en-US.msi`：`1456586c7918aaa7dd5a9ef5e0777072f459ea79a7c3b8a99d98f2d205f8a533`
-  - `ChatOS_3.0.9_x64-setup.exe`：`046f87c80006b7dd05edcef788c984b2c6d06311d78f1d39af908c8904f11e59`
+  - `chatos-windows-react.exe`：`d2e8bd095899bdee8dcd5a8d60c374bf048024086aa3cb189f5c5576af84a420`
+  - `chatos_local_agent_host.exe`：`b6737311ae2b9739d496503007a635c2e97a38a8bfc4a9e17bd87a00520e6187`
+  - `ChatOS_3.0.9_x64_en-US.msi`：`8821920a8004967ef021d9e3a13283ad4e185ad5f24bd66f44fbb3a183feeb9e`
+  - `ChatOS_3.0.9_x64-setup.exe`：`b7daecc3ec7510fcf78975656e191ad730162f1e9a51c3d3d3294157ee11e403`
 - [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、隔离 AppData 原生启动、正常退出、卸载和残留清理；当前事务安全构建产物先连续两次通过单次启动门限，再完成两轮各 5 次冷启动基线，最新报告为 `%TEMP%\chatos-windows-nsis-startup-performance-1.json` 和 `%TEMP%\chatos-windows-nsis-startup-performance-2.json`。
 - [x] MSI 升级 smoke 在既有四轮基础上，以事务安全模板再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-1.json` 和 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-2.json` 同时记录 `0.1.0 → 3.0.9`、两代原生启动退出、截断包 `1620` 失败、事务中途故障 `1603` 回滚、AppData 哨兵保留、卸载以及降级检测规则。
 - [x] MSI 运行中客户端升级 smoke 再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-running-upgrade-1.json` 和 `%TEMP%\chatos-windows-msi-running-upgrade-2.json` 记录旧版原生窗口进程、Installer 正常关闭、无重启升级、新版原生启动、数据保留、卸载和系统待重启队列不变。
 - [x] 本批“Agent Plugin MCP AppContainer 迁移”已重新生成到 MSI/NSIS，并通过 `%TEMP%\chatos-windows-agent-plugin-appcontainer-functional-nsis.json` 的全新目录安装、隔离 AppData 原生启动、正常退出、卸载和清理验证：安装 `1,947 ms`、原生启动 `27,398 ms`、卸载 `614 ms`，三者退出码均为 `0`；Probe 与 Runtime AppContainer profile 注册表残留合计为 `0`。同一哈希的 20 秒门限报告 `%TEMP%\chatos-windows-agent-plugin-appcontainer-final-nsis.json` 以 `3,099 ms` 通过，但另一全新安装路径超过 20 秒；该性能不稳定项继续保留，不伪报为稳定通过。
+- [x] 合并 `3.0.9.4` 后的新 NSIS 已通过 `%TEMP%\chatos-windows-3.0.9.4-merge-nsis.json` 的全新目录安装、隔离 AppData 原生启动、应用自身退出、卸载与清理：安装 `2,181 ms`、原生启动 `3,184 ms`、卸载 `624 ms`，全部退出码为 `0`，安装后 sidecar 哈希与构建资源一致。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [ ] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息。代码默认状态与自动回归均为 workspace/首个消息资源，但原生窗口视觉取证仍受下一项工具故障阻塞。
 - [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。
@@ -53,11 +55,15 @@ Windows 产品版本：`3.0.9`
 
 ### P1：用户能直接感知
 
+- [ ] Codex/Ponytail Hook 的 Windows 端完整闭环。共享 Host v49 已合入可信 bundle 持久化、prompt/tool gate、durable event、session context 和更新后参数校验；macOS 已有 Codex Plugin 预检、bundle 注册/启用与 Seatbelt 隔离 runner。Windows 目前没有对应的 Plugin Hook 预检/状态 UI，也没有 AppContainer Hook runner；非 macOS runner 会明确失败关闭，因此不能把“Host 已理解 Hook 协议”写成“Windows 已可运行 Hook”。
+- [ ] `3.0.9.4` 新增的任务审查优先级展示仍需原生窗口逐态核对。Windows 已投影 `needs_review`、`reviewing_followup`、`waiting_confirmation` 等 Host 状态并提供 Run Inspector/团队 Run 操作，但尚未证明与 macOS 新的 Task Graph、Timeline、回复检查器和宠物活动摘要在优先级、文案与入口可见性上完全一致。
 - [ ] Computer Use / 屏幕采集的受信发布闭环。Windows Worker 源码、x64/arm64 构建和 smoke 已通过，但当前用户 Plugin 目录为空；还需产出跨平台 `.tgz`、进入签名 Marketplace Release，并从 Windows 客户端完成安装、启用、`doctor`、屏幕采集和输入实测。
 - [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、disabled/controlled capability token、句柄绑定的非空目录逐项 DACL 快照、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 拒绝，带最小环境、一次性输出捕获、长驻交互 stdio、多 workspace 租约、超时与 Job Object 回收的可复用启动器，以及独立 profile SID/journal 崩溃恢复已经通过；Agent Plugin MCP 已迁移并以安装目录只读、项目目录读写、禁网策略实测。仍需实现目标级出站规则，并迁移任务终端和 Plugin 应用后端后才能开放第 31 页开关。迁移完成前继续只发布账号/项目边界、审批策略和现有 Job Object 进程树回收。
 
 ### P2：平台/发布质量
 
+- [ ] Windows 客户端机器资源治理尚未与 macOS `ClientMachineResourceGovernor` / `ClientFileWorkerResourceGovernor` 拉齐。共享 Host v49 已发布 scheduler snapshot 并支持 pressure policy，但 Windows 尚未采集系统内存压力、把压力动态写入 Host admission，也没有跨附件/Artifact/媒体 worker 的统一容量预留。
+- [ ] `3.0.9.4` 的文件 worker 隔离和临时文件生命周期仍需 Windows 等价实现与回归：macOS 已把附件授权/预览、Artifact 上传恢复、过期临时文件回收、原子导出和外部文件/SSH 提交收进独立 worker。Windows 各业务已有各自的 vault、哈希复验、原子提交和 AppContainer 组件，但尚无统一的 crash-recovery/cleanup governor，不能据局部能力宣称与 macOS 新实现完全等价。
 - [ ] Windows 安装包代码签名、发布证书、签名校验和 SmartScreen 信誉验证。仓库可生成安装包，但本机未配置正式签名身份。
 - [ ] Windows Installer 无法由 Restart Manager 正常关闭的强制文件锁及需重启场景仍需在一次性 Windows VM 中补验；客户端正常运行造成的文件占用、事务中途故障回滚均已关闭。本机已有其他软件留下的待重启文件操作，不能为了测试篡改系统队列。历史 `0.1.0` 安装包自身允许降级，已发布二进制无法由新版本追溯修改。
 - [ ] 固定分辨率与 100%/125%/150% 缩放的原生截图对照、键盘导航、焦点顺序、屏幕阅读器标签和对比度验收。
