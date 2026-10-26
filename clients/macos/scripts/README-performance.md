@@ -37,6 +37,17 @@ macOS 仅支持 arm64，不提供 Intel 或 universal 构建。统一入口使�
 
 此基准没有测量 App 切页、首个可交互帧、主线程 hang、physical footprint、Host IPC 或媒体链路；小样本分位数不是发布 SLO 证明。应在固定机器、数据集、供电、热状态、缓存和负载下比较，不把不同运行环境直接合并。正式导航脚本、真实组合负载与干净提交的基线/候选对照仍待完成。
 
+基线与候选都完成后，用回归门禁比较：
+
+```sh
+zsh clients/macos/scripts/compare-performance-baselines.sh \
+  --baseline /绝对路径/baseline/run.json \
+  --candidate /绝对路径/candidate/run.json \
+  --output /绝对路径/comparison.json
+```
+
+比较器要求两份结果都完整、源码采集期间未变化，并且夹具规则、夹具源码、硬件、macOS、架构和供电来源一致。它检查全部存储指标的 P50/P95/P99；默认允许最多 15% 相对波动或 0.25 ms 绝对噪声（取较大者），超限返回非零状态并在 JSON 中列出失败项。阈值可显式覆盖，但不能用更宽阈值把不同机器或夹具强行合并。该门禁仍只代表存储工程基准，不会把它误标成完整 App 性能验收。
+
 ## App 性能 Signpost
 
 Release 与 Debug 客户端都在 `com.chatos.native / Performance` 下发布以下稳定 interval，可在 Instruments 的 Time Profiler、SwiftUI 或 Logging 录制中对齐交互和主线程热点：
@@ -92,6 +103,7 @@ zsh clients/macos/scripts/run-process-group-soak.sh \
 
 ```sh
 /usr/bin/arch -arm64 /usr/bin/python3 -B -m unittest discover -s clients/macos/scripts/tests -v
+zsh -n clients/macos/scripts/compare-performance-baselines.sh
 zsh -n clients/macos/scripts/package-app.sh
 zsh -n clients/macos/scripts/verify-app-build.sh
 zsh -n clients/macos/scripts/run-process-group-soak.sh
