@@ -23,7 +23,8 @@ MEDIA_WORKER="$APP_PATH/Contents/MacOS/ChatOSMediaWorker"
 CODE_READ_WORKER="$APP_PATH/Contents/MacOS/ChatOSCodeReadWorker"
 AGENT_WORKER="$APP_PATH/Contents/MacOS/ChatOSAgentWorker"
 PLUGIN_PROCESS_LIST="$APP_PATH/Contents/Resources/Tools/darwin-arm64/ps"
-if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" || ! -x "$LOCAL_AGENT_HOST" || ! -x "$MEDIA_WORKER" || ! -x "$CODE_READ_WORKER" || ! -x "$AGENT_WORKER" || ! -x "$PLUGIN_PROCESS_LIST" ]]; then
+APP_ICON="$APP_PATH/Contents/Resources/ChatOS.icns"
+if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" || ! -x "$LOCAL_AGENT_HOST" || ! -x "$MEDIA_WORKER" || ! -x "$CODE_READ_WORKER" || ! -x "$AGENT_WORKER" || ! -x "$PLUGIN_PROCESS_LIST" || ! -f "$APP_ICON" ]]; then
   echo "Invalid ChatOS app bundle: $APP_PATH" >&2
   exit 1
 fi
@@ -39,6 +40,8 @@ done
 CONFIGURATION=$(plutil -extract ChatOSBuildConfiguration raw "$INFO_PLIST")
 GIT_COMMIT=$(plutil -extract ChatOSBuildGitCommit raw "$INFO_PLIST")
 BUILD_DATE=$(plutil -extract ChatOSBuildDateUTC raw "$INFO_PLIST")
+DISPLAY_NAME=$(plutil -extract CFBundleDisplayName raw "$INFO_PLIST")
+ICON_FILE=$(plutil -extract CFBundleIconFile raw "$INFO_PLIST")
 
 if [[ "$CONFIGURATION" != "debug" && "$CONFIGURATION" != "release" ]]; then
   echo "Invalid ChatOS build configuration: $CONFIGURATION" >&2
@@ -58,6 +61,10 @@ if ! print -r -- "$GIT_COMMIT" | grep -Eq '^[0-9a-f]{40}$'; then
 fi
 if [[ -z "$BUILD_DATE" ]]; then
   echo "Missing ChatOS build date metadata" >&2
+  exit 1
+fi
+if [[ "$DISPLAY_NAME" != "ChatOS" || "$ICON_FILE" != "ChatOS.icns" ]]; then
+  echo "Invalid ChatOS Finder metadata: display=$DISPLAY_NAME icon=$ICON_FILE" >&2
   exit 1
 fi
 

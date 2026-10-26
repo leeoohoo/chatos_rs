@@ -2551,6 +2551,12 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批统一的是能够在 durable claim/process spawn 前安全等待的 Agent、Media 与 Code Read。Host 保持进程内固定 worker 硬预留；Large Transfer、进程内重媒体和 Plugin 可能已持有 durable 身份，仍禁止机械套外层 permit。当前额度在 App 启动时确定，实时 memory pressure、thermal、电源状态和带迟滞恢复属于 12.115。
 
+### 12.114d 安装包应用可发现性修复（2026-10-26）
+
+本批修复本地 Release 包虽然已位于 `/Applications/ChatOS.app`、Spotlight 元数据也已导入，但应用搜索结果缺少稳定展示信息的问题。正式打包清单现在显式声明 `CFBundleDisplayName=ChatOS` 与 `CFBundleIconFile=ChatOS.icns`，并把仓库中的 1024 px ChatOS 品牌图标复制到签名包内。构建验证会同时检查显示名、图标声明和实际图标文件，避免后续重新产出“文件存在但 Spotlight/LaunchServices 展示不完整”的安装包。
+
+验证：源 plist 通过 `plutil`，打包与验证脚本通过 zsh 语法检查；提交后重新执行原生 arm64 Release 打包、深度签名验证、包内 Git SHA 校验、无备份覆盖安装，并刷新 LaunchServices 与 Spotlight 索引。此阶段只修复安装包元数据，不启动 ChatOS、不访问活动用户数据库。
+
 ### 12.115—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
