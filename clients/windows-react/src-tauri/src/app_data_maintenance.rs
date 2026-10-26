@@ -9,6 +9,7 @@ use crate::app_owned_export::try_remove_stale_owned_file;
 
 const STALE_APP_DATA_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const MAXIMUM_ENTRIES_PER_SCOPE: usize = 2_000;
+const MAXIMUM_ENTRIES_PER_TEMPORARY_TREE: usize = 20_000;
 
 const PREFERENCE_PREFIXES: &[&str] =
     &[".general-settings-", ".global-utilities-", ".quick-search-"];
@@ -54,9 +55,22 @@ const CLEANUP_SCOPES: &[CleanupScope] = &[
     },
 ];
 
+const DIRECTORY_CLEANUP_SCOPES: &[DirectoryCleanupScope] = &[
+    DirectoryCleanupScope {
+        components: &["NativeConnector", "Plugins", ".source-staging"],
+    },
+    DirectoryCleanupScope {
+        components: &["NativeConnector", "Plugins", ".staging"],
+    },
+];
+
 struct CleanupScope {
     components: &'static [&'static str],
     pattern: CleanupNamePattern,
+}
+
+struct DirectoryCleanupScope {
+    components: &'static [&'static str],
 }
 
 enum CleanupNamePattern {
@@ -79,10 +93,14 @@ fn cleanup_stale_temporaries_before(root: &Path, cutoff: SystemTime) -> usize {
     if !safe_directory(root) {
         return 0;
     }
-    CLEANUP_SCOPES
+    let files_removed = CLEANUP_SCOPES
         .iter()
         .map(|scope| cleanup_scope(root, scope, cutoff))
-        .fold(0usize, usize::saturating_add)
+        .fold(0usize, usize::saturating_add);
+    DIRECTORY_CLEANUP_SCOPES
+        .iter()
+        .map(|scope| cleanup_directory_scope(root, scope, cutoff))
+        .fold(files_removed, usize::saturating_add)
 }
 
 fn cleanup_scope(root: &Path, scope: &CleanupScope, cutoff: SystemTime) -> usize {
@@ -111,6 +129,138 @@ fn cleanup_scope(root: &Path, scope: &CleanupScope, cutoff: SystemTime) -> usize
         }
     }
     removed
+}
+
+fn cleanup_directory_scope(
+    root: &Path,
+    scope: &DirectoryCleanupScope,
+    cutoff: SystemTime,
+) -> usize {
+    let mut directory = root.to_path_buf();
+    for component in scope.components {
+        directory.push(component);
+        if !safe_directory(&directory) {
+            return 0;
+        }
+    }
+    let Ok(entries) = fs::read_dir(&directory) else {
+        return 0;
+    };
+    let mut removed = 0usize;
+    for (visited, entry) in entries.enumerate() {
+        if visited >= MAXIMUM_ENTRIES_PER_SCOPE {
+            break;
+        }
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let path = entry.path();
+        if canonical_uuid(&name)
+            && stale_owned_temporary_tree(&path, cutoff)
+            && fs::remove_dir_all(path).is_ok()
+        {
+            removed = removed.saturating_add(1);
+        }
+    }
+    removed
+}
+
+fn stale_owned_temporary_tree(root: &Path, cutoff: SystemTime) -> bool {
+    let mut pending = vec![root.to_path_buf()];
+    let mut visited = 0usize;
+    while let Some(path) = pending.pop() {
+        visited = visited.saturating_add(1);
+        if visited > MAXIMUM_ENTRIES_PER_TEMPORARY_TREE {
+            return false;
+        }
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            return false;
+        };
+        if metadata.file_type().is_symlink()
+            || is_windows_reparse_point(&metadata)
+            || !metadata.modified().is_ok_and(|modified| modified <= cutoff)
+        {
+            return false;
+        }
+        if metadata.is_file() {
+            if !single_link_regular_file(&path, &metadata) {
+                return false;
+            }
+            continue;
+        }
+        if !metadata.is_dir() {
+            return false;
+        }
+        let Ok(entries) = fs::read_dir(path) else {
+            return false;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return false;
+            };
+            pending.push(entry.path());
+        }
+    }
+    true
+}
+
+#[cfg(windows)]
+fn single_link_regular_file(path: &Path, _: &fs::Metadata) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        Storage::FileSystem::{
+            CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        },
+    };
+
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const OPEN_EXISTING: u32 = 3;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+    let wide = path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            0,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return false;
+    }
+    let mut information = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+    let valid = unsafe { GetFileInformationByHandle(handle, &mut information) } != 0;
+    let safe = valid
+        && information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)
+            == 0
+        && information.nNumberOfLinks == 1;
+    let _ = unsafe { CloseHandle(handle) };
+    safe
+}
+
+#[cfg(unix)]
+fn single_link_regular_file(_: &Path, metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    metadata.nlink() == 1
+}
+
+#[cfg(not(any(windows, unix)))]
+fn single_link_regular_file(_: &Path, _: &fs::Metadata) -> bool {
+    false
 }
 
 fn canonical_temporary_name(name: &str, pattern: &CleanupNamePattern) -> bool {
@@ -267,5 +417,51 @@ mod tests {
         assert!(committed_journal.exists());
         assert!(committed_integrity.exists());
         assert!(malformed_integrity.exists());
+    }
+
+    #[test]
+    fn plugin_cleanup_removes_only_stale_canonical_staging_trees() {
+        let root = tempdir().unwrap();
+        let token = "00000000-0000-0000-0000-000000000000";
+        let source_staging = root.path().join("NativeConnector/Plugins/.source-staging");
+        let install_staging = root.path().join("NativeConnector/Plugins/.staging");
+        let source_tree = source_staging.join(token).join("package/nested");
+        let install_tree = install_staging.join(token).join("package");
+        let malformed = install_staging.join("NOT-A-UUID");
+        let linked_tree = source_staging
+            .join("11111111-1111-1111-1111-111111111111")
+            .join("package");
+        let committed = root
+            .path()
+            .join("NativeConnector/Plugins")
+            .join("a".repeat(64));
+        for directory in [
+            &source_tree,
+            &install_tree,
+            &malformed,
+            &linked_tree,
+            &committed,
+        ] {
+            fs::create_dir_all(directory).unwrap();
+            fs::write(directory.join("value.json"), b"value").unwrap();
+        }
+        let outside = root.path().join("outside.json");
+        fs::write(&outside, b"outside").unwrap();
+        fs::hard_link(&outside, linked_tree.join("linked.json")).unwrap();
+
+        assert_eq!(cleanup_stale_temporaries_before(root.path(), UNIX_EPOCH), 0);
+        assert_eq!(
+            cleanup_stale_temporaries_before(
+                root.path(),
+                SystemTime::now() + Duration::from_secs(1),
+            ),
+            2
+        );
+        assert!(!source_staging.join(token).exists());
+        assert!(!install_staging.join(token).exists());
+        assert!(malformed.exists());
+        assert!(linked_tree.exists());
+        assert!(outside.exists());
+        assert!(committed.exists());
     }
 }

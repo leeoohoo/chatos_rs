@@ -1360,4 +1360,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 95. [部分完成] Windows Agent Plugin per-run invocation journal 与 Plugin 安装完整性事务临时文件已纳入同一个启动后台清理链：扫描严格限定在 `NativeConnector/PluginRuntime/InvocationJournal` 和 `NativeConnector/Plugins/.integrity` 两个固定目录，每目录最多访问 2,000 项；前者只删除超过 24 小时的 `.<小写 UUID>.tmp`，后者只删除 `.<64 位小写 SHA-256>-<小写 UUID>.tmp`。已提交的 intent/integrity JSON、未知名称、symlink、Windows reparse 和多硬链接均保留；journal 的 hard-link 发布语义因此不会被清理器破坏。Windows Tauri 503 项发现、497 项通过、6 条环境集成测试 ignored，Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 和 NSIS 隔离原生启动 smoke 均通过。其余动态所有权目录与 per-run crash recovery 继续逐项审计。
 
+96. [部分完成] Windows Plugin 来源获取与安装提交的 staging 目录已纳入同一个启动后台清理链：严格限定在 `NativeConnector/Plugins/.source-staging/<小写 UUID>` 和 `.staging/<小写 UUID>`，只有整棵树全部超过 24 小时、最多 20,000 项且每项均为普通目录或单链接普通文件时才删除。任一近期写入、扫描错误、symlink、Windows reparse、多硬链接或特殊文件都会保留整棵树；非 canonical 目录、已提交的内容哈希版本目录及仍承载回滚语义的 `.backups` 均不处理。Windows Tauri 504 项发现、498 项通过、6 条环境集成测试 ignored，Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 和 NSIS 隔离原生启动 smoke 均通过。下一步单独设计 `.backups` 的崩溃恢复或回收判定，不能把可能仍是唯一旧版本的备份当普通缓存删除。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
