@@ -635,6 +635,8 @@ pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
 
 pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
     for statement in [
+        "DROP TABLE local_hook_output_blobs",
+        "DELETE FROM client_schema_migrations WHERE version = 40",
         "DROP TABLE local_hook_invocations",
         "DROP TABLE local_hook_events",
         "DELETE FROM client_schema_migrations WHERE version = 39",

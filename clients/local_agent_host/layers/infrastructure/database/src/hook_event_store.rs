@@ -5,9 +5,11 @@ use super::{ClientStorageError, SqliteClientStorage, SqliteResultExt};
 use async_trait::async_trait;
 use chatos_local_agent_ports::{
     LocalHookEventRecord, LocalHookEventSpec, LocalHookEventStore, LocalHookInvocationCompletion,
-    LocalHookInvocationRecord, LocalHookInvocationSpec,
+    LocalHookInvocationRecord, LocalHookInvocationSpec, LocalHookOutputBlobRecord,
 };
+use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqliteRow, Row};
+use std::{fs::OpenOptions, io::Write, path::Path};
 
 pub(super) const SCHEMA_V39: &[&str] = &[
     "CREATE TABLE local_hook_events (\
@@ -49,12 +51,41 @@ pub(super) const SCHEMA_V39: &[&str] = &[
      )",
 ];
 
+pub(super) const SCHEMA_V40: &[&str] = &[
+    "ALTER TABLE local_hook_invocations ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0 CHECK(duration_ms >= 0)",
+    "ALTER TABLE local_hook_invocations ADD COLUMN stdout_overflow INTEGER NOT NULL DEFAULT 0 CHECK(stdout_overflow IN (0, 1))",
+    "ALTER TABLE local_hook_invocations ADD COLUMN stderr_sha256 TEXT",
+    "ALTER TABLE local_hook_invocations ADD COLUMN stderr_bytes INTEGER NOT NULL DEFAULT 0 CHECK(stderr_bytes >= 0)",
+    "ALTER TABLE local_hook_invocations ADD COLUMN stderr_overflow INTEGER NOT NULL DEFAULT 0 CHECK(stderr_overflow IN (0, 1))",
+    "CREATE TABLE local_hook_output_blobs (\
+       blob_id TEXT PRIMARY KEY NOT NULL,\
+       invocation_id TEXT NOT NULL,\
+       stream TEXT NOT NULL CHECK(stream IN ('stdout','stderr')),\
+       sha256 TEXT NOT NULL,\
+       byte_count INTEGER NOT NULL CHECK(byte_count > 0),\
+       storage_ref TEXT NOT NULL UNIQUE,\
+       expires_at_unix_ms INTEGER NOT NULL,\
+       created_at_unix_ms INTEGER NOT NULL,\
+       FOREIGN KEY(invocation_id) REFERENCES local_hook_invocations(invocation_id) ON DELETE CASCADE,\
+       UNIQUE(invocation_id, stream)\
+     )",
+    "CREATE INDEX local_hook_output_blobs_expiry ON local_hook_output_blobs(\
+       expires_at_unix_ms, blob_id\
+     )",
+];
+
 const EVENT_SELECT: &str = "SELECT event_id, owner_user_id, event_type, subject_id, sequence, \
     payload_sha256, status, additional_context, created_at_unix_ms, updated_at_unix_ms \
     FROM local_hook_events";
 const INVOCATION_SELECT: &str = "SELECT invocation_id, event_id, bundle_id, hook_id, attempt, \
-    status, exit_code, timed_out, stdout_sha256, stdout_bytes, stderr_summary, \
+    status, exit_code, timed_out, duration_ms, stdout_sha256, stdout_bytes, stdout_overflow, \
+    stderr_sha256, stderr_bytes, stderr_overflow, stderr_summary, \
     additional_context, created_at_unix_ms, updated_at_unix_ms FROM local_hook_invocations";
+
+const OUTPUT_BLOB_SELECT: &str = "SELECT blob_id, invocation_id, stream, sha256, byte_count, \
+    storage_ref, expires_at_unix_ms, created_at_unix_ms FROM local_hook_output_blobs";
+const OUTPUT_SPILL_THRESHOLD_BYTES: usize = 16 * 1_024;
+const OUTPUT_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 
 #[async_trait]
 impl LocalHookEventStore for SqliteClientStorage {
@@ -255,8 +286,27 @@ impl LocalHookEventStore for SqliteClientStorage {
         now_unix_ms: i64,
     ) -> Result<LocalHookInvocationRecord, ClientStorageError> {
         validate_completion(completion)?;
-        let mut connection = self.acquire_write().await.db()?;
-        Self::begin_immediate(&mut connection).await?;
+        let prepared_blobs = prepare_output_blobs(
+            self.hook_output_root.clone(),
+            invocation_id.to_string(),
+            expected_attempt,
+            completion.clone(),
+            now_unix_ms,
+        )
+        .await?;
+        let mut connection = match self.acquire_write().await.db() {
+            Ok(connection) => connection,
+            Err(error) => {
+                cleanup_created_blobs(&prepared_blobs).await;
+                return Err(error);
+            }
+        };
+        if let Err(error) = Self::begin_immediate(&mut connection).await {
+            cleanup_created_blobs(&prepared_blobs).await;
+            return Err(error);
+        }
+        let mut expired_storage_refs = Vec::new();
+        let mut blobs_committed = false;
         let result = async {
             let current = fetch_invocation(&mut connection, invocation_id)
                 .await?
@@ -271,17 +321,21 @@ impl LocalHookEventStore for SqliteClientStorage {
             }
             let changed = sqlx::query(
                 "UPDATE local_hook_invocations SET status = ?, exit_code = ?, timed_out = ?, \
-                 stdout_sha256 = ?, stdout_bytes = ?, stderr_summary = ?, \
+                 duration_ms = ?, stdout_sha256 = ?, stdout_bytes = ?, stdout_overflow = ?, \
+                 stderr_sha256 = ?, stderr_bytes = ?, stderr_overflow = ?, stderr_summary = ?, \
                  additional_context = ?, updated_at_unix_ms = ? \
                  WHERE invocation_id = ? AND attempt = ? AND status = 'running'",
             )
             .bind(&completion.status)
             .bind(completion.exit_code)
             .bind(completion.timed_out)
+            .bind(to_i64(completion.duration_ms, "Hook duration")?)
             .bind(&completion.stdout_sha256)
-            .bind(i64::try_from(completion.stdout_bytes).map_err(|_| {
-                ClientStorageError::InvalidState("Hook stdout size overflow".to_string())
-            })?)
+            .bind(to_i64(completion.stdout_bytes, "Hook stdout size")?)
+            .bind(completion.stdout_overflow)
+            .bind(&completion.stderr_sha256)
+            .bind(to_i64(completion.stderr_bytes, "Hook stderr size")?)
+            .bind(completion.stderr_overflow)
             .bind(&completion.stderr_summary)
             .bind(&completion.additional_context)
             .bind(now_unix_ms)
@@ -295,12 +349,67 @@ impl LocalHookEventStore for SqliteClientStorage {
                     "Hook invocation changed while completing: {invocation_id}"
                 )));
             }
+            for prepared in &prepared_blobs {
+                sqlx::query(
+                    "INSERT INTO local_hook_output_blobs(\
+                     blob_id, invocation_id, stream, sha256, byte_count, storage_ref, \
+                     expires_at_unix_ms, created_at_unix_ms) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&prepared.record.blob_id)
+                .bind(&prepared.record.invocation_id)
+                .bind(&prepared.record.stream)
+                .bind(&prepared.record.sha256)
+                .bind(to_i64(prepared.record.byte_count, "Hook output blob size")?)
+                .bind(&prepared.record.storage_ref)
+                .bind(prepared.record.expires_at_unix_ms)
+                .bind(prepared.record.created_at_unix_ms)
+                .execute(&mut *connection)
+                .await
+                .db()?;
+            }
+            blobs_committed = true;
+            expired_storage_refs = sqlx::query_scalar(
+                "SELECT storage_ref FROM local_hook_output_blobs WHERE expires_at_unix_ms <= ?",
+            )
+            .bind(now_unix_ms)
+            .fetch_all(&mut *connection)
+            .await
+            .db()?;
+            sqlx::query("DELETE FROM local_hook_output_blobs WHERE expires_at_unix_ms <= ?")
+                .bind(now_unix_ms)
+                .execute(&mut *connection)
+                .await
+                .db()?;
             fetch_invocation(&mut connection, invocation_id)
                 .await?
                 .ok_or_else(|| ClientStorageError::NotFound(invocation_id.to_string()))
         }
         .await;
-        Self::finish_write(&mut connection, result).await
+        let result = Self::finish_write(&mut connection, result).await;
+        drop(connection);
+        if result.is_err() || !blobs_committed {
+            cleanup_created_blobs(&prepared_blobs).await;
+        } else {
+            cleanup_expired_blobs(&self.hook_output_root, &expired_storage_refs).await;
+        }
+        result
+    }
+
+    async fn list_hook_output_blobs(
+        &self,
+        invocation_id: &str,
+    ) -> Result<Vec<LocalHookOutputBlobRecord>, ClientStorageError> {
+        validate_output_identifier("invocation_id", invocation_id)?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "{OUTPUT_BLOB_SELECT} WHERE invocation_id = ? ORDER BY stream"
+        )))
+        .bind(invocation_id)
+        .fetch_all(&self.pool)
+        .await
+        .db()?
+        .into_iter()
+        .map(decode_output_blob)
+        .collect()
     }
 
     async fn complete_hook_event(
@@ -360,6 +469,41 @@ impl LocalHookEventStore for SqliteClientStorage {
     }
 }
 
+impl SqliteClientStorage {
+    pub(super) async fn prune_hook_output_blobs(
+        &self,
+        now_unix_ms: i64,
+    ) -> Result<(), ClientStorageError> {
+        let mut connection = self.acquire_write().await.db()?;
+        Self::begin_immediate(&mut connection).await?;
+        let result = async {
+            let expired: Vec<String> = sqlx::query_scalar(
+                "SELECT storage_ref FROM local_hook_output_blobs WHERE expires_at_unix_ms <= ?",
+            )
+            .bind(now_unix_ms)
+            .fetch_all(&mut *connection)
+            .await
+            .db()?;
+            sqlx::query("DELETE FROM local_hook_output_blobs WHERE expires_at_unix_ms <= ?")
+                .bind(now_unix_ms)
+                .execute(&mut *connection)
+                .await
+                .db()?;
+            Ok(expired)
+        }
+        .await;
+        let expired = Self::finish_write(&mut connection, result).await?;
+        drop(connection);
+        cleanup_expired_blobs(&self.hook_output_root, &expired).await;
+        let retained: Vec<String> =
+            sqlx::query_scalar("SELECT storage_ref FROM local_hook_output_blobs")
+                .fetch_all(&self.pool)
+                .await
+                .db()?;
+        cleanup_unreferenced_output_files(self.hook_output_root.clone(), retained).await
+    }
+}
+
 fn validate_event(event: &LocalHookEventSpec) -> Result<(), ClientStorageError> {
     for (name, value) in [
         ("event_id", event.event_id.as_str()),
@@ -409,6 +553,10 @@ fn validate_completion(
         .as_deref()
         .is_some_and(|value| !is_sha256(value))
         || completion
+            .stderr_sha256
+            .as_deref()
+            .is_some_and(|value| !is_sha256(value))
+        || completion
             .stderr_summary
             .as_ref()
             .map(String::len)
@@ -424,6 +572,60 @@ fn validate_completion(
         return Err(ClientStorageError::InvalidState(
             "invalid Hook invocation output".to_string(),
         ));
+    }
+    validate_spill(
+        "stdout",
+        completion.stdout_bytes,
+        completion.stdout_sha256.as_deref(),
+        completion.stdout_spill.as_ref(),
+        512 * 1_024,
+    )?;
+    validate_spill(
+        "stderr",
+        completion.stderr_bytes,
+        completion.stderr_sha256.as_deref(),
+        completion.stderr_spill.as_ref(),
+        64 * 1_024,
+    )?;
+    Ok(())
+}
+
+fn validate_spill(
+    stream: &str,
+    byte_count: u64,
+    expected_sha256: Option<&str>,
+    spill: Option<&chatos_local_agent_ports::LocalHookOutputSpill>,
+    maximum_bytes: usize,
+) -> Result<(), ClientStorageError> {
+    let byte_count = usize::try_from(byte_count)
+        .map_err(|_| ClientStorageError::InvalidState(format!("Hook {stream} size overflow")))?;
+    if byte_count > maximum_bytes {
+        return Err(ClientStorageError::InvalidState(format!(
+            "Hook {stream} exceeds its capture limit"
+        )));
+    }
+    if byte_count != 0 && expected_sha256.is_none() {
+        return Err(ClientStorageError::InvalidState(format!(
+            "Hook {stream} hash is missing"
+        )));
+    }
+    let should_spill = byte_count > OUTPUT_SPILL_THRESHOLD_BYTES;
+    if spill.is_some() != should_spill {
+        return Err(ClientStorageError::InvalidState(format!(
+            "Hook {stream} spill does not match the inline threshold"
+        )));
+    }
+    let Some(spill) = spill else { return Ok(()) };
+    if spill.byte_count() != byte_count {
+        return Err(ClientStorageError::InvalidState(format!(
+            "Hook {stream} spill size does not match"
+        )));
+    }
+    let digest = format!("{:x}", Sha256::digest(spill.as_bytes()));
+    if expected_sha256 != Some(digest.as_str()) {
+        return Err(ClientStorageError::InvalidState(format!(
+            "Hook {stream} spill hash does not match"
+        )));
     }
     Ok(())
 }
@@ -498,15 +700,208 @@ fn decode_invocation(row: SqliteRow) -> Result<LocalHookInvocationRecord, Client
         status: row.try_get("status").db()?,
         exit_code: row.try_get("exit_code").db()?,
         timed_out: row.try_get("timed_out").db()?,
+        duration_ms: to_u64(row.try_get("duration_ms").db()?, "Hook duration")?,
         stdout_sha256: row.try_get("stdout_sha256").db()?,
-        stdout_bytes: u64::try_from(row.try_get::<i64, _>("stdout_bytes").db()?).map_err(|_| {
-            ClientStorageError::InvalidState("invalid Hook stdout size".to_string())
-        })?,
+        stdout_bytes: to_u64(row.try_get("stdout_bytes").db()?, "Hook stdout size")?,
+        stdout_overflow: row.try_get("stdout_overflow").db()?,
+        stderr_sha256: row.try_get("stderr_sha256").db()?,
+        stderr_bytes: to_u64(row.try_get("stderr_bytes").db()?, "Hook stderr size")?,
+        stderr_overflow: row.try_get("stderr_overflow").db()?,
         stderr_summary: row.try_get("stderr_summary").db()?,
         additional_context: row.try_get("additional_context").db()?,
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
         updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
     })
+}
+
+#[derive(Debug)]
+struct PreparedOutputBlob {
+    record: LocalHookOutputBlobRecord,
+    path: std::path::PathBuf,
+    created: bool,
+}
+
+async fn prepare_output_blobs(
+    root: std::path::PathBuf,
+    invocation_id: String,
+    attempt: u32,
+    completion: LocalHookInvocationCompletion,
+    now_unix_ms: i64,
+) -> Result<Vec<PreparedOutputBlob>, ClientStorageError> {
+    tokio::task::spawn_blocking(move || {
+        let mut prepared = Vec::new();
+        for (stream, spill) in [
+            ("stdout", completion.stdout_spill.as_ref()),
+            ("stderr", completion.stderr_spill.as_ref()),
+        ] {
+            let Some(spill) = spill else { continue };
+            let expires_at_unix_ms =
+                now_unix_ms
+                    .checked_add(OUTPUT_RETENTION_MS)
+                    .ok_or_else(|| {
+                        ClientStorageError::InvalidState("Hook output expiry overflow".to_string())
+                    })?;
+            let blob_id = hook_output_blob_id(&invocation_id, attempt, stream, spill.as_bytes());
+            let storage_ref = format!("{blob_id}.hook-output");
+            let path = safe_output_path(&root, &storage_ref)?;
+            let created = write_output_file(&path, spill.as_bytes())?;
+            prepared.push(PreparedOutputBlob {
+                record: LocalHookOutputBlobRecord {
+                    blob_id,
+                    invocation_id: invocation_id.clone(),
+                    stream: stream.to_string(),
+                    sha256: format!("{:x}", Sha256::digest(spill.as_bytes())),
+                    byte_count: u64::try_from(spill.byte_count()).map_err(|_| {
+                        ClientStorageError::InvalidState(
+                            "Hook output blob size overflow".to_string(),
+                        )
+                    })?,
+                    storage_ref,
+                    expires_at_unix_ms,
+                    created_at_unix_ms: now_unix_ms,
+                },
+                path,
+                created,
+            });
+        }
+        Ok(prepared)
+    })
+    .await
+    .map_err(ClientStorageError::database)?
+}
+
+fn hook_output_blob_id(invocation_id: &str, attempt: u32, stream: &str, bytes: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(invocation_id.as_bytes());
+    digest.update([0]);
+    digest.update(attempt.to_be_bytes());
+    digest.update([0]);
+    digest.update(stream.as_bytes());
+    digest.update([0]);
+    digest.update(Sha256::digest(bytes));
+    format!("{:x}", digest.finalize())
+}
+
+fn safe_output_path(
+    root: &Path,
+    storage_ref: &str,
+) -> Result<std::path::PathBuf, ClientStorageError> {
+    let Some(blob_id) = storage_ref.strip_suffix(".hook-output") else {
+        return Err(ClientStorageError::InvalidState(
+            "invalid Hook output storage reference".to_string(),
+        ));
+    };
+    if !is_sha256(blob_id) || storage_ref.contains('/') || storage_ref.contains('\\') {
+        return Err(ClientStorageError::InvalidState(
+            "invalid Hook output storage reference".to_string(),
+        ));
+    }
+    Ok(root.join(storage_ref))
+}
+
+fn write_output_file(path: &Path, bytes: &[u8]) -> Result<bool, ClientStorageError> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(path) {
+        Ok(mut file) => {
+            file.write_all(bytes)
+                .and_then(|_| file.sync_all())
+                .map_err(ClientStorageError::database)?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = std::fs::symlink_metadata(path).map_err(ClientStorageError::database)?;
+            if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+                return Err(ClientStorageError::InvalidState(
+                    "Hook output path is not a regular file".to_string(),
+                ));
+            }
+            let existing = std::fs::read(path).map_err(ClientStorageError::database)?;
+            if existing != bytes {
+                return Err(ClientStorageError::Conflict(
+                    "Hook output blob identity contains different bytes".to_string(),
+                ));
+            }
+            Ok(false)
+        }
+        Err(error) => Err(ClientStorageError::database(error)),
+    }
+}
+
+async fn cleanup_created_blobs(prepared: &[PreparedOutputBlob]) {
+    for blob in prepared.iter().filter(|blob| blob.created) {
+        let _ = tokio::fs::remove_file(&blob.path).await;
+    }
+}
+
+async fn cleanup_expired_blobs(root: &Path, storage_refs: &[String]) {
+    for storage_ref in storage_refs {
+        let Ok(path) = safe_output_path(root, storage_ref) else {
+            continue;
+        };
+        let _ = tokio::fs::remove_file(path).await;
+    }
+}
+
+async fn cleanup_unreferenced_output_files(
+    root: std::path::PathBuf,
+    retained: Vec<String>,
+) -> Result<(), ClientStorageError> {
+    tokio::task::spawn_blocking(move || {
+        let retained = retained
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        for entry in std::fs::read_dir(&root).map_err(ClientStorageError::database)? {
+            let entry = entry.map_err(ClientStorageError::database)?;
+            let Some(name) = entry.file_name().to_str().map(ToString::to_string) else {
+                continue;
+            };
+            if retained.contains(&name) || safe_output_path(&root, &name).is_err() {
+                continue;
+            }
+            let metadata =
+                std::fs::symlink_metadata(entry.path()).map_err(ClientStorageError::database)?;
+            if metadata.file_type().is_file() && !metadata.file_type().is_symlink() {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(ClientStorageError::database)?
+}
+
+fn decode_output_blob(row: SqliteRow) -> Result<LocalHookOutputBlobRecord, ClientStorageError> {
+    Ok(LocalHookOutputBlobRecord {
+        blob_id: row.try_get("blob_id").db()?,
+        invocation_id: row.try_get("invocation_id").db()?,
+        stream: row.try_get("stream").db()?,
+        sha256: row.try_get("sha256").db()?,
+        byte_count: to_u64(row.try_get("byte_count").db()?, "Hook output blob size")?,
+        storage_ref: row.try_get("storage_ref").db()?,
+        expires_at_unix_ms: row.try_get("expires_at_unix_ms").db()?,
+        created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
+    })
+}
+
+fn validate_output_identifier(name: &str, value: &str) -> Result<(), ClientStorageError> {
+    if value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+        return Err(ClientStorageError::InvalidState(format!("invalid {name}")));
+    }
+    Ok(())
+}
+
+fn to_i64(value: u64, name: &str) -> Result<i64, ClientStorageError> {
+    i64::try_from(value).map_err(|_| ClientStorageError::InvalidState(format!("{name} overflow")))
+}
+
+fn to_u64(value: i64, name: &str) -> Result<u64, ClientStorageError> {
+    u64::try_from(value).map_err(|_| ClientStorageError::InvalidState(format!("invalid {name}")))
 }
 
 #[cfg(test)]
@@ -575,10 +970,17 @@ mod tests {
             status: "succeeded".to_string(),
             exit_code: Some(0),
             timed_out: false,
+            duration_ms: 12,
             stdout_sha256: Some("b".repeat(64)),
             stdout_bytes: 2,
+            stdout_overflow: false,
+            stderr_sha256: None,
+            stderr_bytes: 0,
+            stderr_overflow: false,
             stderr_summary: None,
             additional_context: Some("context".to_string()),
+            stdout_spill: None,
+            stderr_spill: None,
         };
         store
             .complete_hook_invocation(&invocation.invocation_id, 2, &completion, 40)
@@ -604,5 +1006,122 @@ mod tests {
                 .as_deref(),
             Some("context")
         );
+    }
+
+    #[tokio::test]
+    async fn large_hook_outputs_spill_outside_sqlite_and_expire() {
+        let store = SqliteClientStorage::connect_memory().await.expect("store");
+        let base_event = event();
+        store
+            .prepare_hook_event(&base_event, 10)
+            .await
+            .expect("event");
+        let invocation = LocalHookInvocationSpec {
+            invocation_id: "hook-invocation-large".to_string(),
+            event_id: base_event.event_id.clone(),
+            bundle_id: "bundle-large".to_string(),
+            hook_id: "hook-large".to_string(),
+        };
+        store
+            .begin_hook_invocation(&invocation, 20)
+            .await
+            .expect("begin");
+        let stdout = vec![b'x'; OUTPUT_SPILL_THRESHOLD_BYTES + 1];
+        let stderr = vec![b's'; OUTPUT_SPILL_THRESHOLD_BYTES + 2];
+        let completion = LocalHookInvocationCompletion {
+            status: "failed".to_string(),
+            exit_code: Some(1),
+            timed_out: false,
+            duration_ms: 45,
+            stdout_sha256: Some(format!("{:x}", Sha256::digest(&stdout))),
+            stdout_bytes: stdout.len() as u64,
+            stdout_overflow: false,
+            stderr_sha256: Some(format!("{:x}", Sha256::digest(&stderr))),
+            stderr_bytes: stderr.len() as u64,
+            stderr_overflow: false,
+            stderr_summary: Some("redacted diagnostic".to_string()),
+            additional_context: None,
+            stdout_spill: Some(chatos_local_agent_ports::LocalHookOutputSpill::new(
+                stdout.clone(),
+            )),
+            stderr_spill: Some(chatos_local_agent_ports::LocalHookOutputSpill::new(
+                stderr.clone(),
+            )),
+        };
+
+        let completed = store
+            .complete_hook_invocation(&invocation.invocation_id, 1, &completion, 100)
+            .await
+            .expect("complete");
+        assert_eq!(completed.duration_ms, 45);
+        assert_eq!(
+            completed.stderr_summary.as_deref(),
+            Some("redacted diagnostic")
+        );
+        let blobs = store
+            .list_hook_output_blobs(&invocation.invocation_id)
+            .await
+            .expect("blobs");
+        assert_eq!(blobs.len(), 2);
+        assert_eq!(blobs[0].stream, "stderr");
+        assert_eq!(blobs[1].stream, "stdout");
+        assert!(!format!("{blobs:?}").contains(&"s".repeat(128)));
+        let paths = blobs
+            .iter()
+            .map(|blob| store.hook_output_root.join(&blob.storage_ref))
+            .collect::<Vec<_>>();
+        assert_eq!(std::fs::read(&paths[0]).expect("stderr blob"), stderr);
+        assert_eq!(std::fs::read(&paths[1]).expect("stdout blob"), stdout);
+
+        let mut cleanup_event = event();
+        cleanup_event.event_id = "hook-event-cleanup".to_string();
+        cleanup_event.subject_id = "conversation-cleanup".to_string();
+        cleanup_event.sequence = 2;
+        store
+            .prepare_hook_event(&cleanup_event, 30)
+            .await
+            .expect("cleanup event");
+        let cleanup_invocation = LocalHookInvocationSpec {
+            invocation_id: "hook-invocation-cleanup".to_string(),
+            event_id: cleanup_event.event_id,
+            bundle_id: "bundle-cleanup".to_string(),
+            hook_id: "hook-cleanup".to_string(),
+        };
+        store
+            .begin_hook_invocation(&cleanup_invocation, 40)
+            .await
+            .expect("cleanup begin");
+        let cleanup_completion = LocalHookInvocationCompletion {
+            status: "succeeded".to_string(),
+            exit_code: Some(0),
+            timed_out: false,
+            duration_ms: 1,
+            stdout_sha256: Some(format!("{:x}", Sha256::digest([]))),
+            stdout_bytes: 0,
+            stdout_overflow: false,
+            stderr_sha256: None,
+            stderr_bytes: 0,
+            stderr_overflow: false,
+            stderr_summary: None,
+            additional_context: None,
+            stdout_spill: None,
+            stderr_spill: None,
+        };
+        store
+            .complete_hook_invocation(
+                &cleanup_invocation.invocation_id,
+                1,
+                &cleanup_completion,
+                100 + OUTPUT_RETENTION_MS,
+            )
+            .await
+            .expect("cleanup completion");
+
+        assert!(store
+            .list_hook_output_blobs(&invocation.invocation_id)
+            .await
+            .expect("expired blobs")
+            .is_empty());
+        assert!(paths.iter().all(|path| !path.exists()));
     }
 }

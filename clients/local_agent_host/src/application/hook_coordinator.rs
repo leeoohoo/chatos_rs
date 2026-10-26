@@ -9,7 +9,7 @@ use chatos_agent_profiles::{
 use chatos_ai_runtime::message_item;
 use chatos_local_agent_ports::{
     LocalHookEventSpec, LocalHookInvocationCompletion, LocalHookInvocationRecord,
-    LocalHookInvocationSpec,
+    LocalHookInvocationSpec, LocalHookOutputSpill,
 };
 use chatos_local_agent_protocol::{
     LocalAgentRunClaim, LocalAgentRunRecord, LocalAgentStepOutcome, LocalAgentToolCall,
@@ -32,6 +32,7 @@ use uuid::Uuid;
 const MAXIMUM_EVENT_CONTEXT_BYTES: usize = 512 * 1_024;
 const MAXIMUM_STDERR_SUMMARY_BYTES: usize = 4_096;
 const MAXIMUM_PARENT_DEPTH: usize = 64;
+const OUTPUT_SPILL_THRESHOLD_BYTES: usize = 16 * 1_024;
 
 /// Executes the trusted Codex-compatible lifecycle Hooks which must run before
 /// a model request. The durable runtime owns replay; this coordinator owns
@@ -575,10 +576,17 @@ impl LocalHookCoordinator {
                 status: "failed".to_string(),
                 exit_code: None,
                 timed_out: false,
+                duration_ms: 0,
                 stdout_sha256: None,
                 stdout_bytes: 0,
+                stdout_overflow: false,
+                stderr_sha256: None,
+                stderr_bytes: 0,
+                stderr_overflow: false,
                 stderr_summary: Some(safe_summary(error.as_bytes())),
                 additional_context: None,
+                stdout_spill: None,
+                stderr_spill: None,
             },
         };
         let completed = self
@@ -941,18 +949,24 @@ fn completion_from_result(
     result: &LocalHookInvocationResult,
 ) -> LocalHookInvocationCompletion {
     let stdout_sha256 = Some(sha256(&result.stdout));
+    let stderr_sha256 = (!result.stderr.is_empty()).then(|| sha256(&result.stderr));
     let mut completion = LocalHookInvocationCompletion {
         status: "failed".to_string(),
         exit_code: result.exit_code,
         timed_out: result.timed_out,
+        duration_ms: result.duration_ms,
         stdout_sha256,
         stdout_bytes: u64::try_from(result.stdout.len()).unwrap_or(u64::MAX),
-        stderr_summary: if result.stderr.is_empty() {
-            None
-        } else {
-            Some(safe_summary(&result.stderr))
-        },
+        stdout_overflow: result.stdout_overflow,
+        stderr_sha256,
+        stderr_bytes: u64::try_from(result.stderr.len()).unwrap_or(u64::MAX),
+        stderr_overflow: result.stderr_overflow,
+        stderr_summary: hook_diagnostic_summary(result),
         additional_context: None,
+        stdout_spill: (result.stdout.len() > OUTPUT_SPILL_THRESHOLD_BYTES)
+            .then(|| LocalHookOutputSpill::new(result.stdout.clone())),
+        stderr_spill: (result.stderr.len() > OUTPUT_SPILL_THRESHOLD_BYTES)
+            .then(|| LocalHookOutputSpill::new(result.stderr.clone())),
     };
     if result.timed_out
         || result.stdout_overflow
@@ -966,6 +980,7 @@ fn completion_from_result(
         return completion;
     }
     let Ok(output) = serde_json::from_slice::<HookOutput>(&result.stdout) else {
+        completion.stderr_summary = Some("Hook stdout was not valid protocol JSON".to_string());
         return completion;
     };
     if !output.r#continue {
@@ -1024,6 +1039,19 @@ fn completion_from_result(
         }
     }
     completion
+}
+
+fn hook_diagnostic_summary(result: &LocalHookInvocationResult) -> Option<String> {
+    if result.timed_out {
+        return Some("Hook execution timed out".to_string());
+    }
+    if result.stdout_overflow {
+        return Some("Hook stdout exceeded the 524288-byte capture limit".to_string());
+    }
+    if result.stderr_overflow {
+        return Some("Hook stderr exceeded the 65536-byte capture limit".to_string());
+    }
+    (!result.stderr.is_empty()).then(|| safe_summary(&result.stderr))
 }
 
 fn merge_outcomes(
@@ -1930,6 +1958,35 @@ mod tests {
 
         assert_eq!(completion.status, "succeeded");
         assert!(completion.additional_context.is_none());
+    }
+
+    #[test]
+    fn overflowed_hook_output_fails_with_a_safe_summary_and_redacted_spill() {
+        let hook = hook("overflow", "UserPromptSubmit", "overflow");
+        let result = LocalHookInvocationResult {
+            exit_code: Some(0),
+            stdout: vec![b'x'; 512 * 1_024],
+            stderr: b"private stderr must not become the summary".to_vec(),
+            stdout_overflow: true,
+            stderr_overflow: false,
+            timed_out: false,
+            duration_ms: 5,
+        };
+
+        let completion = completion_from_result("UserPromptSubmit", &hook, &result);
+
+        assert_eq!(completion.status, "failed");
+        assert_eq!(
+            completion.stderr_summary.as_deref(),
+            Some("Hook stdout exceeded the 524288-byte capture limit")
+        );
+        assert!(completion.stdout_spill.is_some());
+        assert!(!format!("{:?}", completion.stdout_spill).contains(&"x".repeat(64)));
+        assert!(!completion
+            .stderr_summary
+            .as_deref()
+            .unwrap()
+            .contains("private stderr"));
     }
 
     #[cfg(target_os = "macos")]

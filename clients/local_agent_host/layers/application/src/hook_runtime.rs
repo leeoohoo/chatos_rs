@@ -4,7 +4,7 @@
 use crate::{LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_local_agent_ports::{
     LocalHookEventRecord, LocalHookEventSpec, LocalHookInvocationCompletion,
-    LocalHookInvocationRecord, LocalHookInvocationSpec,
+    LocalHookInvocationRecord, LocalHookInvocationSpec, LocalHookOutputBlobRecord,
 };
 use chatos_local_agent_protocol::LocalPluginHookBundleRecord;
 
@@ -74,6 +74,14 @@ impl LocalAgentRuntime {
             .store
             .complete_hook_invocation(invocation_id, expected_attempt, completion, self.now()?)
             .await?)
+    }
+
+    #[doc(hidden)]
+    pub async fn list_hook_output_blobs_for_host_worker(
+        &self,
+        invocation_id: &str,
+    ) -> Result<Vec<LocalHookOutputBlobRecord>, LocalAgentRuntimeError> {
+        Ok(self.store.list_hook_output_blobs(invocation_id).await?)
     }
 
     #[doc(hidden)]
