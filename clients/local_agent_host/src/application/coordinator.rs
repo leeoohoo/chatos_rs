@@ -173,6 +173,9 @@ impl LocalAgentHostCoordinator {
         shutdown: watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
         if let Some(hooks) = self.hook_coordinator.as_ref() {
+            let _ = hooks
+                .abandon_interrupted_async_invocations(&self.owner_user_id)
+                .await;
             let _ = hooks.recover_pending_events(&self.owner_user_id).await;
         }
         let result = if self.memory_sync_worker.is_none() {

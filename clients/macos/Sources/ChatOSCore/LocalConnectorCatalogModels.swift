@@ -165,6 +165,7 @@ public struct LocalConnectorPluginInspectionComponent: Codable, Identifiable, Se
     public var toolNames: [String]
     public var hookDialect: String?
     public var hookEvents: [String]
+    public var hookAsyncEvents: [String]
     public var hookCommands: [String]
     public var hookRuntimes: [String]
 
@@ -177,6 +178,7 @@ public struct LocalConnectorPluginInspectionComponent: Codable, Identifiable, Se
         toolNames: [String],
         hookDialect: String? = nil,
         hookEvents: [String] = [],
+        hookAsyncEvents: [String] = [],
         hookCommands: [String] = [],
         hookRuntimes: [String] = []
     ) {
@@ -186,6 +188,7 @@ public struct LocalConnectorPluginInspectionComponent: Codable, Identifiable, Se
         self.toolNames = toolNames
         self.hookDialect = hookDialect
         self.hookEvents = hookEvents
+        self.hookAsyncEvents = hookAsyncEvents
         self.hookCommands = hookCommands
         self.hookRuntimes = hookRuntimes
     }
@@ -198,12 +201,14 @@ public struct LocalConnectorPluginInspectionComponent: Codable, Identifiable, Se
         toolNames = try container.decodeIfPresent([String].self, forKey: .toolNames) ?? []
         hookDialect = try container.decodeIfPresent(String.self, forKey: .hookDialect)
         hookEvents = try container.decodeIfPresent([String].self, forKey: .hookEvents) ?? []
+        hookAsyncEvents = try container.decodeIfPresent([String].self, forKey: .hookAsyncEvents) ?? []
         hookCommands = try container.decodeIfPresent([String].self, forKey: .hookCommands) ?? []
         hookRuntimes = try container.decodeIfPresent([String].self, forKey: .hookRuntimes) ?? []
     }
 
     private enum CodingKeys: String, CodingKey {
-        case componentKey, displayName, kind, toolNames, hookDialect, hookEvents, hookCommands
+        case componentKey, displayName, kind, toolNames, hookDialect, hookEvents, hookAsyncEvents
+        case hookCommands
         case hookRuntimes
     }
 }

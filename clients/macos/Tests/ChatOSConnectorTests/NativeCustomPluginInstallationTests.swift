@@ -495,6 +495,7 @@ struct NativeCustomPluginInstallationTests {
                     "type": "command",
                     "command": command,
                     "timeout": 5,
+                    "async": true,
                     "statusMessage": "Loading mode",
                 ]],
             ]],
@@ -529,6 +530,7 @@ struct NativeCustomPluginInstallationTests {
         let hook = try #require(inspection.components.first(where: { $0.kind == .hook }))
         #expect(hook.hookDialect == "codex")
         #expect(hook.hookEvents == ["SessionStart", "SubagentStart", "UserPromptSubmit"])
+        #expect(hook.hookAsyncEvents == ["SessionStart"])
         #expect(hook.hookCommands.count == 3)
         #expect(hook.hookCommands.first == command)
         #expect(hook.hookRuntimes.count == 1)
@@ -548,6 +550,7 @@ struct NativeCustomPluginInstallationTests {
         #expect(trust.permissionSnapshotSHA256.count == 64)
         #expect(trust.permissions == ["process.spawn", "workspace.read"])
         #expect(trust.hooks.count == 3)
+        #expect(trust.hooks.filter(\.isAsync).map(\.event) == ["SessionStart"])
 
         let host = HookBundleHostStub()
         await service.setLocalAgentCompanionServices(
@@ -560,6 +563,7 @@ struct NativeCustomPluginInstallationTests {
         #expect(published.count == 1)
         #expect(published.first?["bundle_id"] == trust.bundleID)
         #expect(published.first?["artifact_sha256"] == trust.artifactSHA256)
+        #expect(await host.publishedAsyncFlags() == [true, false, false])
         #expect(await host.activeBundleIDs() == [trust.bundleID])
 
         try Data(#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node changed.js"}]}]}}"#.utf8)
@@ -648,11 +652,25 @@ struct NativeCustomPluginInstallationTests {
         #expect(trust.permissions == ["process.spawn", "workspace.read"])
     }
 
-    @Test("Codex Hook parser rejects unsupported async handlers and path escapes")
-    func codexHookParserRejectsUnsafeInputs() throws {
+    @Test("Codex Hook parser preserves async handlers and rejects invalid flags and path escapes")
+    func codexHookParserValidatesAsyncAndUnsafeInputs() throws {
         let async = Data(#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node hook.js","async":true}]}]}}"#.utf8)
+        let parsed = try NativeCodexHookBundleParser.parse(async)
+        #expect(parsed.hooks.count == 1)
+        #expect(parsed.hooks.first?.isAsync == true)
+        let legacyTrustedHook = try JSONDecoder().decode(
+            NativeCodexHookDefinition.self,
+            from: Data(#"{"hook_id":"legacy","event":"SessionStart","command":"node hook.js","timeout_seconds":5,"additional_context_limit":65536}"#.utf8)
+        )
+        #expect(legacyTrustedHook.isAsync == false)
+
+        let invalidAsync = Data(#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node hook.js","async":1}]}]}}"#.utf8)
         #expect(throws: NativeConnectorError.self) {
-            _ = try NativeCodexHookBundleParser.parse(async)
+            _ = try NativeCodexHookBundleParser.parse(invalidAsync)
+        }
+        let unsupportedRewake = Data(#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node hook.js","asyncRewake":true}]}]}}"#.utf8)
+        #expect(throws: NativeConnectorError.self) {
+            _ = try NativeCodexHookBundleParser.parse(unsupportedRewake)
         }
 
         let root = FileManager.default.temporaryDirectory
@@ -972,6 +990,7 @@ private struct CustomPluginRejectingTicketProvider: LocalConnectorPairingTicketP
 private actor HookBundleHostStub: LocalAgentHostClientServicing {
     private var bundles: [[String: String]] = []
     private var activeIDs: [String] = []
+    private var asyncFlags: [Bool] = []
 
     func start(ownerUserID: String) async throws {}
     func stop() async {}
@@ -997,6 +1016,9 @@ private actor HookBundleHostStub: LocalAgentHostClientServicing {
             "bundle_id": bundleID,
             "artifact_sha256": bundle["artifact_sha256"] as? String ?? "",
         ])
+        asyncFlags = (bundle["hooks"] as? [[String: Any]] ?? []).map {
+            $0["is_async"] as? Bool ?? false
+        }
         return try JSONSerialization.data(withJSONObject: [
             "type": "plugin_hook_bundle",
             "bundle": ["bundle_id": bundleID],
@@ -1005,4 +1027,5 @@ private actor HookBundleHostStub: LocalAgentHostClientServicing {
 
     func publishedBundles() -> [[String: String]] { bundles }
     func activeBundleIDs() -> [String] { activeIDs }
+    func publishedAsyncFlags() -> [Bool] { asyncFlags }
 }

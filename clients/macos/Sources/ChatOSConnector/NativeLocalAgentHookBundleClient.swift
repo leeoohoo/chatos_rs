@@ -135,6 +135,7 @@ private struct WireHook: Encodable, Sendable {
     var event: String
     var matcher: String?
     var command: String
+    var isAsync: Bool
     var timeoutMs: UInt64
     var additionalContextLimit: UInt64
 
@@ -143,6 +144,7 @@ private struct WireHook: Encodable, Sendable {
         event = hook.event
         matcher = hook.matcher
         command = hook.command
+        isAsync = hook.isAsync
         timeoutMs = UInt64((hook.timeoutSeconds * 1_000).rounded())
         additionalContextLimit = UInt64(hook.additionalContextLimit)
     }
@@ -150,6 +152,7 @@ private struct WireHook: Encodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case event, matcher, command
         case hookID = "hook_id"
+        case isAsync = "is_async"
         case timeoutMs = "timeout_ms"
         case additionalContextLimit = "additional_context_limit"
     }

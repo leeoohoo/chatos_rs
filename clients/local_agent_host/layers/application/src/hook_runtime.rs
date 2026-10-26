@@ -3,8 +3,9 @@
 
 use crate::{LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_local_agent_ports::{
-    LocalHookEventRecord, LocalHookEventSpec, LocalHookInvocationCompletion,
-    LocalHookInvocationRecord, LocalHookInvocationSpec, LocalHookOutputBlobRecord,
+    LocalAsyncHookContextRecord, LocalHookEventRecord, LocalHookEventSpec,
+    LocalHookInvocationCompletion, LocalHookInvocationRecord, LocalHookInvocationSpec,
+    LocalHookOutputBlobRecord,
 };
 use chatos_local_agent_protocol::LocalPluginHookBundleRecord;
 
@@ -106,6 +107,31 @@ impl LocalAgentRuntime {
         invocation_id: &str,
     ) -> Result<Vec<LocalHookOutputBlobRecord>, LocalAgentRuntimeError> {
         Ok(self.store.list_hook_output_blobs(invocation_id).await?)
+    }
+
+    #[doc(hidden)]
+    pub async fn claim_async_hook_contexts_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        session_id: &str,
+        delivery_key: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalAsyncHookContextRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .claim_async_hook_contexts(owner_user_id, session_id, delivery_key, limit, self.now()?)
+            .await?)
+    }
+
+    #[doc(hidden)]
+    pub async fn abandon_running_async_hook_invocations_for_host_worker(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<u64, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .abandon_running_async_hook_invocations(owner_user_id, self.now()?)
+            .await?)
     }
 
     #[doc(hidden)]

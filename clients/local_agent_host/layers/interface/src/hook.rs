@@ -14,6 +14,8 @@ pub struct LocalPluginHookDefinition {
     pub event: String,
     pub matcher: Option<String>,
     pub command: String,
+    #[serde(default)]
+    pub is_async: bool,
     pub timeout_ms: u64,
     pub additional_context_limit: u64,
 }
@@ -239,6 +241,7 @@ mod tests {
                 event: "SessionStart".to_string(),
                 matcher: None,
                 command: "node hook.js".to_string(),
+                is_async: false,
                 timeout_ms: 5_000,
                 additional_context_limit: 65_536,
             }],

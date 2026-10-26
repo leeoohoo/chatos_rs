@@ -4,8 +4,9 @@
 use super::{ClientStorageError, SqliteClientStorage, SqliteResultExt};
 use async_trait::async_trait;
 use chatos_local_agent_ports::{
-    LocalHookEventRecord, LocalHookEventSpec, LocalHookEventStore, LocalHookInvocationCompletion,
-    LocalHookInvocationRecord, LocalHookInvocationSpec, LocalHookOutputBlobRecord,
+    LocalAsyncHookContextRecord, LocalHookEventRecord, LocalHookEventSpec, LocalHookEventStore,
+    LocalHookInvocationCompletion, LocalHookInvocationRecord, LocalHookInvocationSpec,
+    LocalHookOutputBlobRecord,
 };
 use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqliteRow, Row};
@@ -83,14 +84,27 @@ pub(super) const SCHEMA_V41: &[&str] = &[
      )",
 ];
 
+pub(super) const SCHEMA_V42: &[&str] = &[
+    "ALTER TABLE local_hook_invocations ADD COLUMN is_async INTEGER NOT NULL DEFAULT 0 CHECK(is_async IN (0, 1))",
+    "ALTER TABLE local_hook_invocations ADD COLUMN async_delivery_key TEXT",
+    "CREATE INDEX local_hook_events_async_session ON local_hook_events(\
+       owner_user_id, CASE WHEN json_valid(payload_json) \
+       THEN json_extract(payload_json, '$.session_id') END, event_id\
+     )",
+    "CREATE INDEX local_hook_invocations_async_delivery ON local_hook_invocations(\
+       event_id, is_async, status, async_delivery_key, updated_at_unix_ms, invocation_id\
+     )",
+];
+
 const EVENT_SELECT: &str = "SELECT event_id, owner_user_id, event_type, subject_id, sequence, \
     payload_sha256, payload_json, matcher_value, active_bundle_ids_json, status, \
     additional_context, created_at_unix_ms, updated_at_unix_ms \
     FROM local_hook_events";
 const INVOCATION_SELECT: &str = "SELECT invocation_id, event_id, bundle_id, hook_id, attempt, \
-    status, exit_code, timed_out, duration_ms, stdout_sha256, stdout_bytes, stdout_overflow, \
+    is_async, status, exit_code, timed_out, duration_ms, stdout_sha256, stdout_bytes, stdout_overflow, \
     stderr_sha256, stderr_bytes, stderr_overflow, stderr_summary, \
-    additional_context, created_at_unix_ms, updated_at_unix_ms FROM local_hook_invocations";
+    additional_context, async_delivery_key, created_at_unix_ms, updated_at_unix_ms \
+    FROM local_hook_invocations";
 
 const OUTPUT_BLOB_SELECT: &str = "SELECT blob_id, invocation_id, stream, sha256, byte_count, \
     storage_ref, expires_at_unix_ms, created_at_unix_ms FROM local_hook_output_blobs";
@@ -298,15 +312,16 @@ impl LocalHookEventStore for SqliteClientStorage {
             }
             sqlx::query(
                 "INSERT INTO local_hook_invocations(\
-                 invocation_id, event_id, bundle_id, hook_id, attempt, status, exit_code, \
+                 invocation_id, event_id, bundle_id, hook_id, is_async, attempt, status, exit_code, \
                  timed_out, stdout_sha256, stdout_bytes, stderr_summary, additional_context, \
                  created_at_unix_ms, updated_at_unix_ms) \
-                 VALUES(?, ?, ?, ?, 1, 'running', NULL, 0, NULL, 0, NULL, NULL, ?, ?)",
+                 VALUES(?, ?, ?, ?, ?, 1, 'running', NULL, 0, NULL, 0, NULL, NULL, ?, ?)",
             )
             .bind(&invocation.invocation_id)
             .bind(&invocation.event_id)
             .bind(&invocation.bundle_id)
             .bind(&invocation.hook_id)
+            .bind(invocation.is_async)
             .bind(now_unix_ms)
             .bind(now_unix_ms)
             .execute(&mut *connection)
@@ -454,6 +469,141 @@ impl LocalHookEventStore for SqliteClientStorage {
         .collect()
     }
 
+    async fn claim_async_hook_contexts(
+        &self,
+        owner_user_id: &str,
+        session_id: &str,
+        delivery_key: &str,
+        limit: u32,
+        now_unix_ms: i64,
+    ) -> Result<Vec<LocalAsyncHookContextRecord>, ClientStorageError> {
+        for (name, value) in [
+            ("owner_user_id", owner_user_id),
+            ("session_id", session_id),
+            ("delivery_key", delivery_key),
+        ] {
+            if value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+                return Err(ClientStorageError::InvalidState(format!(
+                    "invalid async Hook {name}"
+                )));
+            }
+        }
+        if !(1..=256).contains(&limit) || now_unix_ms < 0 {
+            return Err(ClientStorageError::InvalidState(
+                "invalid async Hook context claim".to_string(),
+            ));
+        }
+        let available: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM local_hook_events e \
+             INNER JOIN local_hook_invocations i ON i.event_id = e.event_id \
+             WHERE e.owner_user_id = ? AND CASE WHEN json_valid(e.payload_json) \
+             THEN json_extract(e.payload_json, '$.session_id') END = ? \
+             AND i.is_async = 1 AND i.status = 'succeeded' \
+             AND i.additional_context IS NOT NULL \
+             AND (i.async_delivery_key IS NULL OR i.async_delivery_key = ?))",
+        )
+        .bind(owner_user_id)
+        .bind(session_id)
+        .bind(delivery_key)
+        .fetch_one(&self.pool)
+        .await
+        .db()?;
+        if !available {
+            return Ok(Vec::new());
+        }
+        let mut connection = self.acquire_write().await.db()?;
+        Self::begin_immediate(&mut connection).await?;
+        let result = async {
+            let rows = sqlx::query(
+                "SELECT i.invocation_id, i.event_id, e.event_type, i.bundle_id, i.hook_id, \
+                 i.additional_context, i.async_delivery_key \
+                 FROM local_hook_invocations i \
+                 INNER JOIN local_hook_events e ON e.event_id = i.event_id \
+                 WHERE e.owner_user_id = ? AND CASE WHEN json_valid(e.payload_json) \
+                 THEN json_extract(e.payload_json, '$.session_id') END = ? \
+                 AND i.is_async = 1 AND i.status = 'succeeded' \
+                 AND i.additional_context IS NOT NULL \
+                 AND (i.async_delivery_key IS NULL OR i.async_delivery_key = ?) \
+                 ORDER BY i.updated_at_unix_ms, i.invocation_id LIMIT ?",
+            )
+            .bind(owner_user_id)
+            .bind(session_id)
+            .bind(delivery_key)
+            .bind(i64::from(limit))
+            .fetch_all(&mut *connection)
+            .await
+            .db()?;
+            let mut contexts = Vec::with_capacity(rows.len());
+            for row in rows {
+                let invocation_id: String = row.try_get("invocation_id").db()?;
+                let existing_key: Option<String> = row.try_get("async_delivery_key").db()?;
+                if existing_key.is_none() {
+                    let changed = sqlx::query(
+                        "UPDATE local_hook_invocations SET async_delivery_key = ? \
+                         WHERE invocation_id = ? \
+                         AND async_delivery_key IS NULL",
+                    )
+                    .bind(delivery_key)
+                    .bind(&invocation_id)
+                    .execute(&mut *connection)
+                    .await
+                    .db()?;
+                    if changed.rows_affected() != 1 {
+                        return Err(ClientStorageError::Conflict(format!(
+                            "async Hook context changed while claiming: {invocation_id}"
+                        )));
+                    }
+                }
+                contexts.push(LocalAsyncHookContextRecord {
+                    invocation_id,
+                    event_id: row.try_get("event_id").db()?,
+                    event_type: row.try_get("event_type").db()?,
+                    bundle_id: row.try_get("bundle_id").db()?,
+                    hook_id: row.try_get("hook_id").db()?,
+                    additional_context: row.try_get("additional_context").db()?,
+                    async_delivery_key: delivery_key.to_string(),
+                });
+            }
+            Ok(contexts)
+        }
+        .await;
+        Self::finish_write(&mut connection, result).await
+    }
+
+    async fn abandon_running_async_hook_invocations(
+        &self,
+        owner_user_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<u64, ClientStorageError> {
+        if owner_user_id.trim().is_empty()
+            || owner_user_id.len() > 256
+            || owner_user_id.chars().any(char::is_control)
+            || now_unix_ms < 0
+        {
+            return Err(ClientStorageError::InvalidState(
+                "invalid abandoned async Hook query".to_string(),
+            ));
+        }
+        let mut connection = self.acquire_write().await.db()?;
+        Self::begin_immediate(&mut connection).await?;
+        let result = async {
+            let result = sqlx::query(
+                "UPDATE local_hook_invocations SET status = 'failed', \
+                 stderr_summary = 'Host stopped before async Hook completion', \
+                 updated_at_unix_ms = ? WHERE is_async = 1 AND status = 'running' \
+                 AND event_id IN (SELECT event_id FROM local_hook_events WHERE owner_user_id = ?)",
+            )
+            .bind(now_unix_ms)
+            .bind(owner_user_id)
+            .execute(&mut *connection)
+            .await
+            .db()?;
+            Ok(result.rows_affected())
+        }
+        .await;
+        Self::finish_write(&mut connection, result).await
+    }
+
     async fn complete_hook_event(
         &self,
         event_id: &str,
@@ -481,7 +631,7 @@ impl LocalHookEventStore for SqliteClientStorage {
             }
             let running: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM local_hook_invocations \
-                 WHERE event_id = ? AND status = 'running'",
+                 WHERE event_id = ? AND status = 'running' AND is_async = 0",
             )
             .bind(event_id)
             .fetch_one(&mut *connection)
@@ -766,6 +916,7 @@ fn decode_invocation(row: SqliteRow) -> Result<LocalHookInvocationRecord, Client
             event_id: row.try_get("event_id").db()?,
             bundle_id: row.try_get("bundle_id").db()?,
             hook_id: row.try_get("hook_id").db()?,
+            is_async: row.try_get("is_async").db()?,
         },
         attempt: u32::try_from(row.try_get::<i64, _>("attempt").db()?).map_err(|_| {
             ClientStorageError::InvalidState("invalid Hook invocation attempt".to_string())
@@ -782,6 +933,7 @@ fn decode_invocation(row: SqliteRow) -> Result<LocalHookInvocationRecord, Client
         stderr_overflow: row.try_get("stderr_overflow").db()?,
         stderr_summary: row.try_get("stderr_summary").db()?,
         additional_context: row.try_get("additional_context").db()?,
+        async_delivery_key: row.try_get("async_delivery_key").db()?,
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
         updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
     })
@@ -1037,6 +1189,7 @@ mod tests {
             event_id: event.event_id.clone(),
             bundle_id: "bundle-1".to_string(),
             hook_id: "hook-1".to_string(),
+            is_async: false,
         };
         let first = store
             .begin_hook_invocation(&invocation, 20)
@@ -1097,6 +1250,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn async_context_claim_is_iteration_stable_and_interrupted_work_is_not_replayed() {
+        let store = SqliteClientStorage::connect_memory().await.expect("store");
+        let mut async_event = event();
+        async_event.event_id = "hook-event-async".to_string();
+        async_event.subject_id = "run-async".to_string();
+        async_event.event_type = "Interrupt".to_string();
+        async_event.payload_json = r#"{"session_id":"conversation-async"}"#.to_string();
+        async_event.payload_sha256 =
+            format!("{:x}", Sha256::digest(async_event.payload_json.as_bytes()));
+        store
+            .prepare_hook_event(&async_event, 10)
+            .await
+            .expect("async event");
+        let completed_invocation = LocalHookInvocationSpec {
+            invocation_id: "hook-invocation-async-completed".to_string(),
+            event_id: async_event.event_id.clone(),
+            bundle_id: "bundle-async".to_string(),
+            hook_id: "hook-async".to_string(),
+            is_async: true,
+        };
+        store
+            .begin_hook_invocation(&completed_invocation, 20)
+            .await
+            .expect("begin async invocation");
+        store
+            .complete_hook_invocation(
+                &completed_invocation.invocation_id,
+                1,
+                &LocalHookInvocationCompletion {
+                    status: "succeeded".to_string(),
+                    exit_code: Some(0),
+                    timed_out: false,
+                    duration_ms: 10,
+                    stdout_sha256: Some("a".repeat(64)),
+                    stdout_bytes: 2,
+                    stdout_overflow: false,
+                    stderr_sha256: None,
+                    stderr_bytes: 0,
+                    stderr_overflow: false,
+                    stderr_summary: None,
+                    additional_context: Some(r#"{"additional_context":"background"}"#.to_string()),
+                    stdout_spill: None,
+                    stderr_spill: None,
+                },
+                30,
+            )
+            .await
+            .expect("complete async invocation");
+        let first = store
+            .claim_async_hook_contexts("user-1", "conversation-async", "delivery-1", 10, 40)
+            .await
+            .expect("claim async context");
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].async_delivery_key, "delivery-1");
+        assert_eq!(
+            store
+                .claim_async_hook_contexts("user-1", "conversation-async", "delivery-1", 10, 50,)
+                .await
+                .expect("same delivery replay"),
+            first
+        );
+        assert!(store
+            .claim_async_hook_contexts("user-1", "conversation-async", "delivery-2", 10, 60,)
+            .await
+            .expect("later delivery")
+            .is_empty());
+
+        let interrupted = LocalHookInvocationSpec {
+            invocation_id: "hook-invocation-async-interrupted".to_string(),
+            event_id: async_event.event_id,
+            bundle_id: "bundle-async".to_string(),
+            hook_id: "hook-interrupted".to_string(),
+            is_async: true,
+        };
+        store
+            .begin_hook_invocation(&interrupted, 70)
+            .await
+            .expect("begin interrupted invocation");
+        assert_eq!(
+            store
+                .abandon_running_async_hook_invocations("user-1", 80)
+                .await
+                .expect("abandon interrupted async Hook"),
+            1
+        );
+        let abandoned = store
+            .begin_hook_invocation(&interrupted, 90)
+            .await
+            .expect("interrupted invocation is terminal");
+        assert_eq!(abandoned.status, "failed");
+        assert_eq!(abandoned.attempt, 1);
+    }
+
+    #[tokio::test]
     async fn large_hook_outputs_spill_outside_sqlite_and_expire() {
         let store = SqliteClientStorage::connect_memory().await.expect("store");
         let base_event = event();
@@ -1109,6 +1356,7 @@ mod tests {
             event_id: base_event.event_id.clone(),
             bundle_id: "bundle-large".to_string(),
             hook_id: "hook-large".to_string(),
+            is_async: false,
         };
         store
             .begin_hook_invocation(&invocation, 20)
@@ -1174,6 +1422,7 @@ mod tests {
             event_id: cleanup_event.event_id,
             bundle_id: "bundle-cleanup".to_string(),
             hook_id: "hook-cleanup".to_string(),
+            is_async: false,
         };
         store
             .begin_hook_invocation(&cleanup_invocation, 40)

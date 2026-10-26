@@ -184,6 +184,7 @@ extension NativeLocalConnectorService {
                 toolNames: [],
                 hookDialect: hook.dialect,
                 hookEvents: bundle.events,
+                hookAsyncEvents: bundle.asyncEvents,
                 hookCommands: bundle.commands,
                 hookRuntimes: runtimes
             ))

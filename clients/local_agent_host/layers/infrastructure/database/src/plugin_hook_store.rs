@@ -283,6 +283,7 @@ mod tests {
                 event: "SessionStart".to_string(),
                 matcher: None,
                 command: "node hook.js".to_string(),
+                is_async: false,
                 timeout_ms: 5_000,
                 additional_context_limit: 65_536,
             }],

@@ -610,6 +610,65 @@ pub(super) async fn rewind_receipt_v35(connection: &mut SqliteConnection) {
     }
 }
 
+#[tokio::test]
+async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads() {
+    let database_path = std::env::temp_dir().join(format!(
+        "chatos-hook-async-migration-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let storage = SqliteClientStorage::connect_file(&database_path)
+        .await
+        .expect("current storage");
+    sqlx::query(
+        "INSERT INTO local_hook_events(\
+         event_id, owner_user_id, event_type, subject_id, sequence, payload_sha256, \
+         payload_json, matcher_value, active_bundle_ids_json, status, additional_context, \
+         created_at_unix_ms, updated_at_unix_ms) VALUES(\
+         'legacy-hook-event', 'user-1', 'SessionStart', 'conversation-1', 1, ?, \
+         '', '', '[]', 'completed', NULL, 1, 1)",
+    )
+    .bind("a".repeat(64))
+    .execute(&storage.pool)
+    .await
+    .expect("legacy Hook event");
+    let mut connection = storage.pool.acquire().await.expect("connection");
+    for statement in [
+        "DROP INDEX local_hook_events_async_session",
+        "DROP INDEX local_hook_invocations_async_delivery",
+        "ALTER TABLE local_hook_invocations DROP COLUMN async_delivery_key",
+        "ALTER TABLE local_hook_invocations DROP COLUMN is_async",
+        "DELETE FROM client_schema_migrations WHERE version = 42",
+    ] {
+        sqlx::query(statement)
+            .execute(&mut *connection)
+            .await
+            .expect("rewind v42 Hook schema");
+    }
+    drop(connection);
+    storage.pool.close().await;
+
+    let migrated = SqliteClientStorage::connect_file(&database_path)
+        .await
+        .expect("migrate legacy Hook event through v42");
+    let version: i64 = sqlx::query_scalar("SELECT MAX(version) FROM client_schema_migrations")
+        .fetch_one(&migrated.pool)
+        .await
+        .expect("schema version");
+    assert_eq!(version, 42);
+    let legacy_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM local_hook_events WHERE event_id = ?")
+            .bind("legacy-hook-event")
+            .fetch_one(&migrated.pool)
+            .await
+            .expect("legacy Hook event preserved");
+    assert_eq!(legacy_count, 1);
+    migrated.pool.close().await;
+    for backup in migration_backups(&database_path) {
+        std::fs::remove_file(backup).expect("remove migration backup");
+    }
+    remove_database_files(&database_path);
+}
+
 pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
     rewind_receipt_v37(connection).await;
     for statement in [
@@ -635,6 +694,7 @@ pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
 
 pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
     for statement in [
+        "DELETE FROM client_schema_migrations WHERE version = 42",
         "DELETE FROM client_schema_migrations WHERE version = 41",
         "DROP TABLE local_hook_output_blobs",
         "DELETE FROM client_schema_migrations WHERE version = 40",

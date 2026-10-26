@@ -462,6 +462,7 @@ pub struct LocalHookInvocationSpec {
     pub event_id: String,
     pub bundle_id: String,
     pub hook_id: String,
+    pub is_async: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -480,8 +481,20 @@ pub struct LocalHookInvocationRecord {
     pub stderr_overflow: bool,
     pub stderr_summary: Option<String>,
     pub additional_context: Option<String>,
+    pub async_delivery_key: Option<String>,
     pub created_at_unix_ms: i64,
     pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalAsyncHookContextRecord {
+    pub invocation_id: String,
+    pub event_id: String,
+    pub event_type: String,
+    pub bundle_id: String,
+    pub hook_id: String,
+    pub additional_context: String,
+    pub async_delivery_key: String,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -589,6 +602,21 @@ pub trait LocalHookEventStore: Send + Sync {
         &self,
         invocation_id: &str,
     ) -> Result<Vec<LocalHookOutputBlobRecord>, ClientStorageError>;
+
+    async fn claim_async_hook_contexts(
+        &self,
+        owner_user_id: &str,
+        session_id: &str,
+        delivery_key: &str,
+        limit: u32,
+        now_unix_ms: i64,
+    ) -> Result<Vec<LocalAsyncHookContextRecord>, ClientStorageError>;
+
+    async fn abandon_running_async_hook_invocations(
+        &self,
+        owner_user_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<u64, ClientStorageError>;
 
     async fn complete_hook_event(
         &self,
