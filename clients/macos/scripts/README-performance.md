@@ -107,6 +107,8 @@ zsh clients/macos/scripts/run-process-group-soak.sh \
 
 原始样本写入 `samples.jsonl`，每项保留 PID/start-time 身份、进程树、physical footprint、resident size、累计 CPU、累计磁盘读写、FD 和内核线程；`run.json` 保存聚合 p50/p95/p99、首尾/峰值、增减步数和验收失败原因。显式临时目录使用 `lstat` 有界扫描，绝不跟随 symlink。正式验收模式同时校验 App 与构建 manifest 的完整清单，只接受 `clean-release-build`；并拒绝少于 8 小时、间隔大于 5 秒、少于 5,000 样本或没有明确资源上限/进程/临时目录的运行，短诊断不能生成 `passed`。
 
+采集输出目录必须位于所有 `--temporary-root` 之外；否则采集器自己持续写入的 `samples.jsonl` 会被误计为客户端临时文件增长，入口会在开始采集前直接拒绝这种自干扰配置。
+
 采集器不生成负载，也不能从内核线程数推断 Swift Task 或 Notification observer 数；200 次导航、账户循环、内部 Task/observer 计数与主线程 hang 仍须由后续 App 内验收驱动器提供。Plugin 是动态名称，正式命令应额外加入该验收插件的真实 executable 名称。
 
 ## 工具回归
