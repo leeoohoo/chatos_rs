@@ -2643,6 +2643,14 @@ Agent Worker 父进程读端从不可取消的 `getline` 改为独立 descriptor
 
 边界：这一步恢复了可信、可重复的功能与并行回归基线，但不冒充 12.119 正式性能验收；固定硬件的 200 次 UI 切页、20 次账户循环、主线程 hang 采集、进程组资源曲线和 8 小时组合 soak 仍未执行。本阶段没有停止、替换、启动、打包或安装当前 ChatOS，也没有访问活动用户数据库。
 
+### 12.119a 第五十二完整里程碑：进程组资源曲线采集器（2026-10-26）
+
+新增 `run-process-group-soak.sh` 和原生 arm64 Python 采集器，只接受明确的根 PID，并以 PID + `proc_pid_rusage` start absolute time 防止 PID 复用污染。每个样本重新构造根进程后代树，逐进程记录 physical footprint、resident size、累计 CPU、累计磁盘读写、FD 与内核线程；聚合层计算 CPU 百分比、区间磁盘增量、p50/p95/p99、首尾/峰值、增减步数和单调增长。指定临时目录仅用 `lstat` 有界扫描，不跟随 symlink，不搜索账户目录或数据库。
+
+正式验收模式绑定并校验 `clean-release-build` App 与构建 manifest，要求根 PID 确实执行该 bundle 的 `ChatOSSwift`；少于 8 小时、采样间隔大于 5 秒、少于 5,000 样本、未明确 App/manifest、必需进程、隔离临时目录或三类资源上限时直接拒绝产生通过结论。必需 Worker/Host/Plugin 可设置最低出现样本数；physical-footprint p95、CPU p95、单区间磁盘写入，以及 FD、内核线程、临时文件数/字节的单调增长均进入失败原因。原始记录按行流式写入 `samples.jsonl`，运行中和失败 manifest 都原子持久化，仓库内输出必须处于 ignored 路径。
+
+工具回归 32 项通过，另以独立 `/bin/sleep` 根进程和隔离临时目录完成 6 个真实样本的短诊断，manifest 状态为 `completed` 且明确保持 `performance_acceptance: not-evaluated`。它不控制或终止目标，本次没有对正在运行的 ChatOS 采样。边界：内核线程不能冒充 Swift Task/Notification observer；采集器只观察外部编排的组合负载，不生成 200 次导航、20 次账户循环、Agent/Media/Plugin 作业或主线程 hang trace。上述驱动器和正式 8 小时运行仍属于 12.119 后续子阶段。
+
 ### 12.119—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：

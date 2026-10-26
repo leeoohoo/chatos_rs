@@ -37,10 +37,39 @@ macOS 仅支持 arm64，不提供 Intel 或 universal 构建。统一入口使�
 
 此基准没有测量 App 切页、首个可交互帧、主线程 hang、physical footprint、Host IPC 或媒体链路；小样本分位数不是发布 SLO 证明。应在固定机器、数据集、供电、热状态、缓存和负载下比较，不把不同运行环境直接合并。正式导航脚本、signpost/trace、真实组合负载与干净提交的基线/候选对照仍待完成。
 
+## 进程组资源曲线与 8 小时 soak
+
+`run-process-group-soak.sh` 只观察一个明确的根 PID 及其后代，不启动、停止或控制 App，也不会搜索账户数据库。请只把它指向使用隔离数据目录的验收实例，不要把当前日常使用实例当成压测目标：
+
+```sh
+zsh clients/macos/scripts/run-process-group-soak.sh \
+  --root-pid 12345 \
+  --app /绝对路径/ChatOS.app \
+  --build-manifest /绝对路径/ChatOS.app.build-manifest.json \
+  --duration-seconds 28800 \
+  --sample-interval-seconds 5 \
+  --minimum-samples 5000 \
+  --require-process ChatOSSwift \
+  --require-process chatos_local_agent_host \
+  --require-process ChatOSAgentWorker \
+  --require-process ChatOSMediaWorker \
+  --required-process-minimum-samples 100 \
+  --temporary-root /绝对路径/isolated-runtime \
+  --evaluate-acceptance \
+  --max-group-physical-footprint-bytes 4294967296 \
+  --max-cpu-percent-p95 400 \
+  --max-disk-write-bytes-per-interval 268435456
+```
+
+原始样本写入 `samples.jsonl`，每项保留 PID/start-time 身份、进程树、physical footprint、resident size、累计 CPU、累计磁盘读写、FD 和内核线程；`run.json` 保存聚合 p50/p95/p99、首尾/峰值、增减步数和验收失败原因。显式临时目录使用 `lstat` 有界扫描，绝不跟随 symlink。正式验收模式同时校验 App 与构建 manifest 的完整清单，只接受 `clean-release-build`；并拒绝少于 8 小时、间隔大于 5 秒、少于 5,000 样本或没有明确资源上限/进程/临时目录的运行，短诊断不能生成 `passed`。
+
+采集器不生成负载，也不能从内核线程数推断 Swift Task 或 Notification observer 数；200 次导航、账户循环、内部 Task/observer 计数与主线程 hang 仍须由后续 App 内验收驱动器提供。Plugin 是动态名称，正式命令应额外加入该验收插件的真实 executable 名称。
+
 ## 工具回归
 
 ```sh
 /usr/bin/arch -arm64 /usr/bin/python3 -B -m unittest discover -s clients/macos/scripts/tests -v
 zsh -n clients/macos/scripts/package-app.sh
 zsh -n clients/macos/scripts/verify-app-build.sh
+zsh -n clients/macos/scripts/run-process-group-soak.sh
 ```

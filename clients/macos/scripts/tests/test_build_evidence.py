@@ -267,7 +267,8 @@ class BaselineTests(unittest.TestCase):
             uname.write_text("#!/bin/sh\nprintf '%s\\n' x86_64\n")
             uname.chmod(0o755)
             environment = dict(os.environ, PATH=directory + ":/usr/bin:/bin")
-            for script in ("package-app.sh", "verify-app-build.sh", "run-performance-baseline.sh"):
+            for script in ("package-app.sh", "verify-app-build.sh", "run-performance-baseline.sh",
+                           "run-process-group-soak.sh"):
                 with self.subTest(script=script):
                     result = subprocess.run(["/bin/zsh", str(scripts / script)],
                                             env=environment, capture_output=True, timeout=10)
