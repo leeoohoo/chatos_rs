@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import Foundation
 
 /// macOS adapter for one Story resource image generation. Provider payloads, local media bytes,
@@ -6,6 +7,17 @@ import Foundation
 struct StoryAssetImageGenerationAdapter: StoryAssetImageGenerating {
     let store: StoryProjectStore
     let media: any MediaGenerationServicing
+    let mediaWorker: any MediaWorkerImageNormalizing
+
+    init(
+        store: StoryProjectStore,
+        media: any MediaGenerationServicing,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
+    ) {
+        self.store = store
+        self.media = media
+        self.mediaWorker = mediaWorker
+    }
 
     func generateStoryAssetImage(
         ownerUserID: String,
@@ -51,7 +63,8 @@ struct StoryAssetImageGenerationAdapter: StoryAssetImageGenerating {
               let generated = result.images.first else { throw StoryError.invalidPlan }
         let pngFile = try await MediaStudioImageLoader.normalizedPNGFile(
             for: generated,
-            ownerUserID: ownerUserID
+            ownerUserID: ownerUserID,
+            mediaWorker: mediaWorker
         )
         try await continuationCheck()
         let completed = try await store.completeAssetImageGeneration(

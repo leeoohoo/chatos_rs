@@ -1201,7 +1201,12 @@ final class StoryStudioTests: XCTestCase {
         let store = StoryProjectStore(root: root)
         addTeardownBlock { if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) } }
         let service = StoryTestService()
-        let vm = StoryStudioViewModel(media: service, planner: service, store: store)
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            mediaWorker: TestMediaWorkerImageNormalizer()
+        )
         vm.activate(userID: "alice"); try await idle(vm)
         return (vm, store, service)
     }

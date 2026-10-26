@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import Foundation
 
 /// macOS execution adapter for persisted Story production queues.
@@ -8,7 +9,20 @@ import Foundation
 struct StoryMediaBatchExecutionAdapter: StoryMediaBatchExecuting {
     let store: StoryProjectStore
     let media: any MediaGenerationServicing
+    let mediaWorker: any MediaWorkerImageNormalizing
     let videoJobStore: MediaStudioVideoJobStore
+
+    init(
+        store: StoryProjectStore,
+        media: any MediaGenerationServicing,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared,
+        videoJobStore: MediaStudioVideoJobStore
+    ) {
+        self.store = store
+        self.media = media
+        self.mediaWorker = mediaWorker
+        self.videoJobStore = videoJobStore
+    }
 
     func prepareStoryMediaBatch(
         ownerUserID: String,
@@ -188,6 +202,7 @@ struct StoryMediaBatchExecutionAdapter: StoryMediaBatchExecuting {
             batch: batch,
             store: store,
             media: service,
+            mediaWorker: mediaWorker,
             videoJobStore: videoJobStore,
             accountSessionID: accountSessionID,
             check: continuationCheck,

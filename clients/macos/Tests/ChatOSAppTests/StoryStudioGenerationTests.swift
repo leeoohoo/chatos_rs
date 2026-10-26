@@ -586,7 +586,11 @@ extension StoryStudioTests {
         ))
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         let service = ConcurrentStoryImageService(imageData: png)
-        let vm = StoryStudioViewModel(media: service, store: store)
+        let vm = StoryStudioViewModel(
+            media: service,
+            store: store,
+            mediaWorker: TestMediaWorkerImageNormalizer()
+        )
         vm.activate(userID: "alice"); try await idle(vm)
         var project = makeProject()
         project.props = [
@@ -640,7 +644,11 @@ extension StoryStudioTests {
         ))
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         let service = RecordingFrameImageService(imageData: png)
-        let vm = StoryStudioViewModel(media: service, store: store)
+        let vm = StoryStudioViewModel(
+            media: service,
+            store: store,
+            mediaWorker: TestMediaWorkerImageNormalizer()
+        )
         vm.activate(userID: "alice"); try await idle(vm)
 
         var project = makeProject(); project.source = "测试"
@@ -715,7 +723,11 @@ extension StoryStudioTests {
         ))
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         let service = ConcurrentStoryImageService(imageData: png)
-        let vm = StoryStudioViewModel(media: service, store: store)
+        let vm = StoryStudioViewModel(
+            media: service,
+            store: store,
+            mediaWorker: TestMediaWorkerImageNormalizer()
+        )
         vm.activate(userID: "alice")
         try await idle(vm)
 
