@@ -17,7 +17,11 @@ pub use chatos_local_agent_ports::{
     LocalCapabilitySnapshotStore, LocalJsonSchemaOutputFormat, LocalModelConfigSnapshot,
     LocalModelConfigSnapshotStore,
 };
+#[cfg(windows)]
+pub use chatos_windows_appcontainer::{SandboxedChild, WorkspaceAccess, WorkspaceLeaseManager};
 pub use control_plane::{LocalControlPlaneSnapshot, LocalModelCredentialResolver};
+#[cfg(windows)]
+pub use hook_runner::WindowsAppContainerHookRunner;
 pub use hook_runner::{
     LocalHookInvocation, LocalHookInvocationResult, LocalHookRunner, MacOsSeatbeltHookRunner,
 };

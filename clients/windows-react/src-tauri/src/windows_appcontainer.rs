@@ -92,7 +92,7 @@ const MAXIMUM_PROBE_TEMPORARY_TREE_ENTRIES: usize = 20_000;
 
 #[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum WorkspaceAccess {
+pub enum WorkspaceAccess {
     ReadOnly,
     ReadWrite,
 }
@@ -188,13 +188,13 @@ struct AppContainerInteractiveProcess {
 }
 
 #[derive(Debug)]
-pub(crate) struct SandboxedCommandOutput {
-    pub(crate) exit_code: i32,
-    pub(crate) stdout: Vec<u8>,
-    pub(crate) stderr: Vec<u8>,
+pub struct SandboxedCommandOutput {
+    pub exit_code: i32,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
 }
 
-pub(crate) struct SandboxedChild {
+pub struct SandboxedChild {
     termination: ProcessTermination,
     process: ProcessHandles,
     stdin: Option<File>,
@@ -205,25 +205,25 @@ pub(crate) struct SandboxedChild {
 }
 
 impl SandboxedChild {
-    pub(crate) fn take_stdin(&mut self) -> Option<File> {
+    pub fn take_stdin(&mut self) -> Option<File> {
         self.stdin.take()
     }
 
-    pub(crate) fn take_stdout(&mut self) -> Option<File> {
+    pub fn take_stdout(&mut self) -> Option<File> {
         self.stdout.take()
     }
 
-    pub(crate) fn take_stderr(&mut self) -> Option<File> {
+    pub fn take_stderr(&mut self) -> Option<File> {
         self.stderr.take()
     }
 
-    pub(crate) fn terminate(&self) -> Result<(), String> {
+    pub fn terminate(&self) -> Result<(), String> {
         self.termination.terminate(true).map_err(|error| {
             format!("Terminating the interactive AppContainer process failed: {error}")
         })
     }
 
-    pub(crate) fn wait(mut self, timeout: Duration) -> Result<i32, String> {
+    pub fn wait(mut self, timeout: Duration) -> Result<i32, String> {
         drop(self.stdin.take());
         let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
         let process_result = match unsafe { WaitForSingleObject(self.process.process, timeout_ms) }
@@ -265,14 +265,14 @@ impl SandboxedChild {
     }
 }
 
-pub(crate) struct WorkspaceLeaseManager {
+pub struct WorkspaceLeaseManager {
     journal_root: PathBuf,
     profile_journal_root: PathBuf,
     active_workspaces: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
 impl WorkspaceLeaseManager {
-    pub(crate) fn open(app_data_directory: &Path) -> Result<Self, String> {
+    pub fn open(app_data_directory: &Path) -> Result<Self, String> {
         let journal_root = app_data_directory
             .join("local-agent")
             .join("appcontainer-workspace-leases");
@@ -372,7 +372,7 @@ impl WorkspaceLeaseManager {
         )
     }
 
-    pub(crate) fn spawn_workspace_command_with_leases(
+    pub fn spawn_workspace_command_with_leases(
         &self,
         current_directory: &Path,
         executable: &Path,
@@ -2751,7 +2751,7 @@ fn build_environment_block(environment: &[(OsString, OsString)]) -> Result<Vec<u
     Ok(block)
 }
 
-fn restricted_runtime_environment() -> Vec<(OsString, OsString)> {
+pub fn restricted_runtime_environment() -> Vec<(OsString, OsString)> {
     const ALLOWED: &[&str] = &[
         "ALLUSERSPROFILE",
         "APPDATA",

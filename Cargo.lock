@@ -507,6 +507,7 @@ dependencies = [
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",
  "chatos_mcp_runtime",
+ "chatos_windows_appcontainer",
  "chrono",
  "fs2",
  "futures",
@@ -696,6 +697,16 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "chatos_windows_appcontainer"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

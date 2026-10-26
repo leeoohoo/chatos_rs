@@ -33,6 +33,8 @@ pub use chatos_agent_profiles::{
     ToolSafetyPolicy, TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY,
     TASK_EXECUTION_PROFILE_KEY,
 };
+#[cfg(windows)]
+pub use infrastructure::WindowsAppContainerHookRunner;
 pub use infrastructure::{
     ChildEnvironmentModelCredentialResolver, LocalCapabilityPolicySnapshot,
     LocalCapabilitySnapshotStore, LocalControlPlaneSnapshot, LocalHookInvocation,

@@ -11,13 +11,14 @@ use super::{
     NOTEPAD_TOOL_NAMES, REQUIREMENT_SURVEY_TOOL_NAMES, TASK_PROCESS_TOOL_NAMES,
     TOOL_RESULT_READ_ONLY_TOOLS, TOOL_RESULT_TOOL_NAMES,
 };
+#[cfg(not(windows))]
+use crate::MacOsSeatbeltHookRunner;
 use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
     LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver, LocalHookCoordinator,
     LocalMemorySyncWorker, LocalModelRuntimeResolver, LocalTaskToolExecutor, LocalToolExecutor,
-    LocalToolRegistry, LocalToolScheduler, MacOsSeatbeltHookRunner, NamedReadOnlyTools,
-    MAIN_CHAT_PROFILE_KEY, TASK_APPROVAL_EXEMPT_TOOLS, TASK_EXECUTION_PROFILE_KEY,
-    TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES,
+    LocalToolRegistry, LocalToolScheduler, NamedReadOnlyTools, MAIN_CHAT_PROFILE_KEY,
+    TASK_APPROVAL_EXEMPT_TOOLS, TASK_EXECUTION_PROFILE_KEY, TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES,
 };
 use chatos_local_agent_protocol::LocalAgentToolExecutionRoute;
 use chatos_local_agent_runtime::{LocalAgentProfileRegistry, LocalAgentRuntime};
@@ -376,6 +377,9 @@ fn hook_context_provider(
     hook_data_root: PathBuf,
     workspace_root: Option<PathBuf>,
 ) -> Result<Arc<LocalHookCoordinator>, String> {
+    #[cfg(windows)]
+    let runner = crate::WindowsAppContainerHookRunner::new(hook_data_root)?;
+    #[cfg(not(windows))]
     let runner = MacOsSeatbeltHookRunner::new(hook_data_root)?;
     Ok(Arc::new(LocalHookCoordinator::new(
         Arc::clone(runtime),

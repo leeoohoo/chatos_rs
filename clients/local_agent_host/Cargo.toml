@@ -15,6 +15,7 @@ chatos_agent_profiles = { path = "layers/profiles" }
 chatos_local_agent_ports = { path = "layers/ports" }
 chatos_local_agent_protocol = { path = "layers/interface" }
 chatos_local_agent_runtime = { path = "layers/application" }
+chatos_windows_appcontainer = { path = "../../crates/windows_appcontainer" }
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 fs2 = "0.4"
@@ -40,4 +41,10 @@ windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
+  "Win32_Security_Isolation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_JobObjects",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
 ] }
