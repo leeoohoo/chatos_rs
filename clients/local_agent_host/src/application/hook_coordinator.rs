@@ -3,16 +3,15 @@
 
 use crate::infrastructure::{LocalHookInvocation, LocalHookInvocationResult, LocalHookRunner};
 use async_trait::async_trait;
-use chatos_agent_profiles::{
-    LocalHookContextProvider, MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY,
-};
+use chatos_agent_profiles::{LocalHookContextProvider, TASK_EXECUTION_PROFILE_KEY};
 use chatos_ai_runtime::message_item;
 use chatos_local_agent_ports::{
     LocalHookEventSpec, LocalHookInvocationCompletion, LocalHookInvocationRecord,
     LocalHookInvocationSpec,
 };
 use chatos_local_agent_protocol::{
-    LocalAgentRunClaim, LocalAgentRunRecord, LocalPluginHookBundleRecord, LocalPluginHookDefinition,
+    LocalAgentRunClaim, LocalAgentRunRecord, LocalPluginHookBundleRecord,
+    LocalPluginHookDefinition, StartConversationTurnCommand,
 };
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use futures::future::join_all;
@@ -33,6 +32,11 @@ pub struct LocalHookCoordinator {
     runtime: Arc<LocalAgentRuntime>,
     runner: Arc<dyn LocalHookRunner>,
     workspace_root: Option<PathBuf>,
+}
+
+pub(crate) enum LocalHookPromptDecision {
+    Allow,
+    Block { reason: String },
 }
 
 impl LocalHookCoordinator {
@@ -67,6 +71,11 @@ impl LocalHookCoordinator {
                     "A trusted UserPromptSubmit Hook blocked this message".to_string()
                 }));
             }
+            if outcome.failed && outcome.event_type == "UserPromptSubmit" {
+                return Err(
+                    "A trusted UserPromptSubmit Hook failed before the model request".to_string(),
+                );
+            }
             if let Some(context) = outcome.additional_context {
                 contexts.push(message_item(
                     "system",
@@ -86,10 +95,39 @@ impl LocalHookCoordinator {
         Ok(contexts)
     }
 
+    pub(crate) async fn gate_user_prompt(
+        &self,
+        command: &StartConversationTurnCommand,
+    ) -> Result<LocalHookPromptDecision, String> {
+        let event = HookEvent::new_for_owner(
+            &command.owner_user_id,
+            "UserPromptSubmit",
+            &command.turn_id,
+            "",
+            json!({
+                "session_id": command.conversation_id,
+                "hook_event_name": "UserPromptSubmit",
+                "prompt": command.message,
+                "cwd": self.workspace_display(),
+            }),
+        )?;
+        let outcome = self.execute_event(event).await?;
+        if outcome.failed {
+            return Err("trusted UserPromptSubmit Hook execution failed".to_string());
+        }
+        if outcome.blocked {
+            return Ok(LocalHookPromptDecision::Block {
+                reason: outcome.block_reason.unwrap_or_else(|| {
+                    "A trusted UserPromptSubmit Hook blocked this message".to_string()
+                }),
+            });
+        }
+        Ok(LocalHookPromptDecision::Allow)
+    }
+
     async fn events_for_claim(&self, claim: &LocalAgentRunClaim) -> Result<Vec<HookEvent>, String> {
         let run = &claim.run;
-        if run.profile_key == MAIN_CHAT_PROFILE_KEY && run.owner_entity_type == "conversation_turn"
-        {
+        if run.owner_entity_type == "conversation_turn" {
             let conversation_id = required_input_string(run, "conversation_id")?;
             let turn_id = required_input_string(run, "turn_id")?;
             let prompt = required_input_string(run, "message")?;
@@ -331,16 +369,29 @@ impl HookEvent {
         matcher_value: &str,
         payload: Value,
     ) -> Result<Self, String> {
+        Self::new_for_owner(
+            &run.owner_user_id,
+            event_type,
+            subject_id,
+            matcher_value,
+            payload,
+        )
+    }
+
+    fn new_for_owner(
+        owner_user_id: &str,
+        event_type: &str,
+        subject_id: &str,
+        matcher_value: &str,
+        payload: Value,
+    ) -> Result<Self, String> {
         let stdin_json = serde_json::to_vec(&payload)
             .map_err(|error| format!("encode Hook event payload failed: {error}"))?;
         let payload_sha256 = sha256(&stdin_json);
         Ok(Self {
             spec: LocalHookEventSpec {
-                event_id: stable_id(
-                    "hook-event",
-                    &[&run.owner_user_id, event_type, subject_id, "1"],
-                ),
-                owner_user_id: run.owner_user_id.clone(),
+                event_id: stable_id("hook-event", &[owner_user_id, event_type, subject_id, "1"]),
+                owner_user_id: owner_user_id.to_string(),
                 event_type: event_type.to_string(),
                 subject_id: subject_id.to_string(),
                 sequence: 1,
@@ -367,6 +418,8 @@ struct InvocationOutcome {
 struct PersistedEventOutcome {
     event_type: String,
     blocked: bool,
+    #[serde(default)]
+    failed: bool,
     block_reason: Option<String>,
     additional_context: Option<String>,
 }
@@ -494,6 +547,7 @@ fn merge_outcomes(
         (&left.bundle_id, &left.hook_id).cmp(&(&right.bundle_id, &right.hook_id))
     });
     let blocked = outcomes.iter().any(|outcome| outcome.status == "blocked");
+    let failed = outcomes.iter().any(|outcome| outcome.status == "failed");
     let block_reason = outcomes
         .iter()
         .find(|outcome| outcome.status == "blocked")
@@ -522,6 +576,7 @@ fn merge_outcomes(
     Ok(PersistedEventOutcome {
         event_type: event_type.to_string(),
         blocked,
+        failed,
         block_reason,
         additional_context: (!sections.is_empty()).then(|| sections.join("\n\n")),
     })
@@ -535,6 +590,7 @@ fn decode_persisted_outcome(
         return Ok(PersistedEventOutcome {
             event_type: event_type.to_string(),
             blocked: false,
+            failed: false,
             block_reason: None,
             additional_context: None,
         });
@@ -576,11 +632,18 @@ fn sha256(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{HostRequestHandler, LocalAgentHostCoordinator, LocalAgentScheduler};
+    use chatos_agent_profiles::MAIN_CHAT_PROFILE_KEY;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_ports::{
         IdempotentCommand, LocalAgentRunStore, LocalPluginHookBundleStore,
     };
-    use chatos_local_agent_protocol::{LocalAgentRunStatus, LocalPluginHookBundleSpec};
+    use chatos_local_agent_protocol::{
+        CreateConversationCommand, GetConversationHistoryCommand, HostCommand, HostRequestEnvelope,
+        HostResult, LocalAgentRunStatus, LocalAgentStepOutcome, LocalPluginHookBundleSpec,
+        LOCAL_AGENT_PROTOCOL_VERSION,
+    };
+    use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
     use std::{
         sync::{
             atomic::{AtomicUsize, Ordering},
@@ -594,6 +657,18 @@ mod tests {
         calls: Arc<Mutex<Vec<String>>>,
         active: Arc<AtomicUsize>,
         maximum_active: Arc<AtomicUsize>,
+    }
+
+    struct NeverModelProfile;
+
+    #[async_trait]
+    impl LocalAgentProfile for NeverModelProfile {
+        async fn execute_step(
+            &self,
+            _claim: &LocalAgentRunClaim,
+        ) -> Result<LocalAgentStepOutcome, String> {
+            Err("model must not run for a blocked prompt".to_string())
+        }
     }
 
     impl FakeHookRunner {
@@ -913,5 +988,93 @@ mod tests {
 
         assert!(error.contains("blocked by fixture"));
         assert!(!error.contains("private failure"));
+    }
+
+    #[tokio::test]
+    async fn prompt_gate_blocks_before_the_user_message_and_run_are_persisted() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-block",
+            vec![hook("block", "UserPromptSubmit", "block")],
+        )
+        .await;
+        runtime
+            .try_handle(envelope(
+                "create-conversation",
+                HostCommand::CreateConversation(CreateConversationCommand {
+                    conversation_id: "conversation-1".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    title: "Hooks".to_string(),
+                    resource: None,
+                }),
+            ))
+            .await
+            .expect("create conversation");
+        let hooks = Arc::new(LocalHookCoordinator::new(runtime.clone(), runner, None).unwrap());
+        let mut profiles = LocalAgentProfileRegistry::new();
+        profiles
+            .register(MAIN_CHAT_PROFILE_KEY, NeverModelProfile)
+            .expect("profile");
+        let scheduler =
+            LocalAgentScheduler::new(runtime.clone(), profiles, "user-1", "model-worker")
+                .expect("scheduler");
+        let coordinator =
+            LocalAgentHostCoordinator::new(runtime.clone(), "user-1", Some(scheduler), None)
+                .expect("coordinator")
+                .with_hook_coordinator(hooks);
+
+        let response = coordinator
+            .handle_request(envelope(
+                "start-blocked-turn",
+                HostCommand::StartConversationTurn(StartConversationTurnCommand {
+                    owner_user_id: "user-1".to_string(),
+                    conversation_id: "conversation-1".to_string(),
+                    expected_conversation_version: 1,
+                    turn_id: "turn-blocked".to_string(),
+                    message_id: "message-blocked".to_string(),
+                    run_id: "run-blocked".to_string(),
+                    message: "do not persist me".to_string(),
+                    message_metadata: json!({"source": "composer"}),
+                    attachments: Vec::new(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    max_iterations: 8,
+                }),
+            ))
+            .await;
+
+        assert_eq!(response.error.expect("blocked").code, "hook_blocked");
+        assert!(runtime
+            .get_run_for_host_worker("run-blocked")
+            .await
+            .expect("run lookup")
+            .is_none());
+        let history = runtime
+            .try_handle(envelope(
+                "history-after-block",
+                HostCommand::GetConversationHistory(GetConversationHistoryCommand {
+                    owner_user_id: "user-1".to_string(),
+                    conversation_id: "conversation-1".to_string(),
+                    before_ordinal: None,
+                    limit: 20,
+                }),
+            ))
+            .await
+            .expect("history");
+        let HostResult::ConversationHistory { page } = history else {
+            panic!("unexpected history result")
+        };
+        assert!(page.turns.is_empty());
+        assert!(page.messages.is_empty());
+    }
+
+    fn envelope(command_id: &str, command: HostCommand) -> HostRequestEnvelope {
+        HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: command_id.to_string(),
+            command,
+        }
     }
 }

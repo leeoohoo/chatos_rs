@@ -2,9 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::{
-    HostRequestHandler, LocalAgentScheduler, LocalAgentSchedulerError, LocalMemorySyncError,
-    LocalMemorySyncWorker, LocalToolScheduler, LocalToolSchedulerError, MemorySyncTick,
-    SchedulerTick, ToolSchedulerTick,
+    HostRequestHandler, LocalAgentScheduler, LocalAgentSchedulerError, LocalHookCoordinator,
+    LocalMemorySyncError, LocalMemorySyncWorker, LocalToolScheduler, LocalToolSchedulerError,
+    MemorySyncTick, SchedulerTick, ToolSchedulerTick,
 };
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
@@ -18,6 +18,7 @@ use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::{watch, Notify};
 
+use super::hook_coordinator::LocalHookPromptDecision;
 use super::work_activity::HostWorkActivity;
 
 const MIN_CONCURRENT_WORK_ITEMS: usize = 1;
@@ -44,6 +45,7 @@ pub struct LocalAgentHostCoordinator {
     model_scheduler: Option<LocalAgentScheduler>,
     tool_scheduler: Option<LocalToolScheduler>,
     memory_sync_worker: Option<LocalMemorySyncWorker>,
+    hook_coordinator: Option<Arc<LocalHookCoordinator>>,
     wakeup: Arc<Notify>,
     memory_wakeup: Arc<Notify>,
     activity: watch::Sender<u64>,
@@ -91,6 +93,7 @@ impl LocalAgentHostCoordinator {
             tool_scheduler: tool_scheduler
                 .map(|scheduler| scheduler.with_work_activity(work_activity.clone())),
             memory_sync_worker: None,
+            hook_coordinator: None,
             wakeup: Arc::new(Notify::new()),
             memory_wakeup: Arc::new(Notify::new()),
             activity,
@@ -125,6 +128,11 @@ impl LocalAgentHostCoordinator {
         }
         self.memory_sync_worker = Some(worker);
         Ok(self)
+    }
+
+    pub fn with_hook_coordinator(mut self, coordinator: Arc<LocalHookCoordinator>) -> Self {
+        self.hook_coordinator = Some(coordinator);
+        self
     }
 
     pub fn with_reserved_ipc_tools<I, S>(mut self, tool_names: I) -> Result<Self, String>
@@ -583,6 +591,31 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
                     false,
                 ),
             );
+        }
+        if let HostCommand::StartConversationTurn(command) = &request.command {
+            if let Err(message) = request.validate() {
+                return HostResponseEnvelope::failure(
+                    request.command_id,
+                    HostError::new("invalid_request", message, false),
+                );
+            }
+            if let Some(hooks) = self.hook_coordinator.as_ref() {
+                match hooks.gate_user_prompt(command).await {
+                    Ok(LocalHookPromptDecision::Allow) => {}
+                    Ok(LocalHookPromptDecision::Block { reason }) => {
+                        return HostResponseEnvelope::failure(
+                            request.command_id,
+                            HostError::new("hook_blocked", reason, false),
+                        );
+                    }
+                    Err(message) => {
+                        return HostResponseEnvelope::failure(
+                            request.command_id,
+                            HostError::new("hook_execution_failed", message, true),
+                        );
+                    }
+                }
+            }
         }
         if matches!(request.command, HostCommand::CreateRequirementSurvey(_)) {
             return HostResponseEnvelope::failure(

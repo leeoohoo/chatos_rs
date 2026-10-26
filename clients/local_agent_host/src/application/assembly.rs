@@ -13,11 +13,11 @@ use super::{
 };
 use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
-    LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver,
-    LocalHookContextProvider, LocalHookCoordinator, LocalMemorySyncWorker,
-    LocalModelRuntimeResolver, LocalTaskToolExecutor, LocalToolExecutor, LocalToolRegistry,
-    LocalToolScheduler, MacOsSeatbeltHookRunner, NamedReadOnlyTools, MAIN_CHAT_PROFILE_KEY,
-    TASK_APPROVAL_EXEMPT_TOOLS, TASK_EXECUTION_PROFILE_KEY, TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES,
+    LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver, LocalHookCoordinator,
+    LocalMemorySyncWorker, LocalModelRuntimeResolver, LocalTaskToolExecutor, LocalToolExecutor,
+    LocalToolRegistry, LocalToolScheduler, MacOsSeatbeltHookRunner, NamedReadOnlyTools,
+    MAIN_CHAT_PROFILE_KEY, TASK_APPROVAL_EXEMPT_TOOLS, TASK_EXECUTION_PROFILE_KEY,
+    TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES,
 };
 use chatos_local_agent_protocol::LocalAgentToolExecutionRoute;
 use chatos_local_agent_runtime::{LocalAgentProfileRegistry, LocalAgentRuntime};
@@ -201,7 +201,7 @@ impl LocalAgentHostAssembly {
         approval_exempt_tools: Vec<String>,
         memory_source_id: Option<String>,
         memory_sync_worker: Option<LocalMemorySyncWorker>,
-        hook_context_provider: Option<Arc<dyn LocalHookContextProvider>>,
+        hook_context_provider: Option<Arc<LocalHookCoordinator>>,
     ) -> Result<Self, String>
     where
         M: LocalModelRuntimeResolver + 'static,
@@ -244,9 +244,10 @@ impl LocalAgentHostAssembly {
             "tool_result_",
         ])?
         .with_local_prefixed_input_items(vec![task_process_prompt_item()]);
-        if let Some(provider) = hook_context_provider {
-            main_chat_planner = main_chat_planner.with_hook_context_provider(Arc::clone(&provider));
-            task_execution_planner = task_execution_planner.with_hook_context_provider(provider);
+        if let Some(provider) = hook_context_provider.as_ref() {
+            main_chat_planner = main_chat_planner.with_hook_context_provider(Arc::clone(provider));
+            task_execution_planner =
+                task_execution_planner.with_hook_context_provider(Arc::clone(provider));
         }
         if let Some(source_id) = memory_source_id {
             main_chat_planner = main_chat_planner.with_memory_source_id(source_id.clone())?;
@@ -337,6 +338,9 @@ impl LocalAgentHostAssembly {
         if let Some(worker) = memory_sync_worker {
             coordinator = coordinator.with_memory_sync_worker(worker)?;
         }
+        if let Some(hooks) = hook_context_provider {
+            coordinator = coordinator.with_hook_coordinator(hooks);
+        }
         let coordinator = Arc::new(coordinator);
         Ok(Self {
             runtime,
@@ -371,7 +375,7 @@ fn hook_context_provider(
     runtime: &Arc<LocalAgentRuntime>,
     hook_data_root: PathBuf,
     workspace_root: Option<PathBuf>,
-) -> Result<Arc<dyn LocalHookContextProvider>, String> {
+) -> Result<Arc<LocalHookCoordinator>, String> {
     let runner = MacOsSeatbeltHookRunner::new(hook_data_root)?;
     Ok(Arc::new(LocalHookCoordinator::new(
         Arc::clone(runtime),
