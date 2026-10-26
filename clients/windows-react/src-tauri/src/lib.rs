@@ -22,6 +22,7 @@ mod general_settings;
 mod global_utilities;
 mod host_lifecycle;
 mod local_terminal;
+mod machine_resource_governor;
 mod media_studio;
 mod notepad;
 mod pet;
@@ -127,6 +128,7 @@ use local_terminal::{
     poll_local_terminal, resize_local_terminal, send_local_terminal_input, start_local_terminal,
     LocalTerminalRegistry,
 };
+use machine_resource_governor::MachineResourceGovernor;
 use media_studio::{
     cancel_media_studio_video_generation, discard_media_studio_presentation,
     discard_media_studio_reference_images, discard_media_studio_video_reference_audio,
@@ -260,6 +262,8 @@ pub fn run() {
     let clipboard_history_manager = ClipboardHistoryManager::default();
     let protocol_clipboard_history_manager = clipboard_history_manager.clone();
     let drop_attachment_manager = attachment_manager.clone();
+    let machine_resource_governor = MachineResourceGovernor::default();
+    let drop_resource_governor = machine_resource_governor.clone();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(authentication)
@@ -272,6 +276,7 @@ pub fn run() {
         .manage(wechat_companion_manager)
         .manage(pet_asset_store)
         .manage(clipboard_history_manager)
+        .manage(machine_resource_governor)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
@@ -364,9 +369,30 @@ pub fn run() {
                         return;
                     };
                     let manager = drop_attachment_manager.clone();
+                    let resources = drop_resource_governor.clone();
                     let webview = webview.clone();
                     let paths = paths.clone();
                     tauri::async_runtime::spawn(async move {
+                        let _permit = match resources
+                            .acquire(
+                                machine_resource_governor::MachineResourceKind::CodeReadWorker,
+                                machine_resource_governor::MachineResourcePriority::Interactive,
+                            )
+                            .await
+                        {
+                            Ok(permit) => permit,
+                            Err(error) => {
+                                let _ = webview.emit(
+                                    "conversation-attachments-staged",
+                                    serde_json::json!({
+                                        "scope": &scope,
+                                        "attachments": [],
+                                        "errors": [error],
+                                    }),
+                                );
+                                return;
+                            }
+                        };
                         let result = manager.stage_paths(scope.clone(), paths).await;
                         if manager.active_scope().as_ref() != Some(&scope) {
                             manager.discard_import_result(&result);

@@ -17,6 +17,9 @@ use uuid::Uuid;
 use crate::{
     authentication::{AuthenticationManager, GatewayModelConfig},
     host_lifecycle::validate_owner,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
 };
 use history::{
     ImageGenerationOutcome, ImageHistoryCursor, ImageHistoryItem, ImageHistoryPage,
@@ -888,6 +891,7 @@ pub(crate) async fn load_media_studio_video_history(
 pub(crate) async fn pick_media_studio_reference_images(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, MediaStudioManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: MediaStudioReferenceSelectionInput,
 ) -> Result<MediaImageReferenceImportResult, String> {
     validate_owner(&input.owner_user_id)?;
@@ -914,6 +918,12 @@ pub(crate) async fn pick_media_studio_reference_images(
     let references = manager.references.clone();
     let owner_user_id = input.owner_user_id.clone();
     let staged_presentation_id = presentation_id.clone();
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::MediaWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let mut result = tauri::async_runtime::spawn_blocking(move || {
         references.stage_paths(
             &owner_user_id,
@@ -951,6 +961,7 @@ pub(crate) async fn pick_media_studio_reference_images(
 pub(crate) async fn pick_agent_avatar(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, MediaStudioManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: MediaStudioReferenceSelectionInput,
 ) -> Result<Option<MediaImageReferenceDraft>, String> {
     validate_owner(&input.owner_user_id)?;
@@ -977,6 +988,12 @@ pub(crate) async fn pick_agent_avatar(
     let owner_user_id = input.owner_user_id.clone();
     let staged_presentation_id = presentation_id.clone();
     let path = handle.path().to_path_buf();
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::MediaWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let mut result = tauri::async_runtime::spawn_blocking(move || {
         references.stage_paths(
             &owner_user_id,
@@ -1022,6 +1039,7 @@ pub(crate) async fn pick_agent_avatar(
 pub(crate) async fn pick_media_studio_video_reference_audio(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, MediaStudioManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: MediaStudioReferenceSelectionInput,
 ) -> Result<Option<MediaVideoAudioDraft>, String> {
     validate_owner(&input.owner_user_id)?;
@@ -1047,6 +1065,12 @@ pub(crate) async fn pick_media_studio_video_reference_audio(
     let inputs = manager.video_inputs.clone();
     let owner_user_id = input.owner_user_id.clone();
     let staged_presentation_id = presentation_id.clone();
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::MediaWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         inputs.stage_path(
             &owner_user_id,
@@ -1076,6 +1100,7 @@ pub(crate) async fn pick_media_studio_video_reference_audio(
 pub(crate) async fn stage_media_studio_history_references(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, MediaStudioManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: MediaStudioHistoryReferenceSelectionInput,
 ) -> Result<MediaImageReferenceImportResult, String> {
     validate_owner(&input.owner_user_id)?;
@@ -1099,6 +1124,12 @@ pub(crate) async fn stage_media_studio_history_references(
     let command_owner_user_id = input.owner_user_id.clone();
     let staged_presentation_id = presentation_id.clone();
     let assets = input.assets;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::MediaWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let mut result = tauri::async_runtime::spawn_blocking(move || {
         let mut values = Vec::new();
         let mut errors = Vec::new();

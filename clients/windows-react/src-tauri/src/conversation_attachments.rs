@@ -17,7 +17,12 @@ use tauri::{http, State};
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
-use crate::host_lifecycle::HostManager;
+use crate::{
+    host_lifecycle::HostManager,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
+};
 
 const MAXIMUM_ATTACHMENT_COUNT: usize = 20;
 const MAXIMUM_ATTACHMENT_BYTES: usize = 20 * 1_024 * 1_024;
@@ -294,25 +299,35 @@ impl AttachmentManager {
             }
         };
         let _guard = self.inner.import_lock.lock().await;
-        let mut attachments = Vec::new();
-        let mut errors = Vec::new();
-        if paths.len() > MAXIMUM_ATTACHMENT_COUNT {
-            errors.push(format!("单次最多添加 {MAXIMUM_ATTACHMENT_COUNT} 个附件"));
-        }
-        for path in paths.into_iter().take(MAXIMUM_ATTACHMENT_COUNT) {
-            match read_file_candidate(&path) {
-                Ok(candidate) => match self.stage_candidate(&scope, candidate) {
-                    Ok(attachment) => attachments.push(attachment),
-                    Err(error) => errors.push(error),
-                },
-                Err(error) => errors.push(error),
+        let manager = self.clone();
+        let failed_scope = scope.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut attachments = Vec::new();
+            let mut errors = Vec::new();
+            if paths.len() > MAXIMUM_ATTACHMENT_COUNT {
+                errors.push(format!("单次最多添加 {MAXIMUM_ATTACHMENT_COUNT} 个附件"));
             }
-        }
-        AttachmentImportResult {
-            scope,
-            attachments,
-            errors,
-        }
+            for path in paths.into_iter().take(MAXIMUM_ATTACHMENT_COUNT) {
+                match read_file_candidate(&path) {
+                    Ok(candidate) => match manager.stage_candidate(&scope, candidate) {
+                        Ok(attachment) => attachments.push(attachment),
+                        Err(error) => errors.push(error),
+                    },
+                    Err(error) => errors.push(error),
+                }
+            }
+            AttachmentImportResult {
+                scope,
+                attachments,
+                errors,
+            }
+        })
+        .await
+        .unwrap_or_else(|_| AttachmentImportResult {
+            scope: failed_scope,
+            attachments: Vec::new(),
+            errors: vec!["附件读取任务异常退出。".into()],
+        })
     }
 
     async fn stage_candidate_for_scope(
@@ -332,18 +347,28 @@ impl AttachmentManager {
             }
         };
         let _guard = self.inner.import_lock.lock().await;
-        match self.stage_candidate(&scope, candidate) {
-            Ok(attachment) => AttachmentImportResult {
-                scope,
-                attachments: vec![attachment],
-                errors: vec![],
-            },
-            Err(error) => AttachmentImportResult {
-                scope,
-                attachments: vec![],
-                errors: vec![error],
-            },
-        }
+        let manager = self.clone();
+        let failed_scope = scope.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            match manager.stage_candidate(&scope, candidate) {
+                Ok(attachment) => AttachmentImportResult {
+                    scope,
+                    attachments: vec![attachment],
+                    errors: vec![],
+                },
+                Err(error) => AttachmentImportResult {
+                    scope,
+                    attachments: vec![],
+                    errors: vec![error],
+                },
+            }
+        })
+        .await
+        .unwrap_or_else(|_| AttachmentImportResult {
+            scope: failed_scope,
+            attachments: Vec::new(),
+            errors: vec!["附件保存任务异常退出。".into()],
+        })
     }
 
     fn stage_candidate(

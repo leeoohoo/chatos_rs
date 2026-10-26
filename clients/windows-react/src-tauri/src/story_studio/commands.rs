@@ -7,6 +7,9 @@ use tauri::{AppHandle, Emitter, State};
 use crate::{
     authentication::AuthenticationManager,
     host_lifecycle::validate_owner,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
     media_studio::{MediaStudioManager, StoryVideoPollOutcome},
 };
 
@@ -1077,6 +1080,7 @@ pub(crate) async fn confirm_latest_story_frames(
 pub(crate) async fn import_local_story_image(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, StoryStudioManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: StoryLocalImageImportCommandInput,
 ) -> Result<Option<StoryProjectSnapshot>, String> {
     validate_owner(&input.owner_user_id)?;
@@ -1098,6 +1102,12 @@ pub(crate) async fn import_local_story_image(
     let work = manager.inner().clone();
     let owner = input.owner_user_id;
     let saved_owner = owner.clone();
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::MediaWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         work.import_local_story_image(
             &saved_owner,
@@ -1118,6 +1128,7 @@ pub(crate) async fn import_story_history_image(
     authentication: State<'_, AuthenticationManager>,
     media_manager: State<'_, MediaStudioManager>,
     story_manager: State<'_, StoryStudioManager>,
+    resources: State<'_, MachineResourceGovernor>,
     input: StoryHistoryImageImportCommandInput,
 ) -> Result<StoryProjectSnapshot, String> {
     validate_owner(&input.owner_user_id)?;
@@ -1128,6 +1139,12 @@ pub(crate) async fn import_story_history_image(
     let story = story_manager.inner().clone();
     let owner = input.owner_user_id;
     let saved_owner = owner.clone();
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::MediaWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let bytes =
             media.read_story_history_image(&saved_owner, &input.record_id, &input.content_token)?;

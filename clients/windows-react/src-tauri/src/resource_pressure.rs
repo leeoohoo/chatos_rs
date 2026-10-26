@@ -1,4 +1,4 @@
-use crate::host_lifecycle::HostManager;
+use crate::{host_lifecycle::HostManager, machine_resource_governor::MachineResourceGovernor};
 use chatos_local_agent_protocol::LocalAgentResourcePressureLevel;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
@@ -106,6 +106,8 @@ pub(crate) fn start_monitor(app: AppHandle) {
             let sample = tauri::async_runtime::spawn_blocking(sample_machine_pressure).await;
             if let Ok(Ok(sample)) = sample {
                 if let Some(level) = hysteresis.observe(sample.pressure_level(), Instant::now()) {
+                    app.state::<MachineResourceGovernor>()
+                        .update_pressure(level);
                     let _ = app
                         .state::<HostManager>()
                         .update_scheduler_pressure(level)

@@ -1,6 +1,9 @@
 use crate::{
     authentication::AuthenticationManager,
     host_lifecycle::{validate_owner, HostManager},
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chatos_local_agent_protocol::{
@@ -128,6 +131,7 @@ pub async fn preview_agent_artifact(
 pub async fn save_agent_artifact(
     manager: State<'_, HostManager>,
     authentication: State<'_, AuthenticationManager>,
+    resources: State<'_, MachineResourceGovernor>,
     owner_user_id: String,
     artifact_id: String,
     name: String,
@@ -166,6 +170,12 @@ pub async fn save_agent_artifact(
     let Some(selected) = selected else {
         return Ok(false);
     };
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     tokio::fs::write(selected.path(), bytes)
         .await
         .map_err(|error| format!("保存 Agent 文档失败：{error}"))?;
