@@ -81,8 +81,9 @@ fn snapshot_from_state(state: &Map<String, Value>) -> Result<AccessControlSnapsh
                 && probe.workspace_lease_verified
                 && probe.workspace_recovery_verified
                 && probe.workspace_permission_tiers_verified
+                && probe.nonempty_workspace_rejected
                 && probe.network_capability_policy_verified =>
-            "Windows AppContainer 文件/网络拒绝、正式工作区租约、只读/读写 ACL 档位、启动 journal 恢复及 disabled/controlled 网络 capability token 自检已通过；任务、Plugin 与 Agent 启动链尚未统一迁移，因此当前仍只发布账号上下文和 Job Object 进程树边界。",
+            "Windows AppContainer 文件/网络拒绝、空白 staging 目录只读/读写租约、启动 journal 恢复、非空目录失败关闭及 disabled/controlled 网络 capability token 自检已通过；现有项目树尚无可逆的逐项 ACL 租约，任务、Plugin 与 Agent 启动链也未统一迁移，因此当前仍只发布账号上下文和 Job Object 进程树边界。",
         Ok(_) =>
             "Windows AppContainer 自检未证明文件隔离；当前只发布账号上下文和 Job Object 进程树边界。",
         Err(_) =>

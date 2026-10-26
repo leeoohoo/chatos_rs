@@ -47,6 +47,7 @@ pub(crate) struct AppContainerProbe {
     pub workspace_lease_verified: bool,
     pub workspace_recovery_verified: bool,
     pub workspace_permission_tiers_verified: bool,
+    pub nonempty_workspace_rejected: bool,
     pub network_capability_policy_verified: bool,
 }
 
@@ -169,6 +170,17 @@ impl WorkspaceLeaseManager {
             .map_err(|error| format!("Resolving the AppContainer workspace failed: {error}"))?;
         if !workspace.is_dir() {
             return Err("The AppContainer workspace is not a directory.".to_owned());
+        }
+        let has_existing_content = std::fs::read_dir(&workspace)
+            .map_err(|error| format!("Inspecting the AppContainer workspace failed: {error}"))?
+            .next()
+            .transpose()
+            .map_err(|error| format!("Inspecting the AppContainer workspace failed: {error}"))?
+            .is_some();
+        if has_existing_content {
+            return Err(
+                "The AppContainer lease only supports an empty staging directory.".to_owned(),
+            );
         }
         {
             let mut active = self.active_workspaces.lock().map_err(|_| {
@@ -299,16 +311,29 @@ fn run_probe() -> Result<AppContainerProbe, String> {
         write_probe_file(&profile, Path::new(&system_root), &read_only_write_file)?;
     lease.restore()?;
     let restored_exit = read_probe_file(&profile, &reader, &workspace_file)?;
-    let recovery_lease =
-        lease_manager.grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly)?;
+    let recovery_workspace = tempfile::tempdir()
+        .map_err(|error| format!("无法创建 AppContainer 恢复探测目录：{error}"))?;
+    let recovery_lease = lease_manager.grant(
+        recovery_workspace.path(),
+        profile.sid,
+        WorkspaceAccess::ReadOnly,
+    )?;
     let recovery_journal_path = recovery_lease.journal_path.clone();
-    let recovery_granted_exit = read_probe_file(&profile, &reader, &workspace_file)?;
+    let recovery_file = recovery_workspace.path().join("recovery.txt");
+    std::fs::write(&recovery_file, b"lease-readable")
+        .map_err(|error| format!("无法写入 AppContainer 恢复探测文件：{error}"))?;
+    let recovery_granted_exit = read_probe_file(&profile, &reader, &recovery_file)?;
     recovery_lease.abandon_for_recovery();
     let recovered_count = lease_manager.recover_all()?;
-    let recovered_exit = read_probe_file(&profile, &reader, &workspace_file)?;
-    let read_write_lease =
-        lease_manager.grant(workspace.path(), profile.sid, WorkspaceAccess::ReadWrite)?;
-    let read_write_file = workspace.path().join("read-write.txt");
+    let recovered_exit = read_probe_file(&profile, &reader, &recovery_file)?;
+    let read_write_workspace = tempfile::tempdir()
+        .map_err(|error| format!("无法创建 AppContainer 读写探测目录：{error}"))?;
+    let read_write_lease = lease_manager.grant(
+        read_write_workspace.path(),
+        profile.sid,
+        WorkspaceAccess::ReadWrite,
+    )?;
+    let read_write_file = read_write_workspace.path().join("read-write.txt");
     let read_write_exit = write_probe_file(&profile, Path::new(&system_root), &read_write_file)?;
     let read_write_created = std::fs::read_to_string(&read_write_file)
         .map(|value| value.trim() == "lease-written")
@@ -318,6 +343,20 @@ fn run_probe() -> Result<AppContainerProbe, String> {
         .map_err(|error| format!("无法清理 AppContainer 读写探测文件：{error}"))?;
     let after_read_write_restore_exit =
         write_probe_file(&profile, Path::new(&system_root), &read_write_file)?;
+    let nonempty_workspace = tempfile::tempdir()
+        .map_err(|error| format!("无法创建 AppContainer 非空目录探测：{error}"))?;
+    std::fs::write(
+        nonempty_workspace.path().join("existing.txt"),
+        b"host-owned",
+    )
+    .map_err(|error| format!("无法写入 AppContainer 非空目录探测文件：{error}"))?;
+    let nonempty_workspace_rejected = lease_manager
+        .grant(
+            nonempty_workspace.path(),
+            profile.sid,
+            WorkspaceAccess::ReadOnly,
+        )
+        .is_err();
     Ok(AppContainerProbe {
         filesystem_denied: disabled_network_process.exit_code != 0
             && controlled_network_process.exit_code != 0,
@@ -333,6 +372,7 @@ fn run_probe() -> Result<AppContainerProbe, String> {
             && read_write_created
             && after_read_write_restore_exit != 0
             && !read_write_file.exists(),
+        nonempty_workspace_rejected,
         network_capability_policy_verified: disabled_network_process.capability_policy_verified
             && controlled_network_process.capability_policy_verified,
     })
@@ -1059,6 +1099,7 @@ mod tests {
         assert!(probe.workspace_lease_verified);
         assert!(probe.workspace_recovery_verified);
         assert!(probe.workspace_permission_tiers_verified);
+        assert!(probe.nonempty_workspace_rejected);
         assert!(probe.network_capability_policy_verified);
         assert_eq!(
             NetworkAccess::from_policy("disabled").unwrap(),
@@ -1096,18 +1137,39 @@ mod tests {
         assert!(!journal_path.exists());
         assert_ne!(read_file_exit_code(&profile, &workspace_file).unwrap(), 0);
 
+        let recovery_workspace = tempfile::tempdir().unwrap();
         let lease = manager
-            .grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly)
+            .grant(
+                recovery_workspace.path(),
+                profile.sid,
+                WorkspaceAccess::ReadOnly,
+            )
             .unwrap();
         let journal_path = lease.journal_path.clone();
-        assert_eq!(read_file_exit_code(&profile, &workspace_file).unwrap(), 0);
+        let recovery_file = recovery_workspace.path().join("recovery.txt");
+        std::fs::write(&recovery_file, b"lease-readable").unwrap();
+        assert_eq!(read_file_exit_code(&profile, &recovery_file).unwrap(), 0);
         lease.abandon_for_recovery();
         assert!(journal_path.exists());
         drop(manager);
         let manager = WorkspaceLeaseManager::open(outside.path()).unwrap();
         assert!(!journal_path.exists());
         assert_eq!(manager.journal_count(), 0);
-        assert_ne!(read_file_exit_code(&profile, &workspace_file).unwrap(), 0);
+        assert_ne!(read_file_exit_code(&profile, &recovery_file).unwrap(), 0);
+
+        let nonempty_workspace = tempfile::tempdir().unwrap();
+        std::fs::write(
+            nonempty_workspace.path().join("existing.txt"),
+            b"host-owned",
+        )
+        .unwrap();
+        assert!(manager
+            .grant(
+                nonempty_workspace.path(),
+                profile.sid,
+                WorkspaceAccess::ReadOnly,
+            )
+            .is_err());
     }
 
     #[test]
