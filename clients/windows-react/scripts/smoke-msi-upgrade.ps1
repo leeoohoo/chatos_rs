@@ -325,6 +325,69 @@ function Invoke-ApplicationSmoke {
     }
 }
 
+function Start-ApplicationForRunningUpgrade {
+    param(
+        [Parameter(Mandatory = $true)][string]$ApplicationPath,
+        [Parameter(Mandatory = $true)][string]$UserDataRoot,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+    )
+
+    $previous = @{}
+    foreach ($name in @("APPDATA", "LOCALAPPDATA", "CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP")) {
+        $previous[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+    }
+    [Environment]::SetEnvironmentVariable("APPDATA", $UserDataRoot, "Process")
+    [Environment]::SetEnvironmentVariable("LOCALAPPDATA", $UserDataRoot, "Process")
+    [Environment]::SetEnvironmentVariable("CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP", $null, "Process")
+    try {
+        $application = Start-Process -FilePath $ApplicationPath -PassThru
+    }
+    finally {
+        foreach ($name in $previous.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $previous[$name], "Process")
+        }
+    }
+
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTimeOffset]::UtcNow -lt $deadline) {
+        $application.Refresh()
+        if ($application.HasExited) {
+            throw "Installed ChatOS exited before the running-application upgrade began."
+        }
+        if ($application.MainWindowHandle -ne [IntPtr]::Zero) {
+            return $application
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    Stop-Process -Id $application.Id -Force -ErrorAction SilentlyContinue
+    throw "Installed ChatOS did not expose a native window before the running-application upgrade."
+}
+
+function Get-PendingFileRenameState {
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
+        "SYSTEM\CurrentControlSet\Control\Session Manager",
+        $false
+    )
+    try {
+        $names = @($key.GetValueNames())
+        if ($names -notcontains "PendingFileRenameOperations") {
+            return '{"present":false}'
+        }
+        $operations = @($key.GetValue(
+            "PendingFileRenameOperations",
+            $null,
+            [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+        ))
+        return ([ordered]@{
+            present = $true
+            operations = $operations
+        } | ConvertTo-Json -Compress -Depth 3)
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
 function New-TruncatedInstaller {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
@@ -484,6 +547,14 @@ $report = [ordered]@{
     currentUpgradeExitCode = $null
     applicationExitCode = $null
     uninstallExitCode = $null
+    runningUpgradeLegacyInstallExitCode = $null
+    runningUpgradeLegacyProcessId = $null
+    runningUpgradeExitCode = $null
+    runningUpgradeApplicationExitCode = $null
+    runningUpgradeUninstallExitCode = $null
+    runningUpgradeLegacyProcessExited = $false
+    runningUpgradePendingRenameUnchanged = $false
+    runningUpgradeVerified = $false
     sentinelPreservedAfterFailedUpgrade = $false
     transactionalRollbackVerified = $false
     sentinelPreservedAfterUpgrade = $false
@@ -497,6 +568,7 @@ $userDataRoot = Join-Path $installRoot "user-data"
 $sentinelPath = Join-Path $userDataRoot "com.chatos.windows\upgrade-smoke-user-data.json"
 $applicationPath = $null
 $rollbackProductCode = $null
+$runningLegacyProcess = $null
 $failure = $null
 
 try {
@@ -578,6 +650,50 @@ try {
     $report.uninstallExitCode = $uninstall.ExitCode
     Assert-SuccessCode -ExitCode $uninstall.ExitCode -Operation "Current MSI uninstall"
     Wait-FileRemoved -Path $applicationPath
+
+    $runningLegacyLog = Join-Path $installRoot "running-legacy-install.log"
+    $runningLegacyInstall = Invoke-MsiInstall -InstallerPath $isolatedLegacyInstaller -Destination $InstallDirectory -LogPath $runningLegacyLog
+    $report.runningUpgradeLegacyInstallExitCode = $runningLegacyInstall.ExitCode
+    Assert-SuccessCode -ExitCode $runningLegacyInstall.ExitCode -Operation "Running-upgrade legacy MSI installation"
+
+    $applicationPath = Wait-ApplicationInstalled -Directory $InstallDirectory
+    $null = Assert-ApplicationVersion -ApplicationPath $applicationPath -ExpectedVersion $LegacyVersion
+    $runningLegacyProcess = Start-ApplicationForRunningUpgrade -ApplicationPath $applicationPath -UserDataRoot $userDataRoot -TimeoutSeconds $StartupTimeoutSeconds
+    $report.runningUpgradeLegacyProcessId = $runningLegacyProcess.Id
+    $pendingRenameBefore = Get-PendingFileRenameState
+
+    $runningUpgradeLog = Join-Path $installRoot "running-application-upgrade.log"
+    $runningUpgrade = Invoke-MsiInstall -InstallerPath $resolvedCurrent -Destination $InstallDirectory -LogPath $runningUpgradeLog
+    $report.runningUpgradeExitCode = $runningUpgrade.ExitCode
+    if ($runningUpgrade.ExitCode -eq 3010) {
+        throw "Running-application MSI upgrade requested a reboot."
+    }
+    Assert-SuccessCode -ExitCode $runningUpgrade.ExitCode -Operation "Running-application MSI upgrade"
+    $pendingRenameAfter = Get-PendingFileRenameState
+    $report.runningUpgradePendingRenameUnchanged = $pendingRenameBefore -ceq $pendingRenameAfter
+    if (-not $report.runningUpgradePendingRenameUnchanged) {
+        throw "Running-application MSI upgrade changed PendingFileRenameOperations."
+    }
+
+    $report.runningUpgradeLegacyProcessExited = $runningLegacyProcess.WaitForExit(5000)
+    if (-not $report.runningUpgradeLegacyProcessExited) {
+        throw "Windows Installer did not close the running legacy application during upgrade."
+    }
+    $runningLegacyProcess = $null
+
+    $applicationPath = Wait-ApplicationInstalled -Directory $InstallDirectory
+    $null = Assert-ApplicationVersion -ApplicationPath $applicationPath -ExpectedVersion $CurrentVersion
+    if ((Get-Content -LiteralPath $sentinelPath -Raw).Trim() -ne $sentinelContent) {
+        throw "The running-application MSI upgrade changed the AppData sentinel."
+    }
+    $report.runningUpgradeApplicationExitCode = Invoke-ApplicationSmoke -ApplicationPath $applicationPath -UserDataRoot $userDataRoot -TimeoutSeconds $StartupTimeoutSeconds
+
+    $runningUninstallLog = Join-Path $installRoot "running-upgrade-uninstall.log"
+    $runningUninstall = Invoke-MsiUninstall -ProductCode $currentProductCode -LogPath $runningUninstallLog
+    $report.runningUpgradeUninstallExitCode = $runningUninstall.ExitCode
+    Assert-SuccessCode -ExitCode $runningUninstall.ExitCode -Operation "Running-application current MSI uninstall"
+    Wait-FileRemoved -Path $applicationPath
+    $report.runningUpgradeVerified = $true
     $report.status = "passed"
 }
 catch {
@@ -586,6 +702,18 @@ catch {
     $report.error = $_.Exception.Message
 }
 finally {
+    if ($null -ne $runningLegacyProcess) {
+        try {
+            $runningLegacyProcess.Refresh()
+            if (-not $runningLegacyProcess.HasExited) {
+                Stop-Process -Id $runningLegacyProcess.Id -Force -ErrorAction SilentlyContinue
+                $null = $runningLegacyProcess.WaitForExit(5000)
+            }
+        }
+        catch {
+            # The process may already have been closed by Windows Installer/Restart Manager.
+        }
+    }
     foreach ($productCode in @($currentProductCode, $rollbackProductCode, $legacyProductCode) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) {
         if ((Get-MsiProductState -ProductCode $productCode) -ne -1) {
             $cleanup = Invoke-MsiUninstall -ProductCode $productCode
