@@ -5,6 +5,13 @@ import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const indexPath = path.join(root, "dist", "index.html");
+const tauriConfigPath = path.join(root, "src-tauri", "tauri.conf.json");
+const tauriConfig = JSON.parse(await readFile(tauriConfigPath, "utf8"));
+if (tauriConfig.bundle?.windows?.allowDowngrades !== false) {
+  throw new Error(
+    "Windows 安装包必须显式设置 bundle.windows.allowDowngrades=false，避免旧版本覆盖新版本。",
+  );
+}
 const indexHtml = await readFile(indexPath, "utf8").catch(() => {
   throw new Error("dist/index.html 不存在；请先运行 npm run build。");
 });

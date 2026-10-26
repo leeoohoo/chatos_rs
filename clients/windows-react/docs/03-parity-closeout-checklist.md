@@ -26,17 +26,19 @@ Windows 产品版本：`3.0.9`
 - [x] Plugin 设置页已开放本机目录 typed 导入：React 只持有原生选择句柄与目录名，不接收绝对路径；预检显示清单、MCP/Skill 组件和内容指纹，确认安装时由原生端复验账号、页面、会话代次、选择租约及完全相同的指纹，再进入既有原子安装和回滚链。Git/npm 来源仍由安装助手处理。
 - [x] Plugin Secret 已完成 Windows 原生闭环：`${credential:<name>}` 按账号、Plugin 与 Secret 名生成不透明 Host 引用，明文只写入 Windows Credential Manager；设置页仅投影 Secret 名称与配置状态，已有值永不回读。Agent 启动前会重新核对清单、Host 绑定与安装完整性，再把明文短暂注入目标进程环境；缺值、跨账号、引用篡改或清单漂移均失败关闭，卸载会同步清理当前清单声明的凭据。兼容 MCP JSON 仍拒绝环境变量，避免把无法区分的明文 Secret 导入系统。
 - [x] 访问控制页的“审批策略/审批人”已接入现有真实命令门禁：按需审批、审批模型和完全控制分别映射到 `request_approval`、`auto_approval`、`full_control`；自动审批与完全控制必须二次确认，自动审批仍由 Rust 后端强制要求已配置审批模型。文件权限、网络访问和本机权限总开关继续锁定，并明确标注尚无操作系统级隔离。
+- [x] Windows MSI 覆盖升级闭环已实测：从仓库保留的 `0.1.0` 安装到隔离目录并使用隔离的真实 AppData，先用截断的 `3.0.9` MSI 验证失败前置不改变旧程序和用户数据哨兵，再完成 `0.1.0 → 3.0.9` Major Upgrade、两代原生启动退出、数据保留和卸载。`3.0.9` 起显式设置 `allowDowngrades=false`，Bundle 审计和 MSI `WIX_DOWNGRADE_DETECTED`/LaunchCondition 双重门禁防止本安装包覆盖更高版本。
 
 ## B. 本次交付前必须关闭
 
 - [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（134 个测试文件、504 项测试）。
 - [x] Windows Tauri Rust 全量测试、两项真实 sidecar 集成测试、一次公网 HTTPS Git 获取 smoke、一次公网 npm Registry 获取 smoke、一次公网 npm MCP 隔离预检与安装 smoke、一次兼容 MCP JSON 冻结 Node 预检与安装 smoke、Rustfmt 和 Clippy 全部通过（469 项常规测试 + 2 项真实 sidecar 测试 + 1 项 Git smoke + 1 项 npm Registry smoke + 1 项 npm MCP smoke + 1 项兼容 MCP JSON smoke）。
 - [x] 重新生成版本为 `3.0.9` 的 Release EXE、MSI、NSIS，并记录 SHA-256：
-  - `chatos-windows-react.exe`：`67c5b25a19bc13c9f4d8da0191e4983e72e3f65211a8dfb8428365bd12afdc7c`
+  - `chatos-windows-react.exe`：`20743e1fdc724f64f8bf8f57e9d4c4e0ceda3bd5495bac636456575de0d64c3a`
   - `chatos_local_agent_host.exe`：`5f697fced2658ac59a3f9fb4ff5d167ac033545ed0f0c995363c754fcc0ebf66`
-  - `ChatOS_3.0.9_x64_en-US.msi`：`cc9307ddcc2221adba3a7430067a3ff7286d8b689e1f6f3b8aea31cf1f52e60e`
-  - `ChatOS_3.0.9_x64-setup.exe`：`f3ce6ba1fc92037498b1a7d78db2e960755514f2e119c1841ea39b736ee3772e`
-- [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、启动、正常退出、卸载和残留清理；访问控制构建产物连续两次通过 20 秒门限，成功报告为 `%TEMP%\chatos-windows-install-smoke-3.0.9-access-control-1.json` 和 `%TEMP%\chatos-windows-install-smoke-3.0.9-access-control-2.json`。
+  - `ChatOS_3.0.9_x64_en-US.msi`：`9d70c20b6bc404435ad11f1d8c2404a0d701aba2a149614548b2972589dc6d03`
+  - `ChatOS_3.0.9_x64-setup.exe`：`5f70f4200ee4cd435e780b4f17bc0ab3ce1aacade16ca52fe34688bb2ccc24a9`
+- [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、启动、正常退出、卸载和残留清理；降级保护构建产物连续两次通过 20 秒门限，成功报告为 `%TEMP%\chatos-windows-install-smoke-3.0.9-downgrade-guard-1.json` 和 `%TEMP%\chatos-windows-install-smoke-3.0.9-downgrade-guard-2.json`。
+- [x] MSI 升级 smoke 连续四次通过；最终报告 `%TEMP%\chatos-windows-msi-upgrade-smoke-0.1.0-to-3.0.9-4.json` 同时记录 `0.1.0 → 3.0.9`、两代原生启动退出、截断包 `1620` 失败、AppData 哨兵保留、卸载以及降级检测规则。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [ ] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息。代码默认状态与自动回归均为 workspace/首个消息资源，但原生窗口视觉取证仍受下一项工具故障阻塞。
 - [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。
@@ -51,7 +53,7 @@ Windows 产品版本：`3.0.9`
 ### P2：平台/发布质量
 
 - [ ] Windows 安装包代码签名、发布证书、签名校验和 SmartScreen 信誉验证。仓库可生成安装包，但本机未配置正式签名身份。
-- [ ] 从旧版安装包到 `3.0.9` 的覆盖升级、数据迁移、失败回滚和降级演练；当前 smoke 只覆盖干净安装与卸载。
+- [ ] Windows Installer 事务执行到中途后的故障注入回滚，以及文件被占用、需重启场景仍需补验；当前已关闭旧版覆盖升级、失败前置保护、数据保留、正常卸载和 `3.0.9` 起的降级检测。历史 `0.1.0` 安装包自身允许降级，已发布二进制无法由新版本追溯修改。
 - [ ] 固定分辨率与 100%/125%/150% 缩放的原生截图对照、键盘导航、焦点顺序、屏幕阅读器标签和对比度验收。
 - [ ] 冷启动、Host ready、首屏会话、万级消息、大目录、Git Diff、终端大输出和 8 小时运行的 Windows 性能/稳定性基线。
 
@@ -69,4 +71,4 @@ Windows 产品版本：`3.0.9`
 3. [已完成] Git、固定版本 npm 来源、普通 npm MCP、常见 stdio MCP JSON、portable Agent、Codex、Claude、独立 Skill、skills-only、设置页本机目录 typed 导入与 Windows Credential Manager Secret resolver 均已完成。
 4. [外部依赖] 完成 Computer Use `.tgz`、Marketplace 签名发布/客户端安装闭环，以及 Windows 安装包正式代码签名。
 5. [待开始] 设计并实现 Windows 文件/网络隔离后，再开放第 31 页的文件、网络与总开关；审批策略和审批人已经接入真实执行门禁。
-6. [待验证] 工具恢复后完成 31 页原生逐页视觉、缩放和无障碍验收；随后执行升级/回滚及性能稳定性基线。
+6. [待验证] 工具恢复后完成 31 页原生逐页视觉、缩放和无障碍验收；升级与失败前置保护已完成，后续补 Windows Installer 中途故障回滚及性能稳定性基线。
