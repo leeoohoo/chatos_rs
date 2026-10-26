@@ -101,6 +101,7 @@ extension AppModel {
     }
 
     func prepareForApplicationTermination() {
+        machineResourcePressureMonitor.stop()
         cancelAccountScopedBackgroundTasks()
         languagePreferencesLoadTask?.cancel()
         languagePreferencesLoadTask = nil

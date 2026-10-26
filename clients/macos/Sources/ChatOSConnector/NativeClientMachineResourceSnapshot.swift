@@ -73,11 +73,15 @@ public struct NativeClientResourceDomainSnapshot: Sendable, Equatable {
 
 public struct NativeClientSharedResourcePoolSnapshot: Sendable, Equatable {
     public let poolID: String
+    public let configuredResourceUnits: Int
     public let availableResourceUnits: Int
+    public let maximumBackgroundResourceUnits: Int
     public let usedResourceUnits: Int
     public let reservedHostResourceUnits: Int
     public let activeCount: Int
     public let queuedCount: Int
+    public let pressureLevel: ClientMachinePressureLevel
+    public let pendingRecoveryLevel: ClientMachinePressureLevel?
 }
 
 public struct NativeClientMachineResourceSnapshot: Sendable, Equatable {
@@ -184,11 +188,15 @@ public struct NativeClientMachineResourceSnapshotProvider: Sendable {
         let sharedPool = machineSnapshot.map {
             NativeClientSharedResourcePoolSnapshot(
                 poolID: poolID,
-                availableResourceUnits: $0.budget.availableResourceUnits,
+                configuredResourceUnits: $0.budget.availableResourceUnits,
+                availableResourceUnits: $0.capacity.effectiveResourceUnits,
+                maximumBackgroundResourceUnits: $0.capacity.maximumBackgroundResourceUnits,
                 usedResourceUnits: $0.usedResourceUnits,
                 reservedHostResourceUnits: $0.budget.reservedHostResourceUnits,
                 activeCount: $0.active.count,
-                queuedCount: $0.queued.count
+                queuedCount: $0.queued.count,
+                pressureLevel: $0.capacity.pressureState.level,
+                pendingRecoveryLevel: $0.pendingRecoveryState?.level
             )
         }
         return .init(domains: [
@@ -202,7 +210,7 @@ public struct NativeClientMachineResourceSnapshotProvider: Sendable {
                 configuredLimit: machineSnapshot?.budget.maximumAgentRuns
                     ?? agentSnapshot.limit,
                 sharedPoolID: poolID,
-                sharedPoolLimit: machineSnapshot?.budget.availableResourceUnits,
+                sharedPoolLimit: machineSnapshot?.capacity.effectiveResourceUnits,
                 activeCount: Self.count(.agentRun, in: machineSnapshot?.active)
                     ?? agentSnapshot.activeCount,
                 queuedCount: Self.count(.agentRun, in: machineSnapshot?.queued)
@@ -312,7 +320,7 @@ public struct NativeClientMachineResourceSnapshotProvider: Sendable {
             processModel: .oneWorkerPerUnit,
             configuredLimit: snapshot.budget.maximumConcurrentWorkers(for: kind),
             sharedPoolID: poolID,
-            sharedPoolLimit: machineSnapshot?.budget.availableResourceUnits,
+            sharedPoolLimit: machineSnapshot?.capacity.effectiveResourceUnits,
             activeCount: count(machineKind, in: machineSnapshot?.active)
                 ?? snapshot.active.filter { $0.kind == kind }.count,
             queuedCount: count(machineKind, in: machineSnapshot?.queued)

@@ -124,6 +124,7 @@ let package = Package(
                 "ChatOSMediaWorkerProtocol",
                 "ChatOSCodeReadWorkerClient",
                 "ChatOSCodeReadWorkerProtocol",
+                "ChatOSWorkerRuntime",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             linkerSettings: [
@@ -132,6 +133,7 @@ let package = Package(
                 .linkedFramework("Security"),
                 .linkedFramework("WebKit"),
                 .linkedFramework("AVFoundation"),
+                .linkedFramework("IOKit"),
                 .linkedLibrary("sqlite3"),
             ]
         ),

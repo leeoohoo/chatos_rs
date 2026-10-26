@@ -194,6 +194,8 @@ public struct ClientMachineResourceGovernorSnapshot: Sendable, Equatable {
     public let metricsByKind: [ClientMachineResourceKind: ClientMachineResourceMetrics]
     public let maximumObservedFileActive: Int
     public let maximumObservedFileQueued: Int
+    public let capacity: ClientMachineResourceCapacity
+    public let pendingRecoveryState: ClientMachinePressureState?
 
     public var usedResourceUnits: Int {
         active.reduce(into: 0) { total, context in
@@ -208,6 +210,113 @@ public struct ClientMachineResourceGovernorSnapshot: Sendable, Equatable {
 
 public enum ClientMachineResourceGovernorError: Error, Sendable, Equatable {
     case queueFull
+}
+
+public enum ClientMachineMemoryPressure: Int, Sendable, Comparable {
+    case normal = 0
+    case warning = 1
+    case critical = 2
+
+    public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+public enum ClientMachineThermalPressure: Int, Sendable, Comparable {
+    case nominal = 0
+    case fair = 1
+    case serious = 2
+    case critical = 3
+
+    public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+public enum ClientMachinePressureLevel: Int, Sendable, Comparable {
+    case normal = 0
+    case elevated = 1
+    case serious = 2
+    case critical = 3
+
+    public static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+public struct ClientMachinePressureState: Sendable, Equatable {
+    public static let normal = Self(
+        memory: .normal,
+        thermal: .nominal,
+        lowPowerModeEnabled: false,
+        onBatteryPower: false,
+        batteryLevel: nil
+    )
+
+    public let memory: ClientMachineMemoryPressure
+    public let thermal: ClientMachineThermalPressure
+    public let lowPowerModeEnabled: Bool
+    public let onBatteryPower: Bool
+    public let batteryLevel: Double?
+
+    public init(
+        memory: ClientMachineMemoryPressure,
+        thermal: ClientMachineThermalPressure,
+        lowPowerModeEnabled: Bool,
+        onBatteryPower: Bool,
+        batteryLevel: Double?
+    ) {
+        self.memory = memory
+        self.thermal = thermal
+        self.lowPowerModeEnabled = lowPowerModeEnabled
+        self.onBatteryPower = onBatteryPower
+        self.batteryLevel = batteryLevel.map { min(1, max(0, $0)) }
+    }
+
+    public var isLowBattery: Bool {
+        onBatteryPower && batteryLevel.map { $0 <= 0.2 } == true
+    }
+
+    public var level: ClientMachinePressureLevel {
+        if memory == .critical || thermal == .critical { return .critical }
+        if memory == .warning || thermal == .serious { return .serious }
+        if thermal == .fair || lowPowerModeEnabled || isLowBattery { return .elevated }
+        return .normal
+    }
+}
+
+public struct ClientMachineResourceCapacity: Sendable, Equatable {
+    public let pressureState: ClientMachinePressureState
+    public let effectiveResourceUnits: Int
+    public let maximumBackgroundResourceUnits: Int
+}
+
+public enum ClientMachineResourcePressurePolicy {
+    public static let interactiveReserveResourceUnits =
+        ClientMachineResourceBudget.agentRunUnitCost
+
+    public static func capacity(
+        budget: ClientMachineResourceBudget,
+        pressureState: ClientMachinePressureState
+    ) -> ClientMachineResourceCapacity {
+        let baseline = budget.availableResourceUnits
+        let minimum = min(baseline, interactiveReserveResourceUnits)
+        let effective: Int
+        let background: Int
+        switch pressureState.level {
+        case .normal:
+            effective = baseline
+            background = baseline
+        case .elevated:
+            effective = max(minimum, (baseline * 3 + 3) / 4)
+            background = max(0, effective - minimum)
+        case .serious:
+            effective = max(minimum, (baseline + 1) / 2)
+            background = max(0, effective - minimum)
+        case .critical:
+            effective = minimum
+            background = 0
+        }
+        return .init(
+            pressureState: pressureState,
+            effectiveResourceUnits: effective,
+            maximumBackgroundResourceUnits: background
+        )
+    }
 }
 
 public final class ClientMachineResourcePermit: @unchecked Sendable {
@@ -273,11 +382,26 @@ public actor ClientMachineResourceGovernor {
     private var consecutiveInteractiveAdmissionsWhileContended = 0
     private var maximumObservedFileActive = 0
     private var maximumObservedFileQueued = 0
+    private var capacity: ClientMachineResourceCapacity
+    private var pendingRecoveryState: ClientMachinePressureState?
+    private var recoveryTask: Task<Void, Never>?
+    private var recoveryGeneration: UInt64 = 0
+    private let recoveryDelay: Duration
 
-    public init(budget: ClientMachineResourceBudget, maximumQueued: Int = 256) {
+    public init(
+        budget: ClientMachineResourceBudget,
+        maximumQueued: Int = 256,
+        recoveryDelay: Duration = .seconds(30)
+    ) {
         precondition(maximumQueued > 0)
+        precondition(recoveryDelay >= .zero)
         self.budget = budget
         self.maximumQueued = maximumQueued
+        self.recoveryDelay = recoveryDelay
+        self.capacity = ClientMachineResourcePressurePolicy.capacity(
+            budget: budget,
+            pressureState: .normal
+        )
     }
 
     public func acquire(
@@ -285,7 +409,7 @@ public actor ClientMachineResourceGovernor {
     ) async throws -> ClientMachineResourcePermit {
         try Task.checkCancellation()
         let id = UUID()
-        if canAdmit(context.kind) {
+        if canAdmit(context) {
             return admit(id: id, context: context, wasQueued: false)
         }
         guard waiters.count < maximumQueued else {
@@ -322,7 +446,7 @@ public actor ClientMachineResourceGovernor {
     public func tryAcquire(
         context: ClientMachineResourceContext
     ) -> ClientMachineResourcePermit? {
-        guard !Task.isCancelled, canAdmit(context.kind) else {
+        guard !Task.isCancelled, canAdmit(context) else {
             updateMetrics(for: context.kind) {
                 Self.increment(&$0.immediateCapacityRejectionCount)
             }
@@ -339,8 +463,27 @@ public actor ClientMachineResourceGovernor {
             queued: waiters.map(\.context),
             metricsByKind: metricsByKind,
             maximumObservedFileActive: maximumObservedFileActive,
-            maximumObservedFileQueued: maximumObservedFileQueued
+            maximumObservedFileQueued: maximumObservedFileQueued,
+            capacity: capacity,
+            pendingRecoveryState: pendingRecoveryState
         )
+    }
+
+    /// Applies resource pressure without revoking permits that already crossed the admission
+    /// boundary. Escalations take effect immediately; recovery is delayed so oscillating system
+    /// notifications cannot repeatedly open and close process-spawn capacity.
+    public func updatePressureState(_ pressureState: ClientMachinePressureState) {
+        if pressureState.level >= capacity.pressureState.level {
+            cancelPendingRecovery()
+            capacity = ClientMachineResourcePressurePolicy.capacity(
+                budget: budget,
+                pressureState: pressureState
+            )
+            drainWaiters()
+            return
+        }
+
+        scheduleRecovery(to: pressureState)
     }
 
     fileprivate func release(id: UUID) {
@@ -372,7 +515,7 @@ public actor ClientMachineResourceGovernor {
     }
 
     private func nextAdmissibleWaiterIndex() -> Int? {
-        let candidates = waiters.indices.filter { canAdmit(waiters[$0].context.kind) }
+        let candidates = waiters.indices.filter { canAdmit(waiters[$0].context) }
         guard !candidates.isEmpty else { return nil }
         let interactive = candidates.first { waiters[$0].context.priority == .interactive }
         let background = candidates.first { waiters[$0].context.priority == .background }
@@ -405,10 +548,16 @@ public actor ClientMachineResourceGovernor {
         return background
     }
 
-    private func canAdmit(_ kind: ClientMachineResourceKind) -> Bool {
+    private func canAdmit(_ context: ClientMachineResourceContext) -> Bool {
+        let kind = context.kind
+        let cost = budget.unitCost(for: kind)
         guard budget.maximumActive(for: kind) > activeCount(kind),
-              usedResourceUnits() + budget.unitCost(for: kind)
-                <= budget.availableResourceUnits else { return false }
+              usedResourceUnits() + cost <= capacity.effectiveResourceUnits else { return false }
+        if context.priority == .background,
+           usedBackgroundResourceUnits() + cost
+            > capacity.maximumBackgroundResourceUnits {
+            return false
+        }
         // Preserve the historical one-slot reservation between the two file-worker kinds. Across
         // Agent and file work the pool stays work-conserving; once another domain queues, normal
         // priority/fairness ordering prevents the releasing domain from immediately taking it back.
@@ -423,8 +572,8 @@ public actor ClientMachineResourceGovernor {
         let reserve = activeCount(kind) > 0 && activeCount(otherFileKind) == 0
             ? budget.unitCost(for: otherFileKind)
             : 0
-        return usedResourceUnits() + budget.unitCost(for: kind)
-            <= budget.availableResourceUnits - reserve
+        return usedResourceUnits() + cost
+            <= capacity.effectiveResourceUnits - reserve
     }
 
     private func admit(
@@ -466,6 +615,56 @@ public actor ClientMachineResourceGovernor {
         active.values.reduce(into: 0) { total, context in
             total += budget.unitCost(for: context.kind)
         }
+    }
+
+    private func usedBackgroundResourceUnits() -> Int {
+        active.values.reduce(into: 0) { total, context in
+            if context.priority == .background {
+                total += budget.unitCost(for: context.kind)
+            }
+        }
+    }
+
+    private func scheduleRecovery(to pressureState: ClientMachinePressureState) {
+        recoveryGeneration &+= 1
+        let generation = recoveryGeneration
+        recoveryTask?.cancel()
+        pendingRecoveryState = pressureState
+        let delay = recoveryDelay
+        recoveryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.completeRecovery(
+                to: pressureState,
+                generation: generation
+            )
+        }
+    }
+
+    private func completeRecovery(
+        to pressureState: ClientMachinePressureState,
+        generation: UInt64
+    ) {
+        guard generation == recoveryGeneration,
+              pendingRecoveryState == pressureState else { return }
+        capacity = ClientMachineResourcePressurePolicy.capacity(
+            budget: budget,
+            pressureState: pressureState
+        )
+        pendingRecoveryState = nil
+        recoveryTask = nil
+        drainWaiters()
+    }
+
+    private func cancelPendingRecovery() {
+        recoveryGeneration &+= 1
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        pendingRecoveryState = nil
     }
 
     private func fileActiveCount() -> Int {

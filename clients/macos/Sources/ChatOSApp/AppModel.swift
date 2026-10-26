@@ -2,6 +2,7 @@ import ChatOSAPI
 import ChatOSAgentRuntime
 import ChatOSConnector
 import ChatOSCore
+import ChatOSWorkerRuntime
 import AppKit
 import Combine
 import Foundation
@@ -140,6 +141,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let agentSkillLibrary: LocalAgentSkillLibrary
     let agentGroupChatScheduler: LocalAgentGroupChatScheduler
     let machineResourceSnapshotProvider: NativeClientMachineResourceSnapshotProvider
+    let machineResourcePressureMonitor: ClientMachineResourcePressureMonitor
     let agentGroupChatBuilderService: LocalAgentBuilderService
     let notepadService: NativeLocalAgentNotepadService
     let wechatCompanionService: ChatOSWeChatCompanionService
@@ -482,6 +484,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 await localAgentHost?.resourceSnapshot()
             }
         )
+        self.machineResourcePressureMonitor = ClientMachineResourcePressureMonitor(
+            governor: .shared
+        )
         self.agentGroupChatBuilderService = LocalAgentBuilderService(
             groupChatService: agentGroupChatService,
             projectsService: localProjectsService,
@@ -650,6 +655,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             guard let self, let ownerUserID = authenticatedUserID else { return }
             refreshLocalAgentControlPlane(ownerUserID: ownerUserID, force: true)
         }
+        machineResourcePressureMonitor.start()
         authentication.start()
     }
 

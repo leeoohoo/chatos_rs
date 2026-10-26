@@ -2557,13 +2557,29 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 验证：源 plist 通过 `plutil`，打包与验证脚本通过 zsh 语法检查；提交后重新执行原生 arm64 Release 打包、深度签名验证、包内 Git SHA 校验、无备份覆盖安装，并刷新 LaunchServices 与 Spotlight 索引。此阶段只修复安装包元数据，不启动 ChatOS、不访问活动用户数据库。
 
-### 12.115—12.120 剩余完整交付路径
+### 12.115a 第四十六完整里程碑：App-owned 动态压力调额（2026-10-26）
+
+本里程碑把 12.114c 的静态共享额度改成运行时动态额度，同时保持 claim-before-spawn 边界和跨会话并行。App 启动后由单独的轻量监控器接收 `DispatchSource` memory pressure、`ProcessInfo.thermalState`、低电量模式通知，以及 IOKit 电池电量/供电状态；监控器只向共享 Governor 提交压力快照，不启动 Host、不领取 Delivery、不访问活动数据库。
+
+已实施：
+
+- 统一压力级别为 normal、elevated、serious、critical。normal 使用启动时基线；elevated 约 75%；serious 约 50%；critical 只保留 2 个交互资源单位。压力期后台最多使用“当前额度减 2”，因此至少保留一个 Agent Run 或两个短 Worker 的交互容量。
+- 压力升高立即收紧新准入；已经持有 permit、已经启动 Worker 或已经越过副作用边界的任务继续运行，不撤销、不重放、不强杀。若 active 已超过新额度，必须先自然释放到额度以内才允许新任务进入。
+- 压力下降默认等待 30 秒再扩容。恢复期间新的同级/更高压力会取消旧恢复，新的较低目标会重新计时；恢复完成后重新 drain 共享队列，继续沿用“最多连续四次 interactive 后 background 必进一次”的有界公平策略。
+- `ClientMachineResourceGovernorSnapshot` 与机器级共享池快照同时报告配置基线、当前有效额度、后台额度、used/active/queued、当前压力级别与待恢复级别；各 Agent/Media/Code Read domain 的 `sharedPoolLimit` 指向当前有效额度，不再把静态上限冒充实时容量。
+- App 生命周期显式启动和停止压力监控；App target 直接链接 IOKit。内存、热、电源和电池通知串行归并，重复状态不重复提交，异步提交保持原始顺序。
+
+验收：Debug 与原生 arm64 Release 均在 `warnings-as-errors` 下通过 Governor 11 项和机器 Snapshot 3 项，共 14 项；覆盖低电量/低电量模式/thermal 分类、立即降额、active 不被撤销、超额时拒绝新任务、后台不可占交互保留、恢复迟滞、压力反复防抖、恢复后的后台公平及动态 Snapshot。App target 在两种配置下均完成依赖图编译。没有启动新安装包，也没有访问活动用户数据库。
+
+边界：Rust Host 仍使用 12.114b 的进程内固定 worker 数和独立硬预留；App 不能伪造 Host permit。Host 在 durable claim 前读取动态上限、压力状态 IPC/协议兼容、最低一个 Host worker 和恢复迟滞属于 12.115b。Large Transfer、进程内重媒体、Plugin 与数据库 maintenance 仍可能已持有 durable 身份，不能机械套外层 permit；它们的组合压力留给 12.119。
+
+### 12.115b—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
 | --- | --- | --- |
-| 12.115 动态压力调额 | 接入 memory pressure、thermal state、低电量和电源模式；压力升高只阻止新 claim，不强杀已提交副作用的任务，并用迟滞恢复 | 压力注入测试验证降额、恢复、防抖和最小保留槽；交互任务不被后台恢复无限饿死 |
+| 12.115b Host 动态压力调额 | 把 App 压力级别和 Host 动态 worker 上限通过版本化 IPC 传给 Rust Host，在 durable claim 前生效并至少保留一个 Host worker | Host 协议兼容、立即降额、不撤销 active claim、30 秒迟滞恢复和断连回退测试通过；Host Snapshot 报告配置/有效上限 |
 | 12.116 文件生命周期收口 | 安全回收 workspace `.import-*`、UI exporter 临时文件和 registry 失败遗留空目录；补最终打开点 device/inode 再校验 | ownership、命名、年龄、锁/活跃 Worker、symlink、hardlink、跨账户和取消/SIGKILL 回归全部通过；不递归清理任意用户目录 |
 | 12.117 Agent/存储强杀矩阵 | 覆盖凭据交付、provider 网络、工具副作用、checkpoint、SQLite COMMIT/VACUUM 等不确定窗口 | 每个停点只有“安全重试、明确失败、待对账”三类结果；无重复副作用、跨账户写入或静默丢失；连续崩溃有隔离熔断 |
 | 12.118 外部环境故障门禁 | 在真实 Linux/macOS SSH 端和移动盘验证 staging、权限继承、原子提交、孤儿扫描、断网、睡眠、只读卷与 ENOSPC | 旧目标不被失败写覆盖；临时文件可识别回收；取消只终止所属进程组；远端不可确认结果进入待对账 |
