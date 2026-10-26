@@ -318,6 +318,7 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             let attachment_manager = app.state::<AttachmentManager>().inner().clone();
             let media_studio_manager = app.state::<MediaStudioManager>().inner().clone();
+            let story_studio_manager = app.state::<StoryStudioManager>().inner().clone();
             let machine_resources = app.state::<MachineResourceGovernor>().inner().clone();
             tauri::async_runtime::spawn(async move {
                 let Ok(_permit) = machine_resources
@@ -331,6 +332,7 @@ pub fn run() {
                 };
                 let _ = attachment_manager.cleanup_stale_temporaries().await;
                 let _ = media_studio_manager.cleanup_stale_temporaries().await;
+                let _ = story_studio_manager.cleanup_stale_temporaries().await;
             });
             resource_pressure::start_monitor(app.handle().clone());
             #[cfg(target_os = "windows")]

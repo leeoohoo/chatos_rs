@@ -9,8 +9,11 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
+
+use crate::app_owned_export::try_remove_stale_owned_file;
 
 use super::{
     batch::{StoryMediaBatchHistoryPage, StoryMediaBatchRecord, MAXIMUM_MEDIA_BATCH_BYTES},
@@ -26,6 +29,8 @@ pub(super) const MAXIMUM_STORY_VIDEO_BYTES: usize = 512 * 1_024 * 1_024;
 const DEFAULT_PROJECT_PAGE_SIZE: usize = 40;
 const MAXIMUM_PROJECT_PAGE_SIZE: usize = 200;
 const DEFAULT_HISTORY_PAGE_SIZE: usize = 20;
+const STALE_STORY_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_STORY_CLEANUP_ENTRIES: usize = 20_000;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -79,6 +84,20 @@ impl StoryProjectStore {
     #[cfg(test)]
     pub(super) fn for_tests(app_data_directory: PathBuf) -> Result<Self, String> {
         Self::new(app_data_directory)
+    }
+
+    pub(super) fn cleanup_stale_temporaries(&self) -> usize {
+        let cutoff = SystemTime::now()
+            .checked_sub(STALE_STORY_TEMPORARY_AGE)
+            .unwrap_or(UNIX_EPOCH);
+        self.cleanup_stale_temporaries_before(cutoff)
+    }
+
+    pub(super) fn cleanup_stale_temporaries_before(&self, cutoff: SystemTime) -> usize {
+        let Ok(_guard) = self.mutation_lock.lock() else {
+            return 0;
+        };
+        cleanup_story_temporaries(&self.root, cutoff)
     }
 
     pub(super) fn save(&self, owner_user_id: &str, project: &StoryProject) -> Result<(), String> {
@@ -972,6 +991,146 @@ impl StoryProjectStore {
         }
         Ok(Some(projects))
     }
+}
+
+fn cleanup_story_temporaries(root: &Path, cutoff: SystemTime) -> usize {
+    if !safe_cleanup_directory(root) {
+        return 0;
+    }
+    let accounts = root.join("Accounts");
+    if !safe_cleanup_directory(&accounts) {
+        return 0;
+    }
+    let mut state = StoryTemporaryCleanupState::default();
+    let Ok(owners) = fs::read_dir(&accounts) else {
+        return 0;
+    };
+    for owner in owners.flatten() {
+        if !state.visit() {
+            break;
+        }
+        let Some(owner_name) = owner.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let owner_path = owner.path();
+        if !valid_owner_hash(&owner_name) || !safe_cleanup_directory(&owner_path) {
+            continue;
+        }
+        let projects = owner_path.join("Projects");
+        cleanup_story_projects(&projects, cutoff, &mut state);
+    }
+    state.removed
+}
+
+fn cleanup_story_projects(
+    projects: &Path,
+    cutoff: SystemTime,
+    state: &mut StoryTemporaryCleanupState,
+) {
+    if !safe_cleanup_directory(projects) {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(projects) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !state.visit() {
+            return;
+        }
+        let Some(project_id) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let project = entry.path();
+        if canonical_project_id(&project_id).is_err() || !safe_cleanup_directory(&project) {
+            continue;
+        }
+        cleanup_story_project(&project, cutoff, state);
+        if state.visited >= MAXIMUM_STORY_CLEANUP_ENTRIES {
+            return;
+        }
+    }
+}
+
+fn cleanup_story_project(
+    project: &Path,
+    cutoff: SystemTime,
+    state: &mut StoryTemporaryCleanupState,
+) {
+    let Ok(entries) = fs::read_dir(project) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !state.visit() {
+            return;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let path = entry.path();
+        if name == "runs" && safe_cleanup_directory(&path) {
+            cleanup_story_runs(&path, cutoff, state);
+        } else if canonical_story_project_temporary_name(&name)
+            && try_remove_stale_owned_file(&path, cutoff)
+        {
+            state.removed = state.removed.saturating_add(1);
+        }
+        if state.visited >= MAXIMUM_STORY_CLEANUP_ENTRIES {
+            return;
+        }
+    }
+}
+
+fn cleanup_story_runs(runs: &Path, cutoff: SystemTime, state: &mut StoryTemporaryCleanupState) {
+    let Ok(entries) = fs::read_dir(runs) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !state.visit() {
+            return;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if canonical_story_run_temporary_name(&name)
+            && try_remove_stale_owned_file(&entry.path(), cutoff)
+        {
+            state.removed = state.removed.saturating_add(1);
+        }
+    }
+}
+
+#[derive(Default)]
+struct StoryTemporaryCleanupState {
+    visited: usize,
+    removed: usize,
+}
+
+impl StoryTemporaryCleanupState {
+    fn visit(&mut self) -> bool {
+        if self.visited >= MAXIMUM_STORY_CLEANUP_ENTRIES {
+            return false;
+        }
+        self.visited += 1;
+        true
+    }
+}
+
+fn canonical_story_project_temporary_name(name: &str) -> bool {
+    if name == "project.json.tmp" {
+        return true;
+    }
+    name.strip_prefix("media-batch-")
+        .and_then(|value| value.strip_suffix(".json.tmp"))
+        .is_some_and(|value| canonical_project_id(value).is_ok())
+}
+
+fn canonical_story_run_temporary_name(name: &str) -> bool {
+    name.strip_suffix(".json.tmp")
+        .is_some_and(|value| canonical_project_id(value).is_ok())
+}
+
+fn safe_cleanup_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| is_private_directory_metadata(&metadata))
 }
 
 fn project_references_media(

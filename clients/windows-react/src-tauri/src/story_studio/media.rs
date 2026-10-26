@@ -289,6 +289,13 @@ impl StoryStudioManager {
         Self::new(app_data_directory)
     }
 
+    pub(crate) async fn cleanup_stale_temporaries(&self) -> usize {
+        let store = self.store.clone();
+        tauri::async_runtime::spawn_blocking(move || store.cleanup_stale_temporaries())
+            .await
+            .unwrap_or_default()
+    }
+
     pub(super) fn present_project(
         &self,
         owner_user_id: &str,
