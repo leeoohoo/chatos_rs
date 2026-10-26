@@ -19,6 +19,7 @@ const REMOTE_CONNECTION_PREFIXES: &[&str] = &[".credential-index-"];
 const CLIPBOARD_PREFIXES: &[&str] = &[".clipboard-"];
 const APPROVAL_PREFIXES: &[&str] = &[".approval-"];
 const INVOCATION_JOURNAL_PREFIXES: &[&str] = &["."];
+const CONNECTOR_PREFIXES: &[&str] = &[".connector-state-", ".approval-history-"];
 
 const CLEANUP_SCOPES: &[CleanupScope] = &[
     CleanupScope {
@@ -52,6 +53,10 @@ const CLEANUP_SCOPES: &[CleanupScope] = &[
     CleanupScope {
         components: &["NativeConnector", "Plugins", ".integrity"],
         pattern: CleanupNamePattern::PluginIntegrity,
+    },
+    CleanupScope {
+        components: &["NativeConnector"],
+        pattern: CleanupNamePattern::Uuid(CONNECTOR_PREFIXES),
     },
 ];
 
@@ -337,6 +342,8 @@ mod tests {
                 "local-agent/approval-decisions",
                 format!(".approval-{token}.tmp"),
             ),
+            ("NativeConnector", format!(".connector-state-{token}.tmp")),
+            ("NativeConnector", format!(".approval-history-{token}.tmp")),
         ]
         .into_iter()
         .map(|(directory, name)| {

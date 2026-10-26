@@ -19,6 +19,7 @@ Windows 产品版本：`3.0.9`
 - [x] Agent Plugin per-run invocation journal 与 Plugin 安装完整性事务已接入同一后台清理链：只进入 `NativeConnector/PluginRuntime/InvocationJournal` 和 `NativeConnector/Plugins/.integrity` 两个固定目录，分别只接受 `.<小写 UUID>.tmp` 与 `.<64 位小写 SHA-256>-<小写 UUID>.tmp`；继续拒绝未满 24 小时、symlink/reparse、多硬链接、非 canonical 名称和超出 2,000 项上限的对象。
 - [x] Plugin 来源获取与安装提交的 staging 目录已接入启动后台清理：只进入 `.source-staging/<小写 UUID>` 与 `.staging/<小写 UUID>`，整棵树最多 20,000 项且所有节点均超过 24 小时才回收；任一 symlink、Windows reparse、多硬链接、特殊文件、近期写入或扫描错误都会保留整棵树，已提交版本目录和 `.backups` 不在清理范围。
 - [x] Plugin `.backups` 已完成基于 Host 当前 `release_digest` 的崩溃恢复：设置页加载与所有安装来源共享串行事务锁；Host 仍指向旧 digest 时恢复完整性精确匹配的唯一备份，Host 已提交新 digest 时保留新目录。被替换的新目录或已失效旧备份只移动到 canonical `.staging/<UUID>` 隔离，随后复用受限的 24 小时树清理；无法唯一匹配、链接、越界或损坏的备份保持不动。
+- [x] `NativeConnector/state.json` 与 `approval-activity.json` 已迁移到公共 AppData 原子替换边界：同目录 canonical UUID 临时文件完整写入、flush/fsync、复验普通非 reparse 文件及长度后，以 Windows write-through replace 提交；启动清理只识别 `.connector-state-<小写 UUID>.tmp` 与 `.approval-history-<小写 UUID>.tmp`，超过 24 小时才回收。
 - [x] 31 个 macOS 一级页面均有 Windows React 路由和对应业务入口；默认登录后进入用户消息，而不是设置页。
 - [x] Local Agent Host 打包资源完成真实 v49 健康握手，并通过账号隔离业务请求测试；此前两个 ignored 集成测试已实际运行通过。
 - [x] Story H.264 实际尾帧回归修复。旧 `16×16` 夹具低于 Windows Media Foundation H.264 有效尺寸，已替换为 `64×64` Baseline/YUV420P 红到蓝视频，继续断言最后一帧为蓝色。
@@ -44,12 +45,12 @@ Windows 产品版本：`3.0.9`
 ## B. 本次交付前必须关闭
 
 - [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（134 个测试文件、504 项测试）。
-- [x] Windows Plugin backup 崩溃恢复切片完成后，Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：507 项测试被发现，501 项通过、0 项失败、6 项环境集成测试按预期 ignored；其中 2 项 sidecar 集成测试此前已以新 v49 Release Host 实际运行通过。Local Agent Host 全量 135 项测试及 Host 自身 Clippy `-D warnings` 保持通过；Windows 对锁中文件的新开句柄读取限制已进入跨平台测试语义，不再误报数据库所有权回归。
+- [x] Windows Connector 固定元数据事务切片完成后，Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：508 项测试被发现，502 项通过、0 项失败、6 项环境集成测试按预期 ignored；其中 2 项 sidecar 集成测试此前已以新 v49 Release Host 实际运行通过。Local Agent Host 全量 135 项测试及 Host 自身 Clippy `-D warnings` 保持通过；Windows 对锁中文件的新开句柄读取限制已进入跨平台测试语义，不再误报数据库所有权回归。
 - [x] 重新生成版本为 `3.0.9` 的 Release EXE、MSI、NSIS，并记录 SHA-256：
-  - `chatos-windows-react.exe`：`644451dfc9d553c2cfb6087dc63ba341d616bb8c4b378db680d9db4663d10b1c`
+  - `chatos-windows-react.exe`：`f40a07b0d08da5bf8829e3ac0e6a359f01eb5116bc0a6d749a537e1a1eea2e6b`
   - `chatos_local_agent_host.exe`：`b6737311ae2b9739d496503007a635c2e97a38a8bfc4a9e17bd87a00520e6187`
-  - `ChatOS_3.0.9_x64_en-US.msi`：`fbba491d7f652e6b352f006b3245c1ee33597ee7052d058b993bad774d9f8b33`
-  - `ChatOS_3.0.9_x64-setup.exe`：`1fc0572e7363ead20b71b0c21626e1268e6f2b710a6f8b408a21f348117d12c0`
+  - `ChatOS_3.0.9_x64_en-US.msi`：`85f4835e987b6c448005f0f4813ae517d168555f6285f89d974e298ee48205e8`
+  - `ChatOS_3.0.9_x64-setup.exe`：`3e35f1111e9ef91684fc8c23be85083dacfe7ea2d96d31d108ded22d37876933`
 - [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、隔离 AppData 原生启动、正常退出、卸载和残留清理；当前事务安全构建产物先连续两次通过单次启动门限，再完成两轮各 5 次冷启动基线，最新报告为 `%TEMP%\chatos-windows-nsis-startup-performance-1.json` 和 `%TEMP%\chatos-windows-nsis-startup-performance-2.json`。
 - [x] MSI 升级 smoke 在既有四轮基础上，以事务安全模板再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-1.json` 和 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-2.json` 同时记录 `0.1.0 → 3.0.9`、两代原生启动退出、截断包 `1620` 失败、事务中途故障 `1603` 回滚、AppData 哨兵保留、卸载以及降级检测规则。
 - [x] MSI 运行中客户端升级 smoke 再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-running-upgrade-1.json` 和 `%TEMP%\chatos-windows-msi-running-upgrade-2.json` 记录旧版原生窗口进程、Installer 正常关闭、无重启升级、新版原生启动、数据保留、卸载和系统待重启队列不变。
@@ -65,6 +66,7 @@ Windows 产品版本：`3.0.9`
 - [x] Plugin 事务临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-temp-cleanup-final-nsis.json`：全新目录安装 `2,181 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,187 ms`、卸载 `638 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin staging 崩溃残留清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-staging-cleanup-final-nsis.json`：全新目录安装 `2,187 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,173 ms`、卸载 `647 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin backup 崩溃恢复版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-backup-recovery-final-nsis.json`：全新目录安装 `2,298 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,204 ms`、卸载 `635 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
+- [x] Connector 固定元数据原子替换版本的新 NSIS 已通过 `%TEMP%\chatos-windows-connector-transaction-cleanup-final-nsis.json`：全新目录安装 `2,192 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,185 ms`、卸载 `626 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [ ] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息。代码默认状态与自动回归均为 workspace/首个消息资源，但原生窗口视觉取证仍受下一项工具故障阻塞。
 - [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。
@@ -81,7 +83,7 @@ Windows 产品版本：`3.0.9`
 ### P2：平台/发布质量
 
 - [ ] Windows App 的统一容量治理已完成基础共享 permit 和第一批安全接入，但仍需逐项审计剩余的 process-spawn/重型 in-process 入口，并补齐机器资源诊断 snapshot。Host v49 与 App pool 已响应同一系统压力；已经领取 durable claim 的附件/终端 tool work 必须继续排除在外层等待之外。
-- [ ] `3.0.9.4` 的文件 worker 隔离和临时文件生命周期仍需 Windows 继续拉齐：公共原子导出与安全的 24 小时残留回收已覆盖 Agent Artifact、记事本 Markdown；附件 vault、Media History、Story manifest、固定 AppData 元数据、Plugin 安装完整性事务、Agent Plugin per-run journal、Plugin source/install staging 树，以及 `.backups` 的 Host-authoritative 崩溃恢复已完成，远程下载已有独立原子提交。其余动态所有权目录仍需逐项审计；禁止用全盘后缀清理冒充统一治理。
+- [ ] `3.0.9.4` 的文件 worker 隔离和临时文件生命周期仍需 Windows 继续拉齐：公共原子导出与安全的 24 小时残留回收已覆盖 Agent Artifact、记事本 Markdown；附件 vault、Media History、Story manifest、固定 AppData 元数据、Connector state/审批历史、Plugin 安装完整性事务、Agent Plugin per-run journal、Plugin source/install staging 树，以及 `.backups` 的 Host-authoritative 崩溃恢复已完成，远程下载已有独立原子提交。Project Creation journal、Agent Skill overrides 等剩余所有权目录仍需分开审计；禁止用全盘后缀清理冒充统一治理。
 - [ ] Windows 安装包代码签名、发布证书、签名校验和 SmartScreen 信誉验证。仓库可生成安装包，但本机未配置正式签名身份。
 - [ ] Windows Installer 无法由 Restart Manager 正常关闭的强制文件锁及需重启场景仍需在一次性 Windows VM 中补验；客户端正常运行造成的文件占用、事务中途故障回滚均已关闭。本机已有其他软件留下的待重启文件操作，不能为了测试篡改系统队列。历史 `0.1.0` 安装包自身允许降级，已发布二进制无法由新版本追溯修改。
 - [ ] 固定分辨率与 100%/125%/150% 缩放的原生截图对照、键盘导航、焦点顺序、屏幕阅读器标签和对比度验收。

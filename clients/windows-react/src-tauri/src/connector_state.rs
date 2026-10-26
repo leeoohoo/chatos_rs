@@ -6,6 +6,8 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
+use crate::app_data_transaction::replace_owned_file;
+
 const MAXIMUM_STATE_BYTES: u64 = 16 * 1_024 * 1_024;
 static STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -203,11 +205,8 @@ fn persist_state(
     if bytes.len() as u64 > MAXIMUM_STATE_BYTES {
         return Err(state_error());
     }
-    let mut temporary = tempfile::NamedTempFile::new_in(directory).map_err(|_| state_error())?;
-    std::io::Write::write_all(&mut temporary, &bytes).map_err(|_| state_error())?;
-    temporary.as_file().sync_all().map_err(|_| state_error())?;
-    temporary.persist(state_path).map_err(|_| state_error())?;
-    Ok(())
+    replace_owned_file(directory, state_path, ".connector-state-", &bytes)
+        .map_err(|_| state_error())
 }
 
 fn state_error() -> String {
