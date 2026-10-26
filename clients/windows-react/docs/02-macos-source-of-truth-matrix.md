@@ -1390,4 +1390,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 110. [部分完成] Hook activation 代码已重新生成 3.0.9 Release EXE、MSI、NSIS，并用最终 NSIS 安装包完成隔离目录 smoke：安装 `3,074 ms`、安装版原生启动 `9,719 ms`、卸载 `1,152 ms`，全部退出码为 `0`；安装版 sidecar SHA-256 为 `f84cb09c16451e092fe6e0fe2a382202258ba0de17fc4492c4a30dfc0a0fc893`，资源文件存在，隔离 AppData 已清理，报告为 `%TEMP%\chatos-windows-hook-activation-nsis-2.json`。本次同时修复了 Windows PowerShell 5 不支持 `Path.GetRelativePath` 导致 smoke 误报失败的问题。该 smoke 只证明安装/启动/卸载边界，真实 Hook 事件触发和阻断/上下文回传仍需单独验证。
 
+111. [部分完成] Local Agent Host 已新增真实 Windows AppContainer Hook coordinator 事件验证：在临时安装目录中通过 `.cmd` Hook 脚本触发 `UserPromptSubmit`，确认原生 runner 的 stdin/stdout、JSON 协议解析、可信上下文回传和 `gate_user_prompt` 放行；随后启用第二个 Bundle，确认 `continue=false` 的真实输出会阻断下一次 Prompt 并保留 `stopReason`。该测试只在 Windows 条件编译下运行，避免把 `cmd.exe` 转义差异误判为协议失败。Hook 事件执行与阻断/上下文回传已通过 Host 定向测试；最终 MSI/NSIS 安装包内的真实事件、安装后重启恢复和原生窗口逐态视觉取证仍未完成，因此本条继续保持部分完成。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

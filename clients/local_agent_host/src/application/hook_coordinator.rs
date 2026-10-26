@@ -1189,6 +1189,8 @@ mod tests {
     use super::*;
     #[cfg(target_os = "macos")]
     use crate::infrastructure::MacOsSeatbeltHookRunner;
+    #[cfg(windows)]
+    use crate::infrastructure::WindowsAppContainerHookRunner;
     use crate::{HostRequestHandler, LocalAgentHostCoordinator, LocalAgentScheduler};
     use chatos_agent_profiles::MAIN_CHAT_PROFILE_KEY;
     use chatos_client_storage::SqliteClientStorage;
@@ -1551,6 +1553,136 @@ mod tests {
         assert!(combined.contains("session context"));
         assert!(combined.contains("prompt context"));
         assert!(!combined.contains("private failure"));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_appcontainer_runner_executes_an_active_user_prompt_hook() {
+        let root = tempfile::tempdir().expect("hook root");
+        let installation = root.path().join("plugin");
+        std::fs::create_dir_all(&installation).expect("installation");
+        std::fs::write(installation.join("hook.js"), "fixture").expect("hook fixture");
+        std::fs::write(
+            installation.join("hook.cmd"),
+            "@echo off\r\necho {\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"windows-hook-ok\"}}\r\n",
+        )
+        .expect("hook command fixture");
+        std::fs::write(
+            installation.join("block.cmd"),
+            "@echo off\r\necho {\"continue\":false,\"stopReason\":\"windows-hook-blocked\"}\r\n",
+        )
+        .expect("blocking command fixture");
+        let installation_root = installation.canonicalize().expect("canonical installation");
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = Arc::new(LocalAgentRuntime::with_clock(
+            storage.clone(),
+            Arc::new(|| Ok(10_000)),
+        ));
+        runtime.initialize("user-1").await.expect("initialize");
+        let bundle = LocalPluginHookBundleSpec {
+            bundle_id: "windows-hook-bundle".into(),
+            owner_user_id: "user-1".into(),
+            plugin_id: "plugin-windows-hook".into(),
+            release_id: "release-1".into(),
+            component_key: "lifecycle".into(),
+            artifact_sha256: "a".repeat(64),
+            content_sha256: "b".repeat(64),
+            normalized_hook_sha256: "c".repeat(64),
+            command_sha256: "d".repeat(64),
+            permission_snapshot_sha256: "e".repeat(64),
+            runner_policy_version: 1,
+            installation_root: installation_root.to_string_lossy().into_owned(),
+            permissions: vec!["process.spawn".into()],
+            hooks: vec![hook("prompt", "UserPromptSubmit", "hook.cmd")],
+            enabled: true,
+            trusted_at_unix_ms: 1,
+        };
+        storage
+            .put_plugin_hook_bundle(&command("put-windows-hook"), &bundle, 10_000)
+            .await
+            .expect("put bundle");
+        storage
+            .set_active_plugin_hook_bundles(
+                &command("activate-windows-hook"),
+                "user-1",
+                std::slice::from_ref(&bundle.bundle_id),
+                10_001,
+            )
+            .await
+            .expect("activate bundle");
+        let runner =
+            WindowsAppContainerHookRunner::new(root.path().join("hook-data")).expect("runner");
+        let coordinator =
+            LocalHookCoordinator::new(runtime.clone(), runner, None).expect("coordinator");
+        let prompt = StartConversationTurnCommand {
+            owner_user_id: "user-1".into(),
+            conversation_id: "conversation-1".into(),
+            expected_conversation_version: 1,
+            turn_id: "turn-1".into(),
+            message_id: "message-1".into(),
+            run_id: "run-1".into(),
+            message: "hello".into(),
+            message_metadata: json!({}),
+            attachments: Vec::new(),
+            model_config_ref: "model-1".into(),
+            model_config_revision: "revision-1".into(),
+            capability_policy_revision: "policy-1".into(),
+            max_iterations: 8,
+        };
+        assert!(matches!(
+            coordinator
+                .gate_user_prompt(&prompt)
+                .await
+                .expect("prompt gate"),
+            LocalHookPromptDecision::Allow
+        ));
+        let context = coordinator
+            .prefixed_context(&claim(run("run-windows-hook")))
+            .await
+            .expect("hook context");
+        assert!(combined_context(&context).contains("windows-hook-ok"));
+
+        let mut blocking_bundle = bundle.clone();
+        blocking_bundle.bundle_id = "windows-blocking-hook-bundle".into();
+        blocking_bundle.plugin_id = "plugin-windows-blocking-hook".into();
+        blocking_bundle.hooks = vec![hook("block", "UserPromptSubmit", "block.cmd")];
+        storage
+            .put_plugin_hook_bundle(
+                &command("put-windows-blocking-hook"),
+                &blocking_bundle,
+                10_002,
+            )
+            .await
+            .expect("put blocking bundle");
+        storage
+            .set_active_plugin_hook_bundles(
+                &command("activate-windows-blocking-hook"),
+                "user-1",
+                &[bundle.bundle_id.clone(), blocking_bundle.bundle_id.clone()],
+                10_003,
+            )
+            .await
+            .expect("activate blocking bundle");
+        let blocking_prompt = StartConversationTurnCommand {
+            turn_id: "turn-2".into(),
+            run_id: "run-2".into(),
+            message: "blocked".into(),
+            ..prompt
+        };
+        match coordinator
+            .gate_user_prompt(&blocking_prompt)
+            .await
+            .expect("blocking prompt gate")
+        {
+            LocalHookPromptDecision::Block { reason } => {
+                assert_eq!(reason, "windows-hook-blocked");
+            }
+            LocalHookPromptDecision::Allow => panic!("blocking Hook was ignored"),
+        }
     }
 
     #[tokio::test]
