@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use chatos_local_agent_protocol::{LocalPluginHookBundleSpec, LocalPluginHookDefinition};
 use chatos_plugin_management_sdk::{
     parse_plugin_manifest, validate_plugin_manifest, verify_plugin_release_signature,
     PluginInstallSource, PluginManifest, PluginMcpServer, PluginReleaseVerificationContext,
@@ -14,7 +15,7 @@ use std::{
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     process::Stdio,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tar::Archive;
 use tokio::{
@@ -84,6 +85,16 @@ pub(crate) struct LocalPluginHookSummary {
     pub(crate) component_key: String,
     pub(crate) hook_count: usize,
     pub(crate) events: Vec<String>,
+    content_sha256: String,
+    normalized_hook_sha256: String,
+    hooks: Vec<LocalPluginHookDefinition>,
+}
+
+struct ParsedCodexHookBundle {
+    hooks: Vec<LocalPluginHookDefinition>,
+    events: Vec<String>,
+    content_sha256: String,
+    normalized_hook_sha256: String,
 }
 
 pub(crate) struct CommittedPluginPackage {
@@ -195,6 +206,94 @@ pub(crate) fn inspect_local_package(
         fingerprint,
         hooks,
     })
+}
+
+pub(crate) fn trusted_local_hook_bundles(
+    package: &CommittedPluginPackage,
+    owner_user_id: &str,
+    plugin_id: &str,
+    release_id: &str,
+) -> Result<Vec<LocalPluginHookBundleSpec>, String> {
+    let mut summaries = inspect_plugin_hooks(&package.installation_root, &package.manifest)?;
+    if summaries.is_empty() {
+        return Ok(Vec::new());
+    }
+    summaries.sort_by(|left, right| left.component_key.cmp(&right.component_key));
+    let mut permissions = package
+        .manifest
+        .permissions
+        .iter()
+        .map(|permission| permission.permission.clone())
+        .collect::<BTreeSet<_>>();
+    permissions.insert("process.spawn".to_owned());
+    let permissions = permissions.into_iter().collect::<Vec<_>>();
+    let permission_snapshot_sha256 = sha256_text(&permissions.join("\n"));
+    let installation_root = package
+        .installation_root
+        .canonicalize()
+        .map_err(|_| install_error("Hook 安装目录无效"))?;
+    let installation_root = installation_root
+        .to_str()
+        .ok_or_else(|| install_error("Hook 安装目录不是有效 Unicode 路径"))?
+        .to_owned();
+    let trusted_at_unix_ms = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| install_error("系统时间无效"))?
+            .as_millis(),
+    )
+    .map_err(|_| install_error("系统时间超出范围"))?;
+    let trusted_at_text = trusted_at_unix_ms.to_string();
+    summaries
+        .into_iter()
+        .map(|summary| {
+            let command_sha256 = sha256_text(
+                &summary
+                    .hooks
+                    .iter()
+                    .map(|hook| format!("{}\0{}", hook.hook_id, hook.command))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+            let binding = [
+                owner_user_id,
+                plugin_id,
+                release_id,
+                summary.component_key.as_str(),
+                package.artifact_sha256.as_str(),
+                summary.content_sha256.as_str(),
+                summary.normalized_hook_sha256.as_str(),
+                command_sha256.as_str(),
+                permission_snapshot_sha256.as_str(),
+                "1",
+                installation_root.as_str(),
+                trusted_at_text.as_str(),
+            ]
+            .join("\0");
+            let bundle = LocalPluginHookBundleSpec {
+                bundle_id: format!("hook-{}", sha256_text(&binding)),
+                owner_user_id: owner_user_id.to_owned(),
+                plugin_id: plugin_id.to_owned(),
+                release_id: release_id.to_owned(),
+                component_key: summary.component_key,
+                artifact_sha256: package.artifact_sha256.clone(),
+                content_sha256: summary.content_sha256,
+                normalized_hook_sha256: summary.normalized_hook_sha256,
+                command_sha256,
+                permission_snapshot_sha256: permission_snapshot_sha256.clone(),
+                runner_policy_version: 1,
+                installation_root: installation_root.clone(),
+                permissions: permissions.clone(),
+                hooks: summary.hooks,
+                enabled: true,
+                trusted_at_unix_ms,
+            };
+            bundle
+                .validate()
+                .map_err(|_| install_error("Hook 信任 Bundle 无效"))?;
+            Ok(bundle)
+        })
+        .collect()
 }
 
 pub(crate) fn inspect_local_package_source(
@@ -2770,11 +2869,14 @@ fn inspect_plugin_hooks(
             let relative = normalized_hook_relative_path(&hook.source.path)?;
             let source = secure_hook_source(package_root, &relative)?;
             let raw = read_bounded_text(&source, MAXIMUM_HOOK_BUNDLE_BYTES)?;
-            let (hook_count, events) = parse_codex_hook_bundle(&raw)?;
+            let parsed = parse_codex_hook_bundle(&raw)?;
             Ok(LocalPluginHookSummary {
                 component_key: hook.component_key.clone(),
-                hook_count,
-                events,
+                hook_count: parsed.hooks.len(),
+                events: parsed.events,
+                content_sha256: parsed.content_sha256,
+                normalized_hook_sha256: parsed.normalized_hook_sha256,
+                hooks: parsed.hooks,
             })
         })
         .collect()
@@ -2811,7 +2913,7 @@ fn secure_hook_source(package_root: &Path, relative: &Path) -> Result<PathBuf, S
     Ok(resolved)
 }
 
-fn parse_codex_hook_bundle(raw: &str) -> Result<(usize, Vec<String>), String> {
+fn parse_codex_hook_bundle(raw: &str) -> Result<ParsedCodexHookBundle, String> {
     let root = serde_json::from_str::<Value>(raw)
         .map_err(|_| install_error("Codex Hook 文件不是有效 JSON"))?;
     let event_map = root
@@ -2822,7 +2924,8 @@ fn parse_codex_hook_bundle(raw: &str) -> Result<(usize, Vec<String>), String> {
         .ok_or_else(|| install_error("Codex Hook 文件必须包含非空 hooks 对象"))?;
     let mut events = event_map.keys().cloned().collect::<Vec<_>>();
     events.sort();
-    let mut hook_count = 0_usize;
+    let mut hooks = Vec::new();
+    let mut normalized = Vec::new();
     for event in &events {
         if !SUPPORTED_CODEX_HOOK_EVENTS.contains(&event.as_str()) {
             return Err(if event == "PreCompact" {
@@ -2861,11 +2964,11 @@ fn parse_codex_hook_bundle(raw: &str) -> Result<(usize, Vec<String>), String> {
                 .ok_or_else(|| {
                     install_error(&format!("Codex Hook {event}[{group_index}] 缺少 handlers"))
                 })?;
-            for handler in handlers {
+            for (handler_index, handler) in handlers.iter().enumerate() {
                 let handler = handler.as_object().ok_or_else(|| {
                     install_error(&format!("Codex Hook {event} handler 必须是对象"))
                 })?;
-                if hook_count >= MAXIMUM_HOOK_COUNT {
+                if hooks.len() >= MAXIMUM_HOOK_COUNT {
                     return Err(install_error("Codex Hook 数量超过 64 个"));
                 }
                 if handler.get("type").and_then(Value::as_str) != Some("command") {
@@ -2878,7 +2981,7 @@ fn parse_codex_hook_bundle(raw: &str) -> Result<(usize, Vec<String>), String> {
                         "当前版本尚未支持 async Codex Hook，不能静默改为同步执行",
                     ));
                 }
-                handler
+                let command = handler
                     .get("command")
                     .and_then(Value::as_str)
                     .map(str::trim)
@@ -2887,19 +2990,21 @@ fn parse_codex_hook_bundle(raw: &str) -> Result<(usize, Vec<String>), String> {
                             && command.len() <= MAXIMUM_HOOK_COMMAND_BYTES
                             && !command.contains('\0')
                     })
-                    .ok_or_else(|| install_error("Codex Hook command 无效或超过限制"))?;
-                if let Some(timeout) = handler.get("timeout") {
-                    timeout
+                    .ok_or_else(|| install_error("Codex Hook command 无效或超过限制"))?
+                    .to_owned();
+                let timeout_seconds = match handler.get("timeout") {
+                    Some(timeout) => timeout
                         .as_f64()
                         .filter(|timeout| {
                             timeout.is_finite()
                                 && *timeout >= MINIMUM_HOOK_TIMEOUT_SECONDS
                                 && *timeout <= MAXIMUM_HOOK_TIMEOUT_SECONDS
                         })
-                        .ok_or_else(|| install_error("Codex Hook timeout 必须在 0.1–30 秒之间"))?;
-                }
-                if let Some(limit) = handler.get("additionalContextLimit") {
-                    limit
+                        .ok_or_else(|| install_error("Codex Hook timeout 必须在 0.1–30 秒之间"))?,
+                    None => 5.0,
+                };
+                let additional_context_limit = match handler.get("additionalContextLimit") {
+                    Some(limit) => limit
                         .as_f64()
                         .filter(|limit| {
                             limit.is_finite()
@@ -2907,13 +3012,44 @@ fn parse_codex_hook_bundle(raw: &str) -> Result<(usize, Vec<String>), String> {
                                 && limit.fract() == 0.0
                                 && *limit <= MAXIMUM_HOOK_ADDITIONAL_CONTEXT_BYTES as f64
                         })
-                        .ok_or_else(|| install_error("additionalContextLimit 超过安全限制"))?;
-                }
-                hook_count += 1;
+                        .ok_or_else(|| install_error("additionalContextLimit 超过安全限制"))?
+                        as u64,
+                    None => 64 * 1_024,
+                };
+                let matcher = group
+                    .get("matcher")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .map(str::to_owned);
+                let hook_id = format!("{event}-{group_index}-{handler_index}");
+                let timeout_ms = (timeout_seconds * 1_000.0).round() as u64;
+                hooks.push(LocalPluginHookDefinition {
+                    hook_id: hook_id.clone(),
+                    event: event.clone(),
+                    matcher: matcher.clone(),
+                    command: command.clone(),
+                    timeout_ms,
+                    additional_context_limit,
+                });
+                normalized.push(json!({
+                    "id": hook_id,
+                    "event": event,
+                    "matcher": matcher.unwrap_or_default(),
+                    "command": command,
+                    "timeoutSeconds": timeout_seconds,
+                    "additionalContextLimit": additional_context_limit,
+                }));
             }
         }
     }
-    Ok((hook_count, events))
+    let normalized = serde_json::to_vec(&normalized)
+        .map_err(|_| install_error("Codex Hook 无法生成规范化摘要"))?;
+    Ok(ParsedCodexHookBundle {
+        hooks,
+        events,
+        content_sha256: sha256_text(raw),
+        normalized_hook_sha256: format!("{:x}", Sha256::digest(normalized)),
+    })
 }
 
 fn local_source_root(source: &Path, subdirectory: Option<&str>) -> Result<PathBuf, String> {
@@ -3771,6 +3907,128 @@ mod tests {
             inspection.hooks[0].events,
             ["SessionStart", "UserPromptSubmit"]
         );
+        assert_eq!(inspection.hooks[0].hooks.len(), 2);
+        assert_eq!(
+            inspection.hooks[0].hooks[0],
+            LocalPluginHookDefinition {
+                hook_id: "SessionStart-0-0".into(),
+                event: "SessionStart".into(),
+                matcher: Some("startup|resume".into()),
+                command: "node secret-command.js".into(),
+                timeout_ms: 5_000,
+                additional_context_limit: 65_536,
+            }
+        );
+        assert_eq!(inspection.hooks[0].hooks[1].timeout_ms, 5_000);
+        assert_eq!(
+            inspection.hooks[0].hooks[1].additional_context_limit,
+            65_536
+        );
+        assert_digest(&inspection.hooks[0].content_sha256);
+        assert_digest(&inspection.hooks[0].normalized_hook_sha256);
+    }
+
+    #[test]
+    fn trusted_hook_bundle_binds_complete_installed_material() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source");
+        let plugin_root = directory.path().join("plugins");
+        fs::create_dir_all(source.join("bin")).unwrap();
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        fs::write(source.join("bin/local-tool.exe"), b"tool").unwrap();
+        fs::write(
+            source.join("hooks/lifecycle.json"),
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node hook.js"}]}]}}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join("chatos.plugin.json"),
+            r#"{
+                "schemaVersion": 3,
+                "name": "trusted-hook-plugin",
+                "version": "1.0.0",
+                "description": "Trusted hook fixture",
+                "author": { "name": "Local" },
+                "interface": {
+                    "displayName": "Trusted Hook",
+                    "shortDescription": "Hook",
+                    "longDescription": "Trusted hook fixture",
+                    "developerName": "Local",
+                    "category": "Productivity"
+                },
+                "mcpServers": {
+                    "local-tool": { "type": "stdio", "bin": "local-tool" }
+                },
+                "hooks": [{"componentKey": "lifecycle", "source": "./hooks/lifecycle.json"}],
+                "permissions": [
+                    {"permission": "process.spawn", "required": true, "components": ["local-tool"]},
+                    {"permission": "workspace.read", "required": true, "components": ["lifecycle"]}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let inspection = inspect_local_package(&source, None).unwrap();
+        let package =
+            install_local_package(&plugin_root, &source, None, &inspection.fingerprint).unwrap();
+        let bundles =
+            trusted_local_hook_bundles(&package, "owner-1", "local-plugin-1", "local-release-1")
+                .unwrap();
+
+        assert_eq!(bundles.len(), 1);
+        let bundle = &bundles[0];
+        bundle.validate().unwrap();
+        assert_eq!(bundle.owner_user_id, "owner-1");
+        assert_eq!(bundle.plugin_id, "local-plugin-1");
+        assert_eq!(bundle.release_id, "local-release-1");
+        assert_eq!(bundle.component_key, "lifecycle");
+        assert_eq!(bundle.hooks.len(), 1);
+        assert_eq!(bundle.hooks[0].event, "SessionStart");
+        assert_eq!(bundle.hooks[0].command, "node hook.js");
+        assert!(bundle.permissions.contains(&"process.spawn".to_owned()));
+        assert!(bundle.permissions.contains(&"workspace.read".to_owned()));
+        for digest in [
+            &bundle.artifact_sha256,
+            &bundle.content_sha256,
+            &bundle.normalized_hook_sha256,
+            &bundle.command_sha256,
+            &bundle.permission_snapshot_sha256,
+        ] {
+            assert_digest(digest);
+        }
+
+        let mut different_artifact = CommittedPluginPackage {
+            plugin_root: package.plugin_root.clone(),
+            installation_root: package.installation_root.clone(),
+            manifest: package.manifest.clone(),
+            artifact_sha256: "f".repeat(64),
+            backup_root: None,
+        };
+        let changed = trusted_local_hook_bundles(
+            &different_artifact,
+            "owner-1",
+            "local-plugin-1",
+            "local-release-1",
+        )
+        .unwrap();
+        assert_ne!(bundle.bundle_id, changed[0].bundle_id);
+        assert_ne!(bundle.artifact_sha256, changed[0].artifact_sha256);
+        different_artifact.artifact_sha256 = package.artifact_sha256.clone();
+
+        fs::write(
+            package.installation_root.join("hooks/lifecycle.json"),
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node changed.js"}]}]}}"#,
+        )
+        .unwrap();
+        let changed = trusted_local_hook_bundles(
+            &different_artifact,
+            "owner-1",
+            "local-plugin-1",
+            "local-release-1",
+        )
+        .unwrap();
+        assert_ne!(bundle.bundle_id, changed[0].bundle_id);
+        assert_ne!(bundle.command_sha256, changed[0].command_sha256);
     }
 
     #[test]
@@ -3806,6 +4064,19 @@ mod tests {
         assert_eq!(inspection.hooks[0].hook_count, 3);
         assert_eq!(
             inspection.hooks[0].events,
+            ["SessionStart", "SubagentStart", "UserPromptSubmit"]
+        );
+        assert_eq!(inspection.hooks[0].hooks.len(), 3);
+        assert!(inspection.hooks[0]
+            .hooks
+            .iter()
+            .all(|hook| !hook.command.is_empty() && hook.timeout_ms == 5_000));
+        assert_eq!(
+            inspection.hooks[0]
+                .hooks
+                .iter()
+                .map(|hook| hook.event.as_str())
+                .collect::<Vec<_>>(),
             ["SessionStart", "SubagentStart", "UserPromptSubmit"]
         );
         assert!(inspection.manifest.permissions.iter().any(|permission| {
@@ -3889,6 +4160,13 @@ mod tests {
         header.set_mode(0o644);
         header.set_cksum();
         archive.append_data(&mut header, path, bytes).unwrap();
+    }
+
+    fn assert_digest(value: &str) {
+        assert_eq!(value.len(), 64);
+        assert!(value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
     }
 
     #[tokio::test]

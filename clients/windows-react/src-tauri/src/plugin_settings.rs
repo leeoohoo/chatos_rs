@@ -1,7 +1,8 @@
 use chatos_local_agent_protocol::{
     GetPluginInstallationCommand, HostCommand, HostResult, ListPluginInstallationsCommand,
-    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalPluginInstallationSummary,
-    PutPluginInstallationCommand, RemovePluginInstallationCommand,
+    LocalPluginHookBundleSpec, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
+    LocalPluginInstallationSummary, PutPluginHookBundleCommand, PutPluginInstallationCommand,
+    RemovePluginInstallationCommand, SetActivePluginHookBundlesCommand,
 };
 use chatos_plugin_management_sdk::{
     parse_plugin_manifest, validate_plugin_manifest, PluginInstallSource, PluginInstallSourceList,
@@ -31,8 +32,8 @@ use crate::{
     plugin_installer::{
         inspect_local_package_source, install_git_package, install_local_package,
         install_marketplace_package, install_npm_mcp, install_npm_package_source,
-        resolve_executable, CommittedPluginPackage, LocalPluginHookSummary, NpmMcpDraft,
-        NpmMcpInspection,
+        resolve_executable, trusted_local_hook_bundles, CommittedPluginPackage,
+        LocalPluginHookSummary, NpmMcpDraft, NpmMcpInspection,
     },
     plugin_integrity::{
         recover_interrupted_installations, requires_installation_integrity,
@@ -631,6 +632,14 @@ async fn finish_local_plugin_install(
         Sha256::digest(package.manifest.name.as_bytes())
     );
     let release_id = format!("local-release-{}", package.artifact_sha256);
+    let hook_bundles =
+        match trusted_local_hook_bundles(&package, owner_user_id, &plugin_id, &release_id) {
+            Ok(bundles) => bundles,
+            Err(error) => {
+                package.rollback();
+                return Err(error);
+            }
+        };
     let records = match list_installation_records(host, owner_user_id).await {
         Ok(records) => records,
         Err(error) => {
@@ -643,6 +652,17 @@ async fn finish_local_plugin_install(
         .filter(|record| record.spec.plugin_id == plugin_id)
         .collect::<Vec<_>>();
     let previous_roots = installation_roots(&settings.plugin_root, &previous).unwrap_or_default();
+    if let Err(error) = publish_inactive_hook_bundles(host, owner_user_id, &hook_bundles).await {
+        package.rollback();
+        return Err(error);
+    }
+    if let Err(error) = authentication
+        .require_session_generation(owner_user_id, generation)
+        .await
+    {
+        package.rollback();
+        return Err(error);
+    }
     let specs =
         match local_installation_specs(owner_user_id, &plugin_id, &release_id, &package, &previous)
         {
@@ -677,6 +697,48 @@ async fn finish_local_plugin_install(
     let _ = remove_installation_roots(&settings.plugin_root, stale_roots).await;
     applications.reset().await;
     Ok(result)
+}
+
+async fn publish_inactive_hook_bundles(
+    host: &dyn PluginSettingsHost,
+    owner_user_id: &str,
+    bundles: &[LocalPluginHookBundleSpec],
+) -> Result<(), String> {
+    if bundles.is_empty() {
+        return Ok(());
+    }
+    let result = host
+        .execute(HostCommand::SetActivePluginHookBundles(
+            SetActivePluginHookBundlesCommand {
+                owner_user_id: owner_user_id.to_owned(),
+                bundle_ids: Vec::new(),
+            },
+        ))
+        .await?;
+    if !matches!(
+        result,
+        HostResult::ActivePluginHookBundlesUpdated { active_bundle_ids }
+            if active_bundle_ids.is_empty()
+    ) {
+        return Err("Local Agent Host 未确认 Hook Bundle 安全停用。".into());
+    }
+    for bundle in bundles {
+        let result = host
+            .execute(HostCommand::PutPluginHookBundle(
+                PutPluginHookBundleCommand {
+                    bundle: bundle.clone(),
+                },
+            ))
+            .await?;
+        if !matches!(
+            result,
+            HostResult::PluginHookBundle { bundle: record }
+                if record.spec == *bundle
+        ) {
+            return Err("Local Agent Host 返回了无效的 Hook Bundle 记录。".into());
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2246,6 +2308,144 @@ fn plugin_catalog_error() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone, Copy)]
+    enum HookHostBehavior {
+        Success,
+        Error,
+        WrongActiveReply,
+        WrongBundleReply,
+    }
+
+    struct HookHost {
+        behavior: HookHostBehavior,
+        commands: Mutex<Vec<HostCommand>>,
+    }
+
+    impl HookHost {
+        fn new(behavior: HookHostBehavior) -> Self {
+            Self {
+                behavior,
+                commands: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl PluginSettingsHost for HookHost {
+        fn execute(&self, command: HostCommand) -> PluginHostFuture<'_> {
+            self.commands.lock().unwrap().push(command.clone());
+            let behavior = self.behavior;
+            Box::pin(async move {
+                match (behavior, command) {
+                    (HookHostBehavior::Error, _) => Err("host unavailable".into()),
+                    (
+                        HookHostBehavior::WrongActiveReply,
+                        HostCommand::SetActivePluginHookBundles(_),
+                    ) => Ok(HostResult::ActivePluginHookBundlesUpdated {
+                        active_bundle_ids: vec!["unexpected-active-bundle".into()],
+                    }),
+                    (
+                        _,
+                        HostCommand::SetActivePluginHookBundles(
+                            SetActivePluginHookBundlesCommand { bundle_ids, .. },
+                        ),
+                    ) => Ok(HostResult::ActivePluginHookBundlesUpdated {
+                        active_bundle_ids: bundle_ids,
+                    }),
+                    (HookHostBehavior::WrongBundleReply, HostCommand::PutPluginHookBundle(_)) => {
+                        Ok(HostResult::ActivePluginHookBundlesUpdated {
+                            active_bundle_ids: Vec::new(),
+                        })
+                    }
+                    (_, HostCommand::PutPluginHookBundle(command)) => {
+                        Ok(HostResult::PluginHookBundle {
+                            bundle: chatos_local_agent_protocol::LocalPluginHookBundleRecord {
+                                spec: command.bundle,
+                                created_at_unix_ms: 1,
+                            },
+                        })
+                    }
+                    _ => panic!("unexpected host command"),
+                }
+            })
+        }
+    }
+
+    fn hook_bundle_fixture() -> LocalPluginHookBundleSpec {
+        LocalPluginHookBundleSpec {
+            bundle_id: "bundle-1".into(),
+            owner_user_id: "owner-1".into(),
+            plugin_id: "plugin-1".into(),
+            release_id: "release-1".into(),
+            component_key: "lifecycle".into(),
+            artifact_sha256: "a".repeat(64),
+            content_sha256: "b".repeat(64),
+            normalized_hook_sha256: "c".repeat(64),
+            command_sha256: "d".repeat(64),
+            permission_snapshot_sha256: "e".repeat(64),
+            runner_policy_version: 1,
+            installation_root: r"C:\ChatOS\Plugins\plugin-1".into(),
+            permissions: vec!["process.spawn".into()],
+            hooks: vec![chatos_local_agent_protocol::LocalPluginHookDefinition {
+                hook_id: "SessionStart-0-0".into(),
+                event: "SessionStart".into(),
+                matcher: None,
+                command: "node hook.js".into(),
+                timeout_ms: 5_000,
+                additional_context_limit: 65_536,
+            }],
+            enabled: true,
+            trusted_at_unix_ms: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn hook_bundles_are_deactivated_before_they_are_published() {
+        let host = HookHost::new(HookHostBehavior::Success);
+        let bundle = hook_bundle_fixture();
+
+        publish_inactive_hook_bundles(&host, "owner-1", std::slice::from_ref(&bundle))
+            .await
+            .unwrap();
+
+        let commands = host.commands.lock().unwrap();
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(
+            &commands[0],
+            HostCommand::SetActivePluginHookBundles(command)
+                if command.owner_user_id == "owner-1" && command.bundle_ids.is_empty()
+        ));
+        assert!(matches!(
+            &commands[1],
+            HostCommand::PutPluginHookBundle(command) if command.bundle == bundle
+        ));
+    }
+
+    #[tokio::test]
+    async fn hook_bundle_publication_rejects_host_errors_and_wrong_replies() {
+        let bundle = hook_bundle_fixture();
+        for behavior in [
+            HookHostBehavior::Error,
+            HookHostBehavior::WrongActiveReply,
+            HookHostBehavior::WrongBundleReply,
+        ] {
+            let host = HookHost::new(behavior);
+            assert!(
+                publish_inactive_hook_bundles(&host, "owner-1", std::slice::from_ref(&bundle))
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn package_without_hooks_does_not_call_hook_host_api() {
+        let host = HookHost::new(HookHostBehavior::Success);
+        publish_inactive_hook_bundles(&host, "owner-1", &[])
+            .await
+            .unwrap();
+        assert!(host.commands.lock().unwrap().is_empty());
+    }
 
     fn manual_manager() -> (tempfile::TempDir, PluginSettingsManager) {
         let directory = tempfile::tempdir().unwrap();

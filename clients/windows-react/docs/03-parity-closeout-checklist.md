@@ -77,6 +77,7 @@ Windows 产品版本：`3.0.9`
 - [x] 对话 Timeline 任务状态摘要版本的新 NSIS 已通过 `%TEMP%\chatos-windows-task-timeline-final-nsis.json`：全新目录安装 `2,207 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `11,096 ms`、卸载 `635 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] 宠物任务门禁摘要版本的新 NSIS 已通过 `%TEMP%\chatos-windows-pet-task-gates-final-nsis.json`：全新目录安装 `2,245 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `11,025 ms`、卸载 `701 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Codex Hook 预检与状态投影版本的新 NSIS 已通过 `%TEMP%\chatos-windows-hook-preflight-final-nsis.json`：全新目录安装 `2,239 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `9,444 ms`、卸载 `640 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。当前产物 SHA-256：EXE `b7cb166d0c92d90b6d9b2fc54de1293708e9aa519d7ccdc5e47ff9c66ecc34ee`、Sidecar `b6737311ae2b9739d496503007a635c2e97a38a8bfc4a9e17bd87a00520e6187`、MSI `11b49b5cdb0c7f2755a0758515cd3fce810abf2ae9cd7abb8b45fc577bddd20f`、NSIS `6d0371b17f1c2320ad486e4a226958f709f25380d2517ff844ec0c76d1e8fbf2`。
+- [x] Codex/Ponytail Hook 信任 Bundle 发布版本的新 NSIS 已通过 `%TEMP%\chatos-windows-hook-trust-final-nsis.json`：全新目录安装 `2,109 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `10,189 ms`、卸载 `625 ms`，全部退出码为 `0`；安装后 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。当前 Bundle 只发布并保持 inactive，Windows runner 尚未接入。当前产物 SHA-256：EXE `aa2154074bdbca527fa90e635207ea644b5fc49c6b760e604b192a06855ee09e`、Sidecar `d092495a2f4ed65a0569733c3f2c2832186d3a060425d0a78af24c62d80f198b`、MSI `bbc5a574eec8088da788f3b8776f4f75bc23eec5a87771ab52a6695d87630b7d`、NSIS `e17fd2810b5d09b901ac4f673a006b8b0f27aef73d05aa3672be07d5a4f2e3ae`。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [ ] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息。代码默认状态与自动回归均为 workspace/首个消息资源，但原生窗口视觉取证仍受下一项工具故障阻塞。
 - [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。
@@ -85,7 +86,7 @@ Windows 产品版本：`3.0.9`
 
 ### P1：用户能直接感知
 
-- [ ] Codex/Ponytail Hook 的 Windows 端完整闭环。共享 Host v49 已合入可信 bundle 持久化、prompt/tool gate、durable event、session context 和更新后参数校验；macOS 已有 Codex Plugin 预检、bundle 注册/启用与 Seatbelt 隔离 runner。Windows 目前没有对应的 Plugin Hook 预检/状态 UI，也没有 AppContainer Hook runner；非 macOS runner 会明确失败关闭，因此不能把“Host 已理解 Hook 协议”写成“Windows 已可运行 Hook”。
+- [ ] Codex/Ponytail Hook 的 Windows 端完整闭环。共享 Host v49 已合入可信 bundle 持久化、prompt/tool gate、durable event、session context 和更新后参数校验；macOS 已有 Codex Plugin 预检、bundle 注册/启用与 Seatbelt 隔离 runner。Windows 已完成同源预检、完整 Hook 定义与不可变信任 Bundle 发布，但发布后强制保持 active set 为空；Windows AppContainer Hook runner、逐事件执行和安全启用仍未完成，非 macOS runner 会明确失败关闭，因此不能把“Bundle 已保存”写成“Windows 已可运行 Hook”。
 - [ ] `3.0.9.4` 新增的任务审查优先级展示仍需原生窗口逐态核对。Windows 原生任务图 DTO 现同时保留 Host 原始状态和 `reviewing_followup` / `waiting_confirmation` 展示状态；Task Graph、Run Inspector、对话 Timeline 状态胶囊与宠物活动摘要均让新门禁覆盖旧 Run 活动并保持轮询，`needs_review` 的恢复操作继续保留。各入口的原生视觉优先级仍需取证，当前不声称完全一致。
 - [ ] Computer Use / 屏幕采集的受信发布闭环。Windows Worker 源码、x64/arm64 构建和 smoke 已通过，但当前用户 Plugin 目录为空；还需产出跨平台 `.tgz`、进入签名 Marketplace Release，并从 Windows 客户端完成安装、启用、`doctor`、屏幕采集和输入实测。
 - [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、disabled/controlled capability token、句柄绑定的非空目录逐项 DACL 快照、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 拒绝，带最小环境、一次性输出捕获、长驻交互 stdio、多 workspace 租约、超时与 Job Object 回收的可复用启动器，以及独立 profile SID/journal 崩溃恢复已经通过；Agent Plugin MCP 已迁移并以安装目录只读、项目目录读写、禁网策略实测。仍需实现目标级出站规则，并迁移任务终端和 Plugin 应用后端后才能开放第 31 页开关。迁移完成前继续只发布账号/项目边界、审批策略和现有 Job Object 进程树回收。
