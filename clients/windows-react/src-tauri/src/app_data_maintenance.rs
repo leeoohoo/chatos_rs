@@ -188,8 +188,11 @@ fn cleanup_directory_scope(
         };
         let path = entry.path();
         if canonical_uuid(&name)
-            && stale_owned_temporary_tree(&path, cutoff)
-            && fs::remove_dir_all(path).is_ok()
+            && try_remove_stale_owned_directory_tree(
+                &path,
+                cutoff,
+                MAXIMUM_ENTRIES_PER_TEMPORARY_TREE,
+            )
         {
             removed = removed.saturating_add(1);
         }
@@ -197,12 +200,23 @@ fn cleanup_directory_scope(
     removed
 }
 
-fn stale_owned_temporary_tree(root: &Path, cutoff: SystemTime) -> bool {
+pub(crate) fn try_remove_stale_owned_directory_tree(
+    root: &Path,
+    cutoff: SystemTime,
+    maximum_entries: usize,
+) -> bool {
+    if maximum_entries == 0 || !stale_owned_temporary_tree(root, cutoff, maximum_entries) {
+        return false;
+    }
+    fs::remove_dir_all(root).is_ok()
+}
+
+fn stale_owned_temporary_tree(root: &Path, cutoff: SystemTime, maximum_entries: usize) -> bool {
     let mut pending = vec![root.to_path_buf()];
     let mut visited = 0usize;
     while let Some(path) = pending.pop() {
         visited = visited.saturating_add(1);
-        if visited > MAXIMUM_ENTRIES_PER_TEMPORARY_TREE {
+        if visited > maximum_entries {
             return false;
         }
         let Ok(metadata) = fs::symlink_metadata(&path) else {

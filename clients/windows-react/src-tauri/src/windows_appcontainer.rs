@@ -17,7 +17,7 @@ use std::{
         Arc, Condvar, Mutex, OnceLock,
     },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use windows_sys::Win32::{
@@ -59,6 +59,7 @@ use windows_sys::Win32::{
 };
 
 use crate::{
+    app_data_maintenance::try_remove_stale_owned_directory_tree,
     app_data_transaction::create_owned_file, terminal_runtime::process::ProcessTermination,
 };
 
@@ -84,6 +85,10 @@ const MAXIMUM_LEASE_TREE_ENTRIES: usize = 100_000;
 const MAXIMUM_LEASE_JOURNAL_BYTES: usize = 64 * 1_024 * 1_024;
 const WORKSPACE_JOURNAL_TEMPORARY_PREFIX: &str = ".appcontainer-workspace-";
 const PROFILE_JOURNAL_TEMPORARY_PREFIX: &str = ".appcontainer-profile-";
+const PROBE_TEMPORARY_PREFIX: &str = "chatos-appcontainer-probe-";
+const PROBE_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_PROBE_TEMPORARY_DIRECTORY_ENTRIES: usize = 20_000;
+const MAXIMUM_PROBE_TEMPORARY_TREE_ENTRIES: usize = 20_000;
 
 #[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -580,9 +585,9 @@ pub(crate) fn probe_isolation() -> Result<AppContainerProbe, String> {
 }
 
 fn run_probe() -> Result<AppContainerProbe, String> {
-    let directory =
-        tempfile::tempdir().map_err(|error| format!("无法创建 AppContainer 探测目录：{error}"))?;
-    let protected_file = directory.path().join("host-only.txt");
+    let scratch = ProbeScratch::create()?;
+    let filesystem_probe = scratch.child("filesystem")?;
+    let protected_file = filesystem_probe.join("host-only.txt");
     std::fs::write(&protected_file, b"host-only")
         .map_err(|error| format!("无法写入 AppContainer 探测文件：{error}"))?;
 
@@ -613,45 +618,38 @@ fn run_probe() -> Result<AppContainerProbe, String> {
         NetworkAccess::from_policy("controlled")?,
     )?;
     let network_denied = probe_network_isolation(&profile, Path::new(&system_root))?;
-    let workspace = tempfile::tempdir()
-        .map_err(|error| format!("无法创建 AppContainer 工作区租约探测目录：{error}"))?;
-    let lease_data = tempfile::tempdir()
-        .map_err(|error| format!("无法创建 AppContainer 租约 journal 探测目录：{error}"))?;
-    let lease_manager = WorkspaceLeaseManager::open(lease_data.path())?;
-    let lease = lease_manager.grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly)?;
+    let workspace = scratch.child("workspace")?;
+    let lease_data = scratch.child("lease-data")?;
+    let lease_manager = WorkspaceLeaseManager::open(&lease_data)?;
+    let lease = lease_manager.grant(&workspace, profile.sid, WorkspaceAccess::ReadOnly)?;
     let journal_path = lease.journal_path.clone();
-    let workspace_file = workspace.path().join("workspace.txt");
+    let workspace_file = workspace.join("workspace.txt");
     std::fs::write(&workspace_file, b"lease-readable")
         .map_err(|error| format!("无法写入 AppContainer 工作区租约探测文件：{error}"))?;
     let granted_exit = read_probe_file(&profile, &reader, &workspace_file)?;
-    let read_only_write_file = workspace.path().join("read-only-write.txt");
+    let read_only_write_file = workspace.join("read-only-write.txt");
     let read_only_write_exit =
         write_probe_file(&profile, Path::new(&system_root), &read_only_write_file)?;
     lease.restore()?;
     let restored_exit = read_probe_file(&profile, &reader, &workspace_file)?;
-    let recovery_workspace = tempfile::tempdir()
-        .map_err(|error| format!("无法创建 AppContainer 恢复探测目录：{error}"))?;
-    let recovery_lease = lease_manager.grant(
-        recovery_workspace.path(),
-        profile.sid,
-        WorkspaceAccess::ReadOnly,
-    )?;
+    let recovery_workspace = scratch.child("recovery-workspace")?;
+    let recovery_lease =
+        lease_manager.grant(&recovery_workspace, profile.sid, WorkspaceAccess::ReadOnly)?;
     let recovery_journal_path = recovery_lease.journal_path.clone();
-    let recovery_file = recovery_workspace.path().join("recovery.txt");
+    let recovery_file = recovery_workspace.join("recovery.txt");
     std::fs::write(&recovery_file, b"lease-readable")
         .map_err(|error| format!("无法写入 AppContainer 恢复探测文件：{error}"))?;
     let recovery_granted_exit = read_probe_file(&profile, &reader, &recovery_file)?;
     recovery_lease.abandon_for_recovery();
     let recovered_count = lease_manager.recover_all()?;
     let recovered_exit = read_probe_file(&profile, &reader, &recovery_file)?;
-    let read_write_workspace = tempfile::tempdir()
-        .map_err(|error| format!("无法创建 AppContainer 读写探测目录：{error}"))?;
+    let read_write_workspace = scratch.child("read-write-workspace")?;
     let read_write_lease = lease_manager.grant(
-        read_write_workspace.path(),
+        &read_write_workspace,
         profile.sid,
         WorkspaceAccess::ReadWrite,
     )?;
-    let read_write_file = read_write_workspace.path().join("read-write.txt");
+    let read_write_file = read_write_workspace.join("read-write.txt");
     let read_write_exit = write_probe_file(&profile, Path::new(&system_root), &read_write_file)?;
     let read_write_created = std::fs::read_to_string(&read_write_file)
         .map(|value| value.trim() == "lease-written")
@@ -662,19 +660,15 @@ fn run_probe() -> Result<AppContainerProbe, String> {
         .map_err(|error| format!("无法清理 AppContainer 读写探测文件：{error}"))?;
     let after_read_write_restore_exit =
         write_probe_file(&profile, Path::new(&system_root), &read_write_file)?;
-    let nonempty_workspace = tempfile::tempdir()
-        .map_err(|error| format!("无法创建 AppContainer 非空目录探测：{error}"))?;
-    let existing_directory = nonempty_workspace.path().join("existing");
+    let nonempty_workspace = scratch.child("nonempty-workspace")?;
+    let existing_directory = nonempty_workspace.join("existing");
     std::fs::create_dir(&existing_directory)
         .map_err(|error| format!("无法创建 AppContainer 既有子目录：{error}"))?;
     let existing_file = existing_directory.join("existing.txt");
     std::fs::write(&existing_file, b"lease-readable")
         .map_err(|error| format!("无法写入 AppContainer 非空目录探测文件：{error}"))?;
-    let nonempty_lease = lease_manager.grant(
-        nonempty_workspace.path(),
-        profile.sid,
-        WorkspaceAccess::ReadOnly,
-    )?;
+    let nonempty_lease =
+        lease_manager.grant(&nonempty_workspace, profile.sid, WorkspaceAccess::ReadOnly)?;
     let nonempty_granted_exit = read_probe_file(&profile, &reader, &existing_file)?;
     nonempty_lease.restore()?;
     let nonempty_restored_exit = read_probe_file(&profile, &reader, &existing_file)?;
@@ -686,7 +680,7 @@ fn run_probe() -> Result<AppContainerProbe, String> {
     let shell = Path::new(&system_root).join("System32").join("cmd.exe");
     let runtime_environment = restricted_runtime_environment();
     let runtime_output = lease_manager.run_workspace_command(
-        workspace.path(),
+        &workspace,
         &shell,
         &[
             "/d".to_owned(),
@@ -700,7 +694,7 @@ fn run_probe() -> Result<AppContainerProbe, String> {
         64 * 1_024,
     )?;
     let mut interactive = lease_manager.spawn_workspace_command(
-        workspace.path(),
+        &workspace,
         &shell,
         &[
             "/d".to_owned(),
@@ -760,6 +754,83 @@ fn run_probe() -> Result<AppContainerProbe, String> {
         nonempty_workspace_tree_verified,
         network_capability_policy_verified,
         runtime_launcher_verified,
+    })
+}
+
+struct ProbeScratch {
+    root: PathBuf,
+}
+
+impl ProbeScratch {
+    fn create() -> Result<Self, String> {
+        let temporary_directory = std::env::temp_dir();
+        let cutoff = SystemTime::now()
+            .checked_sub(PROBE_TEMPORARY_AGE)
+            .unwrap_or(UNIX_EPOCH);
+        cleanup_stale_probe_directories_in(&temporary_directory, cutoff);
+        let root =
+            temporary_directory.join(format!("{PROBE_TEMPORARY_PREFIX}{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root)
+            .map_err(|error| format!("无法创建 AppContainer 探测目录：{error}"))?;
+        let scratch = Self { root };
+        if !safe_probe_directory(&scratch.root) {
+            return Err("AppContainer 探测目录不安全。".to_owned());
+        }
+        Ok(scratch)
+    }
+
+    fn child(&self, name: &str) -> Result<PathBuf, String> {
+        let path = self.root.join(name);
+        std::fs::create_dir(&path)
+            .map_err(|error| format!("无法创建 AppContainer 探测子目录：{error}"))?;
+        if safe_probe_directory(&path) {
+            Ok(path)
+        } else {
+            let _ = std::fs::remove_dir(&path);
+            Err("AppContainer 探测子目录不安全。".to_owned())
+        }
+    }
+}
+
+impl Drop for ProbeScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn cleanup_stale_probe_directories_in(directory: &Path, cutoff: SystemTime) -> usize {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return 0;
+    };
+    entries
+        .take(MAXIMUM_PROBE_TEMPORARY_DIRECTORY_ENTRIES)
+        .filter_map(Result::ok)
+        .filter(|entry| canonical_probe_temporary_name(&entry.file_name()))
+        .filter(|entry| {
+            try_remove_stale_owned_directory_tree(
+                &entry.path(),
+                cutoff,
+                MAXIMUM_PROBE_TEMPORARY_TREE_ENTRIES,
+            )
+        })
+        .count()
+}
+
+fn canonical_probe_temporary_name(name: &OsStr) -> bool {
+    let Some(value) = name
+        .to_str()
+        .and_then(|value| value.strip_prefix(PROBE_TEMPORARY_PREFIX))
+    else {
+        return false;
+    };
+    uuid::Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value)
+}
+
+fn safe_probe_directory(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| {
+        metadata.file_type().is_dir()
+            && !metadata.file_type().is_symlink()
+            && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
     })
 }
 
@@ -3173,5 +3244,33 @@ mod tests {
         )
         .unwrap();
         assert!(WorkspaceLeaseManager::open(app_data.path()).is_err());
+    }
+
+    #[test]
+    fn probe_cleanup_removes_only_canonical_stale_owned_trees() {
+        let directory = tempfile::tempdir().unwrap();
+        let token = "00000000-0000-0000-0000-000000000000";
+        let owned = directory
+            .path()
+            .join(format!("{PROBE_TEMPORARY_PREFIX}{token}"));
+        let malformed = directory
+            .path()
+            .join(format!("{PROBE_TEMPORARY_PREFIX}not-a-uuid"));
+        let unrelated = directory.path().join(format!("other-probe-{token}"));
+        std::fs::create_dir(&owned).unwrap();
+        std::fs::write(owned.join("probe.txt"), b"owned").unwrap();
+        std::fs::create_dir(&malformed).unwrap();
+        std::fs::create_dir(&unrelated).unwrap();
+
+        assert_eq!(
+            cleanup_stale_probe_directories_in(
+                directory.path(),
+                SystemTime::now() + Duration::from_secs(1),
+            ),
+            1
+        );
+        assert!(!owned.exists());
+        assert!(malformed.exists());
+        assert!(unrelated.exists());
     }
 }

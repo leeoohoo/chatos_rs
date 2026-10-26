@@ -1374,4 +1374,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 102. [部分完成] Windows Story 视频尾帧解码已移除运行路径中最后一处无归属 `NamedTempFile`：输入 MP4 改为系统临时目录下 `chatos-story-tail-<小写 UUID>.mp4`，以零共享、`OPEN_REPARSE_POINT` 和 `create_new` 独占创建，分块写入、flush/fsync，并在交给 Media Foundation 前复验普通非 reparse 文件与精确长度；成功、解码失败和任务异常均由 RAII 删除。Story 既有后台维护链在同一个受资源压力治理的 permit 内，最多检查系统临时目录前 20,000 项，只回收超过 24 小时的 canonical 名称；畸形 UUID、其他前缀、目录、symlink、Windows reparse 与多硬链接均不处理。真实 H.264 尾帧解码、业务连续性和清理边界测试通过；Windows Tauri 513 项发现、507 项通过、6 条环境集成测试 ignored，Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 和 NSIS 隔离原生启动 smoke 均通过。其余直接写入点继续按“新建不可变素材、数据库事务或需原子替换”的实际语义分类审计。
 
+103. [部分完成] Windows AppContainer 隔离自检已从 6 个匿名 `tempfile::tempdir` 收敛为单个系统临时目录 `chatos-appcontainer-probe-<小写 UUID>`，内部只创建固定的 filesystem/workspace/lease-data/recovery/read-write/nonempty 子目录；根目录以 `create_dir` 独占创建并复验普通非 reparse 目录，正常成功、返回错误或 panic unwind 由 RAII 整体清理，进程崩溃残留由下一轮自检按 24 小时规则治理。新一轮自检前最多检查系统临时目录前 20,000 项，只回收超过 24 小时且整棵树不超过 20,000 项、全部无 symlink/Windows reparse、普通文件均为单链接且没有近期写入的 canonical 残留；畸形 UUID、其他前缀或任一不安全项均保留。公共安全目录树判定同时复用于 Plugin staging 清理，避免两套删除规则漂移。Windows AppContainer 14 项真实隔离/恢复测试通过；Tauri 全量 514 项发现、508 项通过、6 条环境集成测试 ignored，Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 和 NSIS 隔离原生启动 smoke 均通过。其余运行时临时目录继续按所有权和恢复语义审计。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
