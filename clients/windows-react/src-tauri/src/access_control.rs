@@ -73,6 +73,17 @@ fn snapshot_for_owner(
 
 fn snapshot_from_state(state: &Map<String, Value>) -> Result<AccessControlSnapshot, String> {
     let approval_mode = approval_mode(state)?;
+    #[cfg(target_os = "windows")]
+    let backend_message = match crate::windows_appcontainer::probe_isolation() {
+        Ok(probe) if probe.filesystem_denied && probe.network_denied =>
+            "Windows AppContainer 零 capability 文件与网络隔离自检已通过；任务、Plugin 与 Agent 启动链尚未统一迁移，因此当前仍只发布账号上下文和 Job Object 进程树边界。",
+        Ok(_) =>
+            "Windows AppContainer 自检未证明文件隔离；当前只发布账号上下文和 Job Object 进程树边界。",
+        Err(_) =>
+            "Windows AppContainer 自检不可用；当前只发布账号上下文和 Job Object 进程树边界。",
+    };
+    #[cfg(not(target_os = "windows"))]
+    let backend_message = "当前平台不提供 Windows AppContainer；只发布账号上下文和进程树边界。";
     let (approval_policy, approval_reviewer) = match approval_mode {
         "request_approval" => ("on_request", "user"),
         "auto_approval" => ("on_request", "auto_review"),
@@ -104,7 +115,7 @@ fn snapshot_from_state(state: &Map<String, Value>) -> Result<AccessControlSnapsh
             filesystem_isolation: false,
             network_isolation: false,
             process_tree_control: true,
-            message: "通过账号与项目上下文校验后启动 PowerShell，并使用 Windows Job Object 回收进程树；不声明尚未实现的文件或网络隔离。".into(),
+            message: backend_message.into(),
         }],
     })
 }

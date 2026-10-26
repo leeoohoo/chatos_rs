@@ -50,6 +50,8 @@ mod terminal_runtime;
 mod terminal_tool_worker;
 mod tool_approval;
 mod wechat_companion;
+#[cfg(target_os = "windows")]
+mod windows_appcontainer;
 mod workspace_index;
 
 use access_control::load_access_control;
