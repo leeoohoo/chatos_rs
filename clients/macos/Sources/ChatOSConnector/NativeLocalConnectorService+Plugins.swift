@@ -490,8 +490,12 @@ extension NativeLocalConnectorService {
         await pluginIntegritySnapshots.invalidateAll()
         state.installedPluginIDs.remove(id)
         state.installedPluginRecords?[id] = nil
+        state.pluginHookTrustRecords = (state.pluginHookTrustRecords ?? [:]).filter {
+            $0.value.pluginID != id
+        }
         customPluginRuntimeHealth[id] = nil
         try stateStore.save(state)
+        await syncTrustedPluginHookBundles()
         try? await publishPluginInstallationStatus()
     }
 
@@ -512,6 +516,7 @@ extension NativeLocalConnectorService {
             await pluginApplicationRuntime.stop(pluginID: id)
         }
         try stateStore.save(state)
+        await syncTrustedPluginHookBundles()
         try? await publishPluginInstallationStatus()
     }
 

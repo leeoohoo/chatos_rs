@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import healthFailure from "../../contracts/local-agent/v48/fixtures/health-failure.json";
-import healthRequest from "../../contracts/local-agent/v48/fixtures/health-request.json";
-import healthSuccess from "../../contracts/local-agent/v48/fixtures/health-success.json";
+import healthFailure from "../../contracts/local-agent/v49/fixtures/health-failure.json";
+import healthRequest from "../../contracts/local-agent/v49/fixtures/health-request.json";
+import healthSuccess from "../../contracts/local-agent/v49/fixtures/health-success.json";
 import {
   healthRequestSchema,
   healthResponseSchema,
@@ -9,7 +9,7 @@ import {
   LOCAL_AGENT_MAX_MESSAGE_BYTES,
 } from "./features/host-lifecycle/domain/hostContract";
 
-describe("Local Agent Host v48 shared fixtures", () => {
+describe("Local Agent Host v49 shared fixtures", () => {
   it("parses the canonical health request", () => {
     expect(healthRequestSchema.parse(healthRequest).command.type).toBe("health");
   });

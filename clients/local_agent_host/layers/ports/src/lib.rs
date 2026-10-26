@@ -12,11 +12,12 @@ use chatos_local_agent_protocol::{
     LocalConversationAttachmentRecord, LocalConversationDetail, LocalConversationHistoryPage,
     LocalConversationPage, LocalConversationRuntimeSettings, LocalConversationTurnStart,
     LocalConversationTurnUpdate, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
-    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
-    LocalRemoteConnection, LocalRequirementSurvey, LocalRequirementSurveyResolution,
-    LocalRequirementSurveyStatus, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
-    LocalTaskRecord, LocalTaskStatus, PutConversationRuntimeSettingsCommand,
-    ResumeConversationTurnCommand, StartConversationTurnCommand, UpdateNotepadNoteCommand,
+    LocalPluginHookBundleRecord, LocalPluginHookBundleSpec, LocalPluginInstallationPage,
+    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalRemoteConnection,
+    LocalRequirementSurvey, LocalRequirementSurveyResolution, LocalRequirementSurveyStatus,
+    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage, LocalTaskRecord, LocalTaskStatus,
+    PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
+    StartConversationTurnCommand, UpdateNotepadNoteCommand,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -401,6 +402,31 @@ pub trait LocalPluginInstallationStore: Send + Sync {
 }
 
 #[async_trait]
+pub trait LocalPluginHookBundleStore: Send + Sync {
+    /// Appends an immutable trust snapshot. Repeating the same bundle is
+    /// idempotent; reusing its identity for different material is a conflict.
+    async fn put_plugin_hook_bundle(
+        &self,
+        command: &IdempotentCommand,
+        bundle: &LocalPluginHookBundleSpec,
+        now_unix_ms: i64,
+    ) -> Result<LocalPluginHookBundleRecord, ClientStorageError>;
+
+    async fn list_plugin_hook_bundles(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<LocalPluginHookBundleRecord>, ClientStorageError>;
+
+    async fn set_active_plugin_hook_bundles(
+        &self,
+        command: &IdempotentCommand,
+        owner_user_id: &str,
+        bundle_ids: &[String],
+        now_unix_ms: i64,
+    ) -> Result<Vec<String>, ClientStorageError>;
+}
+
+#[async_trait]
 pub trait LocalCapabilitySnapshotStore: Send + Sync {
     /// Stores an immutable revision. Repeating the same value is safe; reusing
     /// its key for different content must be rejected as a conflict.
@@ -773,6 +799,7 @@ pub trait LocalAgentStore:
     + LocalAgentToolStore
     + LocalAgentTaskStore
     + LocalPluginInstallationStore
+    + LocalPluginHookBundleStore
     + LocalConversationStore
     + LocalConversationRuntimeSettingsStore
     + LocalNotepadStore
@@ -791,6 +818,7 @@ impl<T> LocalAgentStore for T where
         + LocalAgentToolStore
         + LocalAgentTaskStore
         + LocalPluginInstallationStore
+        + LocalPluginHookBundleStore
         + LocalConversationStore
         + LocalConversationRuntimeSettingsStore
         + LocalNotepadStore

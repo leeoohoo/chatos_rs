@@ -638,7 +638,10 @@ impl LocalAgentRuntime {
             command @ (HostCommand::PutPluginInstallation(_)
             | HostCommand::GetPluginInstallation(_)
             | HostCommand::ListPluginInstallations(_)
-            | HostCommand::RemovePluginInstallation(_)) => {
+            | HostCommand::RemovePluginInstallation(_)
+            | HostCommand::PutPluginHookBundle(_)
+            | HostCommand::ListPluginHookBundles(_)
+            | HostCommand::SetActivePluginHookBundles(_)) => {
                 self.handle_plugin_command(&idempotency, command).await
             }
             command @ (HostCommand::CreateConversation(_)

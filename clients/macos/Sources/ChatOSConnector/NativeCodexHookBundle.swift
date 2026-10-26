@@ -1,13 +1,57 @@
 import CryptoKit
 import Foundation
 
-struct NativeCodexHookDefinition: Sendable, Equatable {
+struct NativeCodexHookDefinition: Codable, Sendable, Equatable {
     var id: String
     var event: String
     var matcher: String?
     var command: String
     var timeoutSeconds: Double
     var additionalContextLimit: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case event, matcher, command
+        case id = "hook_id"
+        case timeoutSeconds = "timeout_seconds"
+        case additionalContextLimit = "additional_context_limit"
+    }
+}
+
+struct NativePluginHookTrustRecord: Codable, Sendable, Equatable {
+    static let runnerPolicyVersion: UInt32 = 1
+
+    var bundleID: String
+    var ownerUserID: String
+    var pluginID: String
+    var releaseID: String
+    var componentKey: String
+    var artifactSHA256: String
+    var contentSHA256: String
+    var normalizedHookSHA256: String
+    var commandSHA256: String
+    var permissionSnapshotSHA256: String
+    var runnerPolicyVersion: UInt32
+    var installationRoot: String
+    var permissions: [String]
+    var hooks: [NativeCodexHookDefinition]
+    var trustedAtUnixMs: Int64
+
+    private enum CodingKeys: String, CodingKey {
+        case hooks, permissions
+        case bundleID = "bundle_id"
+        case ownerUserID = "owner_user_id"
+        case pluginID = "plugin_id"
+        case releaseID = "release_id"
+        case componentKey = "component_key"
+        case artifactSHA256 = "artifact_sha256"
+        case contentSHA256 = "content_sha256"
+        case normalizedHookSHA256 = "normalized_hook_sha256"
+        case commandSHA256 = "command_sha256"
+        case permissionSnapshotSHA256 = "permission_snapshot_sha256"
+        case runnerPolicyVersion = "runner_policy_version"
+        case installationRoot = "installation_root"
+        case trustedAtUnixMs = "trusted_at_unix_ms"
+    }
 }
 
 struct NativeCodexHookBundle: Sendable, Equatable {

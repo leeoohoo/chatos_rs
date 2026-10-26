@@ -1,0 +1,87 @@
+{
+  "protocol_version": 49,
+  "command_id": "contract-conversation-history-1",
+  "ok": true,
+  "result": {
+    "type": "conversation_history",
+    "page": {
+      "conversation": {
+        "conversation_id": "conversation-1",
+        "owner_user_id": "user-1",
+        "title": "Project Alpha",
+        "resource": {
+          "kind": "project",
+          "resource_id": "project-1"
+        },
+        "version": 7,
+        "created_at_unix_ms": 1792454400000,
+        "updated_at_unix_ms": 1792454460000
+      },
+      "turns": [
+        {
+          "turn_id": "turn-1",
+          "conversation_id": "conversation-1",
+          "user_message_id": "message-user-1",
+          "run_id": "run-1",
+          "status": "running",
+          "created_at_unix_ms": 1792454401000,
+          "updated_at_unix_ms": 1792454460000
+        }
+      ],
+      "messages": [
+        {
+          "message_id": "message-user-1",
+          "conversation_id": "conversation-1",
+          "turn_id": "turn-1",
+          "ordinal": 1,
+          "role": "user",
+          "content": {
+            "text": "Inspect the current project and report progress."
+          },
+          "metadata": {},
+          "created_at_unix_ms": 1792454401000
+        },
+        {
+          "message_id": "message-assistant-1",
+          "conversation_id": "conversation-1",
+          "turn_id": "turn-1",
+          "ordinal": 2,
+          "role": "assistant",
+          "content": {
+            "text": "The task graph is running."
+          },
+          "metadata": {
+            "task_runner_async": {
+              "task_id": "task-1",
+              "run_id": "run-1",
+              "event": "task.run.started",
+              "status": "running",
+              "source_session_id": "conversation-1",
+              "source_turn_id": "turn-1",
+              "source_user_message_id": "message-user-1"
+            }
+          },
+          "created_at_unix_ms": 1792454402000
+        }
+      ],
+      "attachments": [
+        {
+          "attachment_id": "attachment-1",
+          "conversation_id": "conversation-1",
+          "turn_id": "turn-1",
+          "message_id": "message-user-1",
+          "ordinal": 1,
+          "display_name": "brief.pdf",
+          "media_type": "application/pdf",
+          "byte_size": 42,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorized_local_ref": "local-attachment:authority-1",
+          "metadata": {},
+          "created_at_unix_ms": 1792454401000
+        }
+      ],
+      "next_before_ordinal": null
+    }
+  },
+  "error": null
+}

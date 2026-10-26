@@ -38,6 +38,7 @@ mod migration_tests;
 mod model_snapshot_store;
 mod notepad_store;
 mod notepad_support;
+mod plugin_hook_store;
 mod plugin_query_store;
 mod plugin_store;
 mod receipt_cache;
@@ -94,8 +95,8 @@ pub use chatos_local_agent_ports::{
     LocalMemoryContextCacheStore, LocalMemoryOutboxRecord, LocalMemoryOutboxStatus,
     LocalMemoryOutboxStore, LocalMemorySyncStatus, LocalModelConfigSnapshot,
     LocalModelConfigSnapshotStore, LocalNotepadImageWrite, LocalNotepadStore,
-    LocalPluginInstallationStore, LocalRemoteConnectionStore, LocalRequirementSurveyStore,
-    RunTransition,
+    LocalPluginHookBundleStore, LocalPluginInstallationStore, LocalRemoteConnectionStore,
+    LocalRequirementSurveyStore, RunTransition,
 };
 pub use receipt_cache::ReceiptCacheUsage;
 use run_record::{decode_run, decode_run_summary};

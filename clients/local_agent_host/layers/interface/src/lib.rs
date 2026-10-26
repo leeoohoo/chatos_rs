@@ -16,6 +16,7 @@ mod account_scope;
 mod artifact;
 mod control_plane;
 mod conversation;
+mod hook;
 mod memory;
 mod notepad;
 mod plugin;
@@ -60,6 +61,11 @@ pub use conversation::{
     PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
     StartConversationTurnCommand, LOCAL_CONVERSATION_MAX_ATTACHMENTS,
     LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
+};
+pub use hook::{
+    ListPluginHookBundlesCommand, LocalPluginHookBundleRecord, LocalPluginHookBundleSpec,
+    LocalPluginHookDefinition, PutPluginHookBundleCommand, SetActivePluginHookBundlesCommand,
+    LOCAL_PLUGIN_HOOK_MAX_BUNDLES, LOCAL_PLUGIN_HOOK_MAX_DEFINITIONS,
 };
 pub use memory::{GetMemorySyncStatusCommand, LocalMemorySyncStatus};
 pub use notepad::{
@@ -126,7 +132,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 48;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 49;
 /// Maximum bytes in one physical IPC frame. The high bit of the frame prefix is reserved
 /// as the continuation flag, so this limit must stay below `i32::MAX`.
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
@@ -202,6 +208,9 @@ pub enum HostCommand {
     GetPluginInstallation(GetPluginInstallationCommand),
     ListPluginInstallations(ListPluginInstallationsCommand),
     RemovePluginInstallation(RemovePluginInstallationCommand),
+    PutPluginHookBundle(PutPluginHookBundleCommand),
+    ListPluginHookBundles(ListPluginHookBundlesCommand),
+    SetActivePluginHookBundles(SetActivePluginHookBundlesCommand),
     CreateConversation(CreateConversationCommand),
     GetConversation(GetConversationCommand),
     GetConversationContext(GetConversationCommand),
@@ -286,6 +295,9 @@ impl HostCommand {
             Self::GetPluginInstallation(command) => command.validate(),
             Self::ListPluginInstallations(command) => command.validate(),
             Self::RemovePluginInstallation(command) => command.validate(),
+            Self::PutPluginHookBundle(command) => command.validate(),
+            Self::ListPluginHookBundles(command) => command.validate(),
+            Self::SetActivePluginHookBundles(command) => command.validate(),
             Self::CreateConversation(command) => command.validate(),
             Self::GetConversation(command) => command.validate(),
             Self::GetConversationContext(command) => command.validate(),

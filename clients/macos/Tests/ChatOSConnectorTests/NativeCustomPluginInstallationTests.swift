@@ -539,9 +539,45 @@ struct NativeCustomPluginInstallationTests {
             atPath: source.path,
             expectedFingerprint: inspection.fingerprint
         )
+        let trustedState = try NativeConnectorStateStore(stateURL: stateURL).load()
+        let trust = try #require(trustedState.pluginHookTrustRecords?.values.first)
+        #expect(trust.ownerUserID == "owner-hook")
+        #expect(trust.artifactSHA256.count == 64)
+        #expect(trust.normalizedHookSHA256.count == 64)
+        #expect(trust.commandSHA256.count == 64)
+        #expect(trust.permissionSnapshotSHA256.count == 64)
+        #expect(trust.permissions == ["process.spawn", "workspace.read"])
+        #expect(trust.hooks.count == 3)
+
+        let host = HookBundleHostStub()
+        await service.setLocalAgentCompanionServices(
+            host: host,
+            conversation: nil,
+            messageTasks: nil,
+            askUser: nil
+        )
+        let published = await host.publishedBundles()
+        #expect(published.count == 1)
+        #expect(published.first?["bundle_id"] == trust.bundleID)
+        #expect(published.first?["artifact_sha256"] == trust.artifactSHA256)
+        #expect(await host.activeBundleIDs() == [trust.bundleID])
+
+        try Data(#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node changed.js"}]}]}}"#.utf8)
+            .write(to: URL(fileURLWithPath: trust.installationRoot, isDirectory: true)
+                .appendingPathComponent("hooks/codex-hooks.json"))
+        let postTamperHost = HookBundleHostStub()
+        await service.setLocalAgentCompanionServices(
+            host: postTamperHost,
+            conversation: nil,
+            messageTasks: nil,
+            askUser: nil
+        )
+        #expect(await postTamperHost.publishedBundles().isEmpty)
+        #expect(await postTamperHost.activeBundleIDs().isEmpty)
+
         let catalog = try await service.fetchPlugins(refresh: true)
-        let installed = try #require(catalog.first(where: { $0.displayName == "Generic Hook Fixture" }))
-        #expect(installed.installationIssue == nil)
+        let installed = try #require(catalog.first(where: { $0.pluginID == trust.pluginID }))
+        #expect(installed.installationIssue != nil)
     }
 
     @Test("Codex Hook parser rejects unsupported async handlers and path escapes")
@@ -863,4 +899,42 @@ private struct CustomPluginRejectingTicketProvider: LocalConnectorPairingTicketP
     func issueLocalConnectorPairingTicket() async throws -> String {
         throw URLError(.userAuthenticationRequired)
     }
+}
+
+private actor HookBundleHostStub: LocalAgentHostClientServicing {
+    private var bundles: [[String: String]] = []
+    private var activeIDs: [String] = []
+
+    func start(ownerUserID: String) async throws {}
+    func stop() async {}
+
+    func request(command: Data) async throws -> Data {
+        let object = try #require(
+            JSONSerialization.jsonObject(with: command) as? [String: Any]
+        )
+        if object["type"] as? String == "set_active_plugin_hook_bundles" {
+            let bundleIDs = object["bundle_ids"] as? [String] ?? []
+            activeIDs = bundleIDs.sorted()
+            return try JSONSerialization.data(withJSONObject: [
+                "type": "active_plugin_hook_bundles_updated",
+                "active_bundle_ids": activeIDs,
+            ])
+        }
+        guard object["type"] as? String == "put_plugin_hook_bundle",
+              let bundle = object["bundle"] as? [String: Any],
+              let bundleID = bundle["bundle_id"] as? String else {
+            throw NativeConnectorError.pluginInstallation("unexpected Hook Host command")
+        }
+        bundles.append([
+            "bundle_id": bundleID,
+            "artifact_sha256": bundle["artifact_sha256"] as? String ?? "",
+        ])
+        return try JSONSerialization.data(withJSONObject: [
+            "type": "plugin_hook_bundle",
+            "bundle": ["bundle_id": bundleID],
+        ])
+    }
+
+    func publishedBundles() -> [[String: String]] { bundles }
+    func activeBundleIDs() -> [String] { activeIDs }
 }

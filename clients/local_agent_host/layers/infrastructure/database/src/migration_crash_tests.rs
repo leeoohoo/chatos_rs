@@ -571,7 +571,7 @@ async fn crash_and_recover(point: &str, committed_version: i64, incomplete: bool
     assert_eq!(usage.response_count, 3);
     assert_eq!(usage.response_bytes as usize, expected_response_bytes());
     storage.pool.close().await;
-    assert_source(&fixture.database(), 37).await;
+    assert_source(&fixture.database(), 38).await;
     for (path, digest) in &before {
         if path.exists() {
             assert_eq!(
@@ -586,11 +586,11 @@ async fn crash_and_recover(point: &str, committed_version: i64, incomplete: bool
         after.len(),
         match committed_version {
             34 => 1,
-            35..=37 => 2,
+            35..=38 => 2,
             _ => unreachable!(),
         }
     );
-    if committed_version < 37 {
+    if committed_version < 38 {
         assert!(after
             .iter()
             .all(|path| !path.to_string_lossy().ends_with(".incomplete")));
@@ -671,6 +671,13 @@ crash_case!(
     false
 );
 crash_case!(kill_after_v37_commit, "schema_v37_after_commit", 37, false);
+crash_case!(
+    kill_before_v38_commit,
+    "schema_v38_before_commit",
+    37,
+    false
+);
+crash_case!(kill_after_v38_commit, "schema_v38_after_commit", 38, false);
 
 async fn kill_business_commit_and_reconcile(point: &str) {
     let directory = tempfile::tempdir().unwrap();
