@@ -33,8 +33,8 @@ mod task_write_scope;
 mod tool;
 
 pub use task_acceptance::{
-    completed_task_acceptance_report, validate_task_acceptance_report,
-    validate_task_final_response_limit,
+    completed_task_acceptance_report, task_acceptance_report_for_run,
+    validate_task_acceptance_report, validate_task_final_response_limit,
 };
 
 pub use artifact::{

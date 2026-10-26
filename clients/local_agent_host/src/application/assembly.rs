@@ -268,12 +268,15 @@ impl LocalAgentHostAssembly {
         let mut profiles = LocalAgentProfileRegistry::new();
         profiles.register(MAIN_CHAT_PROFILE_KEY, main_profile)?;
         profiles.register(TASK_EXECUTION_PROFILE_KEY, task_profile)?;
-        let model_scheduler = LocalAgentScheduler::new(
+        let mut model_scheduler = LocalAgentScheduler::new(
             Arc::clone(&runtime),
             profiles,
             owner_user_id.clone(),
             "local-model-worker",
         )?;
+        if let Some(hooks) = hook_context_provider.as_ref() {
+            model_scheduler = model_scheduler.with_hook_coordinator(Arc::clone(hooks));
+        }
         let external_tool_worker = tools.is_none();
         let mut tools = tools.unwrap_or_default();
         let task_tools: Arc<dyn LocalToolExecutor> = Arc::new(LocalTaskToolExecutor::new(

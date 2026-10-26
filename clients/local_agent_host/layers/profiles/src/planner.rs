@@ -4,7 +4,7 @@
 use crate::{memory::memory_plan, LocalAiStepPlanner, PreparedLocalAiStep};
 use async_trait::async_trait;
 use chatos_ai_runtime::{message_item, ContextualTurnRunner, ModelRuntimeConfig, RuntimeTurnSpec};
-use chatos_local_agent_protocol::LocalAgentRunClaim;
+use chatos_local_agent_protocol::{task_acceptance_report_for_run, LocalAgentRunClaim};
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -616,7 +616,8 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                     .is_some_and(|items| !items.is_empty())
             });
         let task_outcome_reported = self.profile_key == TASK_EXECUTION_PROFILE_KEY
-            && completed_task_outcome_report(claim.run.continuation_input.as_ref());
+            && (completed_task_outcome_report(claim.run.continuation_input.as_ref())
+                || task_acceptance_report_for_run(&claim.run).is_some());
         if async_handoff_confirmed {
             // Preserve the former server Task Runner boundary exactly: after the
             // explicit handoff succeeds, Main Chat gets one tool-free response

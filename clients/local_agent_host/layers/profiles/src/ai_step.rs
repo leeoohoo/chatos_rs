@@ -8,7 +8,7 @@ use chatos_ai_runtime::{
     AiRuntimeResult, AiSingleStepOutcome, ContextualTurnRequest, ContextualTurnRunner,
 };
 use chatos_local_agent_protocol::{
-    completed_task_acceptance_report, validate_task_acceptance_report, LocalAgentRunClaim,
+    task_acceptance_report_for_run, validate_task_acceptance_report, LocalAgentRunClaim,
     LocalAgentStepOutcome, LocalAgentToolCall,
 };
 use chatos_local_agent_runtime::LocalAgentProfile;
@@ -287,10 +287,9 @@ fn reduce_ai_step_outcome_for_claim(
             .and_then(Value::as_u64)
             == Some(1)
     {
-        if let (AiSingleStepOutcome::Final(response), Some(report)) = (
-            &outcome,
-            completed_task_acceptance_report(claim.run.continuation_input.as_ref()),
-        ) {
+        if let (AiSingleStepOutcome::Final(response), Some(report)) =
+            (&outcome, task_acceptance_report_for_run(&claim.run))
+        {
             validate_task_acceptance_report(&claim.run.input, report)?;
             // Do not let a second model response rewrite an already-checked deliverable.
             let mut output = response_value(response.clone());
@@ -315,6 +314,7 @@ fn reduce_ai_step_outcome_for_claim(
     if claim.run.profile_key == "task_execution"
         && claim.run.owner_entity_type == "task"
         && !task_outcome_reported(claim.run.continuation_input.as_ref())
+        && task_acceptance_report_for_run(&claim.run).is_none()
     {
         return match outcome {
             AiSingleStepOutcome::Final(response) => Ok(LocalAgentStepOutcome::Continue {
@@ -771,12 +771,40 @@ mod tests {
         };
         assert_eq!(output["content"], report["final_response"]);
         assert_eq!(output["task_acceptance"]["status"], "succeeded");
+        claim.run.continuation_input = None;
+        claim.run.checkpoint = json!({
+            "response": {
+                "content": report["final_response"],
+                "task_acceptance": report,
+                "request_input_items": [],
+                "response_output_items": []
+            },
+            "continuation": {
+                "reason": "trusted_plugin_hook_stop_block",
+                "input_items": [],
+                "stop_hook_block": {
+                    "count": 1,
+                    "reason_sha256": "a".repeat(64),
+                    "event": "SubagentStop"
+                }
+            }
+        });
+        let LocalAgentStepOutcome::Succeed { output } = reduce_ai_step_outcome_for_claim(
+            AiSingleStepOutcome::Final(response(None)),
+            &claim,
+            10_000,
+            &ConservativeToolSafetyPolicy,
+        )
+        .expect("retained acceptance must survive SubagentStop") else {
+            panic!("retained acceptance should allow final completion")
+        };
+        assert_eq!(output["content"], report["final_response"]);
         // A review can finish normally while finding failed or unverified
         // criteria. Preserve those findings; do not turn them into execution
         // errors or allow the model to replace the accepted final text.
         for verdict in ["failed", "not_verified"] {
-            claim.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
-                ["acceptance_checks"][0]["status"] = json!(verdict);
+            claim.run.checkpoint["response"]["task_acceptance"]["acceptance_checks"][0]["status"] =
+                json!(verdict);
             let LocalAgentStepOutcome::Succeed { output } = reduce_ai_step_outcome_for_claim(
                 AiSingleStepOutcome::Final(response(None)),
                 &claim,
@@ -793,8 +821,8 @@ mod tests {
             );
         }
         // Malformed reports still fail validation rather than bypassing it.
-        claim.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
-            ["acceptance_checks"][0]["status"] = json!("unknown-verdict");
+        claim.run.checkpoint["response"]["task_acceptance"]["acceptance_checks"][0]["status"] =
+            json!("unknown-verdict");
         let error = reduce_ai_step_outcome_for_claim(
             AiSingleStepOutcome::Final(response(None)),
             &claim,

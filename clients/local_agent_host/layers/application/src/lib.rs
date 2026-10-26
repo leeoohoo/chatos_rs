@@ -400,14 +400,13 @@ impl LocalAgentRuntime {
                         == Some(1)
                 {
                     if let LocalAgentStepOutcome::Succeed { output } = &command.outcome {
-                        let report = chatos_local_agent_protocol::completed_task_acceptance_report(
-                            current.continuation_input.as_ref(),
-                        )
-                        .ok_or_else(|| {
-                            LocalAgentRuntimeError::InvalidRequest(
-                                "Task has no accepted structured outcome report".into(),
-                            )
-                        })?;
+                        let report =
+                            chatos_local_agent_protocol::task_acceptance_report_for_run(&current)
+                                .ok_or_else(|| {
+                                LocalAgentRuntimeError::InvalidRequest(
+                                    "Task has no accepted structured outcome report".into(),
+                                )
+                            })?;
                         chatos_local_agent_protocol::validate_task_acceptance_report(
                             &current.input,
                             report,

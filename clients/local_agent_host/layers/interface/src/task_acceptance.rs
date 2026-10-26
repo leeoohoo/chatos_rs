@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use crate::LocalAgentRunRecord;
 use serde_json::Value;
 
 /// Explicit, frozen constraints only; never infer a limit from natural-language criteria.
@@ -98,6 +99,19 @@ pub fn completed_task_acceptance_report(continuation: Option<&Value>) -> Option<
             .then(|| invocation.get("result"))
             .flatten()
         })
+}
+
+/// Returns the currently accepted Task report, including the report retained
+/// across a trusted SubagentStop continuation. The retained copy is considered
+/// only at that exact Host-authored checkpoint boundary and is validated again
+/// by every terminal consumer.
+pub fn task_acceptance_report_for_run(run: &LocalAgentRunRecord) -> Option<&Value> {
+    completed_task_acceptance_report(run.continuation_input.as_ref()).or_else(|| {
+        (run.checkpoint.pointer("/continuation/reason")?.as_str()?
+            == "trusted_plugin_hook_stop_block")
+            .then(|| run.checkpoint.pointer("/response/task_acceptance"))
+            .flatten()
+    })
 }
 
 #[cfg(test)]
