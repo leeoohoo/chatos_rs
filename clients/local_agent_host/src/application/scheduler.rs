@@ -3,7 +3,7 @@
 
 //! One-step scheduler for registered Local Agent business profiles.
 
-use crate::application::work_activity::HostWorkActivity;
+use crate::{application::work_activity::HostWorkActivity, LocalHookCoordinator};
 use chatos_local_agent_protocol::{
     ClaimNextRunCommand, CommitStepCommand, GetRunCommand, HostCommand, HostRequestEnvelope,
     HostResult, LocalAgentRunRecord, LocalAgentStepOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
@@ -37,6 +37,7 @@ pub struct LocalAgentScheduler {
     worker_id: String,
     lease_duration_ms: u64,
     work_activity: HostWorkActivity,
+    hook_coordinator: Option<Arc<LocalHookCoordinator>>,
 }
 
 impl LocalAgentScheduler {
@@ -66,11 +67,20 @@ impl LocalAgentScheduler {
             worker_id: worker_id.to_string(),
             lease_duration_ms: 300_000,
             work_activity: HostWorkActivity::default(),
+            hook_coordinator: None,
         })
     }
 
     pub(crate) fn with_work_activity(mut self, work_activity: HostWorkActivity) -> Self {
         self.work_activity = work_activity;
+        self
+    }
+
+    pub(crate) fn with_hook_coordinator(
+        mut self,
+        hook_coordinator: Arc<LocalHookCoordinator>,
+    ) -> Self {
+        self.hook_coordinator = Some(hook_coordinator);
         self
     }
 
@@ -134,6 +144,20 @@ impl LocalAgentScheduler {
                 reason: "Local Agent profile is not registered".to_string(),
                 detail: serde_json::json!({"profile_key": claim.run.profile_key}),
             },
+        };
+        let outcome = if let Some(hooks) = self.hook_coordinator.as_ref() {
+            match hooks.gate_tool_outcome(&claim, outcome).await {
+                Ok(outcome) => outcome,
+                Err(error) => LocalAgentStepOutcome::NeedsReview {
+                    reason: "trusted tool Hook gate failed closed".to_string(),
+                    detail: serde_json::json!({
+                        "phase": "trusted_plugin_hook",
+                        "error": error,
+                    }),
+                },
+            }
+        } else {
+            outcome
         };
         let run_id = claim.run.run_id.clone();
         let owner_user_id = claim.run.owner_user_id.clone();

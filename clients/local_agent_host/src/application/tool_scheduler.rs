@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::application::work_activity::HostWorkActivity;
+use crate::{application::work_activity::HostWorkActivity, LocalHookCoordinator};
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     ClaimNextToolCommand, CommitToolCommand, HostCommand, HostRequestEnvelope, HostResult,
@@ -92,6 +92,7 @@ pub struct LocalToolScheduler {
     exclude_tool_names: Vec<String>,
     execution_route: Option<LocalAgentToolExecutionRoute>,
     work_activity: HostWorkActivity,
+    hook_coordinator: Option<Arc<LocalHookCoordinator>>,
 }
 
 impl LocalToolScheduler {
@@ -124,11 +125,20 @@ impl LocalToolScheduler {
             exclude_tool_names: Vec::new(),
             execution_route: None,
             work_activity: HostWorkActivity::default(),
+            hook_coordinator: None,
         })
     }
 
     pub(crate) fn with_work_activity(mut self, work_activity: HostWorkActivity) -> Self {
         self.work_activity = work_activity;
+        self
+    }
+
+    pub(crate) fn with_hook_coordinator(
+        mut self,
+        hook_coordinator: Arc<LocalHookCoordinator>,
+    ) -> Self {
+        self.hook_coordinator = Some(hook_coordinator);
         self
     }
 
@@ -205,7 +215,17 @@ impl LocalToolScheduler {
             _ => return Err(LocalToolSchedulerError::UnexpectedResult("claim")),
         };
         let _activity = self.work_activity.begin();
-        let outcome = match claim.preflight_outcome.clone() {
+        let hook_preflight = match self.hook_coordinator.as_ref() {
+            Some(hooks) => match hooks.tool_preflight_outcome(&claim.invocation).await {
+                Ok(outcome) => outcome,
+                Err(error) => Some(LocalAgentToolOutcome::Failed {
+                    error: "trusted tool Hook preflight failed closed".to_string(),
+                    detail: json!({"phase": "trusted_plugin_hook", "error": error}),
+                }),
+            },
+            None => None,
+        };
+        let outcome = match claim.preflight_outcome.clone().or(hook_preflight) {
             Some(outcome) => outcome,
             None => match self.tools.executor_for(&claim.invocation.tool_name) {
                 Some(executor) => match self.execute_with_heartbeat(executor, &claim).await? {

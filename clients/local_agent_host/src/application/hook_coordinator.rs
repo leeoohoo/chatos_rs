@@ -10,7 +10,8 @@ use chatos_local_agent_ports::{
     LocalHookInvocationSpec,
 };
 use chatos_local_agent_protocol::{
-    LocalAgentRunClaim, LocalAgentRunRecord, LocalPluginHookBundleRecord,
+    LocalAgentRunClaim, LocalAgentRunRecord, LocalAgentStepOutcome, LocalAgentToolCall,
+    LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalPluginHookBundleRecord,
     LocalPluginHookDefinition, StartConversationTurnCommand,
 };
 use chatos_local_agent_runtime::LocalAgentRuntime;
@@ -134,62 +135,240 @@ impl LocalHookCoordinator {
         Ok(LocalHookPromptDecision::Allow)
     }
 
+    pub(crate) async fn gate_tool_outcome(
+        &self,
+        claim: &LocalAgentRunClaim,
+        outcome: LocalAgentStepOutcome,
+    ) -> Result<LocalAgentStepOutcome, String> {
+        let LocalAgentStepOutcome::WaitForTool {
+            batch_id,
+            tool_calls,
+            checkpoint,
+        } = outcome
+        else {
+            return Ok(outcome);
+        };
+        let tool_calls = join_all(
+            tool_calls
+                .into_iter()
+                .map(|call| self.gate_tool_call(claim, call)),
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(LocalAgentStepOutcome::WaitForTool {
+            batch_id,
+            tool_calls,
+            checkpoint,
+        })
+    }
+
+    async fn gate_tool_call(
+        &self,
+        claim: &LocalAgentRunClaim,
+        mut call: LocalAgentToolCall,
+    ) -> Result<LocalAgentToolCall, String> {
+        let subject_id = tool_hook_subject(&claim.run.run_id, &call.call_id);
+        let pre = self
+            .execute_event(HookEvent::new(
+                &claim.run,
+                "PreToolUse",
+                &subject_id,
+                &call.tool_name,
+                tool_hook_payload(
+                    &claim.run,
+                    "PreToolUse",
+                    &call.call_id,
+                    &call.tool_name,
+                    &call.arguments,
+                    None,
+                    self.workspace_display(),
+                ),
+            )?)
+            .await?;
+        apply_updated_input(&mut call, &pre)?;
+        if tool_event_denied(&pre) {
+            call.requires_approval = false;
+            return Ok(call);
+        }
+        if pre.permission_decision.as_deref() == Some("ask") {
+            call.requires_approval = true;
+        }
+        if call.requires_approval {
+            let permission = self
+                .execute_event(HookEvent::new(
+                    &claim.run,
+                    "PermissionRequest",
+                    &subject_id,
+                    &call.tool_name,
+                    tool_hook_payload(
+                        &claim.run,
+                        "PermissionRequest",
+                        &call.call_id,
+                        &call.tool_name,
+                        &call.arguments,
+                        None,
+                        self.workspace_display(),
+                    ),
+                )?)
+                .await?;
+            apply_updated_input(&mut call, &permission)?;
+            if tool_event_denied(&permission) {
+                call.requires_approval = false;
+            }
+        }
+        call.validate()?;
+        Ok(call)
+    }
+
+    pub(crate) async fn tool_preflight_outcome(
+        &self,
+        invocation: &LocalAgentToolInvocationRecord,
+    ) -> Result<Option<LocalAgentToolOutcome>, String> {
+        let Some(run) = self
+            .runtime
+            .get_run_for_host_worker(&invocation.run_id)
+            .await
+            .map_err(|error| error.to_string())?
+        else {
+            return Err(format!(
+                "Hook tool Run is unavailable: {}",
+                invocation.run_id
+            ));
+        };
+        let subject_id = tool_hook_subject(&run.run_id, &invocation.call_id);
+        for event_type in ["PreToolUse", "PermissionRequest"] {
+            let record = self
+                .runtime
+                .get_hook_event_for_host_worker(&run.owner_user_id, event_type, &subject_id, 1)
+                .await
+                .map_err(|error| error.to_string())?;
+            let Some(record) = record else {
+                continue;
+            };
+            if record.status != "completed" {
+                return Ok(Some(hook_tool_denial(
+                    event_type,
+                    "trusted Hook decision is incomplete",
+                )));
+            }
+            let decision = decode_persisted_outcome(event_type, record.additional_context)?;
+            if tool_event_denied(&decision) {
+                return Ok(Some(hook_tool_denial(
+                    event_type,
+                    decision
+                        .decision_reason
+                        .as_deref()
+                        .or(decision.block_reason.as_deref())
+                        .unwrap_or("trusted Hook denied the tool call"),
+                )));
+            }
+        }
+        Ok(None)
+    }
+
     async fn events_for_claim(&self, claim: &LocalAgentRunClaim) -> Result<Vec<HookEvent>, String> {
         let run = &claim.run;
+        let mut events = Vec::new();
         if run.owner_entity_type == "conversation_turn" {
             let conversation_id = required_input_string(run, "conversation_id")?;
             let turn_id = required_input_string(run, "turn_id")?;
             let prompt = required_input_string(run, "message")?;
             let session = self.session_for(run, conversation_id).await?;
-            return Ok(vec![
-                HookEvent::new_for_owner_with_sequence(
-                    &run.owner_user_id,
-                    "SessionStart",
-                    conversation_id,
-                    session.sequence,
-                    &session.source,
-                    json!({
-                        "session_id": conversation_id,
-                        "hook_event_name": "SessionStart",
-                        "source": session.source,
-                        "cwd": self.workspace_display(),
-                    }),
-                )?,
-                HookEvent::new(
-                    run,
-                    "UserPromptSubmit",
-                    turn_id,
-                    "",
-                    json!({
-                        "session_id": conversation_id,
-                        "hook_event_name": "UserPromptSubmit",
-                        "prompt": prompt,
-                        "cwd": self.workspace_display(),
-                    }),
-                )?,
-            ]);
+            events.push(HookEvent::new_for_owner_with_sequence(
+                &run.owner_user_id,
+                "SessionStart",
+                conversation_id,
+                session.sequence,
+                &session.source,
+                json!({
+                    "session_id": conversation_id,
+                    "hook_event_name": "SessionStart",
+                    "source": session.source,
+                    "cwd": self.workspace_display(),
+                }),
+            )?);
+            events.push(HookEvent::new(
+                run,
+                "UserPromptSubmit",
+                turn_id,
+                "",
+                json!({
+                    "session_id": conversation_id,
+                    "hook_event_name": "UserPromptSubmit",
+                    "prompt": prompt,
+                    "cwd": self.workspace_display(),
+                }),
+            )?);
+        } else if self.is_delegated_task(run).await? {
+            let session_id = run
+                .input
+                .get("source_conversation_id")
+                .and_then(Value::as_str)
+                .unwrap_or(&run.owner_entity_id);
+            events.push(HookEvent::new(
+                run,
+                "SubagentStart",
+                &run.run_id,
+                "task_execution",
+                json!({
+                    "session_id": session_id,
+                    "hook_event_name": "SubagentStart",
+                    "agent_id": run.run_id,
+                    "agent_type": "task_execution",
+                    "cwd": self.workspace_display(),
+                }),
+            )?);
         }
-        if !self.is_delegated_task(run).await? {
+        events.extend(self.post_tool_events(run)?);
+        Ok(events)
+    }
+
+    fn post_tool_events(&self, run: &LocalAgentRunRecord) -> Result<Vec<HookEvent>, String> {
+        let Some(invocations) = run
+            .continuation_input
+            .as_ref()
+            .and_then(|value| value.get("invocations"))
+            .and_then(Value::as_array)
+        else {
             return Ok(Vec::new());
+        };
+        let mut events = Vec::with_capacity(invocations.len());
+        for invocation in invocations {
+            let Some(invocation_id) = invocation.get("invocation_id").and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let Some(call_id) = invocation.get("call_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(tool_name) = invocation.get("tool_name").and_then(Value::as_str) else {
+                continue;
+            };
+            let arguments = invocation.get("arguments").unwrap_or(&Value::Null);
+            let response = invocation.get("result").cloned().unwrap_or_else(|| {
+                json!({
+                    "status": invocation.get("status"),
+                    "error": invocation.get("error"),
+                })
+            });
+            events.push(HookEvent::new(
+                run,
+                "PostToolUse",
+                invocation_id,
+                tool_name,
+                tool_hook_payload(
+                    run,
+                    "PostToolUse",
+                    call_id,
+                    tool_name,
+                    arguments,
+                    Some(&response),
+                    self.workspace_display(),
+                ),
+            )?);
         }
-        let session_id = run
-            .input
-            .get("source_conversation_id")
-            .and_then(Value::as_str)
-            .unwrap_or(&run.owner_entity_id);
-        Ok(vec![HookEvent::new(
-            run,
-            "SubagentStart",
-            &run.run_id,
-            "task_execution",
-            json!({
-                "session_id": session_id,
-                "hook_event_name": "SubagentStart",
-                "agent_id": run.run_id,
-                "agent_type": "task_execution",
-                "cwd": self.workspace_display(),
-            }),
-        )?])
+        Ok(events)
     }
 
     async fn session_for(
@@ -362,13 +541,19 @@ impl LocalHookCoordinator {
         record: LocalHookInvocationRecord,
     ) -> Result<InvocationOutcome, String> {
         if record.status != "running" {
+            let protocol_output = decode_invocation_output(record.additional_context.as_deref());
             return Ok(InvocationOutcome {
                 bundle_id: bundle.spec.bundle_id,
                 plugin_id: bundle.spec.plugin_id,
                 hook_id: hook.hook_id,
+                block_reason: (record.status == "blocked")
+                    .then_some(record.stderr_summary)
+                    .flatten(),
                 status: record.status,
-                additional_context: record.additional_context,
-                block_reason: None,
+                additional_context: protocol_output.additional_context,
+                permission_decision: protocol_output.permission_decision,
+                decision_reason: protocol_output.decision_reason,
+                updated_input: protocol_output.updated_input,
             });
         }
         let result = self
@@ -401,17 +586,21 @@ impl LocalHookCoordinator {
             )
             .await
             .map_err(|error| error.to_string())?;
+        let protocol_output = decode_invocation_output(completed.additional_context.as_deref());
         Ok(InvocationOutcome {
             bundle_id: bundle.spec.bundle_id,
             plugin_id: bundle.spec.plugin_id,
             hook_id: hook.hook_id,
             status: completed.status,
-            additional_context: completed.additional_context,
+            additional_context: protocol_output.additional_context,
             block_reason: if completion.status == "blocked" {
                 completion.stderr_summary
             } else {
                 None
             },
+            permission_decision: protocol_output.permission_decision,
+            decision_reason: protocol_output.decision_reason,
+            updated_input: protocol_output.updated_input,
         })
     }
 
@@ -516,6 +705,9 @@ struct InvocationOutcome {
     status: String,
     additional_context: Option<String>,
     block_reason: Option<String>,
+    permission_decision: Option<String>,
+    decision_reason: Option<String>,
+    updated_input: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -526,6 +718,24 @@ struct PersistedEventOutcome {
     failed: bool,
     block_reason: Option<String>,
     additional_context: Option<String>,
+    #[serde(default)]
+    permission_decision: Option<String>,
+    #[serde(default)]
+    decision_reason: Option<String>,
+    #[serde(default)]
+    updated_input: Option<Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+struct PersistedInvocationOutput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    additional_context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    permission_decision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    decision_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    updated_input: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -536,6 +746,7 @@ struct HookOutput {
     stop_reason: Option<String>,
     #[serde(rename = "hookSpecificOutput")]
     hook_specific_output: Option<HookSpecificOutput>,
+    decision: Option<PermissionHookDecision>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -544,10 +755,93 @@ struct HookSpecificOutput {
     hook_event_name: String,
     #[serde(rename = "additionalContext")]
     additional_context: Option<String>,
+    #[serde(rename = "permissionDecision")]
+    permission_decision: Option<String>,
+    #[serde(rename = "permissionDecisionReason")]
+    permission_decision_reason: Option<String>,
+    #[serde(rename = "updatedInput")]
+    updated_input: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PermissionHookDecision {
+    behavior: String,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(rename = "updatedInput")]
+    updated_input: Option<Value>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn tool_hook_subject(run_id: &str, call_id: &str) -> String {
+    format!("{run_id}:{call_id}")
+}
+
+fn tool_hook_payload(
+    run: &LocalAgentRunRecord,
+    event_type: &str,
+    call_id: &str,
+    tool_name: &str,
+    arguments: &Value,
+    response: Option<&Value>,
+    cwd: String,
+) -> Value {
+    let session_id = run
+        .input
+        .get("conversation_id")
+        .or_else(|| run.input.get("source_conversation_id"))
+        .and_then(Value::as_str)
+        .unwrap_or(&run.owner_entity_id);
+    let mut payload = json!({
+        "session_id": session_id,
+        "hook_event_name": event_type,
+        "tool_name": tool_name,
+        "tool_input": arguments,
+        "tool_use_id": call_id,
+        "cwd": cwd,
+    });
+    if let Some(response) = response {
+        payload["tool_response"] = response.clone();
+    }
+    payload
+}
+
+fn tool_event_denied(outcome: &PersistedEventOutcome) -> bool {
+    outcome.blocked || outcome.failed || outcome.permission_decision.as_deref() == Some("deny")
+}
+
+fn apply_updated_input(
+    call: &mut LocalAgentToolCall,
+    outcome: &PersistedEventOutcome,
+) -> Result<(), String> {
+    let Some(updated) = outcome.updated_input.as_ref() else {
+        return Ok(());
+    };
+    if tool_event_denied(outcome) {
+        return Ok(());
+    }
+    if !updated.is_object() {
+        return Err(format!(
+            "trusted {} Hook updatedInput for {} must be a JSON object",
+            outcome.event_type, call.tool_name
+        ));
+    }
+    call.arguments = updated.clone();
+    call.validate()
+}
+
+fn hook_tool_denial(event_type: &str, reason: &str) -> LocalAgentToolOutcome {
+    LocalAgentToolOutcome::Failed {
+        error: format!("{event_type} Hook denied this tool call: {reason}"),
+        detail: json!({
+            "phase": "trusted_plugin_hook",
+            "hook_event_name": event_type,
+            "denied": true,
+        }),
+    }
 }
 
 fn required_input_string<'a>(run: &'a LocalAgentRunRecord, field: &str) -> Result<&'a str, String> {
@@ -628,6 +922,16 @@ fn completion_from_result(
     } else {
         completion.status = "succeeded".to_string();
     }
+    let mut persisted = PersistedInvocationOutput::default();
+    if let Some(decision) = output.decision {
+        if !matches!(decision.behavior.as_str(), "allow" | "deny" | "ask") {
+            completion.status = "failed".to_string();
+            return completion;
+        }
+        persisted.permission_decision = Some(decision.behavior);
+        persisted.decision_reason = decision.message;
+        persisted.updated_input = decision.updated_input;
+    }
     if let Some(specific) = output.hook_specific_output {
         if specific.hook_event_name != event_type {
             completion.status = "failed".to_string();
@@ -641,7 +945,26 @@ fn completion_from_result(
                 completion.additional_context = None;
                 return completion;
             }
-            completion.additional_context = Some(context);
+            persisted.additional_context = Some(context);
+        }
+        if let Some(decision) = specific.permission_decision {
+            if !matches!(decision.as_str(), "allow" | "deny" | "ask") {
+                completion.status = "failed".to_string();
+                return completion;
+            }
+            persisted.permission_decision = Some(decision);
+        }
+        if specific.permission_decision_reason.is_some() {
+            persisted.decision_reason = specific.permission_decision_reason;
+        }
+        if specific.updated_input.is_some() {
+            persisted.updated_input = specific.updated_input;
+        }
+    }
+    if persisted != PersistedInvocationOutput::default() {
+        completion.additional_context = serde_json::to_string(&persisted).ok();
+        if completion.additional_context.is_none() {
+            completion.status = "failed".to_string();
         }
     }
     completion
@@ -660,6 +983,23 @@ fn merge_outcomes(
         .iter()
         .find(|outcome| outcome.status == "blocked")
         .and_then(|outcome| outcome.block_reason.clone());
+    let permission_decision = ["deny", "ask", "allow"].into_iter().find_map(|candidate| {
+        outcomes
+            .iter()
+            .any(|outcome| outcome.permission_decision.as_deref() == Some(candidate))
+            .then(|| candidate.to_string())
+    });
+    let decision_reason = outcomes
+        .iter()
+        .find(|outcome| {
+            outcome.permission_decision.as_deref() == permission_decision.as_deref()
+                && outcome.decision_reason.is_some()
+        })
+        .and_then(|outcome| outcome.decision_reason.clone());
+    let updated_input = outcomes
+        .iter()
+        .rev()
+        .find_map(|outcome| outcome.updated_input.clone());
     let mut sections = Vec::new();
     let mut total = 0_usize;
     for outcome in outcomes {
@@ -687,6 +1027,19 @@ fn merge_outcomes(
         failed,
         block_reason,
         additional_context: (!sections.is_empty()).then(|| sections.join("\n\n")),
+        permission_decision,
+        decision_reason,
+        updated_input,
+    })
+}
+
+fn decode_invocation_output(encoded: Option<&str>) -> PersistedInvocationOutput {
+    let Some(encoded) = encoded else {
+        return PersistedInvocationOutput::default();
+    };
+    serde_json::from_str(encoded).unwrap_or_else(|_| PersistedInvocationOutput {
+        additional_context: Some(encoded.to_string()),
+        ..PersistedInvocationOutput::default()
     })
 }
 
@@ -701,6 +1054,9 @@ fn decode_persisted_outcome(
             failed: false,
             block_reason: None,
             additional_context: None,
+            permission_decision: None,
+            decision_reason: None,
+            updated_input: None,
         });
     };
     let outcome: PersistedEventOutcome = serde_json::from_str(&encoded)
@@ -785,7 +1141,8 @@ mod tests {
     };
     use chatos_local_agent_protocol::{
         CreateConversationCommand, GetConversationHistoryCommand, HostCommand, HostRequestEnvelope,
-        HostResult, LocalAgentRunStatus, LocalAgentStepOutcome, LocalPluginHookBundleSpec,
+        HostResult, LocalAgentRunStatus, LocalAgentStepOutcome, LocalAgentToolApprovalStatus,
+        LocalAgentToolExecutionRoute, LocalAgentToolStatus, LocalPluginHookBundleSpec,
         LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
@@ -862,6 +1219,41 @@ mod tests {
                     Vec::new(),
                 ),
                 "invalid" => (Some(0), b"not-json".to_vec(), b"private failure".to_vec()),
+                "deny-tool" => (
+                    Some(0),
+                    serde_json::to_vec(&json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": event,
+                            "permissionDecision": "deny",
+                            "permissionDecisionReason": "blocked by tool policy",
+                        }
+                    }))
+                    .expect("deny output"),
+                    Vec::new(),
+                ),
+                "update-tool" => (
+                    Some(0),
+                    serde_json::to_vec(&json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": event,
+                            "permissionDecision": "allow",
+                            "updatedInput": {"path": "rewritten.txt"},
+                        }
+                    }))
+                    .expect("update output"),
+                    Vec::new(),
+                ),
+                "permission-deny" => (
+                    Some(0),
+                    serde_json::to_vec(&json!({
+                        "decision": {
+                            "behavior": "deny",
+                            "message": "approval Hook denied this call",
+                        }
+                    }))
+                    .expect("permission output"),
+                    Vec::new(),
+                ),
                 command => {
                     let context = command.strip_prefix("delay:").unwrap_or(command);
                     (
@@ -972,6 +1364,17 @@ mod tests {
             timeout_ms: 1_000,
             additional_context_limit: 64 * 1_024,
         }
+    }
+
+    fn matched_hook(
+        hook_id: &str,
+        event: &str,
+        matcher: &str,
+        command: &str,
+    ) -> LocalPluginHookDefinition {
+        let mut hook = hook(hook_id, event, command);
+        hook.matcher = Some(matcher.to_string());
+        hook
     }
 
     fn run(run_id: &str) -> LocalAgentRunRecord {
@@ -1165,6 +1568,136 @@ mod tests {
         let context = outcome.additional_context.expect("context");
         assert!(context.find("bundle-a").unwrap() < context.find("bundle-z").unwrap());
         assert!(context.find("first").unwrap() < context.find("last").unwrap());
+    }
+
+    #[tokio::test]
+    async fn tool_hooks_deny_before_execution_update_input_and_preserve_host_approval() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-tools",
+            vec![
+                matched_hook("deny", "PreToolUse", "^dangerous$", "deny-tool"),
+                matched_hook("update", "PreToolUse", "^read_file$", "update-tool"),
+                matched_hook(
+                    "permission-deny",
+                    "PermissionRequest",
+                    "^write_file$",
+                    "permission-deny",
+                ),
+            ],
+        )
+        .await;
+        let coordinator = LocalHookCoordinator::new(runtime, runner, None).unwrap();
+        let persisted_run = run("run-tool-gate");
+        storage
+            .create_run(
+                &command("create-run-tool-gate"),
+                &persisted_run,
+                "run-tool-gate-created",
+            )
+            .await
+            .expect("create tool gate run");
+        let run_claim = claim(persisted_run);
+        let gated = coordinator
+            .gate_tool_outcome(
+                &run_claim,
+                LocalAgentStepOutcome::WaitForTool {
+                    batch_id: "batch-1".to_string(),
+                    tool_calls: vec![
+                        LocalAgentToolCall {
+                            call_id: "call-denied".to_string(),
+                            tool_name: "dangerous".to_string(),
+                            arguments: json!({"value": 1}),
+                            side_effecting: true,
+                            requires_approval: true,
+                        },
+                        LocalAgentToolCall {
+                            call_id: "call-updated".to_string(),
+                            tool_name: "read_file".to_string(),
+                            arguments: json!({"path": "original.txt"}),
+                            side_effecting: false,
+                            requires_approval: false,
+                        },
+                        LocalAgentToolCall {
+                            call_id: "call-permission".to_string(),
+                            tool_name: "write_file".to_string(),
+                            arguments: json!({"path": "output.txt"}),
+                            side_effecting: true,
+                            requires_approval: true,
+                        },
+                    ],
+                    checkpoint: json!({"response_id": "response-1"}),
+                },
+            )
+            .await
+            .unwrap();
+        let LocalAgentStepOutcome::WaitForTool { tool_calls, .. } = gated else {
+            panic!("expected tool outcome")
+        };
+        assert!(!tool_calls[0].requires_approval);
+        assert_eq!(tool_calls[1].arguments, json!({"path": "rewritten.txt"}));
+        assert!(!tool_calls[2].requires_approval);
+
+        let denied = coordinator
+            .tool_preflight_outcome(&tool_invocation("run-tool-gate", &tool_calls[0]))
+            .await
+            .unwrap();
+        assert!(matches!(denied, Some(LocalAgentToolOutcome::Failed { .. })));
+        assert!(coordinator
+            .tool_preflight_outcome(&tool_invocation("run-tool-gate", &tool_calls[1],))
+            .await
+            .unwrap()
+            .is_none());
+        let permission_denied = coordinator
+            .tool_preflight_outcome(&tool_invocation("run-tool-gate", &tool_calls[2]))
+            .await
+            .unwrap();
+        assert!(matches!(
+            permission_denied,
+            Some(LocalAgentToolOutcome::Failed { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn post_tool_use_context_is_injected_without_replacing_the_real_result() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-post",
+            vec![matched_hook(
+                "post",
+                "PostToolUse",
+                "^read_file$",
+                "post context",
+            )],
+        )
+        .await;
+        let coordinator = LocalHookCoordinator::new(runtime, runner, None).unwrap();
+        let mut continued = run("run-post");
+        continued.continuation_input = Some(json!({
+            "type": "tool_results",
+            "batch_id": "batch-1",
+            "invocations": [{
+                "invocation_id": "invocation-1",
+                "call_id": "call-1",
+                "tool_name": "read_file",
+                "arguments": {"path": "README.md"},
+                "status": "succeeded",
+                "result": {"content": "immutable real result"},
+            }],
+        }));
+
+        let context = coordinator
+            .prefixed_context(&claim(continued.clone()))
+            .await
+            .unwrap();
+
+        assert!(combined_context(&context).contains("post context"));
+        assert_eq!(
+            continued.continuation_input.as_ref().unwrap()["invocations"][0]["result"],
+            json!({"content": "immutable real result"})
+        );
     }
 
     #[tokio::test]
@@ -1525,12 +2058,37 @@ mod tests {
             .collect()
     }
 
-    #[cfg(target_os = "macos")]
     fn combined_context(items: &[Value]) -> String {
         items
             .iter()
             .filter_map(|item| item["content"].as_str())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn tool_invocation(run_id: &str, call: &LocalAgentToolCall) -> LocalAgentToolInvocationRecord {
+        LocalAgentToolInvocationRecord {
+            invocation_id: format!("invocation-{}", call.call_id),
+            run_id: run_id.to_string(),
+            batch_id: "batch-1".to_string(),
+            call_id: call.call_id.clone(),
+            tool_name: call.tool_name.clone(),
+            execution_route: LocalAgentToolExecutionRoute::Shared,
+            arguments: call.arguments.clone(),
+            side_effecting: call.side_effecting,
+            requires_approval: call.requires_approval,
+            approval_status: LocalAgentToolApprovalStatus::NotRequired,
+            approval_decided_by: None,
+            approval_reason: None,
+            approval_decided_at_unix_ms: None,
+            status: LocalAgentToolStatus::Running,
+            result: None,
+            error: None,
+            version: 2,
+            claim_token: Some("tool-token".to_string()),
+            claim_until_unix_ms: Some(20_000),
+            created_at_unix_ms: 10_000,
+            updated_at_unix_ms: 10_000,
+        }
     }
 }

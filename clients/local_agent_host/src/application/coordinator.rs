@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     validate_identifier, HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope,
     HostResult, LocalAgentHostSchedulerSnapshot, LocalAgentResourcePressureLevel,
-    LocalAgentToolExecutionRoute,
+    LocalAgentToolExecutionRoute, LocalAgentToolOutcome,
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use futures::future::join_all;
@@ -131,6 +131,12 @@ impl LocalAgentHostCoordinator {
     }
 
     pub fn with_hook_coordinator(mut self, coordinator: Arc<LocalHookCoordinator>) -> Self {
+        self.model_scheduler = self
+            .model_scheduler
+            .map(|scheduler| scheduler.with_hook_coordinator(Arc::clone(&coordinator)));
+        self.tool_scheduler = self
+            .tool_scheduler
+            .map(|scheduler| scheduler.with_hook_coordinator(Arc::clone(&coordinator)));
         self.hook_coordinator = Some(coordinator);
         self
     }
@@ -477,6 +483,35 @@ impl LocalAgentHostCoordinator {
             })
     }
 
+    async fn apply_hook_preflight_to_external_claim(
+        &self,
+        mut response: HostResponseEnvelope,
+    ) -> HostResponseEnvelope {
+        let Some(hooks) = self.hook_coordinator.as_ref() else {
+            return response;
+        };
+        let invocation = match response.result.as_ref() {
+            Some(HostResult::ToolClaim { claim: Some(claim) }) => claim.invocation.clone(),
+            _ => return response,
+        };
+        let hook_preflight = match hooks.tool_preflight_outcome(&invocation).await {
+            Ok(outcome) => outcome,
+            Err(error) => Some(LocalAgentToolOutcome::Failed {
+                error: "trusted tool Hook preflight failed closed".to_string(),
+                detail: serde_json::json!({
+                    "phase": "trusted_plugin_hook",
+                    "error": error,
+                }),
+            }),
+        };
+        if let (Some(outcome), Some(HostResult::ToolClaim { claim: Some(claim) })) =
+            (hook_preflight, response.result.as_mut())
+        {
+            claim.preflight_outcome = Some(outcome);
+        }
+        response
+    }
+
     async fn health_response(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
         let mut response = self.runtime.handle(request.clone()).await;
         if !response.ok {
@@ -665,6 +700,7 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
         let activity_policy = command_activity_signal_policy(&request.command);
         self.route_external_tool_claim(&mut request);
         let response = self.runtime.handle(request).await;
+        let response = self.apply_hook_preflight_to_external_claim(response).await;
         if response.ok {
             if wakes_scheduler {
                 self.wake();
