@@ -9,6 +9,9 @@ param(
 
     [string]$ExpectedSidecarSha256,
 
+    [ValidateRange(1, 20)]
+    [int]$StartupRuns = 1,
+
     [ValidateRange(5, 120)]
     [int]$StartupTimeoutSeconds = 20
 )
@@ -49,9 +52,27 @@ function Wait-FileRemoved {
     }
 }
 
+function Get-NearestRankPercentile {
+    param(
+        [Parameter(Mandatory = $true)][long[]]$Values,
+        [Parameter(Mandatory = $true)][ValidateRange(0.01, 1.0)][double]$Percentile
+    )
+
+    if ($Values.Count -eq 0) {
+        throw "Cannot calculate a percentile without values."
+    }
+    $sorted = @($Values | Sort-Object)
+    $index = [int][Math]::Max(0, [Math]::Ceiling($Percentile * $sorted.Count) - 1)
+    return $sorted[$index]
+}
+
 $resolvedInstaller = (Resolve-Path -LiteralPath $InstallerPath).Path
 if (Test-Path -LiteralPath $InstallDirectory) {
     throw "Smoke install directory already exists; refusing to reuse it: $InstallDirectory"
+}
+$userDataRoot = "$InstallDirectory-user-data"
+if (Test-Path -LiteralPath $userDataRoot) {
+    throw "Smoke user-data directory already exists; refusing to reuse it: $userDataRoot"
 }
 
 $reportParent = Split-Path -Parent $ReportPath
@@ -60,7 +81,7 @@ if ([string]::IsNullOrWhiteSpace($reportParent) -eq $false) {
 }
 
 $report = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     status = "running"
     startedAtUtc = [DateTimeOffset]::UtcNow.ToString("O")
     completedAtUtc = $null
@@ -71,8 +92,16 @@ $report = [ordered]@{
     sidecarSha256 = $null
     resources = @()
     installExitCode = $null
+    installDurationMs = $null
     applicationExitCode = $null
+    applicationRuns = @()
+    startupProfile = "isolated-cold"
+    startupMedianMs = $null
+    startupP95Ms = $null
+    userDataIsolated = $false
+    userDataCleanupVerified = $false
     uninstallExitCode = $null
+    uninstallDurationMs = $null
     error = $null
 }
 
@@ -82,7 +111,10 @@ $uninstallerPath = $null
 $failure = $null
 
 try {
+    $installWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $install = Start-Process -FilePath $resolvedInstaller -ArgumentList @("/S", "/D=$InstallDirectory") -Wait -PassThru
+    $installWatch.Stop()
+    $report.installDurationMs = $installWatch.ElapsedMilliseconds
     $report.installExitCode = $install.ExitCode
     if ($install.ExitCode -ne 0) {
         throw "NSIS installer failed with exit code $($install.ExitCode)"
@@ -120,20 +152,44 @@ try {
         [System.IO.Path]::GetRelativePath($InstallDirectory, $_).Replace("\", "/")
     })
 
-    $env:CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP = "1"
+    $previousEnvironment = @{}
+    foreach ($name in @("APPDATA", "LOCALAPPDATA", "CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP")) {
+        $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+    }
     try {
-        $launched = Start-Process -FilePath $applicationPath -PassThru
-        if (-not $launched.WaitForExit($StartupTimeoutSeconds * 1000)) {
-            Stop-Process -Id $launched.Id -Force -ErrorAction SilentlyContinue
-            throw "Installed ChatOS application did not complete its graceful startup/exit smoke path"
+        [Environment]::SetEnvironmentVariable("CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP", "1", "Process")
+        for ($index = 1; $index -le $StartupRuns; $index++) {
+            $runDataRoot = Join-Path $userDataRoot "run-$index"
+            New-Item -ItemType Directory -Path $runDataRoot -Force | Out-Null
+            [Environment]::SetEnvironmentVariable("APPDATA", $runDataRoot, "Process")
+            [Environment]::SetEnvironmentVariable("LOCALAPPDATA", $runDataRoot, "Process")
+
+            $startupWatch = [System.Diagnostics.Stopwatch]::StartNew()
+            $launched = Start-Process -FilePath $applicationPath -PassThru
+            if (-not $launched.WaitForExit($StartupTimeoutSeconds * 1000)) {
+                Stop-Process -Id $launched.Id -Force -ErrorAction SilentlyContinue
+                throw "Installed ChatOS application did not complete startup run $index within $StartupTimeoutSeconds seconds."
+            }
+            $startupWatch.Stop()
+            $report.applicationExitCode = $launched.ExitCode
+            $report.applicationRuns += [ordered]@{
+                run = $index
+                durationMs = $startupWatch.ElapsedMilliseconds
+                exitCode = $launched.ExitCode
+            }
+            if ($launched.ExitCode -ne 0) {
+                throw "Installed ChatOS application startup run $index exited with code $($launched.ExitCode)"
+            }
         }
-        $report.applicationExitCode = $launched.ExitCode
-        if ($launched.ExitCode -ne 0) {
-            throw "Installed ChatOS application exited with code $($launched.ExitCode)"
-        }
+        $durations = [long[]]@($report.applicationRuns | ForEach-Object { $_.durationMs })
+        $report.startupMedianMs = Get-NearestRankPercentile -Values $durations -Percentile 0.5
+        $report.startupP95Ms = Get-NearestRankPercentile -Values $durations -Percentile 0.95
+        $report.userDataIsolated = $true
     }
     finally {
-        Remove-Item Env:CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP -ErrorAction SilentlyContinue
+        foreach ($name in $previousEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+        }
     }
 
     $uninstaller = @(Get-ChildItem -LiteralPath $InstallDirectory -File -Filter "unins*.exe")
@@ -141,7 +197,10 @@ try {
         throw "Expected exactly one NSIS uninstaller, found $($uninstaller.Count)"
     }
     $uninstallerPath = $uninstaller[0].FullName
+    $uninstallWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $uninstall = Start-Process -FilePath $uninstallerPath -ArgumentList "/S" -Wait -PassThru
+    $uninstallWatch.Stop()
+    $report.uninstallDurationMs = $uninstallWatch.ElapsedMilliseconds
     $report.uninstallExitCode = $uninstall.ExitCode
     if ($uninstall.ExitCode -ne 0) {
         throw "NSIS uninstaller failed with exit code $($uninstall.ExitCode)"
@@ -157,8 +216,6 @@ catch {
     $report.error = $_.Exception.Message
 }
 finally {
-    Remove-Item Env:CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP -ErrorAction SilentlyContinue
-
     if ($null -eq $uninstallerPath -and (Test-Path -LiteralPath $InstallDirectory -PathType Container)) {
         $cleanupUninstallers = @(Get-ChildItem -LiteralPath $InstallDirectory -File -Filter "unins*.exe" -ErrorAction SilentlyContinue)
         if ($cleanupUninstallers.Count -eq 1) {
@@ -180,6 +237,23 @@ finally {
                 $report.status = "failed"
                 $report.error = $_.Exception.Message
             }
+        }
+    }
+
+    try {
+        if (Test-Path -LiteralPath $userDataRoot -PathType Container) {
+            [System.IO.Directory]::Delete($userDataRoot, $true)
+        }
+        $report.userDataCleanupVerified = -not (Test-Path -LiteralPath $userDataRoot)
+        if (-not $report.userDataCleanupVerified) {
+            throw "The isolated smoke user-data directory was not removed."
+        }
+    }
+    catch {
+        if ($null -eq $failure) {
+            $failure = $_
+            $report.status = "failed"
+            $report.error = $_.Exception.Message
         }
     }
 
