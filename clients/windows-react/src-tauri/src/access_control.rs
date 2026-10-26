@@ -82,7 +82,7 @@ fn snapshot_from_state(state: &Map<String, Value>) -> Result<AccessControlSnapsh
     Ok(AccessControlSnapshot {
         settings: AccessControlSettings {
             enabled: true,
-            editable: false,
+            editable: true,
             default_backend: "windows_local_process".into(),
             default_permission_profile_id: "host_account".into(),
             default_permission_profile_name: "Windows 账号权限".into(),
@@ -90,7 +90,7 @@ fn snapshot_from_state(state: &Map<String, Value>) -> Result<AccessControlSnapsh
             default_approval_reviewer: approval_reviewer.into(),
             default_network_access: "host".into(),
             permission_configuration_error: Some(
-                "当前 Windows 后端尚未提供文件或网络隔离；命令进程仍受账号、项目上下文、审批策略和进程树回收约束。"
+                "审批策略已接入 Windows 实际执行门禁；文件权限与网络访问仍锁定为本机账号边界，尚未提供操作系统级隔离。"
                     .into(),
             ),
             policy_revision: format!("{POLICY_SCHEMA_REVISION}:{approval_mode}"),
@@ -140,7 +140,7 @@ mod tests {
         )]))
         .unwrap();
         assert!(snapshot.settings.enabled);
-        assert!(!snapshot.settings.editable);
+        assert!(snapshot.settings.editable);
         assert_eq!(snapshot.settings.default_backend, "windows_local_process");
         assert_eq!(
             snapshot.settings.default_permission_profile_id,

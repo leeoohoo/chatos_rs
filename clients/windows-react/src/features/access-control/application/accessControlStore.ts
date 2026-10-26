@@ -13,6 +13,7 @@ interface AccessControlState {
   activate(port: AccessControlPort, ownerUserId: string): Promise<void>;
   suspend(ownerUserId: string): void;
   refresh(port: AccessControlPort): Promise<void>;
+  updateApproval(port: AccessControlPort, approvalPolicy: "on_request" | "never", approvalReviewer: "user" | "auto_review", riskAcknowledged: boolean): Promise<boolean>;
   reset(): void;
 }
 
@@ -86,6 +87,24 @@ export const useAccessControlStore = create<AccessControlState>((set, get) => ({
         error: errorMessage(error),
         activeRequestId: 0,
       });
+    }
+  },
+
+  async updateApproval(port, approvalPolicy, approvalReviewer, riskAcknowledged) {
+    const current = get();
+    if (!current.ownerUserId || !current.hostAvailable || current.isLoading || !current.snapshot?.settings.editable) return false;
+    const ownerUserId = current.ownerUserId;
+    const requestId = current.requestSequence + 1;
+    set({ requestSequence: requestId, activeRequestId: requestId, isLoading: true, error: null });
+    try {
+      const snapshot = await port.updateApproval(ownerUserId, approvalPolicy, approvalReviewer, riskAcknowledged);
+      if (!accepts(get(), ownerUserId, requestId)) return false;
+      set({ snapshot, isLoading: false, error: null, activeRequestId: 0 });
+      return true;
+    } catch (error) {
+      if (!accepts(get(), ownerUserId, requestId)) return false;
+      set({ isLoading: false, error: errorMessage(error), activeRequestId: 0 });
+      return false;
     }
   },
 

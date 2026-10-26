@@ -25,17 +25,18 @@ Windows 产品版本：`3.0.9`
 - [x] portable Agent Plugin、Codex Plugin、Claude Plugin、npm Agent Plugin 与独立 `SKILL.md` 已接入同一隔离 staging、内容指纹、原子安装和回滚链。根 Skill 会安全归入 `skills/<name>` 并携带 `scripts/references/assets`；纯 Skills 包使用完整性保护的 `skills-only` Host 记录，Agent runtime 不启动进程，只有 `capability_describe` 已披露的 Skill 才能激活并分页读取资源。
 - [x] Plugin 设置页已开放本机目录 typed 导入：React 只持有原生选择句柄与目录名，不接收绝对路径；预检显示清单、MCP/Skill 组件和内容指纹，确认安装时由原生端复验账号、页面、会话代次、选择租约及完全相同的指纹，再进入既有原子安装和回滚链。Git/npm 来源仍由安装助手处理。
 - [x] Plugin Secret 已完成 Windows 原生闭环：`${credential:<name>}` 按账号、Plugin 与 Secret 名生成不透明 Host 引用，明文只写入 Windows Credential Manager；设置页仅投影 Secret 名称与配置状态，已有值永不回读。Agent 启动前会重新核对清单、Host 绑定与安装完整性，再把明文短暂注入目标进程环境；缺值、跨账号、引用篡改或清单漂移均失败关闭，卸载会同步清理当前清单声明的凭据。兼容 MCP JSON 仍拒绝环境变量，避免把无法区分的明文 Secret 导入系统。
+- [x] 访问控制页的“审批策略/审批人”已接入现有真实命令门禁：按需审批、审批模型和完全控制分别映射到 `request_approval`、`auto_approval`、`full_control`；自动审批与完全控制必须二次确认，自动审批仍由 Rust 后端强制要求已配置审批模型。文件权限、网络访问和本机权限总开关继续锁定，并明确标注尚无操作系统级隔离。
 
 ## B. 本次交付前必须关闭
 
-- [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（133 个测试文件、499 项测试）。
+- [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（134 个测试文件、504 项测试）。
 - [x] Windows Tauri Rust 全量测试、两项真实 sidecar 集成测试、一次公网 HTTPS Git 获取 smoke、一次公网 npm Registry 获取 smoke、一次公网 npm MCP 隔离预检与安装 smoke、一次兼容 MCP JSON 冻结 Node 预检与安装 smoke、Rustfmt 和 Clippy 全部通过（469 项常规测试 + 2 项真实 sidecar 测试 + 1 项 Git smoke + 1 项 npm Registry smoke + 1 项 npm MCP smoke + 1 项兼容 MCP JSON smoke）。
 - [x] 重新生成版本为 `3.0.9` 的 Release EXE、MSI、NSIS，并记录 SHA-256：
-  - `chatos-windows-react.exe`：`5286909d0d1333ce25a7a7dea67e0637baf4e5d4d7070f1079b6ba5a6f3b5c29`
+  - `chatos-windows-react.exe`：`67c5b25a19bc13c9f4d8da0191e4983e72e3f65211a8dfb8428365bd12afdc7c`
   - `chatos_local_agent_host.exe`：`5f697fced2658ac59a3f9fb4ff5d167ac033545ed0f0c995363c754fcc0ebf66`
-  - `ChatOS_3.0.9_x64_en-US.msi`：`524b9b7c30a5d3c4794758cc9b82e025ad530f304e4b93abc728aa4c6e169bb3`
-  - `ChatOS_3.0.9_x64-setup.exe`：`297e4e09bffffef75d47011bbab07fc36ce50ed5ab3b6a60c0124af13b7b2fcf`
-- [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、启动、正常退出、卸载和残留清理；Plugin Credential Manager 构建产物连续两次通过 20 秒门限，成功报告为 `%TEMP%\chatos-windows-install-smoke-3.0.9-plugin-credentials-1.json` 和 `%TEMP%\chatos-windows-install-smoke-3.0.9-plugin-credentials-2.json`。
+  - `ChatOS_3.0.9_x64_en-US.msi`：`cc9307ddcc2221adba3a7430067a3ff7286d8b689e1f6f3b8aea31cf1f52e60e`
+  - `ChatOS_3.0.9_x64-setup.exe`：`f3ce6ba1fc92037498b1a7d78db2e960755514f2e119c1841ea39b736ee3772e`
+- [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、启动、正常退出、卸载和残留清理；访问控制构建产物连续两次通过 20 秒门限，成功报告为 `%TEMP%\chatos-windows-install-smoke-3.0.9-access-control-1.json` 和 `%TEMP%\chatos-windows-install-smoke-3.0.9-access-control-2.json`。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [ ] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息。代码默认状态与自动回归均为 workspace/首个消息资源，但原生窗口视觉取证仍受下一项工具故障阻塞。
 - [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。
@@ -45,7 +46,7 @@ Windows 产品版本：`3.0.9`
 ### P1：用户能直接感知
 
 - [ ] Computer Use / 屏幕采集的受信发布闭环。Windows Worker 源码、x64/arm64 构建和 smoke 已通过，但当前用户 Plugin 目录为空；还需产出跨平台 `.tgz`、进入签名 Marketplace Release，并从 Windows 客户端完成安装、启用、`doctor`、屏幕采集和输入实测。
-- [ ] 访问控制的文件与网络隔离。当前 Windows 后端只真实提供账号/项目边界、审批前置校验和 Job Object 进程树回收；没有操作系统级文件沙箱或网络隔离，因此第 31 页只能只读，尚未达到 macOS 截图中的可编辑策略与“文件隔离/网络隔离已就绪”。
+- [ ] 访问控制的文件与网络隔离。当前 Windows 后端真实提供账号/项目边界、可编辑且实际生效的审批策略，以及 Job Object 进程树回收；没有操作系统级文件沙箱或网络隔离，因此第 31 页的文件、网络与总开关仍保持只读，尚未达到 macOS 截图中的完整可编辑能力。
 
 ### P2：平台/发布质量
 
@@ -67,5 +68,5 @@ Windows 产品版本：`3.0.9`
 2. [已完成] Plugin 安装助手专用 capability、受限平台工具与原生 ChatOS Plugin 本地目录 inspect/install 闭环。
 3. [已完成] Git、固定版本 npm 来源、普通 npm MCP、常见 stdio MCP JSON、portable Agent、Codex、Claude、独立 Skill、skills-only、设置页本机目录 typed 导入与 Windows Credential Manager Secret resolver 均已完成。
 4. [外部依赖] 完成 Computer Use `.tgz`、Marketplace 签名发布/客户端安装闭环，以及 Windows 安装包正式代码签名。
-5. [待开始] 设计并实现 Windows 文件/网络隔离后，再开放第 31 页策略编辑。
+5. [待开始] 设计并实现 Windows 文件/网络隔离后，再开放第 31 页的文件、网络与总开关；审批策略和审批人已经接入真实执行门禁。
 6. [待验证] 工具恢复后完成 31 页原生逐页视觉、缩放和无障碍验收；随后执行升级/回滚及性能稳定性基线。

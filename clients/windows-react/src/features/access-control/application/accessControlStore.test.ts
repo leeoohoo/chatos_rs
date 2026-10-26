@@ -46,19 +46,39 @@ describe("access control store", () => {
     expect(useAccessControlStore.getState().ownerUserId).toBeNull();
     expect(useAccessControlStore.getState().snapshot).toBeNull();
   });
+
+  it("updates the effective approval policy and rejects a late mutation after suspension", async () => {
+    const updated = fixture();
+    updated.settings.defaultApprovalPolicy = "never";
+    updated.settings.defaultApprovalReviewer = "policy";
+    const late = deferred<AccessControlSnapshot>();
+    const updateApproval = vi.fn()
+      .mockResolvedValueOnce(updated)
+      .mockImplementationOnce(async () => late.promise);
+    const port = stubPort(undefined, updateApproval);
+    await useAccessControlStore.getState().activate(port, "owner-1");
+    expect(await useAccessControlStore.getState().updateApproval(port, "never", "user", true)).toBe(true);
+    expect(useAccessControlStore.getState().snapshot?.settings.defaultApprovalPolicy).toBe("never");
+    const pending = useAccessControlStore.getState().updateApproval(port, "on_request", "user", false);
+    useAccessControlStore.getState().suspend("owner-1");
+    late.resolve(fixture());
+    expect(await pending).toBe(false);
+    expect(useAccessControlStore.getState().snapshot?.settings.defaultApprovalPolicy).toBe("never");
+  });
 });
 
 function stubPort(
   load: AccessControlPort["load"] = vi.fn(async (_ownerUserId: string) => fixture()),
+  updateApproval: AccessControlPort["updateApproval"] = vi.fn(async () => fixture()),
 ): AccessControlPort {
-  return { load };
+  return { load, updateApproval };
 }
 
 function fixture(): AccessControlSnapshot {
   return {
     settings: {
       enabled: true,
-      editable: false,
+      editable: true,
       defaultBackend: "windows_local_process",
       defaultPermissionProfileId: "host_account",
       defaultPermissionProfileName: "Windows 账号权限",
