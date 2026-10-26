@@ -80,6 +80,10 @@ impl MediaStudioVideoHistoryStore {
         Self { root }
     }
 
+    pub(super) fn temporary_cleanup_root(&self) -> PathBuf {
+        self.root.clone()
+    }
+
     pub(super) fn persist_video(
         &self,
         owner_user_id: &str,

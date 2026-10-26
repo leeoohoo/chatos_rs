@@ -8,13 +8,16 @@ mod video_provider;
 
 use serde::{Deserialize, Serialize};
 use std::{
-    path::PathBuf,
+    fs,
+    path::{Path, PathBuf},
     sync::{atomic::Ordering, Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{http, State};
 use uuid::Uuid;
 
 use crate::{
+    app_owned_export::try_remove_stale_owned_file,
     authentication::{AuthenticationManager, GatewayModelConfig},
     host_lifecycle::validate_owner,
     machine_resource_governor::{
@@ -47,6 +50,8 @@ use video_provider::{
 
 const MAXIMUM_PROVIDER_RESPONSE_BYTES: usize = 48 * 1_024 * 1_024;
 const MAXIMUM_IMAGE_REFERENCES: usize = 8;
+const STALE_HISTORY_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_HISTORY_CLEANUP_ENTRIES_PER_ROOT: usize = 10_000;
 
 #[derive(Clone)]
 pub(crate) struct MediaStudioManager {
@@ -162,6 +167,19 @@ impl MediaStudioManager {
             .ok_or_else(|| "无法定位应用数据目录。".to_owned())?
             .join("com.chatos.windows");
         Self::new(app_data_directory)
+    }
+
+    pub(crate) async fn cleanup_stale_temporaries(&self) -> usize {
+        let image_accounts = self.history.temporary_cleanup_root();
+        let video_accounts = self.video_history.temporary_cleanup_root();
+        tauri::async_runtime::spawn_blocking(move || {
+            let cutoff = SystemTime::now()
+                .checked_sub(STALE_HISTORY_TEMPORARY_AGE)
+                .unwrap_or(UNIX_EPOCH);
+            cleanup_history_temporaries(&image_accounts, &video_accounts, cutoff)
+        })
+        .await
+        .unwrap_or_default()
     }
 
     fn activate_session(
@@ -721,6 +739,147 @@ impl MediaStudioManager {
             _ => Err(http::StatusCode::BAD_REQUEST),
         }
     }
+}
+
+fn cleanup_history_temporaries(
+    image_accounts: &Path,
+    video_accounts: &Path,
+    cutoff: SystemTime,
+) -> usize {
+    let mut removed = 0usize;
+    for root in [image_accounts, video_accounts] {
+        let mut state = HistoryTemporaryCleanupState::default();
+        cleanup_history_account_root(root, cutoff, &mut state);
+        removed = removed.saturating_add(state.removed);
+    }
+    removed
+}
+
+fn cleanup_history_account_root(
+    root: &Path,
+    cutoff: SystemTime,
+    state: &mut HistoryTemporaryCleanupState,
+) {
+    if !safe_cleanup_directory(root) {
+        return;
+    }
+    let Ok(owners) = fs::read_dir(root) else {
+        return;
+    };
+    for owner in owners.flatten() {
+        if !state.visit() {
+            return;
+        }
+        let owner_path = owner.path();
+        if !owner.file_name().to_str().is_some_and(canonical_owner_hash)
+            || !safe_cleanup_directory(&owner_path)
+        {
+            continue;
+        }
+        cleanup_history_owner(&owner_path, cutoff, state);
+    }
+}
+
+fn cleanup_history_owner(
+    owner: &Path,
+    cutoff: SystemTime,
+    state: &mut HistoryTemporaryCleanupState,
+) {
+    let Ok(records) = fs::read_dir(owner) else {
+        return;
+    };
+    for record in records.flatten() {
+        if !state.visit() {
+            return;
+        }
+        let record_path = record.path();
+        if !record.file_name().to_str().is_some_and(canonical_record_id)
+            || !safe_cleanup_directory(&record_path)
+        {
+            continue;
+        }
+        cleanup_history_record(&record_path, cutoff, state);
+        if state.visited >= MAXIMUM_HISTORY_CLEANUP_ENTRIES_PER_ROOT {
+            return;
+        }
+    }
+}
+
+fn cleanup_history_record(
+    record: &Path,
+    cutoff: SystemTime,
+    state: &mut HistoryTemporaryCleanupState,
+) {
+    let Ok(entries) = fs::read_dir(record) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !state.visit() {
+            return;
+        }
+        if entry.file_name().to_str() != Some("record.json.tmp") {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.file_type().is_file()
+            && !metadata.file_type().is_symlink()
+            && !is_windows_reparse_point(&metadata)
+            && metadata.modified().is_ok_and(|modified| modified <= cutoff)
+            && try_remove_stale_owned_file(&path, cutoff)
+        {
+            state.removed = state.removed.saturating_add(1);
+        }
+    }
+}
+
+#[derive(Default)]
+struct HistoryTemporaryCleanupState {
+    visited: usize,
+    removed: usize,
+}
+
+impl HistoryTemporaryCleanupState {
+    fn visit(&mut self) -> bool {
+        if self.visited >= MAXIMUM_HISTORY_CLEANUP_ENTRIES_PER_ROOT {
+            return false;
+        }
+        self.visited += 1;
+        true
+    }
+}
+
+fn canonical_owner_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn canonical_record_id(value: &str) -> bool {
+    Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value)
+}
+
+fn safe_cleanup_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| {
+        metadata.file_type().is_dir()
+            && !metadata.file_type().is_symlink()
+            && !is_windows_reparse_point(&metadata)
+    })
+}
+
+#[cfg(windows)]
+fn is_windows_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_windows_reparse_point(_: &fs::Metadata) -> bool {
+    false
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -1882,6 +2041,73 @@ mod tests {
             supports_reasoning: false,
             supports_responses: true,
         }
+    }
+
+    #[test]
+    fn stale_history_cleanup_only_removes_owned_manifest_temporaries() {
+        let root = tempdir().unwrap();
+        let manager = MediaStudioManager::new(root.path().to_path_buf()).unwrap();
+        let owner = history::owner_hash("alice");
+        let image_record = manager
+            .history
+            .temporary_cleanup_root()
+            .join(&owner)
+            .join(Uuid::new_v4().to_string());
+        let video_record = manager
+            .video_history
+            .temporary_cleanup_root()
+            .join(&owner)
+            .join(Uuid::new_v4().to_string());
+        fs::create_dir_all(&image_record).unwrap();
+        fs::create_dir_all(&video_record).unwrap();
+
+        let image_temporary = image_record.join("record.json.tmp");
+        let video_temporary = video_record.join("record.json.tmp");
+        let committed = image_record.join("record.json");
+        let unrelated = image_record.join("notes.tmp");
+        for path in [&image_temporary, &video_temporary, &committed, &unrelated] {
+            fs::write(path, b"value").unwrap();
+        }
+
+        let invalid_owner_temporary = manager
+            .history
+            .temporary_cleanup_root()
+            .join("not-an-owner")
+            .join(Uuid::new_v4().to_string())
+            .join("record.json.tmp");
+        fs::create_dir_all(invalid_owner_temporary.parent().unwrap()).unwrap();
+        fs::write(&invalid_owner_temporary, b"value").unwrap();
+        let invalid_record_temporary = manager
+            .history
+            .temporary_cleanup_root()
+            .join(&owner)
+            .join("not-a-record")
+            .join("record.json.tmp");
+        fs::create_dir_all(invalid_record_temporary.parent().unwrap()).unwrap();
+        fs::write(&invalid_record_temporary, b"value").unwrap();
+
+        assert_eq!(
+            cleanup_history_temporaries(
+                &manager.history.temporary_cleanup_root(),
+                &manager.video_history.temporary_cleanup_root(),
+                UNIX_EPOCH,
+            ),
+            0
+        );
+        assert_eq!(
+            cleanup_history_temporaries(
+                &manager.history.temporary_cleanup_root(),
+                &manager.video_history.temporary_cleanup_root(),
+                SystemTime::now() + Duration::from_secs(1),
+            ),
+            2
+        );
+        assert!(!image_temporary.exists());
+        assert!(!video_temporary.exists());
+        assert!(committed.exists());
+        assert!(unrelated.exists());
+        assert!(invalid_owner_temporary.exists());
+        assert!(invalid_record_temporary.exists());
     }
 
     #[test]

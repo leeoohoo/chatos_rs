@@ -111,6 +111,10 @@ impl MediaStudioHistoryStore {
         }
     }
 
+    pub(super) fn temporary_cleanup_root(&self) -> PathBuf {
+        self.root.join("Accounts")
+    }
+
     pub(crate) async fn persist_image(
         &self,
         owner_user_id: &str,
