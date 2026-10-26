@@ -16,6 +16,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
+    sync::{Arc, Mutex},
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -26,9 +27,9 @@ use crate::{
     host_lifecycle::HostManager,
     plugin_application::PluginApplicationManager,
     plugin_installer::{
-        install_git_package, install_local_package, install_marketplace_package, install_npm_mcp,
-        install_npm_package_source, resolve_executable, CommittedPluginPackage, NpmMcpDraft,
-        NpmMcpInspection,
+        inspect_local_package_source, install_git_package, install_local_package,
+        install_marketplace_package, install_npm_mcp, install_npm_package_source,
+        resolve_executable, CommittedPluginPackage, NpmMcpDraft, NpmMcpInspection,
     },
     plugin_integrity::{
         requires_installation_integrity, secure_component_revision, verify_installation_integrity,
@@ -54,18 +55,177 @@ impl PluginSettingsHost for HostManager {
 #[derive(Clone)]
 pub(crate) struct PluginSettingsManager {
     plugin_root: PathBuf,
+    manual_selections: Arc<Mutex<BTreeMap<String, ManualPluginSelection>>>,
 }
 
 impl PluginSettingsManager {
     pub(crate) fn new(app_data_directory: PathBuf) -> Self {
         Self {
             plugin_root: app_data_directory.join("NativeConnector").join("Plugins"),
+            manual_selections: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
     pub(crate) fn plugin_root(&self) -> &Path {
         &self.plugin_root
     }
+
+    fn stage_manual_selection(
+        &self,
+        owner_user_id: &str,
+        presentation_id: &str,
+        generation: u64,
+        canonical_root: PathBuf,
+        directory_name: String,
+    ) -> Result<ManualPluginDirectorySelection, String> {
+        let selection_id = format!("plugin-source-{}", uuid::Uuid::new_v4().simple());
+        let mut selections = self
+            .manual_selections
+            .lock()
+            .map_err(|_| "Plugin 手动安装状态不可用。".to_owned())?;
+        for selection in selections.values_mut().filter(|selection| {
+            selection.owner_user_id == owner_user_id
+                && selection.presentation_id == presentation_id
+                && selection.operation_id.is_some()
+        }) {
+            selection.discard_after_operation = true;
+        }
+        selections.retain(|_, selection| {
+            selection.owner_user_id != owner_user_id
+                || selection.presentation_id != presentation_id
+                || selection.operation_id.is_some()
+        });
+        while selections.len() >= 64 {
+            let removable = selections
+                .iter()
+                .find_map(|(key, selection)| selection.operation_id.is_none().then(|| key.clone()))
+                .ok_or_else(|| "Plugin 手动安装操作过多，请稍后重试。".to_owned())?;
+            selections.remove(&removable);
+        }
+        selections.insert(
+            selection_id.clone(),
+            ManualPluginSelection {
+                owner_user_id: owner_user_id.to_owned(),
+                presentation_id: presentation_id.to_owned(),
+                generation,
+                canonical_root,
+                directory_name: directory_name.clone(),
+                inspected_fingerprint: None,
+                operation_id: None,
+                discard_after_operation: false,
+            },
+        );
+        Ok(ManualPluginDirectorySelection {
+            selection_id,
+            directory_name,
+        })
+    }
+
+    fn begin_manual_operation(
+        &self,
+        input: &ManualPluginSelectionInput,
+        generation: u64,
+        expected_fingerprint: Option<&str>,
+    ) -> Result<(ManualPluginSelection, String), String> {
+        let mut selections = self
+            .manual_selections
+            .lock()
+            .map_err(|_| "Plugin 手动安装状态不可用。".to_owned())?;
+        let selection = selections
+            .get_mut(&input.selection_id)
+            .filter(|selection| {
+                selection.owner_user_id == input.owner_user_id
+                    && selection.presentation_id == input.presentation_id
+                    && selection.generation == generation
+            })
+            .ok_or_else(manual_selection_expired)?;
+        if selection.operation_id.is_some() {
+            return Err("Plugin 来源正在处理，请等待当前操作完成。".into());
+        }
+        if let Some(expected) = expected_fingerprint {
+            if selection.inspected_fingerprint.as_deref() != Some(expected) {
+                return Err("Plugin 预检结果已失效，请重新预检。".into());
+            }
+        }
+        let operation_id = uuid::Uuid::new_v4().to_string();
+        selection.operation_id = Some(operation_id.clone());
+        Ok((selection.clone(), operation_id))
+    }
+
+    fn finish_manual_inspection(
+        &self,
+        selection_id: &str,
+        operation_id: &str,
+        fingerprint: Option<String>,
+    ) {
+        let Ok(mut selections) = self.manual_selections.lock() else {
+            return;
+        };
+        let Some(selection) = selections.get_mut(selection_id) else {
+            return;
+        };
+        if selection.operation_id.as_deref() != Some(operation_id) {
+            return;
+        }
+        if selection.discard_after_operation {
+            selections.remove(selection_id);
+            return;
+        }
+        selection.operation_id = None;
+        selection.inspected_fingerprint = fingerprint;
+    }
+
+    fn finish_manual_install(&self, selection_id: &str, operation_id: &str, installed: bool) {
+        let Ok(mut selections) = self.manual_selections.lock() else {
+            return;
+        };
+        if selections
+            .get(selection_id)
+            .and_then(|selection| selection.operation_id.as_deref())
+            != Some(operation_id)
+        {
+            return;
+        }
+        if installed
+            || selections
+                .get(selection_id)
+                .is_some_and(|selection| selection.discard_after_operation)
+        {
+            selections.remove(selection_id);
+        } else if let Some(selection) = selections.get_mut(selection_id) {
+            selection.operation_id = None;
+        }
+    }
+
+    fn discard_manual_selection(&self, owner_user_id: &str, presentation_id: &str) {
+        let Ok(mut selections) = self.manual_selections.lock() else {
+            return;
+        };
+        for selection in selections.values_mut().filter(|selection| {
+            selection.owner_user_id == owner_user_id
+                && selection.presentation_id == presentation_id
+                && selection.operation_id.is_some()
+        }) {
+            selection.discard_after_operation = true;
+        }
+        selections.retain(|_, selection| {
+            selection.owner_user_id != owner_user_id
+                || selection.presentation_id != presentation_id
+                || selection.operation_id.is_some()
+        });
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ManualPluginSelection {
+    owner_user_id: String,
+    presentation_id: String,
+    generation: u64,
+    canonical_root: PathBuf,
+    directory_name: String,
+    inspected_fingerprint: Option<String>,
+    operation_id: Option<String>,
+    discard_after_operation: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -230,6 +390,49 @@ pub struct PluginEnabledInput {
     owner_user_id: String,
     plugin_id: String,
     enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualPluginDirectorySelection {
+    selection_id: String,
+    directory_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualPluginInspection {
+    selection_id: String,
+    directory_name: String,
+    display_name: String,
+    version: String,
+    description: String,
+    fingerprint: String,
+    components: Vec<ManualPluginComponent>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct ManualPluginComponent {
+    kind: &'static str,
+    display_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManualPluginSelectionInput {
+    owner_user_id: String,
+    presentation_id: String,
+    selection_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManualPluginInstallInput {
+    owner_user_id: String,
+    presentation_id: String,
+    selection_id: String,
+    expected_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -474,6 +677,165 @@ pub async fn load_plugin_settings(
         records,
         &owner_user_id,
     )
+}
+
+#[tauri::command]
+pub async fn pick_manual_plugin_directory(
+    authentication: State<'_, AuthenticationManager>,
+    settings: State<'_, PluginSettingsManager>,
+    owner_user_id: String,
+    presentation_id: String,
+) -> Result<Option<ManualPluginDirectorySelection>, String> {
+    let owner_user_id = required_identifier("owner_user_id", owner_user_id)?;
+    let presentation_id = required_identifier("presentation_id", presentation_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let selected = rfd::AsyncFileDialog::new()
+        .set_title("选择 Plugin / MCP 根目录")
+        .pick_folder()
+        .await;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let requested = selected.path().to_path_buf();
+    let (canonical_root, directory_name) =
+        tauri::async_runtime::spawn_blocking(move || prepare_manual_plugin_directory(&requested))
+            .await
+            .map_err(|_| "Plugin 目录选择任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    settings
+        .stage_manual_selection(
+            &owner_user_id,
+            &presentation_id,
+            generation,
+            canonical_root,
+            directory_name,
+        )
+        .map(Some)
+}
+
+#[tauri::command]
+pub async fn inspect_manual_plugin_directory(
+    authentication: State<'_, AuthenticationManager>,
+    settings: State<'_, PluginSettingsManager>,
+    input: ManualPluginSelectionInput,
+) -> Result<ManualPluginInspection, String> {
+    let input = validated_manual_selection_input(input)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let (selection, operation_id) = settings.begin_manual_operation(&input, generation, None)?;
+    let plugin_root = settings.plugin_root.clone();
+    let source_root = selection.canonical_root.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        inspect_local_package_source(&plugin_root, &source_root, None)
+    })
+    .await
+    .map_err(|_| "Plugin 预检任务异常退出。".to_owned())
+    .and_then(|result| result);
+    if let Err(error) = authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await
+    {
+        settings.finish_manual_inspection(&input.selection_id, &operation_id, None);
+        return Err(error);
+    }
+    match result {
+        Ok(inspection) => {
+            let components = manual_plugin_components(&inspection.manifest);
+            let presented = ManualPluginInspection {
+                selection_id: input.selection_id.clone(),
+                directory_name: selection.directory_name,
+                display_name: safe_text(
+                    &inspection.manifest.interface.display_name,
+                    &inspection.manifest.name,
+                ),
+                version: inspection.manifest.version,
+                description: inspection.manifest.description,
+                fingerprint: inspection.fingerprint.clone(),
+                components,
+            };
+            settings.finish_manual_inspection(
+                &input.selection_id,
+                &operation_id,
+                Some(inspection.fingerprint),
+            );
+            Ok(presented)
+        }
+        Err(error) => {
+            settings.finish_manual_inspection(&input.selection_id, &operation_id, None);
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn install_manual_plugin_directory(
+    authentication: State<'_, AuthenticationManager>,
+    host: State<'_, HostManager>,
+    settings: State<'_, PluginSettingsManager>,
+    applications: State<'_, PluginApplicationManager>,
+    input: ManualPluginInstallInput,
+) -> Result<PluginSettingsSnapshot, String> {
+    let selection_input = validated_manual_selection_input(ManualPluginSelectionInput {
+        owner_user_id: input.owner_user_id,
+        presentation_id: input.presentation_id,
+        selection_id: input.selection_id,
+    })?;
+    if input.expected_fingerprint.len() != 64
+        || !input
+            .expected_fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("Plugin 预检指纹无效。".into());
+    }
+    let generation = authentication
+        .session_generation_for_owner(&selection_input.owner_user_id)
+        .await?;
+    let (selection, operation_id) = settings.begin_manual_operation(
+        &selection_input,
+        generation,
+        Some(&input.expected_fingerprint),
+    )?;
+    let result = install_local_plugin_source(
+        &authentication,
+        &host,
+        &settings,
+        &applications,
+        &selection_input.owner_user_id,
+        selection.canonical_root.to_string_lossy().into_owned(),
+        None,
+        input.expected_fingerprint,
+    )
+    .await;
+    settings.finish_manual_install(&selection_input.selection_id, &operation_id, result.is_ok());
+    result?;
+    load_snapshot(
+        &authentication,
+        &*host,
+        &settings.plugin_root,
+        &selection_input.owner_user_id,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn discard_manual_plugin_directory(
+    settings: State<'_, PluginSettingsManager>,
+    owner_user_id: String,
+    presentation_id: String,
+) -> Result<(), String> {
+    let owner_user_id = required_identifier("owner_user_id", owner_user_id)?;
+    let presentation_id = required_identifier("presentation_id", presentation_id)?;
+    settings.discard_manual_selection(&owner_user_id, &presentation_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1013,7 +1375,7 @@ fn project_snapshot(
         marketplace_error,
         local_catalog_error,
         secure_marketplace_install_available: true,
-        manual_install_available: false,
+        manual_install_available: true,
     })
 }
 
@@ -1534,6 +1896,83 @@ fn required_identifier(field: &str, value: String) -> Result<String, String> {
     Ok(value.to_owned())
 }
 
+fn validated_manual_selection_input(
+    input: ManualPluginSelectionInput,
+) -> Result<ManualPluginSelectionInput, String> {
+    Ok(ManualPluginSelectionInput {
+        owner_user_id: required_identifier("owner_user_id", input.owner_user_id)?,
+        presentation_id: required_identifier("presentation_id", input.presentation_id)?,
+        selection_id: required_identifier("selection_id", input.selection_id)?,
+    })
+}
+
+fn prepare_manual_plugin_directory(path: &Path) -> Result<(PathBuf, String), String> {
+    if !path.is_absolute() {
+        return Err("Plugin 来源必须是绝对目录。".into());
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|_| "Plugin 来源目录不存在。".to_owned())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || metadata_is_reparse(&metadata) {
+        return Err("Plugin 来源必须是普通目录，不能是链接或重解析点。".into());
+    }
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| "Plugin 来源目录不可用。".to_owned())?;
+    let directory_name = canonical
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| {
+            !value.is_empty() && value.len() <= 240 && !value.chars().any(char::is_control)
+        })
+        .ok_or_else(|| "Plugin 来源目录名称无效。".to_owned())?
+        .to_owned();
+    Ok((canonical, directory_name))
+}
+
+fn metadata_is_reparse(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = metadata;
+        false
+    }
+}
+
+fn manual_plugin_components(manifest: &PluginManifest) -> Vec<ManualPluginComponent> {
+    let mut components = manifest
+        .mcp_servers
+        .iter()
+        .map(|server| ManualPluginComponent {
+            kind: "mcp",
+            display_name: server.component_key().to_owned(),
+        })
+        .chain(manifest.skills.iter().map(|skill| {
+            ManualPluginComponent {
+                kind: "skill",
+                display_name: Path::new(&skill.path)
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("Skill")
+                    .to_owned(),
+            }
+        }))
+        .collect::<Vec<_>>();
+    components.sort_by(|left, right| {
+        left.kind
+            .cmp(right.kind)
+            .then_with(|| left.display_name.cmp(&right.display_name))
+    });
+    components
+}
+
+fn manual_selection_expired() -> String {
+    "Plugin 目录选择已失效，请重新选择。".into()
+}
+
 fn metadata_response_error() -> String {
     "Local Agent Host 返回了无效的 Plugin 安装记录。".into()
 }
@@ -1545,6 +1984,146 @@ fn plugin_catalog_error() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn manual_manager() -> (tempfile::TempDir, PluginSettingsManager) {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = PluginSettingsManager::new(directory.path().join("app-data"));
+        (directory, manager)
+    }
+
+    fn stage_manual(
+        manager: &PluginSettingsManager,
+        source_root: &Path,
+    ) -> ManualPluginDirectorySelection {
+        manager
+            .stage_manual_selection(
+                "owner-1",
+                "presentation-1",
+                7,
+                source_root.to_path_buf(),
+                "source-plugin".into(),
+            )
+            .unwrap()
+    }
+
+    fn manual_input(selection_id: &str) -> ManualPluginSelectionInput {
+        ManualPluginSelectionInput {
+            owner_user_id: "owner-1".into(),
+            presentation_id: "presentation-1".into(),
+            selection_id: selection_id.into(),
+        }
+    }
+
+    #[test]
+    fn manual_selection_is_bound_to_owner_presentation_and_session_generation() {
+        let (directory, manager) = manual_manager();
+        let selection = stage_manual(&manager, directory.path());
+        let mut input = manual_input(&selection.selection_id);
+
+        input.owner_user_id = "owner-2".into();
+        assert!(manager.begin_manual_operation(&input, 7, None).is_err());
+        input.owner_user_id = "owner-1".into();
+        input.presentation_id = "presentation-2".into();
+        assert!(manager.begin_manual_operation(&input, 7, None).is_err());
+        input.presentation_id = "presentation-1".into();
+        assert!(manager.begin_manual_operation(&input, 8, None).is_err());
+
+        let (_, operation_id) = manager.begin_manual_operation(&input, 7, None).unwrap();
+        manager.finish_manual_inspection(&selection.selection_id, &operation_id, None);
+    }
+
+    #[test]
+    fn manual_install_requires_the_exact_preflight_fingerprint() {
+        let (directory, manager) = manual_manager();
+        let selection = stage_manual(&manager, directory.path());
+        let input = manual_input(&selection.selection_id);
+        let (_, operation_id) = manager.begin_manual_operation(&input, 7, None).unwrap();
+        manager.finish_manual_inspection(
+            &selection.selection_id,
+            &operation_id,
+            Some("a".repeat(64)),
+        );
+
+        assert!(manager
+            .begin_manual_operation(&input, 7, Some(&"b".repeat(64)))
+            .is_err());
+        assert!(manager
+            .begin_manual_operation(&input, 7, Some(&"a".repeat(64)))
+            .is_ok());
+    }
+
+    #[test]
+    fn manual_selection_rejects_concurrent_operations() {
+        let (directory, manager) = manual_manager();
+        let selection = stage_manual(&manager, directory.path());
+        let input = manual_input(&selection.selection_id);
+        let (_, operation_id) = manager.begin_manual_operation(&input, 7, None).unwrap();
+
+        assert_eq!(
+            manager.begin_manual_operation(&input, 7, None).unwrap_err(),
+            "Plugin 来源正在处理，请等待当前操作完成。"
+        );
+        manager.finish_manual_inspection(&selection.selection_id, &operation_id, None);
+    }
+
+    #[test]
+    fn successful_manual_install_consumes_the_selection() {
+        let (directory, manager) = manual_manager();
+        let selection = stage_manual(&manager, directory.path());
+        let input = manual_input(&selection.selection_id);
+        let (_, operation_id) = manager.begin_manual_operation(&input, 7, None).unwrap();
+        manager.finish_manual_install(&selection.selection_id, &operation_id, true);
+
+        assert!(manager.begin_manual_operation(&input, 7, None).is_err());
+    }
+
+    #[test]
+    fn discard_does_not_remove_a_leased_manual_operation() {
+        let (directory, manager) = manual_manager();
+        let selection = stage_manual(&manager, directory.path());
+        let input = manual_input(&selection.selection_id);
+        let (_, operation_id) = manager.begin_manual_operation(&input, 7, None).unwrap();
+        manager.discard_manual_selection("owner-1", "presentation-1");
+        let replacement = stage_manual(&manager, directory.path());
+
+        assert!(manager
+            .manual_selections
+            .lock()
+            .unwrap()
+            .contains_key(&selection.selection_id));
+        assert_ne!(replacement.selection_id, selection.selection_id);
+        manager.finish_manual_install(&selection.selection_id, &operation_id, false);
+        assert!(!manager
+            .manual_selections
+            .lock()
+            .unwrap()
+            .contains_key(&selection.selection_id));
+    }
+
+    #[test]
+    fn manual_directory_preflight_rejects_non_directories_and_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let ordinary = directory.path().join("ordinary-plugin");
+        fs::create_dir(&ordinary).unwrap();
+        let (canonical, name) = prepare_manual_plugin_directory(&ordinary).unwrap();
+        assert_eq!(canonical, ordinary.canonicalize().unwrap());
+        assert_eq!(name, "ordinary-plugin");
+
+        let file = directory.path().join("not-a-directory");
+        fs::write(&file, b"plugin").unwrap();
+        assert!(prepare_manual_plugin_directory(&file).is_err());
+        assert!(prepare_manual_plugin_directory(Path::new("relative-plugin")).is_err());
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_dir;
+            let link = directory.path().join("linked-plugin");
+            if symlink_dir(&ordinary, &link).is_ok() {
+                assert!(prepare_manual_plugin_directory(&link).is_err());
+                assert!(metadata_is_reparse(&fs::symlink_metadata(&link).unwrap()));
+            }
+        }
+    }
 
     #[test]
     fn platform_gate_only_accepts_windows_or_universal_plugins() {

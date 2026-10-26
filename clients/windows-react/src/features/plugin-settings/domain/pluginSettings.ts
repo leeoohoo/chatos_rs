@@ -41,8 +41,30 @@ export const pluginSettingsSnapshotSchema = z.object({
   manualInstallAvailable: z.boolean(),
 });
 
+export const manualPluginDirectorySelectionSchema = z.object({
+  selectionId: z.string().min(1),
+  directoryName: z.string().min(1),
+});
+
+export const manualPluginComponentSchema = z.object({
+  kind: z.enum(["mcp", "skill"]),
+  displayName: z.string().min(1),
+});
+
+export const manualPluginInspectionSchema = z.object({
+  selectionId: z.string().min(1),
+  directoryName: z.string().min(1),
+  displayName: z.string().min(1),
+  version: z.string().min(1),
+  description: z.string(),
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  components: z.array(manualPluginComponentSchema).max(192),
+});
+
 export type ManagedPlugin = z.infer<typeof managedPluginSchema>;
 export type PluginSettingsSnapshot = z.infer<typeof pluginSettingsSnapshotSchema>;
+export type ManualPluginDirectorySelection = z.infer<typeof manualPluginDirectorySelectionSchema>;
+export type ManualPluginInspection = z.infer<typeof manualPluginInspectionSchema>;
 
 export function filterPlugins(plugins: ManagedPlugin[], queryInput: string) {
   const query = queryInput.trim().toLocaleLowerCase();

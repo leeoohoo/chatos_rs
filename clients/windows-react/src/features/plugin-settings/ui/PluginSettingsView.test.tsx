@@ -39,4 +39,57 @@ describe("PluginSettingsView", () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(toggle).not.toBeChecked());
   });
+
+  it("preflights a native folder before enabling manual installation", async () => {
+    const port = pluginSettingsPort({
+      pickManualDirectory: vi.fn(async () => ({ selectionId: "selection-private", directoryName: "safe-plugin" })),
+      inspectManualDirectory: vi.fn(async (_ownerUserId, _presentationId, selectionId) => ({
+        selectionId,
+        directoryName: "safe-plugin",
+        displayName: "Safe Plugin",
+        version: "2.1.0",
+        description: "Verified locally.",
+        fingerprint: "b".repeat(64),
+        components: [{ kind: "skill" as const, displayName: "safe-skill" }],
+      })),
+      installManualDirectory: vi.fn(async () => pluginSettingsPort().load("owner-1")),
+    });
+    render(<PluginSettingsView ownerUserId="owner-1" port={port} onOpenInstallationAssistant={vi.fn()} />);
+    await screen.findByText("Diagram Studio");
+
+    fireEvent.click(screen.getByRole("button", { name: "手动安装…" }));
+    const installButton = screen.getByRole("button", { name: "确认安装" });
+    expect(installButton).toBeDisabled();
+    expect(screen.queryByText(/C:\\/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "选择根目录" }));
+    expect(await screen.findByText("safe-plugin")).toBeInTheDocument();
+    expect(installButton).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "预检" }));
+    expect(await screen.findByText("Safe Plugin · 2.1.0")).toBeInTheDocument();
+    expect(screen.getByText("safe-skill")).toBeInTheDocument();
+    expect(screen.getByText("b".repeat(64))).toBeInTheDocument();
+    expect(installButton).toBeEnabled();
+
+    fireEvent.click(installButton);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(port.installManualDirectory).toHaveBeenCalledWith(
+      "owner-1",
+      expect.stringMatching(/^plugin-manual-/),
+      "selection-private",
+      "b".repeat(64),
+    );
+  });
+
+  it("discards the native selection when the manual sheet closes", async () => {
+    const port = pluginSettingsPort({ discardManualDirectory: vi.fn(async () => undefined) });
+    render(<PluginSettingsView ownerUserId="owner-1" port={port} onOpenInstallationAssistant={vi.fn()} />);
+    await screen.findByText("Diagram Studio");
+    fireEvent.click(screen.getByRole("button", { name: "手动安装…" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭手动安装" }));
+    await waitFor(() => expect(port.discardManualDirectory).toHaveBeenCalledWith(
+      "owner-1",
+      expect.stringMatching(/^plugin-manual-/),
+    ));
+  });
 });

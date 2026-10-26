@@ -146,8 +146,9 @@ use plugin_application::{
     launch_plugin_application, list_plugin_applications, PluginApplicationManager,
 };
 use plugin_settings::{
-    install_marketplace_plugin, load_plugin_settings, uninstall_plugin, update_plugin_enabled,
-    PluginSettingsManager,
+    discard_manual_plugin_directory, inspect_manual_plugin_directory,
+    install_manual_plugin_directory, install_marketplace_plugin, load_plugin_settings,
+    pick_manual_plugin_directory, uninstall_plugin, update_plugin_enabled, PluginSettingsManager,
 };
 use project_conversation::prepare_project_conversation;
 use project_creation::{
@@ -570,6 +571,10 @@ pub fn run() {
             close_local_terminal,
             discard_local_terminal_presentation,
             list_plugin_applications,
+            pick_manual_plugin_directory,
+            inspect_manual_plugin_directory,
+            install_manual_plugin_directory,
+            discard_manual_plugin_directory,
             install_marketplace_plugin,
             load_plugin_settings,
             update_plugin_enabled,

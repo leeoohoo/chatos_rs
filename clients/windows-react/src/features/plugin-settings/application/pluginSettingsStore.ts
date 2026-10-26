@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { PluginSettingsSnapshot } from "../domain/pluginSettings";
+import type { ManualPluginDirectorySelection, ManualPluginInspection, PluginSettingsSnapshot } from "../domain/pluginSettings";
 import type { PluginSettingsPort } from "../ports/PluginSettingsPort";
 
 interface PluginSettingsState {
@@ -9,11 +9,19 @@ interface PluginSettingsState {
   operatingPluginId: string | null;
   error: string | null;
   notice: string | null;
+  manualSelection: ManualPluginDirectorySelection | null;
+  manualInspection: ManualPluginInspection | null;
+  manualBusy: "pick" | "inspect" | "install" | null;
+  manualEpoch: number;
   epoch: number;
   load(port: PluginSettingsPort, ownerUserId: string): Promise<void>;
   install(port: PluginSettingsPort, pluginId: string): Promise<boolean>;
   updateEnabled(port: PluginSettingsPort, pluginId: string, enabled: boolean): Promise<boolean>;
   uninstall(port: PluginSettingsPort, pluginId: string): Promise<boolean>;
+  pickManualDirectory(port: PluginSettingsPort, presentationId: string): Promise<boolean>;
+  inspectManualDirectory(port: PluginSettingsPort, presentationId: string): Promise<boolean>;
+  installManualDirectory(port: PluginSettingsPort, presentationId: string): Promise<boolean>;
+  discardManualDirectory(port: PluginSettingsPort, presentationId: string): Promise<void>;
   clearMessage(): void;
   reset(): void;
 }
@@ -25,6 +33,10 @@ export const usePluginSettingsStore = create<PluginSettingsState>((set, get) => 
   operatingPluginId: null,
   error: null,
   notice: null,
+  manualSelection: null,
+  manualInspection: null,
+  manualBusy: null,
+  manualEpoch: 0,
   epoch: 0,
 
   async load(port, ownerInput) {
@@ -64,6 +76,90 @@ export const usePluginSettingsStore = create<PluginSettingsState>((set, get) => 
     ));
   },
 
+  async pickManualDirectory(port, presentationId) {
+    const current = get();
+    if (!current.ownerUserId || current.manualBusy || current.operatingPluginId) return false;
+    const ownerUserId = current.ownerUserId;
+    const epoch = current.epoch;
+    const manualEpoch = current.manualEpoch + 1;
+    set({ manualBusy: "pick", manualEpoch, error: null, notice: null });
+    try {
+      const selection = await port.pickManualDirectory(ownerUserId, presentationId);
+      if (!isCurrent(get(), ownerUserId, epoch) || get().manualEpoch !== manualEpoch) return false;
+      if (!selection) {
+        set({ manualBusy: null });
+        return false;
+      }
+      set({ manualBusy: null, manualSelection: selection, manualInspection: null });
+      return true;
+    } catch (failure) {
+      if (!isCurrent(get(), ownerUserId, epoch) || get().manualEpoch !== manualEpoch) return false;
+      set({ manualBusy: null, error: errorMessage(failure) });
+      return false;
+    }
+  },
+
+  async inspectManualDirectory(port, presentationId) {
+    const current = get();
+    if (!current.ownerUserId || !current.manualSelection || current.manualBusy || current.operatingPluginId) return false;
+    const ownerUserId = current.ownerUserId;
+    const selectionId = current.manualSelection.selectionId;
+    const epoch = current.epoch;
+    const manualEpoch = current.manualEpoch;
+    set({ manualBusy: "inspect", manualInspection: null, error: null, notice: null });
+    try {
+      const inspection = await port.inspectManualDirectory(ownerUserId, presentationId, selectionId);
+      if (!isCurrentManual(get(), ownerUserId, epoch, manualEpoch, selectionId)) return false;
+      if (inspection.selectionId !== selectionId) {
+        set({ manualBusy: null, error: "Plugin 预检响应与当前目录不匹配，请重新选择。" });
+        return false;
+      }
+      set({ manualBusy: null, manualInspection: inspection });
+      return true;
+    } catch (failure) {
+      if (!isCurrentManual(get(), ownerUserId, epoch, manualEpoch, selectionId)) return false;
+      set({ manualBusy: null, error: errorMessage(failure) });
+      return false;
+    }
+  },
+
+  async installManualDirectory(port, presentationId) {
+    const current = get();
+    if (!current.ownerUserId || !current.manualSelection || !current.manualInspection || current.manualBusy || current.operatingPluginId) return false;
+    const ownerUserId = current.ownerUserId;
+    const selectionId = current.manualSelection.selectionId;
+    const fingerprint = current.manualInspection.fingerprint;
+    const epoch = current.epoch;
+    const manualEpoch = current.manualEpoch;
+    set({ manualBusy: "install", error: null, notice: null });
+    try {
+      const snapshot = await port.installManualDirectory(ownerUserId, presentationId, selectionId, fingerprint);
+      if (!isCurrentManual(get(), ownerUserId, epoch, manualEpoch, selectionId)) return false;
+      set({ snapshot, manualBusy: null, manualSelection: null, manualInspection: null, notice: "自定义 Plugin 已完成复检并安装到本机。" });
+      return true;
+    } catch (failure) {
+      if (!isCurrentManual(get(), ownerUserId, epoch, manualEpoch, selectionId)) return false;
+      set({ manualBusy: null, error: errorMessage(failure) });
+      return false;
+    }
+  },
+
+  async discardManualDirectory(port, presentationId) {
+    const ownerUserId = get().ownerUserId;
+    set((state) => ({
+      manualSelection: null,
+      manualInspection: null,
+      manualBusy: null,
+      manualEpoch: state.manualEpoch + 1,
+    }));
+    if (!ownerUserId) return;
+    try {
+      await port.discardManualDirectory(ownerUserId, presentationId);
+    } catch {
+      // Presentation teardown is best effort; native operation leases remain protected.
+    }
+  },
+
   clearMessage() { set({ error: null, notice: null }); },
 
   reset() {
@@ -74,6 +170,10 @@ export const usePluginSettingsStore = create<PluginSettingsState>((set, get) => 
       operatingPluginId: null,
       error: null,
       notice: null,
+      manualSelection: null,
+      manualInspection: null,
+      manualBusy: null,
+      manualEpoch: state.manualEpoch + 1,
       epoch: state.epoch + 1,
     }));
   },
@@ -105,6 +205,18 @@ async function runMutation(
 
 function isCurrent(state: PluginSettingsState, ownerUserId: string, epoch: number) {
   return state.ownerUserId === ownerUserId && state.epoch === epoch;
+}
+
+function isCurrentManual(
+  state: PluginSettingsState,
+  ownerUserId: string,
+  epoch: number,
+  manualEpoch: number,
+  selectionId: string,
+) {
+  return isCurrent(state, ownerUserId, epoch)
+    && state.manualEpoch === manualEpoch
+    && state.manualSelection?.selectionId === selectionId;
 }
 
 function errorMessage(failure: unknown) {

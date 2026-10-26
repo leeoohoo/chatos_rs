@@ -31,7 +31,7 @@ export function pluginSettingsSnapshot(): PluginSettingsSnapshot {
     marketplaceError: null,
     localCatalogError: null,
     secureMarketplaceInstallAvailable: true,
-    manualInstallAvailable: false,
+    manualInstallAvailable: true,
   };
 }
 
@@ -55,6 +55,21 @@ export function pluginSettingsPort(overrides: Partial<PluginSettingsPort> = {}):
       ...pluginSettingsSnapshot(),
       plugins: pluginSettingsSnapshot().plugins.map((plugin) => ({ ...plugin, installed: false, installedVersion: null })),
     }),
+    pickManualDirectory: async () => ({ selectionId: "selection-1", directoryName: "my-plugin" }),
+    inspectManualDirectory: async (_ownerUserId, _presentationId, selectionId) => ({
+      selectionId,
+      directoryName: "my-plugin",
+      displayName: "My Local Plugin",
+      version: "1.0.0",
+      description: "A verified local plugin.",
+      fingerprint: "a".repeat(64),
+      components: [
+        { kind: "mcp", displayName: "local-mcp" },
+        { kind: "skill", displayName: "local-skill" },
+      ],
+    }),
+    installManualDirectory: async () => pluginSettingsSnapshot(),
+    discardManualDirectory: async () => undefined,
     ...overrides,
   };
 }

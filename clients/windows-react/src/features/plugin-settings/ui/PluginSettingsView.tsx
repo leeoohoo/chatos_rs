@@ -15,10 +15,17 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
   const operatingPluginId = usePluginSettingsStore((state) => state.operatingPluginId);
   const error = usePluginSettingsStore((state) => state.error);
   const notice = usePluginSettingsStore((state) => state.notice);
+  const manualSelection = usePluginSettingsStore((state) => state.manualSelection);
+  const manualInspection = usePluginSettingsStore((state) => state.manualInspection);
+  const manualBusy = usePluginSettingsStore((state) => state.manualBusy);
   const load = usePluginSettingsStore((state) => state.load);
   const install = usePluginSettingsStore((state) => state.install);
   const updateEnabled = usePluginSettingsStore((state) => state.updateEnabled);
   const uninstall = usePluginSettingsStore((state) => state.uninstall);
+  const pickManualDirectory = usePluginSettingsStore((state) => state.pickManualDirectory);
+  const inspectManualDirectory = usePluginSettingsStore((state) => state.inspectManualDirectory);
+  const installManualDirectory = usePluginSettingsStore((state) => state.installManualDirectory);
+  const discardManualDirectory = usePluginSettingsStore((state) => state.discardManualDirectory);
   const clearMessage = usePluginSettingsStore((state) => state.clearMessage);
   const reset = usePluginSettingsStore((state) => state.reset);
   const language = useGeneralSettingsStore((state) => state.settings.interfaceLanguage);
@@ -26,11 +33,21 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [uninstallTarget, setUninstallTarget] = useState<ManagedPlugin | null>(null);
+  const [showsManualInstaller, setShowsManualInstaller] = useState(false);
+  const [manualPresentationId] = useState(newManualPresentationId);
 
   useEffect(() => {
     void load(port, ownerUserId);
-    return () => reset();
-  }, [load, ownerUserId, port, reset]);
+    return () => {
+      void discardManualDirectory(port, manualPresentationId);
+      reset();
+    };
+  }, [discardManualDirectory, load, manualPresentationId, ownerUserId, port, reset]);
+
+  const closeManualInstaller = () => {
+    setShowsManualInstaller(false);
+    void discardManualDirectory(port, manualPresentationId);
+  };
 
   const plugins = useMemo(() => filterPlugins(snapshot?.plugins ?? [], query), [query, snapshot?.plugins]);
   if (!snapshot && isLoading) return <PluginStatus loading title={english ? "Syncing plugins" : "正在同步 Plugin"} detail={english ? "Reading Marketplace and the native installation catalog." : "正在读取 Marketplace 与本机安装目录。"} />;
@@ -47,13 +64,13 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
       <header><span aria-hidden="true">⌕</span><h3>{english ? "Find Plugins" : "查找 Plugin"}</h3></header>
       <div className="plugin-settings-finder__body">
         <div className="plugin-settings-search"><span aria-hidden="true">⌕</span><input aria-label={english ? "Search plugins" : "搜索 Plugin"} onChange={(event) => setQuery(event.target.value)} placeholder={english ? "Search plugins, Skills, or publishers" : "搜索 Plugin、Skill 或发布者"} value={query} /><output>{plugins.length} {english ? "items" : "项"}</output></div>
-        <div className="plugin-settings-actions"><button onClick={onOpenInstallationAssistant} type="button"><span aria-hidden="true">◇</span> {english ? "Installation Assistant" : "安装助手"}</button><button disabled={isLoading} onClick={() => void load(port, ownerUserId)} type="button"><span aria-hidden="true">↻</span> {english ? "Check for Updates" : "检查更新"}</button></div>
+        <div className="plugin-settings-actions"><button onClick={onOpenInstallationAssistant} type="button"><span aria-hidden="true">◇</span> {english ? "Installation Assistant" : "安装助手"}</button><button disabled={!snapshot.manualInstallAvailable} onClick={() => setShowsManualInstaller(true)} type="button"><span aria-hidden="true">＋</span> {english ? "Install Manually…" : "手动安装…"}</button><button disabled={isLoading} onClick={() => void load(port, ownerUserId)} type="button"><span aria-hidden="true">↻</span> {english ? "Check for Updates" : "检查更新"}</button></div>
       </div>
       <p className="plugin-settings-finder__footnote">{english ? "Filter by name, Skill, publisher, or category." : "按名称、Skill、发布者或分类筛选。"}</p>
     </section>
 
     {!snapshot.secureMarketplaceInstallAvailable && <section className="plugin-settings-platform-note"><span aria-hidden="true">i</span><div><strong>{english ? "Windows installation safety gate" : "Windows 安装安全门禁"}</strong><p>{english ? "Marketplace installation is unavailable because the native verification chain is not ready." : "Windows 原生安装校验链尚未就绪，Marketplace 安装暂不可用。"}</p></div></section>}
-    {snapshot.secureMarketplaceInstallAvailable && !snapshot.manualInstallAvailable && <section className="plugin-settings-platform-note"><span aria-hidden="true">i</span><div><strong>{english ? "Verified Marketplace installation" : "受信 Marketplace 安装"}</strong><p>{english ? "Signed Marketplace plugins can be installed and updated. The Installation Assistant supports local ChatOS Plugin folders, credential-free HTTPS Git repositories, exact-version public npm packages, ordinary npm MCPs, and bounded conversion of common stdio MCP JSON layouts; direct settings-page import and other compatibility formats remain unavailable." : "已支持安装和更新经过签名校验的 Marketplace Plugin；安装助手支持本机 ChatOS Plugin 目录、无凭据 HTTPS Git 仓库、公共 npm 精确版本包、普通 npm MCP，以及常见 stdio MCP JSON 布局的有界转换。设置页直接导入及其他兼容格式仍未开放。"}</p></div></section>}
+    {snapshot.secureMarketplaceInstallAvailable && <section className="plugin-settings-platform-note"><span aria-hidden="true">i</span><div><strong>{english ? "Verified plugin installation" : "受信 Plugin 安装"}</strong><p>{snapshot.manualInstallAvailable ? (english ? "Signed Marketplace packages and local folders are verified again immediately before installation. Git and npm sources remain available through the Installation Assistant." : "Marketplace 签名包与本机目录都会在安装前再次校验；Git 与 npm 来源继续由安装助手处理。") : (english ? "Signed Marketplace plugins can be installed and updated. Local folder import is currently unavailable." : "已支持安装和更新经过签名校验的 Marketplace Plugin；本机目录导入暂不可用。")}</p></div></section>}
 
     {(!snapshot.marketplaceAvailable || !snapshot.localCatalogAvailable) && <section className="plugin-settings-partial"><strong>{english ? "Partial catalog" : "目录加载不完整"}</strong><p>{snapshot.marketplaceError ?? snapshot.localCatalogError}</p></section>}
 
@@ -77,7 +94,34 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
     </section>
 
     {uninstallTarget && <div className="plugin-settings-confirm"><section aria-modal="true" role="alertdialog"><span>!</span><h3>{english ? "Uninstall plugin?" : "卸载 Plugin？"}</h3><p>{english ? `${uninstallTarget.displayName} will be disabled, its runtime stopped, and its native installation files removed.` : `${uninstallTarget.displayName} 将被停用，运行进程会终止，本机安装文件也会删除。`}</p><footer><button onClick={() => setUninstallTarget(null)} type="button">{english ? "Cancel" : "取消"}</button><button className="is-danger" disabled={Boolean(operatingPluginId)} onClick={async () => { if (await uninstall(port, uninstallTarget.id)) setUninstallTarget(null); }} type="button">{english ? "Uninstall" : "卸载"}</button></footer></section></div>}
+    {showsManualInstaller && <div className="plugin-settings-manual" onMouseDown={(event) => { if (event.currentTarget === event.target) closeManualInstaller(); }}>
+      <section aria-labelledby="manual-plugin-title" aria-modal="true" role="dialog">
+        <header><div><span aria-hidden="true">◇</span><div><h3 id="manual-plugin-title">{english ? "Install a Local Plugin" : "安装本机 Plugin"}</h3><p>{english ? "Choose a Plugin, MCP, Agent plugin, or standalone Skill folder." : "选择 Plugin、MCP、Agent Plugin 或独立 Skill 的根目录。"}</p></div></div><button aria-label={english ? "Close manual installer" : "关闭手动安装"} onClick={closeManualInstaller} type="button">×</button></header>
+        <div className="plugin-settings-manual__content">
+          <section className="plugin-settings-manual__source"><div><strong>{english ? "Source folder" : "来源目录"}</strong><p>{manualSelection?.directoryName ?? (english ? "No folder selected" : "尚未选择目录")}</p></div><button disabled={manualBusy != null} onClick={() => void pickManualDirectory(port, manualPresentationId)} type="button">{manualBusy === "pick" ? (english ? "Choosing…" : "选择中…") : (english ? "Choose Root Folder" : "选择根目录")}</button></section>
+          <p className="plugin-settings-manual__privacy">{english ? "Only the folder name is shown here. The native client keeps its full path private." : "这里只显示目录名称；完整路径仅由原生客户端保管，不会暴露给 React 页面。"}</p>
+          {error && <div className="plugin-settings-manual__error" role="alert"><span>!</span><p>{error}</p></div>}
+          {manualInspection ? <section className="plugin-settings-manual__inspection">
+            <header><span>✓</span><div><strong>{english ? "Preflight Passed" : "预检通过"}</strong><p>{manualInspection.displayName} · {manualInspection.version}</p></div></header>
+            {manualInspection.description && <p>{manualInspection.description}</p>}
+            <div className="plugin-settings-manual__components">{manualInspection.components.length ? manualInspection.components.map((component, index) => <span key={`${component.kind}-${component.displayName}-${index}`}><b>{component.kind === "skill" ? "Skill" : "MCP"}</b>{component.displayName}</span>) : <small>{english ? "No MCP or Skill components declared." : "未声明 MCP 或 Skill 组件。"}</small>}</div>
+            <dl><dt>SHA-256</dt><dd>{manualInspection.fingerprint}</dd></dl>
+          </section> : <section className="plugin-settings-manual__empty"><span aria-hidden="true">⌕</span><div><strong>{english ? "Preflight required" : "需要先预检"}</strong><p>{english ? "The package type, components, manifest, links, and content fingerprint will be checked before installation." : "安装前会检查包类型、组件、清单、链接与内容指纹。"}</p></div></section>}
+        </div>
+        <footer><button onClick={closeManualInstaller} type="button">{english ? "Cancel" : "取消"}</button><button disabled={!manualSelection || manualBusy != null} onClick={() => void inspectManualDirectory(port, manualPresentationId)} type="button">{manualBusy === "inspect" ? (english ? "Inspecting…" : "预检中…") : (english ? "Run Preflight" : "预检")}</button><button className="is-primary" disabled={!manualInspection || manualBusy != null} onClick={async () => { if (await installManualDirectory(port, manualPresentationId)) setShowsManualInstaller(false); }} type="button">{manualBusy === "install" ? (english ? "Installing…" : "安装中…") : (english ? "Install" : "确认安装")}</button></footer>
+      </section>
+    </div>}
   </div>;
+}
+
+let manualPresentationSequence = 0;
+
+function newManualPresentationId() {
+  manualPresentationSequence += 1;
+  const random = globalThis.crypto?.randomUUID?.();
+  return random
+    ? `plugin-manual-${random}`
+    : `plugin-manual-${Date.now().toString(36)}-${manualPresentationSequence.toString(36)}`;
 }
 
 function PluginDetails({ english, plugin }: { english: boolean; plugin: ManagedPlugin }) {
