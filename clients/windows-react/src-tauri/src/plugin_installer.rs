@@ -24,6 +24,7 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{
+    agent_plugin_runtime::load_agent_plugin_skill_snapshot,
     plugin_integrity::{remove_installation_integrity, write_installation_integrity},
     terminal_runtime::process::ProcessTermination,
 };
@@ -60,7 +61,7 @@ pub(crate) struct CommittedPluginPackage {
     pub(crate) installation_root: PathBuf,
     pub(crate) manifest: PluginManifest,
     pub(crate) artifact_sha256: String,
-    backup_root: Option<PathBuf>,
+    pub(crate) backup_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -390,86 +391,137 @@ const COMPATIBLE_MCP_CONFIGURATIONS: &[&str] = &[
     "opencode.json",
 ];
 
+const COMPATIBLE_PLUGIN_MANIFESTS: &[(&str, &str)] = &[
+    ("plugin.json", "Agent Plugin"),
+    (".codex-plugin/plugin.json", "Codex Plugin"),
+    (".claude-plugin/plugin.json", "Claude Plugin"),
+    ("package.json", "npm Agent Plugin"),
+];
+
+#[derive(Clone)]
+struct CompatiblePluginIdentity {
+    name: String,
+    version: String,
+    description: String,
+    display_name: String,
+    format_name: String,
+    document: serde_json::Map<String, Value>,
+}
+
 fn normalize_compatible_mcp_package(package_root: &Path) -> Result<(), String> {
     if package_root.join("chatos.plugin.json").is_file() {
         return Ok(());
     }
-    let Some((configuration_name, configuration_path)) = COMPATIBLE_MCP_CONFIGURATIONS
+    let identity = compatible_plugin_identity(package_root)?;
+    let skills = normalize_compatible_skills(package_root)?;
+    let external_configuration = COMPATIBLE_MCP_CONFIGURATIONS
         .iter()
         .map(|name| (*name, package_root.join(name)))
-        .find(|(_, path)| path.is_file())
-    else {
-        return Ok(());
+        .find(|(_, path)| path.is_file());
+    let (configuration_name, raw, document) = if let Some((name, path)) = external_configuration {
+        let raw = read_bounded_text(&path, MAXIMUM_MANIFEST_BYTES)?;
+        let document = serde_json::from_str::<Value>(&raw)
+            .map_err(|_| install_error("MCP 配置不是有效 JSON"))?;
+        (Some(name.to_owned()), Some(raw), Some(document))
+    } else if identity
+        .as_ref()
+        .is_some_and(|identity| identity.document.contains_key("mcpServers"))
+    {
+        let identity = identity.as_ref().expect("identity checked above");
+        (
+            Some(identity.format_name.clone()),
+            Some(
+                serde_json::to_string(&identity.document)
+                    .map_err(|_| install_error("Plugin 清单无法序列化"))?,
+            ),
+            Some(Value::Object(identity.document.clone())),
+        )
+    } else {
+        (None, None, None)
     };
-    let raw = read_bounded_text(&configuration_path, MAXIMUM_MANIFEST_BYTES)?;
-    let document: Value =
-        serde_json::from_str(&raw).map_err(|_| install_error("MCP 配置不是有效 JSON"))?;
-    let document = document
-        .as_object()
-        .ok_or_else(|| install_error("MCP 配置必须是 JSON 对象"))?;
-    let servers = ["mcpServers", "servers", "mcp"]
-        .iter()
-        .find_map(|key| document.get(*key))
-        .and_then(Value::as_object)
-        .filter(|servers| !servers.is_empty() && servers.len() <= 64)
-        .ok_or_else(|| install_error(&format!("{configuration_name} 缺少有效 MCP Server 对象")))?;
+    let servers = match document.as_ref() {
+        Some(document) => {
+            let document = document
+                .as_object()
+                .ok_or_else(|| install_error("MCP 配置必须是 JSON 对象"))?;
+            Some(
+                ["mcpServers", "servers", "mcp"]
+                    .iter()
+                    .find_map(|key| document.get(*key))
+                    .and_then(Value::as_object)
+                    .filter(|servers| !servers.is_empty() && servers.len() <= 64)
+                    .ok_or_else(|| {
+                        install_error(&format!(
+                            "{} 缺少有效 MCP Server 对象",
+                            configuration_name.as_deref().unwrap_or("Plugin 清单")
+                        ))
+                    })?,
+            )
+        }
+        None => None,
+    };
+    if identity.is_none() && skills.is_empty() && servers.is_none() {
+        return Ok(());
+    }
 
-    let bin_root = package_root.join("bin");
-    fs::create_dir_all(&bin_root).map_err(|_| install_error("无法创建兼容 MCP 启动目录"))?;
     let mut normalized_servers = BTreeMap::new();
-    let mut frozen_node_prepared = false;
-    for (server_name, server) in servers {
-        let server = server
-            .as_object()
-            .ok_or_else(|| install_error("MCP Server 配置必须是对象"))?;
-        let transport = server
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("stdio")
-            .to_ascii_lowercase();
-        if !matches!(transport.as_str(), "stdio" | "local") {
-            return Err(install_error("兼容导入当前只接受 stdio MCP"));
-        }
-        if let Some(environment) = server.get("env").or_else(|| server.get("environment")) {
-            if !environment.is_null()
-                && !environment
-                    .as_object()
-                    .is_some_and(serde_json::Map::is_empty)
-            {
-                return Err(install_error(
-                    "兼容 MCP 配置包含环境变量；Secret resolver 完成前拒绝导入",
-                ));
+    if let Some(servers) = servers {
+        let bin_root = package_root.join("bin");
+        fs::create_dir_all(&bin_root).map_err(|_| install_error("无法创建兼容 MCP 启动目录"))?;
+        let mut frozen_node_prepared = false;
+        for (server_name, server) in servers {
+            let server = server
+                .as_object()
+                .ok_or_else(|| install_error("MCP Server 配置必须是对象"))?;
+            let transport = server
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("stdio")
+                .to_ascii_lowercase();
+            if !matches!(transport.as_str(), "stdio" | "local") {
+                return Err(install_error("兼容导入当前只接受 stdio MCP"));
             }
+            if let Some(environment) = server.get("env").or_else(|| server.get("environment")) {
+                if !environment.is_null()
+                    && !environment
+                        .as_object()
+                        .is_some_and(serde_json::Map::is_empty)
+                {
+                    return Err(install_error(
+                        "兼容 MCP 配置包含环境变量；Secret resolver 完成前拒绝导入",
+                    ));
+                }
+            }
+            let component_key = compatibility_identifier(server_name, "MCP Server 名称")?;
+            if normalized_servers.contains_key(&component_key) {
+                return Err(install_error("MCP Server 名称规范化后重复"));
+            }
+            let command = compatible_command(server, server_name)?;
+            let raw_command = command
+                .first()
+                .ok_or_else(|| install_error("MCP Server 缺少 command"))?;
+            let mut arguments = command.iter().skip(1).cloned().collect::<Vec<_>>();
+            arguments.extend(compatible_string_array(server.get("args"), "MCP args")?);
+            if arguments.len() > 64 {
+                return Err(install_error("MCP 启动参数数量超过限制"));
+            }
+            let bin = prepare_compatible_launcher(
+                package_root,
+                &bin_root,
+                &component_key,
+                raw_command,
+                &mut frozen_node_prepared,
+            )?;
+            normalized_servers.insert(
+                component_key,
+                json!({
+                    "type": "stdio",
+                    "bin": bin,
+                    "args": arguments,
+                    "env": {}
+                }),
+            );
         }
-        let component_key = compatibility_identifier(server_name, "MCP Server 名称")?;
-        if normalized_servers.contains_key(&component_key) {
-            return Err(install_error("MCP Server 名称规范化后重复"));
-        }
-        let command = compatible_command(server, server_name)?;
-        let raw_command = command
-            .first()
-            .ok_or_else(|| install_error("MCP Server 缺少 command"))?;
-        let mut arguments = command.iter().skip(1).cloned().collect::<Vec<_>>();
-        arguments.extend(compatible_string_array(server.get("args"), "MCP args")?);
-        if arguments.len() > 64 {
-            return Err(install_error("MCP 启动参数数量超过限制"));
-        }
-        let bin = prepare_compatible_launcher(
-            package_root,
-            &bin_root,
-            &component_key,
-            raw_command,
-            &mut frozen_node_prepared,
-        )?;
-        normalized_servers.insert(
-            component_key,
-            json!({
-                "type": "stdio",
-                "bin": bin,
-                "args": arguments,
-                "env": {}
-            }),
-        );
     }
 
     let components = normalized_servers.keys().cloned().collect::<Vec<_>>();
@@ -478,40 +530,300 @@ fn normalize_compatible_mcp_package(package_root: &Path) -> Result<(), String> {
         .cloned()
         .unwrap_or_else(|| "local-mcp".into());
     let identity_component = primary_component.chars().take(40).collect::<String>();
-    let configuration_digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
-    let identity = format!("mcp-{identity_component}-{}", &configuration_digest[..12]);
-    let display_name = if servers.len() == 1 {
-        servers.keys().next().cloned().unwrap_or(primary_component)
+    let identity_seed = raw.unwrap_or_else(|| skills.join("\n"));
+    let configuration_digest = format!("{:x}", Sha256::digest(identity_seed.as_bytes()));
+    let fallback_identity = format!("mcp-{identity_component}-{}", &configuration_digest[..12]);
+    let default_display_name = if normalized_servers.len() == 1 {
+        normalized_servers
+            .keys()
+            .next()
+            .cloned()
+            .unwrap_or(primary_component)
+    } else if normalized_servers.is_empty() {
+        skills
+            .first()
+            .and_then(|path| path.rsplit('/').next())
+            .unwrap_or("Imported Skill")
+            .to_owned()
     } else {
-        format!("Imported MCP ({})", servers.len())
-    }
-    .chars()
-    .take(120)
-    .collect::<String>();
+        format!("Imported MCP ({})", normalized_servers.len())
+    };
+    let manifest_name = identity
+        .as_ref()
+        .map(|identity| identity.name.clone())
+        .unwrap_or_else(|| {
+            if normalized_servers.is_empty() {
+                skills
+                    .first()
+                    .and_then(|path| path.rsplit('/').next())
+                    .unwrap_or("local-skill")
+                    .to_owned()
+            } else {
+                format!("compat-{fallback_identity}")
+            }
+        });
+    let manifest_version = identity
+        .as_ref()
+        .map(|identity| identity.version.clone())
+        .unwrap_or_else(|| "0.0.0-local".into());
+    let description = identity
+        .as_ref()
+        .map(|identity| identity.description.clone())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            if normalized_servers.is_empty() {
+                "Imported standalone Agent Skill".into()
+            } else {
+                format!(
+                    "Imported stdio MCP configuration from {}",
+                    configuration_name.as_deref().unwrap_or("compatible Plugin")
+                )
+            }
+        });
+    let display_name = identity
+        .as_ref()
+        .map(|identity| identity.display_name.clone())
+        .unwrap_or(default_display_name)
+        .chars()
+        .take(120)
+        .collect::<String>();
+    let permissions = if normalized_servers.is_empty() {
+        Vec::new()
+    } else {
+        vec![json!({
+            "permission": "process.spawn",
+            "required": true,
+            "reason": "启动用户确认导入的本机 MCP Server",
+            "components": components
+        })]
+    };
     write_json_file(
         &package_root.join("chatos.plugin.json"),
         &json!({
             "schemaVersion": 3,
-            "name": format!("compat-{identity}"),
-            "version": "0.0.0-local",
-            "description": format!("Imported stdio MCP configuration from {configuration_name}"),
+            "name": manifest_name,
+            "version": manifest_version,
+            "description": description,
             "author": {"name": "Local"},
             "interface": {
                 "displayName": display_name,
-                "shortDescription": "Imported stdio MCP configuration",
-                "longDescription": "Imported stdio MCP configuration",
+                "shortDescription": description,
+                "longDescription": description,
                 "developerName": "Local",
                 "category": "Developer Tools"
             },
+            "skills": skills,
             "mcpServers": normalized_servers,
-            "permissions": [{
-                "permission": "process.spawn",
-                "required": true,
-                "reason": "启动用户确认导入的本机 MCP Server",
-                "components": components
-            }]
+            "permissions": permissions
         }),
     )
+}
+
+fn compatible_plugin_identity(
+    package_root: &Path,
+) -> Result<Option<CompatiblePluginIdentity>, String> {
+    for (relative, format_name) in COMPATIBLE_PLUGIN_MANIFESTS {
+        let path = package_root.join(relative);
+        if !path.is_file() {
+            continue;
+        }
+        let raw = read_bounded_text(&path, MAXIMUM_MANIFEST_BYTES)?;
+        let document = serde_json::from_str::<Value>(&raw)
+            .map_err(|_| install_error(&format!("{format_name} 清单不是有效 JSON")))?
+            .as_object()
+            .cloned()
+            .ok_or_else(|| install_error(&format!("{format_name} 清单必须是 JSON 对象")))?;
+        let raw_name = document
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| install_error(&format!("{format_name} 清单必须声明 name 和 version")))?;
+        let raw_version = document
+            .get("version")
+            .and_then(Value::as_str)
+            .ok_or_else(|| install_error(&format!("{format_name} 清单必须声明 name 和 version")))?;
+        let name = compatibility_identifier(raw_name, "Plugin name")?;
+        let version = raw_version.trim();
+        if version.is_empty() || version.len() > 128 || version.chars().any(char::is_control) {
+            return Err(install_error("Plugin version 无效"));
+        }
+        let description = document
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .chars()
+            .take(2_000)
+            .collect::<String>();
+        let display_name = compatible_display_name(&document)
+            .unwrap_or(raw_name)
+            .trim()
+            .chars()
+            .take(120)
+            .collect::<String>();
+        if display_name.is_empty() || display_name.chars().any(char::is_control) {
+            return Err(install_error("Plugin displayName 无效"));
+        }
+        return Ok(Some(CompatiblePluginIdentity {
+            name,
+            version: version.to_owned(),
+            description,
+            display_name,
+            format_name: (*format_name).to_owned(),
+            document,
+        }));
+    }
+    Ok(None)
+}
+
+fn compatible_display_name(document: &serde_json::Map<String, Value>) -> Option<&str> {
+    document
+        .get("extensions")
+        .and_then(Value::as_object)
+        .and_then(|extensions| extensions.get("com.openai"))
+        .and_then(Value::as_object)
+        .and_then(|openai| openai.get("interface"))
+        .and_then(Value::as_object)
+        .and_then(|interface| interface.get("displayName"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            document
+                .get("interface")
+                .and_then(Value::as_object)
+                .and_then(|interface| interface.get("displayName"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| document.get("displayName").and_then(Value::as_str))
+}
+
+fn normalize_compatible_skills(package_root: &Path) -> Result<Vec<String>, String> {
+    let root_skill = package_root.join("SKILL.md");
+    if root_skill.is_file() {
+        let raw = read_bounded_text(&root_skill, 256 * 1_024)?;
+        let name = compatible_root_skill_name(&raw)?;
+        let target = package_root.join("skills").join(&name);
+        if target.exists() {
+            return Err(install_error(&format!(
+                "根目录 SKILL.md 与 skills/{name} 冲突"
+            )));
+        }
+        fs::create_dir_all(&target).map_err(|_| install_error("无法创建兼容 Skill 目录"))?;
+        fs::copy(&root_skill, target.join("SKILL.md"))
+            .map_err(|_| install_error("无法复制兼容 SKILL.md"))?;
+        for resource in ["scripts", "references", "assets"] {
+            let source = package_root.join(resource);
+            if source.exists() {
+                copy_compatible_skill_tree(&source, &target.join(resource))?;
+            }
+        }
+    }
+
+    let skills_root = package_root.join("skills");
+    let metadata = match fs::symlink_metadata(&skills_root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_) => return Err(install_error("无法读取兼容 Skill 目录")),
+    };
+    if !metadata.is_dir() || is_symlink_or_reparse(&metadata) {
+        return Err(install_error("兼容 Skill 根目录无效"));
+    }
+    let mut entries = fs::read_dir(&skills_root)
+        .map_err(|_| install_error("无法读取兼容 Skill 目录"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| install_error("无法读取兼容 Skill 目录"))?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+    let mut skills = Vec::new();
+    for entry in entries {
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| install_error("兼容 Skill 名称无效"))?;
+        if name.starts_with('.') {
+            continue;
+        }
+        let metadata =
+            fs::symlink_metadata(entry.path()).map_err(|_| install_error("无法读取兼容 Skill"))?;
+        if is_symlink_or_reparse(&metadata) {
+            return Err(install_error("兼容 Skill 不允许链接或重解析点"));
+        }
+        if !metadata.is_dir() || !entry.path().join("SKILL.md").is_file() {
+            continue;
+        }
+        if !valid_compatible_skill_name(&name) {
+            return Err(install_error("兼容 Skill 目录名无效"));
+        }
+        skills.push(format!("skills/{name}"));
+        if skills.len() > 128 {
+            return Err(install_error("兼容 Skill 数量超过限制"));
+        }
+    }
+    Ok(skills)
+}
+
+fn compatible_root_skill_name(raw: &str) -> Result<String, String> {
+    let normalized = raw.replace("\r\n", "\n");
+    let frontmatter = normalized
+        .strip_prefix("---\n")
+        .and_then(|rest| {
+            rest.split_once("\n---\n")
+                .map(|(frontmatter, _)| frontmatter)
+        })
+        .ok_or_else(|| install_error("SKILL.md 缺少有效 YAML frontmatter"))?;
+    let value = frontmatter
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("name:").map(str::trim))
+        .ok_or_else(|| install_error("SKILL.md 必须声明 name"))?;
+    let value = if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    };
+    if !valid_compatible_skill_name(value) {
+        return Err(install_error("SKILL.md name 无效"));
+    }
+    Ok(value.to_owned())
+}
+
+fn valid_compatible_skill_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && !value.starts_with('-')
+        && !value.ends_with('-')
+        && !value.contains("--")
+}
+
+fn copy_compatible_skill_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    let metadata =
+        fs::symlink_metadata(source).map_err(|_| install_error("无法读取兼容 Skill 资源"))?;
+    if !metadata.is_dir() || is_symlink_or_reparse(&metadata) {
+        return Err(install_error("兼容 Skill 资源目录无效"));
+    }
+    fs::create_dir_all(destination).map_err(|_| install_error("无法创建兼容 Skill 资源目录"))?;
+    let entries = fs::read_dir(source)
+        .map_err(|_| install_error("无法读取兼容 Skill 资源"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| install_error("无法读取兼容 Skill 资源"))?;
+    for entry in entries {
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|_| install_error("无法读取兼容 Skill 资源"))?;
+        if is_symlink_or_reparse(&metadata) {
+            return Err(install_error("兼容 Skill 资源不允许链接或重解析点"));
+        }
+        let target = destination.join(entry.file_name());
+        if metadata.is_dir() {
+            copy_compatible_skill_tree(&entry.path(), &target)?;
+        } else if metadata.is_file() {
+            fs::copy(entry.path(), target).map_err(|_| install_error("无法复制兼容 Skill 资源"))?;
+        } else {
+            return Err(install_error("兼容 Skill 包含特殊文件"));
+        }
+    }
+    Ok(())
 }
 
 fn compatible_command(
@@ -2291,6 +2603,12 @@ fn validate_local_package(package_root: &Path) -> Result<PluginManifest, String>
     if !windows_compatible(&manifest.dependencies.supported_platforms) {
         return Err(install_error("本地 Plugin 不支持 Windows"));
     }
+    load_agent_plugin_skill_snapshot(
+        package_root,
+        &manifest.name,
+        manifest.skills.iter().map(|skill| skill.path.as_str()),
+    )
+    .map_err(|_| install_error("本地 Plugin Skill 无效"))?;
     let mut executable_count = 0_usize;
     for server in &manifest.mcp_servers {
         if let PluginMcpServer::Stdio { bin, env, .. } = server {
@@ -2303,9 +2621,9 @@ fn validate_local_package(package_root: &Path) -> Result<PluginManifest, String>
             executable_count += 1;
         }
     }
-    if executable_count == 0 {
+    if executable_count == 0 && manifest.skills.is_empty() {
         return Err(install_error(
-            "本地 Plugin 尚无 Windows 可运行的 stdio MCP 组件",
+            "本地 Plugin 尚无可运行的 stdio MCP 或有效 Skill",
         ));
     }
     Ok(manifest)
@@ -2675,8 +2993,11 @@ fn validate_install_source(source: &PluginInstallSource) -> Result<(), String> {
         .mcp_servers
         .iter()
         .any(|server| matches!(server, PluginMcpServer::Stdio { .. }))
+        && source.release.normalized_manifest.skills.is_empty()
     {
-        return Err(install_error("Plugin 没有 Windows 可运行的 stdio MCP 组件"));
+        return Err(install_error(
+            "Plugin 没有 Windows 可运行的 stdio MCP 或有效 Skill",
+        ));
     }
     Ok(())
 }
@@ -2747,16 +3068,27 @@ fn validate_extracted_package(
     )?;
     let package_json: Value = serde_json::from_str(&package_json)
         .map_err(|_| install_error("Plugin package.json 无效"))?;
+    let has_stdio = manifest
+        .mcp_servers
+        .iter()
+        .any(|server| matches!(server, PluginMcpServer::Stdio { .. }));
     if package_json.get("name").and_then(Value::as_str)
         != Some(source.release.npm_package.name.as_str())
         || package_json.get("version").and_then(Value::as_str)
             != Some(source.release.version.as_str())
-        || !package_json.get("bin").is_some_and(|value| {
-            value.is_string() || value.as_object().is_some_and(|items| !items.is_empty())
-        })
+        || (has_stdio
+            && !package_json.get("bin").is_some_and(|value| {
+                value.is_string() || value.as_object().is_some_and(|items| !items.is_empty())
+            }))
     {
         return Err(install_error("Plugin package.json 身份或可执行入口无效"));
     }
+    load_agent_plugin_skill_snapshot(
+        &package_root,
+        &manifest.name,
+        manifest.skills.iter().map(|skill| skill.path.as_str()),
+    )
+    .map_err(|_| install_error("Plugin 安装包 Skill 无效"))?;
     for server in &manifest.mcp_servers {
         let PluginMcpServer::Stdio { bin, .. } = server else {
             continue;
@@ -3329,6 +3661,133 @@ mod tests {
             .join("bin/compat-fixture-server.exe")
             .is_file());
         package.finish().unwrap();
+    }
+
+    #[test]
+    fn portable_skill_only_plugin_is_normalized_in_staging_and_installed() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("portable-skill");
+        let plugin_root = directory.path().join("plugins");
+        fs::create_dir_all(source.join("references")).unwrap();
+        fs::create_dir_all(source.join("scripts")).unwrap();
+        fs::create_dir_all(source.join("assets")).unwrap();
+        fs::write(
+            source.join("plugin.json"),
+            serde_json::to_vec(&json!({
+                "name": "portable-helper",
+                "version": "1.2.3",
+                "description": "Portable helper",
+                "displayName": "Portable Helper"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            "---\nname: portable-helper\ndescription: Portable rules\n---\nFollow the portable rules.\n",
+        )
+        .unwrap();
+        fs::write(source.join("references/guide.md"), "Guide").unwrap();
+        fs::write(source.join("scripts/check.ps1"), "Write-Output safe").unwrap();
+        fs::write(source.join("assets/readme.txt"), "Asset").unwrap();
+
+        let inspection = inspect_local_package_source(&plugin_root, &source, None).unwrap();
+        assert_eq!(inspection.manifest.name, "portable-helper");
+        assert_eq!(inspection.manifest.version, "1.2.3");
+        assert_eq!(inspection.manifest.skills.len(), 1);
+        assert!(inspection.manifest.mcp_servers.is_empty());
+        assert!(!source.join("chatos.plugin.json").exists());
+        assert!(!source.join("skills").exists());
+
+        let package =
+            install_local_package(&plugin_root, &source, None, &inspection.fingerprint).unwrap();
+        let installed_skill = package
+            .installation_root
+            .join("skills")
+            .join("portable-helper");
+        assert!(installed_skill.join("SKILL.md").is_file());
+        assert_eq!(
+            fs::read_to_string(installed_skill.join("references/guide.md")).unwrap(),
+            "Guide"
+        );
+        assert!(installed_skill.join("scripts/check.ps1").is_file());
+        assert!(installed_skill.join("assets/readme.txt").is_file());
+        package.finish().unwrap();
+    }
+
+    #[test]
+    fn codex_and_claude_skill_plugins_keep_their_manifest_identity() {
+        for (manifest_path, name) in [
+            (".codex-plugin/plugin.json", "codex-helper"),
+            (".claude-plugin/plugin.json", "claude-helper"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let manifest_path = directory.path().join(manifest_path);
+            fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+            fs::write(
+                &manifest_path,
+                serde_json::to_vec(&json!({
+                    "name": name,
+                    "version": "2.0.0",
+                    "description": "Compatible skill Plugin"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let skill = directory.path().join("skills").join(name);
+            fs::create_dir_all(&skill).unwrap();
+            fs::write(
+                skill.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: Compatible rules\n---\nUse the rules.\n"),
+            )
+            .unwrap();
+
+            normalize_compatible_mcp_package(directory.path()).unwrap();
+            let manifest = validate_local_package(directory.path()).unwrap();
+            assert_eq!(manifest.name, name);
+            assert_eq!(manifest.version, "2.0.0");
+            assert_eq!(manifest.skills[0].path, format!("./skills/{name}"));
+            assert!(manifest.mcp_servers.is_empty());
+        }
+    }
+
+    #[test]
+    fn compatible_skill_import_rejects_conflicts_invalid_frontmatter_and_duplicates() {
+        let conflict = tempfile::tempdir().unwrap();
+        fs::write(
+            conflict.path().join("SKILL.md"),
+            "---\nname: helper\ndescription: Root\n---\nRoot rules.\n",
+        )
+        .unwrap();
+        fs::create_dir_all(conflict.path().join("skills/helper")).unwrap();
+        fs::write(
+            conflict.path().join("skills/helper/SKILL.md"),
+            "---\nname: helper\ndescription: Existing\n---\nExisting rules.\n",
+        )
+        .unwrap();
+        assert!(normalize_compatible_mcp_package(conflict.path()).is_err());
+
+        let invalid = tempfile::tempdir().unwrap();
+        fs::write(invalid.path().join("SKILL.md"), "No frontmatter").unwrap();
+        assert!(normalize_compatible_mcp_package(invalid.path()).is_err());
+
+        let duplicate = tempfile::tempdir().unwrap();
+        for directory_name in ["first", "second"] {
+            let skill = duplicate.path().join("skills").join(directory_name);
+            fs::create_dir_all(&skill).unwrap();
+            fs::write(
+                skill.join("SKILL.md"),
+                "---\nname: first\ndescription: Duplicate\n---\nDuplicate rules.\n",
+            )
+            .unwrap();
+        }
+        fs::write(
+            duplicate.path().join("plugin.json"),
+            r#"{"name":"duplicate","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        normalize_compatible_mcp_package(duplicate.path()).unwrap();
+        assert!(validate_local_package(duplicate.path()).is_err());
     }
 
     #[test]

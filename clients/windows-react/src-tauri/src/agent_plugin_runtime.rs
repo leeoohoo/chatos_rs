@@ -347,24 +347,27 @@ fn load_skill_resources(
     skill_directory: &Path,
     total_bytes: &mut u64,
 ) -> Result<BTreeMap<String, String>, String> {
-    let references = skill_directory.join("references");
-    let metadata = match std::fs::symlink_metadata(&references) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-        Err(_) => return Err(plugin_runtime_error()),
-    };
-    if !metadata.is_dir() || is_symlink_or_reparse(&metadata) {
-        return Ok(BTreeMap::new());
-    }
-    let references = references
-        .canonicalize()
-        .map_err(|_| plugin_runtime_error())?;
-    if !references.starts_with(installation_root) {
-        return Err(plugin_runtime_error());
-    }
     let mut resources = BTreeMap::new();
     let mut observed = 0_usize;
-    let mut stack = vec![(references, PathBuf::from("references"))];
+    let mut stack = Vec::new();
+    for resource_root in ["scripts", "references", "assets"] {
+        let candidate = skill_directory.join(resource_root);
+        let metadata = match std::fs::symlink_metadata(&candidate) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err(plugin_runtime_error()),
+        };
+        if !metadata.is_dir() || is_symlink_or_reparse(&metadata) {
+            return Err(plugin_runtime_error());
+        }
+        let canonical = candidate
+            .canonicalize()
+            .map_err(|_| plugin_runtime_error())?;
+        if !canonical.starts_with(installation_root) {
+            return Err(plugin_runtime_error());
+        }
+        stack.push((canonical, PathBuf::from(resource_root)));
+    }
     while let Some((directory, relative_directory)) = stack.pop() {
         let mut entries = std::fs::read_dir(&directory)
             .map_err(|_| plugin_runtime_error())?
@@ -382,7 +385,7 @@ fn load_skill_resources(
             let metadata =
                 std::fs::symlink_metadata(entry.path()).map_err(|_| plugin_runtime_error())?;
             if is_symlink_or_reparse(&metadata) {
-                continue;
+                return Err(plugin_runtime_error());
             }
             let relative = relative_directory.join(&name);
             if metadata.is_dir() {
@@ -620,6 +623,26 @@ impl AgentPluginRuntime {
             optional_nullable_u64(arguments, "offset", 0, usize::MAX as u64)?.unwrap_or(0) as usize;
         let limit = optional_nullable_u64(arguments, "limit", 1, 20)?.unwrap_or(8) as usize;
         let query = query.unwrap_or_default().to_lowercase();
+        if session.definitions.is_empty() && !session.skills_by_option.is_empty() {
+            let (skills, next_offset) = session
+                .describe_skill_catalog(&query, offset, limit)
+                .await?;
+            return Ok(LocalAgentToolOutcome::Succeeded {
+                output: json!({
+                    "view": "skill_catalog",
+                    "disclosure_version": 2,
+                    "binding_schema_version": 1,
+                    "provider_id": format!("plugin:{}:{}", selection.plugin_id, selection.component_key),
+                    "plugin_option": requested_plugin,
+                    "name": selection.display_name,
+                    "tools": [],
+                    "skills": skills,
+                    "offset": offset,
+                    "next_offset": next_offset,
+                    "guidance": "Activate a returned skill_ref with agent_skill_activate before following its instructions or reading its resources.",
+                }),
+            });
+        }
         let filtered = session
             .definitions
             .iter()
@@ -998,7 +1021,7 @@ struct McpSession {
     described: Mutex<HashSet<String>>,
     disclosed_skills: Mutex<HashSet<String>>,
     activated_skills: Mutex<HashSet<String>>,
-    connection: Mutex<McpConnection>,
+    connection: Option<Mutex<McpConnection>>,
 }
 
 struct McpConnection {
@@ -1017,8 +1040,36 @@ impl McpSession {
         resolved: ResolvedAgentPluginExecution,
         runtime_fingerprint: String,
     ) -> Result<Self, String> {
-        let executable = resolved
-            .executable
+        let skills_by_option = resolved
+            .skill_snapshot
+            .documents
+            .values()
+            .map(|document| {
+                (
+                    skill_option(context, &resolved.identity, &document.name),
+                    document.clone(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let Some(executable) = resolved.executable.as_ref() else {
+            if skills_by_option.is_empty()
+                || !resolved.args.is_empty()
+                || !resolved.environment.is_empty()
+                || resolved.allowed_tools.is_some()
+            {
+                return Err(plugin_runtime_error());
+            }
+            return Ok(Self {
+                runtime_fingerprint,
+                definitions: Vec::new(),
+                skills_by_option,
+                described: Mutex::new(HashSet::new()),
+                disclosed_skills: Mutex::new(HashSet::new()),
+                activated_skills: Mutex::new(HashSet::new()),
+                connection: None,
+            });
+        };
+        let executable = executable
             .canonicalize()
             .map_err(|_| plugin_runtime_error())?;
         let plugin_root = plugin_root
@@ -1061,14 +1112,14 @@ impl McpSession {
             described: Mutex::new(HashSet::new()),
             disclosed_skills: Mutex::new(HashSet::new()),
             activated_skills: Mutex::new(HashSet::new()),
-            connection: Mutex::new(McpConnection {
+            connection: Some(Mutex::new(McpConnection {
                 child,
                 _termination: termination,
                 stdin,
                 stdout: BufReader::new(stdout),
                 next_request_id: 1,
                 unusable: false,
-            }),
+            })),
         };
         let initialization = session
             .request(
@@ -1098,17 +1149,6 @@ impl McpSession {
             .map_err(|error| error.message)?;
         let tools = session.list_tools().await.map_err(|error| error.message)?;
         let definitions = decode_tool_definitions(context, &resolved, tools)?;
-        let skills_by_option = resolved
-            .skill_snapshot
-            .documents
-            .values()
-            .map(|document| {
-                (
-                    skill_option(context, &resolved.identity, &document.name),
-                    document.clone(),
-                )
-            })
-            .collect();
         Ok(Self {
             runtime_fingerprint,
             definitions,
@@ -1179,6 +1219,37 @@ impl McpSession {
                 })
             })
             .collect()
+    }
+
+    async fn describe_skill_catalog(
+        &self,
+        query: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<Value>, Option<usize>), String> {
+        let filtered = self
+            .skills_by_option
+            .iter()
+            .filter(|(_, document)| {
+                query.is_empty()
+                    || format!("{} {}", document.name, document.description)
+                        .to_lowercase()
+                        .contains(query)
+            })
+            .map(|(option, _)| option.clone())
+            .collect::<Vec<_>>();
+        if offset > filtered.len() || limit == 0 || limit > 20 {
+            return Err(invalid_capability_arguments());
+        }
+        let page = filtered
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        self.mark_disclosed_skills(&page).await;
+        let next_offset = (offset + page.len() < filtered.len()).then_some(offset + page.len());
+        Ok((self.skill_summaries(&page), next_offset))
     }
 
     async fn activate_skill(
@@ -1292,7 +1363,10 @@ impl McpSession {
 
     async fn request(&self, method: &str, parameters: Value) -> Result<Value, McpError> {
         let future = async {
-            let mut connection = self.connection.lock().await;
+            let Some(connection) = self.connection.as_ref() else {
+                return Err(McpError::known("Plugin does not provide an MCP runtime."));
+            };
+            let mut connection = connection.lock().await;
             if connection.unusable {
                 return Err(McpError::unknown("Plugin MCP session is unavailable."));
             }
@@ -1340,7 +1414,10 @@ impl McpSession {
 
     async fn notify(&self, method: &str, parameters: Value) -> Result<(), McpError> {
         let future = async {
-            let mut connection = self.connection.lock().await;
+            let Some(connection) = self.connection.as_ref() else {
+                return Err(McpError::known("Plugin does not provide an MCP runtime."));
+            };
+            let mut connection = connection.lock().await;
             if connection.unusable {
                 return Err(McpError::unknown("Plugin MCP session is unavailable."));
             }
@@ -1365,7 +1442,10 @@ impl McpSession {
     }
 
     async fn invalidate(&self) {
-        let mut connection = self.connection.lock().await;
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        let mut connection = connection.lock().await;
         if connection.unusable {
             return;
         }
@@ -1708,8 +1788,9 @@ fn resolved_runtime_fingerprint(resolved: &ResolvedAgentPluginExecution) -> Resu
 
     let executable = resolved
         .executable
-        .canonicalize()
-        .map_err(|_| plugin_runtime_error())?;
+        .as_ref()
+        .map(|path| path.canonicalize().map_err(|_| plugin_runtime_error()))
+        .transpose()?;
     let working_directory = resolved
         .working_directory
         .as_ref()
@@ -1720,7 +1801,10 @@ fn resolved_runtime_fingerprint(resolved: &ResolvedAgentPluginExecution) -> Resu
         allowed_tools.sort();
     }
     let identity = resolved.identity.frozen_identity();
-    let executable = executable.to_string_lossy().into_owned();
+    let executable = executable
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let working_directory = working_directory
         .as_ref()
         .map(|path| path.to_string_lossy().into_owned())
@@ -2440,6 +2524,66 @@ mod tests {
         .is_err());
     }
 
+    #[tokio::test]
+    async fn skill_only_session_never_starts_a_process_and_preserves_disclosure_gates() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_root = directory.path().join("Plugins");
+        let installation = plugin_root.join("plugin-1").join("1.0.0");
+        let skill = installation.join("skills").join("portable-helper");
+        for resource in ["scripts", "references", "assets"] {
+            std::fs::create_dir_all(skill.join(resource)).unwrap();
+        }
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: portable-helper\ndescription: Portable helper\n---\nFollow the portable rules.\n",
+        )
+        .unwrap();
+        std::fs::write(skill.join("scripts/check.ps1"), "Write-Output safe").unwrap();
+        std::fs::write(skill.join("references/guide.md"), "Guide").unwrap();
+        std::fs::write(skill.join("assets/readme.txt"), "Asset").unwrap();
+        let context = context();
+        let snapshot = load_agent_plugin_skill_snapshot(
+            &installation,
+            "portable-helper",
+            ["skills/portable-helper"].into_iter(),
+        )
+        .unwrap();
+        let resolved = ResolvedAgentPluginExecution {
+            identity: frozen_plugin_selections(&context).unwrap().remove(0),
+            executable: None,
+            args: Vec::new(),
+            working_directory: Some(installation),
+            environment: BTreeMap::new(),
+            allowed_tools: None,
+            skill_snapshot: snapshot,
+        };
+        let fingerprint = resolved_runtime_fingerprint(&resolved).unwrap();
+
+        let session = McpSession::connect(&plugin_root, &context, resolved, fingerprint)
+            .await
+            .unwrap();
+
+        assert!(session.connection.is_none());
+        assert!(session.definitions.is_empty());
+        assert_eq!(session.skills_by_option.len(), 1);
+        let skill_ref = session.skills_by_option.keys().next().unwrap().clone();
+        assert!(session.activate_skill(&skill_ref).await.is_err());
+        let (catalog, next_offset) = session
+            .describe_skill_catalog("portable", 0, 8)
+            .await
+            .unwrap();
+        assert_eq!(catalog[0]["skill_ref"], skill_ref);
+        assert_eq!(catalog[0]["name"], "portable-helper");
+        assert_eq!(next_offset, None);
+        let activated = session.activate_skill(&skill_ref).await.unwrap().unwrap();
+        assert!(activated.resources.contains_key("scripts/check.ps1"));
+        assert!(activated.resources.contains_key("references/guide.md"));
+        assert!(activated.resources.contains_key("assets/readme.txt"));
+        let error = session.call_tool("forged", json!({})).await.unwrap_err();
+        assert!(error.outcome_known);
+        session.invalidate().await;
+    }
+
     #[cfg(unix)]
     #[test]
     fn skill_snapshot_rejects_a_symlinked_declared_directory() {
@@ -2539,7 +2683,7 @@ fn main() {
         .unwrap();
         let resolved = ResolvedAgentPluginExecution {
             identity: frozen_plugin_selections(&context).unwrap().remove(0),
-            executable,
+            executable: Some(executable),
             args: Vec::new(),
             working_directory: Some(installation),
             environment: BTreeMap::new(),

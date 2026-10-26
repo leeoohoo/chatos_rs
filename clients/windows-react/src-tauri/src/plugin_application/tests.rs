@@ -265,6 +265,57 @@ async fn agent_catalog_freezes_only_manifest_backed_stdio_components() {
 }
 
 #[tokio::test]
+async fn skill_only_plugin_is_selectable_and_resolves_without_an_executable() {
+    let fixture = CatalogFixture::new();
+    let skill = fixture.installation.join("skills").join("portable-helper");
+    fs::create_dir_all(skill.join("references")).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: portable-helper\ndescription: Portable helper rules\n---\nFollow the portable rules.\n",
+    )
+    .unwrap();
+    fs::write(skill.join("references/guide.md"), "Guide").unwrap();
+    fixture.write_manifest(json!({
+        "schemaVersion": 3,
+        "name": "portable-helper",
+        "version": "1.0.0",
+        "description": "Portable helper rules.",
+        "skills": ["skills/portable-helper"],
+        "mcpServers": {},
+        "interface": {"displayName": "Portable Helper"},
+        "permissions": []
+    }));
+    let mut record = fixture.record();
+    record.spec.component_id = "skills-only".into();
+    record.spec.server_id = "skills-only".into();
+    record.spec.executable_path = fixture
+        .installation
+        .join("chatos.plugin.json")
+        .to_string_lossy()
+        .into_owned();
+    record.spec.args.clear();
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let options = manager
+        .list_agent_plugins(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].component_key, "skills-only");
+    assert_eq!(options[0].display_name, "Portable Helper");
+
+    let client = ScriptedMetadataClient::new(vec![Ok(record_result(record))]);
+    let resolved = manager
+        .resolve_agent_plugin(&client, "owner-1", &options[0])
+        .await
+        .unwrap();
+    assert!(resolved.executable.is_none());
+    assert!(resolved.args.is_empty());
+    assert!(resolved.environment.is_empty());
+    assert_eq!(resolved.skill_snapshot.len(), 1);
+}
+
+#[tokio::test]
 async fn agent_catalog_rejects_missing_or_non_stdio_manifest_components() {
     let fixture = CatalogFixture::new();
     let mut record = fixture.record();
@@ -332,7 +383,7 @@ async fn agent_runtime_resolves_only_the_exact_frozen_installation() {
         .unwrap();
 
     assert_eq!(resolved.identity, expected);
-    assert_eq!(resolved.executable, fixture.executable);
+    assert_eq!(resolved.executable, Some(fixture.executable));
     assert_eq!(resolved.args, ["mcp"]);
     assert!(resolved.environment.is_empty());
     assert_eq!(resolved.skill_snapshot.len(), 1);

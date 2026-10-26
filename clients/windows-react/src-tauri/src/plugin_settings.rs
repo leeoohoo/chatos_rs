@@ -723,8 +723,39 @@ fn installation_specs(
             .map_err(|_| "Plugin 安装记录无效。".to_owned())?;
         specs.push(spec);
     }
+    if specs.is_empty()
+        && package.manifest.mcp_servers.is_empty()
+        && !package.manifest.skills.is_empty()
+    {
+        let component_key = "skills-only";
+        let manifest_path = package.installation_root.join("chatos.plugin.json");
+        let installation_id = previous_by_component
+            .get(component_key)
+            .map(|record| record.spec.installation_id.clone())
+            .unwrap_or_else(|| format!("plugin-install-{}", uuid::Uuid::new_v4().simple()));
+        let spec = LocalPluginInstallationSpec {
+            installation_id,
+            owner_user_id: owner_user_id.to_owned(),
+            plugin_id: source.catalog.id.clone(),
+            release_id: source.release.id.clone(),
+            release_digest: format!("sha256:{}", source.release.artifact_sha256),
+            component_id: component_key.into(),
+            component_revision: secure_component_revision(&source.release.artifact_sha256)?,
+            server_id: component_key.into(),
+            executable_path: manifest_path.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            working_directory: Some(package.installation_root.to_string_lossy().into_owned()),
+            environment_secret_refs: BTreeMap::new(),
+            tool_prefix: None,
+            allowed_tools: None,
+            enabled,
+        };
+        spec.validate()
+            .map_err(|_| "Plugin Skill 安装记录无效。".to_owned())?;
+        specs.push(spec);
+    }
     if specs.is_empty() {
-        return Err("Plugin 没有 Windows 可运行的 stdio MCP 组件。".into());
+        return Err("Plugin 没有 Windows 可运行的 stdio MCP 或有效 Skill。".into());
     }
     Ok(specs)
 }
@@ -776,8 +807,38 @@ fn local_installation_specs(
             .map_err(|_| "Plugin 安装记录无效。".to_owned())?;
         specs.push(spec);
     }
+    if specs.is_empty()
+        && package.manifest.mcp_servers.is_empty()
+        && !package.manifest.skills.is_empty()
+    {
+        let component_key = "skills-only";
+        let manifest_path = package.installation_root.join("chatos.plugin.json");
+        let spec = LocalPluginInstallationSpec {
+            installation_id: previous_by_component
+                .get(component_key)
+                .map(|record| record.spec.installation_id.clone())
+                .unwrap_or_else(|| format!("plugin-install-{}", uuid::Uuid::new_v4().simple())),
+            owner_user_id: owner_user_id.to_owned(),
+            plugin_id: plugin_id.to_owned(),
+            release_id: release_id.to_owned(),
+            release_digest: format!("sha256:{}", package.artifact_sha256),
+            component_id: component_key.into(),
+            component_revision: secure_component_revision(&package.artifact_sha256)?,
+            server_id: component_key.into(),
+            executable_path: manifest_path.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            working_directory: Some(package.installation_root.to_string_lossy().into_owned()),
+            environment_secret_refs: BTreeMap::new(),
+            tool_prefix: None,
+            allowed_tools: None,
+            enabled: true,
+        };
+        spec.validate()
+            .map_err(|_| "Plugin Skill 安装记录无效。".to_owned())?;
+        specs.push(spec);
+    }
     if specs.is_empty() {
-        return Err("Plugin 没有 Windows 可运行的 stdio MCP 组件。".into());
+        return Err("Plugin 没有 Windows 可运行的 stdio MCP 或有效 Skill。".into());
     }
     Ok(specs)
 }
@@ -1528,6 +1589,54 @@ mod tests {
         assert_eq!(runtime_status(false, false), "not_installed");
         assert_eq!(runtime_status(true, false), "disabled");
         assert_eq!(runtime_status(true, true), "not_checked");
+    }
+
+    #[test]
+    fn skill_only_package_receives_a_non_executable_host_record() {
+        let directory = tempfile::tempdir().unwrap();
+        let installation_root = directory.path().join("installed");
+        fs::create_dir_all(&installation_root).unwrap();
+        fs::write(installation_root.join("chatos.plugin.json"), "{}").unwrap();
+        let manifest = parse_plugin_manifest(
+            r#"{
+                "schemaVersion": 3,
+                "name": "skill-only",
+                "version": "1.0.0",
+                "description": "Skill only",
+                "author": { "name": "Local" },
+                "skills": ["./skills/helper"],
+                "mcpServers": {},
+                "interface": {
+                    "displayName": "Skill Only",
+                    "shortDescription": "Skill only",
+                    "longDescription": "Skill only",
+                    "developerName": "Local",
+                    "category": "Developer Tools"
+                },
+                "permissions": []
+            }"#,
+        )
+        .unwrap();
+        let package = crate::plugin_installer::CommittedPluginPackage {
+            plugin_root: directory.path().to_path_buf(),
+            installation_root: installation_root.clone(),
+            manifest,
+            artifact_sha256: "a".repeat(64),
+            backup_root: None,
+        };
+
+        let specs =
+            local_installation_specs("owner-1", "plugin-1", "release-1", &package, &[]).unwrap();
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].server_id, "skills-only");
+        assert_eq!(specs[0].component_id, "skills-only");
+        assert!(specs[0].args.is_empty());
+        assert!(specs[0].allowed_tools.is_none());
+        assert_eq!(
+            Path::new(&specs[0].executable_path).file_name(),
+            Some(std::ffi::OsStr::new("chatos.plugin.json"))
+        );
     }
 
     #[test]

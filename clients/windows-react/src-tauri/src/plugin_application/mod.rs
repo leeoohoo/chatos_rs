@@ -29,6 +29,7 @@ const MAXIMUM_UI_CONTRIBUTIONS: usize = 64;
 const MAXIMUM_UI_ASSETS: usize = 256;
 const MAXIMUM_BRIDGE_CAPABILITIES: usize = 64;
 const MAXIMUM_MCP_SERVERS: usize = 64;
+const SKILLS_ONLY_COMPONENT_KEY: &str = "skills-only";
 
 type MetadataFuture<'a> = Pin<Box<dyn Future<Output = Result<HostResult, String>> + Send + 'a>>;
 
@@ -113,11 +114,12 @@ impl PluginApplicationManager {
         {
             return Err(plugin_unavailable());
         }
-        let server = manifest
-            .mcp_servers
-            .get(&expected.component_key)
-            .ok_or_else(plugin_unavailable)?;
-        if record.spec.args != server.args {
+        let server = manifest.mcp_servers.get(&expected.component_key);
+        if server.is_some_and(|server| record.spec.args != server.args)
+            || (server.is_none()
+                && (expected.component_key != SKILLS_ONLY_COMPONENT_KEY
+                    || !record.spec.args.is_empty()))
+        {
             return Err(plugin_unavailable());
         }
         let working_directory = match record.spec.working_directory.as_deref() {
@@ -137,10 +139,10 @@ impl PluginApplicationManager {
         };
         Ok(ResolvedAgentPluginExecution {
             identity: projected,
-            executable: PathBuf::from(&record.spec.executable_path),
+            executable: server.map(|_| PathBuf::from(&record.spec.executable_path)),
             args: record.spec.args,
             working_directory,
-            environment: server.env.clone(),
+            environment: server.map(|server| server.env.clone()).unwrap_or_default(),
             allowed_tools: record.spec.allowed_tools,
             skill_snapshot,
         })
@@ -198,10 +200,12 @@ impl PluginApplicationManager {
             let Ok(option) = project_agent_plugin(&record, &manifest) else {
                 continue;
             };
-            let Some(server) = manifest.mcp_servers.get(&option.component_key) else {
-                continue;
-            };
-            if record.spec.args != server.args {
+            let server = manifest.mcp_servers.get(&option.component_key);
+            if server.is_some_and(|server| record.spec.args != server.args)
+                || (server.is_none()
+                    && (option.component_key != SKILLS_ONLY_COMPONENT_KEY
+                        || !record.spec.args.is_empty()))
+            {
                 continue;
             }
             options.insert(option.selection_id(), option);
@@ -356,7 +360,7 @@ pub(crate) struct TrustedAgentPluginOption {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedAgentPluginExecution {
     pub(crate) identity: TrustedAgentPluginOption,
-    pub(crate) executable: PathBuf,
+    pub(crate) executable: Option<PathBuf>,
     pub(crate) args: Vec<String>,
     pub(crate) working_directory: Option<PathBuf>,
     pub(crate) environment: BTreeMap<String, String>,
@@ -789,6 +793,44 @@ fn project_agent_plugin(
     manifest: &PluginManifest,
 ) -> Result<TrustedAgentPluginOption, String> {
     let component_key = &record.spec.server_id;
+    if component_key == SKILLS_ONLY_COMPONENT_KEY {
+        if manifest.skills.is_empty()
+            || !manifest.mcp_servers.is_empty()
+            || !record.spec.args.is_empty()
+            || !record.spec.environment_secret_refs.is_empty()
+            || record.spec.tool_prefix.is_some()
+            || record.spec.allowed_tools.is_some()
+            || Path::new(&record.spec.executable_path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                != Some("chatos.plugin.json")
+        {
+            return Err(plugin_catalog_error());
+        }
+        let display_name = manifest
+            .interface
+            .as_ref()
+            .and_then(|interface| interface.display_name.as_deref())
+            .unwrap_or(&manifest.name)
+            .trim()
+            .to_owned();
+        let description = manifest.description.trim().to_owned();
+        validate_text(&display_name, 240)?;
+        if !valid_optional_text(&description, 16 * 1_024) {
+            return Err(plugin_catalog_error());
+        }
+        return Ok(TrustedAgentPluginOption {
+            installation_id: record.spec.installation_id.clone(),
+            plugin_id: record.spec.plugin_id.clone(),
+            component_key: component_key.clone(),
+            component_revision: record.spec.component_revision.clone(),
+            release_id: record.spec.release_id.clone(),
+            release_digest: record.spec.release_digest.clone(),
+            manifest_version: manifest.version.clone(),
+            display_name,
+            description,
+        });
+    }
     let server = manifest
         .mcp_servers
         .get(component_key)
