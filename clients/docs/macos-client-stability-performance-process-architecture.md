@@ -2589,13 +2589,24 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：Host 动态额度只控制 scheduler durable claim，不撤销 active claim，也不机械包裹 Memory Sync。Large Transfer、进程内重媒体、Plugin 与数据库 maintenance 的组合压力仍留给 12.119；真实移动盘/ENOSPC/睡眠/断网门禁、长时间 Release soak 和正式分发仍分别属于 12.118—12.120。
 
-### 12.116—12.120 剩余完整交付路径
+### 12.116 第四十八完整里程碑：文件生命周期与失败回收收口（2026-10-26）
+
+本里程碑关闭 12.110 明确保留的 workspace `.import-*`、两类 UI exporter 临时文件和默认项目注册失败遗留目录。附件 materialize 只在精确的 `.chatos-attachments/<owner+conversation hash>/<token hash>` 目录内机会式扫描，只回收超过 24 小时、当前用户拥有、规范 UUID 命名、未锁定且链接形态可证明安全的 `.import-*`；普通孤儿必须只有一个硬链接，`linkat(temp, source)` 后被 `SIGKILL` 留下的双链接只有在另一个链接正是预期 `source[.ext]` 且 inode 相同时才移除临时名字。最终返回前再次复核已验证 descriptor 与 `source` 目录项仍为同一 device/inode。
+
+Artifact 与消息附件导出统一使用 descriptor 绑定的 `AppOwnedExportTransaction`。事务在用户选择的目标目录内创建并锁定规范临时文件，只扫描该目录中对应 exporter 自己的 24 小时旧命名空间；fresh、非规范名、其他用户、symlink、hardlink 和仍持锁文件全部保留。最终安装前同时复核原目录 descriptor、按原路径重开的目录和临时文件 descriptor/目录项身份，目录路径被替换时拒绝 rename；取消、摘要失败或其他未安装退出由事务析构删除本次临时文件，成功 rename 后 fsync 目录。
+
+Code Read Worker 协议升至 v3；Agent 默认项目目录创建现在接收 Worker 返回的目录 device/inode。后续注册或验证失败时，先跨所有 owner 查询同一 workspace/relative root 是否已有非 removed 记录；只有完全未注册时才请求非递归删除，并把创建时身份作为硬前置条件。目录已非空、被替换为 symlink/其他 inode、已被另一账户注册或 registry 查询自身失败时均 fail closed，不删除现有内容。协议升级让旧 Worker 不能以缺少身份字段的成功响应静默进入新回收链路。
+
+验收：Debug 与原生 arm64 Release `warnings-as-errors` 联合矩阵各执行 60 项，包含 13 项真实 Code Read Worker 进程隔离、14 项 Worker Engine、17 项默认项目/失败回收、5 项 Registry 和 11 项 UI exporter/事务回归，0 跳过、0 失败；Release 完成 App、Connector、Worker 完整优化依赖图。覆盖规范名与年龄、活跃锁、symlink、普通/预期双 hardlink、取消、SIGKILL 残留、目录路径替换、非空目录和跨账户注册。`git diff --check` 与提交前静态检查同步执行。本阶段没有停止、替换、启动、打包或安装当前 ChatOS，也没有访问活动用户数据库。
+
+边界：回收仍是精确目录内的机会式维护，不递归扫描任意用户目录；24 小时宽限优先保护暂停、睡眠和慢卷上的活跃导出。真实移动盘 ENOSPC/只读/睡眠与外部 SSH 环境属于 12.118，8 小时组合 soak 和正式分发分别属于 12.119、12.120。
+
+### 12.117—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
 | --- | --- | --- |
-| 12.116 文件生命周期收口 | 安全回收 workspace `.import-*`、UI exporter 临时文件和 registry 失败遗留空目录；补最终打开点 device/inode 再校验 | ownership、命名、年龄、锁/活跃 Worker、symlink、hardlink、跨账户和取消/SIGKILL 回归全部通过；不递归清理任意用户目录 |
 | 12.117 Agent/存储强杀矩阵 | 覆盖凭据交付、provider 网络、工具副作用、checkpoint、SQLite COMMIT/VACUUM 等不确定窗口 | 每个停点只有“安全重试、明确失败、待对账”三类结果；无重复副作用、跨账户写入或静默丢失；连续崩溃有隔离熔断 |
 | 12.118 外部环境故障门禁 | 在真实 Linux/macOS SSH 端和移动盘验证 staging、权限继承、原子提交、孤儿扫描、断网、睡眠、只读卷与 ENOSPC | 旧目标不被失败写覆盖；临时文件可识别回收；取消只终止所属进程组；远端不可确认结果进入待对账 |
 | 12.119 Release 组合 SLO 与 8 小时 soak | 固定硬件运行 UI + Agent + Host + Media + Plugin 组合负载，完成 200 次切页、20 次账户循环、崩溃/取消风暴和 8 小时 soak | 暖切页 p95 < 100 ms、无 >250 ms 主线程 hang；进程组 footprint/CPU/磁盘写入有基线；Task/FD/observer/临时文件不单调增长 |

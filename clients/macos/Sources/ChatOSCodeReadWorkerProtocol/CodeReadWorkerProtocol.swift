@@ -1,9 +1,9 @@
 import Foundation
 
 public enum ChatOSCodeReadWorkerProtocol {
-    public static let minimumVersion = 2
-    public static let maximumVersion = 2
-    public static let buildVersion = "code-read-worker-v2"
+    public static let minimumVersion = 3
+    public static let maximumVersion = 3
+    public static let buildVersion = "code-read-worker-v3"
     public static let maximumInlineBytes = 16 * 1_024 * 1_024
     public static let maximumBinaryPayloadBytes = 20 * 1_024 * 1_024
     public static let operations = [

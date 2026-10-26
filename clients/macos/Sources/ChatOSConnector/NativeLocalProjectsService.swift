@@ -140,7 +140,7 @@ public actor NativeLocalProjectsService:
                 ? directoryName
                 : "\(projectsRelativeRoot)/\(directoryName)"
             do {
-                _ = try await codeReadWorker.execute(
+                let creation = try await codeReadWorker.execute(
                     operation: "project_create_directory_v1",
                     arguments: [
                         "path": .string(relativeRoot),
@@ -154,16 +154,47 @@ public actor NativeLocalProjectsService:
                     defaultToolRoot: nil,
                     ripgrepURL: nil
                 )
-                return try await create(
-                    ownerUserID: ownerUserID,
-                    draft: .init(
-                        name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                        description: description.trimmingCharacters(in: .whitespacesAndNewlines),
-                        workspaceID: workspace.id,
-                        relativeRoot: relativeRoot,
-                        projectTypeKey: projectTypeKey
-                    )
+                guard case let .object(createdDirectory) = creation,
+                      case let .string(createdDevice)? = createdDirectory["device"],
+                      case let .string(createdInode)? = createdDirectory["inode"],
+                      UInt64(createdDevice) != nil,
+                      UInt64(createdInode) != nil else {
+                    throw CodeReadWorkerProcessClientError.invalidResponse
+                }
+                let draft = LocalProjectDraft(
+                    name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                    description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+                    workspaceID: workspace.id,
+                    relativeRoot: relativeRoot,
+                    projectTypeKey: projectTypeKey
                 )
+                do {
+                    return try await create(ownerUserID: ownerUserID, draft: draft)
+                } catch {
+                    let isRegistered = (try? await registry().containsRegisteredPath(
+                        workspaceID: draft.workspaceID,
+                        relativeRoot: draft.relativeRoot
+                    )) ?? true
+                    if !isRegistered {
+                        _ = try? await codeReadWorker.execute(
+                            operation: "project_delete_entry_v1",
+                            arguments: [
+                                "path": .string(relativeRoot),
+                                "recursive": .bool(false),
+                                "expected_device": .string(createdDevice),
+                                "expected_inode": .string(createdInode),
+                            ],
+                            projectRoot: URL(
+                                fileURLWithPath: workspace.absoluteRoot,
+                                isDirectory: true
+                            ),
+                            requestCWD: nil,
+                            defaultToolRoot: nil,
+                            ripgrepURL: nil
+                        )
+                    }
+                    throw error
+                }
             } catch let error as CodeReadWorkerProcessClientError {
                 guard case let .requestRejected(code, _) = error,
                       code == "already_exists" else { throw error }

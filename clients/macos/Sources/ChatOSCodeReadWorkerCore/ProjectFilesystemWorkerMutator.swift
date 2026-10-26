@@ -27,7 +27,11 @@ struct ProjectFilesystemWorkerMutator {
             guard let recursive = arguments.bool("recursive") else {
                 throw CodeReadWorkerCoreError.invalidRequest("缺少布尔字段：recursive")
             }
-            return try delete(path: requiredString(arguments, "path"), recursive: recursive)
+            return try delete(
+                path: requiredString(arguments, "path"),
+                recursive: recursive,
+                expectedIdentity: try optionalIdentity(arguments)
+            )
         default:
             throw CodeReadWorkerCoreError.unsupportedTool(operation)
         }
@@ -134,13 +138,21 @@ struct ProjectFilesystemWorkerMutator {
             current = next
             ownsCurrent = true
         }
+        var status = stat()
+        guard Darwin.fstat(current, &status) == 0 else { throw mappedErrno(errno) }
         return .object([
             "path": .string(components.joined(separator: "/")),
             "created": .bool(created),
+            "device": .string(String(status.st_dev)),
+            "inode": .string(String(status.st_ino)),
         ])
     }
 
-    private func delete(path: String, recursive: Bool) throws -> CodeReadWorkerJSONValue {
+    private func delete(
+        path: String,
+        recursive: Bool,
+        expectedIdentity: CodeReadWorkerFileIdentity?
+    ) throws -> CodeReadWorkerJSONValue {
         try checkDeadline()
         let components = try normalizedComponents(path)
         let rootDescriptor = try openRoot()
@@ -156,15 +168,21 @@ struct ProjectFilesystemWorkerMutator {
             Darwin.fstatat(parentDescriptor, $0, &status, AT_SYMLINK_NOFOLLOW)
         }
         guard statResult == 0 else { throw mappedErrno(errno) }
+        if let expectedIdentity {
+            guard UInt64(status.st_dev) == expectedIdentity.device,
+                  UInt64(status.st_ino) == expectedIdentity.inode else {
+                throw CodeReadWorkerCoreError.filesystemFailure("目标在操作期间发生变化")
+            }
+        }
         let isDirectory = (status.st_mode & S_IFMT) == S_IFDIR
-        if isDirectory && recursive {
+        if isDirectory && (recursive || expectedIdentity != nil) {
             let descriptor = leaf.withCString {
                 Darwin.openat(parentDescriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
             }
             guard descriptor >= 0 else { throw mappedErrno(errno) }
             defer { _ = Darwin.close(descriptor) }
             try validateIdentity(descriptor, expected: status)
-            try deleteDirectoryContents(descriptor)
+            if recursive { try deleteDirectoryContents(descriptor) }
             try validateIdentity(leaf, in: parentDescriptor, expected: status)
         }
         let flags = isDirectory ? AT_REMOVEDIR : 0
@@ -318,6 +336,20 @@ struct ProjectFilesystemWorkerMutator {
             throw CodeReadWorkerCoreError.invalidRequest("缺少字符串字段：\(key)")
         }
         return value
+    }
+
+    private func optionalIdentity(
+        _ arguments: [String: CodeReadWorkerJSONValue]
+    ) throws -> CodeReadWorkerFileIdentity? {
+        let device = arguments.string("expected_device")
+        let inode = arguments.string("expected_inode")
+        guard device != nil || inode != nil else { return nil }
+        guard let device, let inode,
+              let parsedDevice = UInt64(device),
+              let parsedInode = UInt64(inode) else {
+            throw CodeReadWorkerCoreError.invalidRequest("无效的目标身份")
+        }
+        return .init(device: parsedDevice, inode: parsedInode)
     }
 
     private func checkDeadline() throws {

@@ -50,6 +50,23 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
         ).first
     }
 
+    /// Used only to fence cleanup of a just-created managed directory. The lookup deliberately
+    /// spans owners so one account can never remove an empty directory already registered by
+    /// another account sharing the same local workspace grant.
+    public func containsRegisteredPath(
+        workspaceID: String,
+        relativeRoot: String
+    ) throws -> Bool {
+        try ProjectRegistryValidation.routeIdentifier(workspaceID, field: "workspaceID")
+        try ProjectRegistryValidation.relativeRoot(relativeRoot)
+        return try query(
+            "SELECT 1 FROM local_project_records "
+                + "WHERE workspace_id = ? AND relative_root = ? AND status != 'removed' LIMIT 1",
+            [.text(workspaceID), .text(relativeRoot)],
+            row: { _ in true }
+        ).first == true
+    }
+
     public func create(ownerUserID: String, draft: LocalProjectDraft) throws -> LocalProjectRecord {
         let now = Self.now()
         let record = LocalProjectRecord(

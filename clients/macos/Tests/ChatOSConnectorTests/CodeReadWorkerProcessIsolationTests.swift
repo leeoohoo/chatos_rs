@@ -843,7 +843,7 @@ private struct WorkerFixture {
         let script = """
         #!/bin/zsh
         IFS= read -r hello
-        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":2,"worker_build_version":"code-read-worker-v2","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files","open_file_in_pet","project_list_v1","project_search_entries_v1","project_run_analyze_v1","project_write_file_v1","project_create_directory_v1","project_delete_entry_v1","attachment_authorize_v1","attachment_resolve_v1","attachment_verify_file_v1","attachment_materialize_v1"],"maximum_inline_bytes":16777216,"maximum_binary_payload_bytes":20971520,"error":null}'
+        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":3,"worker_build_version":"code-read-worker-v3","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files","open_file_in_pet","project_list_v1","project_search_entries_v1","project_run_analyze_v1","project_write_file_v1","project_create_directory_v1","project_delete_entry_v1","attachment_authorize_v1","attachment_resolve_v1","attachment_verify_file_v1","attachment_materialize_v1"],"maximum_inline_bytes":16777216,"maximum_binary_payload_bytes":20971520,"error":null}'
         IFS= read -r request
         \(behavior)
         """
@@ -860,7 +860,7 @@ private struct WorkerFixture {
         let script = """
         #!/bin/zsh
         IFS= read -r hello
-        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":2,"worker_build_version":"code-read-worker-v2","helper_instance_id":"fixture-helper","operations":["attachment_authorize_v1"],"maximum_inline_bytes":16777216,"maximum_binary_payload_bytes":20971520,"error":null}'
+        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":3,"worker_build_version":"code-read-worker-v3","helper_instance_id":"fixture-helper","operations":["attachment_authorize_v1"],"maximum_inline_bytes":16777216,"maximum_binary_payload_bytes":20971520,"error":null}'
         IFS= read -r request
         exit 0
         """

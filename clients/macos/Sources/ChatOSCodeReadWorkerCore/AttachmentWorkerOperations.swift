@@ -253,6 +253,7 @@ struct AttachmentWorkerOperations {
         defer { _ = Darwin.close(directory) }
         let fileExtension = safeExtension(authorization.displayName)
         let name = "source" + (fileExtension.map { "." + $0 } ?? "")
+        cleanupStaleImports(in: directory, installedName: name)
         let temporaryName = ".import-" + UUID().uuidString.lowercased()
         let temporary = temporaryName.withCString {
             Darwin.openat(
@@ -294,8 +295,9 @@ struct AttachmentWorkerOperations {
             throw CodeReadWorkerCoreError.attachmentWorkspaceConflict
         }
         defer { _ = Darwin.close(installed) }
+        let verified: (status: stat, capture: Data)
         do {
-            _ = try hashAndCapture(
+            verified = try hashAndCapture(
                 descriptor: installed,
                 expected: authorization,
                 offset: 0,
@@ -304,9 +306,105 @@ struct AttachmentWorkerOperations {
         } catch {
             throw CodeReadWorkerCoreError.attachmentWorkspaceConflict
         }
+        var installedPathStatus = stat()
+        guard name.withCString({
+            Darwin.fstatat(directory, $0, &installedPathStatus, AT_SYMLINK_NOFOLLOW)
+        }) == 0,
+        sameIdentity(verified.status, installedPathStatus) else {
+            throw CodeReadWorkerCoreError.attachmentWorkspaceConflict
+        }
         return .object([
             "relative_path": .string((components + [name]).joined(separator: "/")),
         ])
+    }
+
+    private func cleanupStaleImports(in directory: Int32, installedName: String) {
+        guard let stream = Darwin.fdopendir(Darwin.dup(directory)) else { return }
+        defer { Darwin.closedir(stream) }
+        let cutoff = Int64(Date().timeIntervalSince1970) - 24 * 60 * 60
+        while let entry = Darwin.readdir(stream) {
+            let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) {
+                    String(cString: $0)
+                }
+            }
+            guard name.hasPrefix(".import-") else { continue }
+            let token = String(name.dropFirst(".import-".count))
+            guard let uuid = UUID(uuidString: token),
+                  uuid.uuidString.lowercased() == token else { continue }
+            var inspected = stat()
+            guard name.withCString({
+                Darwin.fstatat(directory, $0, &inspected, AT_SYMLINK_NOFOLLOW)
+            }) == 0,
+            (inspected.st_mode & S_IFMT) == S_IFREG,
+            inspected.st_uid == geteuid(),
+            (inspected.st_nlink == 1 || staleImportHasInstalledLink(
+                inspected,
+                installedName: installedName,
+                directory: directory
+            )),
+            Int64(inspected.st_mtimespec.tv_sec) <= cutoff else { continue }
+            let descriptor = name.withCString {
+                Darwin.openat(directory, $0, O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+            }
+            guard descriptor >= 0 else { continue }
+            do {
+                defer { _ = Darwin.close(descriptor) }
+                guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { continue }
+                var opened = stat()
+                var current = stat()
+                guard Darwin.fstat(descriptor, &opened) == 0,
+                      sameIdentity(inspected, opened),
+                      name.withCString({
+                          Darwin.fstatat(directory, $0, &current, AT_SYMLINK_NOFOLLOW)
+                      }) == 0,
+                      sameIdentity(inspected, current),
+                      staleImportLinkShapeRemainsSafe(
+                          inspected: inspected,
+                          opened: opened,
+                          current: current,
+                          installedName: installedName,
+                          directory: directory
+                      ) else { continue }
+                name.withCString { _ = Darwin.unlinkat(directory, $0, 0) }
+            }
+        }
+    }
+
+    private func staleImportLinkShapeRemainsSafe(
+        inspected: stat,
+        opened: stat,
+        current: stat,
+        installedName: String,
+        directory: Int32
+    ) -> Bool {
+        if inspected.st_nlink == 1 {
+            return opened.st_nlink == 1 && current.st_nlink == 1
+        }
+        return inspected.st_nlink == 2
+            && opened.st_nlink == 2
+            && current.st_nlink == 2
+            && staleImportHasInstalledLink(
+                current,
+                installedName: installedName,
+                directory: directory
+            )
+    }
+
+    private func staleImportHasInstalledLink(
+        _ temporary: stat,
+        installedName: String,
+        directory: Int32
+    ) -> Bool {
+        guard temporary.st_nlink == 2 else { return false }
+        var installed = stat()
+        return installedName.withCString {
+            Darwin.fstatat(directory, $0, &installed, AT_SYMLINK_NOFOLLOW)
+        } == 0
+            && (installed.st_mode & S_IFMT) == S_IFREG
+            && installed.st_uid == geteuid()
+            && installed.st_dev == temporary.st_dev
+            && installed.st_ino == temporary.st_ino
     }
 
     private func authorization(

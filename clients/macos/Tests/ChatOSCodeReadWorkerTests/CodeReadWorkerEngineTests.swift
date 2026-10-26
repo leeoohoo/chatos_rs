@@ -394,6 +394,61 @@ final class CodeReadWorkerEngineTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: outside), attachment.data)
     }
 
+    func testAttachmentMaterializeReclaimsOnlySafeStaleImportOrphans() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let workspace = try Fixture()
+        defer { workspace.dispose() }
+        let attachment = try fixture.makeAttachment(Data("orphan recovery\n".utf8))
+        var arguments = attachment.arguments
+        arguments.merge(try workspace.identityArguments()) { _, new in new }
+        let relativePath = try fixture.execute(
+            "attachment_materialize_v1",
+            arguments
+        ).object.string("relative_path")
+        let installed = workspace.root.appendingPathComponent(relativePath)
+        let directory = installed.deletingLastPathComponent()
+        let stale = importURL(in: directory)
+        let fresh = importURL(in: directory)
+        let locked = importURL(in: directory)
+        let maliciousHardLink = importURL(in: directory)
+        let installedHardLink = importURL(in: directory)
+        let symbolicLink = importURL(in: directory)
+        let malformed = directory.appendingPathComponent(".import-not-a-canonical-uuid")
+        let unrelated = directory.appendingPathComponent("unrelated")
+
+        for url in [stale, fresh, locked, malformed, unrelated] {
+            try Data("temporary".utf8).write(to: url)
+        }
+        try FileManager.default.linkItem(at: unrelated, to: maliciousHardLink)
+        try FileManager.default.linkItem(at: installed, to: installedHardLink)
+        try FileManager.default.createSymbolicLink(
+            at: symbolicLink,
+            withDestinationURL: unrelated
+        )
+        for url in [stale, locked, maliciousHardLink, installedHardLink] {
+            try makeImportStale(url)
+        }
+        let lockedDescriptor = locked.path.withCString {
+            Darwin.open($0, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        }
+        XCTAssertGreaterThanOrEqual(lockedDescriptor, 0)
+        defer { if lockedDescriptor >= 0 { _ = Darwin.close(lockedDescriptor) } }
+        XCTAssertEqual(flock(lockedDescriptor, LOCK_EX | LOCK_NB), 0)
+
+        _ = try fixture.execute("attachment_materialize_v1", arguments)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: installedHardLink.path))
+        XCTAssertEqual(try Data(contentsOf: installed), attachment.data)
+        for preserved in [fresh, locked, maliciousHardLink, symbolicLink, malformed] {
+            XCTAssertTrue(
+                FileManager.default.fileExists(atPath: preserved.path),
+                "Unexpectedly removed \(preserved.lastPathComponent)"
+            )
+        }
+    }
+
     func testAttachmentOperationsRejectChangedRootIdentities() throws {
         let fixture = try Fixture()
         defer { fixture.dispose() }
@@ -440,6 +495,17 @@ final class CodeReadWorkerEngineTests: XCTestCase {
                 "The authorized attachment could not be imported into the task workspace."
             )
         }
+    }
+
+    private func importURL(in directory: URL) -> URL {
+        directory.appendingPathComponent(".import-" + UUID().uuidString.lowercased())
+    }
+
+    private func makeImportStale(_ url: URL) throws {
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -(25 * 60 * 60))],
+            ofItemAtPath: url.path
+        )
     }
 
     func testAttachmentAuthorizationStreamsMultipleFilesAndRejectsShortPayload() throws {

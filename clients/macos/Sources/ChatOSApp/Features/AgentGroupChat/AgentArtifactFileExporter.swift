@@ -54,23 +54,11 @@ enum AgentArtifactFileExporter {
             in: destinationDirectory,
             writeBytes: Int64(expectedBytes)
         )
-        let temporaryURL = destinationDirectory.appendingPathComponent(
-            ".chatos-artifact-export-\(UUID().uuidString).tmp"
+        let transaction = try AppOwnedExportTransaction(
+            destinationURL: destinationURL,
+            temporaryPrefix: ".chatos-artifact-export-"
         )
-        let destinationDescriptor = temporaryURL.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return Darwin.open(
-                path,
-                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-                mode_t(S_IRUSR | S_IWUSR)
-            )
-        }
-        guard destinationDescriptor >= 0 else { throw CocoaError(.fileWriteUnknown) }
-        var installed = false
-        defer {
-            Darwin.close(destinationDescriptor)
-            if !installed { try? FileManager.default.removeItem(at: temporaryURL) }
-        }
+        let destinationDescriptor = transaction.fileDescriptor
 
         var hasher = SHA256()
         var buffer = [UInt8](repeating: 0, count: chunkSize)
@@ -115,14 +103,7 @@ enum AgentArtifactFileExporter {
         }
         try Task.checkCancellation()
         guard fsync(destinationDescriptor) == 0 else { throw CocoaError(.fileWriteUnknown) }
-        let renameResult: Int32 = temporaryURL.withUnsafeFileSystemRepresentation { temporaryPath in
-            destinationURL.withUnsafeFileSystemRepresentation { destinationPath in
-                guard let temporaryPath, let destinationPath else { return Int32(-1) }
-                return Darwin.rename(temporaryPath, destinationPath)
-            }
-        }
-        guard renameResult == 0 else { throw CocoaError(.fileWriteUnknown) }
-        installed = true
+        try transaction.install(as: destinationURL.lastPathComponent)
     }
 
     private nonisolated static func writeAll(
