@@ -144,7 +144,8 @@ struct TaskReplyInspectorContent: View {
                     TaskProcessTimelineView(
                         items: viewModel.processTimelineItems,
                         allowsTextSelection: true,
-                        liveActivity: task.lastRun?.activity
+                        liveActivity: task.lastRun?.activity,
+                        taskStatus: task.status
                     )
                 case .detail:
                     taskDetail(task)

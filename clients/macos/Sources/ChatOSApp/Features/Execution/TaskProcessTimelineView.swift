@@ -6,6 +6,7 @@ struct TaskProcessTimelineView: View {
     let items: [TaskProcessTimelineItem]
     var allowsTextSelection = true
     var liveActivity: MessageTaskRunActivity?
+    var taskStatus: String?
 
     var body: some View {
         if displayedItems.isEmpty {
@@ -41,6 +42,22 @@ struct TaskProcessTimelineView: View {
     }
 
     private var liveActivityItem: TaskProcessTimelineItem? {
+        if let stage = MessageTaskRunActivityPresentation.taskStatusTitleOverride(
+            for: taskStatus,
+            localized: { model.localized($0, english: $1) }
+        ) {
+            let detail = MessageTaskRunActivityPresentation.taskStatusDetailOverride(
+                for: taskStatus,
+                localized: { model.localized($0, english: $1) }
+            ) ?? stage
+            return .init(
+                id: "task-live-gate-\(taskStatus ?? "paused")",
+                title: model.localized("实时 · \(stage)", english: "Live · \(stage)"),
+                detail: detail,
+                occurredAt: liveActivity?.startedAt.map { ISO8601DateFormatter().string(from: $0) },
+                status: "paused"
+            )
+        }
         guard let activity = liveActivity else { return nil }
         let stage = MessageTaskRunActivityPresentation.title(for: activity.kind) {
             model.localized($0, english: $1)
@@ -124,6 +141,7 @@ struct TaskProcessTimelineView: View {
         switch status.lowercased() {
         case "completed", "succeeded", "success", "done": "已完成"
         case "running", "processing", "in_progress", "doing": "进行中"
+        case "paused": "已暂停"
         case "blocked": "阻塞"
         case "failed", "error": "失败"
         case "cancelled", "canceled": "已取消"
@@ -135,6 +153,7 @@ struct TaskProcessTimelineView: View {
         switch status.lowercased() {
         case "completed", "succeeded", "success", "done": "checkmark"
         case "running", "processing", "in_progress", "doing": "arrow.triangle.2.circlepath"
+        case "paused": "pause.fill"
         case "blocked", "failed", "error": "exclamationmark"
         default: "circle.fill"
         }
@@ -144,6 +163,7 @@ struct TaskProcessTimelineView: View {
         switch status.lowercased() {
         case "completed", "succeeded", "success", "done": .green
         case "running", "processing", "in_progress", "doing": AppPalette.ai
+        case "paused": .orange
         case "blocked": .orange
         case "failed", "error", "cancelled", "canceled": .red
         default: .secondary

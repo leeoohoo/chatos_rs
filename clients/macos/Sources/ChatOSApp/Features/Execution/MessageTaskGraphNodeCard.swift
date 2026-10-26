@@ -140,6 +140,12 @@ struct MessageTaskGraphNodeCard: View {
             case .acceptancePassed: model.localized("验收通过", english: "Acceptance Passed")
             }
         }
+        if let override = MessageTaskRunActivityPresentation.taskStatusTitleOverride(
+            for: node.task.status,
+            localized: { model.localized($0, english: $1) }
+        ) {
+            return override
+        }
         if let activity = currentActivity {
             return MessageTaskRunActivityPresentation.title(for: activity.kind) {
                 model.localized($0, english: $1)
@@ -184,6 +190,12 @@ struct MessageTaskGraphNodeCard: View {
             case .executionFailed, .acceptanceFailed: .red
             case .acceptancePassed: .green
             }
+        }
+        if MessageTaskRunActivityPresentation.taskStatusTitleOverride(
+            for: node.task.status,
+            localized: { model.localized($0, english: $1) }
+        ) != nil {
+            return .orange
         }
         if let activity = currentActivity {
             return switch activity.kind {

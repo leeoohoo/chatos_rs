@@ -100,7 +100,8 @@ struct MessageTaskInspectorView: View {
                 taskStatus: task.status
             ),
             allowsTextSelection: true,
-            liveActivity: task.lastRun?.activity
+            liveActivity: task.lastRun?.activity,
+            taskStatus: task.status
         )
     }
 
@@ -129,7 +130,18 @@ struct MessageTaskInspectorView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("运行信息").appFont(.subheadline.weight(.semibold))
                 LabeledContent("状态", value: displayedRunStatus(task: task, run: detail.run))
-                if let activity = detail.run.activity {
+                if let override = MessageTaskRunActivityPresentation.taskStatusTitleOverride(
+                    for: task.status,
+                    localized: { model.localized($0, english: $1) }
+                ) {
+                    LabeledContent("当前阶段", value: override)
+                    if let overrideDetail = MessageTaskRunActivityPresentation.taskStatusDetailOverride(
+                        for: task.status,
+                        localized: { model.localized($0, english: $1) }
+                    ) {
+                        LabeledContent("详情", value: overrideDetail)
+                    }
+                } else if let activity = detail.run.activity {
                     LabeledContent("当前阶段") {
                         Text(MessageTaskRunActivityPresentation.title(for: activity.kind) {
                             model.localized($0, english: $1)
@@ -293,6 +305,12 @@ struct MessageTaskInspectorView: View {
             case .acceptanceFailed: model.localized("未通过验收", english: "Acceptance Not Met")
             case .acceptancePassed: model.localized("验收通过", english: "Acceptance Passed")
             }
+        }
+        if let override = MessageTaskRunActivityPresentation.taskStatusTitleOverride(
+            for: task.status,
+            localized: { model.localized($0, english: $1) }
+        ) {
+            return override
         }
         if let activity = run.activity {
             return MessageTaskRunActivityPresentation.title(for: activity.kind) {

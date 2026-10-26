@@ -3,6 +3,45 @@ import Foundation
 
 enum MessageTaskRunActivityPresentation {
     static func title(
+        forTaskStatus taskStatus: String?,
+        fallback activityKind: MessageTaskRunActivityKind?,
+        localized: (String, String) -> String
+    ) -> String? {
+        if let override = taskStatusTitleOverride(for: taskStatus, localized: localized) {
+            return override
+        }
+        return activityKind.map { title(for: $0, localized: localized) }
+    }
+
+    static func taskStatusTitleOverride(
+        for status: String?,
+        localized: (String, String) -> String
+    ) -> String? {
+        switch normalized(status) {
+        case "reviewing_followup": localized("审查追加要求", "Reviewing Follow-up")
+        case "waiting_confirmation": localized("等待确认", "Awaiting Confirmation")
+        default: nil
+        }
+    }
+
+    static func taskStatusDetailOverride(
+        for status: String?,
+        localized: (String, String) -> String
+    ) -> String? {
+        switch normalized(status) {
+        case "reviewing_followup": localized(
+            "后续执行已暂停，正在审查追加要求",
+            "Further execution is paused while the follow-up is reviewed"
+        )
+        case "waiting_confirmation": localized(
+            "后续执行已暂停，等待你确认要求",
+            "Further execution is paused awaiting your confirmation"
+        )
+        default: nil
+        }
+    }
+
+    static func title(
         for kind: MessageTaskRunActivityKind,
         localized: (String, String) -> String
     ) -> String {
@@ -65,5 +104,9 @@ enum MessageTaskRunActivityPresentation {
         return parts.count > 1
             ? "\(parts.dropLast().joined(separator: " · ")) · \(readable)"
             : readable
+    }
+
+    private static func normalized(_ status: String?) -> String {
+        status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
     }
 }

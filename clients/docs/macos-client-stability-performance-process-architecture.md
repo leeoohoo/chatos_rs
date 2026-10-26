@@ -2,7 +2,7 @@
 
 更新时间：2026-10-22
 
-状态：强化版方案，P0 部分实施中；阶段记录见 12.1—12.39，完整 Release 验收待完成
+状态：核心架构改造实施中；阶段记录见 12.1—12.112，完整 Release 验收待完成
 
 适用范围：`clients/macos`、`clients/local_agent_host` 以及 macOS 客户端启动的 Plugin/Companion 进程
 
@@ -2472,6 +2472,36 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 验证：Debug 与原生 arm64 Release 的 `warnings-as-errors` 联合矩阵各执行 32 项，0 跳过、0 失败；包含 4 项确定性预算/Governor 回归、12 项真实 Code Read 进程隔离，以及 16 项真实 Media 进程、超时、取消、父进程死亡和并发回归。新增跨类型真实进程用例故意挂起两个 Media Worker，在媒体额度占满时确认真实 Code Read Worker 仍使用保留槽立即完成文件读取，观测到总活跃峰值精确为 3；反向保留、同类双并行、排队取消和队列溢出由确定性 actor 测试覆盖。未启动、安装或替换正式 App，不访问活动用户数据库。
 
 边界：本批统一的是 Media 与 Code Read 两类短生命周期文件 Worker。Agent Run 已有领取 durable Delivery 前的独立自适应 Governor，不能在进程客户端上简单再套一层、让已领取 lease 排队；Host 工作额度也属于另一所有权域。将 Agent/Host 纳入同一机器级观测需要把 permit 提前到 claim 之前并统一权重，仍是后续里程碑。当前预算在 App 进程启动时按硬件确定，不随实时 memory pressure、热状态或电源模式自动缩放；1 GiB 是起始估算而非每类精确峰值，仍需低端机器组合 trace、压力迟滞和 8 小时 soak 校准。
+
+### 12.112 第四十一完整里程碑：追加要求门禁状态统一（2026-10-26）
+
+本里程碑修复任务事实已经进入 `reviewing_followup` 或 `waiting_confirmation`，但宠物实时气泡、任务图节点和 Run Inspector 仍优先显示旧 Run `waitingModel`/`runningModel` 活动的问题。旧活动是 Run 最近一次执行阶段，不得覆盖更新的任务级暂停门禁。
+
+已实施：
+
+- 集中定义任务门禁的标题和详情映射；`reviewing_followup` 显示“审查追加要求”，`waiting_confirmation` 显示“等待确认”，两者明确说明后续执行已经暂停。
+- 宠物实时气泡先读取任务门禁，再回退到 Run 活动；门禁期间使用橙色暂停图标，不再显示旋转中的“等待 AI 响应”，但仍每两秒刷新任务，门禁解除后可以自然恢复实时阶段。
+- 任务图节点、Conversation/Workspace/Pet 三处执行时间线和 Run Inspector 使用同一优先级；门禁期间隐藏旧 Run 的操作与阶段，时间线生成橙色“已暂停”实时节点。
+- 保留正常 `running + waitingModel` 行为，真实等待模型时仍显示“等待 AI 响应”，没有把全部活动状态机械改成暂停。
+
+验证：Debug 与原生 arm64 Release 各运行任务映射 12 项、Core 门禁 5 项、宠物状态 3 项，共 20 项，0 跳过、0 失败；Swift Debug/Release 完整依赖图均成功编译，`git diff --check` 通过。
+
+边界：本批统一展示优先级，不改变 Host 的追加要求审查协议、durable Run、轮询频率或任务调度。正式安装后的视觉复测需由用户重新打开客户端后在真实追加要求任务中确认；不为视觉复测主动启动客户端或访问活动用户数据库。
+
+### 12.113—12.120 剩余完整交付路径
+
+后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
+
+| 里程碑 | 明确目标 | 完成条件 |
+| --- | --- | --- |
+| 12.113 机器级资源所有权冻结 | 找出 Agent、Host、Media、Code Read、Plugin、数据库维护各自的 claim/permit/lease 所有者，冻结统一权重、保留槽、fencing 与诊断 Snapshot；禁止在已领取 durable Delivery 后再等待外层 permit | ADR 与代码入口一一对应；证明不存在嵌套 permit 死锁；测试能观测每类 active/queued/claimed，且不同会话可并行任务仍使用独立 PID |
+| 12.114 claim 前统一准入 | Agent 和可安全接入的 Helper 在领取持久任务前取得加权额度；Host 通过明确协议报告/约束实际 in-flight，不能靠 App 猜测 | 跨会话长短任务、Agent + Media + Code Read 组合测试通过；等待额度的任务不持有 delivery lease；取消只移除所属 waiter |
+| 12.115 动态压力调额 | 接入 memory pressure、thermal state、低电量和电源模式；压力升高只阻止新 claim，不强杀已提交副作用的任务，并用迟滞恢复 | 压力注入测试验证降额、恢复、防抖和最小保留槽；交互任务不被后台恢复无限饿死 |
+| 12.116 文件生命周期收口 | 安全回收 workspace `.import-*`、UI exporter 临时文件和 registry 失败遗留空目录；补最终打开点 device/inode 再校验 | ownership、命名、年龄、锁/活跃 Worker、symlink、hardlink、跨账户和取消/SIGKILL 回归全部通过；不递归清理任意用户目录 |
+| 12.117 Agent/存储强杀矩阵 | 覆盖凭据交付、provider 网络、工具副作用、checkpoint、SQLite COMMIT/VACUUM 等不确定窗口 | 每个停点只有“安全重试、明确失败、待对账”三类结果；无重复副作用、跨账户写入或静默丢失；连续崩溃有隔离熔断 |
+| 12.118 外部环境故障门禁 | 在真实 Linux/macOS SSH 端和移动盘验证 staging、权限继承、原子提交、孤儿扫描、断网、睡眠、只读卷与 ENOSPC | 旧目标不被失败写覆盖；临时文件可识别回收；取消只终止所属进程组；远端不可确认结果进入待对账 |
+| 12.119 Release 组合 SLO 与 8 小时 soak | 固定硬件运行 UI + Agent + Host + Media + Plugin 组合负载，完成 200 次切页、20 次账户循环、崩溃/取消风暴和 8 小时 soak | 暖切页 p95 < 100 ms、无 >250 ms 主线程 hang；进程组 footprint/CPU/磁盘写入有基线；Task/FD/observer/临时文件不单调增长 |
+| 12.120 正式分发关闭 | 完成 Developer ID、hardened runtime、嵌套 Helper 从内到外签名、notarization、stapling 和最终兼容矩阵 | 安装包在干净机器验证通过；包内 Git SHA、架构、签名、协议/Schema 和回滚说明一致；不再以 ad-hoc 本地包冒充正式外部分发 |
 
 ## 十三、验证矩阵
 
