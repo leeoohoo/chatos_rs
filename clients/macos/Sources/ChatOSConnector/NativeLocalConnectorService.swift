@@ -10,6 +10,11 @@ public typealias NativeApprovalMemoryProviderFactory = @Sendable (
     _ runtimeScope: String
 ) async throws -> AgentMemoryContextProvider
 
+typealias NativeCustomPluginStateSaver = @Sendable (
+    _ state: NativeConnectorPersistentState,
+    _ store: NativeConnectorStateStore
+) throws -> Void
+
 public struct NativeConnectorConfiguration: Sendable {
     public var gatewayBaseURL: URL
     public var stateURL: URL
@@ -39,6 +44,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let stateStore: NativeConnectorStateStore
     let activityHistoryStore: NativeConnectorActivityHistoryStore
     let pluginInstaller: NativePluginInstaller
+    let customPluginStateSaver: NativeCustomPluginStateSaver
     let pluginIntegritySnapshots = NativePluginIntegritySnapshotCache()
     let pluginPermissionSnapshots = NativePluginPermissionSnapshotCache()
     let mcpCodeWriteStore = NativeMCPCodeWriteStore()
@@ -120,7 +126,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             configuration: configuration,
             ticketProvider: ticketProvider,
             approvalMemoryProviderFactory: approvalMemoryProviderFactory,
-            pluginInstallerFactory: { NativePluginInstaller(rootURL: $0) }
+            pluginInstallerFactory: { NativePluginInstaller(rootURL: $0) },
+            customPluginStateSaver: { state, store in try store.save(state) }
         )
     }
 
@@ -128,7 +135,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         configuration: NativeConnectorConfiguration,
         ticketProvider: any LocalConnectorPairingTicketProviding,
         approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory? = nil,
-        pluginInstallerFactory: @Sendable (URL) -> NativePluginInstaller
+        pluginInstallerFactory: @Sendable (URL) -> NativePluginInstaller,
+        customPluginStateSaver: @escaping NativeCustomPluginStateSaver = { state, store in
+            try store.save(state)
+        }
     ) {
         self.configuration = configuration
         self.ticketProvider = ticketProvider
@@ -148,6 +158,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         let pluginRuntimeRootURL = connectorRootURL
             .appendingPathComponent("PluginRuntime", isDirectory: true)
         self.pluginInstaller = pluginInstallerFactory(pluginInstallationRootURL)
+        self.customPluginStateSaver = customPluginStateSaver
         self.pluginRuntimeRootURL = pluginRuntimeRootURL
         self.localAgentModelCredentialStore = NativeLocalAgentModelCredentialStore(
             rootURL: connectorRootURL
@@ -162,6 +173,11 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         self.approvalMemoryProviderFactory = approvalMemoryProviderFactory
         self.state = (try? stateStore.load()) ?? .empty
         self.activityHistory = (try? activityHistoryStore.load()) ?? .empty
+        try? self.pluginInstaller.recoverCustomPluginTransactions(
+            referencedInstallationPaths: (self.state.installedPluginRecords ?? [:]).values.map {
+                $0.installationPath
+            }
+        )
         _ = try? self.pluginInstaller.removeUnreferencedInstallations(
             referencedInstallationPaths: (self.state.installedPluginRecords ?? [:]).values.map {
                 $0.installationPath

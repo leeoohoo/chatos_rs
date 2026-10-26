@@ -584,6 +584,249 @@ struct NativeCustomPluginInstallationTests {
         #expect(installed.installationIssue != nil)
     }
 
+    @Test("Hook upgrades replace trust, bind permission changes, and uninstall cleans all state")
+    func hookUpgradeTrustAndUninstallLifecycle() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HookUpgradeLifecycle-\(UUID().uuidString)", isDirectory: true)
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("state.json")
+        try Self.writeInitialState(to: stateURL, ownerUserID: "owner-hook-upgrade")
+        let configuration = NativeConnectorConfiguration(
+            gatewayBaseURL: URL(string: "https://connector.example.test")!,
+            stateURL: stateURL
+        )
+        let service = NativeLocalConnectorService(
+            configuration: configuration,
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+
+        try Self.writeNativeHookFixture(
+            at: source,
+            version: "1.0.0",
+            command: "node hooks/first.js",
+            permissions: ["workspace.read"]
+        )
+        let firstInspection = try await service.inspectLocalPlugin(atPath: source.path)
+        try await service.installLocalPlugin(
+            atPath: source.path,
+            expectedFingerprint: firstInspection.fingerprint
+        )
+        let firstState = try NativeConnectorStateStore(stateURL: stateURL).load()
+        let firstRecord = try #require(firstState.installedPluginRecords?.values.first)
+        let firstTrust = try #require(firstState.pluginHookTrustRecords?.values.first)
+
+        let host = HookBundleHostStub()
+        await service.setLocalAgentCompanionServices(
+            host: host,
+            conversation: nil,
+            messageTasks: nil,
+            askUser: nil
+        )
+        #expect(await host.activeBundleIDs() == [firstTrust.bundleID])
+
+        try Self.writeNativeHookFixture(
+            at: source,
+            version: "2.0.0",
+            command: "node hooks/second.js",
+            permissions: ["workspace.read", "network.client"]
+        )
+        let secondInspection = try await service.inspectLocalPlugin(atPath: source.path)
+        try await service.installLocalPlugin(
+            atPath: source.path,
+            expectedFingerprint: secondInspection.fingerprint
+        )
+
+        let secondState = try NativeConnectorStateStore(stateURL: stateURL).load()
+        let secondRecord = try #require(secondState.installedPluginRecords?[firstRecord.pluginID])
+        let secondTrust = try #require(secondState.pluginHookTrustRecords?.values.first)
+        #expect(secondState.pluginHookTrustRecords?.count == 1)
+        #expect(secondRecord.version == "2.0.0")
+        #expect(secondRecord.releaseID != firstRecord.releaseID)
+        #expect(secondRecord.artifactSHA256 != firstRecord.artifactSHA256)
+        #expect(secondTrust.bundleID != firstTrust.bundleID)
+        #expect(secondTrust.commandSHA256 != firstTrust.commandSHA256)
+        #expect(secondTrust.permissionSnapshotSHA256 != firstTrust.permissionSnapshotSHA256)
+        #expect(secondTrust.permissions == ["network.client", "process.spawn", "workspace.read"])
+        #expect(!FileManager.default.fileExists(atPath: firstRecord.installationPath))
+        #expect(FileManager.default.fileExists(atPath: secondRecord.installationPath))
+        #expect(await host.activeBundleIDs() == [secondTrust.bundleID])
+        try Self.requireNoCustomPluginTransactionResidue(
+            in: stateURL.deletingLastPathComponent().appendingPathComponent("Plugins")
+        )
+
+        var policyDriftState = secondState
+        var policyDriftTrust = secondTrust
+        policyDriftTrust.runnerPolicyVersion &+= 1
+        policyDriftState.pluginHookTrustRecords = [policyDriftTrust.bundleID: policyDriftTrust]
+        try NativeConnectorStateStore(stateURL: stateURL).save(policyDriftState)
+        let policyDriftService = NativeLocalConnectorService(
+            configuration: configuration,
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+        let policyDriftHost = HookBundleHostStub()
+        await policyDriftService.setLocalAgentCompanionServices(
+            host: policyDriftHost,
+            conversation: nil,
+            messageTasks: nil,
+            askUser: nil
+        )
+        #expect(await policyDriftHost.publishedBundles().isEmpty)
+        #expect(await policyDriftHost.activeBundleIDs().isEmpty)
+
+        try NativeConnectorStateStore(stateURL: stateURL).save(secondState)
+        let uninstallService = NativeLocalConnectorService(
+            configuration: configuration,
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+        let uninstallHost = HookBundleHostStub()
+        await uninstallService.setLocalAgentCompanionServices(
+            host: uninstallHost,
+            conversation: nil,
+            messageTasks: nil,
+            askUser: nil
+        )
+        try await uninstallService.uninstallPlugin(id: firstRecord.pluginID)
+        let uninstalledState = try NativeConnectorStateStore(stateURL: stateURL).load()
+        #expect(uninstalledState.installedPluginRecords?[firstRecord.pluginID] == nil)
+        #expect(uninstalledState.pluginHookTrustRecords?.isEmpty != false)
+        #expect(!uninstalledState.installedPluginIDs.contains(firstRecord.pluginID))
+        #expect(!FileManager.default.fileExists(atPath: secondRecord.installationPath))
+        #expect(await uninstallHost.activeBundleIDs().isEmpty)
+    }
+
+    @Test("failed Hook upgrade restores the old directory, state, trust, and active Bundle")
+    func failedHookUpgradeRollsBackCompletely() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HookUpgradeRollback-\(UUID().uuidString)", isDirectory: true)
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("state.json")
+        try Self.writeInitialState(to: stateURL, ownerUserID: "owner-hook-rollback")
+        let configuration = NativeConnectorConfiguration(
+            gatewayBaseURL: URL(string: "https://connector.example.test")!,
+            stateURL: stateURL
+        )
+        let initialService = NativeLocalConnectorService(
+            configuration: configuration,
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+        try Self.writeNativeHookFixture(
+            at: source,
+            version: "1.0.0",
+            command: "node hooks/stable.js",
+            permissions: ["workspace.read"]
+        )
+        let initialInspection = try await initialService.inspectLocalPlugin(atPath: source.path)
+        try await initialService.installLocalPlugin(
+            atPath: source.path,
+            expectedFingerprint: initialInspection.fingerprint
+        )
+        let initialState = try NativeConnectorStateStore(stateURL: stateURL).load()
+        let initialRecord = try #require(initialState.installedPluginRecords?.values.first)
+        let initialTrust = try #require(initialState.pluginHookTrustRecords?.values.first)
+        let initialManifest = try Data(contentsOf: URL(
+            fileURLWithPath: initialRecord.installationPath,
+            isDirectory: true
+        ).appendingPathComponent("chatos.plugin.json"))
+
+        try Self.writeNativeHookFixture(
+            at: source,
+            version: "2.0.0",
+            command: "node hooks/broken-upgrade.js",
+            permissions: ["workspace.read", "network.client"]
+        )
+        let failingService = NativeLocalConnectorService(
+            configuration: configuration,
+            ticketProvider: CustomPluginRejectingTicketProvider(),
+            pluginInstallerFactory: { NativePluginInstaller(rootURL: $0) },
+            customPluginStateSaver: { _, _ in
+                throw CustomPluginPersistenceFixtureError.rejected
+            }
+        )
+        let upgradeInspection = try await failingService.inspectLocalPlugin(atPath: source.path)
+        await #expect(throws: CustomPluginPersistenceFixtureError.self) {
+            try await failingService.installLocalPlugin(
+                atPath: source.path,
+                expectedFingerprint: upgradeInspection.fingerprint
+            )
+        }
+
+        let restoredState = try NativeConnectorStateStore(stateURL: stateURL).load()
+        #expect(restoredState.installedPluginRecords?[initialRecord.pluginID] == initialRecord)
+        #expect(restoredState.pluginHookTrustRecords?[initialTrust.bundleID] == initialTrust)
+        #expect(FileManager.default.fileExists(atPath: initialRecord.installationPath))
+        #expect(try Data(contentsOf: URL(
+            fileURLWithPath: initialRecord.installationPath,
+            isDirectory: true
+        ).appendingPathComponent("chatos.plugin.json")) == initialManifest)
+        let failedUpgradePath = URL(
+            fileURLWithPath: initialRecord.installationPath,
+            isDirectory: true
+        ).deletingLastPathComponent().appendingPathComponent("2.0.0", isDirectory: true)
+        #expect(!FileManager.default.fileExists(atPath: failedUpgradePath.path))
+        try Self.requireNoCustomPluginTransactionResidue(
+            in: stateURL.deletingLastPathComponent().appendingPathComponent("Plugins")
+        )
+
+        let host = HookBundleHostStub()
+        await failingService.setLocalAgentCompanionServices(
+            host: host,
+            conversation: nil,
+            messageTasks: nil,
+            askUser: nil
+        )
+        #expect(await host.activeBundleIDs() == [initialTrust.bundleID])
+    }
+
+    @Test("interrupted custom Plugin commits recover according to durable state")
+    func interruptedCustomPluginCommitRecovery() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CustomPluginCrashRecovery-\(UUID().uuidString)", isDirectory: true)
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        let installs = root.appendingPathComponent("installs", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let installer = NativePluginInstaller(rootURL: installs)
+
+        try Self.writeNativeHookFixture(
+            at: source,
+            version: "1.0.0",
+            command: "node hooks/stable.js",
+            permissions: ["workspace.read"]
+        )
+        let firstPrepared = try installer.prepareLocalPlugin(atPath: source.path)
+        let firstCommit = try installer.commitCustomPlugin(firstPrepared)
+        try installer.finalizeCustomPluginCommit(firstCommit)
+
+        try Self.writeNativeHookFixture(
+            at: source,
+            version: "2.0.0",
+            command: "node hooks/new.js",
+            permissions: ["workspace.read", "network.client"]
+        )
+        let interruptedBeforeState = try installer.commitCustomPlugin(
+            installer.prepareLocalPlugin(atPath: source.path)
+        )
+        #expect(!FileManager.default.fileExists(atPath: firstCommit.record.installationPath))
+        #expect(FileManager.default.fileExists(atPath: interruptedBeforeState.record.installationPath))
+        try installer.recoverCustomPluginTransactions(
+            referencedInstallationPaths: [firstCommit.record.installationPath]
+        )
+        #expect(FileManager.default.fileExists(atPath: firstCommit.record.installationPath))
+        #expect(!FileManager.default.fileExists(atPath: interruptedBeforeState.record.installationPath))
+        try Self.requireNoCustomPluginTransactionResidue(in: installs)
+
+        let interruptedAfterState = try installer.commitCustomPlugin(
+            installer.prepareLocalPlugin(atPath: source.path)
+        )
+        try installer.recoverCustomPluginTransactions(
+            referencedInstallationPaths: [interruptedAfterState.record.installationPath]
+        )
+        #expect(!FileManager.default.fileExists(atPath: firstCommit.record.installationPath))
+        #expect(FileManager.default.fileExists(atPath: interruptedAfterState.record.installationPath))
+        try Self.requireNoCustomPluginTransactionResidue(in: installs)
+    }
+
     @Test("Ponytail 5.3.2 imports through the generic Codex Hook path")
     func ponytailFixtureImportsWithoutPluginSpecificLogic() async throws {
         var repositoryRoot = URL(fileURLWithPath: #filePath)
@@ -979,6 +1222,83 @@ struct NativeCustomPluginInstallationTests {
         let restored = try NativeConnectorStateStore(stateURL: stateURL).load()
         return try #require(restored.installedPluginRecords?.values.first?.pluginID)
     }
+
+    private static func writeInitialState(to stateURL: URL, ownerUserID: String) throws {
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(
+            id: ownerUserID,
+            username: ownerUserID,
+            displayName: ownerUserID,
+            role: "user"
+        )
+        state.deviceID = "device-\(ownerUserID)"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+    }
+
+    private static func writeNativeHookFixture(
+        at source: URL,
+        version: String,
+        command: String,
+        permissions: [String]
+    ) throws {
+        if FileManager.default.fileExists(atPath: source.path) {
+            try FileManager.default.removeItem(at: source)
+        }
+        let hooks = source.appendingPathComponent("hooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: hooks, withIntermediateDirectories: true)
+        let permissionRecords = permissions.map { permission in
+            [
+                "permission": permission,
+                "required": true,
+                "components": ["lifecycle"],
+            ] as [String: Any]
+        }
+        let manifest: [String: Any] = [
+            "schemaVersion": 3,
+            "name": "hook-upgrade-fixture",
+            "version": version,
+            "description": "Hook upgrade transaction fixture",
+            "hooks": [[
+                "componentKey": "lifecycle",
+                "dialect": "codex",
+                "path": "hooks/hooks.json",
+            ]],
+            "permissions": permissionRecords,
+        ]
+        try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+            .write(to: source.appendingPathComponent("chatos.plugin.json"), options: .atomic)
+        let hookDocument: [String: Any] = [
+            "hooks": [
+                "SessionStart": [[
+                    "hooks": [[
+                        "type": "command",
+                        "command": command,
+                    ]],
+                ]],
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: hookDocument, options: [.sortedKeys])
+            .write(to: hooks.appendingPathComponent("hooks.json"), options: .atomic)
+        let scriptName = command.split(separator: "/").last.map(String.init) ?? "hook.js"
+        try Data("process.stdout.write('{}')\n".utf8)
+            .write(to: hooks.appendingPathComponent(scriptName), options: .atomic)
+    }
+
+    private static func requireNoCustomPluginTransactionResidue(in pluginsRoot: URL) throws {
+        let children = try FileManager.default.contentsOfDirectory(
+            at: pluginsRoot,
+            includingPropertiesForKeys: nil
+        )
+        #expect(!children.contains(where: { $0.lastPathComponent.hasPrefix(".backup-custom-") }))
+        let stagingRoot = pluginsRoot.appendingPathComponent(".custom-staging", isDirectory: true)
+        if FileManager.default.fileExists(atPath: stagingRoot.path) {
+            #expect(try FileManager.default.contentsOfDirectory(atPath: stagingRoot.path).isEmpty)
+        }
+    }
+}
+
+private enum CustomPluginPersistenceFixtureError: Error {
+    case rejected
 }
 
 private struct CustomPluginRejectingTicketProvider: LocalConnectorPairingTicketProviding {

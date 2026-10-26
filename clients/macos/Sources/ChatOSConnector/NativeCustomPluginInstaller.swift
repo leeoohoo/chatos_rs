@@ -8,6 +8,13 @@ struct NativePreparedCustomPlugin: Sendable {
     var sourceSummary: String
 }
 
+struct NativeCommittedCustomPlugin: Sendable {
+    var record: NativeInstalledPluginRecord
+    var pluginDirectoryURL: URL
+    var backupURL: URL?
+    var temporaryRootURL: URL
+}
+
 enum NativeCustomMCPAccessPolicy {
     struct Permission: Sendable, Equatable {
         var id: String
@@ -301,13 +308,28 @@ extension NativePluginInstaller {
         }
     }
 
-    func commitCustomPlugin(_ prepared: NativePreparedCustomPlugin) throws -> NativeInstalledPluginRecord {
-        let record = prepared.record
+    func committedCustomPluginRecord(
+        _ prepared: NativePreparedCustomPlugin
+    ) -> NativeInstalledPluginRecord {
+        var record = prepared.record
         let pluginDirectory = rootURL
             .appendingPathComponent(Self.sha256Hex(record.pluginID), isDirectory: true)
         let finalURL = pluginDirectory.appendingPathComponent(record.version, isDirectory: true)
+        record.installationPath = finalURL.path
+        return record
+    }
+
+    func commitCustomPlugin(
+        _ prepared: NativePreparedCustomPlugin
+    ) throws -> NativeCommittedCustomPlugin {
+        let record = committedCustomPluginRecord(prepared)
+        let pluginDirectory = URL(
+            fileURLWithPath: record.installationPath,
+            isDirectory: true
+        ).deletingLastPathComponent()
         let backupURL = rootURL.appendingPathComponent(
-            ".backup-custom-\(UUID().uuidString)", isDirectory: true
+            ".backup-custom-\(pluginDirectory.lastPathComponent)-\(UUID().uuidString)",
+            isDirectory: true
         )
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let hadPrevious = FileManager.default.fileExists(atPath: pluginDirectory.path)
@@ -315,18 +337,95 @@ extension NativePluginInstaller {
         do {
             try FileManager.default.createDirectory(at: pluginDirectory, withIntermediateDirectories: true)
             try FileManager.default.moveItem(
-                at: URL(fileURLWithPath: record.installationPath, isDirectory: true),
-                to: finalURL
+                at: URL(fileURLWithPath: prepared.record.installationPath, isDirectory: true),
+                to: URL(fileURLWithPath: record.installationPath, isDirectory: true)
             )
-            try? FileManager.default.removeItem(at: prepared.temporaryRootURL)
-            if hadPrevious { try? FileManager.default.removeItem(at: backupURL) }
-            var committed = record
-            committed.installationPath = finalURL.path
-            return committed
+            return NativeCommittedCustomPlugin(
+                record: record,
+                pluginDirectoryURL: pluginDirectory,
+                backupURL: hadPrevious ? backupURL : nil,
+                temporaryRootURL: prepared.temporaryRootURL
+            )
         } catch {
             try? FileManager.default.removeItem(at: pluginDirectory)
             if hadPrevious { try? FileManager.default.moveItem(at: backupURL, to: pluginDirectory) }
+            try? FileManager.default.removeItem(at: prepared.temporaryRootURL)
             throw error
+        }
+    }
+
+    func finalizeCustomPluginCommit(_ commit: NativeCommittedCustomPlugin) throws {
+        if let backupURL = commit.backupURL,
+           FileManager.default.fileExists(atPath: backupURL.path) {
+            try FileManager.default.removeItem(at: backupURL)
+        }
+        if FileManager.default.fileExists(atPath: commit.temporaryRootURL.path) {
+            try FileManager.default.removeItem(at: commit.temporaryRootURL)
+        }
+    }
+
+    func rollbackCustomPluginCommit(_ commit: NativeCommittedCustomPlugin) throws {
+        if FileManager.default.fileExists(atPath: commit.pluginDirectoryURL.path) {
+            try FileManager.default.removeItem(at: commit.pluginDirectoryURL)
+        }
+        if let backupURL = commit.backupURL,
+           FileManager.default.fileExists(atPath: backupURL.path) {
+            try FileManager.default.moveItem(at: backupURL, to: commit.pluginDirectoryURL)
+        }
+        if FileManager.default.fileExists(atPath: commit.temporaryRootURL.path) {
+            try FileManager.default.removeItem(at: commit.temporaryRootURL)
+        }
+    }
+
+    func recoverCustomPluginTransactions(
+        referencedInstallationPaths: [String]
+    ) throws {
+        guard FileManager.default.fileExists(atPath: rootURL.path) else { return }
+        let referencesByDirectory = Dictionary(
+            uniqueKeysWithValues: referencedInstallationPaths.compactMap { path -> (String, URL)? in
+                let installationURL = URL(fileURLWithPath: path, isDirectory: true)
+                    .standardizedFileURL
+                let pluginDirectory = installationURL.deletingLastPathComponent()
+                guard pluginDirectory.deletingLastPathComponent() == rootURL.standardizedFileURL else {
+                    return nil
+                }
+                return (pluginDirectory.lastPathComponent, installationURL)
+            }
+        )
+        let children = try FileManager.default.contentsOfDirectory(
+            at: rootURL,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsSubdirectoryDescendants]
+        )
+        let backupPrefix = ".backup-custom-"
+        for backupURL in children where backupURL.lastPathComponent.hasPrefix(backupPrefix) {
+            let suffix = String(backupURL.lastPathComponent.dropFirst(backupPrefix.count))
+            guard suffix.count > 65 else { continue }
+            let separator = suffix.index(suffix.startIndex, offsetBy: 64)
+            let pluginDirectoryName = String(suffix[..<separator])
+            guard suffix[separator] == "-",
+                  pluginDirectoryName.allSatisfy(\.isHexDigit) else {
+                continue
+            }
+            let values = try backupURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true else { continue }
+            let pluginDirectoryURL = rootURL.appendingPathComponent(
+                pluginDirectoryName,
+                isDirectory: true
+            )
+            if let referencedURL = referencesByDirectory[pluginDirectoryName],
+               !FileManager.default.fileExists(atPath: referencedURL.path) {
+                if FileManager.default.fileExists(atPath: pluginDirectoryURL.path) {
+                    try FileManager.default.removeItem(at: pluginDirectoryURL)
+                }
+                try FileManager.default.moveItem(at: backupURL, to: pluginDirectoryURL)
+            } else {
+                try FileManager.default.removeItem(at: backupURL)
+            }
+        }
+        let stagingRoot = rootURL.appendingPathComponent(".custom-staging", isDirectory: true)
+        if FileManager.default.fileExists(atPath: stagingRoot.path) {
+            try FileManager.default.removeItem(at: stagingRoot)
         }
     }
 

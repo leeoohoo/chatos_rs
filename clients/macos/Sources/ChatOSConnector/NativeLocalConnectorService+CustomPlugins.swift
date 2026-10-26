@@ -32,9 +32,8 @@ extension NativeLocalConnectorService {
                 "MCP package 或工具清单在确认后发生变化，请重新预检并确认"
             )
         }
-        let record = try pluginInstaller.commitCustomPlugin(prepared)
+        try await commitCustomPlugin(prepared)
         shouldDiscard = false
-        try await persistCustomPlugin(record)
     }
 
     public func inspectLocalPlugin(atPath path: String) async throws -> LocalConnectorPluginInspection {
@@ -58,9 +57,8 @@ extension NativeLocalConnectorService {
                 "Plugin 文件或工具清单在确认后发生变化，请重新预检并确认"
             )
         }
-        let record = try pluginInstaller.commitCustomPlugin(prepared)
+        try await commitCustomPlugin(prepared)
         shouldDiscard = false
-        try await persistCustomPlugin(record)
     }
 
     public func inspectPluginSource(
@@ -86,9 +84,8 @@ extension NativeLocalConnectorService {
                 "Plugin 来源或组件清单在确认后发生变化，请重新预检并确认"
             )
         }
-        let record = try pluginInstaller.commitCustomPlugin(prepared)
+        try await commitCustomPlugin(prepared)
         shouldDiscard = false
-        try await persistCustomPlugin(record)
     }
 
     private func inspectPreparedCustomPlugin(
@@ -212,24 +209,58 @@ extension NativeLocalConnectorService {
         )
     }
 
-    private func persistCustomPlugin(_ record: NativeInstalledPluginRecord) async throws {
+    private func commitCustomPlugin(_ prepared: NativePreparedCustomPlugin) async throws {
+        let record = pluginInstaller.committedCustomPluginRecord(prepared)
         let hookTrustRecords = try Self.makeHookTrustRecords(
             record: record,
-            ownerUserID: state.user?.id ?? "local-user"
+            ownerUserID: state.user?.id ?? "local-user",
+            contentRootURL: URL(
+                fileURLWithPath: prepared.record.installationPath,
+                isDirectory: true
+            )
         )
-        var records = state.installedPluginRecords ?? [:]
+        let commit = try pluginInstaller.commitCustomPlugin(prepared)
+        do {
+            try await persistCustomPlugin(commit, hookTrustRecords: hookTrustRecords)
+        } catch {
+            do {
+                try pluginInstaller.rollbackCustomPluginCommit(commit)
+            } catch let rollbackError {
+                throw NativeConnectorError.pluginInstallation(
+                    "Plugin 安装失败且旧版本恢复失败：\(error.localizedDescription)；恢复错误：\(rollbackError.localizedDescription)"
+                )
+            }
+            throw error
+        }
+    }
+
+    private func persistCustomPlugin(
+        _ commit: NativeCommittedCustomPlugin,
+        hookTrustRecords: [NativePluginHookTrustRecord]
+    ) async throws {
+        let record = commit.record
+        var nextState = state
+        var records = nextState.installedPluginRecords ?? [:]
         records[record.pluginID] = record
-        state.installedPluginRecords = records
-        var trustRecords = (state.pluginHookTrustRecords ?? [:]).filter {
+        nextState.installedPluginRecords = records
+        var trustRecords = (nextState.pluginHookTrustRecords ?? [:]).filter {
             $0.value.pluginID != record.pluginID
         }
         for trust in hookTrustRecords {
             trustRecords[trust.bundleID] = trust
         }
-        state.pluginHookTrustRecords = trustRecords
-        state.installedPluginIDs.insert(record.pluginID)
-        state.pluginPreferences[record.pluginID] = true
-        try stateStore.save(state)
+        nextState.pluginHookTrustRecords = trustRecords
+        nextState.installedPluginIDs.insert(record.pluginID)
+        nextState.pluginPreferences[record.pluginID] = true
+        try customPluginStateSaver(nextState, stateStore)
+        state = nextState
+        do {
+            try pluginInstaller.finalizeCustomPluginCommit(commit)
+        } catch {
+            Self.logger.error(
+                "Failed to remove finalized custom plugin transaction files: \(error.localizedDescription, privacy: .public)"
+            )
+        }
         await pluginPermissionSnapshots.invalidateAll()
         await pluginIntegritySnapshots.invalidateAll()
         await syncTrustedPluginHookBundles()
@@ -272,18 +303,24 @@ extension NativeLocalConnectorService {
 
     private static func makeHookTrustRecords(
         record: NativeInstalledPluginRecord,
-        ownerUserID: String
+        ownerUserID: String,
+        contentRootURL: URL? = nil
     ) throws -> [NativePluginHookTrustRecord] {
-        let manifest = try loadCustomPluginManifest(record: record)
+        var contentRecord = record
+        if let contentRootURL {
+            contentRecord.installationPath = contentRootURL.path
+        }
+        let manifest = try loadCustomPluginManifest(record: contentRecord)
         guard !manifest.hooks.isEmpty else { return [] }
         let permissions = hookPermissionSnapshot(manifest)
         let permissionSHA = NativePluginInstaller.sha256Hex(permissions.joined(separator: "\n"))
         let root = URL(fileURLWithPath: record.installationPath, isDirectory: true)
+        let contentRoot = contentRootURL ?? root
         let trustedAt = Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down))
         return try manifest.hooks.sorted(by: { $0.componentKey < $1.componentKey }).map { hook in
             let bundle = try NativeCodexHookBundleParser.load(
                 contribution: hook,
-                installationRoot: root
+                installationRoot: contentRoot
             )
             let commandSHA = hookCommandSHA(bundle.hooks)
             let binding = [
