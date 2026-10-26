@@ -17,37 +17,51 @@ const PROJECT_RUN_PREFIXES: &[&str] = &[".preferences-"];
 const REMOTE_CONNECTION_PREFIXES: &[&str] = &[".credential-index-"];
 const CLIPBOARD_PREFIXES: &[&str] = &[".clipboard-"];
 const APPROVAL_PREFIXES: &[&str] = &[".approval-"];
+const INVOCATION_JOURNAL_PREFIXES: &[&str] = &["."];
 
 const CLEANUP_SCOPES: &[CleanupScope] = &[
     CleanupScope {
         components: &["preferences"],
-        prefixes: PREFERENCE_PREFIXES,
+        pattern: CleanupNamePattern::Uuid(PREFERENCE_PREFIXES),
     },
     CleanupScope {
         components: &["pet"],
-        prefixes: PET_PREFIXES,
+        pattern: CleanupNamePattern::Uuid(PET_PREFIXES),
     },
     CleanupScope {
         components: &["project-run"],
-        prefixes: PROJECT_RUN_PREFIXES,
+        pattern: CleanupNamePattern::Uuid(PROJECT_RUN_PREFIXES),
     },
     CleanupScope {
         components: &["remote-connections"],
-        prefixes: REMOTE_CONNECTION_PREFIXES,
+        pattern: CleanupNamePattern::Uuid(REMOTE_CONNECTION_PREFIXES),
     },
     CleanupScope {
         components: &["clipboard-history", "Payloads"],
-        prefixes: CLIPBOARD_PREFIXES,
+        pattern: CleanupNamePattern::Uuid(CLIPBOARD_PREFIXES),
     },
     CleanupScope {
         components: &["local-agent", "approval-decisions"],
-        prefixes: APPROVAL_PREFIXES,
+        pattern: CleanupNamePattern::Uuid(APPROVAL_PREFIXES),
+    },
+    CleanupScope {
+        components: &["NativeConnector", "PluginRuntime", "InvocationJournal"],
+        pattern: CleanupNamePattern::Uuid(INVOCATION_JOURNAL_PREFIXES),
+    },
+    CleanupScope {
+        components: &["NativeConnector", "Plugins", ".integrity"],
+        pattern: CleanupNamePattern::PluginIntegrity,
     },
 ];
 
 struct CleanupScope {
     components: &'static [&'static str],
-    prefixes: &'static [&'static str],
+    pattern: CleanupNamePattern,
+}
+
+enum CleanupNamePattern {
+    Uuid(&'static [&'static str]),
+    PluginIntegrity,
 }
 
 pub(crate) async fn cleanup_stale_temporaries(root: PathBuf) -> usize {
@@ -90,7 +104,7 @@ fn cleanup_scope(root: &Path, scope: &CleanupScope, cutoff: SystemTime) -> usize
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        if canonical_temporary_name(&name, scope.prefixes)
+        if canonical_temporary_name(&name, &scope.pattern)
             && try_remove_stale_owned_file(&entry.path(), cutoff)
         {
             removed = removed.saturating_add(1);
@@ -99,12 +113,30 @@ fn cleanup_scope(root: &Path, scope: &CleanupScope, cutoff: SystemTime) -> usize
     removed
 }
 
-fn canonical_temporary_name(name: &str, prefixes: &[&str]) -> bool {
-    prefixes.iter().any(|prefix| {
-        name.strip_prefix(prefix)
+fn canonical_temporary_name(name: &str, pattern: &CleanupNamePattern) -> bool {
+    match pattern {
+        CleanupNamePattern::Uuid(prefixes) => prefixes.iter().any(|prefix| {
+            name.strip_prefix(prefix)
+                .and_then(|value| value.strip_suffix(".tmp"))
+                .is_some_and(canonical_uuid)
+        }),
+        CleanupNamePattern::PluginIntegrity => name
+            .strip_prefix('.')
             .and_then(|value| value.strip_suffix(".tmp"))
-            .is_some_and(|value| Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value))
-    })
+            .and_then(|value| value.split_once('-'))
+            .is_some_and(|(digest, token)| canonical_sha256(digest) && canonical_uuid(token)),
+    }
+}
+
+fn canonical_uuid(value: &str) -> bool {
+    Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value)
+}
+
+fn canonical_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn safe_directory(path: &Path) -> bool {
@@ -195,5 +227,45 @@ mod tests {
         assert!(unrelated.exists());
         assert!(malformed.exists());
         assert!(outside.exists());
+    }
+
+    #[test]
+    fn plugin_cleanup_accepts_only_exact_journal_and_integrity_names() {
+        let root = tempdir().unwrap();
+        let token = "00000000-0000-0000-0000-000000000000";
+        let digest = "a".repeat(64);
+        let journal = root
+            .path()
+            .join("NativeConnector/PluginRuntime/InvocationJournal");
+        let integrity = root.path().join("NativeConnector/Plugins/.integrity");
+        fs::create_dir_all(&journal).unwrap();
+        fs::create_dir_all(&integrity).unwrap();
+        let journal_temporary = journal.join(format!(".{token}.tmp"));
+        let integrity_temporary = integrity.join(format!(".{digest}-{token}.tmp"));
+        let committed_journal = journal.join(format!("{digest}.intent.json"));
+        let committed_integrity = integrity.join(format!("{digest}.json"));
+        let malformed_integrity = integrity.join(format!(".not-a-digest-{token}.tmp"));
+        for path in [
+            &journal_temporary,
+            &integrity_temporary,
+            &committed_journal,
+            &committed_integrity,
+            &malformed_integrity,
+        ] {
+            fs::write(path, b"value").unwrap();
+        }
+
+        assert_eq!(
+            cleanup_stale_temporaries_before(
+                root.path(),
+                SystemTime::now() + Duration::from_secs(1),
+            ),
+            2
+        );
+        assert!(!journal_temporary.exists());
+        assert!(!integrity_temporary.exists());
+        assert!(committed_journal.exists());
+        assert!(committed_integrity.exists());
+        assert!(malformed_integrity.exists());
     }
 }
