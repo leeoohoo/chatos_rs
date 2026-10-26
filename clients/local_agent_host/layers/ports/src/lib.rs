@@ -426,6 +426,89 @@ pub trait LocalPluginHookBundleStore: Send + Sync {
     ) -> Result<Vec<String>, ClientStorageError>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalHookEventSpec {
+    pub event_id: String,
+    pub owner_user_id: String,
+    pub event_type: String,
+    pub subject_id: String,
+    pub sequence: u64,
+    pub payload_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalHookEventRecord {
+    pub spec: LocalHookEventSpec,
+    pub status: String,
+    pub additional_context: Option<String>,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalHookInvocationSpec {
+    pub invocation_id: String,
+    pub event_id: String,
+    pub bundle_id: String,
+    pub hook_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalHookInvocationRecord {
+    pub spec: LocalHookInvocationSpec,
+    pub attempt: u32,
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    pub stdout_sha256: Option<String>,
+    pub stdout_bytes: u64,
+    pub stderr_summary: Option<String>,
+    pub additional_context: Option<String>,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalHookInvocationCompletion {
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    pub stdout_sha256: Option<String>,
+    pub stdout_bytes: u64,
+    pub stderr_summary: Option<String>,
+    pub additional_context: Option<String>,
+}
+
+#[async_trait]
+pub trait LocalHookEventStore: Send + Sync {
+    async fn prepare_hook_event(
+        &self,
+        event: &LocalHookEventSpec,
+        now_unix_ms: i64,
+    ) -> Result<LocalHookEventRecord, ClientStorageError>;
+
+    async fn begin_hook_invocation(
+        &self,
+        invocation: &LocalHookInvocationSpec,
+        now_unix_ms: i64,
+    ) -> Result<LocalHookInvocationRecord, ClientStorageError>;
+
+    async fn complete_hook_invocation(
+        &self,
+        invocation_id: &str,
+        expected_attempt: u32,
+        completion: &LocalHookInvocationCompletion,
+        now_unix_ms: i64,
+    ) -> Result<LocalHookInvocationRecord, ClientStorageError>;
+
+    async fn complete_hook_event(
+        &self,
+        event_id: &str,
+        additional_context: Option<&str>,
+        now_unix_ms: i64,
+    ) -> Result<LocalHookEventRecord, ClientStorageError>;
+}
+
 #[async_trait]
 pub trait LocalCapabilitySnapshotStore: Send + Sync {
     /// Stores an immutable revision. Repeating the same value is safe; reusing
@@ -800,6 +883,7 @@ pub trait LocalAgentStore:
     + LocalAgentTaskStore
     + LocalPluginInstallationStore
     + LocalPluginHookBundleStore
+    + LocalHookEventStore
     + LocalConversationStore
     + LocalConversationRuntimeSettingsStore
     + LocalNotepadStore
@@ -819,6 +903,7 @@ impl<T> LocalAgentStore for T where
         + LocalAgentTaskStore
         + LocalPluginInstallationStore
         + LocalPluginHookBundleStore
+        + LocalHookEventStore
         + LocalConversationStore
         + LocalConversationRuntimeSettingsStore
         + LocalNotepadStore

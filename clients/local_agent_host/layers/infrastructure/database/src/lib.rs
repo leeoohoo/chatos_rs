@@ -24,6 +24,7 @@ mod conversation_lifecycle;
 mod conversation_query_store;
 mod conversation_runtime_settings_store;
 mod conversation_store;
+mod hook_event_store;
 mod maintenance;
 #[cfg(test)]
 mod maintenance_backup_tests;
@@ -91,12 +92,12 @@ pub use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentArtifactStore, LocalAgentArtifactWrite,
     LocalAgentRunStore, LocalAgentStore, LocalAgentTaskStore, LocalAgentToolStore,
     LocalCapabilityPolicySnapshot, LocalCapabilitySnapshotStore,
-    LocalConversationRuntimeSettingsStore, LocalConversationStore, LocalMemoryContextCacheEntry,
-    LocalMemoryContextCacheStore, LocalMemoryOutboxRecord, LocalMemoryOutboxStatus,
-    LocalMemoryOutboxStore, LocalMemorySyncStatus, LocalModelConfigSnapshot,
-    LocalModelConfigSnapshotStore, LocalNotepadImageWrite, LocalNotepadStore,
-    LocalPluginHookBundleStore, LocalPluginInstallationStore, LocalRemoteConnectionStore,
-    LocalRequirementSurveyStore, RunTransition,
+    LocalConversationRuntimeSettingsStore, LocalConversationStore, LocalHookEventStore,
+    LocalMemoryContextCacheEntry, LocalMemoryContextCacheStore, LocalMemoryOutboxRecord,
+    LocalMemoryOutboxStatus, LocalMemoryOutboxStore, LocalMemorySyncStatus,
+    LocalModelConfigSnapshot, LocalModelConfigSnapshotStore, LocalNotepadImageWrite,
+    LocalNotepadStore, LocalPluginHookBundleStore, LocalPluginInstallationStore,
+    LocalRemoteConnectionStore, LocalRequirementSurveyStore, RunTransition,
 };
 pub use receipt_cache::ReceiptCacheUsage;
 use run_record::{decode_run, decode_run_summary};

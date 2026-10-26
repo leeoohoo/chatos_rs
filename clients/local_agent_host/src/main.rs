@@ -68,6 +68,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )
     })?;
     let storage = Arc::new(SqliteClientStorage::connect_file(&database).await?);
+    let hook_data_root = database
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "database has no parent"))?
+        .join("HookData");
     let runtime = Arc::new(LocalAgentRuntime::new(storage.clone()));
     let recovered = runtime.initialize(&options.owner_user_id).await?;
     if recovered > 0 {
@@ -103,7 +107,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
     let assembly = (match memory_services {
         Some((source_id, sync_worker)) => {
-            LocalAgentHostAssembly::with_external_tool_worker_and_memory(
+            LocalAgentHostAssembly::with_external_tool_worker_and_memory_and_hooks(
                 runtime,
                 options.owner_user_id,
                 control_plane.clone(),
@@ -112,15 +116,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 options.approval_exempt_tools,
                 source_id,
                 sync_worker,
+                hook_data_root,
+                None,
             )
         }
-        None => LocalAgentHostAssembly::with_external_tool_worker(
+        None => LocalAgentHostAssembly::with_external_tool_worker_and_hooks(
             runtime,
             options.owner_user_id,
             control_plane.clone(),
             control_plane,
             options.read_only_tools,
             options.approval_exempt_tools,
+            hook_data_root,
+            None,
         ),
     })
     .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?

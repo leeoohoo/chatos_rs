@@ -212,6 +212,21 @@ where
     }
 }
 
+#[async_trait]
+pub trait LocalHookContextProvider: Send + Sync {
+    async fn prefixed_context(&self, claim: &LocalAgentRunClaim) -> Result<Vec<Value>, String>;
+}
+
+#[async_trait]
+impl<T> LocalHookContextProvider for Arc<T>
+where
+    T: LocalHookContextProvider + ?Sized,
+{
+    async fn prefixed_context(&self, claim: &LocalAgentRunClaim) -> Result<Vec<Value>, String> {
+        (**self).prefixed_context(claim).await
+    }
+}
+
 pub struct ControlPlaneLocalAiStepPlanner {
     profile_key: &'static str,
     initial_text_field: &'static str,
@@ -222,6 +237,7 @@ pub struct ControlPlaneLocalAiStepPlanner {
     local_tool_prefixes: Vec<String>,
     local_prefixed_input_items: Vec<Value>,
     local_context_runtime: Option<Arc<LocalAgentRuntime>>,
+    hook_context_provider: Option<Arc<dyn LocalHookContextProvider>>,
 }
 
 impl ControlPlaneLocalAiStepPlanner {
@@ -271,6 +287,7 @@ impl ControlPlaneLocalAiStepPlanner {
             local_tool_prefixes: Vec::new(),
             local_prefixed_input_items: Vec::new(),
             local_context_runtime: None,
+            hook_context_provider: None,
         }
     }
 
@@ -313,6 +330,14 @@ impl ControlPlaneLocalAiStepPlanner {
 
     pub fn with_local_conversation_context(mut self, runtime: Arc<LocalAgentRuntime>) -> Self {
         self.local_context_runtime = Some(runtime);
+        self
+    }
+
+    pub fn with_hook_context_provider<P>(mut self, provider: P) -> Self
+    where
+        P: LocalHookContextProvider + 'static,
+    {
+        self.hook_context_provider = Some(Arc::new(provider));
         self
     }
 
@@ -373,6 +398,11 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
         capabilities
             .prefixed_input_items
             .push(runtime_clock_context());
+        if let Some(provider) = self.hook_context_provider.as_ref() {
+            capabilities
+                .prefixed_input_items
+                .extend(provider.prefixed_context(claim).await?);
+        }
         let configured_instructions = merge_instructions(
             capabilities.instructions,
             transient.model_config.instructions,

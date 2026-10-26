@@ -9,7 +9,7 @@ pub mod interface;
 
 pub use application::{
     LocalAgentCoordinatorError, LocalAgentHostAssembly, LocalAgentHostCoordinator,
-    LocalAgentScheduler, LocalAgentSchedulerError, LocalAskUserToolExecutor,
+    LocalAgentScheduler, LocalAgentSchedulerError, LocalAskUserToolExecutor, LocalHookCoordinator,
     LocalMemoryContextCache, LocalMemoryOutboxWriter, LocalMemorySyncError, LocalMemorySyncWorker,
     LocalNotepadToolExecutor, LocalRequirementSurveyToolExecutor, LocalSkillToolExecutor,
     LocalTaskProcessToolExecutor, LocalTaskToolExecutor, LocalToolExecutor, LocalToolRegistry,
@@ -28,16 +28,17 @@ pub use application::{
 pub use chatos_agent_profiles::{
     ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy, ControlPlaneLocalAiStepPlanner,
     DurableAiProfile, LocalAiStepExecutor, LocalAiStepPlanner, LocalCapabilityResolver,
-    LocalModelRuntimeResolver, NamedReadOnlyTools, PreparedLocalAiStep, ResolvedLocalCapabilities,
-    ToolSafetyPolicy, TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY,
+    LocalHookContextProvider, LocalModelRuntimeResolver, NamedReadOnlyTools, PreparedLocalAiStep,
+    ResolvedLocalCapabilities, ToolSafetyPolicy, TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY,
     TASK_EXECUTION_PROFILE_KEY,
 };
 pub use infrastructure::{
     ChildEnvironmentModelCredentialResolver, LocalCapabilityPolicySnapshot,
-    LocalCapabilitySnapshotStore, LocalControlPlaneSnapshot, LocalJsonSchemaOutputFormat,
-    LocalMcpServerConfig, LocalMcpStdioSession, LocalMcpToolDefinition, LocalMcpToolSet,
-    LocalMemoryRuntimeConfig, LocalMemoryRuntimeServices, LocalModelConfigSnapshot,
-    LocalModelConfigSnapshotStore, LocalModelCredentialResolver, LocalPluginSecretResolver,
+    LocalCapabilitySnapshotStore, LocalControlPlaneSnapshot, LocalHookInvocation,
+    LocalHookInvocationResult, LocalHookRunner, LocalJsonSchemaOutputFormat, LocalMcpServerConfig,
+    LocalMcpStdioSession, LocalMcpToolDefinition, LocalMcpToolSet, LocalMemoryRuntimeConfig,
+    LocalMemoryRuntimeServices, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
+    LocalModelCredentialResolver, LocalPluginSecretResolver, MacOsSeatbeltHookRunner,
 };
 pub use interface::{
     decode_response, read_frame, serve_reader_writer, serve_stream, write_frame,

@@ -15,7 +15,7 @@ pub use ai_step::{
     PreparedLocalAiStep, ToolSafetyPolicy,
 };
 pub use planner::{
-    ControlPlaneLocalAiStepPlanner, LocalCapabilityResolver, LocalModelRuntimeResolver,
-    ResolvedLocalCapabilities, TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY,
-    TASK_EXECUTION_PROFILE_KEY,
+    ControlPlaneLocalAiStepPlanner, LocalCapabilityResolver, LocalHookContextProvider,
+    LocalModelRuntimeResolver, ResolvedLocalCapabilities, TransientLocalModelRuntime,
+    MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY,
 };

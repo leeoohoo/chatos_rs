@@ -10,6 +10,7 @@ mod assembly;
 mod coordinator;
 #[cfg(test)]
 mod coordinator_worker_tests;
+mod hook_coordinator;
 mod memory_sync;
 #[cfg(test)]
 mod memory_sync_tests;
@@ -40,6 +41,7 @@ pub use ask_user_tools::{
 pub use assembly::LocalAgentHostAssembly;
 pub use chatos_local_agent_runtime::LocalAgentRuntime;
 pub use coordinator::{LocalAgentCoordinatorError, LocalAgentHostCoordinator};
+pub use hook_coordinator::LocalHookCoordinator;
 pub use memory_sync::{
     LocalMemoryContextCache, LocalMemoryOutboxWriter, LocalMemorySyncError, LocalMemorySyncWorker,
     MemorySyncTick,

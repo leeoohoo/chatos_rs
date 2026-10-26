@@ -31,6 +31,7 @@ mod control_plane_runtime;
 mod conversation_query_tests;
 mod conversation_runtime;
 mod conversation_settings_runtime;
+mod hook_runtime;
 mod host_worker;
 mod message_task_graph;
 #[cfg(test)]
