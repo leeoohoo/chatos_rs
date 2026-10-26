@@ -5,6 +5,7 @@ mod agent_management;
 mod agent_plugin_runtime;
 mod agent_skill_management;
 mod ai_model_settings;
+mod app_data_maintenance;
 mod app_owned_export;
 mod ask_user;
 mod attachment_tool_worker;
@@ -308,6 +309,7 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             app.manage(PetPreferencesStore::new(data_dir.clone()));
             app.manage(PluginSettingsManager::new(data_dir.clone()));
+            let app_data_maintenance_root = data_dir.clone();
             app.manage(PluginApplicationManager::try_new(data_dir).map_err(std::io::Error::other)?);
             let resource_directory = app
                 .path()
@@ -333,6 +335,8 @@ pub fn run() {
                 let _ = attachment_manager.cleanup_stale_temporaries().await;
                 let _ = media_studio_manager.cleanup_stale_temporaries().await;
                 let _ = story_studio_manager.cleanup_stale_temporaries().await;
+                let _ = app_data_maintenance::cleanup_stale_temporaries(app_data_maintenance_root)
+                    .await;
             });
             resource_pressure::start_monitor(app.handle().clone());
             #[cfg(target_os = "windows")]
