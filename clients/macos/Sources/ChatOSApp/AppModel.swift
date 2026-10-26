@@ -139,6 +139,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let agentServices: any AgentServiceProviding
     let agentSkillLibrary: LocalAgentSkillLibrary
     let agentGroupChatScheduler: LocalAgentGroupChatScheduler
+    let machineResourceSnapshotProvider: NativeClientMachineResourceSnapshotProvider
     let agentGroupChatBuilderService: LocalAgentBuilderService
     let notepadService: NativeLocalAgentNotepadService
     let wechatCompanionService: ChatOSWeChatCompanionService
@@ -472,6 +473,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             }
         )
         self.agentGroupChatScheduler = agentGroupChatScheduler
+        self.machineResourceSnapshotProvider = NativeClientMachineResourceSnapshotProvider(
+            scheduler: agentGroupChatScheduler,
+            logicalJobBudget: RuntimeConfiguration.clientResourceBudget
+        )
         self.agentGroupChatBuilderService = LocalAgentBuilderService(
             groupChatService: agentGroupChatService,
             projectsService: localProjectsService,

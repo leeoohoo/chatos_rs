@@ -89,6 +89,7 @@ let package = Package(
                 "ChatOSCore",
                 "ChatOSAgentRuntime",
                 "ChatOSNetworking",
+                "ChatOSWorkerRuntime",
                 "ChatOSProcessRuntime",
                 "ChatOSModelCapabilities",
                 "ChatOSAgentWorkerProtocol",

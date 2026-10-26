@@ -1,8 +1,8 @@
 # ChatOS macOS 客户端稳定性、性能与进程架构方案
 
-更新时间：2026-10-22
+更新时间：2026-10-26
 
-状态：核心架构改造实施中；阶段记录见 12.1—12.112，完整 Release 验收待完成
+状态：核心架构改造实施中；阶段记录见 12.1—12.113，完整 Release 验收待完成
 
 适用范围：`clients/macos`、`clients/local_agent_host` 以及 macOS 客户端启动的 Plugin/Companion 进程
 
@@ -2488,13 +2488,28 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批统一展示优先级，不改变 Host 的追加要求审查协议、durable Run、轮询频率或任务调度。正式安装后的视觉复测需由用户重新打开客户端后在真实追加要求任务中确认；不为视觉复测主动启动客户端或访问活动用户数据库。
 
-### 12.113—12.120 剩余完整交付路径
+### 12.113 第四十二完整里程碑：机器级资源所有权与观测冻结（2026-10-26）
+
+本里程碑先关闭统一资源调度最危险的设计缺口：不能因为多个 Governor 已存在，就把 Agent、Host、Media、Plugin 和数据库维护机械套进同一个外层 permit。部分媒体传输、Plugin 调用和进程内解码在进入现有准入层时，可能已经拥有 durable job/Delivery；让它们再次排队会使 lease 老化、取消语义错位，并重新制造跨会话阻塞。
+
+已实施：
+
+- 新增 `NativeClientMachineResourceSnapshotProvider`，由 AppModel 生产实例接入，不是测试专用清单；一次并发采集 Swift Agent、File Worker、Large Transfer 和 Heavy Media 四套 Governor 的实际 Snapshot。
+- 冻结八个资源域：Swift Agent Run、Rust Host work item、Media Worker、Code Read Worker、大文件传输、进程内重媒体、Plugin 进程和数据库维护；每域明确唯一 owner、准入边界、进程模型、配置上限、共享池、active/queued 观测能力，以及排队时是否可能已经持有 durable claim。
+- Swift Agent 标记为 `beforeDurableClaim + unclaimed`；Rust Host 固定 worker 在 claim 前拥有容量，但 App 当前只能看到配置上限；Media/Code Read 在启动独立 PID 前准入；Large Transfer、进程内重媒体与 Plugin 明确标记为 `mayAlreadyBeClaimed`，禁止下一阶段直接增加外层 claim permit。
+- Snapshot 显式返回缺少精确观测的 Host、Plugin、数据库维护，不用 `0` 伪装未知；同时给出不安全外套 claim permit 的资源域，供后续诊断和测试门禁使用。
+- Connector 对 `ChatOSWorkerRuntime` 改为直接模块依赖，避免依赖 Media/Code Client 的偶然传递依赖；AppModel 使用与 Host/Swift Agent 启动相同的 `RuntimeConfiguration.clientResourceBudget` 构造机器视图。
+
+验证：Debug 与原生 arm64 Release 各联合运行 File Worker 4 项、机器资源快照 1 项、Host/Swift Agent 预算与 Governor 9 项、Large Transfer 4 项、Heavy Media 4 项，共 22 项，0 跳过、0 失败。新增回归真实占用并排队两条 Agent 和三条 Media 准入，验证 active/queued、共享池、Host 未观测状态和不安全外套 permit 列表；Debug/Release 完整 App 依赖图同步编译通过。
+
+边界：本批冻结所有权并统一观测语义，不改变任何现有并发额度，也不把 Snapshot 冒充统一准入。Host 尚未通过 IPC 报告实际 active/queued，Plugin Registry 与数据库 maintenance lease 尚未接入实时计数；这三项保持 `configuredLimitOnly`/`unavailable`，必须在 12.114 按各自所有权域补齐。当前策略仍是启动时静态额度，动态 memory/thermal/power 调额属于 12.115。
+
+### 12.114—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
 | --- | --- | --- |
-| 12.113 机器级资源所有权冻结 | 找出 Agent、Host、Media、Code Read、Plugin、数据库维护各自的 claim/permit/lease 所有者，冻结统一权重、保留槽、fencing 与诊断 Snapshot；禁止在已领取 durable Delivery 后再等待外层 permit | ADR 与代码入口一一对应；证明不存在嵌套 permit 死锁；测试能观测每类 active/queued/claimed，且不同会话可并行任务仍使用独立 PID |
 | 12.114 claim 前统一准入 | Agent 和可安全接入的 Helper 在领取持久任务前取得加权额度；Host 通过明确协议报告/约束实际 in-flight，不能靠 App 猜测 | 跨会话长短任务、Agent + Media + Code Read 组合测试通过；等待额度的任务不持有 delivery lease；取消只移除所属 waiter |
 | 12.115 动态压力调额 | 接入 memory pressure、thermal state、低电量和电源模式；压力升高只阻止新 claim，不强杀已提交副作用的任务，并用迟滞恢复 | 压力注入测试验证降额、恢复、防抖和最小保留槽；交互任务不被后台恢复无限饿死 |
 | 12.116 文件生命周期收口 | 安全回收 workspace `.import-*`、UI exporter 临时文件和 registry 失败遗留空目录；补最终打开点 device/inode 再校验 | ownership、命名、年龄、锁/活跃 Worker、symlink、hardlink、跨账户和取消/SIGKILL 回归全部通过；不递归清理任意用户目录 |
