@@ -36,9 +36,9 @@ public enum NativeLocalAgentConcurrencyPolicy {
     }
 }
 
-/// A process-wide logical-job budget shared by the two client runtimes that can
-/// currently create model/tool work. Media remains outside this first governor
-/// slice and must not be reported as governed yet.
+/// The machine-level logical-job budget split between the Rust Host reservation and the App-owned
+/// pool. Swift Agent Runs consume the App share directly; Media and Code Read workers borrow its
+/// otherwise idle weighted units through `ClientMachineResourceGovernor`.
 public struct NativeClientResourceBudget: Sendable, Equatable {
     public let totalLogicalJobs: Int
     public let localAgentHostWorkItems: Int

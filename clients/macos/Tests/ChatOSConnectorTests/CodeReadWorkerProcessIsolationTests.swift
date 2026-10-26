@@ -10,6 +10,72 @@ import XCTest
 @testable import ChatOSConnector
 
 final class CodeReadWorkerProcessIsolationTests: XCTestCase {
+    func testSharedMachineQueueDoesNotSpawnWorkerBeforeAdmission() async throws {
+        let fixture = try WorkerFixture()
+        defer { fixture.dispose() }
+        let marker = fixture.root.appendingPathComponent("worker-started")
+        let script = fixture.root.appendingPathComponent("marker-worker.sh")
+        try Data("#!/bin/sh\n/usr/bin/touch '\(marker.path)'\nexec /bin/sleep 60\n".utf8)
+            .write(to: script)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o700))],
+            ofItemAtPath: script.path
+        )
+        let machineGovernor = ClientMachineResourceGovernor(budget: .init(
+            availableResourceUnits: 2,
+            reservedHostResourceUnits: 2,
+            maximumAgentRuns: 1,
+            maximumMediaWorkers: 2,
+            maximumCodeReadWorkers: 2
+        ))
+        let agent = try await machineGovernor.acquire(context: .init(
+            kind: .agentRun,
+            priority: .interactive,
+            operation: "occupied-agent"
+        ))
+        let fileGovernor = ClientFileWorkerResourceGovernor(
+            budget: .init(
+                totalConcurrentWorkers: 3,
+                maximumMediaWorkers: 2,
+                maximumCodeReadWorkers: 2
+            ),
+            machineGovernor: machineGovernor
+        )
+        let request = Task {
+            try await CodeReadWorkerProcessClient(
+                executableURL: script,
+                timeout: 30,
+                resourceGovernor: fileGovernor
+            ).execute(
+                operation: "read_file_raw",
+                arguments: ["path": .string("README.md")],
+                projectRoot: fixture.root
+            )
+        }
+        defer { request.cancel() }
+        for _ in 0..<200 {
+            let snapshot = await machineGovernor.snapshot()
+            if snapshot.queued.contains(where: { $0.kind == .codeReadWorker }) { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        var snapshot = await machineGovernor.snapshot()
+        XCTAssertEqual(snapshot.queued.filter { $0.kind == .codeReadWorker }.count, 1)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+
+        await agent.releaseAndWait()
+        for _ in 0..<200 {
+            if FileManager.default.fileExists(atPath: marker.path) { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
+        request.cancel()
+        _ = try? await request.value
+        snapshot = await machineGovernor.snapshot()
+        XCTAssertTrue(snapshot.active.isEmpty)
+    }
+
     func testMediaBurstCannotConsumeReservedCodeReadWorkerSlot() async throws {
         let executable = try realWorkerExecutable()
         let fixture = try WorkerFixture()

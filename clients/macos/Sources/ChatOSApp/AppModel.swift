@@ -396,6 +396,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             services: agentServices,
             runtime: AgentWorkerProcessClient(),
             maximumConcurrentExecutions: RuntimeConfiguration.swiftAgentMaximumConcurrentRuns,
+            machineResourceGovernor: .shared,
             projectTypeKeyProvider: { ownerUserID, projectID in
                 try await localProjectsService.registry().get(
                     ownerUserID: ownerUserID,
@@ -476,6 +477,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.machineResourceSnapshotProvider = NativeClientMachineResourceSnapshotProvider(
             scheduler: agentGroupChatScheduler,
             logicalJobBudget: RuntimeConfiguration.clientResourceBudget,
+            machineResourceGovernor: .shared,
             hostSnapshot: {
                 await localAgentHost?.resourceSnapshot()
             }

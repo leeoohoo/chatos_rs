@@ -2,7 +2,7 @@
 
 更新时间：2026-10-26
 
-状态：核心架构改造实施中；阶段记录见 12.1—12.114a，完整 Release 验收待完成
+状态：核心架构改造实施中；阶段记录见 12.1—12.114c，剩余 12.115—12.120 按完整里程碑验收
 
 适用范围：`clients/macos`、`clients/local_agent_host` 以及 macOS 客户端启动的 Plugin/Companion 进程
 
@@ -2535,13 +2535,28 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批使 Host 的 claim 前容量成为可验证事实，没有在 App 外层再套第二个 permit，也没有改变既有静态并发额度。Agent、Host 与 Media/Code Read 之间仍是静态分区而非可借用的加权机器池；动态共享准入单列为 12.114c，必须使用本批 v47 反馈并保持所有等待点位于 durable claim/process spawn 之前。
 
-### 12.114c—12.120 剩余完整交付路径
+### 12.114c 第四十五完整里程碑：claim 前加权共享准入（2026-10-26）
+
+本里程碑关闭 Swift Agent 与短生命周期文件 Worker 各自拥有独立静态额度的问题。过去不同会话的 Agent 已可并行，Media 与 Code Read 也各自拥有独立 PID，但三套 Governor 互相不可见；组合负载可能同时跑满各自上限，也可能一边空闲、一边排队。现在三类 App-owned 工作在 durable claim 或进程启动前进入同一个加权、可借用资源池，Rust Host 继续保留独立硬额度，不在 App 内伪造二次 permit。
+
+已实施：
+
+- `ClientMachineResourceGovernor` 成为唯一中央准入 actor：Agent Run 消耗 2 个资源单位，Media 与 Code Read 各消耗 1 个；可用单位精确等于扣除 Host 硬预留后的 App 份额。各类仍有自身 active 上限，Media/Code Read 保留跨类别保护，同时允许首个短 Worker 借用 Agent 旁最后一个空闲单位，不出现“两类都为对方保留所以谁也进不去”的空转。
+- `LocalAgentExecutionGovernor` 与 `ClientFileWorkerResourceGovernor` 保留既有 API、Snapshot 和 metrics 契约，但只作为中央 Governor 的类型化 façade；permit 直接包装同一个 machine permit，因此没有嵌套 permit、重复计数或释放顺序死锁。测试默认使用隔离 Governor，生产 `AppModel` 明确把 Agent、Media、Code Read 和机器快照接到 `ClientMachineResourceGovernor.shared`。
+- 共享等待队列上限 256。interactive 可优先，但连续四次插队后 background 必须获得一次准入；取消按唯一 waiter ID 删除，重复 release 幂等，队列满只拒绝新请求。所有 Agent 等待发生在 `claimNextDelivery` 前，所有文件 Worker 等待发生在 `Process.run` 前。
+- 机器级 Snapshot 新增 `client-machine-resource-units`：直接报告 available、used、active、queued 及 `reservedHostResourceUnits`；Agent、Media、Code Read 三个 domain 指向同一 pool。Host 单独指向 `host-reserved-resource-units`，其 active/queued 仍来自 v47 真实 Health，不和 App permit 混算。
+- 确定性组合回归同时占用 Agent、Media、Code Read 并验证加权总量不越界，覆盖最后一个可借用单位、跨类型取消、四次交互公平边界和 Host 预留。真实调度回归用 Media + Code Read 占满 App pool，确认 Agent waiter 存在时 Delivery 仍是 `pending`；真实进程回归用启动 marker 确认 Code Read 排队时 PID 尚未出现，释放额度后才启动。
+
+验证：Debug 受影响矩阵包含 Worker Runtime 8 项、资源策略 10 项、机器 Snapshot 2 项、Agent 调度 30 项、真实 Code Read 进程 13 项，以及截图所涉追加要求状态 3 项，全部通过；原生 arm64 Release 在 `warnings-as-errors` 下完成完整 App 优化依赖图并运行 66 项受影响回归，0 跳过、0 失败。`git diff --check` 通过。正式包、签名、安装和包内 Git SHA 在本里程碑提交后复核；不主动启动 App，不访问活动用户数据库。
+
+边界：本批统一的是能够在 durable claim/process spawn 前安全等待的 Agent、Media 与 Code Read。Host 保持进程内固定 worker 硬预留；Large Transfer、进程内重媒体和 Plugin 可能已持有 durable 身份，仍禁止机械套外层 permit。当前额度在 App 启动时确定，实时 memory pressure、thermal、电源状态和带迟滞恢复属于 12.115。
+
+### 12.115—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
 | --- | --- | --- |
-| 12.114c claim 前加权共享准入 | 在 v47 Host 真实占用反馈基础上，让 Agent 与可安全接入的 Media/Code Read 使用可借用的机器额度；Host 保留硬槽，任何等待都位于 durable claim/process spawn 之前 | 跨会话长短任务、Agent + Host + Media + Code Read 组合测试通过；等待额度的任务不持有 delivery lease；取消只移除所属 waiter；无嵌套 permit |
 | 12.115 动态压力调额 | 接入 memory pressure、thermal state、低电量和电源模式；压力升高只阻止新 claim，不强杀已提交副作用的任务，并用迟滞恢复 | 压力注入测试验证降额、恢复、防抖和最小保留槽；交互任务不被后台恢复无限饿死 |
 | 12.116 文件生命周期收口 | 安全回收 workspace `.import-*`、UI exporter 临时文件和 registry 失败遗留空目录；补最终打开点 device/inode 再校验 | ownership、命名、年龄、锁/活跃 Worker、symlink、hardlink、跨账户和取消/SIGKILL 回归全部通过；不递归清理任意用户目录 |
 | 12.117 Agent/存储强杀矩阵 | 覆盖凭据交付、provider 网络、工具副作用、checkpoint、SQLite COMMIT/VACUUM 等不确定窗口 | 每个停点只有“安全重试、明确失败、待对账”三类结果；无重复副作用、跨账户写入或静默丢失；连续崩溃有隔离熔断 |

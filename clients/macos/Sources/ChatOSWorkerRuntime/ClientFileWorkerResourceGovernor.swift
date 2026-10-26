@@ -128,37 +128,32 @@ public final class ClientFileWorkerPermit: @unchecked Sendable {
     public let context: ClientFileWorkerContext
 
     private let lock = NSLock()
-    private let id: UUID
-    private var governor: ClientFileWorkerResourceGovernor?
+    private var machinePermit: ClientMachineResourcePermit?
 
     fileprivate init(
-        id: UUID,
         context: ClientFileWorkerContext,
-        governor: ClientFileWorkerResourceGovernor
+        machinePermit: ClientMachineResourcePermit
     ) {
-        self.id = id
         self.context = context
-        self.governor = governor
+        self.machinePermit = machinePermit
     }
 
     public func release() {
-        guard let governor = takeGovernor() else { return }
-        Task { await governor.release(id: id) }
+        takeMachinePermit()?.release()
     }
 
     public func releaseAndWait() async {
-        guard let governor = takeGovernor() else { return }
-        await governor.release(id: id)
+        await takeMachinePermit()?.releaseAndWait()
     }
 
     deinit { release() }
 
-    private func takeGovernor() -> ClientFileWorkerResourceGovernor? {
+    private func takeMachinePermit() -> ClientMachineResourcePermit? {
         lock.lock()
-        let governor = governor
-        self.governor = nil
+        let permit = machinePermit
+        machinePermit = nil
         lock.unlock()
-        return governor
+        return permit
     }
 }
 
@@ -167,171 +162,113 @@ public final class ClientFileWorkerPermit: @unchecked Sendable {
 /// slot needed by the other; remaining slots are shared for throughput.
 public actor ClientFileWorkerResourceGovernor {
     public static let shared = ClientFileWorkerResourceGovernor(
-        budget: ClientFileWorkerResourceBudgetPolicy.adaptiveDefault
+        budget: ClientFileWorkerResourceBudgetPolicy.adaptiveDefault,
+        machineGovernor: .shared
     )
-
-    private struct Waiter {
-        let id: UUID
-        let context: ClientFileWorkerContext
-        let continuation: CheckedContinuation<ClientFileWorkerPermit?, Never>
-    }
-
-    private struct Metrics {
-        var admittedCount: UInt64 = 0
-        var queuedAdmissionCount: UInt64 = 0
-        var releasedCount: UInt64 = 0
-        var queuedCancellationCount: UInt64 = 0
-        var queueFullRejectionCount: UInt64 = 0
-        var maximumObservedActive: Int = 0
-        var maximumObservedQueued: Int = 0
-    }
-
-    private static let maximumInteractiveAdmissionBurst = 4
     public let budget: ClientFileWorkerResourceBudget
     public let maximumQueued: Int
-    private var active: [UUID: ClientFileWorkerContext] = [:]
-    private var waiters: [Waiter] = []
-    private var consecutiveInteractiveAdmissionsWhileContended = 0
-    private var metrics = Metrics()
+    private let machineGovernor: ClientMachineResourceGovernor
 
     public init(
         budget: ClientFileWorkerResourceBudget =
             ClientFileWorkerResourceBudgetPolicy.adaptiveDefault,
-        maximumQueued: Int = 256
+        maximumQueued: Int = 256,
+        machineGovernor: ClientMachineResourceGovernor? = nil
     ) {
         precondition(maximumQueued > 0)
         self.budget = budget
         self.maximumQueued = maximumQueued
+        self.machineGovernor = machineGovernor ?? .init(
+            budget: .fileOnly(budget),
+            maximumQueued: maximumQueued
+        )
     }
 
     public func acquire(
         context: ClientFileWorkerContext
     ) async throws -> ClientFileWorkerPermit {
         try Task.checkCancellation()
-        let id = UUID()
-        if canAdmit(context.kind) {
-            return admit(id: id, context: context, wasQueued: false)
-        }
-        guard waiters.count < maximumQueued else {
-            Self.increment(&metrics.queueFullRejectionCount)
+        do {
+            let permit = try await machineGovernor.acquire(context: .init(
+                requestID: context.requestID,
+                kind: context.kind.machineKind,
+                priority: context.priority.machinePriority,
+                operation: context.operation
+            ))
+            return .init(context: context, machinePermit: permit)
+        } catch ClientMachineResourceGovernorError.queueFull {
             throw ClientFileWorkerGovernorError.queueFull
         }
-        let permit = await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                waiters.append(.init(id: id, context: context, continuation: continuation))
-                metrics.maximumObservedQueued = max(metrics.maximumObservedQueued, waiters.count)
-            }
-        } onCancel: {
-            Task { await self.cancel(id: id) }
-        }
-        guard let permit else { throw CancellationError() }
-        if Task.isCancelled {
-            await permit.releaseAndWait()
-            throw CancellationError()
-        }
-        return permit
     }
 
-    public func snapshot() -> ClientFileWorkerGovernorSnapshot {
-        .init(
+    public func snapshot() async -> ClientFileWorkerGovernorSnapshot {
+        let machine = await machineGovernor.snapshot()
+        let active = machine.active.compactMap(ClientFileWorkerContext.init(machine:))
+        let queued = machine.queued.compactMap(ClientFileWorkerContext.init(machine:))
+        let media = machine.metrics(for: .mediaWorker)
+        let codeRead = machine.metrics(for: .codeReadWorker)
+        return .init(
             budget: budget,
-            active: active.values.sorted(by: Self.contextOrder),
-            queued: waiters.map(\.context),
+            active: active,
+            queued: queued,
             metrics: .init(
-                admittedCount: metrics.admittedCount,
-                queuedAdmissionCount: metrics.queuedAdmissionCount,
-                releasedCount: metrics.releasedCount,
-                queuedCancellationCount: metrics.queuedCancellationCount,
-                queueFullRejectionCount: metrics.queueFullRejectionCount,
-                maximumObservedActive: metrics.maximumObservedActive,
-                maximumObservedQueued: metrics.maximumObservedQueued
+                admittedCount: Self.add(media.admittedCount, codeRead.admittedCount),
+                queuedAdmissionCount: Self.add(
+                    media.queuedAdmissionCount,
+                    codeRead.queuedAdmissionCount
+                ),
+                releasedCount: Self.add(media.releasedCount, codeRead.releasedCount),
+                queuedCancellationCount: Self.add(
+                    media.queuedCancellationCount,
+                    codeRead.queuedCancellationCount
+                ),
+                queueFullRejectionCount: Self.add(
+                    media.queueFullRejectionCount,
+                    codeRead.queueFullRejectionCount
+                ),
+                maximumObservedActive: machine.maximumObservedFileActive,
+                maximumObservedQueued: machine.maximumObservedFileQueued
             )
         )
     }
 
-    fileprivate func release(id: UUID) {
-        guard active.removeValue(forKey: id) != nil else { return }
-        Self.increment(&metrics.releasedCount)
-        drainWaiters()
+    private static func add(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        let result = lhs.addingReportingOverflow(rhs)
+        return result.overflow ? .max : result.partialValue
     }
+}
 
-    private func cancel(id: UUID) {
-        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
-        let waiter = waiters.remove(at: index)
-        Self.increment(&metrics.queuedCancellationCount)
-        waiter.continuation.resume(returning: nil)
-    }
-
-    private func drainWaiters() {
-        while let index = nextAdmissibleWaiterIndex() {
-            let waiter = waiters.remove(at: index)
-            let permit = admit(id: waiter.id, context: waiter.context, wasQueued: true)
-            waiter.continuation.resume(returning: permit)
+private extension ClientFileWorkerKind {
+    var machineKind: ClientMachineResourceKind {
+        switch self {
+        case .media: .mediaWorker
+        case .codeRead: .codeReadWorker
         }
     }
+}
 
-    private func nextAdmissibleWaiterIndex() -> Int? {
-        let candidates = waiters.indices.filter { canAdmit(waiters[$0].context.kind) }
-        guard !candidates.isEmpty else { return nil }
-        let interactive = candidates.first {
-            waiters[$0].context.priority == .interactive
+private extension ClientFileWorkerPriority {
+    var machinePriority: ClientMachineResourcePriority {
+        switch self {
+        case .background: .background
+        case .interactive: .interactive
         }
-        let background = candidates.first {
-            waiters[$0].context.priority == .background
-        }
-        if let background,
-           interactive == nil
-            || consecutiveInteractiveAdmissionsWhileContended
-                >= Self.maximumInteractiveAdmissionBurst {
-            consecutiveInteractiveAdmissionsWhileContended = 0
-            return background
-        }
-        if let interactive {
-            if background != nil {
-                consecutiveInteractiveAdmissionsWhileContended += 1
-            } else {
-                consecutiveInteractiveAdmissionsWhileContended = 0
-            }
-            return interactive
-        }
-        consecutiveInteractiveAdmissionsWhileContended = 0
-        return background
     }
+}
 
-    private func canAdmit(_ kind: ClientFileWorkerKind) -> Bool {
-        let activeForKind = active.values.reduce(into: 0) { count, context in
-            if context.kind == kind { count += 1 }
+private extension ClientFileWorkerContext {
+    init?(machine: ClientMachineResourceContext) {
+        let kind: ClientFileWorkerKind
+        switch machine.kind {
+        case .agentRun: return nil
+        case .mediaWorker: kind = .media
+        case .codeReadWorker: kind = .codeRead
         }
-        guard activeForKind < budget.maximumConcurrentWorkers(for: kind) else { return false }
-        let reservationsForOtherKinds = ClientFileWorkerKind.allCases.reduce(into: 0) {
-            reserved, candidate in
-            guard candidate != kind else { return }
-            if !active.values.contains(where: { $0.kind == candidate }) { reserved += 1 }
-        }
-        return active.count < budget.totalConcurrentWorkers - reservationsForOtherKinds
-    }
-
-    private func admit(
-        id: UUID,
-        context: ClientFileWorkerContext,
-        wasQueued: Bool
-    ) -> ClientFileWorkerPermit {
-        active[id] = context
-        Self.increment(&metrics.admittedCount)
-        if wasQueued { Self.increment(&metrics.queuedAdmissionCount) }
-        metrics.maximumObservedActive = max(metrics.maximumObservedActive, active.count)
-        return .init(id: id, context: context, governor: self)
-    }
-
-    private static func contextOrder(
-        _ lhs: ClientFileWorkerContext,
-        _ rhs: ClientFileWorkerContext
-    ) -> Bool {
-        if lhs.kind != rhs.kind { return lhs.kind.rawValue < rhs.kind.rawValue }
-        return lhs.requestID < rhs.requestID
-    }
-
-    private static func increment(_ value: inout UInt64) {
-        if value < UInt64.max { value += 1 }
+        self.init(
+            requestID: machine.requestID,
+            kind: kind,
+            priority: machine.priority == .interactive ? .interactive : .background,
+            operation: machine.operation
+        )
     }
 }
