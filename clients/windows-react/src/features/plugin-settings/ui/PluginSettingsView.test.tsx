@@ -41,18 +41,18 @@ describe("PluginSettingsView", () => {
     await waitFor(() => expect(toggle).not.toBeChecked());
   });
 
-  it("shows validated Hooks without claiming the Windows runner is active", async () => {
+  it("shows validated Hooks with the Windows runner ready", async () => {
     const snapshot = pluginSettingsSnapshot();
     snapshot.plugins[0]!.hookCount = 1;
-    snapshot.plugins[0]!.hookRuntimeStatus = "runner_unavailable";
+    snapshot.plugins[0]!.hookRuntimeStatus = "ready";
     const port = pluginSettingsPort({ load: vi.fn(async () => snapshot) });
     render(<PluginSettingsView ownerUserId="owner-1" port={port} onOpenInstallationAssistant={vi.fn()} />);
 
-    expect(await screen.findByText("Hook runner 未接入")).toBeInTheDocument();
+    expect(await screen.findByText("Hook runner 已就绪")).toBeInTheDocument();
     expect(screen.getByText("1 Hook Bundle")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Skills 与权限"));
     expect(screen.getByText("生命周期 Hooks")).toBeInTheDocument();
-    expect(screen.getByText(/这些 Hook 当前不会运行/)).toBeInTheDocument();
+    expect(screen.getByText(/Plugin 启用后会在 Windows AppContainer 中执行/)).toBeInTheDocument();
   });
 
   it("keeps plugin secrets local to the password dialog and clears them when closed", async () => {
@@ -89,7 +89,7 @@ describe("PluginSettingsView", () => {
         fingerprint: "b".repeat(64),
         components: [
           { kind: "skill" as const, displayName: "safe-skill", hookCount: null, events: [], runtimeStatus: null },
-          { kind: "hook" as const, displayName: "lifecycle", hookCount: 3, events: ["SessionStart", "UserPromptSubmit"], runtimeStatus: "runner_unavailable" as const },
+          { kind: "hook" as const, displayName: "lifecycle", hookCount: 3, events: ["SessionStart", "UserPromptSubmit"], runtimeStatus: "ready" as const },
         ],
       })),
       installManualDirectory: vi.fn(async () => pluginSettingsPort().load("owner-1")),
@@ -109,7 +109,7 @@ describe("PluginSettingsView", () => {
     expect(await screen.findByText("Safe Plugin · 2.1.0")).toBeInTheDocument();
     expect(screen.getByText("safe-skill")).toBeInTheDocument();
     expect(screen.getByText("lifecycle")).toBeInTheDocument();
-    expect(screen.getByText(/3 个处理器.*Windows runner 尚未接入/)).toBeInTheDocument();
+    expect(screen.getByText(/3 个处理器.*Windows runner 已就绪/)).toBeInTheDocument();
     expect(screen.getByText("b".repeat(64))).toBeInTheDocument();
     expect(installButton).toBeEnabled();
 

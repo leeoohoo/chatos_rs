@@ -135,6 +135,30 @@ impl LocalPluginHookBundleStore for SqliteClientStorage {
             .collect()
     }
 
+    async fn list_all_plugin_hook_bundles(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<LocalPluginHookBundleRecord>, ClientStorageError> {
+        let rows = sqlx::query(
+            "SELECT bundles.spec_json, bundles.created_at_unix_ms \
+             FROM local_plugin_hook_bundles bundles \
+             WHERE bundles.owner_user_id = ? \
+             ORDER BY bundles.created_at_unix_ms, bundles.bundle_id",
+        )
+        .bind(owner_user_id)
+        .fetch_all(&self.pool)
+        .await
+        .db()?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(LocalPluginHookBundleRecord {
+                    spec: serde_json::from_str(&row.try_get::<String, _>("spec_json").db()?)?,
+                    created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
+                })
+            })
+            .collect()
+    }
+
     async fn set_active_plugin_hook_bundles(
         &self,
         command: &IdempotentCommand,
@@ -253,6 +277,14 @@ mod tests {
             .await
             .expect("inactive list")
             .is_empty());
+        assert_eq!(
+            store
+                .list_all_plugin_hook_bundles("user-1")
+                .await
+                .expect("all list")
+                .len(),
+            1
+        );
         store
             .set_active_plugin_hook_bundles(
                 &command("activate-1"),

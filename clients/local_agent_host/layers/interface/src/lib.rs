@@ -63,7 +63,8 @@ pub use conversation::{
     LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
 };
 pub use hook::{
-    ListPluginHookBundlesCommand, LocalPluginHookBundleRecord, LocalPluginHookBundleSpec,
+    ListPluginHookBundleRecordsCommand, ListPluginHookBundlesCommand, LocalPluginHookBundleRecord,
+    LocalPluginHookBundleSpec,
     LocalPluginHookDefinition, PutPluginHookBundleCommand, SetActivePluginHookBundlesCommand,
     LOCAL_PLUGIN_HOOK_MAX_BUNDLES, LOCAL_PLUGIN_HOOK_MAX_DEFINITIONS,
 };
@@ -210,6 +211,7 @@ pub enum HostCommand {
     RemovePluginInstallation(RemovePluginInstallationCommand),
     PutPluginHookBundle(PutPluginHookBundleCommand),
     ListPluginHookBundles(ListPluginHookBundlesCommand),
+    ListPluginHookBundleRecords(ListPluginHookBundleRecordsCommand),
     SetActivePluginHookBundles(SetActivePluginHookBundlesCommand),
     CreateConversation(CreateConversationCommand),
     GetConversation(GetConversationCommand),
@@ -297,6 +299,7 @@ impl HostCommand {
             Self::RemovePluginInstallation(command) => command.validate(),
             Self::PutPluginHookBundle(command) => command.validate(),
             Self::ListPluginHookBundles(command) => command.validate(),
+            Self::ListPluginHookBundleRecords(command) => command.validate(),
             Self::SetActivePluginHookBundles(command) => command.validate(),
             Self::CreateConversation(command) => command.validate(),
             Self::GetConversation(command) => command.validate(),

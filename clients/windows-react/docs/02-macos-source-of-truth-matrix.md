@@ -1386,4 +1386,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 108. [部分完成] 在 107 项基础上，Host 已接入 Windows AppContainer Hook runner 的隔离执行基础（profile、ACL lease、网络 capability、Job Object、stdin/stdout/超时），并通过真实 Windows AppContainer 回归测试。当前发布后仍强制保持 active set 为空，尚未完成 Bundle 安全启用和安装到事件协调器的端到端闭环；本条补充状态不改变“不能声称与 macOS Hook 能力完全拉齐”的结论。
 
+109. [部分完成] Windows Hook 的安装与运行链已继续接通：Hook-only Plugin 现在会生成 `hooks-only` 非可执行 Host 安装记录，Agent Plugin catalog 可安全列出并解析该组件；Marketplace/本机目录安装准入不再因 runner 已存在而拒绝 Hook-only 包。设置页将 Hook runner 投影为“已就绪”，并说明启用后在 AppContainer 中执行。安装升级会先清空 active set，再按安装记录、启用状态、Bundle 校验和完整性恢复有效 Bundle；新增 Host `ListPluginHookBundleRecords` 读取全部已发布记录，使禁用/重新启用和卸载后恢复其他插件 Bundle 不会丢失。Windows React 137 个测试文件、511 项测试，Tauri 521 项通过、6 项 ignored；Local Agent Host 127+7+4 项测试通过。仍需用最终 MSI/NSIS 安装包执行真实 Hook 事件触发、阻断/上下文回传和安装后重启恢复 smoke，并补齐原生窗口逐态视觉取证，因此本项仍不能标记为完全关闭。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

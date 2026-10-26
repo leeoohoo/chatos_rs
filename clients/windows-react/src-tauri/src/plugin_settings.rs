@@ -1,9 +1,9 @@
 use chatos_local_agent_protocol::{
-    GetPluginInstallationCommand, HostCommand, HostResult, ListPluginHookBundlesCommand,
-    ListPluginInstallationsCommand, LocalPluginHookBundleRecord, LocalPluginHookBundleSpec,
-    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalPluginInstallationSummary,
-    PutPluginHookBundleCommand, PutPluginInstallationCommand, RemovePluginInstallationCommand,
-    SetActivePluginHookBundlesCommand,
+    GetPluginInstallationCommand, HostCommand, HostResult, ListPluginHookBundleRecordsCommand,
+    ListPluginHookBundlesCommand, ListPluginInstallationsCommand, LocalPluginHookBundleRecord,
+    LocalPluginHookBundleSpec, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
+    LocalPluginInstallationSummary, PutPluginHookBundleCommand, PutPluginInstallationCommand,
+    RemovePluginInstallationCommand, SetActivePluginHookBundlesCommand,
 };
 use chatos_plugin_management_sdk::{
     parse_plugin_manifest, validate_plugin_manifest, PluginInstallSource, PluginInstallSourceList,
@@ -793,6 +793,33 @@ async fn list_hook_bundle_records(
     }
 }
 
+async fn list_all_hook_bundle_records(
+    host: &dyn PluginSettingsHost,
+    owner_user_id: &str,
+) -> Result<Vec<LocalPluginHookBundleRecord>, String> {
+    match host
+        .execute(HostCommand::ListPluginHookBundleRecords(
+            ListPluginHookBundleRecordsCommand {
+                owner_user_id: owner_user_id.to_owned(),
+            },
+        ))
+        .await?
+    {
+        HostResult::PluginHookBundles { bundles } => Ok(bundles),
+        _ => Err("Local Agent Host 返回了无效的 Hook Bundle 记录清单。".into()),
+    }
+}
+
+async fn reconcile_current_hook_bundles(
+    host: &dyn PluginSettingsHost,
+    plugin_root: &Path,
+    owner_user_id: &str,
+) -> Result<(), String> {
+    let records = list_installation_records(host, owner_user_id).await?;
+    let bundles = list_all_hook_bundle_records(host, owner_user_id).await?;
+    reconcile_active_hook_bundles(host, owner_user_id, plugin_root, &records, &bundles).await
+}
+
 async fn reconcile_active_hook_bundles(
     host: &dyn PluginSettingsHost,
     owner_user_id: &str,
@@ -1163,6 +1190,12 @@ pub async fn update_plugin_enabled(
         }
         return Err(error);
     }
+    if let Err(error) =
+        reconcile_current_hook_bundles(&*host, &settings.plugin_root, &owner_user_id).await
+    {
+        let _ = deactivate_hook_bundles(&*host, &owner_user_id).await;
+        eprintln!("Hook Bundle 状态同步失败，已停用 active set: {error}");
+    }
     applications.reset().await;
     authentication
         .require_session_generation(&owner_user_id, generation)
@@ -1243,6 +1276,8 @@ pub async fn uninstall_plugin(
     let credential_names = declared_secret_names(&manifest)?;
     validate_secret_bindings(&owner_user_id, &plugin_id, &manifest, &targets)?;
     let installation_roots = installation_roots(&settings.plugin_root, &targets)?;
+    let bundles_before = list_all_hook_bundle_records(&*host, &owner_user_id).await?;
+    deactivate_hook_bundles(&*host, &owner_user_id).await?;
     let deleted_credentials =
         applications.delete_credentials(&owner_user_id, &plugin_id, &credential_names)?;
     for record in &targets {
@@ -1293,6 +1328,23 @@ pub async fn uninstall_plugin(
     }
     applications.reset().await;
     remove_installation_roots(&settings.plugin_root, installation_roots).await?;
+    let reconciliation = match list_installation_records(&*host, &owner_user_id).await {
+        Ok(records) => {
+            reconcile_active_hook_bundles(
+                &*host,
+                &owner_user_id,
+                &settings.plugin_root,
+                &records,
+                &bundles_before,
+            )
+            .await
+        }
+        Err(error) => Err(error),
+    };
+    if let Err(error) = reconciliation {
+        let _ = deactivate_hook_bundles(&*host, &owner_user_id).await;
+        eprintln!("卸载后 Hook Bundle 状态同步失败，active set 保持为空: {error}");
+    }
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
@@ -1442,9 +1494,13 @@ fn installation_specs(
     }
     if specs.is_empty()
         && package.manifest.mcp_servers.is_empty()
-        && !package.manifest.skills.is_empty()
+        && (!package.manifest.skills.is_empty() || !package.manifest.hooks.is_empty())
     {
-        let component_key = "skills-only";
+        let component_key = if package.manifest.skills.is_empty() {
+            "hooks-only"
+        } else {
+            "skills-only"
+        };
         let manifest_path = package.installation_root.join("chatos.plugin.json");
         let installation_id = previous_by_component
             .get(component_key)
@@ -1527,9 +1583,13 @@ fn local_installation_specs(
     }
     if specs.is_empty()
         && package.manifest.mcp_servers.is_empty()
-        && !package.manifest.skills.is_empty()
+        && (!package.manifest.skills.is_empty() || !package.manifest.hooks.is_empty())
     {
-        let component_key = "skills-only";
+        let component_key = if package.manifest.skills.is_empty() {
+            "hooks-only"
+        } else {
+            "skills-only"
+        };
         let manifest_path = package.installation_root.join("chatos.plugin.json");
         let spec = LocalPluginInstallationSpec {
             installation_id: previous_by_component
@@ -1796,16 +1856,18 @@ fn project_marketplace_plugin(
         runtime_status: runtime_status(installed, enabled),
         mcp_server_count: manifest.mcp_servers.len(),
         hook_count: manifest.hooks.len(),
-        hook_runtime_status: (!manifest.hooks.is_empty()).then_some("runner_unavailable"),
+        hook_runtime_status: (!manifest.hooks.is_empty()).then_some("ready"),
         skills: presented_skills(manifest),
         permissions: presented_permissions(&manifest.permissions),
         installation_issue: installed_projection.and_then(|projection| projection.issue),
         windows_compatible: compatible,
         install_action_available: compatible
-            && manifest
+            && (manifest
                 .mcp_servers
                 .iter()
-                .any(|server| matches!(server, PluginMcpServer::Stdio { .. })),
+                .any(|server| matches!(server, PluginMcpServer::Stdio { .. }))
+                || !manifest.skills.is_empty()
+                || !manifest.hooks.is_empty()),
         credentials,
     })
 }
@@ -1853,7 +1915,7 @@ fn project_local_plugin(
         hook_count: manifest.map_or(0, |manifest| manifest.hooks.len()),
         hook_runtime_status: manifest
             .is_some_and(|manifest| !manifest.hooks.is_empty())
-            .then_some("runner_unavailable"),
+            .then_some("ready"),
         skills: manifest.map_or_else(Vec::new, presented_skills),
         permissions: manifest.map_or_else(Vec::new, |manifest| {
             presented_permissions(&manifest.permissions)
@@ -2431,7 +2493,7 @@ fn manual_plugin_components(
             display_name: hook.component_key.clone(),
             hook_count: Some(hook.hook_count),
             events: hook.events.clone(),
-            runtime_status: Some("runner_unavailable"),
+            runtime_status: Some("ready"),
         }))
         .collect::<Vec<_>>();
     components.sort_by(|left, right| {
@@ -2487,11 +2549,13 @@ mod tests {
             Box::pin(async move {
                 match (behavior, command) {
                     (HookHostBehavior::Error, _) => Err("host unavailable".into()),
-                    (_, HostCommand::ListPluginHookBundles(_)) => {
-                        Ok(HostResult::PluginHookBundles {
-                            bundles: Vec::new(),
-                        })
-                    }
+                    (
+                        _,
+                        HostCommand::ListPluginHookBundles(_)
+                        | HostCommand::ListPluginHookBundleRecords(_),
+                    ) => Ok(HostResult::PluginHookBundles {
+                        bundles: Vec::new(),
+                    }),
                     (
                         HookHostBehavior::WrongActiveReply,
                         HostCommand::SetActivePluginHookBundles(_),
@@ -2992,13 +3056,59 @@ mod tests {
             artifact_sha256: "a".repeat(64),
             backup_root: None,
         };
-
         let specs =
             local_installation_specs("owner-1", "plugin-1", "release-1", &package, &[]).unwrap();
 
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].server_id, "skills-only");
         assert_eq!(specs[0].component_id, "skills-only");
+        assert!(specs[0].args.is_empty());
+        assert!(specs[0].allowed_tools.is_none());
+        assert_eq!(
+            Path::new(&specs[0].executable_path).file_name(),
+            Some(std::ffi::OsStr::new("chatos.plugin.json"))
+        );
+    }
+
+    #[test]
+    fn hook_only_package_receives_a_non_executable_host_record() {
+        let directory = tempfile::tempdir().unwrap();
+        let installation_root = directory.path().join("installed");
+        fs::create_dir_all(&installation_root).unwrap();
+        fs::write(installation_root.join("chatos.plugin.json"), "{}").unwrap();
+        let manifest = parse_plugin_manifest(
+            r#"{
+                "schemaVersion": 3,
+                "name": "hook-only",
+                "version": "1.0.0",
+                "description": "Hook only",
+                "author": { "name": "Local" },
+                "hooks": [{ "componentKey": "lifecycle", "source": "hooks/lifecycle.json" }],
+                "mcpServers": {},
+                "interface": {
+                    "displayName": "Hook Only",
+                    "shortDescription": "Hook only",
+                    "longDescription": "Hook only",
+                    "developerName": "Local",
+                    "category": "Developer Tools"
+                },
+                "permissions": []
+            }"#,
+        )
+        .unwrap();
+        let package = crate::plugin_installer::CommittedPluginPackage {
+            plugin_root: directory.path().to_path_buf(),
+            installation_root: installation_root.clone(),
+            manifest,
+            artifact_sha256: "a".repeat(64),
+            backup_root: None,
+        };
+        let specs =
+            local_installation_specs("owner-1", "plugin-1", "release-1", &package, &[]).unwrap();
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].server_id, "hooks-only");
+        assert_eq!(specs[0].component_id, "hooks-only");
         assert!(specs[0].args.is_empty());
         assert!(specs[0].allowed_tools.is_none());
         assert_eq!(

@@ -30,7 +30,7 @@ export const managedPluginSchema = z.object({
   runtimeStatus: z.enum(["not_installed", "not_checked", "disabled"]),
   mcpServerCount: z.number().int().nonnegative(),
   hookCount: z.number().int().nonnegative(),
-  hookRuntimeStatus: z.literal("runner_unavailable").nullable(),
+  hookRuntimeStatus: z.enum(["ready", "runner_unavailable"]).nullable(),
   skills: z.array(z.string().min(1)).max(128),
   permissions: z.array(pluginPermissionSchema).max(128),
   installationIssue: z.enum(["metadata_invalid", "integrity_check_failed"]).nullable(),
@@ -59,7 +59,7 @@ export const manualPluginComponentSchema = z.object({
   displayName: z.string().min(1),
   hookCount: z.number().int().nonnegative().nullable(),
   events: z.array(z.string().min(1)).max(11),
-  runtimeStatus: z.literal("runner_unavailable").nullable(),
+  runtimeStatus: z.enum(["ready", "runner_unavailable"]).nullable(),
 });
 
 export const manualPluginInspectionSchema = z.object({

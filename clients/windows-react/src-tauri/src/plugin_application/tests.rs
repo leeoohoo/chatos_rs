@@ -376,6 +376,49 @@ async fn skill_only_plugin_is_selectable_and_resolves_without_an_executable() {
 }
 
 #[tokio::test]
+async fn hook_only_plugin_is_selectable_and_resolves_without_an_executable() {
+    let fixture = CatalogFixture::new();
+    fixture.write_manifest(json!({
+        "schemaVersion": 3,
+        "name": "hook-only",
+        "version": "1.0.0",
+        "description": "Lifecycle hooks.",
+        "hooks": [{"componentKey": "lifecycle", "source": "hooks/lifecycle.json"}],
+        "mcpServers": {},
+        "interface": {"displayName": "Hook Only"},
+        "permissions": []
+    }));
+    let mut record = fixture.record();
+    record.spec.component_id = "hooks-only".into();
+    record.spec.server_id = "hooks-only".into();
+    record.spec.executable_path = fixture
+        .installation
+        .join("chatos.plugin.json")
+        .to_string_lossy()
+        .into_owned();
+    record.spec.args.clear();
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let options = manager
+        .list_agent_plugins(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].component_key, "hooks-only");
+    assert_eq!(options[0].display_name, "Hook Only");
+
+    let client = ScriptedMetadataClient::new(vec![Ok(record_result(record))]);
+    let resolved = manager
+        .resolve_agent_plugin(&client, "owner-1", &options[0])
+        .await
+        .unwrap();
+    assert!(resolved.executable.is_none());
+    assert!(resolved.args.is_empty());
+    assert!(resolved.environment.is_empty());
+    assert_eq!(resolved.skill_snapshot.len(), 0);
+}
+
+#[tokio::test]
 async fn agent_catalog_rejects_missing_or_non_stdio_manifest_components() {
     let fixture = CatalogFixture::new();
     let mut record = fixture.record();

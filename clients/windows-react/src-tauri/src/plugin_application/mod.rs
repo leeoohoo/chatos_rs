@@ -3,6 +3,7 @@ use chatos_local_agent_protocol::{
     LocalPluginInstallationRecord, LocalPluginInstallationSummary,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
@@ -38,6 +39,7 @@ const MAXIMUM_UI_ASSETS: usize = 256;
 const MAXIMUM_BRIDGE_CAPABILITIES: usize = 64;
 const MAXIMUM_MCP_SERVERS: usize = 64;
 const SKILLS_ONLY_COMPONENT_KEY: &str = "skills-only";
+const HOOKS_ONLY_COMPONENT_KEY: &str = "hooks-only";
 
 type MetadataFuture<'a> = Pin<Box<dyn Future<Output = Result<HostResult, String>> + Send + 'a>>;
 
@@ -159,8 +161,8 @@ impl PluginApplicationManager {
         let server = manifest.mcp_servers.get(&expected.component_key);
         if server.is_some_and(|server| record.spec.args != server.args)
             || (server.is_none()
-                && (expected.component_key != SKILLS_ONLY_COMPONENT_KEY
-                    || !record.spec.args.is_empty()))
+                && !is_non_executable_component(&expected.component_key)
+                && !record.spec.args.is_empty())
         {
             return Err(plugin_unavailable());
         }
@@ -247,8 +249,8 @@ impl PluginApplicationManager {
             let server = manifest.mcp_servers.get(&option.component_key);
             if server.is_some_and(|server| record.spec.args != server.args)
                 || (server.is_none()
-                    && (option.component_key != SKILLS_ONLY_COMPONENT_KEY
-                        || !record.spec.args.is_empty()))
+                    && !is_non_executable_component(&option.component_key)
+                    && !record.spec.args.is_empty())
             {
                 continue;
             }
@@ -585,6 +587,8 @@ struct PluginManifest {
     description: String,
     #[serde(default)]
     skills: Vec<PathReference>,
+    #[serde(default)]
+    hooks: Vec<Value>,
     #[serde(default)]
     mcp_servers: BTreeMap<String, PluginMcpServer>,
     #[serde(default)]
@@ -975,8 +979,13 @@ fn project_agent_plugin(
     manifest: &PluginManifest,
 ) -> Result<TrustedAgentPluginOption, String> {
     let component_key = &record.spec.server_id;
-    if component_key == SKILLS_ONLY_COMPONENT_KEY {
-        if manifest.skills.is_empty()
+    if is_non_executable_component(component_key) {
+        let valid_component = match component_key.as_str() {
+            SKILLS_ONLY_COMPONENT_KEY => !manifest.skills.is_empty(),
+            HOOKS_ONLY_COMPONENT_KEY => !manifest.hooks.is_empty() && manifest.skills.is_empty(),
+            _ => false,
+        };
+        if !valid_component
             || !manifest.mcp_servers.is_empty()
             || !record.spec.args.is_empty()
             || !record.spec.environment_secret_refs.is_empty()
@@ -1076,6 +1085,13 @@ fn project_agent_plugin(
         display_name,
         description,
     })
+}
+
+fn is_non_executable_component(component_key: &str) -> bool {
+    matches!(
+        component_key,
+        SKILLS_ONLY_COMPONENT_KEY | HOOKS_ONLY_COMPONENT_KEY
+    )
 }
 
 fn executable_matches_manifest_bin(executable_path: &str, manifest_bin: &str) -> bool {

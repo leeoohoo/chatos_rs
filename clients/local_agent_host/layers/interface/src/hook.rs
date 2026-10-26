@@ -170,6 +170,11 @@ pub struct ListPluginHookBundlesCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListPluginHookBundleRecordsCommand {
+    pub owner_user_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SetActivePluginHookBundlesCommand {
     pub owner_user_id: String,
     #[serde(default)]
@@ -196,6 +201,12 @@ impl SetActivePluginHookBundlesCommand {
 }
 
 impl ListPluginHookBundlesCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)
+    }
+}
+
+impl ListPluginHookBundleRecordsCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("owner_user_id", &self.owner_user_id)
     }

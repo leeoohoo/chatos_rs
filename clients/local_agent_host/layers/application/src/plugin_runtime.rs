@@ -71,6 +71,13 @@ impl LocalAgentRuntime {
                     .await?;
                 Ok(HostResult::PluginHookBundles { bundles })
             }
+            HostCommand::ListPluginHookBundleRecords(command) => {
+                let bundles = self
+                    .store
+                    .list_all_plugin_hook_bundles(&command.owner_user_id)
+                    .await?;
+                Ok(HostResult::PluginHookBundles { bundles })
+            }
             HostCommand::SetActivePluginHookBundles(command) => {
                 let active_bundle_ids = self
                     .store

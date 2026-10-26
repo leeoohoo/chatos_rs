@@ -50,6 +50,7 @@ impl CommandReceiptPolicy {
             | HostCommand::GetPluginInstallation(_)
             | HostCommand::ListPluginInstallations(_)
             | HostCommand::ListPluginHookBundles(_)
+            | HostCommand::ListPluginHookBundleRecords(_)
             | HostCommand::GetConversation(_)
             | HostCommand::GetConversationContext(_)
             | HostCommand::GetConversationAttachment(_)

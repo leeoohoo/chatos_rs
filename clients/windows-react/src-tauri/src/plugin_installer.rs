@@ -2842,14 +2842,12 @@ fn validate_local_package(package_root: &Path) -> Result<PluginManifest, String>
             executable_count += 1;
         }
     }
-    if executable_count == 0 && manifest.skills.is_empty() {
-        if !hook_summaries.is_empty() {
-            return Err(install_error(
-                "Codex Hook 已通过安全预检，但 Windows AppContainer Hook runner 尚未接入；Hook-only Plugin 暂不能安装",
-            ));
-        }
+    if executable_count == 0
+        && manifest.skills.is_empty()
+        && (hook_summaries.is_empty() || !manifest.mcp_servers.is_empty())
+    {
         return Err(install_error(
-            "本地 Plugin 尚无可运行的 stdio MCP 或有效 Skill",
+            "本地 Plugin 尚无可运行的 stdio MCP、有效 Skill 或受支持的 Hook",
         ));
     }
     Ok(manifest)
