@@ -30,7 +30,10 @@
     "active": true,
     "targets": "all",
     "windows": {
-      "allowDowngrades": false
+      "allowDowngrades": false,
+      "wix": {
+        "template": "wix-main.wxs"
+      }
     },
     "icon": [
       "icons/32x32.png",

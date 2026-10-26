@@ -90,6 +90,108 @@ function Get-MsiDowngradeMessage {
     return $conditionRecord.GetType().InvokeMember("StringData", "GetProperty", $null, $conditionRecord, 1)
 }
 
+function Get-RememberedInstallDirectoryState {
+    $registryPath = "Software\chatos\ChatOS"
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($registryPath, $false)
+    if ($null -eq $key) {
+        return [pscustomobject]@{
+            KeyExisted = $false
+            HasDefault = $false
+            DefaultValue = $null
+            DefaultKind = $null
+            HasNamed = $false
+            NamedValue = $null
+            NamedKind = $null
+        }
+    }
+    try {
+        $names = @($key.GetValueNames())
+        $hasDefault = $names -contains ""
+        $hasNamed = $names -contains "InstallDir"
+        return [pscustomobject]@{
+            KeyExisted = $true
+            HasDefault = $hasDefault
+            DefaultValue = if ($hasDefault) { $key.GetValue("") } else { $null }
+            DefaultKind = if ($hasDefault) { $key.GetValueKind("") } else { $null }
+            HasNamed = $hasNamed
+            NamedValue = if ($hasNamed) { $key.GetValue("InstallDir") } else { $null }
+            NamedKind = if ($hasNamed) { $key.GetValueKind("InstallDir") } else { $null }
+        }
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
+function Clear-RememberedInstallDirectory {
+    param([Parameter(Mandatory = $true)]$State)
+
+    foreach ($value in @($State.DefaultValue, $State.NamedValue)) {
+        if ($value -is [string] -and -not [string]::IsNullOrWhiteSpace($value)) {
+            $candidate = [System.IO.Path]::GetFullPath($value.Trim())
+            if (Test-Path -LiteralPath $candidate) {
+                throw "Refusing to replace an active remembered ChatOS install directory: $candidate"
+            }
+        }
+    }
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Software\chatos\ChatOS", $true)
+    if ($null -eq $key) {
+        return
+    }
+    try {
+        $key.DeleteValue("", $false)
+        $key.DeleteValue("InstallDir", $false)
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
+function Wait-RememberedInstallDirectoryCleared {
+    param([Parameter(Mandatory = $true)]$OriginalState)
+
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    $stableObservations = 0
+    while ([DateTimeOffset]::UtcNow -lt $deadline) {
+        Clear-RememberedInstallDirectory -State $OriginalState
+        Start-Sleep -Milliseconds 250
+        $current = Get-RememberedInstallDirectoryState
+        if (-not $current.HasDefault -and -not $current.HasNamed) {
+            $stableObservations++
+            if ($stableObservations -ge 20) {
+                return
+            }
+        }
+        else {
+            $stableObservations = 0
+        }
+    }
+    throw "The remembered ChatOS install directory did not remain cleared."
+}
+
+function Restore-RememberedInstallDirectory {
+    param([Parameter(Mandatory = $true)]$State)
+
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\chatos\ChatOS", $true)
+    try {
+        if ($State.HasDefault) {
+            $key.SetValue("", $State.DefaultValue, $State.DefaultKind)
+        }
+        else {
+            $key.DeleteValue("", $false)
+        }
+        if ($State.HasNamed) {
+            $key.SetValue("InstallDir", $State.NamedValue, $State.NamedKind)
+        }
+        else {
+            $key.DeleteValue("InstallDir", $false)
+        }
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
 function Invoke-MsiInstall {
     param(
         [Parameter(Mandatory = $true)][string]$InstallerPath,
@@ -106,9 +208,16 @@ function Invoke-MsiInstall {
 }
 
 function Invoke-MsiUninstall {
-    param([Parameter(Mandatory = $true)][string]$ProductCode)
+    param(
+        [Parameter(Mandatory = $true)][string]$ProductCode,
+        [string]$LogPath
+    )
 
-    return Start-Process -FilePath "msiexec.exe" -ArgumentList "/x $ProductCode /qn /norestart" -Wait -PassThru
+    $arguments = "/x $ProductCode /qn /norestart"
+    if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
+        $arguments += " /L*v `"$LogPath`""
+    }
+    return Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait -PassThru
 }
 
 function Assert-SuccessCode {
@@ -122,15 +231,53 @@ function Assert-SuccessCode {
     }
 }
 
+function Wait-FileRemoved {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [ValidateRange(1, 60)][int]$TimeoutSeconds = 15
+    )
+
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ((Test-Path -LiteralPath $Path -PathType Leaf) -and [DateTimeOffset]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 250
+    }
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        throw "MSI uninstall left the application executable behind."
+    }
+}
+
 function Find-Application {
     param([Parameter(Mandatory = $true)][string]$Directory)
 
+    if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
+        throw "Installed application directory is missing: $Directory"
+    }
     $applications = @(Get-ChildItem -LiteralPath $Directory -File -Filter "*.exe" |
         Where-Object { $_.Name -ne "chatos_local_agent_host.exe" })
     if ($applications.Count -ne 1) {
         throw "Expected exactly one ChatOS application executable, found $($applications.Count)"
     }
     return $applications[0].FullName
+}
+
+function Wait-ApplicationInstalled {
+    param(
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [ValidateRange(1, 60)][int]$TimeoutSeconds = 15
+    )
+
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTimeOffset]::UtcNow -lt $deadline) {
+        if (Test-Path -LiteralPath $Directory -PathType Container) {
+            $applications = @(Get-ChildItem -LiteralPath $Directory -File -Filter "*.exe" -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -ne "chatos_local_agent_host.exe" })
+            if ($applications.Count -gt 0) {
+                return Find-Application -Directory $Directory
+            }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "Installed application did not appear before the timeout."
 }
 
 function Assert-ApplicationVersion {
@@ -201,6 +348,82 @@ function New-TruncatedInstaller {
     }
 }
 
+function New-IsolatedLegacyInstaller {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    Copy-Item -LiteralPath $Source -Destination $Destination
+    $installer = $null
+    $database = $null
+    $view = $null
+    try {
+        $installer = New-Object -ComObject WindowsInstaller.Installer
+        $database = $installer.GetType().InvokeMember(
+            "OpenDatabase", "InvokeMethod", $null, $installer, @($Destination, 1)
+        )
+        $view = $database.GetType().InvokeMember(
+            "OpenView", "InvokeMethod", $null, $database,
+            @("DELETE FROM ``AppSearch`` WHERE ``Property``='INSTALLDIR'")
+        )
+        $view.GetType().InvokeMember("Execute", "InvokeMethod", $null, $view, $null) | Out-Null
+        $database.GetType().InvokeMember("Commit", "InvokeMethod", $null, $database, $null) | Out-Null
+    }
+    finally {
+        foreach ($comObject in @($view, $database, $installer)) {
+            if ($null -ne $comObject -and [System.Runtime.InteropServices.Marshal]::IsComObject($comObject)) {
+                [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($comObject) | Out-Null
+            }
+        }
+    }
+}
+
+function New-RollbackFaultInstaller {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    Copy-Item -LiteralPath $Source -Destination $Destination
+    $faultProductCode = "{" + [guid]::NewGuid().ToString().ToUpperInvariant() + "}"
+    $installer = $null
+    $database = $null
+    $productView = $null
+    $customActionView = $null
+    $sequenceView = $null
+    try {
+        $installer = New-Object -ComObject WindowsInstaller.Installer
+        $database = $installer.GetType().InvokeMember(
+            "OpenDatabase", "InvokeMethod", $null, $installer, @($Destination, 1)
+        )
+        $productView = $database.GetType().InvokeMember(
+            "OpenView", "InvokeMethod", $null, $database,
+            @("UPDATE ``Property`` SET ``Value``='$faultProductCode' WHERE ``Property``='ProductCode'")
+        )
+        $productView.GetType().InvokeMember("Execute", "InvokeMethod", $null, $productView, $null) | Out-Null
+        $customActionView = $database.GetType().InvokeMember(
+            "OpenView", "InvokeMethod", $null, $database,
+            @("INSERT INTO ``CustomAction`` (``Action``, ``Type``, ``Source``, ``Target``, ``ExtendedType``) VALUES ('ChatOSRollbackFault', 19, '', 'ChatOS rollback fault injection.', 0)")
+        )
+        $customActionView.GetType().InvokeMember("Execute", "InvokeMethod", $null, $customActionView, $null) | Out-Null
+        $sequenceView = $database.GetType().InvokeMember(
+            "OpenView", "InvokeMethod", $null, $database,
+            @("INSERT INTO ``InstallExecuteSequence`` (``Action``, ``Condition``, ``Sequence``) VALUES ('ChatOSRollbackFault', 'NOT Installed', 4550)")
+        )
+        $sequenceView.GetType().InvokeMember("Execute", "InvokeMethod", $null, $sequenceView, $null) | Out-Null
+        $database.GetType().InvokeMember("Commit", "InvokeMethod", $null, $database, $null) | Out-Null
+    }
+    finally {
+        foreach ($comObject in @($sequenceView, $customActionView, $productView, $database, $installer)) {
+            if ($null -ne $comObject -and [System.Runtime.InteropServices.Marshal]::IsComObject($comObject)) {
+                [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($comObject) | Out-Null
+            }
+        }
+    }
+    return $faultProductCode
+}
+
 $resolvedLegacy = (Resolve-Path -LiteralPath $LegacyInstallerPath).Path
 $resolvedCurrent = (Resolve-Path -LiteralPath $CurrentInstallerPath).Path
 if ([string]::Equals($resolvedLegacy, $resolvedCurrent, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -232,6 +455,8 @@ foreach ($productCode in @($legacyProductCode, $currentProductCode)) {
         throw "Refusing to reuse an MSI ProductCode that is already installed: $productCode"
     }
 }
+$rememberedInstallDirectoryState = Get-RememberedInstallDirectoryState
+Wait-RememberedInstallDirectoryCleared -OriginalState $rememberedInstallDirectoryState
 
 $installRoot = Split-Path -Parent $InstallDirectory
 $ownsInstallRoot = -not $PSBoundParameters.ContainsKey("InstallDirectory")
@@ -254,10 +479,13 @@ $report = [ordered]@{
     legacyInstallExitCode = $null
     legacyApplicationExitCode = $null
     corruptedUpgradeExitCode = $null
+    transactionalRollbackExitCode = $null
+    transactionalRollbackProductCode = $null
     currentUpgradeExitCode = $null
     applicationExitCode = $null
     uninstallExitCode = $null
     sentinelPreservedAfterFailedUpgrade = $false
+    transactionalRollbackVerified = $false
     sentinelPreservedAfterUpgrade = $false
     downgradeGuardVerified = $true
     downgradeMessage = $downgradeMessage
@@ -268,15 +496,18 @@ $sentinelContent = '{"owner":"upgrade-smoke","schemaVersion":1}'
 $userDataRoot = Join-Path $installRoot "user-data"
 $sentinelPath = Join-Path $userDataRoot "com.chatos.windows\upgrade-smoke-user-data.json"
 $applicationPath = $null
+$rollbackProductCode = $null
 $failure = $null
 
 try {
     $legacyLog = Join-Path $installRoot "legacy-install.log"
-    $legacyInstall = Invoke-MsiInstall -InstallerPath $resolvedLegacy -Destination $InstallDirectory -LogPath $legacyLog
+    $isolatedLegacyInstaller = Join-Path $installRoot "isolated-legacy.msi"
+    New-IsolatedLegacyInstaller -Source $resolvedLegacy -Destination $isolatedLegacyInstaller
+    $legacyInstall = Invoke-MsiInstall -InstallerPath $isolatedLegacyInstaller -Destination $InstallDirectory -LogPath $legacyLog
     $report.legacyInstallExitCode = $legacyInstall.ExitCode
     Assert-SuccessCode -ExitCode $legacyInstall.ExitCode -Operation "Legacy MSI installation"
 
-    $applicationPath = Find-Application -Directory $InstallDirectory
+    $applicationPath = Wait-ApplicationInstalled -Directory $InstallDirectory
     $null = Assert-ApplicationVersion -ApplicationPath $applicationPath -ExpectedVersion $LegacyVersion
     $legacyApplicationHash = (Get-FileHash -LiteralPath $applicationPath -Algorithm SHA256).Hash
     $report.legacyApplicationExitCode = Invoke-ApplicationSmoke -ApplicationPath $applicationPath -UserDataRoot $userDataRoot -TimeoutSeconds $StartupTimeoutSeconds
@@ -300,12 +531,40 @@ try {
         throw "A rejected upgrade changed the user-data sentinel."
     }
 
+    $rollbackInstaller = Join-Path $installRoot "rollback-fault-current.msi"
+    $rollbackProductCode = New-RollbackFaultInstaller -Source $resolvedCurrent -Destination $rollbackInstaller
+    $report.transactionalRollbackProductCode = $rollbackProductCode
+    $rollbackLog = Join-Path $installRoot "transactional-rollback.log"
+    $rollbackUpgrade = Invoke-MsiInstall -InstallerPath $rollbackInstaller -Destination $InstallDirectory -LogPath $rollbackLog
+    $report.transactionalRollbackExitCode = $rollbackUpgrade.ExitCode
+    if ($rollbackUpgrade.ExitCode -in @(0, 3010)) {
+        throw "The transaction fault-injection upgrade unexpectedly succeeded."
+    }
+    $rollbackLogContent = Get-Content -LiteralPath $rollbackLog -Raw
+    if (-not $rollbackLogContent.Contains("ChatOSRollbackFault")) {
+        throw "The MSI transaction did not reach the injected post-copy failure action."
+    }
+    if ((Get-MsiProductState -ProductCode $legacyProductCode) -eq -1 -or
+        (Get-MsiProductState -ProductCode $rollbackProductCode) -ne -1 -or
+        (Get-MsiProductState -ProductCode $currentProductCode) -ne -1) {
+        throw "Windows Installer did not restore the legacy product registration after rollback."
+    }
+    $applicationPath = Wait-ApplicationInstalled -Directory $InstallDirectory
+    $null = Assert-ApplicationVersion -ApplicationPath $applicationPath -ExpectedVersion $LegacyVersion
+    if ((Get-FileHash -LiteralPath $applicationPath -Algorithm SHA256).Hash -ne $legacyApplicationHash) {
+        throw "Windows Installer did not restore the legacy application bytes after rollback."
+    }
+    if ((Get-Content -LiteralPath $sentinelPath -Raw).Trim() -ne $sentinelContent) {
+        throw "The failed MSI transaction changed the AppData sentinel."
+    }
+    $report.transactionalRollbackVerified = $true
+
     $upgradeLog = Join-Path $installRoot "current-upgrade.log"
     $currentUpgrade = Invoke-MsiInstall -InstallerPath $resolvedCurrent -Destination $InstallDirectory -LogPath $upgradeLog
     $report.currentUpgradeExitCode = $currentUpgrade.ExitCode
     Assert-SuccessCode -ExitCode $currentUpgrade.ExitCode -Operation "Current MSI upgrade"
 
-    $applicationPath = Find-Application -Directory $InstallDirectory
+    $applicationPath = Wait-ApplicationInstalled -Directory $InstallDirectory
     $null = Assert-ApplicationVersion -ApplicationPath $applicationPath -ExpectedVersion $CurrentVersion
     $report.sentinelPreservedAfterUpgrade = (Get-Content -LiteralPath $sentinelPath -Raw).Trim() -eq $sentinelContent
     if (-not $report.sentinelPreservedAfterUpgrade) {
@@ -314,12 +573,11 @@ try {
 
     $report.applicationExitCode = Invoke-ApplicationSmoke -ApplicationPath $applicationPath -UserDataRoot $userDataRoot -TimeoutSeconds $StartupTimeoutSeconds
 
-    $uninstall = Invoke-MsiUninstall -ProductCode $currentProductCode
+    $uninstallLog = Join-Path $installRoot "current-uninstall.log"
+    $uninstall = Invoke-MsiUninstall -ProductCode $currentProductCode -LogPath $uninstallLog
     $report.uninstallExitCode = $uninstall.ExitCode
     Assert-SuccessCode -ExitCode $uninstall.ExitCode -Operation "Current MSI uninstall"
-    if (Test-Path -LiteralPath $applicationPath -PathType Leaf) {
-        throw "MSI uninstall left the application executable behind."
-    }
+    Wait-FileRemoved -Path $applicationPath
     $report.status = "passed"
 }
 catch {
@@ -328,7 +586,7 @@ catch {
     $report.error = $_.Exception.Message
 }
 finally {
-    foreach ($productCode in @($currentProductCode, $legacyProductCode)) {
+    foreach ($productCode in @($currentProductCode, $rollbackProductCode, $legacyProductCode) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) {
         if ((Get-MsiProductState -ProductCode $productCode) -ne -1) {
             $cleanup = Invoke-MsiUninstall -ProductCode $productCode
             if ($cleanup.ExitCode -notin @(0, 1605, 3010) -and $null -eq $failure) {
@@ -338,6 +596,8 @@ finally {
             }
         }
     }
+    Wait-RememberedInstallDirectoryCleared -OriginalState $rememberedInstallDirectoryState
+    Restore-RememberedInstallDirectory -State $rememberedInstallDirectoryState
 
     $report.completedAtUtc = [DateTimeOffset]::UtcNow.ToString("O")
     $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $ReportPath -Encoding utf8
