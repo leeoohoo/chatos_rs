@@ -3,7 +3,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     time::{Duration, Instant, UNIX_EPOCH},
 };
@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, State};
 use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
 
 use crate::{
+    app_owned_export::replace_bytes_preserving_permissions,
     host_lifecycle::validate_owner,
     machine_resource_governor::{
         MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
@@ -499,8 +500,13 @@ fn write_file(
     if content_revision(&current) != expected_revision {
         return Err("文件已被其他程序修改，请重新加载后再保存。".into());
     }
-    atomic_write(&file_path, content.as_bytes(), metadata.permissions())
-        .map_err(|_| file_error())?;
+    replace_bytes_preserving_permissions(
+        &file_path,
+        ".chatos-project-file-",
+        content.as_bytes(),
+        metadata.permissions(),
+    )
+    .map_err(|_| file_error())?;
     Ok(ProjectFileWriteResult {
         project_id: project_id.to_owned(),
         path: relative_path.to_owned(),
@@ -579,58 +585,6 @@ fn delete_entry(
         parent_path: parent.clone(),
         listing: list_directory(project_root, project_id, &parent).ok(),
     })
-}
-
-fn atomic_write(path: &Path, bytes: &[u8], permissions: fs::Permissions) -> std::io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| std::io::Error::other("missing parent"))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.as_file_mut().set_permissions(permissions)?;
-    temporary.as_file_mut().write_all(bytes)?;
-    temporary.as_file_mut().flush()?;
-    temporary.as_file().sync_all()?;
-    let temporary_path = temporary.into_temp_path().keep()?;
-    let result = replace_file(&temporary_path, path);
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary_path);
-    }
-    result
-}
-
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::rename(source, destination)
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let succeeded = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if succeeded == 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
 }
 
 fn content_revision(bytes: &[u8]) -> String {

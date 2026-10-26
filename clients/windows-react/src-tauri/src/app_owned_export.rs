@@ -13,6 +13,24 @@ pub(crate) fn export_bytes(
     temporary_prefix: &str,
     bytes: &[u8],
 ) -> Result<(), String> {
+    write_owned_bytes(destination, temporary_prefix, bytes, None)
+}
+
+pub(crate) fn replace_bytes_preserving_permissions(
+    destination: &Path,
+    temporary_prefix: &str,
+    bytes: &[u8],
+    permissions: fs::Permissions,
+) -> Result<(), String> {
+    write_owned_bytes(destination, temporary_prefix, bytes, Some(permissions))
+}
+
+fn write_owned_bytes(
+    destination: &Path,
+    temporary_prefix: &str,
+    bytes: &[u8],
+    permissions: Option<fs::Permissions>,
+) -> Result<(), String> {
     let leaf = destination
         .file_name()
         .filter(|value| valid_leaf_name(value.to_string_lossy().as_ref()))
@@ -43,6 +61,10 @@ pub(crate) fn export_bytes(
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
     let mut file = options.open(&temporary).map_err(|_| export_error())?;
+    if let Some(permissions) = permissions {
+        file.set_permissions(permissions)
+            .map_err(|_| export_error())?;
+    }
     for chunk in bytes.chunks(256 * 1_024) {
         file.write_all(chunk).map_err(|_| export_error())?;
     }
@@ -333,5 +355,28 @@ mod tests {
             ".chatos-artifact-export-not-owned.tmp",
             ".chatos-artifact-export-"
         ));
+    }
+
+    #[test]
+    fn replacement_preserves_destination_permissions() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("project.txt");
+        fs::write(&destination, b"old").unwrap();
+        let permissions = fs::metadata(&destination).unwrap().permissions();
+
+        replace_bytes_preserving_permissions(
+            &destination,
+            ".chatos-project-file-",
+            b"new",
+            permissions.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"new");
+        assert_eq!(
+            fs::metadata(&destination).unwrap().permissions().readonly(),
+            permissions.readonly()
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 }
