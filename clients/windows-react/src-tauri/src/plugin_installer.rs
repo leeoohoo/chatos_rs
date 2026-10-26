@@ -164,6 +164,17 @@ pub(crate) fn inspect_local_package(
     })
 }
 
+pub(crate) fn inspect_local_package_source(
+    plugin_root: &Path,
+    source: &Path,
+    subdirectory: Option<&str>,
+) -> Result<LocalPluginInspection, String> {
+    let acquired = acquire_local_package(plugin_root, source)?;
+    let source_root = local_source_root(&acquired.package_root, subdirectory)?;
+    normalize_compatible_mcp_package(&source_root)?;
+    inspect_local_package(&source_root, None)
+}
+
 pub(crate) fn install_local_package(
     plugin_root: &Path,
     source: &Path,
@@ -174,13 +185,9 @@ pub(crate) fn install_local_package(
         return Err(install_error("Plugin 预检指纹无效"));
     }
     let plugin_root = canonical_plugin_root(plugin_root)?;
-    let source_root = local_source_root(source, subdirectory)?;
-    if source_root == plugin_root
-        || source_root.starts_with(&plugin_root)
-        || plugin_root.starts_with(&source_root)
-    {
-        return Err(install_error("Plugin 来源目录与安装目录不能重叠"));
-    }
+    let acquired = acquire_local_package(&plugin_root, source)?;
+    let source_root = local_source_root(&acquired.package_root, subdirectory)?;
+    normalize_compatible_mcp_package(&source_root)?;
     install_copied_package(&plugin_root, &source_root, expected_fingerprint)
 }
 
@@ -191,7 +198,9 @@ pub(crate) async fn inspect_git_package(
     subdirectory: Option<&str>,
 ) -> Result<LocalPluginInspection, String> {
     let acquired = acquire_git_package(plugin_root, repository_url, git_reference).await?;
-    inspect_local_package(&acquired.package_root, subdirectory)
+    let source_root = local_source_root(&acquired.package_root, subdirectory)?;
+    normalize_compatible_mcp_package(&source_root)?;
+    inspect_local_package(&source_root, None)
 }
 
 pub(crate) async fn install_git_package(
@@ -206,6 +215,7 @@ pub(crate) async fn install_git_package(
     }
     let acquired = acquire_git_package(plugin_root, repository_url, git_reference).await?;
     let source_root = local_source_root(&acquired.package_root, subdirectory)?;
+    normalize_compatible_mcp_package(&source_root)?;
     install_copied_package(&acquired.plugin_root, &source_root, expected_fingerprint)
 }
 
@@ -321,7 +331,9 @@ pub(crate) async fn inspect_npm_package_source(
     subdirectory: Option<&str>,
 ) -> Result<LocalPluginInspection, String> {
     let acquired = acquire_npm_package(plugin_root, package_name, exact_version).await?;
-    inspect_local_package(&acquired.package_root, subdirectory)
+    let source_root = local_source_root(&acquired.package_root, subdirectory)?;
+    normalize_compatible_mcp_package(&source_root)?;
+    inspect_local_package(&source_root, None)
 }
 
 pub(crate) async fn install_npm_package_source(
@@ -336,7 +348,303 @@ pub(crate) async fn install_npm_package_source(
     }
     let acquired = acquire_npm_package(plugin_root, package_name, exact_version).await?;
     let source_root = local_source_root(&acquired.package_root, subdirectory)?;
+    normalize_compatible_mcp_package(&source_root)?;
     install_copied_package(&acquired.plugin_root, &source_root, expected_fingerprint)
+}
+
+fn acquire_local_package(
+    plugin_root: &Path,
+    source: &Path,
+) -> Result<AcquiredPluginSource, String> {
+    let plugin_root = canonical_plugin_root(plugin_root)?;
+    let source_root = local_source_root(source, None)?;
+    if source_root == plugin_root
+        || source_root.starts_with(&plugin_root)
+        || plugin_root.starts_with(&source_root)
+    {
+        return Err(install_error("Plugin 来源目录与安装目录不能重叠"));
+    }
+    let staging_root = plugin_root
+        .join(".source-staging")
+        .join(Uuid::new_v4().to_string());
+    let package_root = staging_root.join("package");
+    fs::create_dir_all(&package_root).map_err(|_| install_error("无法创建 Plugin 临时目录"))?;
+    let acquired = AcquiredPluginSource {
+        plugin_root,
+        staging_root,
+        package_root,
+    };
+    snapshot_local_tree(&source_root, Some(&acquired.package_root))?;
+    Ok(acquired)
+}
+
+const COMPATIBLE_MCP_CONFIGURATIONS: &[&str] = &[
+    "mcp.json",
+    ".mcp.json",
+    ".cursor/mcp.json",
+    ".vscode/mcp.json",
+    ".gemini/settings.json",
+    "claude_desktop_config.json",
+    "mcp_config.json",
+    "cline_mcp_settings.json",
+    "opencode.json",
+];
+
+fn normalize_compatible_mcp_package(package_root: &Path) -> Result<(), String> {
+    if package_root.join("chatos.plugin.json").is_file() {
+        return Ok(());
+    }
+    let Some((configuration_name, configuration_path)) = COMPATIBLE_MCP_CONFIGURATIONS
+        .iter()
+        .map(|name| (*name, package_root.join(name)))
+        .find(|(_, path)| path.is_file())
+    else {
+        return Ok(());
+    };
+    let raw = read_bounded_text(&configuration_path, MAXIMUM_MANIFEST_BYTES)?;
+    let document: Value =
+        serde_json::from_str(&raw).map_err(|_| install_error("MCP 配置不是有效 JSON"))?;
+    let document = document
+        .as_object()
+        .ok_or_else(|| install_error("MCP 配置必须是 JSON 对象"))?;
+    let servers = ["mcpServers", "servers", "mcp"]
+        .iter()
+        .find_map(|key| document.get(*key))
+        .and_then(Value::as_object)
+        .filter(|servers| !servers.is_empty() && servers.len() <= 64)
+        .ok_or_else(|| install_error(&format!("{configuration_name} 缺少有效 MCP Server 对象")))?;
+
+    let bin_root = package_root.join("bin");
+    fs::create_dir_all(&bin_root).map_err(|_| install_error("无法创建兼容 MCP 启动目录"))?;
+    let mut normalized_servers = BTreeMap::new();
+    let mut frozen_node_prepared = false;
+    for (server_name, server) in servers {
+        let server = server
+            .as_object()
+            .ok_or_else(|| install_error("MCP Server 配置必须是对象"))?;
+        let transport = server
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("stdio")
+            .to_ascii_lowercase();
+        if !matches!(transport.as_str(), "stdio" | "local") {
+            return Err(install_error("兼容导入当前只接受 stdio MCP"));
+        }
+        if let Some(environment) = server.get("env").or_else(|| server.get("environment")) {
+            if !environment.is_null()
+                && !environment
+                    .as_object()
+                    .is_some_and(serde_json::Map::is_empty)
+            {
+                return Err(install_error(
+                    "兼容 MCP 配置包含环境变量；Secret resolver 完成前拒绝导入",
+                ));
+            }
+        }
+        let component_key = compatibility_identifier(server_name, "MCP Server 名称")?;
+        if normalized_servers.contains_key(&component_key) {
+            return Err(install_error("MCP Server 名称规范化后重复"));
+        }
+        let command = compatible_command(server, server_name)?;
+        let raw_command = command
+            .first()
+            .ok_or_else(|| install_error("MCP Server 缺少 command"))?;
+        let mut arguments = command.iter().skip(1).cloned().collect::<Vec<_>>();
+        arguments.extend(compatible_string_array(server.get("args"), "MCP args")?);
+        if arguments.len() > 64 {
+            return Err(install_error("MCP 启动参数数量超过限制"));
+        }
+        let bin = prepare_compatible_launcher(
+            package_root,
+            &bin_root,
+            &component_key,
+            raw_command,
+            &mut frozen_node_prepared,
+        )?;
+        normalized_servers.insert(
+            component_key,
+            json!({
+                "type": "stdio",
+                "bin": bin,
+                "args": arguments,
+                "env": {}
+            }),
+        );
+    }
+
+    let components = normalized_servers.keys().cloned().collect::<Vec<_>>();
+    let primary_component = components
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "local-mcp".into());
+    let identity_component = primary_component.chars().take(40).collect::<String>();
+    let configuration_digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
+    let identity = format!("mcp-{identity_component}-{}", &configuration_digest[..12]);
+    let display_name = if servers.len() == 1 {
+        servers.keys().next().cloned().unwrap_or(primary_component)
+    } else {
+        format!("Imported MCP ({})", servers.len())
+    }
+    .chars()
+    .take(120)
+    .collect::<String>();
+    write_json_file(
+        &package_root.join("chatos.plugin.json"),
+        &json!({
+            "schemaVersion": 3,
+            "name": format!("compat-{identity}"),
+            "version": "0.0.0-local",
+            "description": format!("Imported stdio MCP configuration from {configuration_name}"),
+            "author": {"name": "Local"},
+            "interface": {
+                "displayName": display_name,
+                "shortDescription": "Imported stdio MCP configuration",
+                "longDescription": "Imported stdio MCP configuration",
+                "developerName": "Local",
+                "category": "Developer Tools"
+            },
+            "mcpServers": normalized_servers,
+            "permissions": [{
+                "permission": "process.spawn",
+                "required": true,
+                "reason": "启动用户确认导入的本机 MCP Server",
+                "components": components
+            }]
+        }),
+    )
+}
+
+fn compatible_command(
+    server: &serde_json::Map<String, Value>,
+    server_name: &str,
+) -> Result<Vec<String>, String> {
+    let command = server
+        .get("command")
+        .ok_or_else(|| install_error(&format!("MCP {server_name} 缺少 command")))?;
+    if let Some(command) = command.as_str() {
+        return compatible_string_array(Some(&json!([command])), "MCP command");
+    }
+    let command = compatible_string_array(Some(command), "MCP command")?;
+    if command.is_empty() {
+        return Err(install_error("MCP command 不能为空"));
+    }
+    Ok(command)
+}
+
+fn compatible_string_array(value: Option<&Value>, field: &str) -> Result<Vec<String>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .filter(|values| values.len() <= 64)
+        .ok_or_else(|| install_error(&format!("{field} 必须是字符串数组")))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.contains('\0') && value.len() <= 2_048)
+                .map(str::to_owned)
+                .ok_or_else(|| install_error(&format!("{field} 包含无效值")))
+        })
+        .collect()
+}
+
+fn compatibility_identifier(value: &str, field: &str) -> Result<String, String> {
+    let mut normalized = String::new();
+    for character in value.trim().chars() {
+        let character = character.to_ascii_lowercase();
+        if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+            normalized.push(character);
+        } else if !normalized.ends_with('-') {
+            normalized.push('-');
+        }
+    }
+    let normalized = normalized
+        .trim_matches(|character| matches!(character, '-' | '.' | '_'))
+        .chars()
+        .take(128)
+        .collect::<String>();
+    if normalized.is_empty() || !valid_executable_name(&normalized) {
+        return Err(install_error(&format!("{field} 无法转换为安全标识")));
+    }
+    Ok(normalized)
+}
+
+fn prepare_compatible_launcher(
+    package_root: &Path,
+    bin_root: &Path,
+    component_key: &str,
+    raw_command: &str,
+    frozen_node_prepared: &mut bool,
+) -> Result<String, String> {
+    let command = raw_command.trim();
+    if command.eq_ignore_ascii_case("node") || command.eq_ignore_ascii_case("node.exe") {
+        let bin = "compat-node";
+        let launcher = bin_root.join(format!("{bin}.exe"));
+        if !*frozen_node_prepared {
+            if launcher.exists() {
+                return Err(install_error("兼容 MCP Node.js 启动器名称冲突"));
+            }
+            let node = find_system_executable("node")
+                .ok_or_else(|| install_error("兼容 MCP 的 Node command 需要本机 Node.js"))?;
+            fs::copy(node, &launcher)
+                .map_err(|_| install_error("无法冻结兼容 MCP Node.js 运行时"))?;
+            *frozen_node_prepared = true;
+        }
+        return Ok(bin.into());
+    }
+
+    let mut relative = command.replace('\\', "/");
+    for prefix in [
+        "${PLUGIN_ROOT}/",
+        "$PLUGIN_ROOT/",
+        "${CLAUDE_PLUGIN_ROOT}/",
+        "$CLAUDE_PLUGIN_ROOT/",
+    ] {
+        if let Some(stripped) = relative.strip_prefix(prefix) {
+            relative = stripped.to_owned();
+            break;
+        }
+    }
+    while let Some(stripped) = relative.strip_prefix("./") {
+        relative = stripped.to_owned();
+    }
+    let relative = safe_relative_path(Path::new(&relative)).map_err(|_| {
+        install_error("兼容 MCP command 必须是 node 或 Plugin 目录内的 Windows .exe")
+    })?;
+    if !relative
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("exe"))
+    {
+        return Err(install_error(
+            "兼容 MCP command 必须是 node 或 Plugin 目录内的 Windows .exe",
+        ));
+    }
+    let source = package_root.join(relative);
+    let metadata = fs::symlink_metadata(&source)
+        .map_err(|_| install_error("兼容 MCP command 指向的可执行文件不存在"))?;
+    if !metadata.is_file() || is_symlink_or_reparse(&metadata) {
+        return Err(install_error("兼容 MCP command 指向的文件无效"));
+    }
+    let source = source
+        .canonicalize()
+        .map_err(|_| install_error("兼容 MCP command 路径无效"))?;
+    let canonical_root = package_root
+        .canonicalize()
+        .map_err(|_| install_error("兼容 MCP 目录无效"))?;
+    if !source.starts_with(&canonical_root) {
+        return Err(install_error("兼容 MCP command 越界"));
+    }
+    let bin = format!("compat-{component_key}");
+    let launcher = bin_root.join(format!("{bin}.exe"));
+    if launcher.exists() {
+        return Err(install_error("兼容 MCP 启动器名称冲突"));
+    }
+    fs::copy(source, launcher).map_err(|_| install_error("无法冻结兼容 MCP 可执行文件"))?;
+    Ok(bin)
 }
 
 pub(crate) async fn inspect_npm_mcp(
@@ -2969,6 +3277,148 @@ mod tests {
         )
         .unwrap();
         assert_ne!(one, two);
+    }
+
+    #[test]
+    fn compatible_stdio_mcp_config_is_normalized_in_staging_and_installed() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source");
+        let plugin_root = directory.path().join("plugins");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("server.exe"), b"fixture executable").unwrap();
+        fs::write(
+            source.join("mcp.json"),
+            serde_json::to_vec(&json!({
+                "mcpServers": {
+                    "Fixture Server": {
+                        "type": "stdio",
+                        "command": ["./server.exe", "--stdio"],
+                        "args": ["--safe"],
+                        "env": {}
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let inspection = inspect_local_package_source(&plugin_root, &source, None).unwrap();
+        assert!(inspection
+            .manifest
+            .name
+            .starts_with("compat-mcp-fixture-server-"));
+        assert_eq!(inspection.manifest.version, "0.0.0-local");
+        let PluginMcpServer::Stdio { bin, args, env, .. } = &inspection.manifest.mcp_servers[0]
+        else {
+            panic!("expected a normalized stdio MCP server");
+        };
+        assert_eq!(bin, "compat-fixture-server");
+        assert_eq!(args, &["--stdio", "--safe"]);
+        assert!(env.is_empty());
+        assert!(!source.join("chatos.plugin.json").exists());
+        assert!(!source.join("bin").exists());
+
+        let package =
+            install_local_package(&plugin_root, &source, None, &inspection.fingerprint).unwrap();
+        assert!(package
+            .installation_root
+            .join("chatos.plugin.json")
+            .is_file());
+        assert!(package
+            .installation_root
+            .join("bin/compat-fixture-server.exe")
+            .is_file());
+        package.finish().unwrap();
+    }
+
+    #[test]
+    fn compatible_stdio_mcp_rejects_secrets_shell_commands_and_remote_transports() {
+        for (name, server) in [
+            (
+                "secret",
+                json!({"command": "node", "env": {"API_KEY": "plaintext"}}),
+            ),
+            ("shell", json!({"command": "npx", "args": ["server"]})),
+            (
+                "remote",
+                json!({"type": "http", "url": "https://example.com/mcp"}),
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            fs::write(
+                directory.path().join("mcp.json"),
+                serde_json::to_vec(&json!({"mcpServers": {name: server}})).unwrap(),
+            )
+            .unwrap();
+            assert!(normalize_compatible_mcp_package(directory.path()).is_err());
+            assert!(!directory.path().join("chatos.plugin.json").exists());
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Node.js"]
+    async fn compatible_node_mcp_config_smoke() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source");
+        let plugin_root = directory.path().join("plugins");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("server.mjs"),
+            r#"import readline from "node:readline";
+const lines = readline.createInterface({ input: process.stdin });
+lines.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  let result = {};
+  if (request.method === "initialize") {
+    result = { protocolVersion: request.params.protocolVersion, capabilities: {}, serverInfo: { name: "compat-fixture", version: "1" } };
+  } else if (request.method === "tools/list") {
+    result = { tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }] };
+  }
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\n");
+});
+"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join("claude_desktop_config.json"),
+            serde_json::to_vec(&json!({
+                "mcpServers": {
+                    "compat-fixture": {
+                        "command": "node",
+                        "args": ["server.mjs"]
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let acquired = acquire_local_package(&plugin_root, &source).unwrap();
+        normalize_compatible_mcp_package(&acquired.package_root).unwrap();
+        let local = inspect_local_package(&acquired.package_root, None).unwrap();
+        let PluginMcpServer::Stdio { bin, args, env, .. } = &local.manifest.mcp_servers[0] else {
+            panic!("expected a normalized stdio MCP server");
+        };
+        let executable = resolve_executable(&acquired.package_root, bin).unwrap();
+        let tools = inspect_mcp_tools(&acquired.package_root, &executable, args, env)
+            .await
+            .unwrap();
+        assert_eq!(tools[0]["name"], "ping");
+        drop(acquired);
+
+        let package =
+            install_local_package(&plugin_root, &source, None, &local.fingerprint).unwrap();
+        let installed = validate_local_package(&package.installation_root).unwrap();
+        let PluginMcpServer::Stdio { bin, args, env, .. } = &installed.mcp_servers[0] else {
+            panic!("expected an installed stdio MCP server");
+        };
+        let executable = resolve_executable(&package.installation_root, bin).unwrap();
+        let tools = inspect_mcp_tools(&package.installation_root, &executable, args, env)
+            .await
+            .unwrap();
+        assert_eq!(tools[0]["name"], "ping");
+        package.finish().unwrap();
     }
 
     #[tokio::test]
