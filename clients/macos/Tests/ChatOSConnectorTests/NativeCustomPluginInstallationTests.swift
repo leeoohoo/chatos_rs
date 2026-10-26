@@ -467,6 +467,131 @@ struct NativeCustomPluginInstallationTests {
         #expect(inspection.components.first?.toolNames == ["ping"])
     }
 
+    @Test("a weak root manifest cannot hide a valid Codex Hook manifest")
+    func codexHookManifestFallbackAndPreflight() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CodexHookImport-\(UUID().uuidString)", isDirectory: true)
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        let manifestFolder = source.appendingPathComponent(".codex-plugin", isDirectory: true)
+        let hookFolder = source.appendingPathComponent("hooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: manifestFolder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: hookFolder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"{"name":"shadow-only"}"#.utf8)
+            .write(to: source.appendingPathComponent("plugin.json"))
+        try Data("""
+        {
+          "name": "generic-hook-fixture",
+          "version": "5.3.2",
+          "hooks": "./hooks/codex-hooks.json",
+          "interface": {"displayName": "Generic Hook Fixture"}
+        }
+        """.utf8).write(to: manifestFolder.appendingPathComponent("plugin.json"))
+        let command = "node -e \"process.stdout.write('{}')\""
+        let hookDocument: [String: Any] = ["hooks": [
+            "SessionStart": [[
+                "matcher": "startup|resume|clear|compact",
+                "hooks": [[
+                    "type": "command",
+                    "command": command,
+                    "timeout": 5,
+                    "statusMessage": "Loading mode",
+                ]],
+            ]],
+            "SubagentStart": [["hooks": [[
+                "type": "command", "command": "node subagent.js",
+            ]]]],
+            "UserPromptSubmit": [["hooks": [[
+                "type": "command", "command": "node tracker.js",
+            ]]]],
+        ]]
+        try JSONSerialization.data(withJSONObject: hookDocument, options: [.sortedKeys])
+            .write(to: hookFolder.appendingPathComponent("codex-hooks.json"))
+
+        let stateURL = root.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(id: "owner-hook", username: "hook", displayName: "Hook", role: "user")
+        state.deviceID = "device-hook"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+
+        let inspection = try await service.inspectLocalPlugin(atPath: source.path)
+        #expect(inspection.displayName == "Generic Hook Fixture")
+        #expect(inspection.version == "5.3.2")
+        #expect(inspection.sourceSummary.contains("Codex Plugin"))
+        #expect(inspection.sourceSummary.contains(".codex-plugin/plugin.json"))
+        let hook = try #require(inspection.components.first(where: { $0.kind == .hook }))
+        #expect(hook.hookDialect == "codex")
+        #expect(hook.hookEvents == ["SessionStart", "SubagentStart", "UserPromptSubmit"])
+        #expect(hook.hookCommands.count == 3)
+        #expect(hook.hookCommands.first == command)
+        #expect(hook.hookRuntimes.count == 1)
+        #expect(hook.hookRuntimes.first?.hasPrefix("node: /") == true)
+        #expect(inspection.requestedPermissions == ["process.spawn", "workspace.read"])
+
+        try await service.installLocalPlugin(
+            atPath: source.path,
+            expectedFingerprint: inspection.fingerprint
+        )
+        let catalog = try await service.fetchPlugins(refresh: true)
+        let installed = try #require(catalog.first(where: { $0.displayName == "Generic Hook Fixture" }))
+        #expect(installed.installationIssue == nil)
+    }
+
+    @Test("Codex Hook parser rejects unsupported async handlers and path escapes")
+    func codexHookParserRejectsUnsafeInputs() throws {
+        let async = Data(#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node hook.js","async":true}]}]}}"#.utf8)
+        #expect(throws: NativeConnectorError.self) {
+            _ = try NativeCodexHookBundleParser.parse(async)
+        }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CodexHookEscape-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(throws: NativeConnectorError.self) {
+            _ = try NativeCodexHookBundleParser.load(
+                contribution: .init(
+                    componentKey: "escape",
+                    dialect: "codex",
+                    path: "../outside.json"
+                ),
+                installationRoot: root
+            )
+        }
+    }
+
+    @Test("manifest discovery aggregates every invalid candidate diagnostic")
+    func manifestDiscoveryAggregatesDiagnostics() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PluginManifestDiagnostics-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(".codex-plugin", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"{"schemaVersion":3,"name":false}"#.utf8)
+            .write(to: root.appendingPathComponent("chatos.plugin.json"))
+        try Data(#"{"name":"missing-version"}"#.utf8)
+            .write(to: root.appendingPathComponent(".codex-plugin/plugin.json"))
+        try Data("not-json".utf8).write(to: root.appendingPathComponent("plugin.json"))
+        do {
+            _ = try NativeAgentPluginCompatibilityImporter.normalizePackage(at: root)
+            Issue.record("expected every invalid identity candidate to be rejected")
+        } catch {
+            #expect(error.localizedDescription.contains("chatos.plugin.json"))
+            #expect(error.localizedDescription.contains(".codex-plugin/plugin.json"))
+            #expect(error.localizedDescription.contains("plugin.json"))
+            #expect(error.localizedDescription.contains("name 和 version"))
+        }
+    }
+
     @Test("a standalone root Skill inside a monorepo subdirectory imports through the unified source flow")
     func standaloneSkillSubdirectoryImports() async throws {
         let root = FileManager.default.temporaryDirectory

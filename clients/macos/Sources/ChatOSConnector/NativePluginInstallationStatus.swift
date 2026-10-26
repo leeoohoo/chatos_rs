@@ -128,9 +128,30 @@ enum NativePluginInstallationStatusBuilder {
                     lastCheckedAt: checkedAt
                 )
             }
-        let componentStatuses = skillStatuses + mcpStatuses + uiStatuses
+        let hookStatuses = manifest.hooks
+            .sorted { $0.componentKey < $1.componentKey }
+            .map { contribution in
+                let validationError: String?
+                do {
+                    _ = try NativeCodexHookBundleParser.load(
+                        contribution: contribution,
+                        installationRoot: installationURL
+                    )
+                    validationError = nil
+                } catch let validationFailure {
+                    validationError = validationFailure.localizedDescription
+                }
+                return GatewayPluginComponentStatus(
+                    componentKey: contribution.componentKey,
+                    kind: "hook_bundle",
+                    availabilityStatus: validationError == nil ? "ready" : "unavailable",
+                    lastError: validationError,
+                    lastCheckedAt: checkedAt
+                )
+            }
+        let componentStatuses = skillStatuses + mcpStatuses + hookStatuses + uiStatuses
         guard !componentStatuses.isEmpty else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin 没有可运行的 MCP 组件")
+            throw NativePluginRuntimeError.invalidManifest("Plugin 没有可运行的组件")
         }
 
         let readyCount = componentStatuses.count(where: { $0.availabilityStatus == "ready" })

@@ -105,6 +105,33 @@ struct NativePluginManifest: Decodable, Sendable {
         }
     }
 
+    struct HookContribution: Decodable, Sendable {
+        var componentKey: String
+        var dialect: String
+        var path: String
+
+        init(componentKey: String, dialect: String, path: String) {
+            self.componentKey = componentKey
+            self.dialect = dialect
+            self.path = path
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            componentKey = try container.decode(String.self, forKey: .componentKey)
+            dialect = try container.decodeIfPresent(String.self, forKey: .dialect) ?? "chatos_v1"
+            if let value = try container.decodeIfPresent(String.self, forKey: .path) {
+                path = value
+            } else {
+                path = try container.decode(PathReference.self, forKey: .source).path
+            }
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case componentKey, dialect, path, source
+        }
+    }
+
     struct Permission: Decodable, Sendable {
         var permission: String
         var required: Bool
@@ -161,6 +188,7 @@ struct NativePluginManifest: Decodable, Sendable {
     var description: String
     var skills: [PathReference]
     var mcpServers: [String: MCPServer]
+    var hooks: [HookContribution]
     var ui: [UIContribution]
     var interface: Interface?
     var permissions: [Permission]
@@ -174,6 +202,7 @@ struct NativePluginManifest: Decodable, Sendable {
         description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
         skills = try container.decodeIfPresent([PathReference].self, forKey: .skills) ?? []
         mcpServers = try container.decodeIfPresent([String: MCPServer].self, forKey: .mcpServers) ?? [:]
+        hooks = try container.decodeIfPresent([HookContribution].self, forKey: .hooks) ?? []
         ui = try container.decodeIfPresent([UIContribution].self, forKey: .ui) ?? []
         interface = try container.decodeIfPresent(Interface.self, forKey: .interface)
         permissions = try container.decodeIfPresent([Permission].self, forKey: .permissions) ?? []
@@ -181,7 +210,7 @@ struct NativePluginManifest: Decodable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, name, version, description, skills, mcpServers, ui, interface, permissions
+        case schemaVersion, name, version, description, skills, mcpServers, hooks, ui, interface, permissions
         case runtimeContext
     }
 }

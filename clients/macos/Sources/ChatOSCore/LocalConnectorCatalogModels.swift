@@ -156,12 +156,17 @@ public struct LocalConnectorPluginInspectionComponent: Codable, Identifiable, Se
     public enum Kind: String, Codable, Sendable, Equatable {
         case mcp
         case skill
+        case hook
     }
 
     public var componentKey: String
     public var displayName: String
     public var kind: Kind
     public var toolNames: [String]
+    public var hookDialect: String?
+    public var hookEvents: [String]
+    public var hookCommands: [String]
+    public var hookRuntimes: [String]
 
     public var id: String { componentKey }
 
@@ -169,12 +174,37 @@ public struct LocalConnectorPluginInspectionComponent: Codable, Identifiable, Se
         componentKey: String,
         displayName: String,
         kind: Kind,
-        toolNames: [String]
+        toolNames: [String],
+        hookDialect: String? = nil,
+        hookEvents: [String] = [],
+        hookCommands: [String] = [],
+        hookRuntimes: [String] = []
     ) {
         self.componentKey = componentKey
         self.displayName = displayName
         self.kind = kind
         self.toolNames = toolNames
+        self.hookDialect = hookDialect
+        self.hookEvents = hookEvents
+        self.hookCommands = hookCommands
+        self.hookRuntimes = hookRuntimes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        componentKey = try container.decode(String.self, forKey: .componentKey)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        toolNames = try container.decodeIfPresent([String].self, forKey: .toolNames) ?? []
+        hookDialect = try container.decodeIfPresent(String.self, forKey: .hookDialect)
+        hookEvents = try container.decodeIfPresent([String].self, forKey: .hookEvents) ?? []
+        hookCommands = try container.decodeIfPresent([String].self, forKey: .hookCommands) ?? []
+        hookRuntimes = try container.decodeIfPresent([String].self, forKey: .hookRuntimes) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case componentKey, displayName, kind, toolNames, hookDialect, hookEvents, hookCommands
+        case hookRuntimes
     }
 }
 
@@ -184,19 +214,39 @@ public struct LocalConnectorPluginInspection: Codable, Sendable, Equatable {
     public var version: String
     public var sourceSummary: String
     public var components: [LocalConnectorPluginInspectionComponent]
+    public var requestedPermissions: [String]
 
     public init(
         fingerprint: String,
         displayName: String,
         version: String,
         sourceSummary: String,
-        components: [LocalConnectorPluginInspectionComponent]
+        components: [LocalConnectorPluginInspectionComponent],
+        requestedPermissions: [String] = []
     ) {
         self.fingerprint = fingerprint
         self.displayName = displayName
         self.version = version
         self.sourceSummary = sourceSummary
         self.components = components
+        self.requestedPermissions = requestedPermissions
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        fingerprint = try container.decode(String.self, forKey: .fingerprint)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        version = try container.decode(String.self, forKey: .version)
+        sourceSummary = try container.decode(String.self, forKey: .sourceSummary)
+        components = try container.decode([LocalConnectorPluginInspectionComponent].self, forKey: .components)
+        requestedPermissions = try container.decodeIfPresent(
+            [String].self,
+            forKey: .requestedPermissions
+        ) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case fingerprint, displayName, version, sourceSummary, components, requestedPermissions
     }
 }
 

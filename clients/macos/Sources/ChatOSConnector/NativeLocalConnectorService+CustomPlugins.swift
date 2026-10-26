@@ -105,7 +105,10 @@ extension NativeLocalConnectorService {
         sourceSummary: String
     ) async throws -> LocalConnectorPluginInspection {
         let manifest = try Self.loadCustomPluginManifest(record: record)
-        let permissionSnapshot = Set(manifest.permissions.map(\.permission)).union(["process.spawn"])
+        var permissionSnapshot = Set(manifest.permissions.map(\.permission))
+        if !manifest.mcpServers.isEmpty || !manifest.hooks.isEmpty {
+            permissionSnapshot.insert("process.spawn")
+        }
         var components: [LocalConnectorPluginInspectionComponent] = []
         var fingerprintParts = [record.artifactSHA256, sourceSummary]
         for componentKey in manifest.mcpServers.keys.sorted() {
@@ -161,8 +164,39 @@ extension NativeLocalConnectorService {
             ))
             fingerprintParts.append("skill:\(skillName)")
         }
+        let installationRoot = URL(
+            fileURLWithPath: record.installationPath,
+            isDirectory: true
+        )
+        for hook in manifest.hooks.sorted(by: { $0.componentKey < $1.componentKey }) {
+            let bundle = try NativeCodexHookBundleParser.load(
+                contribution: hook,
+                installationRoot: installationRoot
+            )
+            let runtimes = try bundle.requiredRuntimes.map { name in
+                let executable = try NativePluginInstaller.resolveExecutable(named: name)
+                return "\(name): \(executable.path)"
+            }
+            components.append(.init(
+                componentKey: hook.componentKey,
+                displayName: hook.componentKey,
+                kind: .hook,
+                toolNames: [],
+                hookDialect: hook.dialect,
+                hookEvents: bundle.events,
+                hookCommands: bundle.commands,
+                hookRuntimes: runtimes
+            ))
+            fingerprintParts.append(contentsOf: [
+                "hook:\(hook.componentKey)",
+                hook.dialect,
+                hook.path,
+                bundle.contentSHA256,
+                bundle.normalizedSHA256,
+            ])
+        }
         guard !components.isEmpty else {
-            throw NativeConnectorError.pluginInstallation("Plugin 没有可安装的 Skill 或 MCP 组件")
+            throw NativeConnectorError.pluginInstallation("Plugin 没有可安装的 Skill、MCP 或 Hook 组件")
         }
         let fingerprint = NativePluginInstaller.sha256Hex(
             fingerprintParts.joined(separator: "\n")
@@ -172,7 +206,8 @@ extension NativeLocalConnectorService {
             displayName: manifest.interface?.displayName ?? manifest.name,
             version: manifest.version,
             sourceSummary: sourceSummary,
-            components: components
+            components: components,
+            requestedPermissions: Array(permissionSnapshot).sorted()
         )
     }
 

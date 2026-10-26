@@ -301,11 +301,16 @@ struct CustomPluginInstallerSheet: View {
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
+            if !value.requestedPermissions.isEmpty {
+                Text(model.localized("请求权限", english: "Requested permissions") + ": "
+                    + value.requestedPermissions.joined(separator: ", "))
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+            }
             ForEach(value.components) { component in
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(component.kind == .skill
-                        ? "\(component.displayName) · Skill"
-                        : "\(component.displayName) · \(component.toolNames.count) tools")
+                    Text(componentTitle(component))
                         .font(.caption.weight(.semibold))
                     if component.kind == .mcp {
                         Text(component.toolNames.prefix(24).joined(separator: ", "))
@@ -318,6 +323,24 @@ struct CustomPluginInstallerSheet: View {
                                 .foregroundStyle(.tertiary)
                         }
                     }
+                    if component.kind == .hook {
+                        if !component.hookRuntimes.isEmpty {
+                            Text("Runtime: " + component.hookRuntimes.joined(separator: ", "))
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        Text(component.hookEvents.joined(separator: ", "))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        ForEach(Array(component.hookCommands.enumerated()), id: \.offset) { _, command in
+                            Text(command)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.tertiary)
+                                .textSelection(.enabled)
+                        }
+                    }
                 }
             }
             Text("SHA-256 \(value.fingerprint)")
@@ -327,6 +350,17 @@ struct CustomPluginInstallerSheet: View {
         }
         .padding(14)
         .background(.green.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func componentTitle(_ component: LocalConnectorPluginInspectionComponent) -> String {
+        switch component.kind {
+        case .skill:
+            "\(component.displayName) · Skill"
+        case .mcp:
+            "\(component.displayName) · \(component.toolNames.count) tools"
+        case .hook:
+            "\(component.displayName) · \(component.hookDialect ?? "Hook") · \(component.hookEvents.count) events"
+        }
     }
 
     private var isBusy: Bool {

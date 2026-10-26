@@ -15,28 +15,71 @@ enum NativeAgentPluginCompatibilityImporter {
         let description: String
         let displayName: String
         let formatName: String
+        let manifestPath: String?
         let rawManifest: [String: Any]?
     }
 
     static func normalizePackage(at packageRoot: URL) throws -> Result {
         let nativeManifestURL = packageRoot.appendingPathComponent("chatos.plugin.json")
+        var identityDiagnostics: [String] = []
+        var foundIdentityCandidate = false
         if FileManager.default.fileExists(atPath: nativeManifestURL.path) {
-            return .init(
-                manifest: try NativePluginManifestLoader.loadManifest(from: nativeManifestURL),
-                formatName: "ChatOS Plugin"
-            )
+            foundIdentityCandidate = true
+            do {
+                return .init(
+                    manifest: try NativePluginManifestLoader.loadManifest(from: nativeManifestURL),
+                    formatName: "ChatOS Plugin · chatos.plugin.json"
+                )
+            } catch {
+                identityDiagnostics.append("chatos.plugin.json：\(error.localizedDescription)")
+            }
         }
 
-        let identity = try discoverIdentity(at: packageRoot)
+        let identity = try discoverIdentity(
+            at: packageRoot,
+            initialDiagnostics: identityDiagnostics,
+            foundInitialCandidate: foundIdentityCandidate
+        )
         let skills = try discoverSkills(at: packageRoot, identityName: identity.name)
         let mcpServers = try discoverMCPServers(
             at: packageRoot,
             inlineManifest: identity.rawManifest
         )
-        guard !skills.isEmpty || !mcpServers.isEmpty else {
+        let hooks = try discoverHooks(
+            at: packageRoot,
+            inlineManifest: identity.rawManifest
+        )
+        guard !skills.isEmpty || !mcpServers.isEmpty || !hooks.isEmpty else {
             throw NativeConnectorError.pluginInstallation(
-                "没有找到可导入的 Skill 或 MCP；目录中需要 SKILL.md、skills/*/SKILL.md 或受支持的 MCP 配置"
+                "没有找到可导入的 Skill、MCP 或 Codex Hook"
             )
+        }
+
+        var permissions: [[String: Any]] = []
+        if !mcpServers.isEmpty {
+            permissions.append([
+                "permission": "process.spawn",
+                "required": true,
+                "reason": "启动用户确认导入的本地 MCP Server",
+                "components": mcpServers.keys.sorted(),
+            ])
+        }
+        if !hooks.isEmpty {
+            let hookComponents = hooks.compactMap { $0["componentKey"] as? String }.sorted()
+            permissions.append(contentsOf: [
+                [
+                    "permission": "process.spawn",
+                    "required": true,
+                    "reason": "运行用户逐条确认的生命周期 Hook 命令",
+                    "components": hookComponents,
+                ],
+                [
+                    "permission": "workspace.read",
+                    "required": true,
+                    "reason": "向本地只读 Hook 提供当前授权工作区",
+                    "components": hookComponents,
+                ],
+            ])
         }
 
         let manifest: [String: Any] = [
@@ -46,13 +89,9 @@ enum NativeAgentPluginCompatibilityImporter {
             "description": identity.description,
             "skills": skills.map { ["path": $0] },
             "mcpServers": mcpServers,
+            "hooks": hooks,
             "interface": ["displayName": identity.displayName],
-            "permissions": mcpServers.isEmpty ? [] : [[
-                "permission": "process.spawn",
-                "required": true,
-                "reason": "启动用户确认导入的本地 MCP Server",
-                "components": mcpServers.keys.sorted(),
-            ]],
+            "permissions": permissions,
         ]
         try JSONSerialization.data(
             withJSONObject: manifest,
@@ -60,41 +99,58 @@ enum NativeAgentPluginCompatibilityImporter {
         ).write(to: nativeManifestURL, options: .atomic)
         return .init(
             manifest: try NativePluginManifestLoader.loadManifest(from: nativeManifestURL),
-            formatName: identity.formatName
+            formatName: identity.manifestPath.map { "\(identity.formatName) · \($0)" }
+                ?? identity.formatName
         )
     }
 
-    private static func discoverIdentity(at root: URL) throws -> Identity {
+    private static func discoverIdentity(
+        at root: URL,
+        initialDiagnostics: [String],
+        foundInitialCandidate: Bool
+    ) throws -> Identity {
         let candidates: [(String, String)] = [
-            ("plugin.json", "Agent Plugin"),
             (".codex-plugin/plugin.json", "Codex Plugin"),
             (".claude-plugin/plugin.json", "Claude Plugin"),
+            ("plugin.json", "Agent Plugin"),
             ("package.json", "npm Agent Plugin"),
         ]
+        var diagnostics = initialDiagnostics
+        var foundCandidate = foundInitialCandidate
         for (path, formatName) in candidates {
             let url = root.appendingPathComponent(path)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            let manifest = try readJSONObject(url)
-            guard let rawName = manifest["name"] as? String,
-                  let rawVersion = manifest["version"] as? String else {
-                throw NativeConnectorError.pluginInstallation(
-                    "\(formatName) 清单必须声明 name 和 version"
+            foundCandidate = true
+            do {
+                let manifest = try readJSONObject(url)
+                guard let rawName = manifest["name"] as? String,
+                      let rawVersion = manifest["version"] as? String else {
+                    throw NativeConnectorError.pluginInstallation("必须声明 name 和 version")
+                }
+                let name = try normalizedIdentifier(rawName, field: "name")
+                let version = rawVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !version.isEmpty, version.count <= 128 else {
+                    throw NativeConnectorError.pluginInstallation("Plugin version 无效")
+                }
+                let description = (manifest["description"] as? String ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return .init(
+                    name: name,
+                    version: version,
+                    description: String(description.prefix(2_000)),
+                    displayName: displayName(in: manifest) ?? rawName,
+                    formatName: formatName,
+                    manifestPath: path,
+                    rawManifest: manifest
                 )
+            } catch {
+                diagnostics.append("\(path)：\(error.localizedDescription)")
             }
-            let name = try normalizedIdentifier(rawName, field: "name")
-            let version = rawVersion.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !version.isEmpty, version.count <= 128 else {
-                throw NativeConnectorError.pluginInstallation("Plugin version 无效")
-            }
-            let description = (manifest["description"] as? String ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return .init(
-                name: name,
-                version: version,
-                description: String(description.prefix(2_000)),
-                displayName: displayName(in: manifest) ?? rawName,
-                formatName: formatName,
-                rawManifest: manifest
+        }
+
+        if foundCandidate {
+            throw NativeConnectorError.pluginInstallation(
+                "所有 Plugin 身份清单均无效：\n" + diagnostics.joined(separator: "\n")
             )
         }
 
@@ -116,8 +172,65 @@ enum NativeAgentPluginCompatibilityImporter {
             description: "Imported standalone MCP configuration",
             displayName: rawName,
             formatName: "Standalone MCP",
+            manifestPath: nil,
             rawManifest: nil
         )
+    }
+
+    private static func discoverHooks(
+        at root: URL,
+        inlineManifest: [String: Any]?
+    ) throws -> [[String: Any]] {
+        guard let raw = inlineManifest?["hooks"] else { return [] }
+        let paths: [String]
+        if let path = raw as? String {
+            paths = [path]
+        } else if let values = raw as? [Any],
+                  values.allSatisfy({ $0 is String }) {
+            paths = values.compactMap { $0 as? String }
+        } else {
+            throw NativeConnectorError.pluginInstallation(
+                "Codex Plugin hooks 必须是路径字符串或路径数组"
+            )
+        }
+        guard !paths.isEmpty, paths.count <= 16 else {
+            throw NativeConnectorError.pluginInstallation("Codex Hook Bundle 数量无效")
+        }
+        var componentKeys = Set<String>()
+        return try paths.enumerated().map { index, rawPath in
+            var path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            while path.hasPrefix("./") { path.removeFirst(2) }
+            guard !path.isEmpty,
+                  !path.hasPrefix("/"),
+                  !path.contains("\0"),
+                  !path.split(separator: "/").contains("..") else {
+                throw NativeConnectorError.pluginInstallation("Hook path 必须位于插件目录内")
+            }
+            let source = root.appendingPathComponent(path).standardizedFileURL
+            let rootResolved = root.standardizedFileURL.resolvingSymlinksInPath()
+            let sourceResolved = source.resolvingSymlinksInPath()
+            let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard sourceResolved.path.hasPrefix(rootResolved.path + "/"),
+                  values.isRegularFile == true,
+                  values.isSymbolicLink != true else {
+                throw NativeConnectorError.pluginInstallation(
+                    "Hook 文件不存在或发生符号链接逃逸：\(rawPath)"
+                )
+            }
+            let rawComponent = source.deletingPathExtension().lastPathComponent
+            let base = try normalizedIdentifier(
+                rawComponent.isEmpty ? "lifecycle-hooks-\(index)" : rawComponent,
+                field: "Hook component key"
+            )
+            guard componentKeys.insert(base).inserted else {
+                throw NativeConnectorError.pluginInstallation("Hook component key 重复：\(base)")
+            }
+            return [
+                "componentKey": base,
+                "dialect": "codex",
+                "path": path,
+            ]
+        }
     }
 
     private static func discoverSkills(at root: URL, identityName: String) throws -> [String] {
