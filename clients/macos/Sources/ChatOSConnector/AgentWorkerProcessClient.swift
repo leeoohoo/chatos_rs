@@ -364,10 +364,11 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
                       finished.checkpoint.scope == scope else {
                     throw AgentWorkerProcessClientError.invalidResponse
                 }
-                let status = await controller.waitForExit()
-                guard status == EXIT_SUCCESS else {
-                    throw AgentWorkerProcessClientError.workerFailed(controller.stderrTail())
-                }
+                // `finished` is the Worker's committed protocol result. Waiting for Foundation's
+                // separate `Process.waitUntilExit()` notification after this point can miss a
+                // very fast `_exit` under repeated/concurrent launches and hold an already
+                // completed Run until its outer timeout. The controller's deinit still
+                // terminates a malformed Worker that sends `finished` but remains alive.
                 return finished.checkpoint
             case let .failed(failure):
                 throw AgentWorkerProcessClientError.workerFailed(failure.detail)
@@ -437,34 +438,81 @@ private actor AgentWorkerModelEventForwarder {
 
 private final class AgentWorkerLineReader: @unchecked Sendable {
     private let lock = NSLock()
-    private var file: UnsafeMutablePointer<FILE>?
+    private let descriptor: Int32
+    private var buffered = Data()
 
     init(descriptor: Int32) throws {
-        guard let file = fdopen(dup(descriptor), "r") else {
+        let duplicated = dup(descriptor)
+        guard duplicated >= 0 else {
             throw AgentWorkerProcessClientError.launchFailed
         }
-        self.file = file
+        let flags = fcntl(duplicated, F_GETFL)
+        guard flags >= 0,
+              fcntl(duplicated, F_SETFL, flags | O_NONBLOCK) == 0 else {
+            Darwin.close(duplicated)
+            throw AgentWorkerProcessClientError.launchFailed
+        }
+        self.descriptor = duplicated
     }
 
-    deinit {
-        if let file { fclose(file) }
-    }
+    deinit { if descriptor >= 0 { Darwin.close(descriptor) } }
 
-    func next() throws -> Data {
+    func next(processIsAlive: () -> Bool) throws -> Data {
         lock.lock()
         defer { lock.unlock() }
-        guard let file else { throw AgentWorkerProcessClientError.invalidResponse }
-        var line: UnsafeMutablePointer<CChar>?
-        var capacity = 0
-        defer { free(line) }
-        let count = getline(&line, &capacity, file)
-        guard count > 0, let line else { throw AgentWorkerProcessClientError.invalidResponse }
-        let payloadCount = line[count - 1] == 0x0A ? count - 1 : count
-        guard payloadCount > 0,
-              payloadCount <= ChatOSAgentWorkerProtocol.maximumInlineBytes else {
+        while true {
+            if let newline = buffered.firstIndex(of: 0x0A) {
+                let payload = Data(buffered[..<newline])
+                buffered.removeSubrange(...newline)
+                guard !payload.isEmpty,
+                      payload.count <= ChatOSAgentWorkerProtocol.maximumInlineBytes else {
+                    throw AgentWorkerProcessClientError.invalidResponse
+                }
+                return payload
+            }
+            guard buffered.count <= ChatOSAgentWorkerProtocol.maximumInlineBytes else {
+                throw AgentWorkerProcessClientError.invalidResponse
+            }
+
+            var descriptorState = pollfd(
+                fd: descriptor,
+                events: Int16(POLLIN | POLLHUP | POLLERR),
+                revents: 0
+            )
+            let pollResult = Darwin.poll(&descriptorState, 1, 100)
+            if pollResult == 0 {
+                guard processIsAlive() else {
+                    throw AgentWorkerProcessClientError.invalidResponse
+                }
+                continue
+            }
+            if pollResult < 0 {
+                if errno == EINTR { continue }
+                throw AgentWorkerProcessClientError.invalidResponse
+            }
+            guard descriptorState.revents & Int16(POLLNVAL) == 0 else {
+                throw AgentWorkerProcessClientError.invalidResponse
+            }
+
+            var chunk = [UInt8](repeating: 0, count: 64 * 1_024)
+            let count = chunk.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+            }
+            if count > 0 {
+                buffered.append(contentsOf: chunk.prefix(count))
+                continue
+            }
+            if count == 0 {
+                guard !buffered.isEmpty,
+                      buffered.count <= ChatOSAgentWorkerProtocol.maximumInlineBytes else {
+                    throw AgentWorkerProcessClientError.invalidResponse
+                }
+                defer { buffered.removeAll(keepingCapacity: false) }
+                return buffered
+            }
+            if errno == EINTR || errno == EAGAIN { continue }
             throw AgentWorkerProcessClientError.invalidResponse
         }
-        return Data(bytes: line, count: payloadCount)
     }
 }
 
@@ -506,21 +554,15 @@ private final class AgentWorkerLineWriter: @unchecked Sendable {
 }
 
 private final class AgentWorkerProcessController: @unchecked Sendable {
-    /// `getline`, pipe writes and `waitUntilExit` are blocking syscalls. Running them in
-    /// `Task.detached` occupies Swift cooperative-executor threads for the lifetime of a Run and
-    /// can starve unrelated conversations when many Workers are alive. GCD owns these blocking
-    /// lanes and may compensate with kernel threads without consuming Swift executor capacity.
+    /// Pipe polling/reads and writes are blocking syscalls. Running them in `Task.detached`
+    /// occupies Swift cooperative-executor threads for the lifetime of a Run and can starve
+    /// unrelated conversations when many Workers are alive. GCD owns these blocking lanes and
+    /// may compensate with kernel threads without consuming Swift executor capacity.
     private static let protocolIOQueue = DispatchQueue(
         label: "com.chatos.agent-worker.protocol-io",
         qos: .userInitiated,
         attributes: .concurrent
     )
-    private static let processWaitQueue = DispatchQueue(
-        label: "com.chatos.agent-worker.process-wait",
-        qos: .utility,
-        attributes: .concurrent
-    )
-
     private let process: Process
     private let reader: AgentWorkerLineReader
     private let writer: AgentWorkerLineWriter
@@ -606,10 +648,19 @@ private final class AgentWorkerProcessController: @unchecked Sendable {
     }
 
     func receive() async throws -> AgentWorkerMessage {
+        let processID = process.processIdentifier
+        let expectedStartSeconds = startSeconds
+        let expectedStartMicroseconds = startMicroseconds
         let data: Data = try await withCheckedThrowingContinuation { continuation in
             Self.protocolIOQueue.async { [reader] in
                 do {
-                    continuation.resume(returning: try reader.next())
+                    continuation.resume(returning: try reader.next {
+                        chatos_process_matches_start_time(
+                            processID,
+                            expectedStartSeconds,
+                            expectedStartMicroseconds
+                        ) == 1
+                    })
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -685,15 +736,6 @@ private final class AgentWorkerProcessController: @unchecked Sendable {
         stateLock.lock()
         defer { stateLock.unlock() }
         return recordedResourceViolation
-    }
-
-    func waitForExit() async -> Int32 {
-        await withCheckedContinuation { continuation in
-            Self.processWaitQueue.async { [process] in
-                process.waitUntilExit()
-                continuation.resume(returning: process.terminationStatus)
-            }
-        }
     }
 
     func stderrTail() -> String {

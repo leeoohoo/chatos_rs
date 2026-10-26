@@ -2633,6 +2633,16 @@ SSH、SCP、连接测试/MFA 和远程终端统一使用 ChatOS 私有持久化 
 
 边界：本阶段证明文件和网络边界的正确性，不替代 12.119 的固定硬件组合 SLO、200 次切页、20 次账户循环和 8 小时 soak，也不替代 12.120 的 Developer ID 签名、公证、stapling 与干净机器安装验收。
 
+### 12.119 前置完整里程碑：可信全量基线与 Worker 完成提交（2026-10-26）
+
+本里程碑先关闭 12.118 暴露的测试基线漂移和跨 Run 假阻塞，避免在不可信的红色基线上运行组合 SLO。Tool/Skill catalog 的总数与 native builtin 数更新为实际 87/27，历史数据库 migration 数更新为 33；Memory Engine 的 401/403 用例改为按请求路径验证，原 Memory 请求仍只能发送一次，401 只允许一次 `/auth/refresh`，403 禁止 refresh，不再把合法的刷新请求误算为 Memory 重放。两个监听全局 `.chatOSPetOpenFileRequested` 的测试只接收各自 fixture 路径，消除并行测试间的通知串扰。
+
+Agent Worker 父进程读端从不可取消的 `getline` 改为独立 descriptor 上的非阻塞 `poll`、有界分帧和每 100 ms 的 PID/start-time 身份核验。Worker 被 SIGKILL、管道没有及时交付 EOF 或另一 Run 同时运行时，读 lane 不再永久占住；每个 Run 继续拥有独立 reader/writer、进程和资源监控。压力诊断进一步确认随机 35 秒超时发生在 Worker 已经发送合法 `finished`、并已执行 `_exit` 之后：Foundation 的第二次 `Process.waitUntilExit()` 在高频进程启停下偶发遗漏退出通知。协议因此明确以经过 Run ID/scope 校验的 `finished` 作为结果提交点，不再让已经完成的任务依赖第二套进程退出通知；异常存活进程仍由 controller 析构路径定向终止。SSH askpass 回归也不再使用同一不可靠等待，而以 PID 存活和文件输出验证真实完成。
+
+验收：13 项 Agent Worker 真实进程集成测试连续 10 轮、合计 130 项全部通过，每轮约 1.4—1.6 秒；覆盖两个并行 Run、16 Worker 并发、挂起网络不阻塞独立会话、取消、资源超限、SIGKILL、账户切换和 provider 网络重连。完整 Debug 在显式绑定 Agent、Media、Code Read 三个 Debug Worker 后通过 8 个 XCTest target 共 1,239 项和 Swift Testing 741 项，合计 1,980 项零失败；12 项跳过均为需要显式 Docker/外部环境的既有门禁，不是静默跳过 Worker。原生 arm64 Release 完整依赖图在 `warnings-as-errors` 下编译通过，Rust 全仓格式与 `git diff --check` 通过。
+
+边界：这一步恢复了可信、可重复的功能与并行回归基线，但不冒充 12.119 正式性能验收；固定硬件的 200 次 UI 切页、20 次账户循环、主线程 hang 采集、进程组资源曲线和 8 小时组合 soak 仍未执行。本阶段没有停止、替换、启动、打包或安装当前 ChatOS，也没有访问活动用户数据库。
+
 ### 12.119—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：

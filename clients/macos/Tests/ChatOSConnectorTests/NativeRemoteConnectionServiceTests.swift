@@ -1,5 +1,6 @@
 @testable import ChatOSConnector
 import ChatOSCore
+import Darwin
 import Dispatch
 import Foundation
 import XCTest
@@ -247,7 +248,9 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
             ofItemAtPath: scriptURL.path
         )
 
-        let output = Pipe()
+        let outputURL = root.appendingPathComponent("submitted-code")
+        XCTAssertTrue(FileManager.default.createFile(atPath: outputURL.path, contents: nil))
+        let output = try FileHandle(forWritingTo: outputURL)
         let process = Process()
         process.executableURL = scriptURL
         process.arguments = ["(user@bastion.example.com) Please Input Mfa Code (SMS):"]
@@ -258,6 +261,8 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         environment["CHATOS_SSH_VERIFICATION_FILE"] = responseURL.path
         process.environment = environment
         try process.run()
+        output.closeFile()
+        let processID = process.processIdentifier
 
         // Fresh executable scripts can take a few seconds to start while macOS
         // performs security inspection, especially during a concurrent build.
@@ -271,19 +276,23 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
 
         try "614207".write(to: responseURL, atomically: true, encoding: .utf8)
         let completionDeadline = Date().addingTimeInterval(2)
-        while process.isRunning, Date() < completionDeadline {
+        while Self.processIsAlive(processID), Date() < completionDeadline {
             try await Task.sleep(for: .milliseconds(20))
         }
-        if process.isRunning {
-            process.terminate()
+        if Self.processIsAlive(processID) {
+            _ = Darwin.kill(processID, SIGTERM)
+            let terminationDeadline = Date().addingTimeInterval(1)
+            while Self.processIsAlive(processID), Date() < terminationDeadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            if Self.processIsAlive(processID) {
+                _ = Darwin.kill(processID, SIGKILL)
+            }
         }
-        process.waitUntilExit()
 
-        let submittedCode = String(
-            decoding: output.fileHandleForReading.readDataToEndOfFile(),
-            as: UTF8.self
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
-        XCTAssertEqual(process.terminationStatus, 0)
+        let submittedCode = try String(contentsOf: outputURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(Self.processIsAlive(processID))
         XCTAssertEqual(submittedCode, "614207")
     }
 
@@ -1071,6 +1080,11 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
             throw XCTSkip("SSH fixture container name contains unsupported characters")
         }
         return name
+    }
+
+    private static func processIsAlive(_ processID: Int32) -> Bool {
+        errno = 0
+        return Darwin.kill(processID, 0) == 0 || errno == EPERM
     }
 
     @discardableResult
