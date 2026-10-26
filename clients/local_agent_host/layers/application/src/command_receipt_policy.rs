@@ -28,6 +28,7 @@ impl CommandReceiptPolicy {
         // Do not classify by a wire name/prefix or add a fallback arm here.
         match command {
             HostCommand::Health
+            | HostCommand::SetSchedulerPressure(_)
             | HostCommand::GetMemorySyncStatus(_)
             | HostCommand::GetModelConfigSnapshot(_)
             | HostCommand::ListLatestModelConfigSnapshots(_)
@@ -48,6 +49,7 @@ impl CommandReceiptPolicy {
             | HostCommand::GetTaskRuns(_)
             | HostCommand::GetPluginInstallation(_)
             | HostCommand::ListPluginInstallations(_)
+            | HostCommand::ListPluginHookBundles(_)
             | HostCommand::GetConversation(_)
             | HostCommand::GetConversationContext(_)
             | HostCommand::GetConversationAttachment(_)
@@ -87,6 +89,8 @@ impl CommandReceiptPolicy {
             | HostCommand::RestartTask(_)
             | HostCommand::PutPluginInstallation(_)
             | HostCommand::RemovePluginInstallation(_)
+            | HostCommand::PutPluginHookBundle(_)
+            | HostCommand::SetActivePluginHookBundles(_)
             | HostCommand::CreateConversation(_)
             | HostCommand::PutConversationRuntimeSettings(_)
             | HostCommand::StartConversationTurn(_)

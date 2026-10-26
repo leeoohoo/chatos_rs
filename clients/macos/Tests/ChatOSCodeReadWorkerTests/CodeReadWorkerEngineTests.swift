@@ -48,6 +48,36 @@ final class CodeReadWorkerEngineTests: XCTestCase {
         XCTAssertEqual(try presented.string("mode"), "edit")
     }
 
+    func testVerifiesFileIdentityAndRejectsDigestMismatchAndSymlink() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let data = Data(repeating: 0x7a, count: 96 * 1_024)
+        let file = fixture.root.appendingPathComponent("preview.png")
+        try data.write(to: file)
+        let arguments: [String: CodeReadWorkerJSONValue] = [
+            "name": .string(file.lastPathComponent),
+            "byte_size": .number(Double(data.count)),
+            "sha256": .string(sha256(data)),
+        ]
+        let result = try fixture.execute("verify_file_identity_v1", arguments).object
+        XCTAssertEqual(try result.number("byte_count"), Double(data.count))
+        XCTAssertFalse(try result.string("device").isEmpty)
+        XCTAssertFalse(try result.string("inode").isEmpty)
+
+        XCTAssertThrowsError(try fixture.execute(
+            "verify_file_identity_v1",
+            arguments.merging(["sha256": .string(String(repeating: "0", count: 64))]) {
+                _, new in new
+            }
+        ))
+        let link = fixture.root.appendingPathComponent("linked.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+        XCTAssertThrowsError(try fixture.execute(
+            "verify_file_identity_v1",
+            arguments.merging(["name": .string(link.lastPathComponent)]) { _, new in new }
+        ))
+    }
+
     func testRejectsSymbolicLinkEscapeAndChangedRootIdentity() throws {
         let fixture = try Fixture()
         defer { fixture.dispose() }
@@ -364,6 +394,61 @@ final class CodeReadWorkerEngineTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: outside), attachment.data)
     }
 
+    func testAttachmentMaterializeReclaimsOnlySafeStaleImportOrphans() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let workspace = try Fixture()
+        defer { workspace.dispose() }
+        let attachment = try fixture.makeAttachment(Data("orphan recovery\n".utf8))
+        var arguments = attachment.arguments
+        arguments.merge(try workspace.identityArguments()) { _, new in new }
+        let relativePath = try fixture.execute(
+            "attachment_materialize_v1",
+            arguments
+        ).object.string("relative_path")
+        let installed = workspace.root.appendingPathComponent(relativePath)
+        let directory = installed.deletingLastPathComponent()
+        let stale = importURL(in: directory)
+        let fresh = importURL(in: directory)
+        let locked = importURL(in: directory)
+        let maliciousHardLink = importURL(in: directory)
+        let installedHardLink = importURL(in: directory)
+        let symbolicLink = importURL(in: directory)
+        let malformed = directory.appendingPathComponent(".import-not-a-canonical-uuid")
+        let unrelated = directory.appendingPathComponent("unrelated")
+
+        for url in [stale, fresh, locked, malformed, unrelated] {
+            try Data("temporary".utf8).write(to: url)
+        }
+        try FileManager.default.linkItem(at: unrelated, to: maliciousHardLink)
+        try FileManager.default.linkItem(at: installed, to: installedHardLink)
+        try FileManager.default.createSymbolicLink(
+            at: symbolicLink,
+            withDestinationURL: unrelated
+        )
+        for url in [stale, locked, maliciousHardLink, installedHardLink] {
+            try makeImportStale(url)
+        }
+        let lockedDescriptor = locked.path.withCString {
+            Darwin.open($0, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        }
+        XCTAssertGreaterThanOrEqual(lockedDescriptor, 0)
+        defer { if lockedDescriptor >= 0 { _ = Darwin.close(lockedDescriptor) } }
+        XCTAssertEqual(flock(lockedDescriptor, LOCK_EX | LOCK_NB), 0)
+
+        _ = try fixture.execute("attachment_materialize_v1", arguments)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: installedHardLink.path))
+        XCTAssertEqual(try Data(contentsOf: installed), attachment.data)
+        for preserved in [fresh, locked, maliciousHardLink, symbolicLink, malformed] {
+            XCTAssertTrue(
+                FileManager.default.fileExists(atPath: preserved.path),
+                "Unexpectedly removed \(preserved.lastPathComponent)"
+            )
+        }
+    }
+
     func testAttachmentOperationsRejectChangedRootIdentities() throws {
         let fixture = try Fixture()
         defer { fixture.dispose() }
@@ -411,6 +496,102 @@ final class CodeReadWorkerEngineTests: XCTestCase {
             )
         }
     }
+
+    private func importURL(in directory: URL) -> URL {
+        directory.appendingPathComponent(".import-" + UUID().uuidString.lowercased())
+    }
+
+    private func makeImportStale(_ url: URL) throws {
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -(25 * 60 * 60))],
+            ofItemAtPath: url.path
+        )
+    }
+
+    func testAttachmentAuthorizationStreamsMultipleFilesAndRejectsShortPayload() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let first = Data("first attachment".utf8)
+        let second = Data(repeating: 0x4b, count: 96 * 1_024)
+        let firstToken = UUID().uuidString.lowercased()
+        let secondToken = UUID().uuidString.lowercased()
+        let arguments: [String: CodeReadWorkerJSONValue] = [
+            "owner_user_id": .string("owner-stream"),
+            "conversation_id": .string("conversation-stream"),
+            "items": .array([
+                .object([
+                    "token": .string(firstToken),
+                    "byte_size": .number(Double(first.count)),
+                ]),
+                .object([
+                    "token": .string(secondToken),
+                    "byte_size": .number(Double(second.count)),
+                ]),
+            ]),
+        ]
+        let result = try fixture.executeStreaming(
+            "attachment_authorize_v1",
+            arguments,
+            payload: first + second
+        )
+        guard case let .object(payload) = result,
+              case let .array(items)? = payload["items"] else {
+            return XCTFail("Expected streamed attachment authorization result")
+        }
+        XCTAssertEqual(items.count, 2)
+        let directory = fixture.root
+            .appendingPathComponent(sha256(Data("owner-stream".utf8)))
+            .appendingPathComponent(sha256(Data("conversation-stream".utf8)))
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(firstToken)), first)
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(secondToken)), second)
+
+        let shortToken = UUID().uuidString.lowercased()
+        XCTAssertThrowsError(try fixture.executeStreaming(
+            "attachment_authorize_v1",
+            [
+                "owner_user_id": .string("owner-stream"),
+                "conversation_id": .string("short-stream"),
+                "items": .array([.object([
+                    "token": .string(shortToken),
+                    "byte_size": .number(16),
+                ])]),
+            ],
+            payload: Data(repeating: 0x1, count: 8),
+            advertisedByteCount: 16
+        ))
+        let shortDirectory = fixture.root
+            .appendingPathComponent(sha256(Data("owner-stream".utf8)))
+            .appendingPathComponent(sha256(Data("short-stream".utf8)))
+        if FileManager.default.fileExists(atPath: shortDirectory.path) {
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(
+                atPath: shortDirectory.path
+            ).isEmpty)
+        }
+    }
+
+    func testTemporaryCleanupRejectsCallerSelectedScope() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let arguments: [String: CodeReadWorkerJSONValue] = [
+            "minimum_age_seconds": .number(24 * 60 * 60),
+            "scopes": .array([
+                .object([
+                    "path": .string("LocalAgent/Attachments"),
+                    "maximum_depth": .number(2),
+                ]),
+                .object([
+                    "path": .string("LocalAgent/local-agent.artifact-staging"),
+                    "maximum_depth": .number(0),
+                ]),
+                .object([
+                    "path": .string("untrusted-project-directory"),
+                    "maximum_depth": .number(2),
+                ]),
+            ]),
+        ]
+
+        XCTAssertThrowsError(try fixture.execute("cleanup_stale_temporary_files_v1", arguments))
+    }
 }
 
 private struct Fixture {
@@ -427,6 +608,37 @@ private struct Fixture {
         _ arguments: [String: CodeReadWorkerJSONValue]
     ) throws -> CodeReadWorkerJSONValue {
         try ChatOSCodeReadWorkerEngine.execute(request(operation, arguments))
+    }
+
+    func executeStreaming(
+        _ operation: String,
+        _ arguments: [String: CodeReadWorkerJSONValue],
+        payload: Data,
+        advertisedByteCount: UInt64? = nil
+    ) throws -> CodeReadWorkerJSONValue {
+        let base = try request(operation, arguments)
+        let streaming = CodeReadWorkerRequest(
+            protocolVersion: base.protocolVersion,
+            requestID: base.requestID,
+            helperInstanceID: base.helperInstanceID,
+            deadlineUnixMilliseconds: base.deadlineUnixMilliseconds,
+            operation: base.operation,
+            arguments: base.arguments,
+            projectRootPath: base.projectRootPath,
+            projectRootIdentity: base.projectRootIdentity,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            ripgrepPath: nil,
+            ripgrepIdentity: nil,
+            binaryPayloadByteCount: advertisedByteCount ?? UInt64(payload.count)
+        )
+        var offset = 0
+        return try ChatOSCodeReadWorkerEngine.executeStreaming(streaming) { maximumCount in
+            guard offset < payload.count else { return Data() }
+            let end = min(payload.count, offset + maximumCount)
+            defer { offset = end }
+            return payload.subdata(in: offset..<end)
+        }
     }
 
     func request(

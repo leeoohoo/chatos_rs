@@ -5,12 +5,94 @@ import Foundation
 
 struct AttachmentWorkerOperations {
     private static let maximumAttachmentBytes = 20 * 1_024 * 1_024
+    private static let maximumAttachmentCount = 20
     private static let maximumReadBytes = 64 * 1_024
     private static let maximumExactJSONInteger = 9_007_199_254_740_991.0
 
     let root: URL
     let rootIdentity: CodeReadWorkerFileIdentity
     let deadlineUnixMilliseconds: Int64
+
+    func authorize(
+        arguments: [String: CodeReadWorkerJSONValue],
+        binaryPayloadByteCount: UInt64,
+        readBinaryChunk: (Int) throws -> Data
+    ) throws -> CodeReadWorkerJSONValue {
+        let ownerUserID = try requiredString(arguments, "owner_user_id")
+        let conversationID = try requiredString(arguments, "conversation_id")
+        guard !ownerUserID.isEmpty, !conversationID.isEmpty,
+              case let .array(rawItems)? = arguments["items"],
+              !rawItems.isEmpty, rawItems.count <= Self.maximumAttachmentCount else {
+            throw CodeReadWorkerCoreError.attachmentInvalid
+        }
+        let items = try rawItems.map { raw -> AuthorizationItem in
+            guard case let .object(object) = raw else {
+                throw CodeReadWorkerCoreError.attachmentInvalid
+            }
+            let token = try requiredString(object, "token")
+            let byteSize = try requiredUInt64(object, "byte_size")
+            guard let uuid = UUID(uuidString: token), uuid.uuidString.lowercased() == token,
+                  byteSize > 0, byteSize <= UInt64(Self.maximumAttachmentBytes) else {
+                throw CodeReadWorkerCoreError.attachmentInvalid
+            }
+            return .init(token: token, byteSize: byteSize)
+        }
+        guard Set(items.map(\.token)).count == items.count else {
+            throw CodeReadWorkerCoreError.attachmentInvalid
+        }
+        var expectedTotal: UInt64 = 0
+        for item in items {
+            let (next, overflow) = expectedTotal.addingReportingOverflow(item.byteSize)
+            guard !overflow,
+                  next <= UInt64(ChatOSCodeReadWorkerProtocol.maximumBinaryPayloadBytes) else {
+                throw CodeReadWorkerCoreError.attachmentInvalid
+            }
+            expectedTotal = next
+        }
+        guard expectedTotal == binaryPayloadByteCount else {
+            throw CodeReadWorkerCoreError.attachmentInvalid
+        }
+
+        let rootDescriptor = try openRoot()
+        defer { _ = Darwin.close(rootDescriptor) }
+        let directory: Int32
+        do {
+            directory = try createDirectoryChain(
+                [hash(Data(ownerUserID.utf8)), hash(Data(conversationID.utf8))],
+                from: rootDescriptor
+            )
+        } catch {
+            throw CodeReadWorkerCoreError.attachmentWriteFailed
+        }
+        defer { _ = Darwin.close(directory) }
+
+        var installedTokens: [String] = []
+        do {
+            var results: [CodeReadWorkerJSONValue] = []
+            results.reserveCapacity(items.count)
+            for item in items {
+                try checkDeadline()
+                let digest = try authorizeOne(
+                    item,
+                    directory: directory,
+                    readBinaryChunk: readBinaryChunk
+                )
+                installedTokens.append(item.token)
+                results.append(.object([
+                    "token": .string(item.token),
+                    "byte_size": .number(Double(item.byteSize)),
+                    "sha256": .string(digest),
+                ]))
+            }
+            return .object(["items": .array(results)])
+        } catch {
+            for token in installedTokens {
+                token.withCString { _ = Darwin.unlinkat(directory, $0, 0) }
+            }
+            if error is CodeReadWorkerCoreError { throw error }
+            throw CodeReadWorkerCoreError.attachmentWriteFailed
+        }
+    }
 
     func execute(
         operation: String,
@@ -59,6 +141,61 @@ struct AttachmentWorkerOperations {
             "encoding": .string(text == nil ? "base64" : "utf-8"),
             "content": .string(text ?? verified.capture.base64EncodedString()),
         ])
+    }
+
+    private func authorizeOne(
+        _ item: AuthorizationItem,
+        directory: Int32,
+        readBinaryChunk: (Int) throws -> Data
+    ) throws -> String {
+        let temporaryName = ".chatos-write-\(UUID().uuidString.lowercased()).tmp"
+        let temporary = temporaryName.withCString {
+            Darwin.openat(
+                directory,
+                $0,
+                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                0o600
+            )
+        }
+        guard temporary >= 0 else { throw CodeReadWorkerCoreError.attachmentWriteFailed }
+        guard flock(temporary, LOCK_EX | LOCK_NB) == 0 else {
+            _ = Darwin.close(temporary)
+            temporaryName.withCString { _ = Darwin.unlinkat(directory, $0, 0) }
+            throw CodeReadWorkerCoreError.attachmentWriteFailed
+        }
+        defer {
+            _ = Darwin.close(temporary)
+            temporaryName.withCString { _ = Darwin.unlinkat(directory, $0, 0) }
+        }
+
+        var remaining = item.byteSize
+        var hasher = SHA256()
+        while remaining > 0 {
+            try checkDeadline()
+            let maximum = Int(min(remaining, 64 * 1_024))
+            let chunk = try readBinaryChunk(maximum)
+            guard !chunk.isEmpty, chunk.count <= maximum else {
+                throw CodeReadWorkerCoreError.attachmentWriteFailed
+            }
+            hasher.update(data: chunk)
+            do {
+                try writeAll(chunk, to: temporary)
+            } catch {
+                throw CodeReadWorkerCoreError.attachmentWriteFailed
+            }
+            remaining -= UInt64(chunk.count)
+        }
+        guard Darwin.fchmod(temporary, 0o600) == 0,
+              Darwin.fsync(temporary) == 0 else {
+            throw CodeReadWorkerCoreError.attachmentWriteFailed
+        }
+        let installed = temporaryName.withCString { temporaryPointer in
+            item.token.withCString { tokenPointer in
+                Darwin.linkat(directory, temporaryPointer, directory, tokenPointer, 0)
+            }
+        }
+        guard installed == 0 else { throw CodeReadWorkerCoreError.attachmentWriteFailed }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private func verifyFile(_ authorization: Authorization) throws -> CodeReadWorkerJSONValue {
@@ -116,6 +253,7 @@ struct AttachmentWorkerOperations {
         defer { _ = Darwin.close(directory) }
         let fileExtension = safeExtension(authorization.displayName)
         let name = "source" + (fileExtension.map { "." + $0 } ?? "")
+        cleanupStaleImports(in: directory, installedName: name)
         let temporaryName = ".import-" + UUID().uuidString.lowercased()
         let temporary = temporaryName.withCString {
             Darwin.openat(
@@ -126,6 +264,11 @@ struct AttachmentWorkerOperations {
             )
         }
         guard temporary >= 0 else {
+            throw CodeReadWorkerCoreError.attachmentWorkspaceUnavailable
+        }
+        guard flock(temporary, LOCK_EX | LOCK_NB) == 0 else {
+            _ = Darwin.close(temporary)
+            temporaryName.withCString { _ = Darwin.unlinkat(directory, $0, 0) }
             throw CodeReadWorkerCoreError.attachmentWorkspaceUnavailable
         }
         defer {
@@ -152,8 +295,9 @@ struct AttachmentWorkerOperations {
             throw CodeReadWorkerCoreError.attachmentWorkspaceConflict
         }
         defer { _ = Darwin.close(installed) }
+        let verified: (status: stat, capture: Data)
         do {
-            _ = try hashAndCapture(
+            verified = try hashAndCapture(
                 descriptor: installed,
                 expected: authorization,
                 offset: 0,
@@ -162,9 +306,105 @@ struct AttachmentWorkerOperations {
         } catch {
             throw CodeReadWorkerCoreError.attachmentWorkspaceConflict
         }
+        var installedPathStatus = stat()
+        guard name.withCString({
+            Darwin.fstatat(directory, $0, &installedPathStatus, AT_SYMLINK_NOFOLLOW)
+        }) == 0,
+        sameIdentity(verified.status, installedPathStatus) else {
+            throw CodeReadWorkerCoreError.attachmentWorkspaceConflict
+        }
         return .object([
             "relative_path": .string((components + [name]).joined(separator: "/")),
         ])
+    }
+
+    private func cleanupStaleImports(in directory: Int32, installedName: String) {
+        guard let stream = Darwin.fdopendir(Darwin.dup(directory)) else { return }
+        defer { Darwin.closedir(stream) }
+        let cutoff = Int64(Date().timeIntervalSince1970) - 24 * 60 * 60
+        while let entry = Darwin.readdir(stream) {
+            let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) {
+                    String(cString: $0)
+                }
+            }
+            guard name.hasPrefix(".import-") else { continue }
+            let token = String(name.dropFirst(".import-".count))
+            guard let uuid = UUID(uuidString: token),
+                  uuid.uuidString.lowercased() == token else { continue }
+            var inspected = stat()
+            guard name.withCString({
+                Darwin.fstatat(directory, $0, &inspected, AT_SYMLINK_NOFOLLOW)
+            }) == 0,
+            (inspected.st_mode & S_IFMT) == S_IFREG,
+            inspected.st_uid == geteuid(),
+            (inspected.st_nlink == 1 || staleImportHasInstalledLink(
+                inspected,
+                installedName: installedName,
+                directory: directory
+            )),
+            Int64(inspected.st_mtimespec.tv_sec) <= cutoff else { continue }
+            let descriptor = name.withCString {
+                Darwin.openat(directory, $0, O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+            }
+            guard descriptor >= 0 else { continue }
+            do {
+                defer { _ = Darwin.close(descriptor) }
+                guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { continue }
+                var opened = stat()
+                var current = stat()
+                guard Darwin.fstat(descriptor, &opened) == 0,
+                      sameIdentity(inspected, opened),
+                      name.withCString({
+                          Darwin.fstatat(directory, $0, &current, AT_SYMLINK_NOFOLLOW)
+                      }) == 0,
+                      sameIdentity(inspected, current),
+                      staleImportLinkShapeRemainsSafe(
+                          inspected: inspected,
+                          opened: opened,
+                          current: current,
+                          installedName: installedName,
+                          directory: directory
+                      ) else { continue }
+                name.withCString { _ = Darwin.unlinkat(directory, $0, 0) }
+            }
+        }
+    }
+
+    private func staleImportLinkShapeRemainsSafe(
+        inspected: stat,
+        opened: stat,
+        current: stat,
+        installedName: String,
+        directory: Int32
+    ) -> Bool {
+        if inspected.st_nlink == 1 {
+            return opened.st_nlink == 1 && current.st_nlink == 1
+        }
+        return inspected.st_nlink == 2
+            && opened.st_nlink == 2
+            && current.st_nlink == 2
+            && staleImportHasInstalledLink(
+                current,
+                installedName: installedName,
+                directory: directory
+            )
+    }
+
+    private func staleImportHasInstalledLink(
+        _ temporary: stat,
+        installedName: String,
+        directory: Int32
+    ) -> Bool {
+        guard temporary.st_nlink == 2 else { return false }
+        var installed = stat()
+        return installedName.withCString {
+            Darwin.fstatat(directory, $0, &installed, AT_SYMLINK_NOFOLLOW)
+        } == 0
+            && (installed.st_mode & S_IFMT) == S_IFREG
+            && installed.st_uid == geteuid()
+            && installed.st_dev == temporary.st_dev
+            && installed.st_ino == temporary.st_ino
     }
 
     private func authorization(
@@ -458,6 +698,11 @@ struct AttachmentWorkerOperations {
                 token,
             ].joined(separator: "/")
         }
+    }
+
+    private struct AuthorizationItem {
+        let token: String
+        let byteSize: UInt64
     }
 
     private static func hashStatic(_ data: Data) -> String {

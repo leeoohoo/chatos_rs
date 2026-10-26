@@ -1,0 +1,10 @@
+{
+  "protocol_version": 48,
+  "command_id": "contract-health-1",
+  "ok": false,
+  "error": {
+    "code": "storage_unavailable",
+    "message": "Local Agent Host storage is unavailable.",
+    "retryable": true
+  }
+}

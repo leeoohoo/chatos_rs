@@ -1,8 +1,8 @@
 # ChatOS macOS 客户端稳定性、性能与进程架构方案
 
-更新时间：2026-10-22
+更新时间：2026-10-26
 
-状态：强化版方案，P0 部分实施中；阶段记录见 12.1—12.39，完整 Release 验收待完成
+状态：核心架构改造实施中；阶段记录见 12.1—12.115b，剩余 12.116—12.120 按完整里程碑验收
 
 适用范围：`clients/macos`、`clients/local_agent_host` 以及 macOS 客户端启动的 Plugin/Companion 进程
 
@@ -2396,6 +2396,270 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：Worker 校验完成到 UI 真正打开文件之间仍存在文件被同一授权项目内替换的时间窗；当前返回路径会在 App 再次 canonicalize 并拒绝项目外目标，但 Pet 文件台尚未消费 device/inode 身份。若后续允许自动执行或编辑，必须把身份传到最终打开点并再次核对。附件发送授权、附件历史预览、Artifact stage/restore、其他 UI 文件加载器和临时文件回收仍待继续审计。
 
+### 12.107 第三十六完整里程碑：附件发送使用一请求一 Worker 二进制流（2026-10-26）
+
+本里程碑关闭 12.104 明确记录的发送阻塞点。此前新消息与运行中 guidance 都在 `NativeLocalAgentConversationService` actor 内同步把附件 `Data` 写入 vault 并计算 SHA-256；慢卷、空间压力或 20 MiB 草稿会占住该服务 actor，进而延迟同服务上的其他会话命令。现有 Code Read Worker 的逐行 JSON IPC 又不能直接承载附件：Base64 会产生额外字符串、编码缓冲和约 33% 体积放大。现在附件元数据仍使用有界 JSON，原始字节改用握手后紧随请求帧的二进制流，由一次性 Worker 完成落盘和摘要计算。
+
+已实施：
+
+- Code Read Worker 协议升级为 v2，握手同时协商 16 MiB JSON 上限与 20 MiB 二进制总载荷上限；请求显式声明 `binary_payload_byte_count`，只有 `attachment_authorize_v1` 可携带二进制。普通读写请求必须声明零载荷，未知组合失败关闭，避免协议错位把原始字节当下一条 JSON。
+- `CodeReadWorkerProcessClient` 增加二进制执行契约。App 直接遍历既有 `Data` 的只读字节，以最多 64 KiB 的 `write(2)` 分块写入 pipe，不构造 Base64、合并 `Data` 或临时输入文件；生命周期继续是一请求一 PID/进程组，复用取消、墙钟超时、父进程死亡和强杀边界。写端启用 `F_SETNOSIGPIPE`，Worker 在上传中途退出只让所属请求失败，不会终止主 App。
+- Worker 一次处理同一发送命令的最多 20 个附件，总字节仍不得超过 20 MiB。owner/conversation 目录使用哈希组件、目录描述符、`mkdirat`/`openat` 与 `O_NOFOLLOW`；每个附件流式写入 0600 `.chatos-write-*.tmp`，同步计算 SHA-256，`fsync` 后通过 `linkat` 原子无覆盖安装随机 UUID token。批次后项失败会删除本批已安装 token，不把部分授权结果交给 Host。
+- 新消息和 guidance 两个生产入口都改为等待 `authorizeInWorker`；旧的 App 内同步授权实现已删除。App 只在首次使用时确保 vault 根目录存在，附件正文写入、哈希、临时文件和原子安装均不再发生在 App 进程。
+- Core 回归覆盖多附件跨 64 KiB 边界流式写入、摘要、短载荷拒绝和失败清理；真实 Worker 回归覆盖 256 KiB/512 KiB 原始二进制链路、vault 结果映射与上传中途退出。既有附件分发、图片、workspace、联系人和篡改拒绝回归继续通过。
+
+验证：Debug 与原生 arm64 Release `warnings-as-errors` 的联合矩阵各执行 48 项，其中 2 项为显式外部 Media Worker/文档 Plugin 集成开关跳过，0 失败；Release 完成协议、Worker、Connector 和 App 优化编译。构建证据工具 25 项全部通过，两个打包脚本通过 zsh 语法校验，`git diff --check` 通过。未运行 launch smoke，未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：附件草稿在用户发送前仍作为 UI `Data` 存在，本批消除的是发送时第二份 Base64/整块落盘工作，不把草稿采集本身改为文件原生。创建 vault 根目录仍是发送路径上的一次小型元数据操作；真实慢速、只读和 ENOSPC 移动卷需要发布故障注入。Worker 在 `linkat` 前被 `SIGKILL` 仍可能留下 `.chatos-write-*.tmp`，在 App 已取消但 Worker 已安装并回包前中断也可能留下无 Host 引用的 token；必须用 ownership、年龄和活跃 Worker 门禁回收，禁止无条件递归删除。附件历史 `previewURL`、Artifact stage/restore 和统一跨进程动态资源预算仍待实施。
+
+### 12.108 第三十七完整里程碑：附件历史零 I/O 映射与按需 Worker 预览校验（2026-10-26）
+
+本里程碑关闭附件历史加载的同步元数据旁路。此前 `mapTurns` 为每条历史附件调用 `previewURL`，在 Conversation Service actor 内逐个读取 regular-file/symlink/size 元数据并解析真实路径；长历史或慢卷会在图片尚未进入视口前阻塞整个页面刷新。直接为每条历史记录启动 Worker 又会形成列表级进程风暴。现在历史映射只做纯内存授权字段校验和确定性候选路径计算，真实文件只在图片进入 SwiftUI `.task` 后按需校验。
+
+已实施：
+
+- `NativeLocalAgentAttachmentVault.previewURL` 删除 `resourceValues`、`resolvingSymlinksInPath` 和文件存在性检查；它仍严格校验 conversation、UUID token、字节上限和 SHA 字段，只返回 owner/conversation 哈希目录下的候选 URL。缺失或损坏文件不会拖慢历史映射，也不会被误认为已验证。
+- Code Read Worker 新增 `verify_file_identity_v1`。每次可见图片校验启动独立 PID，在父目录 device/inode 授权根内通过 `openat(..., O_NOFOLLOW)` 打开单一文件名，要求当前用户所有的普通文件、1--20 MiB 精确大小，并以 64 KiB 缓冲计算完整 SHA-256；读取前后核对 device、inode、size、mtime 和 ctime，拒绝 symlink、摘要不符和读取期间替换。
+- `ConversationAttachmentImageLoader` 删除两段 App 内 `AppCancellableDetachedWork` 文件扫描。现在先由 Code Read Worker 返回源 identity，再把 identity 交给 Media Worker 解码；解码完成后用第二个独立 Code Read Worker 重新校验完整摘要与身份。任一 Worker 挂起、取消、崩溃或发现替换只影响当前可见图片，不会占用主 App cooperative executor。
+- 历史列表不创建 Worker；只有真正呈现的本地图片才产生校验/解码进程。文件附件 chip 不读取正文，离屏图片的 SwiftUI task 可取消，因此进程成本与可见工作量而不是历史总条数绑定。
+- 新增纯映射回归证明候选 vault 文件不存在时仍可生成 file URL；Core 与真实 Worker 回归覆盖 96/128 KiB 跨块摘要、identity、symlink 和摘要不符；App 回归继续覆盖正常缩略图、摘要错误、symlink 及 Media Worker 执行期间源 inode 被替换。
+
+验证：Debug 与原生 arm64 Release `warnings-as-errors` 的联合矩阵各执行 27 项，0 跳过、0 失败；Release 完成 Worker、Connector 与 App 优化编译。构建证据工具 25 项全部通过，两个打包脚本通过 zsh 语法校验，`git diff --check` 通过。未运行 launch smoke，未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：普通非图片附件当前只显示名称与大小，不提供点击导出，因此不会触发按需文件校验；未来增加打开/导出必须复用 Worker identity，不得直接信任候选 URL。每张可见图片当前需要校验 Worker、Media Worker、复核 Worker 三个短进程，这是优先保证隔离和列表无阻塞的模型；真实快速滚动、20 MiB 图片列表和低端机器 trace 应决定是否增加带硬上限的可取消批处理，但不能退回全局单槽或历史全量预热。Artifact stage/restore、临时文件安全回收和跨 Helper 动态资源预算仍待实施。
+
+### 12.109 第三十八完整里程碑：Artifact stage/restore 独立进程化（2026-10-26）
+
+本里程碑关闭 Agent Artifact 上传暂存与缺失附件恢复的 App 内阻塞文件路径。此前两条路径虽然使用 `Task.detached` 离开 Store actor，却仍在主 App 进程的 Swift cooperative executor 中执行最多 2 MiB 的分块读取、SHA-256、写盘、`fsync` 和原子安装；慢卷、磁盘故障或大量并行文档仍可能占住 App 线程，并让不同会话的无关任务相互等待。
+
+已实施：
+
+- Code Read Worker 新增 `artifact_stage_v1` 与 `artifact_restore_v1`，每次请求继续采用一请求一 PID。`AgentArtifactUploadStager` 和 `AgentArtifactFileRestorer` 删除同步实现及 `Task.detached`，App 只校验内存元数据、计算同一受控状态根下的相对路径并等待对应 Worker；Store 与 Local Agent Artifact Client 支持注入 Worker，生产默认使用真实子进程。
+- Worker 以已认证的共同根 device/inode 为边界，逐级使用 `openat`/`mkdirat` 和 `O_NOFOLLOW`，拒绝绝对路径、`..`、反斜线、symlink、非当前用户文件和变化的根身份。上传源继续要求单硬链接；stage token 继续要求 canonical lowercase UUID，目标文件名必须精确为 `<token>.staged`。
+- stage/restore 均以固定 256 KiB 缓冲流式复制并增量计算完整 SHA-256，读取前后核对 device、inode、size、mtime、ctime，目标目录与文件权限固定为 `0700/0600`。写入前在 Worker 内执行保留 256 MiB 的容量门禁，写完 `fsync`，通过无覆盖 `linkat` 安装并同步目录；并发已安装目标只有完整摘要一致才视为成功。
+- 取消、deadline、Worker 崩溃或慢盘只终止当前 artifact 子进程，不占用主 App cooperative executor，也不经过全局单槽。新增真实进程回归同时发起两份 stage，再由另一 Worker restore，证明两条独立请求可并发完成且最终内容、摘要和 `0600` 权限正确。
+
+验证：Debug 与原生 arm64 Release `warnings-as-errors` 矩阵各执行 34 项，包含 10 项真实进程隔离、12 项 Worker Core、7 项 Artifact Storage、3 项 Upload Stager 和 2 项 Local Artifact Client 回归，0 跳过、0 失败；静态检索确认两处生产实现不再包含 `Task.detached`、`stageSynchronously` 或 `restoreSynchronously`。构建证据工具 25 项全部通过，两个正式打包脚本通过 zsh 语法校验，`git diff --check` 通过；正式包和签名复核在本阶段提交后执行。不会运行 launch smoke，不启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：Host 请求结束后的 staging token `unlink` 仍是 App 内一次常数级元数据清理，不读取正文；Worker 在安装前被 `SIGKILL` 可能留下 `.chatos-artifact-copy-*.tmp`，必须与附件临时文件一起通过 ownership、命名、年龄和活跃 Worker 门禁回收，不能无条件递归删除。两路径按产品约束要求源和目标位于同一受控状态树；不为跨卷任意复制扩大根能力。临时文件安全回收、其他 App 内文件加载器以及跨 Helper 动态资源预算仍待实施。
+
+### 12.110 第三十九完整里程碑：Worker 临时文件安全回收（2026-10-26）
+
+本里程碑关闭附件和 Artifact Worker 被强杀后临时文件长期占盘的问题，同时保持并行任务的文件所有权边界。App 启动后只发起一次 utility 优先级维护请求，目录枚举、身份复核、锁探测和删除全部在独立 Code Read Worker 进程执行；慢卷、目录项过多或单个异常文件不会把扫描工作放回主 App cooperative executor，维护失败也不阻塞启动。
+
+已实施：
+
+- Worker 端将清理范围固化为三个 App-owned scope 及其最大深度：`LocalAgent/Attachments` 两层、`LocalAgent/local-agent.artifact-staging` 当前层、`AgentGroupChatAttachments` 两层；调用方必须完整提供这三项且不能改路径、深度、重复或追加自定义目录。逐级 `openat(..., O_NOFOLLOW)` 并核对根 device/inode，不跟随 symlink，也不扫描用户项目 workspace。
+- 候选文件必须精确匹配 `.chatos-write-<canonical-lowercase-UUID>.tmp` 或 `.chatos-artifact-copy-<canonical-lowercase-UUID>.tmp`，同时为当前用户所有的单硬链接普通文件且修改时间至少超过 24 小时。打开后再次核对 device、inode、size、mtime 和 ctime，未知名称、新文件、身份变化或不满足 ownership 的文件全部保留。
+- 写入侧在创建上述临时文件后立即持有非阻塞独占 `flock`，直至内容同步并完成安装或失败收尾；清理侧只有取得同一独占锁后才复核并删除。因此正在写入的并行请求即使时间属性异常也不会被回收，Worker 崩溃后由内核释放锁，超过宽限期才成为候选。
+- 单次最多访问 20,000 个目录项，并继承 Worker 请求 deadline；达到上限返回 `truncated`，而不是无界遍历。Connector 校验 visited/eligible/deleted/locked/truncated 报告的形状与计数关系，App 不依赖维护成功才能继续初始化。
+
+验证：Debug 与原生 arm64 Release 的 `warnings-as-errors` 联合矩阵各执行 38 项，包含 11 项真实 Code Read Worker 进程隔离、13 项 Worker Engine、Artifact Storage/Upload/Client 及维护服务回归，0 跳过、0 失败。真实进程用例确认过期未锁文件被删除、过期被锁文件和新文件被保留；Core 回归确认调用方不能选择任意 scope。构建证据、脚本语法、差异格式、正式包签名和架构结果见本里程碑提交后的发布验证；不会运行 launch smoke，不启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：本批只回收上述三个状态目录中的 `.chatos-write-*` 与 `.chatos-artifact-copy-*`；项目 workspace 内的 `.import-*` 和其他 UI exporter 临时文件没有纳入，也不会为了释放空间扩大为任意目录递归清理。24 小时宽限优先保护跨睡眠、暂停和长时 I/O，不承诺崩溃后立即释放空间。跨 Helper 动态资源预算、8 小时 soak、真实磁盘满/只读卷、低端机器组合负载和发布级 SLO 仍待后续里程碑完成。
+
+### 12.111 第四十完整里程碑：Media/Code Read 跨 Helper 自适应资源预算（2026-10-26）
+
+本里程碑治理“一请求一进程”落地后的进程数量反压。Media 与 Code Read 的请求此前彼此独立且没有共享上限；快速滚动图片列表、批量项目扫描和附件校验可以同时拉起大量短进程。它们不会因软件单槽互相串行，却可能共同耗尽 CPU、内存、FD 和进程表，最终让所有会话一起变慢。本批新增共享 `ChatOSWorkerRuntime` 准入层，只限制同时存活的文件/媒体 Worker 数，不合并请求、不复用常驻进程，获准的每个任务仍拥有独立 PID、超时和取消域。
+
+已实施：
+
+- 默认总额度同时受逻辑处理器和物理内存约束：预留两个逻辑核和 2 GiB 给 App/系统，每个短 Worker 按 1 GiB 份额估算，总并发落在 3--10；Media 单类上限为 4，Code Read 单类上限为 8。最低总额 3 时同一类仍可并行两个独立 Worker，不退回全局单槽。
+- Media 与 Code Read 各有一个不可被另一类借走的硬保留槽，其余额度共享。一批挂起或高延迟 Media 请求因此不能占掉最后一个 Code Read 槽，反向同理；只有对应类别自身达到上限或共享额确实耗尽时才排队。
+- 所有 `MediaWorkerProcessClient` 图片归一化、JPEG 和视频尾帧请求，以及 `CodeReadWorkerProcessClient` 普通/二进制请求，都在启动子进程前取得 permit，并在成功、协议失败、超时或取消后同步归还。临时文件启动维护被标为 background，交互请求优先；连续四次交互插队后会给已可准入的后台请求一次机会，避免长期饥饿。
+- 队列最多 256 项；排队任务取消只移除自己的 waiter，队列满只拒绝新请求并返回明确 busy 错误，不终止正在工作的其他进程。Snapshot 暴露总/分类预算、active/queued 的 request/kind/priority/operation，以及准入、排队、释放、取消、满队列和峰值计数，供后续组合负载与发布 trace 使用。
+
+验证：Debug 与原生 arm64 Release 的 `warnings-as-errors` 联合矩阵各执行 32 项，0 跳过、0 失败；包含 4 项确定性预算/Governor 回归、12 项真实 Code Read 进程隔离，以及 16 项真实 Media 进程、超时、取消、父进程死亡和并发回归。新增跨类型真实进程用例故意挂起两个 Media Worker，在媒体额度占满时确认真实 Code Read Worker 仍使用保留槽立即完成文件读取，观测到总活跃峰值精确为 3；反向保留、同类双并行、排队取消和队列溢出由确定性 actor 测试覆盖。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：本批统一的是 Media 与 Code Read 两类短生命周期文件 Worker。Agent Run 已有领取 durable Delivery 前的独立自适应 Governor，不能在进程客户端上简单再套一层、让已领取 lease 排队；Host 工作额度也属于另一所有权域。将 Agent/Host 纳入同一机器级观测需要把 permit 提前到 claim 之前并统一权重，仍是后续里程碑。当前预算在 App 进程启动时按硬件确定，不随实时 memory pressure、热状态或电源模式自动缩放；1 GiB 是起始估算而非每类精确峰值，仍需低端机器组合 trace、压力迟滞和 8 小时 soak 校准。
+
+### 12.112 第四十一完整里程碑：追加要求门禁状态统一（2026-10-26）
+
+本里程碑修复任务事实已经进入 `reviewing_followup` 或 `waiting_confirmation`，但宠物实时气泡、任务图节点和 Run Inspector 仍优先显示旧 Run `waitingModel`/`runningModel` 活动的问题。旧活动是 Run 最近一次执行阶段，不得覆盖更新的任务级暂停门禁。
+
+已实施：
+
+- 集中定义任务门禁的标题和详情映射；`reviewing_followup` 显示“审查追加要求”，`waiting_confirmation` 显示“等待确认”，两者明确说明后续执行已经暂停。
+- 宠物实时气泡先读取任务门禁，再回退到 Run 活动；门禁期间使用橙色暂停图标，不再显示旋转中的“等待 AI 响应”，但仍每两秒刷新任务，门禁解除后可以自然恢复实时阶段。
+- 任务图节点、Conversation/Workspace/Pet 三处执行时间线和 Run Inspector 使用同一优先级；门禁期间隐藏旧 Run 的操作与阶段，时间线生成橙色“已暂停”实时节点。
+- 保留正常 `running + waitingModel` 行为，真实等待模型时仍显示“等待 AI 响应”，没有把全部活动状态机械改成暂停。
+
+验证：Debug 与原生 arm64 Release 各运行任务映射 12 项、Core 门禁 5 项、宠物状态 3 项，共 20 项，0 跳过、0 失败；Swift Debug/Release 完整依赖图均成功编译，`git diff --check` 通过。
+
+边界：本批统一展示优先级，不改变 Host 的追加要求审查协议、durable Run、轮询频率或任务调度。正式安装后的视觉复测需由用户重新打开客户端后在真实追加要求任务中确认；不为视觉复测主动启动客户端或访问活动用户数据库。
+
+### 12.113 第四十二完整里程碑：机器级资源所有权与观测冻结（2026-10-26）
+
+本里程碑先关闭统一资源调度最危险的设计缺口：不能因为多个 Governor 已存在，就把 Agent、Host、Media、Plugin 和数据库维护机械套进同一个外层 permit。部分媒体传输、Plugin 调用和进程内解码在进入现有准入层时，可能已经拥有 durable job/Delivery；让它们再次排队会使 lease 老化、取消语义错位，并重新制造跨会话阻塞。
+
+已实施：
+
+- 新增 `NativeClientMachineResourceSnapshotProvider`，由 AppModel 生产实例接入，不是测试专用清单；一次并发采集 Swift Agent、File Worker、Large Transfer 和 Heavy Media 四套 Governor 的实际 Snapshot。
+- 冻结八个资源域：Swift Agent Run、Rust Host work item、Media Worker、Code Read Worker、大文件传输、进程内重媒体、Plugin 进程和数据库维护；每域明确唯一 owner、准入边界、进程模型、配置上限、共享池、active/queued 观测能力，以及排队时是否可能已经持有 durable claim。
+- Swift Agent 标记为 `beforeDurableClaim + unclaimed`；Rust Host 固定 worker 在 claim 前拥有容量，但 App 当前只能看到配置上限；Media/Code Read 在启动独立 PID 前准入；Large Transfer、进程内重媒体与 Plugin 明确标记为 `mayAlreadyBeClaimed`，禁止下一阶段直接增加外层 claim permit。
+- Snapshot 显式返回缺少精确观测的 Host、Plugin、数据库维护，不用 `0` 伪装未知；同时给出不安全外套 claim permit 的资源域，供后续诊断和测试门禁使用。
+- Connector 对 `ChatOSWorkerRuntime` 改为直接模块依赖，避免依赖 Media/Code Client 的偶然传递依赖；AppModel 使用与 Host/Swift Agent 启动相同的 `RuntimeConfiguration.clientResourceBudget` 构造机器视图。
+
+验证：Debug 与原生 arm64 Release 各联合运行 File Worker 4 项、机器资源快照 1 项、Host/Swift Agent 预算与 Governor 9 项、Large Transfer 4 项、Heavy Media 4 项，共 22 项，0 跳过、0 失败。新增回归真实占用并排队两条 Agent 和三条 Media 准入，验证 active/queued、共享池、Host 未观测状态和不安全外套 permit 列表；Debug/Release 完整 App 依赖图同步编译通过。
+
+边界：本批冻结所有权并统一观测语义，不改变任何现有并发额度，也不把 Snapshot 冒充统一准入。Host 尚未通过 IPC 报告实际 active/queued，Plugin Registry 与数据库 maintenance lease 尚未接入实时计数；这三项保持 `configuredLimitOnly`/`unavailable`，必须在 12.114 按各自所有权域补齐。当前策略仍是启动时静态额度，动态 memory/thermal/power 调额属于 12.115。
+
+### 12.114a 第四十三完整里程碑：手动恢复路径 claim 前准入（2026-10-26）
+
+12.113 的所有权审计发现 Swift Agent 存在两条生产绕过：正常 communication/account/recovery drain 都会在 `claimNextDelivery` 前取得 `LocalAgentExecutionGovernor` permit，但用户直接“继续”调用的 `resumeDelivery`，以及人工核实未知副作用后调用的 `retryInterruptedDelivery`，会直接取得 in-process Delivery ownership 并启动独立 Agent Worker。它们既能突破自适应 Agent 并发上限，重试路径还会在容量未知时先清除 `inFlightCallID`、重新激活 Todo 并持久化“继续执行”状态。
+
+已实施：
+
+- 两条手动入口统一以 interactive 优先级取得现有 Agent Governor permit；permit 位于 active Delivery registry、Store 读取、Todo/Run 修改和 Worker 启动之前。
+- Governor 排队取消会释放自己的 waiter；队列满返回明确错误，不领取本地 Delivery ownership，也不修改 durable 状态。
+- ownership 冲突、执行成功、执行失败和取消路径均成对释放 permit；`resumeRegisteredDelivery` 保持不重复取 permit，使已经在 Governor 内的后台 recovery 与 Human retry 不发生嵌套 permit 死锁。
+- 不修改同 Agent/room/lane 因果规则；容量可用后，每次恢复仍启动自己的 `ChatOSAgentWorker` PID，不合并不同会话任务。
+
+验证：Debug 与原生 arm64 Release 各运行直接恢复/人工重试 2 项及 Agent 预算/Governor 9 项，共 11 项，0 跳过、0 失败。关键回归把 Agent 上限固定为 1 并占满唯一槽：直接恢复排队时原 Run 保持 `running + inFlightCallID`，人工重试排队时保持 `needsReview + inFlightCallID`；只有释放容量后才改变持久状态并完成执行。既有“Human retry 活跃时 recovery 不重入”回归同步通过。
+
+边界：本批关闭 Swift Agent 内部绕过，是 12.114 的第一部分，不宣称 Host、Agent、Media、Code Read 已能动态借用同一机器额度。Host 仍靠固定 worker 数在 claim 前限流，App 只能看到配置上限；跨所有权域的加权准入和 Host 实际 in-flight 观测仍属 12.114b。Large Transfer、进程内重媒体和 Plugin 仍禁止在已有 durable 身份外机械增加 permit。
+
+### 12.114b 第四十四完整里程碑：Host claim 边界真实观测（2026-10-26）
+
+本里程碑关闭 Rust Host 只能由 App 根据配置额度“猜测并发”的缺口。Host 固定 worker pool 原本已经在 durable claim 前限制并发，但 Health 只返回存储和帧协议状态；机器级 Snapshot 因而无法区分“Host 空闲”“Host 已占满”和“已有跨会话任务排队”，也无法为后续动态调额提供可信输入。
+
+已实施：
+
+- model 与 tool scheduler 共用进程内 claim activity tracker；只有成功取得 durable claim 后才计入 active，guard 覆盖正常提交、执行错误、取消、lease 丢失和提前返回，任一路径离开 `run_once` 都会归还，不把短暂的数据库探测冒充长期占用。
+- Host 从同一 SQLite 事实源只读统计当前 owner 的 queued/model-ready/continuation-ready/到期 retry Run、尚未 materialize 的 ready Task，以及符合内置 tool scheduler 名称与 execution-route 过滤器的 pending Tool。追加要求 review/hold、未到计划时间、待批准和 platform-owned Tool 不计入 Host ready queue。
+- Local Agent Host 协议升级到 v47；Health 增加最大 worker 数、active、idle 和 queued-ready 数，Rust、Swift、Windows、TypeScript Zod 与共享 fixture 同步迁移。macOS 和 Windows 启动握手都校验 `active + idle == maximum`，旧 Helper 不会被新版客户端误接纳。
+- macOS `NativeLocalAgentHostLifecycle.resourceSnapshot()` 只观察已运行的同一进程 identity；Host 未启动或观测失败返回 unknown，不触发启动或恢复，也不影响正常任务 IPC。`NativeClientMachineResourceSnapshotProvider` 取得 v47 数据后把 Host 从 `configuredLimitOnly` 提升为 `exact`，否则保持未知而非伪造为零。
+- 新增真实 claim 边界回归：两个 Host worker 同时执行两个不同 conversation 的阻塞 Run，第三个 Run 保持 durable-ready 队列；Health 必须报告 `maximum=2 / active=2 / idle=0 / queued=1`。该用例直接证明一个长会话不会占住整个 Host，且排队发生在第三个任务领取 lease 之前。
+
+验证：Host protocol/runtime/storage/process Debug 全量 432 项通过；Swift Debug 与原生 arm64 Release 的 Host 生命周期、共享契约和机器快照各 19 项通过，Release 使用 `warnings-as-errors` 并完成完整 App 优化依赖图；Windows Host 受影响单元测试 8 项通过，2 项仅因缺少 Windows sidecar 环境按既有门禁跳过，Rust `cargo check` 通过；TypeScript 4 个受影响文件 15 项和完整 typecheck 通过。`cargo fmt --check`、`git diff --check`、正式包签名、包内 SHA 与安装结果在本阶段提交后复核；不会主动启动正式 App 或访问活动用户数据库。
+
+边界：本批使 Host 的 claim 前容量成为可验证事实，没有在 App 外层再套第二个 permit，也没有改变既有静态并发额度。Agent、Host 与 Media/Code Read 之间仍是静态分区而非可借用的加权机器池；动态共享准入单列为 12.114c，必须使用本批 v47 反馈并保持所有等待点位于 durable claim/process spawn 之前。
+
+### 12.114c 第四十五完整里程碑：claim 前加权共享准入（2026-10-26）
+
+本里程碑关闭 Swift Agent 与短生命周期文件 Worker 各自拥有独立静态额度的问题。过去不同会话的 Agent 已可并行，Media 与 Code Read 也各自拥有独立 PID，但三套 Governor 互相不可见；组合负载可能同时跑满各自上限，也可能一边空闲、一边排队。现在三类 App-owned 工作在 durable claim 或进程启动前进入同一个加权、可借用资源池，Rust Host 继续保留独立硬额度，不在 App 内伪造二次 permit。
+
+已实施：
+
+- `ClientMachineResourceGovernor` 成为唯一中央准入 actor：Agent Run 消耗 2 个资源单位，Media 与 Code Read 各消耗 1 个；可用单位精确等于扣除 Host 硬预留后的 App 份额。各类仍有自身 active 上限，Media/Code Read 保留跨类别保护，同时允许首个短 Worker 借用 Agent 旁最后一个空闲单位，不出现“两类都为对方保留所以谁也进不去”的空转。
+- `LocalAgentExecutionGovernor` 与 `ClientFileWorkerResourceGovernor` 保留既有 API、Snapshot 和 metrics 契约，但只作为中央 Governor 的类型化 façade；permit 直接包装同一个 machine permit，因此没有嵌套 permit、重复计数或释放顺序死锁。测试默认使用隔离 Governor，生产 `AppModel` 明确把 Agent、Media、Code Read 和机器快照接到 `ClientMachineResourceGovernor.shared`。
+- 共享等待队列上限 256。interactive 可优先，但连续四次插队后 background 必须获得一次准入；取消按唯一 waiter ID 删除，重复 release 幂等，队列满只拒绝新请求。所有 Agent 等待发生在 `claimNextDelivery` 前，所有文件 Worker 等待发生在 `Process.run` 前。
+- 机器级 Snapshot 新增 `client-machine-resource-units`：直接报告 available、used、active、queued 及 `reservedHostResourceUnits`；Agent、Media、Code Read 三个 domain 指向同一 pool。Host 单独指向 `host-reserved-resource-units`，其 active/queued 仍来自 v47 真实 Health，不和 App permit 混算。
+- 确定性组合回归同时占用 Agent、Media、Code Read 并验证加权总量不越界，覆盖最后一个可借用单位、跨类型取消、四次交互公平边界和 Host 预留。真实调度回归用 Media + Code Read 占满 App pool，确认 Agent waiter 存在时 Delivery 仍是 `pending`；真实进程回归用启动 marker 确认 Code Read 排队时 PID 尚未出现，释放额度后才启动。
+
+验证：Debug 受影响矩阵包含 Worker Runtime 8 项、资源策略 10 项、机器 Snapshot 2 项、Agent 调度 30 项、真实 Code Read 进程 13 项，以及截图所涉追加要求状态 3 项，全部通过；原生 arm64 Release 在 `warnings-as-errors` 下完成完整 App 优化依赖图并运行 66 项受影响回归，0 跳过、0 失败。`git diff --check` 通过。正式包、签名、安装和包内 Git SHA 在本里程碑提交后复核；不主动启动 App，不访问活动用户数据库。
+
+边界：本批统一的是能够在 durable claim/process spawn 前安全等待的 Agent、Media 与 Code Read。Host 保持进程内固定 worker 硬预留；Large Transfer、进程内重媒体和 Plugin 可能已持有 durable 身份，仍禁止机械套外层 permit。当前额度在 App 启动时确定，实时 memory pressure、thermal、电源状态和带迟滞恢复属于 12.115。
+
+### 12.114d 安装包应用可发现性修复（2026-10-26）
+
+本批修复本地 Release 包虽然已位于 `/Applications/ChatOS.app`、Spotlight 元数据也已导入，但应用搜索结果缺少稳定展示信息的问题。正式打包清单现在显式声明 `CFBundleDisplayName=ChatOS` 与 `CFBundleIconFile=ChatOS.icns`，并把仓库中的 1024 px ChatOS 品牌图标复制到签名包内。构建验证会同时检查显示名、图标声明和实际图标文件，避免后续重新产出“文件存在但 Spotlight/LaunchServices 展示不完整”的安装包。
+
+验证：源 plist 通过 `plutil`，打包与验证脚本通过 zsh 语法检查；提交后重新执行原生 arm64 Release 打包、深度签名验证、包内 Git SHA 校验、无备份覆盖安装，并刷新 LaunchServices 与 Spotlight 索引。此阶段只修复安装包元数据，不启动 ChatOS、不访问活动用户数据库。
+
+### 12.115a 第四十六完整里程碑：App-owned 动态压力调额（2026-10-26）
+
+本里程碑把 12.114c 的静态共享额度改成运行时动态额度，同时保持 claim-before-spawn 边界和跨会话并行。App 启动后由单独的轻量监控器接收 `DispatchSource` memory pressure、`ProcessInfo.thermalState`、低电量模式通知，以及 IOKit 电池电量/供电状态；监控器只向共享 Governor 提交压力快照，不启动 Host、不领取 Delivery、不访问活动数据库。
+
+已实施：
+
+- 统一压力级别为 normal、elevated、serious、critical。normal 使用启动时基线；elevated 约 75%；serious 约 50%；critical 只保留 2 个交互资源单位。压力期后台最多使用“当前额度减 2”，因此至少保留一个 Agent Run 或两个短 Worker 的交互容量。
+- 压力升高立即收紧新准入；已经持有 permit、已经启动 Worker 或已经越过副作用边界的任务继续运行，不撤销、不重放、不强杀。若 active 已超过新额度，必须先自然释放到额度以内才允许新任务进入。
+- 压力下降默认等待 30 秒再扩容。恢复期间新的同级/更高压力会取消旧恢复，新的较低目标会重新计时；恢复完成后重新 drain 共享队列，继续沿用“最多连续四次 interactive 后 background 必进一次”的有界公平策略。
+- `ClientMachineResourceGovernorSnapshot` 与机器级共享池快照同时报告配置基线、当前有效额度、后台额度、used/active/queued、当前压力级别与待恢复级别；各 Agent/Media/Code Read domain 的 `sharedPoolLimit` 指向当前有效额度，不再把静态上限冒充实时容量。
+- App 生命周期显式启动和停止压力监控；App target 直接链接 IOKit。内存、热、电源和电池通知串行归并，重复状态不重复提交，异步提交保持原始顺序。
+
+验收：Debug 与原生 arm64 Release 均在 `warnings-as-errors` 下通过 Governor 11 项和机器 Snapshot 3 项，共 14 项；覆盖低电量/低电量模式/thermal 分类、立即降额、active 不被撤销、超额时拒绝新任务、后台不可占交互保留、恢复迟滞、压力反复防抖、恢复后的后台公平及动态 Snapshot。App target 在两种配置下均完成依赖图编译。没有启动新安装包，也没有访问活动用户数据库。
+
+边界：Rust Host 仍使用 12.114b 的进程内固定 worker 数和独立硬预留；App 不能伪造 Host permit。Host 在 durable claim 前读取动态上限、压力状态 IPC/协议兼容、最低一个 Host worker 和恢复迟滞属于 12.115b。Large Transfer、进程内重媒体、Plugin 与数据库 maintenance 仍可能已持有 durable 身份，不能机械套外层 permit；它们的组合压力留给 12.119。
+
+### 12.115b 第四十七完整里程碑：Rust Host 动态压力调额（2026-10-26）
+
+本里程碑把同一份机器压力状态扩展到 Rust Host 的 durable claim 边界。Local Agent 协议升级到 v48，新增版本化 `set_scheduler_pressure` 命令；Host 自己根据配置 worker 数计算有效上限：normal 为 100%、elevated 向上取整约 75%、serious 向上取整约 50%、critical 固定保留一个 worker，始终限制在 `1...configured`。
+
+已实施：
+
+- 每个常驻 scheduler worker 在领取下一项 durable work 前读取动态有效上限。压力升高只阻止新的 claim；已经 active 的 model/tool work 不撤销、不强杀，完成后超出新上限的 worker 才进入等待。model 与 tool 两个 claim 边界之间也会再次复核资格，避免 worker 在降额后跨过第二个领取点。
+- Swift 生命周期保存稳定压力状态。升压立即发送；降压默认等待 30 秒，期间重新升压会取消恢复、不同降压目标会重新计时。Host 尚未运行或发生重启时状态不会丢失；新进程通过基础 Health 后必须先成功应用保存的压力，才会登记为可用进程。
+- 并发启动/重启的 lifecycle transition 继续只允许一个 settle 操作；压力握手引入的 actor suspension 不会制造第二个 Host 或争抢同一数据库锁。
+- Host Health/Snapshot 同时报告 configured worker 数、effective worker 数、pressure level、active、idle 和 durable ready queue。机器级 Host domain 保留 configured limit，同时把 `sharedPoolLimit` 改为当前 effective Host 资源单位，不再把静态硬预留冒充实时容量。
+- Rust、Swift 与 Windows 共享协议 fixture 已同步到 v48；保留 v47 历史 fixture，不覆盖旧版本证据。Windows 当前仍使用 normal 基线，但能够严格验证 v48 Health 新字段。
+
+验收：Rust interface 37 项和 Host lib 115 项测试通过；新增真实并发测试覆盖 configured=2 时两个 active claim 降到 critical 后均继续完成、后续只允许一个 claim、恢复 normal 后第二个 worker 重新领取。macOS Debug 与原生 arm64 Release `warnings-as-errors` 各通过 21 项受影响测试；Host 生命周期覆盖启动前 critical 重放、降压迟滞、恢复扩容、serious 状态跨 Host 重启重放，以及并发 bootstrap/credential restart 无重叠，Release 同时完成完整 App 优化依赖图。Windows v48 fixture 10 项测试及 Tauri `cargo check --all-targets` 通过。此阶段没有停止、替换或启动当前安装的 ChatOS，也没有访问活动用户数据库。
+
+边界：Host 动态额度只控制 scheduler durable claim，不撤销 active claim，也不机械包裹 Memory Sync。Large Transfer、进程内重媒体、Plugin 与数据库 maintenance 的组合压力仍留给 12.119；真实移动盘/ENOSPC/睡眠/断网门禁、长时间 Release soak 和正式分发仍分别属于 12.118—12.120。
+
+### 12.116 第四十八完整里程碑：文件生命周期与失败回收收口（2026-10-26）
+
+本里程碑关闭 12.110 明确保留的 workspace `.import-*`、两类 UI exporter 临时文件和默认项目注册失败遗留目录。附件 materialize 只在精确的 `.chatos-attachments/<owner+conversation hash>/<token hash>` 目录内机会式扫描，只回收超过 24 小时、当前用户拥有、规范 UUID 命名、未锁定且链接形态可证明安全的 `.import-*`；普通孤儿必须只有一个硬链接，`linkat(temp, source)` 后被 `SIGKILL` 留下的双链接只有在另一个链接正是预期 `source[.ext]` 且 inode 相同时才移除临时名字。最终返回前再次复核已验证 descriptor 与 `source` 目录项仍为同一 device/inode。
+
+Artifact 与消息附件导出统一使用 descriptor 绑定的 `AppOwnedExportTransaction`。事务在用户选择的目标目录内创建并锁定规范临时文件，只扫描该目录中对应 exporter 自己的 24 小时旧命名空间；fresh、非规范名、其他用户、symlink、hardlink 和仍持锁文件全部保留。最终安装前同时复核原目录 descriptor、按原路径重开的目录和临时文件 descriptor/目录项身份，目录路径被替换时拒绝 rename；取消、摘要失败或其他未安装退出由事务析构删除本次临时文件，成功 rename 后 fsync 目录。
+
+Code Read Worker 协议升至 v3；Agent 默认项目目录创建现在接收 Worker 返回的目录 device/inode。后续注册或验证失败时，先跨所有 owner 查询同一 workspace/relative root 是否已有非 removed 记录；只有完全未注册时才请求非递归删除，并把创建时身份作为硬前置条件。目录已非空、被替换为 symlink/其他 inode、已被另一账户注册或 registry 查询自身失败时均 fail closed，不删除现有内容。协议升级让旧 Worker 不能以缺少身份字段的成功响应静默进入新回收链路。
+
+验收：Debug 与原生 arm64 Release `warnings-as-errors` 联合矩阵各执行 60 项，包含 13 项真实 Code Read Worker 进程隔离、14 项 Worker Engine、17 项默认项目/失败回收、5 项 Registry 和 11 项 UI exporter/事务回归，0 跳过、0 失败；Release 完成 App、Connector、Worker 完整优化依赖图。覆盖规范名与年龄、活跃锁、symlink、普通/预期双 hardlink、取消、SIGKILL 残留、目录路径替换、非空目录和跨账户注册。`git diff --check` 与提交前静态检查同步执行。本阶段没有停止、替换、启动、打包或安装当前 ChatOS，也没有访问活动用户数据库。
+
+边界：回收仍是精确目录内的机会式维护，不递归扫描任意用户目录；24 小时宽限优先保护暂停、睡眠和慢卷上的活跃导出。真实移动盘 ENOSPC/只读/睡眠与外部 SSH 环境属于 12.118，8 小时组合 soak 和正式分发分别属于 12.119、12.120。
+
+### 12.117 第四十九完整里程碑：Agent/存储强杀分类与隔离熔断（2026-10-26）
+
+本里程碑把 Agent 恢复与 SQLite 不确定提交窗口统一收敛为代码级三分类，不再由不同调用方自行猜测。`ready`、尚无 `inFlightCallID` 的 `running` 以及仅因 Memory 暂不可用/同步结果不确定而暂停的 checkpoint 是“安全重试”；已经持久化 `inFlightCallID` 或 `needsReview` 的 checkpoint 是“待对账”，恢复扫描直接持久化 `needsReview`，不再启动新 Worker；其他不可恢复终态是“明确失败”。工具开始前被杀可继续，工具开始标记已提交但结果未确认时绝不自动重放，已提交 receipt/checkpoint 则继续依靠稳定 call ID 与本地防重结果恢复。
+
+自动恢复现在在启动 Worker 前为该 Run 持久化 `automatic_recovery_started`。同一 Run 连续三次在自动恢复中终止后写入 `automatic_recovery_circuit_open`，只失败该 Delivery/Todo 并通知其管理链；Human 显式 retry 是计数边界。该计数不放在 `AgentWorkerProcessClient` 全局状态中，因此一个坏任务不会 quarantine 其他会话、Agent、项目或账户。恢复滚动窗口也不再因为一个独立 Run 返回 suspended/needs-review/局部熔断而停止后续调度，保留共享资源额度但消除故障传播。
+
+存储层的真实子进程 SIGKILL 矩阵新增四个不确定窗口：SQLite commit hook 内部、COMMIT 已返回但业务调用方尚未收到确认、`VACUUM INTO` progress handler 内部、主库 `VACUUM` progress handler 内部。停点先同步发布带 PID 的 marker，再由父进程发送真实 SIGKILL；所有注入仍限定在 `#[cfg(all(test, unix))]`，正常 Host/Release 不读取环境变量或安装 hook。业务 COMMIT 强杀后允许完整旧状态或完整新状态，随后用同一 idempotency key 重试并精确验证 Run/Event 只有一份；两类 VACUUM 强杀后重开执行完整 integrity/foreign-key 检查，原业务行必须保留，迁移备份内部强杀只留下明确 `.incomplete` 文件，不能冒充可恢复快照。
+
+Agent 侧继续保留此前 13 项真实 Worker 进程用例，覆盖凭据授权、provider 网络、写工具 IPC、账户切换、取消、资源超限、独立 Run 与 16 Worker 并行；本批新增 scheduler 的三分类、局部熔断和“熔断 Run 不阻塞后续独立 Run”回归。SQLite 新停点与原 12 个迁移停点共同证明进程强杀后只有安全重试、明确失败或待对账三种结果，不存在自动重复外部副作用、跨账户落盘或静默丢失已提交业务行。
+
+验收：存储包 209 项全量测试通过，其中真实子进程强杀矩阵 16 个父级场景全部使用 signal 9；Scheduler 32 项通过；13 项 Agent Worker 真实进程集成测试在显式绑定 Debug Worker 后 0 跳过通过。存储包 all-targets 严格 Clippy、macOS 全优化依赖图 Release `warnings-as-errors`、Rust 格式与 `git diff --check` 均通过。
+
+边界：SIGKILL 进程测试不是断电/控制器缓存持久性证明；真实 ENOSPC、只读卷、移动盘拔出、睡眠和 SSH 断网属于 12.118。VACUUM 测试使用 SQLite progress/commit hook 锁定真实引擎执行窗口，但不穷举每个底层 sector 写入顺序。8 小时组合崩溃风暴与长期资源曲线仍属于 12.119。本阶段没有停止、替换、启动、打包或安装当前 ChatOS，也没有访问活动用户数据库。
+
+### 12.118 第五十完整里程碑：外部卷、SSH 与不可确认提交门禁（2026-10-26）
+
+本里程碑把本机导出、SCP 下载和远端 SSH 写入统一收敛为“提交前可明确失败、提交后无法确认必须对账”的边界。App-owned 导出和下载只在目标目录的同一文件系统内 staging，提交前校验目录、普通文件、owner、link count 与 device，继承已有目标权限并 `fsync` 文件；提交使用 descriptor 绑定的 `renameat`/`linkat`，随后 `fsync` 目录。提交前失败保留旧目标，提交后目录持久化或临时名移除失败则明确报告结果不确定，不把已经可能可见的新文件当成未执行而自动重试。
+
+远端上传先在目标目录创建规范 `.chatos-upload-<uuid>.tmp`，上传完成后校验 owner、普通文件、单硬链接，继承已有目标权限并执行文件/父目录持久化，再原子安装。机会式清理仅扫描同一父目录内超过 24 小时、规范 UUID 名、当前用户拥有且单硬链接的普通文件；实现使用有界 `find`，修复了 macOS 默认 zsh 在 glob 无匹配时以 `no matches found` 中断首次上传的问题。远端写入结果显式分为 `notApplied` 和 `reconciliationRequired`；连接在最终命名空间操作后中断、超时或取消时只进入待对账，不自动重放副作用。
+
+SSH、SCP、连接测试/MFA 和远程终端统一使用 ChatOS 私有持久化 host-key 文件 `~/Library/Application Support/ChatOSSwift/NativeConnector/SSH/known_hosts`，目录和文件分别强制为 `0700`/`0600`，并校验类型、owner 和单硬链接。生成配置同时固定 `UserKnownHostsFile` 到该文件、`GlobalKnownHostsFile /dev/null`，临时 config 为 `0600`；真实连接前后用户全局 `~/.ssh/known_hosts` 的 SHA-256 均为 `62a8af3be9fb95b040143184b91975a3e210181b1761fa3b866a95225164cedc`，没有把测试主机写入用户 SSH 状态。
+
+所有 OpenSSH 阻塞调用改为独立进程组。取消或超时先向所属进程组发送 `SIGTERM`，有界等待后才发送 `SIGKILL`，不会只杀父 `ssh` 而遗留 askpass/代理孙进程，也不会终止其他并行会话。进程组被 `SIGSTOP` 暂停时，独立 SSH 工作仍能取得自己的执行 lane；恢复 `SIGCONT` 后原调用可继续完成。
+
+验收：在 `/Volumes/MacPortable` 真实外置 APFS 上完成同卷原子替换；在 96 MiB APFS 镜像上分别完成只读挂载和真实 ENOSPC，失败后旧目标均保持完整，镜像、挂载点和填充文件已清理。macOS 一次性 sshd 与 Linux Docker sshd 均通过 staging、权限继承、原子替换、过期 orphan 回收、下载和提交后确认丢失待对账；Docker 用 `docker stop --time 0` 在远端已经提交而确认尚未返回时真实断开服务，客户端不误报成功、不重试副作用，重启后核对目标完整且只提交一次。取消测试证明所属孙进程被清理、无关进程继续运行；暂停/恢复测试证明一个挂起 SSH 生命周期不阻塞独立工作。测试 sshd、容器、control master、密钥和测试 host key 均已清理。
+
+受影响的 Debug 回归共通过 Remote File 4 项、SSH/远端连接 30 项、App-owned 导出 6 项和任务恢复界面 17 项；其中普通无 fixture 运行按设计跳过 3 项显式 SSH 和 2 项显式卷测试，前述真实环境运行已分别通过。完整 Debug 横向回归中的 Agent Worker 13 项、Code Read Worker 13 项、Scheduler 32 项和 App 449 项通过；现有未改动基线仍有三项确定性计数漂移：Tool/Skill catalog 实际 87、旧断言 86，数据库 migration 实际 33、旧断言 32，以及 Memory Engine 的 401/403 请求实际 2 次、旧断言 1 次。一次全 Connector 复跑还在高负载下出现 Agent Worker 网络用例和本地 HTTP Plugin 启动超时，两项随后单独复验分别在 0.177 秒和 1.375 秒通过。因此本阶段不把整仓 Debug 误记为全绿，也不把无关基线漂移混入 12.118。原生 arm64 Release 在 `warnings-as-errors` 下完成完整依赖图编译，Rust 全仓格式与 `git diff --check` 通过。
+
+整机 sleep/wake 没有伪造为已执行：当前用户正在运行的 ChatOS 持有 `PreventUserIdleSystemSleep`，非交互 sudo 不可用，且本轮明确不得停止当前客户端；本阶段以真实链路断开/重连和 OpenSSH 进程组 `SIGSTOP`/`SIGCONT` 作为可重复的暂停恢复证据。完整系统睡眠唤醒仍须在不干扰用户运行实例的专用验收窗口执行。本阶段没有停止、替换、启动、打包或安装当前 ChatOS，也没有访问活动用户数据库。
+
+边界：本阶段证明文件和网络边界的正确性，不替代 12.119 的固定硬件组合 SLO、200 次切页、20 次账户循环和 8 小时 soak，也不替代 12.120 的 Developer ID 签名、公证、stapling 与干净机器安装验收。
+
+### 12.119 前置完整里程碑：可信全量基线与 Worker 完成提交（2026-10-26）
+
+本里程碑先关闭 12.118 暴露的测试基线漂移和跨 Run 假阻塞，避免在不可信的红色基线上运行组合 SLO。Tool/Skill catalog 的总数与 native builtin 数更新为实际 87/27，历史数据库 migration 数更新为 33；Memory Engine 的 401/403 用例改为按请求路径验证，原 Memory 请求仍只能发送一次，401 只允许一次 `/auth/refresh`，403 禁止 refresh，不再把合法的刷新请求误算为 Memory 重放。两个监听全局 `.chatOSPetOpenFileRequested` 的测试只接收各自 fixture 路径，消除并行测试间的通知串扰。
+
+Agent Worker 父进程读端从不可取消的 `getline` 改为独立 descriptor 上的非阻塞 `poll`、有界分帧和每 100 ms 的 PID/start-time 身份核验。Worker 被 SIGKILL、管道没有及时交付 EOF 或另一 Run 同时运行时，读 lane 不再永久占住；每个 Run 继续拥有独立 reader/writer、进程和资源监控。压力诊断进一步确认随机 35 秒超时发生在 Worker 已经发送合法 `finished`、并已执行 `_exit` 之后：Foundation 的第二次 `Process.waitUntilExit()` 在高频进程启停下偶发遗漏退出通知。协议因此明确以经过 Run ID/scope 校验的 `finished` 作为结果提交点，不再让已经完成的任务依赖第二套进程退出通知；异常存活进程仍由 controller 析构路径定向终止。SSH askpass 回归也不再使用同一不可靠等待，而以 PID 存活和文件输出验证真实完成。
+
+验收：13 项 Agent Worker 真实进程集成测试连续 10 轮、合计 130 项全部通过，每轮约 1.4—1.6 秒；覆盖两个并行 Run、16 Worker 并发、挂起网络不阻塞独立会话、取消、资源超限、SIGKILL、账户切换和 provider 网络重连。完整 Debug 在显式绑定 Agent、Media、Code Read 三个 Debug Worker 后通过 8 个 XCTest target 共 1,239 项和 Swift Testing 741 项，合计 1,980 项零失败；12 项跳过均为需要显式 Docker/外部环境的既有门禁，不是静默跳过 Worker。原生 arm64 Release 完整依赖图在 `warnings-as-errors` 下编译通过，Rust 全仓格式与 `git diff --check` 通过。
+
+边界：这一步恢复了可信、可重复的功能与并行回归基线，但不冒充 12.119 正式性能验收；固定硬件的 200 次 UI 切页、20 次账户循环、主线程 hang 采集、进程组资源曲线和 8 小时组合 soak 仍未执行。本阶段没有停止、替换、启动、打包或安装当前 ChatOS，也没有访问活动用户数据库。
+
+### 12.119a 第五十二完整里程碑：进程组资源曲线采集器（2026-10-26）
+
+新增 `run-process-group-soak.sh` 和原生 arm64 Python 采集器，只接受明确的根 PID，并以 PID + `proc_pid_rusage` start absolute time 防止 PID 复用污染。每个样本重新构造根进程后代树，逐进程记录 physical footprint、resident size、累计 CPU、累计磁盘读写、FD 与内核线程；聚合层计算 CPU 百分比、区间磁盘增量、p50/p95/p99、首尾/峰值、增减步数和单调增长。指定临时目录仅用 `lstat` 有界扫描，不跟随 symlink，不搜索账户目录或数据库。
+
+正式验收模式绑定并校验 `clean-release-build` App 与构建 manifest，要求根 PID 确实执行该 bundle 的 `ChatOSSwift`；少于 8 小时、采样间隔大于 5 秒、少于 5,000 样本、未明确 App/manifest、必需进程、隔离临时目录或三类资源上限时直接拒绝产生通过结论。必需 Worker/Host/Plugin 可设置最低出现样本数；physical-footprint p95、CPU p95、单区间磁盘写入，以及 FD、内核线程、临时文件数/字节的单调增长均进入失败原因。原始记录按行流式写入 `samples.jsonl`，运行中和失败 manifest 都原子持久化，仓库内输出必须处于 ignored 路径。
+
+工具回归 32 项通过，另以独立 `/bin/sleep` 根进程和隔离临时目录完成 6 个真实样本的短诊断，manifest 状态为 `completed` 且明确保持 `performance_acceptance: not-evaluated`。它不控制或终止目标，本次没有对正在运行的 ChatOS 采样。边界：内核线程不能冒充 Swift Task/Notification observer；采集器只观察外部编排的组合负载，不生成 200 次导航、20 次账户循环、Agent/Media/Plugin 作业或主线程 hang trace。上述驱动器和正式 8 小时运行仍属于 12.119 后续子阶段。
+
+### 12.119—12.120 剩余完整交付路径
+
+后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
+
+| 里程碑 | 明确目标 | 完成条件 |
+| --- | --- | --- |
+| 12.119 Release 组合 SLO 与 8 小时 soak | 固定硬件运行 UI + Agent + Host + Media + Plugin 组合负载，完成 200 次切页、20 次账户循环、崩溃/取消风暴和 8 小时 soak | 暖切页 p95 < 100 ms、无 >250 ms 主线程 hang；进程组 footprint/CPU/磁盘写入有基线；Task/FD/observer/临时文件不单调增长 |
+| 12.120 正式分发关闭 | 完成 Developer ID、hardened runtime、嵌套 Helper 从内到外签名、notarization、stapling 和最终兼容矩阵 | 安装包在干净机器验证通过；包内 Git SHA、架构、签名、协议/Schema 和回滚说明一致；不再以 ad-hoc 本地包冒充正式外部分发 |
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
@@ -2535,7 +2799,7 @@ Release 验收建议记录：
 
 ### 16.1 源码与文档漂移治理
 
-- 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift/Windows Host 常量与共享 fixture 为 v46；本方案引用版本不能替代实际握手。
+- 以协议代码常量与 Schema migration 为事实源。当前 Rust/Swift/Windows Host 常量与共享 fixture 为 v47；本方案引用版本不能替代实际握手。
 - CI 比较 Swift/Rust 协议版本、payload 边界、支持能力和打包后的真实可执行版本；Schema 兼容矩阵、进程布局及 ADR 随实现更新。
 - 为每个阶段归档 manifest、测试脚本、脱敏统计、故障注入结果与 trace，结论标注“现状/目标/已验证”。首批 P0 改动见 12.1；大传输静态 Governor 见 12.66，重媒体静态 Governor 及其主进程 4K 解码扩展见 12.67–12.69，跨资源动态/跨进程 Governor、Worker 和剩余门禁仍为待实施项。
 

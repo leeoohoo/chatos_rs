@@ -142,12 +142,18 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
         )
 
         let attachmentRoot = root.appendingPathComponent("attachments", isDirectory: true)
-        let vault = NativeLocalAgentAttachmentVault(rootURL: attachmentRoot)
+        let coreWorker = ConnectorCoreCodeReadWorker()
+        let vault = NativeLocalAgentAttachmentVault(
+            rootURL: attachmentRoot,
+            codeReadWorker: coreWorker,
+            binaryCodeReadWorker: coreWorker
+        )
         let bytes = Data(repeating: 0xff, count: 120_000)
-        let spec = try XCTUnwrap(vault.authorize([
+        let authorized = try await vault.authorizeInWorker([
             .init(id: "attachment-1", name: "input.docx", mimeType: "application/octet-stream",
                   kind: .file, origin: .pastedText, data: bytes),
-        ], ownerUserID: "user-1", conversationID: "conversation-1").first)
+        ], ownerUserID: "user-1", conversationID: "conversation-1")
+        let spec = try XCTUnwrap(authorized.first)
         await host.setAttachment(spec)
         let platform = NativeLocalAgentPlatformToolExecutor(
             host: host, attachmentRootURL: attachmentRoot, projectTools: executor,

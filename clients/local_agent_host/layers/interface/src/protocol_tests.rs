@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 fn shared_fixture(name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../contracts/local-agent/v46/fixtures")
+        .join("../../../contracts/local-agent/v49/fixtures")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|error| {
         panic!(
@@ -17,7 +17,7 @@ fn shared_fixture(name: &str) -> Vec<u8> {
 }
 
 #[test]
-fn shared_health_fixtures_match_protocol_v46() {
+fn shared_health_fixtures_match_protocol_v49() {
     let request: HostRequestEnvelope =
         serde_json::from_slice(&shared_fixture("health-request.json")).expect("health request");
     request.validate().expect("valid health request");
@@ -37,6 +37,14 @@ fn shared_health_fixtures_match_protocol_v46() {
             recovered_claims: 0,
             max_frame_bytes: LOCAL_AGENT_MAX_FRAME_BYTES,
             max_message_bytes: LOCAL_AGENT_MAX_MESSAGE_BYTES,
+            scheduler: Some(LocalAgentHostSchedulerSnapshot {
+                maximum_concurrent_work_items: 4,
+                effective_maximum_concurrent_work_items: 3,
+                pressure_level: LocalAgentResourcePressureLevel::Elevated,
+                active_work_items: 2,
+                idle_workers: 2,
+                queued_ready_work_items: 3,
+            }),
         }) if service == "chatos-local-agent-host"
     ));
 

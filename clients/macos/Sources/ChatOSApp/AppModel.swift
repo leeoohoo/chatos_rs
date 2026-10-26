@@ -2,6 +2,7 @@ import ChatOSAPI
 import ChatOSAgentRuntime
 import ChatOSConnector
 import ChatOSCore
+import ChatOSWorkerRuntime
 import AppKit
 import Combine
 import Foundation
@@ -139,6 +140,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let agentServices: any AgentServiceProviding
     let agentSkillLibrary: LocalAgentSkillLibrary
     let agentGroupChatScheduler: LocalAgentGroupChatScheduler
+    let machineResourceSnapshotProvider: NativeClientMachineResourceSnapshotProvider
+    let machineResourcePressureMonitor: ClientMachineResourcePressureMonitor
     let agentGroupChatBuilderService: LocalAgentBuilderService
     let notepadService: NativeLocalAgentNotepadService
     let wechatCompanionService: ChatOSWeChatCompanionService
@@ -173,6 +176,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var agentExecutorRecoveryTask: Task<Void, Never>?
     var agentRuntimeCoordinatorGeneration: UInt64 = 0
     var agentArtifactStorageTask: Task<Void, Never>?
+    var temporaryFileMaintenanceTask: Task<Void, Never>?
     var agentArtifactStorageOwnerUserID: String?
     var agentArtifactStorageGeneration: UInt64 = 0
     var localConnectorRecoveryTask: Task<Void, Never>?
@@ -394,6 +398,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             services: agentServices,
             runtime: AgentWorkerProcessClient(),
             maximumConcurrentExecutions: RuntimeConfiguration.swiftAgentMaximumConcurrentRuns,
+            machineResourceGovernor: .shared,
             projectTypeKeyProvider: { ownerUserID, projectID in
                 try await localProjectsService.registry().get(
                     ownerUserID: ownerUserID,
@@ -471,6 +476,20 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             }
         )
         self.agentGroupChatScheduler = agentGroupChatScheduler
+        self.machineResourceSnapshotProvider = NativeClientMachineResourceSnapshotProvider(
+            scheduler: agentGroupChatScheduler,
+            logicalJobBudget: RuntimeConfiguration.clientResourceBudget,
+            machineResourceGovernor: .shared,
+            hostSnapshot: {
+                await localAgentHost?.resourceSnapshot()
+            }
+        )
+        self.machineResourcePressureMonitor = ClientMachineResourcePressureMonitor(
+            governor: .shared,
+            hostPressureUpdate: { level in
+                await localAgentHost?.updateResourcePressure(level)
+            }
+        )
         self.agentGroupChatBuilderService = LocalAgentBuilderService(
             groupChatService: agentGroupChatService,
             projectsService: localProjectsService,
@@ -605,6 +624,12 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             }
             .store(in: &cancellables)
         startVisualSessionMonitoring()
+        let temporaryFileMaintenance = NativeLocalTemporaryFileMaintenanceService(
+            rootURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+        )
+        temporaryFileMaintenanceTask = Task(priority: .utility) {
+            _ = try? await temporaryFileMaintenance.cleanupStaleFiles()
+        }
         let connectorServicePreparationTask = Task { [weak self, localConnectorService] in
             await localConnectorService.setLocalAgentCompanionServices(
                 host: localAgentHost,
@@ -633,6 +658,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             guard let self, let ownerUserID = authenticatedUserID else { return }
             refreshLocalAgentControlPlane(ownerUserID: ownerUserID, force: true)
         }
+        machineResourcePressureMonitor.start()
         authentication.start()
     }
 

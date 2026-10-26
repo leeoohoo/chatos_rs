@@ -57,7 +57,15 @@ pub(super) async fn resolve(
         || expected.is_empty()
         || expected != supplied
     {
-        return Err("review must decide every current candidate exactly once; stale or foreign task ids are rejected".into());
+        let mut pending_task_ids = expected.into_iter().collect::<Vec<_>>();
+        pending_task_ids.sort_unstable();
+        let current = json!({
+            "review_message_id": review["review_message_id"],
+            "pending_task_ids": pending_task_ids,
+        });
+        return Err(format!(
+            "review must decide every current candidate exactly once; stale or foreign task ids are rejected. Retry with this authoritative current review: {current}"
+        ));
     }
     *side_effects_started = true;
     let result = executor
@@ -89,7 +97,7 @@ pub(super) async fn resolve(
 pub(super) fn definition() -> Value {
     json!({
         "type": "function", "name": "resolve_task_followup",
-        "description": "Use ONLY when the current Run context contains task_followup_review with pending=true. Copy its review_message_id and decide every pending candidate exactly once; never invent a token or reuse historical task ids. For status questions without a pending review, use list_tasks/get_task instead. continue releases unchanged work; cancel atomically stops conflicting work and its dependents; clarify keeps execution held pending user confirmation. Old review tokens and omitted or foreign tasks are rejected.",
+        "description": "Use ONLY when the current Run context contains task_followup_review with pending=true. The context marked context_authority=current_run supersedes every historical review in retained conversation or checkpoint data. Copy its review_message_id and decide every pending candidate exactly once; never invent a token or reuse historical task ids. For status questions without a pending review, use list_tasks/get_task instead. continue releases unchanged work; cancel atomically stops conflicting work and its dependents; clarify keeps execution held pending user confirmation. Old review tokens and omitted or foreign tasks are rejected with the current token and candidate ids so the call can be corrected.",
         "parameters": {
             "type": "object", "additionalProperties": false,
             "properties": {

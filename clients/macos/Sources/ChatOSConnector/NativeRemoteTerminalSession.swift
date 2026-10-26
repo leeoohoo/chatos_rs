@@ -75,8 +75,10 @@ public final class NativeRemoteTerminalSession: LocalProcessDelegate, @unchecked
             // browsing and command operations can then reuse it without asking
             // the jump host for a second SMS code.
             let controlPath = try NativeOpenSSHClient.persistentControlPath(for: draft)
+            let knownHostsURL = try NativeSSHConnectionTester.privateKnownHostsFile()
             try NativeSSHConnectionTester.sshConfig(
                 for: draft,
+                knownHostsPath: knownHostsURL.path,
                 controlPath: controlPath.path
             )
                 .write(to: config, atomically: true, encoding: .utf8)

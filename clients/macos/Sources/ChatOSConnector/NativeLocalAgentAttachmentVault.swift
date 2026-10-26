@@ -40,44 +40,111 @@ struct NativeLocalAgentAttachmentVault: Sendable {
 
     let rootURL: URL
     private let codeReadWorker: any CodeReadWorkerExecuting
+    private let binaryCodeReadWorker: any CodeReadWorkerBinaryExecuting
 
     init(
         rootURL: URL,
-        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared,
+        binaryCodeReadWorker: any CodeReadWorkerBinaryExecuting = CodeReadWorkerProcessClient.shared
     ) {
         self.rootURL = rootURL
         self.codeReadWorker = codeReadWorker
+        self.binaryCodeReadWorker = binaryCodeReadWorker
     }
 
-    func authorize(
+    /// Production send path. The already-bounded draft buffers are written directly to a
+    /// one-request Worker pipe; they are never duplicated into JSON/Base64 in the App process.
+    func authorizeInWorker(
         _ drafts: [ConversationAttachmentDraft],
         ownerUserID: String,
         conversationID: String
-    ) throws -> [LocalAgentConversationAttachmentSpec] {
-        try drafts.map { draft in
-            guard !draft.data.isEmpty, draft.data.count <= Self.maximumAttachmentBytes else {
+    ) async throws -> [LocalAgentConversationAttachmentSpec] {
+        guard !drafts.isEmpty else { return [] }
+        var totalBytes = 0
+        var items: [CodeReadWorkerJSONValue] = []
+        var tokens: [String] = []
+        items.reserveCapacity(drafts.count)
+        tokens.reserveCapacity(drafts.count)
+        for draft in drafts {
+            let (nextTotal, overflow) = totalBytes.addingReportingOverflow(draft.data.count)
+            guard !draft.data.isEmpty,
+                  draft.data.count <= Self.maximumAttachmentBytes,
+                  !overflow,
+                  nextTotal <= ChatOSCodeReadWorkerProtocol.maximumBinaryPayloadBytes else {
                 throw NativeLocalAgentAttachmentVaultError.invalidAttachment
             }
+            totalBytes = nextTotal
             let token = UUID().uuidString.lowercased()
-            let directory = scopedDirectory(ownerUserID: ownerUserID, conversationID: conversationID)
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
+            tokens.append(token)
+            items.append(.object([
+                "token": .string(token),
+                "byte_size": .number(Double(draft.data.count)),
+            ]))
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let result: CodeReadWorkerJSONValue
+        do {
+            result = try await binaryCodeReadWorker.execute(
+                operation: "attachment_authorize_v1",
+                arguments: [
+                    "owner_user_id": .string(ownerUserID),
+                    "conversation_id": .string(conversationID),
+                    "items": .array(items),
+                ],
+                binaryPayloads: drafts.map(\.data),
+                projectRoot: rootURL,
+                requestCWD: nil,
+                defaultToolRoot: nil,
+                ripgrepURL: nil
             )
-            let file = directory.appendingPathComponent(token, isDirectory: false)
-            try draft.data.write(to: file, options: .atomic)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: file.path
-            )
-            return .init(
-                attachmentID: draft.id, displayName: draft.name, mediaType: draft.mimeType,
-                byteSize: UInt64(draft.data.count), sha256: Self.sha256(draft.data),
+        } catch let error as CodeReadWorkerProcessClientError {
+            guard case let .requestRejected(code, _) = error else { throw error }
+            switch code {
+            case "attachment_reference_invalid":
+                throw NativeLocalAgentAttachmentVaultError.invalidReference
+            case "attachment_integrity_mismatch":
+                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
+            default:
+                throw NativeLocalAgentAttachmentVaultError.invalidAttachment
+            }
+        }
+        guard case let .object(object) = result,
+              case let .array(rawResults)? = object["items"],
+              rawResults.count == drafts.count else {
+            throw NativeLocalAgentAttachmentWorkerShapeError.invalid
+        }
+        var specs: [LocalAgentConversationAttachmentSpec] = []
+        specs.reserveCapacity(drafts.count)
+        for index in drafts.indices {
+            let draft = drafts[index]
+            let token = tokens[index]
+            guard case let .object(fields) = rawResults[index],
+                  case let .string(returnedToken)? = fields["token"],
+                  returnedToken == token,
+                  case let .number(returnedSize)? = fields["byte_size"],
+                  returnedSize == Double(draft.data.count),
+                  case let .string(digest)? = fields["sha256"],
+                  digest.count == 64,
+                  digest.utf8.allSatisfy({
+                      (48...57).contains($0) || (97...102).contains($0)
+                  }) else {
+                throw NativeLocalAgentAttachmentWorkerShapeError.invalid
+            }
+            specs.append(.init(
+                attachmentID: draft.id,
+                displayName: draft.name,
+                mediaType: draft.mimeType,
+                byteSize: UInt64(draft.data.count),
+                sha256: digest,
                 authorizedLocalRef: Self.referencePrefix + token,
                 metadata: .object(["kind": .string(draft.kind.rawValue)])
-            )
+            ))
         }
+        return specs
     }
 
     func resolve(
@@ -171,11 +238,10 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         ownerUserID: String,
         conversationID: String
     ) throws -> URL {
-        try validatedFileURL(
-            record,
-            ownerUserID: ownerUserID,
-            conversationID: conversationID
-        )
+        _ = try arguments(record, ownerUserID: ownerUserID, conversationID: conversationID)
+        let token = String(record.authorizedLocalRef.dropFirst(Self.referencePrefix.count))
+        return scopedDirectory(ownerUserID: ownerUserID, conversationID: conversationID)
+            .appendingPathComponent(token, isDirectory: false)
     }
 
     private func execute(
@@ -233,26 +299,6 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         ]
     }
 
-    private func validatedFileURL(
-        _ record: LocalAgentConversationAttachmentRecord,
-        ownerUserID: String,
-        conversationID: String
-    ) throws -> URL {
-        _ = try arguments(record, ownerUserID: ownerUserID, conversationID: conversationID)
-        let token = String(record.authorizedLocalRef.dropFirst(Self.referencePrefix.count))
-        let directory = scopedDirectory(ownerUserID: ownerUserID, conversationID: conversationID)
-        let file = directory.appendingPathComponent(token, isDirectory: false)
-        let values = try file.resourceValues(forKeys: [
-            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
-        ])
-        guard values.isRegularFile == true, values.isSymbolicLink != true,
-              values.fileSize == Int(record.byteSize),
-              Self.isContained(file: file, in: directory) else {
-            throw NativeLocalAgentAttachmentVaultError.invalidAttachment
-        }
-        return file
-    }
-
     private func scopedDirectory(ownerUserID: String, conversationID: String) -> URL {
         rootURL
             .appendingPathComponent(Self.scopeComponent(ownerUserID), isDirectory: true)
@@ -265,10 +311,6 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func isContained(file: URL, in directory: URL) -> Bool {
-        file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
-            == directory.resolvingSymlinksInPath().standardizedFileURL
-    }
 }
 
 enum NativeLocalAgentAttachmentVaultError: LocalizedError, Equatable {

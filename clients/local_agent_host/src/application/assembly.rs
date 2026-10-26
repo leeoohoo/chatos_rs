@@ -13,14 +13,15 @@ use super::{
 };
 use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
-    LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver, LocalMemorySyncWorker,
-    LocalModelRuntimeResolver, LocalTaskToolExecutor, LocalToolExecutor, LocalToolRegistry,
-    LocalToolScheduler, NamedReadOnlyTools, MAIN_CHAT_PROFILE_KEY, TASK_APPROVAL_EXEMPT_TOOLS,
-    TASK_EXECUTION_PROFILE_KEY, TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES,
+    LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver, LocalHookCoordinator,
+    LocalMemorySyncWorker, LocalModelRuntimeResolver, LocalTaskToolExecutor, LocalToolExecutor,
+    LocalToolRegistry, LocalToolScheduler, MacOsSeatbeltHookRunner, NamedReadOnlyTools,
+    MAIN_CHAT_PROFILE_KEY, TASK_APPROVAL_EXEMPT_TOOLS, TASK_EXECUTION_PROFILE_KEY,
+    TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES,
 };
 use chatos_local_agent_protocol::LocalAgentToolExecutionRoute;
 use chatos_local_agent_runtime::{LocalAgentProfileRegistry, LocalAgentRuntime};
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 /// Fully assembled durable execution services for one native client process.
 /// Platform code owns storage creation and concrete control-plane/tool adapters;
@@ -55,6 +56,7 @@ impl LocalAgentHostAssembly {
             Vec::new(),
             None,
             None,
+            None,
         )
     }
 
@@ -84,6 +86,40 @@ impl LocalAgentHostAssembly {
             approval_exempt_tools,
             None,
             None,
+            None,
+        )
+    }
+
+    /// Builds the production external-tool Host with trusted, isolated Hook
+    /// execution enabled for both model Profiles.
+    pub fn with_external_tool_worker_and_hooks<M, C, I, S>(
+        runtime: Arc<LocalAgentRuntime>,
+        owner_user_id: impl Into<String>,
+        model_resolver: M,
+        capability_resolver: C,
+        read_only_tools: I,
+        approval_exempt_tools: Vec<String>,
+        hook_data_root: PathBuf,
+        workspace_root: Option<PathBuf>,
+    ) -> Result<Self, String>
+    where
+        M: LocalModelRuntimeResolver + 'static,
+        C: LocalCapabilityResolver + 'static,
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let hooks = hook_context_provider(&runtime, hook_data_root, workspace_root)?;
+        Self::build(
+            runtime,
+            owner_user_id.into(),
+            model_resolver,
+            capability_resolver,
+            None,
+            read_only_tools,
+            approval_exempt_tools,
+            None,
+            None,
+            Some(hooks),
         )
     }
 
@@ -115,6 +151,43 @@ impl LocalAgentHostAssembly {
             approval_exempt_tools,
             Some(memory_source_id.into()),
             Some(memory_sync_worker),
+            None,
+        )
+    }
+
+    /// Builds the production external-tool Host with retained Memory and
+    /// trusted, isolated Hook execution enabled.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_external_tool_worker_and_memory_and_hooks<M, C, I, S>(
+        runtime: Arc<LocalAgentRuntime>,
+        owner_user_id: impl Into<String>,
+        model_resolver: M,
+        capability_resolver: C,
+        read_only_tools: I,
+        approval_exempt_tools: Vec<String>,
+        memory_source_id: impl Into<String>,
+        memory_sync_worker: LocalMemorySyncWorker,
+        hook_data_root: PathBuf,
+        workspace_root: Option<PathBuf>,
+    ) -> Result<Self, String>
+    where
+        M: LocalModelRuntimeResolver + 'static,
+        C: LocalCapabilityResolver + 'static,
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let hooks = hook_context_provider(&runtime, hook_data_root, workspace_root)?;
+        Self::build(
+            runtime,
+            owner_user_id.into(),
+            model_resolver,
+            capability_resolver,
+            None,
+            read_only_tools,
+            approval_exempt_tools,
+            Some(memory_source_id.into()),
+            Some(memory_sync_worker),
+            Some(hooks),
         )
     }
 
@@ -128,6 +201,7 @@ impl LocalAgentHostAssembly {
         approval_exempt_tools: Vec<String>,
         memory_source_id: Option<String>,
         memory_sync_worker: Option<LocalMemorySyncWorker>,
+        hook_context_provider: Option<Arc<LocalHookCoordinator>>,
     ) -> Result<Self, String>
     where
         M: LocalModelRuntimeResolver + 'static,
@@ -170,25 +244,30 @@ impl LocalAgentHostAssembly {
             "tool_result_",
         ])?
         .with_local_prefixed_input_items(vec![task_process_prompt_item()]);
+        if let Some(provider) = hook_context_provider.as_ref() {
+            main_chat_planner = main_chat_planner.with_hook_context_provider(Arc::clone(provider));
+            task_execution_planner =
+                task_execution_planner.with_hook_context_provider(Arc::clone(provider));
+        }
         if let Some(source_id) = memory_source_id {
             main_chat_planner = main_chat_planner.with_memory_source_id(source_id.clone())?;
             task_execution_planner = task_execution_planner.with_memory_source_id(source_id)?;
         }
+        let mut main_profile = DurableAiProfile::new(
+            ChatosAiRuntimeStepExecutor::new(main_chat_planner),
+            safety.clone(),
+        );
+        let mut task_profile = DurableAiProfile::new(
+            ChatosAiRuntimeStepExecutor::new(task_execution_planner),
+            safety,
+        );
+        if let Some(hooks) = hook_context_provider.as_ref() {
+            main_profile = main_profile.with_tool_hook_gate(Arc::clone(hooks));
+            task_profile = task_profile.with_tool_hook_gate(Arc::clone(hooks));
+        }
         let mut profiles = LocalAgentProfileRegistry::new();
-        profiles.register(
-            MAIN_CHAT_PROFILE_KEY,
-            DurableAiProfile::new(
-                ChatosAiRuntimeStepExecutor::new(main_chat_planner),
-                safety.clone(),
-            ),
-        )?;
-        profiles.register(
-            TASK_EXECUTION_PROFILE_KEY,
-            DurableAiProfile::new(
-                ChatosAiRuntimeStepExecutor::new(task_execution_planner),
-                safety,
-            ),
-        )?;
+        profiles.register(MAIN_CHAT_PROFILE_KEY, main_profile)?;
+        profiles.register(TASK_EXECUTION_PROFILE_KEY, task_profile)?;
         let model_scheduler = LocalAgentScheduler::new(
             Arc::clone(&runtime),
             profiles,
@@ -259,6 +338,9 @@ impl LocalAgentHostAssembly {
         if let Some(worker) = memory_sync_worker {
             coordinator = coordinator.with_memory_sync_worker(worker)?;
         }
+        if let Some(hooks) = hook_context_provider {
+            coordinator = coordinator.with_hook_coordinator(hooks);
+        }
         let coordinator = Arc::new(coordinator);
         Ok(Self {
             runtime,
@@ -287,6 +369,19 @@ impl LocalAgentHostAssembly {
     pub fn coordinator(&self) -> Arc<LocalAgentHostCoordinator> {
         Arc::clone(&self.coordinator)
     }
+}
+
+fn hook_context_provider(
+    runtime: &Arc<LocalAgentRuntime>,
+    hook_data_root: PathBuf,
+    workspace_root: Option<PathBuf>,
+) -> Result<Arc<LocalHookCoordinator>, String> {
+    let runner = MacOsSeatbeltHookRunner::new(hook_data_root)?;
+    Ok(Arc::new(LocalHookCoordinator::new(
+        Arc::clone(runtime),
+        runner,
+        workspace_root,
+    )?))
 }
 
 fn host_tool_safety(

@@ -380,6 +380,68 @@ async fn incomplete_foreign_duplicate_and_stale_decisions_do_not_release_any_tas
 }
 
 #[tokio::test]
+async fn direct_cancellation_reconciles_review_and_remaining_candidates_can_be_resolved() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    fixture(&storage).await;
+    guide(&storage, "followup").await;
+
+    storage
+        .cancel_task(
+            &idempotency("direct-cancel"),
+            "user-1",
+            "root",
+            None,
+            "Latest requirement replaces this work",
+            &[],
+            "direct-cancel-event",
+            11_000,
+        )
+        .await
+        .unwrap();
+
+    let tasks = storage
+        .get_task_graph("user-1", "graph-original")
+        .await
+        .unwrap()
+        .unwrap()
+        .tasks;
+    let status = |id: &str| tasks.iter().find(|task| task.task_id == id).unwrap().status;
+    assert_eq!(status("root"), LocalTaskStatus::Cancelled);
+    assert_eq!(status("child"), LocalTaskStatus::Cancelled);
+    assert_eq!(status("spare"), LocalTaskStatus::Ready);
+
+    let main = claim(&storage, "review-after-direct-cancel", 11_500)
+        .await
+        .unwrap();
+    let reviews = main.run.input["task_followup_review"]["tasks"]
+        .as_array()
+        .unwrap();
+    let review_state = |id: &str| {
+        reviews.iter().find(|task| task["task_id"] == id).unwrap()["review_state"].clone()
+    };
+    assert_eq!(review_state("root"), "cancelled");
+    assert_eq!(review_state("child"), "cancelled");
+    assert_eq!(review_state("spare"), "pending");
+
+    let output = storage
+        .resolve_task_followup(
+            &idempotency("resolve-remaining"),
+            &review(
+                "run-original",
+                "followup",
+                &[("spare", TaskFollowupAction::Continue)],
+            ),
+            12_000,
+        )
+        .await
+        .unwrap();
+    assert_eq!(output["reviewed"], true);
+    assert_eq!(output["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(output["tasks"][0]["task_id"], "spare");
+    assert_eq!(output["tasks"][0]["state"], "released");
+}
+
+#[tokio::test]
 async fn omitted_review_is_visible_failure_and_clarification_holds_until_next_message() {
     let storage = SqliteClientStorage::connect_memory().await.unwrap();
     fixture(&storage).await;

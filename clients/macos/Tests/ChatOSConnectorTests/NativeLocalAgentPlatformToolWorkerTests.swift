@@ -694,12 +694,14 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-attachment-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
+        let coreWorker = ConnectorCoreCodeReadWorker()
         let vault = NativeLocalAgentAttachmentVault(
             rootURL: root,
-            codeReadWorker: ConnectorCoreCodeReadWorker()
+            codeReadWorker: coreWorker,
+            binaryCodeReadWorker: coreWorker
         )
         let data = Data("hello local attachment".utf8)
-        let spec = try XCTUnwrap(vault.authorize(
+        let authorized = try await vault.authorizeInWorker(
             [.init(
                 id: "attachment-1",
                 name: "notes.txt",
@@ -710,7 +712,8 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             )],
             ownerUserID: "owner/a",
             conversationID: "conversation/a"
-        ).first)
+        )
+        let spec = try XCTUnwrap(authorized.first)
         let record = attachmentRecord(spec)
 
         let previewURL = try vault.previewURL(

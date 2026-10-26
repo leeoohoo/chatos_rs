@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use crate::{application::work_activity::HostWorkActivity, LocalHookCoordinator};
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     ClaimNextToolCommand, CommitToolCommand, HostCommand, HostRequestEnvelope, HostResult,
@@ -90,6 +91,8 @@ pub struct LocalToolScheduler {
     include_tool_names: Option<Vec<String>>,
     exclude_tool_names: Vec<String>,
     execution_route: Option<LocalAgentToolExecutionRoute>,
+    work_activity: HostWorkActivity,
+    hook_coordinator: Option<Arc<LocalHookCoordinator>>,
 }
 
 impl LocalToolScheduler {
@@ -121,7 +124,22 @@ impl LocalToolScheduler {
             include_tool_names: None,
             exclude_tool_names: Vec::new(),
             execution_route: None,
+            work_activity: HostWorkActivity::default(),
+            hook_coordinator: None,
         })
+    }
+
+    pub(crate) fn with_work_activity(mut self, work_activity: HostWorkActivity) -> Self {
+        self.work_activity = work_activity;
+        self
+    }
+
+    pub(crate) fn with_hook_coordinator(
+        mut self,
+        hook_coordinator: Arc<LocalHookCoordinator>,
+    ) -> Self {
+        self.hook_coordinator = Some(hook_coordinator);
+        self
     }
 
     pub fn with_lease_duration_ms(mut self, lease_duration_ms: u64) -> Result<Self, String> {
@@ -136,6 +154,20 @@ impl LocalToolScheduler {
 
     pub(crate) fn owner_user_id(&self) -> &str {
         &self.owner_user_id
+    }
+
+    pub(crate) fn claim_filter(
+        &self,
+    ) -> (
+        Option<&[String]>,
+        &[String],
+        Option<LocalAgentToolExecutionRoute>,
+    ) {
+        (
+            self.include_tool_names.as_deref(),
+            &self.exclude_tool_names,
+            self.execution_route,
+        )
     }
 
     pub fn with_execution_route(mut self, execution_route: LocalAgentToolExecutionRoute) -> Self {
@@ -182,7 +214,18 @@ impl LocalToolScheduler {
             HostResult::ToolClaim { claim: None } => return Ok(ToolSchedulerTick::Idle),
             _ => return Err(LocalToolSchedulerError::UnexpectedResult("claim")),
         };
-        let outcome = match claim.preflight_outcome.clone() {
+        let _activity = self.work_activity.begin();
+        let hook_preflight = match self.hook_coordinator.as_ref() {
+            Some(hooks) => match hooks.tool_preflight_outcome(&claim.invocation).await {
+                Ok(outcome) => outcome,
+                Err(error) => Some(LocalAgentToolOutcome::Failed {
+                    error: "trusted tool Hook preflight failed closed".to_string(),
+                    detail: json!({"phase": "trusted_plugin_hook", "error": error}),
+                }),
+            },
+            None => None,
+        };
+        let outcome = match claim.preflight_outcome.clone().or(hook_preflight) {
             Some(outcome) => outcome,
             None => match self.tools.executor_for(&claim.invocation.tool_name) {
                 Some(executor) => match self.execute_with_heartbeat(executor, &claim).await? {

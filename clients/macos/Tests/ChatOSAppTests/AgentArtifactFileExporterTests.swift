@@ -58,6 +58,29 @@ final class AgentArtifactFileExporterTests: XCTestCase {
         }
     }
 
+    func testCancellationPreservesDestinationAndRemovesTemporaryFile() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let existing = Data("keep me".utf8)
+        try existing.write(to: fixture.destination)
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await AgentArtifactFileExporter.export(
+                reference(for: fixture, sha256: fixture.sha256),
+                to: fixture.destination
+            )
+        }
+
+        do {
+            try await task.value
+            XCTFail("Cancelled export completed")
+        } catch is CancellationError {}
+
+        XCTAssertEqual(try Data(contentsOf: fixture.destination), existing)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: fixture.root.path)
+            .allSatisfy { !$0.hasPrefix(".chatos-artifact-export-") })
+    }
+
     private func reference(
         for fixture: (root: URL, source: URL, destination: URL, data: Data, sha256: String),
         sha256: String

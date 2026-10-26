@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSProcessRuntime
 import CryptoKit
 import Darwin
 import Dispatch
@@ -98,6 +99,14 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         qos: .userInitiated,
         attributes: .concurrent
     )
+    private let remoteCommitAcknowledgementDelaySeconds: Int
+
+    init(remoteCommitAcknowledgementDelaySeconds: Int = 0) {
+        self.remoteCommitAcknowledgementDelaySeconds = max(
+            0,
+            remoteCommitAcknowledgementDelaySeconds
+        )
+    }
 
     func hasReusableConnection(draft: RemoteConnectionDraft) async -> Bool {
         (try? await Self.performBlockingWork { controller in
@@ -340,17 +349,35 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     commands.append("rm -f -- \"$tmp\"")
                 }
                 commands.append("trap - EXIT HUP INT TERM")
-                let captured = try Self.run(
-                    executable: "/usr/bin/ssh",
-                    arguments: ["-F", runtime.config.path, "chatos-target", commands.joined(separator: "; ")],
-                    environment: runtime.environment,
-                    input: data,
-                    timeout: 30,
-                    maximumCapturedBytes: 256 * 1_024,
-                    controller: controller
-                )
+                let captured: CapturedProcessResult
+                do {
+                    captured = try Self.run(
+                        executable: "/usr/bin/ssh",
+                        arguments: [
+                            "-F", runtime.config.path,
+                            "chatos-target", commands.joined(separator: "; "),
+                        ],
+                        environment: runtime.environment,
+                        input: data,
+                        timeout: 30,
+                        maximumCapturedBytes: 256 * 1_024,
+                        controller: controller
+                    )
+                } catch {
+                    if controller.isCancelled {
+                        throw RemoteFileMutationFailure.reconciliationRequired(
+                            "（上传确认前被取消）"
+                        )
+                    }
+                    throw error
+                }
+                if !overwrite, captured.exitCode == 73, !captured.timedOut {
+                    throw NativeOpenSSHError.remoteFileExists(path)
+                }
                 guard captured.exitCode == 0, !captured.timedOut else {
-                    throw NativeOpenSSHError.remoteFailure(Self.failureMessage(captured))
+                    throw RemoteFileMutationFailure.reconciliationRequired(
+                        Self.failureSuffix(captured)
+                    )
                 }
             }
         }
@@ -362,11 +389,18 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         remotePath: String,
         overwrite: Bool
     ) async throws {
+        let acknowledgementDelay = remoteCommitAcknowledgementDelaySeconds
         try await Self.performBlockingWork { controller in
             guard FileManager.default.isReadableFile(atPath: localURL.path) else {
                 throw NativeOpenSSHError.localFileUnavailable(localURL.path)
             }
             try Self.withRuntime(draft: draft) { runtime in
+                let remoteParent = Self.remoteParent(remotePath)
+                try Self.runRemotePreparation(
+                    Self.remoteTransferCleanupScript(for: remoteParent),
+                    runtime: runtime,
+                    controller: controller
+                )
                 let temporaryRemotePath = Self.remoteTransferTemporaryPath(for: remotePath)
                 var committed = false
                 defer {
@@ -384,8 +418,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                         controller: controller
                     )
                 }
-                try Self.runRemoteMutation(
-                    "mkdir -p -- \(Self.shellQuote(Self.remoteParent(remotePath))); "
+                try Self.runRemotePreparation(
+                    "mkdir -p -- \(Self.shellQuote(remoteParent)); "
                         + "umask 077; : > \(Self.shellQuote(temporaryRemotePath))",
                     runtime: runtime,
                     controller: controller
@@ -400,6 +434,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                     temporaryPath: temporaryRemotePath,
                     destinationPath: remotePath,
                     overwrite: overwrite,
+                    acknowledgementDelaySeconds: acknowledgementDelay,
                     runtime: runtime,
                     controller: controller
                 )
@@ -493,6 +528,10 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                 try Task.checkCancellation()
                 return value
             } catch {
+                if let failure = error as? RemoteFileMutationFailure,
+                   failure.requiresReconciliation {
+                    throw failure
+                }
                 if Task.isCancelled { throw CancellationError() }
                 throw error
             }
@@ -516,7 +555,26 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             controller: controller
         )
         guard captured.exitCode == 0, !captured.timedOut else {
-            throw NativeOpenSSHError.remoteFailure(failureMessage(captured))
+            throw RemoteFileMutationFailure.reconciliationRequired(failureSuffix(captured))
+        }
+    }
+
+    private static func runRemotePreparation(
+        _ command: String,
+        runtime: SSHRuntime,
+        controller: NativeOpenSSHProcessController
+    ) throws {
+        let captured = try run(
+            executable: "/usr/bin/ssh",
+            arguments: ["-F", runtime.config.path, "chatos-target", "set -e; \(command)"],
+            environment: runtime.environment,
+            input: nil,
+            timeout: 30,
+            maximumCapturedBytes: 256 * 1_024,
+            controller: controller
+        )
+        guard captured.exitCode == 0, !captured.timedOut else {
+            throw RemoteFileMutationFailure.notApplied(failureMessage(captured))
         }
     }
 
@@ -560,7 +618,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             controller: controller
         )
         guard captured.exitCode == 0, !captured.timedOut else {
-            throw NativeOpenSSHError.remoteFailure(failureMessage(captured))
+            throw RemoteFileMutationFailure.notApplied(failureMessage(captured))
         }
     }
 
@@ -571,10 +629,30 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         )
     }
 
+    static func remoteTransferCleanupScript(for parentPath: String) -> String {
+        """
+        parent=\(shellQuote(parentPath)); now=$(date +%s); \
+        find "$parent" -mindepth 1 -maxdepth 1 -type f -name '.chatos-upload-*.tmp' -print 2>/dev/null | \
+        while IFS= read -r item; do \
+          name=${item##*/}; token=${name#.chatos-upload-}; token=${token%.tmp}; \
+          [ ${#token} -eq 36 ] || continue; \
+          case "$token" in ????????-????-????-????-????????????) ;; *) continue ;; esac; \
+          case "$token" in *[!0-9a-f-]*) continue ;; esac; \
+          links=$(stat -c '%h' -- "$item" 2>/dev/null || stat -f '%l' "$item" 2>/dev/null) || continue; \
+          owner=$(stat -c '%u' -- "$item" 2>/dev/null || stat -f '%u' "$item" 2>/dev/null) || continue; \
+          modified=$(stat -c '%Y' -- "$item" 2>/dev/null || stat -f '%m' "$item" 2>/dev/null) || continue; \
+          [ "$links" = 1 ] && [ "$owner" = "$(id -u)" ] || continue; \
+          [ $((now - modified)) -ge 86400 ] || continue; \
+          rm -f -- "$item"; \
+        done
+        """
+    }
+
     private static func commitRemoteTransfer(
         temporaryPath: String,
         destinationPath: String,
         overwrite: Bool,
+        acknowledgementDelaySeconds: Int,
         runtime: SSHRuntime,
         controller: NativeOpenSSHProcessController
     ) throws {
@@ -592,6 +670,9 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             commands.append("ln -- \"$tmp\" \"$target\" 2>/dev/null || exit 73")
             commands.append("rm -f -- \"$tmp\"")
         }
+        if acknowledgementDelaySeconds > 0 {
+            commands.append("sleep \(acknowledgementDelaySeconds)")
+        }
         let captured = try run(
             executable: "/usr/bin/ssh",
             arguments: [
@@ -608,7 +689,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             throw NativeOpenSSHError.remoteFileExists(destinationPath)
         }
         guard captured.exitCode == 0, !captured.timedOut else {
-            throw NativeOpenSSHError.remoteFailure(failureMessage(captured))
+            throw RemoteFileMutationFailure.reconciliationRequired(failureSuffix(captured))
         }
     }
 
@@ -643,10 +724,104 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         destinationURL: URL,
         overwrite: Bool
     ) throws {
-        let result = overwrite
-            ? Darwin.rename(temporaryURL.path, destinationURL.path)
-            : Darwin.link(temporaryURL.path, destinationURL.path)
-        guard result == 0 else {
+        let temporaryParent = temporaryURL.deletingLastPathComponent()
+            .standardizedFileURL.resolvingSymlinksInPath()
+        let destinationParent = destinationURL.deletingLastPathComponent()
+            .standardizedFileURL.resolvingSymlinksInPath()
+        guard temporaryParent == destinationParent,
+              validLeafName(temporaryURL.lastPathComponent),
+              validLeafName(destinationURL.lastPathComponent) else {
+            throw NativeOpenSSHError.localFileCommitFailed(
+                destinationURL.path,
+                "临时文件必须位于目标目录的同一文件系统中"
+            )
+        }
+
+        let directory = destinationParent.path.withCString {
+            Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard directory >= 0 else {
+            throw NativeOpenSSHError.localFileCommitFailed(
+                destinationURL.path,
+                String(cString: strerror(errno))
+            )
+        }
+        defer { _ = Darwin.close(directory) }
+
+        var directoryMetadata = stat()
+        guard Darwin.fstat(directory, &directoryMetadata) == 0,
+              (directoryMetadata.st_mode & S_IFMT) == S_IFDIR else {
+            throw NativeOpenSSHError.localFileCommitFailed(
+                destinationURL.path,
+                "目标目录身份校验失败"
+            )
+        }
+        let temporaryName = temporaryURL.lastPathComponent
+        let destinationName = destinationURL.lastPathComponent
+        let temporary = temporaryName.withCString {
+            Darwin.openat(directory, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard temporary >= 0 else {
+            throw NativeOpenSSHError.localFileCommitFailed(
+                destinationURL.path,
+                String(cString: strerror(errno))
+            )
+        }
+        defer { _ = Darwin.close(temporary) }
+
+        var temporaryMetadata = stat()
+        guard Darwin.fstat(temporary, &temporaryMetadata) == 0,
+              (temporaryMetadata.st_mode & S_IFMT) == S_IFREG,
+              temporaryMetadata.st_uid == geteuid(),
+              temporaryMetadata.st_nlink == 1,
+              temporaryMetadata.st_dev == directoryMetadata.st_dev else {
+            throw NativeOpenSSHError.localFileCommitFailed(
+                destinationURL.path,
+                "临时文件身份或文件系统校验失败"
+            )
+        }
+
+        var destinationMetadata = stat()
+        let destinationStatus = destinationName.withCString {
+            Darwin.fstatat(directory, $0, &destinationMetadata, AT_SYMLINK_NOFOLLOW)
+        }
+        if destinationStatus == 0 {
+            guard overwrite else {
+                throw NativeOpenSSHError.localFileExists(destinationURL.path)
+            }
+            guard (destinationMetadata.st_mode & S_IFMT) == S_IFREG else {
+                throw NativeOpenSSHError.localFileCommitFailed(
+                    destinationURL.path,
+                    "目标不是可原子替换的普通文件"
+                )
+            }
+            guard Darwin.fchmod(temporary, destinationMetadata.st_mode & 0o7777) == 0 else {
+                throw NativeOpenSSHError.localFileCommitFailed(
+                    destinationURL.path,
+                    String(cString: strerror(errno))
+                )
+            }
+        } else if errno != ENOENT {
+            throw NativeOpenSSHError.localFileCommitFailed(
+                destinationURL.path,
+                String(cString: strerror(errno))
+            )
+        }
+
+        guard Darwin.fsync(temporary) == 0 else {
+            throw NativeOpenSSHError.localFileCommitFailed(
+                destinationURL.path,
+                String(cString: strerror(errno))
+            )
+        }
+        let commitResult = temporaryName.withCString { source in
+            destinationName.withCString { destination in
+                overwrite
+                    ? Darwin.renameat(directory, source, directory, destination)
+                    : Darwin.linkat(directory, source, directory, destination, 0)
+            }
+        }
+        guard commitResult == 0 else {
             let failure = errno
             if !overwrite, failure == EEXIST {
                 throw NativeOpenSSHError.localFileExists(destinationURL.path)
@@ -657,8 +832,27 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             )
         }
         if !overwrite {
-            try? FileManager.default.removeItem(at: temporaryURL)
+            let unlinkResult = temporaryName.withCString {
+                Darwin.unlinkat(directory, $0, 0)
+            }
+            guard unlinkResult == 0 else {
+                throw NativeOpenSSHError.localFileCommitUncertain(
+                    destinationURL.path,
+                    String(cString: strerror(errno))
+                )
+            }
         }
+        guard Darwin.fsync(directory) == 0 else {
+            throw NativeOpenSSHError.localFileCommitUncertain(
+                destinationURL.path,
+                String(cString: strerror(errno))
+            )
+        }
+    }
+
+    private static func validLeafName(_ name: String) -> Bool {
+        !name.isEmpty && name != "." && name != ".."
+            && !name.contains("/") && !name.contains("\0")
     }
 
     private static func withRuntime<T>(
@@ -677,8 +871,17 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         let config = directory.appendingPathComponent("ssh_config")
         let askpass = directory.appendingPathComponent("askpass.sh")
         let controlPath = try persistentControlPath(for: draft)
-        try NativeSSHConnectionTester.sshConfig(for: draft, controlPath: controlPath.path)
+        let knownHostsURL = try NativeSSHConnectionTester.privateKnownHostsFile()
+        try NativeSSHConnectionTester.sshConfig(
+            for: draft,
+            knownHostsPath: knownHostsURL.path,
+            controlPath: controlPath.path
+        )
             .write(to: config, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: config.path
+        )
         try NativeSSHConnectionTester.askpassScript.write(to: askpass, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: askpass.path)
         var environment = ProcessInfo.processInfo.environment
@@ -741,7 +944,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         return directory.appendingPathComponent(digest, isDirectory: false)
     }
 
-    private static func run(
+    static func run(
         executable: String,
         arguments: [String],
         environment: [String: String],
@@ -751,25 +954,27 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         controller: NativeOpenSSHProcessController
     ) throws -> CapturedProcessResult {
         try controller.throwIfCancelled()
-        let process = Process()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         let stdout = NativeBoundedProcessOutput(maximumBytes: maximumCapturedBytes)
         let stderr = NativeBoundedProcessOutput(maximumBytes: maximumCapturedBytes)
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.environment = environment
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
         let inputPipe: Pipe?
+        let nullInput: Int32
+        let standardInput: Int32
         if input != nil {
             let pipe = Pipe()
-            process.standardInput = pipe
             inputPipe = pipe
+            nullInput = -1
+            standardInput = pipe.fileHandleForReading.fileDescriptor
         } else {
-            process.standardInput = FileHandle.nullDevice
             inputPipe = nil
+            nullInput = Darwin.open("/dev/null", O_RDONLY | O_CLOEXEC)
+            guard nullInput >= 0 else {
+                throw NativeOpenSSHError.launchFailed("无法打开 SSH 标准输入")
+            }
+            standardInput = nullInput
         }
+        defer { if nullInput >= 0 { _ = Darwin.close(nullInput) } }
         NativeProcessPipeReader.install(
             on: stdoutPipe.fileHandleForReading,
             onData: stdout.append
@@ -778,27 +983,51 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             on: stderrPipe.fileHandleForReading,
             onData: stderr.append
         )
-        let exitSignal = NativeProcessExitSignal.install(on: process)
-        do {
-            try process.run()
-        } catch {
+        let processArguments = [executable] + arguments
+        var processID: pid_t = 0
+        let spawnResult = withCStringArray(processArguments) { argv in
+            withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { envp in
+                chatos_spawn_process_group(
+                    executable,
+                    argv,
+                    envp,
+                    nil,
+                    standardInput,
+                    stdoutPipe.fileHandleForWriting.fileDescriptor,
+                    stderrPipe.fileHandleForWriting.fileDescriptor,
+                    &processID
+                )
+            }
+        }
+        inputPipe?.fileHandleForReading.closeFile()
+        stdoutPipe.fileHandleForWriting.closeFile()
+        stderrPipe.fileHandleForWriting.closeFile()
+        guard spawnResult == 0, processID > 0 else {
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
-            throw NativeOpenSSHError.launchFailed(error.localizedDescription)
+            throw NativeOpenSSHError.launchFailed(String(cString: strerror(spawnResult)))
         }
-        let registration = controller.register(process)
-        defer { controller.clear(process, registration: registration) }
+        let registration = controller.register(processID)
+        defer { controller.clear(processID, registration: registration) }
+        let exitSignal = NativeProcessExitSignal.reap(processID: processID)
         if let input, let inputPipe {
-            inputPipe.fileHandleForWriting.write(input)
+            do {
+                try inputPipe.fileHandleForWriting.write(contentsOf: input)
+            } catch {
+                _ = chatos_signal_process_group(processID, SIGKILL)
+                try? inputPipe.fileHandleForWriting.close()
+                _ = exitSignal.wait(timeout: 2)
+                throw NativeOpenSSHError.remoteFailure(error.localizedDescription)
+            }
             try? inputPipe.fileHandleForWriting.close()
         }
         var exitCode = exitSignal.wait(timeout: timeout)
         let timedOut = exitCode == nil
         if timedOut {
-            _ = Darwin.kill(process.processIdentifier, SIGTERM)
+            _ = chatos_signal_process_group(processID, SIGTERM)
             exitCode = exitSignal.wait(timeout: 0.75)
             if exitCode == nil {
-                _ = Darwin.kill(process.processIdentifier, SIGKILL)
+                _ = chatos_signal_process_group(processID, SIGKILL)
                 exitCode = exitSignal.wait(timeout: 2)
             }
         }
@@ -822,6 +1051,15 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             timedOut: timedOut,
             outputDiscarded: stdoutSnapshot.discarded || stderrSnapshot.discarded
         )
+    }
+
+    private static func withCStringArray<Result>(
+        _ values: [String],
+        _ body: ([UnsafeMutablePointer<CChar>?]) throws -> Result
+    ) rethrows -> Result {
+        let pointers = values.map { strdup($0) }
+        defer { pointers.forEach { free($0) } }
+        return try body(pointers + [nil])
     }
 
     private static func shellQuote(_ value: String) -> String {
@@ -855,6 +1093,11 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return stderr.isEmpty ? "远程操作失败（退出码 \(result.exitCode)）" : stderr
     }
+
+    private static func failureSuffix(_ result: CapturedProcessResult) -> String {
+        let message = failureMessage(result)
+        return message.isEmpty ? "" : "（\(message)）"
+    }
 }
 
 final class NativeOpenSSHProcessController: @unchecked Sendable {
@@ -866,33 +1109,36 @@ final class NativeOpenSSHProcessController: @unchecked Sendable {
 
     private let lock = NSLock()
     private var cancellationRequested = false
-    private var activeProcess: Process?
+    private var activeProcessID: pid_t?
     private var activeRegistration: UUID?
 
-    func throwIfCancelled() throws {
+    var isCancelled: Bool {
         lock.lock()
-        let cancelled = cancellationRequested
-        lock.unlock()
-        if cancelled { throw CancellationError() }
+        defer { lock.unlock() }
+        return cancellationRequested
     }
 
-    func register(_ process: Process) -> UUID {
+    func throwIfCancelled() throws {
+        if isCancelled { throw CancellationError() }
+    }
+
+    func register(_ processID: pid_t) -> UUID {
         let registration = UUID()
         lock.lock()
-        activeProcess = process
+        activeProcessID = processID
         activeRegistration = registration
         let cancelled = cancellationRequested
         lock.unlock()
         if cancelled {
-            requestTermination(of: process, registration: registration)
+            requestTermination(of: processID, registration: registration)
         }
         return registration
     }
 
-    func clear(_ process: Process, registration: UUID) {
+    func clear(_ processID: pid_t, registration: UUID) {
         lock.lock()
-        if activeProcess === process, activeRegistration == registration {
-            activeProcess = nil
+        if activeProcessID == processID, activeRegistration == registration {
+            activeProcessID = nil
             activeRegistration = nil
         }
         lock.unlock()
@@ -901,28 +1147,27 @@ final class NativeOpenSSHProcessController: @unchecked Sendable {
     func cancel() {
         lock.lock()
         cancellationRequested = true
-        let process = activeProcess
+        let processID = activeProcessID
         let registration = activeRegistration
         lock.unlock()
-        if let process, let registration {
-            requestTermination(of: process, registration: registration)
+        if let processID, let registration {
+            requestTermination(of: processID, registration: registration)
         }
     }
 
-    private func requestTermination(of process: Process, registration: UUID) {
-        if process.isRunning { process.terminate() }
-        Self.forceKillQueue.asyncAfter(deadline: .now() + 2) { [weak self, process] in
+    private func requestTermination(of processID: pid_t, registration: UUID) {
+        _ = chatos_signal_process_group(processID, SIGTERM)
+        Self.forceKillQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self,
-                  self.owns(process, registration: registration),
-                  process.isRunning else { return }
-            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+                  self.owns(processID, registration: registration) else { return }
+            _ = chatos_signal_process_group(processID, SIGKILL)
         }
     }
 
-    private func owns(_ process: Process, registration: UUID) -> Bool {
+    private func owns(_ processID: pid_t, registration: UUID) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return activeProcess === process && activeRegistration == registration
+        return activeProcessID == processID && activeRegistration == registration
     }
 }
 
@@ -931,7 +1176,7 @@ private struct SSHRuntime {
     let environment: [String: String]
 }
 
-private struct CapturedProcessResult {
+struct CapturedProcessResult {
     let exitCode: Int
     let stdout: Data
     let stderr: Data
@@ -946,6 +1191,7 @@ private enum NativeOpenSSHError: LocalizedError {
     case localFileUnavailable(String)
     case localFileExists(String)
     case localFileCommitFailed(String, String)
+    case localFileCommitUncertain(String, String)
     case remoteFileExists(String)
 
     var errorDescription: String? {
@@ -956,6 +1202,8 @@ private enum NativeOpenSSHError: LocalizedError {
         case let .localFileUnavailable(path): "无法读取本机文件：\(path)"
         case let .localFileExists(path): "本机已有同名文件：\(path)"
         case let .localFileCommitFailed(path, reason): "无法提交本机文件 \(path)：\(reason)"
+        case let .localFileCommitUncertain(path, reason):
+            "本机文件提交后的持久化结果尚未确认，请先核对 \(path) 后再重试：\(reason)"
         case let .remoteFileExists(path): "远端已有同名文件：\(path)"
         }
     }

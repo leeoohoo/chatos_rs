@@ -22,8 +22,11 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
     case attachmentInvalid
     case attachmentReferenceInvalid
     case attachmentIntegrityMismatch
+    case attachmentWriteFailed
     case attachmentWorkspaceUnavailable
     case attachmentWorkspaceConflict
+    case artifactInvalid
+    case artifactWriteFailed
 
     public var errorDescription: String? {
         switch self {
@@ -45,10 +48,13 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
         case .attachmentInvalid: "The local attachment is unavailable or exceeds its safety limit."
         case .attachmentReferenceInvalid: "The local attachment reference is invalid."
         case .attachmentIntegrityMismatch: "The local attachment failed its integrity check."
+        case .attachmentWriteFailed: "The local attachment could not be stored safely."
         case .attachmentWorkspaceUnavailable:
             "The authorized attachment could not be imported into the task workspace."
         case .attachmentWorkspaceConflict:
             "The workspace attachment copy has changed or is unsafe; it was not overwritten."
+        case .artifactInvalid: "The artifact file failed its integrity check."
+        case .artifactWriteFailed: "The artifact file could not be stored safely."
         }
     }
 
@@ -73,8 +79,11 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
         case .attachmentInvalid: code = "attachment_invalid"
         case .attachmentReferenceInvalid: code = "attachment_reference_invalid"
         case .attachmentIntegrityMismatch: code = "attachment_integrity_mismatch"
+        case .attachmentWriteFailed: code = "attachment_write_failed"
         case .attachmentWorkspaceUnavailable: code = "attachment_workspace_unavailable"
         case .attachmentWorkspaceConflict: code = "attachment_workspace_conflict"
+        case .artifactInvalid: code = "artifact_invalid"
+        case .artifactWriteFailed: code = "artifact_write_failed"
         }
         return .init(code: code, message: errorDescription ?? code)
     }
@@ -94,6 +103,7 @@ public enum ChatOSCodeReadWorkerEngine {
         guard request.type == "request",
               request.protocolVersion == ChatOSCodeReadWorkerProtocol.maximumVersion,
               ChatOSCodeReadWorkerProtocol.operations.contains(request.operation),
+              request.binaryPayloadByteCount == 0,
               request.deadlineUnixMilliseconds > nowMilliseconds() else {
             throw CodeReadWorkerCoreError.invalidRequest("代码读取请求无效或已经过期")
         }
@@ -137,6 +147,20 @@ public enum ChatOSCodeReadWorkerEngine {
             return try context.searchText(mapped)
         case "open_file_in_pet":
             return try context.resolvePetFile(request.arguments)
+        case "verify_file_identity_v1":
+            return try context.verifyFileIdentity(request.arguments)
+        case "artifact_stage_v1", "artifact_restore_v1":
+            return try ArtifactWorkerOperations(
+                root: root,
+                rootIdentity: request.projectRootIdentity,
+                deadlineUnixMilliseconds: request.deadlineUnixMilliseconds
+            ).execute(operation: request.operation, arguments: request.arguments)
+        case "cleanup_stale_temporary_files_v1":
+            return try TemporaryFileCleanupWorkerOperations(
+                root: root,
+                rootIdentity: request.projectRootIdentity,
+                deadlineUnixMilliseconds: request.deadlineUnixMilliseconds
+            ).execute(arguments: request.arguments)
         case "project_list_v1":
             return try context.projectList(request.arguments)
         case "project_search_entries_v1":
@@ -161,6 +185,34 @@ public enum ChatOSCodeReadWorkerEngine {
         default:
             throw CodeReadWorkerCoreError.unsupportedTool(request.operation)
         }
+    }
+
+    public static func executeStreaming(
+        _ request: CodeReadWorkerRequest,
+        readBinaryChunk: (Int) throws -> Data
+    ) throws -> CodeReadWorkerJSONValue {
+        guard request.type == "request",
+              request.protocolVersion == ChatOSCodeReadWorkerProtocol.maximumVersion,
+              request.operation == "attachment_authorize_v1",
+              request.binaryPayloadByteCount > 0,
+              request.binaryPayloadByteCount
+                <= UInt64(ChatOSCodeReadWorkerProtocol.maximumBinaryPayloadBytes),
+              request.deadlineUnixMilliseconds > nowMilliseconds() else {
+            throw CodeReadWorkerCoreError.invalidRequest("附件授权请求无效或已经过期")
+        }
+        let root = try validatedRoot(
+            path: request.projectRootPath,
+            identity: request.projectRootIdentity
+        )
+        return try AttachmentWorkerOperations(
+            root: root,
+            rootIdentity: request.projectRootIdentity,
+            deadlineUnixMilliseconds: request.deadlineUnixMilliseconds
+        ).authorize(
+            arguments: request.arguments,
+            binaryPayloadByteCount: request.binaryPayloadByteCount,
+            readBinaryChunk: readBinaryChunk
+        )
     }
 
     private static func validatedRoot(
@@ -302,6 +354,94 @@ private struct Context {
             "relative_path": .string(relativePath(url)),
             "line": line,
             "mode": .string(mode),
+        ])
+    }
+
+    func verifyFileIdentity(
+        _ arguments: [String: CodeReadWorkerJSONValue]
+    ) throws -> CodeReadWorkerJSONValue {
+        try checkDeadline()
+        let name = try requiredString(arguments, "name")
+        let expectedBytesValue = try requiredNumber(arguments, "byte_size")
+        let expectedDigest = try requiredString(arguments, "sha256").lowercased()
+        guard !name.contains("/"), !name.contains("\\"), name != ".", name != "..",
+              name.utf8.count <= 255,
+              expectedBytesValue.isFinite,
+              expectedBytesValue.rounded() == expectedBytesValue,
+              expectedBytesValue > 0,
+              expectedBytesValue <= 20 * 1_024 * 1_024,
+              expectedDigest.utf8.count == 64,
+              expectedDigest.utf8.allSatisfy({
+                  (48...57).contains($0) || (97...102).contains($0)
+              }) else {
+            throw CodeReadWorkerCoreError.invalidRequest("文件身份校验参数无效")
+        }
+        let expectedBytes = Int64(expectedBytesValue)
+        let rootDescriptor = root.path.withCString {
+            Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard rootDescriptor >= 0 else { throw CodeReadWorkerCoreError.notDirectory }
+        defer { _ = Darwin.close(rootDescriptor) }
+        let descriptor = name.withCString {
+            Darwin.openat(rootDescriptor, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else { throw CodeReadWorkerCoreError.notFile }
+        defer { _ = Darwin.close(descriptor) }
+
+        var before = stat()
+        guard Darwin.fstat(descriptor, &before) == 0,
+              (before.st_mode & S_IFMT) == S_IFREG,
+              before.st_uid == geteuid(),
+              before.st_size == expectedBytes,
+              Darwin.lseek(descriptor, 0, SEEK_SET) == 0 else {
+            throw CodeReadWorkerCoreError.attachmentIntegrityMismatch
+        }
+        var hasher = SHA256()
+        var total: Int64 = 0
+        var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
+        while total < expectedBytes {
+            try checkDeadline()
+            let requested = min(buffer.count, Int(expectedBytes - total))
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, requested)
+            }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else {
+                throw CodeReadWorkerCoreError.attachmentIntegrityMismatch
+            }
+            buffer.withUnsafeBytes { bytes in
+                hasher.update(bufferPointer: UnsafeRawBufferPointer(
+                    rebasing: bytes.prefix(count)
+                ))
+            }
+            total += Int64(count)
+        }
+        var trailingByte: UInt8 = 0
+        while true {
+            let trailingCount = Darwin.read(descriptor, &trailingByte, 1)
+            if trailingCount == 0 { break }
+            if trailingCount < 0, errno == EINTR { continue }
+            throw CodeReadWorkerCoreError.attachmentIntegrityMismatch
+        }
+        var after = stat()
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        guard Darwin.fstat(descriptor, &after) == 0,
+              before.st_dev == after.st_dev,
+              before.st_ino == after.st_ino,
+              before.st_size == after.st_size,
+              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+              before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
+              before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec,
+              digest == expectedDigest else {
+            throw CodeReadWorkerCoreError.attachmentIntegrityMismatch
+        }
+        return .object([
+            "device": .string(String(after.st_dev)),
+            "inode": .string(String(after.st_ino)),
+            "byte_count": .number(Double(after.st_size)),
+            "modified_seconds": .string(String(after.st_mtimespec.tv_sec)),
+            "modified_nanoseconds": .string(String(after.st_mtimespec.tv_nsec)),
         ])
     }
 

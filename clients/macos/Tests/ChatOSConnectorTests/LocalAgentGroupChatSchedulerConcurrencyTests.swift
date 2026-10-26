@@ -1,10 +1,92 @@
 import ChatOSAgentRuntime
 @testable import ChatOSConnector
 import ChatOSCore
+import ChatOSWorkerRuntime
 import Foundation
 import XCTest
 
 extension LocalAgentGroupChatSchedulerTests {
+    func testSharedMachineCapacityQueuesAgentBeforeDeliveryClaim() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-shared-machine-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "共享资源 Agent",
+                rolePrompt: "验证 claim 前准入。",
+                modelConfigID: "parallel-model"
+            )
+        )
+        let room = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: agent.id
+        )
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "等待共享额度"),
+            limits: .init()
+        )
+        let delivery = try XCTUnwrap(post.deliveries.first)
+
+        let machineGovernor = ClientMachineResourceGovernor(budget: .init(
+            availableResourceUnits: 2,
+            reservedHostResourceUnits: 2,
+            maximumAgentRuns: 1,
+            maximumMediaWorkers: 2,
+            maximumCodeReadWorkers: 2
+        ))
+        let media = try await machineGovernor.acquire(context: .init(
+            kind: .mediaWorker,
+            priority: .interactive,
+            operation: "occupied-media"
+        ))
+        let codeRead = try await machineGovernor.acquire(context: .init(
+            kind: .codeReadWorker,
+            priority: .interactive,
+            operation: "occupied-code-read"
+        ))
+        let settingsSuite = "local-agent-shared-machine-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: ParallelSchedulerTestServices(probe: SchedulerConcurrencyProbe()),
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 1,
+            machineResourceGovernor: machineGovernor
+        )
+        let drain = Task {
+            try await scheduler.drainCommunications(ownerUserID: "alice", maximumRuns: 1)
+        }
+        for _ in 0..<200 {
+            let snapshot = await machineGovernor.snapshot()
+            if snapshot.queued.contains(where: { $0.kind == .agentRun }) { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        var snapshot = await machineGovernor.snapshot()
+        XCTAssertEqual(snapshot.queued.filter { $0.kind == .agentRun }.count, 1)
+        let unclaimed = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: delivery.id
+        )
+        XCTAssertEqual(unclaimed?.status, .pending)
+
+        await media.releaseAndWait()
+        await codeRead.releaseAndWait()
+        let results = try await drain.value
+        XCTAssertEqual(results.first?.deliveryID, delivery.id)
+        XCTAssertEqual(results.first?.outcome, .completed)
+        snapshot = await machineGovernor.snapshot()
+        XCTAssertTrue(snapshot.active.isEmpty)
+        XCTAssertTrue(snapshot.queued.isEmpty)
+    }
+
     func testSchedulerRunsDifferentAgentsConcurrentlyButClaimsOneDeliveryPerAgent() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-parallel-scheduler-\(UUID().uuidString)")

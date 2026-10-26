@@ -57,6 +57,32 @@ impl LocalAgentRuntime {
                     .await?;
                 Ok(HostResult::PluginInstallation { installation })
             }
+            HostCommand::PutPluginHookBundle(command) => {
+                let bundle = self
+                    .store
+                    .put_plugin_hook_bundle(idempotency, &command.bundle, self.now()?)
+                    .await?;
+                Ok(HostResult::PluginHookBundle { bundle })
+            }
+            HostCommand::ListPluginHookBundles(command) => {
+                let bundles = self
+                    .store
+                    .list_plugin_hook_bundles(&command.owner_user_id)
+                    .await?;
+                Ok(HostResult::PluginHookBundles { bundles })
+            }
+            HostCommand::SetActivePluginHookBundles(command) => {
+                let active_bundle_ids = self
+                    .store
+                    .set_active_plugin_hook_bundles(
+                        idempotency,
+                        &command.owner_user_id,
+                        &command.bundle_ids,
+                        self.now()?,
+                    )
+                    .await?;
+                Ok(HostResult::ActivePluginHookBundlesUpdated { active_bundle_ids })
+            }
             _ => unreachable!("non-plugin command routed to plugin runtime"),
         }
     }

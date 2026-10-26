@@ -1,4 +1,5 @@
 import ChatOSCodeReadWorkerProtocol
+import ChatOSWorkerRuntime
 import Darwin
 import Dispatch
 import Foundation
@@ -14,6 +15,18 @@ public protocol CodeReadWorkerExecuting: Sendable {
     ) async throws -> CodeReadWorkerJSONValue
 }
 
+public protocol CodeReadWorkerBinaryExecuting: CodeReadWorkerExecuting {
+    func execute(
+        operation: String,
+        arguments: [String: CodeReadWorkerJSONValue],
+        binaryPayloads: [Data],
+        projectRoot: URL,
+        requestCWD: String?,
+        defaultToolRoot: String?,
+        ripgrepURL: URL?
+    ) async throws -> CodeReadWorkerJSONValue
+}
+
 public enum CodeReadWorkerProcessClientError: LocalizedError, Equatable {
     case unavailable
     case invalidExecutable
@@ -21,6 +34,7 @@ public enum CodeReadWorkerProcessClientError: LocalizedError, Equatable {
     case incompatibleProtocol
     case invalidResponse
     case requestRejected(code: String, message: String)
+    case resourceBusy
     case timedOut
 
     public var errorDescription: String? {
@@ -31,12 +45,13 @@ public enum CodeReadWorkerProcessClientError: LocalizedError, Equatable {
         case .incompatibleProtocol: "代码读取独立进程版本与客户端不兼容。"
         case .invalidResponse: "代码读取独立进程返回了无效结果。"
         case let .requestRejected(_, message): message
+        case .resourceBusy: "代码读取任务过多，请稍后重试。"
         case .timedOut: "代码读取超时，已终止对应的独立进程。"
         }
     }
 }
 
-public struct CodeReadWorkerProcessClient: CodeReadWorkerExecuting {
+public struct CodeReadWorkerProcessClient: CodeReadWorkerBinaryExecuting {
     public static let shared = CodeReadWorkerProcessClient()
 
     /// The helper lifecycle uses synchronous Process/FileHandle calls. Keep those blocking waits
@@ -50,10 +65,16 @@ public struct CodeReadWorkerProcessClient: CodeReadWorkerExecuting {
 
     public let executableURL: URL?
     public let timeout: TimeInterval
+    private let resourceGovernor: ClientFileWorkerResourceGovernor
 
-    public init(executableURL: URL? = nil, timeout: TimeInterval = 60) {
+    public init(
+        executableURL: URL? = nil,
+        timeout: TimeInterval = 60,
+        resourceGovernor: ClientFileWorkerResourceGovernor = .shared
+    ) {
         self.executableURL = executableURL
         self.timeout = timeout
+        self.resourceGovernor = resourceGovernor
     }
 
     public func execute(
@@ -64,15 +85,51 @@ public struct CodeReadWorkerProcessClient: CodeReadWorkerExecuting {
         defaultToolRoot: String? = nil,
         ripgrepURL: URL? = nil
     ) async throws -> CodeReadWorkerJSONValue {
+        try await execute(
+            operation: operation,
+            arguments: arguments,
+            binaryPayloads: [],
+            projectRoot: projectRoot,
+            requestCWD: requestCWD,
+            defaultToolRoot: defaultToolRoot,
+            ripgrepURL: ripgrepURL
+        )
+    }
+
+    public func execute(
+        operation: String,
+        arguments: [String: CodeReadWorkerJSONValue],
+        binaryPayloads: [Data],
+        projectRoot: URL,
+        requestCWD: String? = nil,
+        defaultToolRoot: String? = nil,
+        ripgrepURL: URL? = nil
+    ) async throws -> CodeReadWorkerJSONValue {
+        let payloadByteCount = try Self.payloadByteCount(binaryPayloads)
         guard timeout.isFinite,
               (0.05...120).contains(timeout),
-              ChatOSCodeReadWorkerProtocol.operations.contains(operation) else {
+              ChatOSCodeReadWorkerProtocol.operations.contains(operation),
+              payloadByteCount <= ChatOSCodeReadWorkerProtocol.maximumBinaryPayloadBytes,
+              (binaryPayloads.isEmpty || operation == "attachment_authorize_v1") else {
             throw CodeReadWorkerProcessClientError.invalidResponse
         }
         let resolvedExecutable = try executableURL ?? Self.resolveExecutable()
+        let permit: ClientFileWorkerPermit
+        do {
+            permit = try await resourceGovernor.acquire(context: .init(
+                kind: .codeRead,
+                priority: operation == "cleanup_stale_temporary_files_v1"
+                    ? .background : .interactive,
+                operation: operation
+            ))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw CodeReadWorkerProcessClientError.resourceBusy
+        }
         let controller = CodeReadWorkerProcessController()
         do {
-            return try await withTaskCancellationHandler {
+            let result = try await withTaskCancellationHandler {
                 try await withThrowingTaskGroup(of: CodeReadWorkerJSONValue.self) { group in
                     group.addTask {
                         try await withTaskCancellationHandler {
@@ -85,6 +142,7 @@ public struct CodeReadWorkerProcessClient: CodeReadWorkerExecuting {
                                     requestCWD: requestCWD,
                                     defaultToolRoot: defaultToolRoot,
                                     ripgrepURL: ripgrepURL,
+                                    binaryPayloads: binaryPayloads,
                                     timeout: timeout
                                 )
                             }
@@ -108,16 +166,31 @@ public struct CodeReadWorkerProcessClient: CodeReadWorkerExecuting {
             } onCancel: {
                 controller.terminate()
             }
+            await permit.releaseAndWait()
+            return result
         } catch is CancellationError {
+            await permit.releaseAndWait()
             throw CancellationError()
         } catch let error as CodeReadWorkerProcessClientError {
+            await permit.releaseAndWait()
             if Task.isCancelled { throw CancellationError() }
             if controller.didTimeOut { throw CodeReadWorkerProcessClientError.timedOut }
             throw error
         } catch {
+            await permit.releaseAndWait()
             if controller.didTimeOut { throw CodeReadWorkerProcessClientError.timedOut }
             throw CodeReadWorkerProcessClientError.invalidResponse
         }
+    }
+
+    private static func payloadByteCount(_ payloads: [Data]) throws -> Int {
+        var total = 0
+        for payload in payloads {
+            let (next, overflow) = total.addingReportingOverflow(payload.count)
+            guard !overflow else { throw CodeReadWorkerProcessClientError.invalidResponse }
+            total = next
+        }
+        return total
     }
 
     private static func resolveExecutable() throws -> URL {
@@ -178,6 +251,7 @@ private final class CodeReadWorkerProcessController: @unchecked Sendable {
         requestCWD: String?,
         defaultToolRoot: String?,
         ripgrepURL: URL?,
+        binaryPayloads: [Data],
         timeout: TimeInterval
     ) throws -> CodeReadWorkerJSONValue {
         try validateExecutable(executableURL)
@@ -191,6 +265,9 @@ private final class CodeReadWorkerProcessController: @unchecked Sendable {
         child.terminationHandler = { _ in exitSignal.signal() }
         let input = Pipe()
         let output = Pipe()
+        guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
+            throw CodeReadWorkerProcessClientError.launchFailed
+        }
         child.executableURL = executableURL.standardizedFileURL
         child.currentDirectoryURL = executableURL.deletingLastPathComponent()
         child.arguments = ["--parent-pid", String(getpid())]
@@ -230,6 +307,8 @@ private final class CodeReadWorkerProcessController: @unchecked Sendable {
               hello.workerBuildVersion == ChatOSCodeReadWorkerProtocol.buildVersion,
               hello.operations.contains(operation),
               hello.maximumInlineBytes == ChatOSCodeReadWorkerProtocol.maximumInlineBytes,
+              hello.maximumBinaryPayloadBytes
+                == ChatOSCodeReadWorkerProtocol.maximumBinaryPayloadBytes,
               !hello.helperInstanceID.isEmpty else {
             throw CodeReadWorkerProcessClientError.incompatibleProtocol
         }
@@ -247,9 +326,11 @@ private final class CodeReadWorkerProcessController: @unchecked Sendable {
             requestCWD: requestCWD,
             defaultToolRoot: defaultToolRoot,
             ripgrepPath: ripgrepURL?.standardizedFileURL.path,
-            ripgrepIdentity: ripgrepIdentity
+            ripgrepIdentity: ripgrepIdentity,
+            binaryPayloadByteCount: UInt64(binaryPayloads.reduce(0) { $0 + $1.count })
         )
         try input.fileHandleForWriting.write(contentsOf: CodeReadWorkerWireCodec.encodeLine(request))
+        try writeBinaryPayloads(binaryPayloads, to: input.fileHandleForWriting.fileDescriptor)
         try input.fileHandleForWriting.close()
         let response = try CodeReadWorkerWireCodec.decode(
             CodeReadWorkerResponse.self,
@@ -269,6 +350,24 @@ private final class CodeReadWorkerProcessController: @unchecked Sendable {
             throw CodeReadWorkerProcessClientError.invalidResponse
         }
         return result
+    }
+
+    private func writeBinaryPayloads(_ payloads: [Data], to descriptor: Int32) throws {
+        for payload in payloads {
+            try payload.withUnsafeBytes { bytes in
+                guard let base = bytes.baseAddress else { return }
+                var offset = 0
+                while offset < bytes.count {
+                    let requested = min(64 * 1_024, bytes.count - offset)
+                    let count = Darwin.write(descriptor, base.advanced(by: offset), requested)
+                    if count < 0, errno == EINTR { continue }
+                    guard count > 0 else {
+                        throw CodeReadWorkerProcessClientError.invalidResponse
+                    }
+                    offset += count
+                }
+            }
+        }
     }
 
     func terminate(timedOut: Bool = false) {

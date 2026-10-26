@@ -33,4 +33,29 @@ struct PetTaskLiveActivitySummaryTests {
         #expect(progress?.title == "部署前端")
         #expect(progress?.occurredAtDate != nil)
     }
+
+    @Test("task follow-up gates override a stale waiting-model activity")
+    func followupGateOverridesRunActivity() {
+        let localized: (String, String) -> String = { chinese, _ in chinese }
+
+        #expect(MessageTaskRunActivityPresentation.title(
+            forTaskStatus: " reviewing_followup ",
+            fallback: .waitingModel,
+            localized: localized
+        ) == "审查追加要求")
+        #expect(MessageTaskRunActivityPresentation.taskStatusDetailOverride(
+            for: "reviewing_followup",
+            localized: localized
+        ) == "后续执行已暂停，正在审查追加要求")
+        #expect(MessageTaskRunActivityPresentation.title(
+            forTaskStatus: "waiting_confirmation",
+            fallback: .runningModel,
+            localized: localized
+        ) == "等待确认")
+        #expect(MessageTaskRunActivityPresentation.title(
+            forTaskStatus: "running",
+            fallback: .waitingModel,
+            localized: localized
+        ) == "等待 AI 响应")
+    }
 }

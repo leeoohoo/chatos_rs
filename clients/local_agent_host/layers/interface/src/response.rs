@@ -9,9 +9,9 @@ use crate::{
     LocalConversationPage, LocalConversationRuntimeSettings, LocalConversationTurnStart,
     LocalConversationTurnUpdate, LocalMemorySyncStatus, LocalMessageTaskGraph,
     LocalModelConfigSnapshot, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
-    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalRemoteConnection,
-    LocalRequirementSurvey, LocalRequirementSurveyResolution, LocalSkillBundleSnapshot,
-    LocalTaskGraph, LocalTaskGraphPage, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalPluginHookBundleRecord, LocalPluginInstallationPage, LocalPluginInstallationRecord,
+    LocalRemoteConnection, LocalRequirementSurvey, LocalRequirementSurveyResolution,
+    LocalSkillBundleSnapshot, LocalTaskGraph, LocalTaskGraphPage, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +57,12 @@ pub enum HostResult {
         recovered_claims: u64,
         max_frame_bytes: usize,
         max_message_bytes: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scheduler: Option<LocalAgentHostSchedulerSnapshot>,
+    },
+    SchedulerPressureUpdated {
+        pressure_level: crate::LocalAgentResourcePressureLevel,
+        effective_maximum_concurrent_work_items: usize,
     },
     MemorySyncStatus {
         status: LocalMemorySyncStatus,
@@ -134,6 +140,15 @@ pub enum HostResult {
     },
     PluginInstallations {
         page: LocalPluginInstallationPage,
+    },
+    PluginHookBundle {
+        bundle: LocalPluginHookBundleRecord,
+    },
+    PluginHookBundles {
+        bundles: Vec<LocalPluginHookBundleRecord>,
+    },
+    ActivePluginHookBundlesUpdated {
+        active_bundle_ids: Vec<String>,
     },
     Conversation {
         conversation: LocalConversationDetail,
@@ -215,6 +230,16 @@ pub enum HostResult {
     RequirementPlan {
         plan: Option<crate::LocalRequirementPlan>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalAgentHostSchedulerSnapshot {
+    pub maximum_concurrent_work_items: usize,
+    pub effective_maximum_concurrent_work_items: usize,
+    pub pressure_level: crate::LocalAgentResourcePressureLevel,
+    pub active_work_items: usize,
+    pub idle_workers: usize,
+    pub queued_ready_work_items: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

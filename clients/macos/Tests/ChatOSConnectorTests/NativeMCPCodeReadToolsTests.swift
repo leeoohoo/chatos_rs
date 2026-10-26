@@ -95,7 +95,9 @@ struct NativeMCPCodeReadToolsTests {
             object: nil,
             queue: nil
         ) { notification in
-            received.store(notification.object as? PetFilePresentationRequest)
+            guard let request = notification.object as? PetFilePresentationRequest,
+                  request.path == file.path else { return }
+            received.store(request)
         }
         defer { NotificationCenter.default.removeObserver(token) }
 
@@ -129,7 +131,9 @@ struct NativeMCPCodeReadToolsTests {
             object: nil,
             queue: nil
         ) { notification in
-            received.store(notification.object as? PetFilePresentationRequest)
+            guard let request = notification.object as? PetFilePresentationRequest,
+                  request.path == file.path else { return }
+            received.store(request)
         }
         defer { NotificationCenter.default.removeObserver(token) }
 

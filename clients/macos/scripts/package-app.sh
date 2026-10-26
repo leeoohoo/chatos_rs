@@ -41,6 +41,7 @@ SWIFTTERM_NOTICE_DIR="$RESOURCES_DIR/ThirdPartyNotices/SwiftTerm"
 PET_DIR="$RESOURCES_DIR/Pets/fengtuan"
 EN_LOCALIZATION_DIR="$RESOURCES_DIR/en.lproj"
 ZH_HANS_LOCALIZATION_DIR="$RESOURCES_DIR/zh-Hans.lproj"
+APP_ICON_SOURCE="$PROJECT_DIR/../windows-react/src-tauri/icons/icon.icns"
 
 if [[ "$BUILD_CONFIGURATION" == "release" && -n "$(git -C "$PROJECT_DIR" status --porcelain)" && "${CHATOS_ALLOW_DIRTY_RELEASE:-0}" != "1" ]]; then
   echo "Refusing to package a Release app from a dirty worktree." >&2
@@ -230,6 +231,11 @@ copy_swift_resource_bundle "ChatOSSwift_ChatOSCore.bundle"
 copy_swift_resource_bundle "ChatOSSwift_ChatOSModelCapabilities.bundle"
 copy_swift_resource_bundle "SwiftTerm_SwiftTerm.bundle"
 cp "$PROJECT_DIR/Support/ChatOSSwift-Info.plist" "$CONTENTS_DIR/Info.plist"
+if [[ ! -f "$APP_ICON_SOURCE" ]]; then
+  echo "ChatOS application icon not found at $APP_ICON_SOURCE" >&2
+  exit 1
+fi
+cp "$APP_ICON_SOURCE" "$RESOURCES_DIR/ChatOS.icns"
 set_plist_string "ChatOSBuildConfiguration" "$BUILD_CONFIGURATION"
 set_plist_string "ChatOSBuildGitCommit" "$BUILD_GIT_COMMIT"
 set_plist_string "ChatOSBuildDateUTC" "$BUILD_DATE_UTC"

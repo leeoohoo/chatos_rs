@@ -52,6 +52,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory?
     weak var companionRuntime: (any LocalConnectorCompanionRuntimeProviding)?
     var companionConversationClient: NativeLocalAgentConversationClient?
+    var localAgentHostClient: (any LocalAgentHostClientServicing)?
+    var pluginHookSyncGeneration: UInt64 = 0
     var companionConversationService: NativeLocalAgentConversationService?
     var companionMessageTaskService: NativeLocalAgentMessageTaskGraphService?
     var companionAskUserService: NativeLocalAgentAskUserPromptService?
@@ -195,11 +197,13 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         conversation: NativeLocalAgentConversationService?,
         messageTasks: NativeLocalAgentMessageTaskGraphService?,
         askUser: NativeLocalAgentAskUserPromptService?
-    ) {
+    ) async {
+        localAgentHostClient = host
         companionConversationClient = host.map(NativeLocalAgentConversationClient.init(host:))
         companionConversationService = conversation
         companionMessageTaskService = messageTasks
         companionAskUserService = askUser
+        await syncTrustedPluginHookBundles()
     }
 
     public func configureLocalApprovalAgent(

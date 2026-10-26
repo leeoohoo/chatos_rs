@@ -158,7 +158,16 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
             let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
             do { try await service.ensureThread(); XCTFail("Should reject HTTP \(status)") } catch {}
             let requests = await transport.requests
-            XCTAssertEqual(requests.count, 1)
+            XCTAssertEqual(
+                requests.filter { $0.url.path.contains("/threads/") }.count,
+                1,
+                "The rejected Memory request must never be replayed"
+            )
+            XCTAssertEqual(
+                requests.filter { $0.url.path.hasSuffix("/auth/refresh") }.count,
+                status == 401 ? 1 : 0,
+                "Only a 401 may perform one authoritative User Service refresh"
+            )
         }
     }
 

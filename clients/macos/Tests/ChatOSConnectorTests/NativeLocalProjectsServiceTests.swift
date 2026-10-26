@@ -1,10 +1,15 @@
 @testable import ChatOSConnector
+import ChatOSCodeReadWorkerClient
+import ChatOSCodeReadWorkerProtocol
 import ChatOSCore
 import Foundation
 import XCTest
 
 final class NativeLocalProjectsServiceTests: XCTestCase {
-    private func context(rootWorkspaceFirst: Bool = false) throws -> Context {
+    private func context(
+        rootWorkspaceFirst: Bool = false,
+        codeReadWorker: any CodeReadWorkerExecuting = ConnectorCoreCodeReadWorker()
+    ) throws -> Context {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("local-projects-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root.appendingPathComponent("repo"), withIntermediateDirectories: true)
         let stateURL = root.appendingPathComponent("connector.json")
@@ -28,7 +33,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
                        service: NativeLocalProjectsService(
                            connector: connector,
                            databaseURL: root.appendingPathComponent("projects.db"),
-                           codeReadWorker: ConnectorCoreCodeReadWorker()
+                           codeReadWorker: codeReadWorker
                        ))
     }
 
@@ -102,6 +107,105 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: context.root.appendingPathComponent("Projects/并行项目-2").path
         ))
+    }
+
+    func testFailedRegistrationRemovesJustCreatedEmptyDirectory() async throws {
+        let context = try context(rootWorkspaceFirst: true)
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let directory = context.root.appendingPathComponent("Projects/cleanup-failed-project")
+
+        do {
+            _ = try await context.service.createInDefaultWorkspace(
+                ownerUserID: "alice",
+                name: "cleanup-failed-project",
+                projectTypeKey: "missing-project-type"
+            )
+            XCTFail("Invalid project type was registered")
+        } catch {}
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    func testFailedRegistrationPreservesPathRegisteredByAnotherAccount() async throws {
+        let context = try context(rootWorkspaceFirst: true)
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let relativeRoot = "Projects/cross-account-project"
+        let registry = try await context.service.registry()
+        _ = try await registry.create(
+            ownerUserID: "bob",
+            draft: .init(
+                name: "Other account",
+                workspaceID: "ws",
+                relativeRoot: relativeRoot
+            )
+        )
+
+        do {
+            _ = try await context.service.createInDefaultWorkspace(
+                ownerUserID: "alice",
+                name: "cross-account-project",
+                projectTypeKey: "missing-project-type"
+            )
+            XCTFail("Invalid project type was registered")
+        } catch {}
+
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: context.root.appendingPathComponent(relativeRoot).path
+        ))
+        let otherAccountRecords = try await registry.list(ownerUserID: "bob")
+        XCTAssertNotNil(otherAccountRecords.first)
+    }
+
+    func testFailedRegistrationDoesNotRecursivelyDeleteNonemptyDirectory() async throws {
+        let context = try context(
+            rootWorkspaceFirst: true,
+            codeReadWorker: ProjectCreationMutationWorker(mutation: .addSentinel)
+        )
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let directory = context.root.appendingPathComponent("Projects/nonempty-project")
+
+        do {
+            _ = try await context.service.createInDefaultWorkspace(
+                ownerUserID: "alice",
+                name: "nonempty-project",
+                projectTypeKey: "missing-project-type"
+            )
+            XCTFail("Invalid project type was registered")
+        } catch {}
+
+        XCTAssertEqual(
+            try String(contentsOf: directory.appendingPathComponent("sentinel"), encoding: .utf8),
+            "preserve"
+        )
+    }
+
+    func testFailedRegistrationDoesNotFollowReplacementSymlink() async throws {
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "local-project-outside-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let sentinel = outside.appendingPathComponent("sentinel")
+        try Data("preserve".utf8).write(to: sentinel)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let context = try context(
+            rootWorkspaceFirst: true,
+            codeReadWorker: ProjectCreationMutationWorker(mutation: .replaceWithSymlink(outside))
+        )
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let directory = context.root.appendingPathComponent("Projects/replaced-project")
+
+        do {
+            _ = try await context.service.createInDefaultWorkspace(
+                ownerUserID: "alice",
+                name: "replaced-project",
+                projectTypeKey: "missing-project-type"
+            )
+            XCTFail("Replacement symlink was registered")
+        } catch {}
+
+        XCTAssertTrue(try directory.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink ?? false)
+        XCTAssertEqual(try String(contentsOf: sentinel, encoding: .utf8), "preserve")
     }
 
     func testImportsExistingAbsoluteDirectoryWithoutChangingOrLinkingIt() async throws {
@@ -306,5 +410,43 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     private struct Context { let root: URL; let connector: NativeLocalConnectorService; let service: NativeLocalProjectsService }
     private struct NoNetworkTicketProvider: LocalConnectorPairingTicketProviding {
         func issueLocalConnectorPairingTicket() async throws -> String { throw URLError(.notConnectedToInternet) }
+    }
+}
+
+private struct ProjectCreationMutationWorker: CodeReadWorkerExecuting {
+    enum Mutation: Sendable {
+        case addSentinel
+        case replaceWithSymlink(URL)
+    }
+
+    let mutation: Mutation
+
+    func execute(
+        operation: String,
+        arguments: [String: CodeReadWorkerJSONValue],
+        projectRoot: URL,
+        requestCWD: String?,
+        defaultToolRoot: String?,
+        ripgrepURL: URL?
+    ) async throws -> CodeReadWorkerJSONValue {
+        let result = try await ConnectorCoreCodeReadWorker().execute(
+            operation: operation,
+            arguments: arguments,
+            projectRoot: projectRoot,
+            requestCWD: requestCWD,
+            defaultToolRoot: defaultToolRoot,
+            ripgrepURL: ripgrepURL
+        )
+        guard operation == "project_create_directory_v1",
+              case let .string(relativePath)? = arguments["path"] else { return result }
+        let directory = projectRoot.appendingPathComponent(relativePath, isDirectory: true)
+        switch mutation {
+        case .addSentinel:
+            try Data("preserve".utf8).write(to: directory.appendingPathComponent("sentinel"))
+        case let .replaceWithSymlink(target):
+            try FileManager.default.removeItem(at: directory)
+            try FileManager.default.createSymbolicLink(at: directory, withDestinationURL: target)
+        }
+        return result
     }
 }

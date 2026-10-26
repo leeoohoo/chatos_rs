@@ -1,16 +1,20 @@
 import Foundation
 
 public enum ChatOSCodeReadWorkerProtocol {
-    public static let minimumVersion = 1
-    public static let maximumVersion = 1
-    public static let buildVersion = "code-read-worker-v1"
+    public static let minimumVersion = 3
+    public static let maximumVersion = 3
+    public static let buildVersion = "code-read-worker-v3"
     public static let maximumInlineBytes = 16 * 1_024 * 1_024
+    public static let maximumBinaryPayloadBytes = 20 * 1_024 * 1_024
     public static let operations = [
         "read_file_raw", "read_file_range", "list_dir", "search_text",
-        "read_file", "search_files", "open_file_in_pet",
+        "read_file", "search_files", "open_file_in_pet", "verify_file_identity_v1",
+        "artifact_stage_v1", "artifact_restore_v1",
+        "cleanup_stale_temporary_files_v1",
         "project_list_v1", "project_search_entries_v1",
         "project_run_analyze_v1", "project_write_file_v1",
         "project_create_directory_v1", "project_delete_entry_v1",
+        "attachment_authorize_v1",
         "attachment_resolve_v1", "attachment_verify_file_v1",
         "attachment_materialize_v1",
     ]
@@ -67,6 +71,7 @@ public struct CodeReadWorkerHelloRequest: Codable, Sendable, Equatable {
     public let clientInstanceID: String
     public let parentProcessID: Int32
     public let maximumInlineBytes: Int
+    public let maximumBinaryPayloadBytes: Int
 
     public init(clientInstanceID: String, parentProcessID: Int32) {
         type = "hello"
@@ -75,6 +80,7 @@ public struct CodeReadWorkerHelloRequest: Codable, Sendable, Equatable {
         self.clientInstanceID = clientInstanceID
         self.parentProcessID = parentProcessID
         maximumInlineBytes = ChatOSCodeReadWorkerProtocol.maximumInlineBytes
+        maximumBinaryPayloadBytes = ChatOSCodeReadWorkerProtocol.maximumBinaryPayloadBytes
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -84,6 +90,7 @@ public struct CodeReadWorkerHelloRequest: Codable, Sendable, Equatable {
         case clientInstanceID = "client_instance_id"
         case parentProcessID = "parent_process_id"
         case maximumInlineBytes = "maximum_inline_bytes"
+        case maximumBinaryPayloadBytes = "maximum_binary_payload_bytes"
     }
 }
 
@@ -95,6 +102,7 @@ public struct CodeReadWorkerHelloResponse: Codable, Sendable, Equatable {
     public let helperInstanceID: String
     public let operations: [String]
     public let maximumInlineBytes: Int
+    public let maximumBinaryPayloadBytes: Int
     public let error: CodeReadWorkerErrorPayload?
 
     public init(
@@ -110,6 +118,7 @@ public struct CodeReadWorkerHelloResponse: Codable, Sendable, Equatable {
         self.helperInstanceID = helperInstanceID
         operations = ChatOSCodeReadWorkerProtocol.operations
         maximumInlineBytes = ChatOSCodeReadWorkerProtocol.maximumInlineBytes
+        maximumBinaryPayloadBytes = ChatOSCodeReadWorkerProtocol.maximumBinaryPayloadBytes
         self.error = error
     }
 
@@ -119,6 +128,7 @@ public struct CodeReadWorkerHelloResponse: Codable, Sendable, Equatable {
         case workerBuildVersion = "worker_build_version"
         case helperInstanceID = "helper_instance_id"
         case maximumInlineBytes = "maximum_inline_bytes"
+        case maximumBinaryPayloadBytes = "maximum_binary_payload_bytes"
     }
 }
 
@@ -136,6 +146,7 @@ public struct CodeReadWorkerRequest: Codable, Sendable, Equatable {
     public let defaultToolRoot: String?
     public let ripgrepPath: String?
     public let ripgrepIdentity: CodeReadWorkerFileIdentity?
+    public let binaryPayloadByteCount: UInt64
 
     public init(
         protocolVersion: Int,
@@ -149,7 +160,8 @@ public struct CodeReadWorkerRequest: Codable, Sendable, Equatable {
         requestCWD: String?,
         defaultToolRoot: String?,
         ripgrepPath: String?,
-        ripgrepIdentity: CodeReadWorkerFileIdentity?
+        ripgrepIdentity: CodeReadWorkerFileIdentity?,
+        binaryPayloadByteCount: UInt64 = 0
     ) {
         type = "request"
         self.protocolVersion = protocolVersion
@@ -164,6 +176,7 @@ public struct CodeReadWorkerRequest: Codable, Sendable, Equatable {
         self.defaultToolRoot = defaultToolRoot
         self.ripgrepPath = ripgrepPath
         self.ripgrepIdentity = ripgrepIdentity
+        self.binaryPayloadByteCount = binaryPayloadByteCount
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -178,6 +191,7 @@ public struct CodeReadWorkerRequest: Codable, Sendable, Equatable {
         case defaultToolRoot = "default_tool_root"
         case ripgrepPath = "ripgrep_path"
         case ripgrepIdentity = "ripgrep_identity"
+        case binaryPayloadByteCount = "binary_payload_byte_count"
     }
 }
 

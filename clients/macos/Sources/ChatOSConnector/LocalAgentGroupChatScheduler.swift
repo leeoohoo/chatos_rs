@@ -1,5 +1,6 @@
 import ChatOSAgentRuntime
 import ChatOSCore
+import ChatOSWorkerRuntime
 import Foundation
 
 final class LocalAgentExecutorCancellationHandle: @unchecked Sendable {
@@ -64,28 +65,26 @@ actor LocalAgentActiveDeliveryRegistry {
 
 final class LocalAgentExecutionPermit: @unchecked Sendable {
     private let lock = NSLock()
-    private var governor: LocalAgentExecutionGovernor?
+    private var machinePermit: ClientMachineResourcePermit?
 
-    init(governor: LocalAgentExecutionGovernor) {
-        self.governor = governor
+    init(machinePermit: ClientMachineResourcePermit) {
+        self.machinePermit = machinePermit
     }
 
-    private func takeGovernor() -> LocalAgentExecutionGovernor? {
+    private func takeMachinePermit() -> ClientMachineResourcePermit? {
         lock.lock()
-        let governor = governor
-        self.governor = nil
+        let permit = machinePermit
+        machinePermit = nil
         lock.unlock()
-        return governor
+        return permit
     }
 
     func release() {
-        guard let governor = takeGovernor() else { return }
-        Task { await governor.release() }
+        takeMachinePermit()?.release()
     }
 
     func releaseAndWait() async {
-        guard let governor = takeGovernor() else { return }
-        await governor.release()
+        await takeMachinePermit()?.releaseAndWait()
     }
 
     deinit {
@@ -128,102 +127,69 @@ public struct LocalAgentExecutionGovernorSnapshot: Sendable, Equatable {
 /// acquired before a durable delivery is claimed, so work never waits for capacity while its
 /// database lease is already aging.
 actor LocalAgentExecutionGovernor {
-    private struct Waiter {
-        let id: UUID
-        let priority: LocalAgentExecutionPriority
-        let enqueuedAtUptimeNanoseconds: UInt64
-        let continuation: CheckedContinuation<LocalAgentExecutionPermit?, Never>
-    }
-
-    private struct Metrics {
-        var admittedCount: UInt64 = 0
-        var queuedAdmissionCount: UInt64 = 0
-        var releasedCount: UInt64 = 0
-        var queuedCancellationCount: UInt64 = 0
-        var queueFullRejectionCount: UInt64 = 0
-        var immediateCapacityRejectionCount: UInt64 = 0
-        var totalQueueWaitNanoseconds: UInt64 = 0
-        var maximumQueueWaitNanoseconds: UInt64 = 0
-        var maximumObservedActive: Int = 0
-        var maximumObservedQueued: Int = 0
-        var interactivePriorityBypassCount: UInt64 = 0
-        var backgroundFairnessAdmissionCount: UInt64 = 0
-    }
-
-    private static let maximumInteractiveAdmissionBurst = 4
     let limit: Int
     let maximumQueued: Int
-    private var active = 0
-    private var waiters: [Waiter] = []
-    private var consecutiveInteractiveAdmissionsWhileContended = 0
-    private var metrics = Metrics()
+    private let machineGovernor: ClientMachineResourceGovernor
 
-    init(limit: Int, maximumQueued: Int = 256) {
+    init(
+        limit: Int,
+        maximumQueued: Int = 256,
+        machineGovernor: ClientMachineResourceGovernor? = nil
+    ) {
         precondition(limit > 0)
         precondition(maximumQueued > 0)
         self.limit = limit
         self.maximumQueued = maximumQueued
+        self.machineGovernor = machineGovernor ?? .init(
+            budget: .agentOnly(limit: limit),
+            maximumQueued: maximumQueued
+        )
     }
 
     func acquire(
         priority: LocalAgentExecutionPriority = .background
     ) async -> LocalAgentExecutionPermit? {
         guard !Task.isCancelled else { return nil }
-        if active < limit {
-            active += 1
-            recordAdmission(wasQueued: false, queueWaitNanoseconds: 0)
-            return .init(governor: self)
-        }
-        guard waiters.count < maximumQueued else {
-            Self.increment(&metrics.queueFullRejectionCount)
+        do {
+            let permit = try await machineGovernor.acquire(context: .init(
+                kind: .agentRun,
+                priority: priority.machinePriority,
+                operation: "local-agent-run"
+            ))
+            return .init(machinePermit: permit)
+        } catch ClientMachineResourceGovernorError.queueFull {
+            return nil
+        } catch is CancellationError {
+            return nil
+        } catch {
             return nil
         }
-        let waiterID = UUID()
-        let permit = await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                waiters.append(.init(
-                    id: waiterID,
-                    priority: priority,
-                    enqueuedAtUptimeNanoseconds: DispatchTime.now().uptimeNanoseconds,
-                    continuation: continuation
-                ))
-                metrics.maximumObservedQueued = max(
-                    metrics.maximumObservedQueued,
-                    waiters.count
-                )
-            }
-        } onCancel: {
-            Task { await self.cancel(waiterID: waiterID) }
-        }
-        if Task.isCancelled {
-            await permit?.releaseAndWait()
-            return nil
-        }
-        return permit
     }
 
-    func tryAcquire() -> LocalAgentExecutionPermit? {
-        guard active < limit else {
-            Self.increment(&metrics.immediateCapacityRejectionCount)
-            return nil
-        }
-        active += 1
-        recordAdmission(wasQueued: false, queueWaitNanoseconds: 0)
-        return .init(governor: self)
+    func tryAcquire() async -> LocalAgentExecutionPermit? {
+        await machineGovernor.tryAcquire(context: .init(
+            kind: .agentRun,
+            priority: .background,
+            operation: "local-agent-run"
+        )).map(LocalAgentExecutionPermit.init(machinePermit:))
     }
 
-    func snapshot() -> LocalAgentExecutionGovernorSnapshot {
-        let interactiveQueuedCount = waiters.reduce(into: 0) { total, waiter in
-            if waiter.priority == .interactive { total += 1 }
+    func snapshot() async -> LocalAgentExecutionGovernorSnapshot {
+        let machine = await machineGovernor.snapshot()
+        let active = machine.active.filter { $0.kind == .agentRun }
+        let queued = machine.queued.filter { $0.kind == .agentRun }
+        let metrics = machine.metrics(for: .agentRun)
+        let interactiveQueuedCount = queued.reduce(into: 0) { total, context in
+            if context.priority == .interactive { total += 1 }
         }
         return .init(
             limit: limit,
             maximumQueued: maximumQueued,
-            activeCount: active,
-            queuedCount: waiters.count,
+            activeCount: active.count,
+            queuedCount: queued.count,
             interactiveQueuedCount: interactiveQueuedCount,
-            backgroundQueuedCount: waiters.count - interactiveQueuedCount,
-            totalInFlight: active + waiters.count,
+            backgroundQueuedCount: queued.count - interactiveQueuedCount,
+            totalInFlight: active.count + queued.count,
             metrics: .init(
                 admittedCount: metrics.admittedCount,
                 queuedAdmissionCount: metrics.queuedAdmissionCount,
@@ -240,79 +206,14 @@ actor LocalAgentExecutionGovernor {
             )
         )
     }
+}
 
-    fileprivate func release() {
-        precondition(active > 0)
-        Self.increment(&metrics.releasedCount)
-        while !waiters.isEmpty {
-            let waiter = waiters.remove(at: nextWaiterIndex())
-            let queueWaitNanoseconds = DispatchTime.now().uptimeNanoseconds
-                - waiter.enqueuedAtUptimeNanoseconds
-            recordAdmission(wasQueued: true, queueWaitNanoseconds: queueWaitNanoseconds)
-            waiter.continuation.resume(returning: .init(governor: self))
-            return
+private extension LocalAgentExecutionPriority {
+    var machinePriority: ClientMachineResourcePriority {
+        switch self {
+        case .interactive: .interactive
+        case .background: .background
         }
-        active -= 1
-        consecutiveInteractiveAdmissionsWhileContended = 0
-    }
-
-    private func nextWaiterIndex() -> Int {
-        let interactiveIndex = waiters.firstIndex { $0.priority == .interactive }
-        let backgroundIndex = waiters.firstIndex { $0.priority == .background }
-        switch (interactiveIndex, backgroundIndex) {
-        case let (.some(interactiveIndex), .some(backgroundIndex)):
-            if consecutiveInteractiveAdmissionsWhileContended
-                < Self.maximumInteractiveAdmissionBurst {
-                consecutiveInteractiveAdmissionsWhileContended += 1
-                if backgroundIndex < interactiveIndex {
-                    Self.increment(&metrics.interactivePriorityBypassCount)
-                }
-                return interactiveIndex
-            }
-            consecutiveInteractiveAdmissionsWhileContended = 0
-            Self.increment(&metrics.backgroundFairnessAdmissionCount)
-            return backgroundIndex
-        case let (.some(interactiveIndex), .none):
-            consecutiveInteractiveAdmissionsWhileContended = 0
-            return interactiveIndex
-        case let (.none, .some(backgroundIndex)):
-            consecutiveInteractiveAdmissionsWhileContended = 0
-            return backgroundIndex
-        case (.none, .none):
-            preconditionFailure("execution governor selected from an empty queue")
-        }
-    }
-
-    private func cancel(waiterID: UUID) {
-        guard let index = waiters.firstIndex(where: { $0.id == waiterID }) else { return }
-        let waiter = waiters.remove(at: index)
-        Self.increment(&metrics.queuedCancellationCount)
-        waiter.continuation.resume(returning: nil)
-    }
-
-    private func recordAdmission(
-        wasQueued: Bool,
-        queueWaitNanoseconds: UInt64
-    ) {
-        Self.increment(&metrics.admittedCount)
-        metrics.maximumObservedActive = max(metrics.maximumObservedActive, active)
-        guard wasQueued else { return }
-        Self.increment(&metrics.queuedAdmissionCount)
-        Self.add(queueWaitNanoseconds, to: &metrics.totalQueueWaitNanoseconds)
-        metrics.maximumQueueWaitNanoseconds = max(
-            metrics.maximumQueueWaitNanoseconds,
-            queueWaitNanoseconds
-        )
-    }
-
-    private static func increment(_ value: inout UInt64) {
-        guard value < .max else { return }
-        value += 1
-    }
-
-    private static func add(_ amount: UInt64, to value: inout UInt64) {
-        let result = value.addingReportingOverflow(amount)
-        value = result.overflow ? .max : result.partialValue
     }
 }
 
@@ -413,6 +314,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         runtime: any AgentRuntimeExecuting = AgentRuntime(),
         limits: AgentGroupChatRoutingLimits = .init(),
         maximumConcurrentExecutions: Int = NativeClientResourceBudgetPolicy.adaptiveDefault.swiftAgentRuns,
+        machineResourceGovernor: ClientMachineResourceGovernor? = nil,
         projectTypeKeyProvider: @escaping ProjectTypeKeyProvider = { _, _ in nil },
         professionProvider: @escaping ProfessionProvider = { _, key in
             LocalAgentSkillCatalog.profession(key: key)
@@ -439,7 +341,8 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.executorTaskRegistry = executorTaskRegistry
         self.activeDeliveryRegistry = LocalAgentActiveDeliveryRegistry()
         self.executionGovernor = LocalAgentExecutionGovernor(
-            limit: max(1, maximumConcurrentExecutions)
+            limit: max(1, maximumConcurrentExecutions),
+            machineGovernor: machineResourceGovernor
         )
         self.relayMCP = LocalAgentRelayMCPServer(
             service: service,
@@ -461,6 +364,20 @@ public struct LocalAgentGroupChatScheduler: Sendable {
 
     public func executionGovernorSnapshot() async -> LocalAgentExecutionGovernorSnapshot {
         await executionGovernor.snapshot()
+    }
+
+    func acquireExecutionPermit(
+        priority: LocalAgentExecutionPriority
+    ) async throws -> LocalAgentExecutionPermit {
+        if let permit = await executionGovernor.acquire(priority: priority) {
+            if Task.isCancelled {
+                await permit.releaseAndWait()
+                throw CancellationError()
+            }
+            return permit
+        }
+        if Task.isCancelled { throw CancellationError() }
+        throw AgentGroupChatError.storage("Agent execution admission queue is full")
     }
 
 }

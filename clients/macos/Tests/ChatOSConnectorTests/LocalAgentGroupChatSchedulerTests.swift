@@ -91,9 +91,13 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         checkpoint.status = .running
         checkpoint.pendingCalls = [.init(id: "write", name: "chat_send_message", arguments: "{}")]
         checkpoint.inFlightCallID = "write"
-        XCTAssertTrue(
+        XCTAssertFalse(
             LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint),
-            "AgentRuntime will surface an interrupted side effect as needsReview without replaying it"
+            "A persisted in-flight side effect must be classified before launching another Worker"
+        )
+        XCTAssertEqual(
+            LocalAgentGroupChatScheduler.interruptedCheckpointDisposition(checkpoint),
+            .needsReview
         )
 
         checkpoint.status = .needsReview

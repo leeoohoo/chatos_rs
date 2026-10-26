@@ -1,7 +1,38 @@
 @testable import ChatOSConnector
+import ChatOSWorkerRuntime
 import XCTest
 
 final class NativeClientResourceBudgetPolicyTests: XCTestCase {
+    func testMachineBudgetMatchesNativeHostReservationAndSwiftAgentCapacity() {
+        let native = NativeClientResourceBudgetPolicy.recommended(
+            logicalProcessorCount: 12,
+            physicalMemoryBytes: 96 * 1_024 * 1_024 * 1_024,
+            configuredTotalLogicalJobs: 10,
+            configuredHostWorkItems: 2
+        )
+        let machine = ClientMachineResourceBudgetPolicy.recommended(
+            logicalProcessorCount: 12,
+            physicalMemoryBytes: 96 * 1_024 * 1_024 * 1_024,
+            configuredTotalLogicalJobs: 10,
+            configuredHostWorkItems: 2,
+            fileBudget: .init(
+                totalConcurrentWorkers: 6,
+                maximumMediaWorkers: 4,
+                maximumCodeReadWorkers: 5
+            )
+        )
+
+        XCTAssertEqual(machine.maximumAgentRuns, native.swiftAgentRuns)
+        XCTAssertEqual(
+            machine.reservedHostResourceUnits,
+            native.localAgentHostWorkItems * ClientMachineResourceBudget.agentRunUnitCost
+        )
+        XCTAssertEqual(
+            machine.availableResourceUnits,
+            native.swiftAgentRuns * ClientMachineResourceBudget.agentRunUnitCost
+        )
+    }
+
     func testAdaptiveBudgetSplitsOneTotalAcrossHostAndSwiftAgent() {
         let budget = NativeClientResourceBudgetPolicy.recommended(
             logicalProcessorCount: 12,

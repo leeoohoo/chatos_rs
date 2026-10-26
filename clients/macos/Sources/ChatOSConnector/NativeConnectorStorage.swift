@@ -26,6 +26,7 @@ struct NativeConnectorPersistentState: Codable, Sendable {
     var policyRevision: String?
     var installedPluginIDs: Set<String> = []
     var installedPluginRecords: [String: NativeInstalledPluginRecord]?
+    var pluginHookTrustRecords: [String: NativePluginHookTrustRecord]?
     var pluginPreferences: [String: Bool] = [:]
     /// Associates each locally cached model with the managed Prompt/capability revision
     /// selected for its vendor. The actual prompt and tools remain in Local Agent Host's

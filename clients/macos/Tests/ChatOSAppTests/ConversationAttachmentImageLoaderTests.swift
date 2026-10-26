@@ -1,7 +1,11 @@
 import AppKit
+import ChatOSCodeReadWorkerClient
+import ChatOSCodeReadWorkerCore
+import ChatOSCodeReadWorkerProtocol
 import ChatOSMediaWorkerClient
 import ChatOSMediaWorkerProtocol
 import CryptoKit
+import Darwin
 import Foundation
 import XCTest
 @testable import ChatOSApp
@@ -20,7 +24,8 @@ final class ConversationAttachmentImageLoaderTests: XCTestCase {
             maximumDisplayPixelSize: 64,
             temporaryDirectory: fixture.root,
             availableCapacityOverride: Int64.max,
-            mediaWorker: TestMediaWorkerImageNormalizer()
+            mediaWorker: TestMediaWorkerImageNormalizer(),
+            codeReadWorker: AppCoreCodeReadWorker()
         )
 
         XCTAssertEqual(decoded.image.width, 64)
@@ -40,7 +45,8 @@ final class ConversationAttachmentImageLoaderTests: XCTestCase {
                 ownerUserID: "test-user",
                 temporaryDirectory: fixture.root,
                 availableCapacityOverride: Int64.max,
-                mediaWorker: TestMediaWorkerImageNormalizer()
+                mediaWorker: TestMediaWorkerImageNormalizer(),
+                codeReadWorker: AppCoreCodeReadWorker()
             )
             XCTFail("Mismatched digest was accepted")
         } catch {
@@ -62,7 +68,8 @@ final class ConversationAttachmentImageLoaderTests: XCTestCase {
                 ownerUserID: "test-user",
                 temporaryDirectory: fixture.root,
                 availableCapacityOverride: Int64.max,
-                mediaWorker: TestMediaWorkerImageNormalizer()
+                mediaWorker: TestMediaWorkerImageNormalizer(),
+                codeReadWorker: AppCoreCodeReadWorker()
             )
             XCTFail("Symbolic link was accepted")
         } catch {
@@ -83,7 +90,8 @@ final class ConversationAttachmentImageLoaderTests: XCTestCase {
                 maximumDisplayPixelSize: 64,
                 temporaryDirectory: fixture.root,
                 availableCapacityOverride: Int64.max,
-                mediaWorker: ReplacingTestMediaWorker()
+                mediaWorker: ReplacingTestMediaWorker(),
+                codeReadWorker: AppCoreCodeReadWorker()
             )
             XCTFail("A source replaced after digest verification was accepted")
         } catch {
@@ -108,6 +116,46 @@ final class ConversationAttachmentImageLoaderTests: XCTestCase {
         try data.write(to: url)
         let sha256 = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         return (root, url, data, sha256)
+    }
+}
+
+private struct AppCoreCodeReadWorker: CodeReadWorkerExecuting {
+    func execute(
+        operation: String,
+        arguments: [String: CodeReadWorkerJSONValue],
+        projectRoot: URL,
+        requestCWD: String?,
+        defaultToolRoot: String?,
+        ripgrepURL: URL?
+    ) async throws -> CodeReadWorkerJSONValue {
+        var status = stat()
+        guard projectRoot.path.withCString({ Darwin.lstat($0, &status) }) == 0 else {
+            throw CodeReadWorkerProcessClientError.invalidResponse
+        }
+        do {
+            return try ChatOSCodeReadWorkerEngine.execute(.init(
+                protocolVersion: ChatOSCodeReadWorkerProtocol.maximumVersion,
+                requestID: UUID().uuidString,
+                helperInstanceID: UUID().uuidString,
+                deadlineUnixMilliseconds: Int64((Date().timeIntervalSince1970 + 10) * 1_000),
+                operation: operation,
+                arguments: arguments,
+                projectRootPath: projectRoot.path,
+                projectRootIdentity: .init(
+                    device: UInt64(status.st_dev),
+                    inode: UInt64(status.st_ino)
+                ),
+                requestCWD: requestCWD,
+                defaultToolRoot: defaultToolRoot,
+                ripgrepPath: nil,
+                ripgrepIdentity: nil
+            ))
+        } catch let error as CodeReadWorkerCoreError {
+            throw CodeReadWorkerProcessClientError.requestRejected(
+                code: error.payload.code,
+                message: error.payload.message
+            )
+        }
     }
 }
 

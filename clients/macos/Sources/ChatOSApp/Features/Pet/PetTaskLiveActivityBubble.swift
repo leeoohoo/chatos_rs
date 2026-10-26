@@ -29,9 +29,14 @@ struct PetTaskLiveActivityBubble: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(.accentColor)
+                    if taskStatusOverrideTitle != nil {
+                        Image(systemName: "pause.circle.fill")
+                            .foregroundStyle(.orange)
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(.accentColor)
+                    }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(currentStageTitle)
                             .font(.system(size: 13, weight: .semibold))
@@ -115,16 +120,30 @@ struct PetTaskLiveActivityBubble: View {
     }
 
     private var currentStageTitle: String {
-        guard let currentActivity else {
-            return PetActivityPresentation.displayTitle(for: activity, model: model)
+        if let title = MessageTaskRunActivityPresentation.title(
+            forTaskStatus: task?.status,
+            fallback: currentActivity?.kind,
+            localized: { model.localized($0, english: $1) }
+        ) {
+            return title
         }
-        return MessageTaskRunActivityPresentation.title(for: currentActivity.kind) {
+        return PetActivityPresentation.displayTitle(for: activity, model: model)
+    }
+
+    private var taskStatusOverrideTitle: String? {
+        MessageTaskRunActivityPresentation.taskStatusTitleOverride(for: task?.status) {
             model.localized($0, english: $1)
         }
     }
 
     private var currentOperation: String? {
-        PetTaskLiveActivitySummary.operationLabel(currentActivity?.operation)
+        if let detail = MessageTaskRunActivityPresentation.taskStatusDetailOverride(
+            for: task?.status,
+            localized: { model.localized($0, english: $1) }
+        ) {
+            return detail
+        }
+        return PetTaskLiveActivitySummary.operationLabel(currentActivity?.operation)
     }
 
     private var refreshIdentity: String {

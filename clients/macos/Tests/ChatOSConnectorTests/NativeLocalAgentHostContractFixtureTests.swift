@@ -29,6 +29,12 @@ final class NativeLocalAgentHostContractFixtureTests: XCTestCase {
         XCTAssertEqual(success.result?.recoveredClaims, 0)
         XCTAssertEqual(success.result?.maxFrameBytes, LocalAgentHostFrameCodec.maximumFrameBytes)
         XCTAssertEqual(success.result?.maxMessageBytes, LocalAgentHostFrameCodec.maximumMessageBytes)
+        XCTAssertEqual(success.result?.scheduler.maximumConcurrentWorkItems, 4)
+        XCTAssertEqual(success.result?.scheduler.effectiveMaximumConcurrentWorkItems, 3)
+        XCTAssertEqual(success.result?.scheduler.pressureLevel, .elevated)
+        XCTAssertEqual(success.result?.scheduler.activeWorkItems, 2)
+        XCTAssertEqual(success.result?.scheduler.idleWorkers, 2)
+        XCTAssertEqual(success.result?.scheduler.queuedReadyWorkItems, 3)
 
         let failure = try JSONDecoder.localAgent.decode(
             NativeLocalAgentHealthResponse.self,
@@ -83,7 +89,7 @@ final class NativeLocalAgentHostContractFixtureTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         return try Data(contentsOf: clients
-            .appendingPathComponent("contracts/local-agent/v46/fixtures")
+            .appendingPathComponent("contracts/local-agent/v49/fixtures")
             .appendingPathComponent(name))
     }
 

@@ -4,9 +4,9 @@ use chatos_local_agent_host::{
     application::{skill_model_tools, task_model_tools, LocalAgentRuntime},
     infrastructure::SqliteClientStorage,
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
-    LocalAiStepExecutor, LocalAiStepPlanner, LocalControlPlaneSnapshot, LocalSkillToolExecutor,
-    LocalTaskToolExecutor, LocalToolRegistry, LocalToolScheduler, NamedReadOnlyTools,
-    ResolvedLocalCapabilities, ToolSchedulerTick, TransientLocalModelRuntime,
+    ExecutedLocalAiStep, LocalAiStepExecutor, LocalAiStepPlanner, LocalControlPlaneSnapshot,
+    LocalSkillToolExecutor, LocalTaskToolExecutor, LocalToolRegistry, LocalToolScheduler,
+    NamedReadOnlyTools, ResolvedLocalCapabilities, ToolSchedulerTick, TransientLocalModelRuntime,
     AGENT_SKILL_TOOL_NAMES, TASK_APPROVAL_EXEMPT_TOOLS, TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES,
 };
 use chatos_local_agent_protocol::*;
@@ -123,8 +123,9 @@ impl LocalAiStepExecutor for ReplayExecutor {
     async fn execute_ai_step(
         &self,
         claim: &LocalAgentRunClaim,
-    ) -> Result<AiSingleStepOutcome, String> {
+    ) -> Result<ExecutedLocalAiStep, String> {
         let prepared = self.planner.prepare_ai_step(claim).await?;
+        let tool_definitions = prepared.request.model_request.tools.clone();
         let step = self
             .steps
             .lock()
@@ -173,13 +174,17 @@ impl LocalAiStepExecutor for ReplayExecutor {
             response_output_items: output_items,
             request_input_items: inputs,
         };
-        Ok(if calls.is_empty() {
+        let outcome = if calls.is_empty() {
             AiSingleStepOutcome::Final(response)
         } else {
             AiSingleStepOutcome::ToolCommand {
                 response,
                 tool_calls: json!(calls),
             }
+        };
+        Ok(ExecutedLocalAiStep {
+            outcome,
+            tool_definitions,
         })
     }
 }

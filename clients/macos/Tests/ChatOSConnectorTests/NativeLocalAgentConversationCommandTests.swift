@@ -48,7 +48,8 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
             "attachments": [["attachment_id": "attachment-1", "conversation_id": "conversation-1",
                              "turn_id": "turn-1", "message_id": "attachment-only", "ordinal": 1,
                              "display_name": "brief.txt", "media_type": "text/plain", "byte_size": 1,
-                             "sha256": String(repeating: "a", count: 64), "authorized_local_ref": "opaque-ref",
+                             "sha256": String(repeating: "a", count: 64),
+                             "authorized_local_ref": "local-attachment:00000000-0000-0000-0000-000000000001",
                              "metadata": [:], "created_at_unix_ms": 4_000]],
         ])
         let page = try JSONDecoder().decode(LocalAgentConversationHistoryPage.self, from: data)
@@ -59,6 +60,9 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         XCTAssertEqual(turn.additionalUserMessages.first?.text, "别发布")
         XCTAssertEqual(turn.additionalUserMessages.map(\.storageOrdinal), [3, 4])
         XCTAssertEqual(turn.additionalUserMessages.last?.attachments.first?.id, "attachment-1")
+        XCTAssertTrue(
+            turn.additionalUserMessages.last?.attachments.first?.localURL?.isFileURL == true
+        )
         XCTAssertTrue(turn.userMessage.attachments.isEmpty)
         XCTAssertEqual(turn.resolvedMessageTaskLookup.sourceUserMessageID, "original")
         let refreshed = await service.mapTurns(page)

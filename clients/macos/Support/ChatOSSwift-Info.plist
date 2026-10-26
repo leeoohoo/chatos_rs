@@ -12,6 +12,10 @@
     <string>6.0</string>
     <key>CFBundleName</key>
     <string>ChatOS</string>
+    <key>CFBundleDisplayName</key>
+    <string>ChatOS</string>
+    <key>CFBundleIconFile</key>
+    <string>ChatOS.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>NSSupportsAutomaticTermination</key>

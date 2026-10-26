@@ -2,20 +2,24 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::{
-    HostRequestHandler, LocalAgentScheduler, LocalAgentSchedulerError, LocalMemorySyncError,
-    LocalMemorySyncWorker, LocalToolScheduler, LocalToolSchedulerError, MemorySyncTick,
-    SchedulerTick, ToolSchedulerTick,
+    HostRequestHandler, LocalAgentScheduler, LocalAgentSchedulerError, LocalHookCoordinator,
+    LocalMemorySyncError, LocalMemorySyncWorker, LocalToolScheduler, LocalToolSchedulerError,
+    MemorySyncTick, SchedulerTick, ToolSchedulerTick,
 };
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     validate_identifier, HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope,
-    HostResult, LocalAgentToolExecutionRoute,
+    HostResult, LocalAgentHostSchedulerSnapshot, LocalAgentResourcePressureLevel,
+    LocalAgentToolExecutionRoute, LocalAgentToolOutcome,
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use futures::future::join_all;
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::{watch, Notify};
+
+use super::hook_coordinator::LocalHookPromptDecision;
+use super::work_activity::HostWorkActivity;
 
 const MIN_CONCURRENT_WORK_ITEMS: usize = 1;
 const MAX_CONCURRENT_WORK_ITEMS: usize = 16;
@@ -41,11 +45,15 @@ pub struct LocalAgentHostCoordinator {
     model_scheduler: Option<LocalAgentScheduler>,
     tool_scheduler: Option<LocalToolScheduler>,
     memory_sync_worker: Option<LocalMemorySyncWorker>,
+    hook_coordinator: Option<Arc<LocalHookCoordinator>>,
     wakeup: Arc<Notify>,
     memory_wakeup: Arc<Notify>,
     activity: watch::Sender<u64>,
+    work_activity: HostWorkActivity,
     reserved_ipc_tools: Vec<String>,
     maximum_concurrent_work_items: usize,
+    effective_maximum_concurrent_work_items: watch::Sender<usize>,
+    pressure_level: watch::Sender<LocalAgentResourcePressureLevel>,
 }
 
 impl LocalAgentHostCoordinator {
@@ -72,17 +80,28 @@ impl LocalAgentHostCoordinator {
             );
         }
         let (activity, _) = watch::channel(0);
+        let maximum_concurrent_work_items = default_maximum_concurrent_work_items();
+        let (effective_maximum_concurrent_work_items, _) =
+            watch::channel(maximum_concurrent_work_items);
+        let (pressure_level, _) = watch::channel(LocalAgentResourcePressureLevel::Normal);
+        let work_activity = HostWorkActivity::default();
         Ok(Self {
             runtime,
             owner_user_id,
-            model_scheduler,
-            tool_scheduler,
+            model_scheduler: model_scheduler
+                .map(|scheduler| scheduler.with_work_activity(work_activity.clone())),
+            tool_scheduler: tool_scheduler
+                .map(|scheduler| scheduler.with_work_activity(work_activity.clone())),
             memory_sync_worker: None,
+            hook_coordinator: None,
             wakeup: Arc::new(Notify::new()),
             memory_wakeup: Arc::new(Notify::new()),
             activity,
+            work_activity,
             reserved_ipc_tools: Vec::new(),
-            maximum_concurrent_work_items: default_maximum_concurrent_work_items(),
+            maximum_concurrent_work_items,
+            effective_maximum_concurrent_work_items,
+            pressure_level,
         })
     }
 
@@ -93,6 +112,8 @@ impl LocalAgentHostCoordinator {
             ));
         }
         self.maximum_concurrent_work_items = maximum;
+        self.effective_maximum_concurrent_work_items
+            .send_replace(maximum);
         Ok(self)
     }
 
@@ -107,6 +128,14 @@ impl LocalAgentHostCoordinator {
         }
         self.memory_sync_worker = Some(worker);
         Ok(self)
+    }
+
+    pub fn with_hook_coordinator(mut self, coordinator: Arc<LocalHookCoordinator>) -> Self {
+        self.tool_scheduler = self
+            .tool_scheduler
+            .map(|scheduler| scheduler.with_hook_coordinator(Arc::clone(&coordinator)));
+        self.hook_coordinator = Some(coordinator);
+        self
     }
 
     pub fn with_reserved_ipc_tools<I, S>(mut self, tool_names: I) -> Result<Self, String>
@@ -158,8 +187,9 @@ impl LocalAgentHostCoordinator {
         &self,
         shutdown: watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
-        let workers = (0..self.maximum_concurrent_work_items)
-            .map(|_| self.run_scheduler_worker_until_shutdown(shutdown.clone()));
+        let workers = (0..self.maximum_concurrent_work_items).map(|worker_index| {
+            self.run_scheduler_worker_until_shutdown(worker_index, shutdown.clone())
+        });
         for result in join_all(workers).await {
             result?;
         }
@@ -175,14 +205,30 @@ impl LocalAgentHostCoordinator {
     /// global concurrency limit across model and tool work.
     async fn run_scheduler_worker_until_shutdown(
         &self,
+        worker_index: usize,
         mut shutdown: watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
+        let mut effective_limit = self.effective_maximum_concurrent_work_items.subscribe();
         let mut failure_backoff = Duration::from_millis(100);
         loop {
             if *shutdown.borrow() {
                 return Ok(());
             }
-            let progressed = match self.run_ready_work_once(&shutdown).await {
+            while worker_index >= *effective_limit.borrow() {
+                tokio::select! {
+                    changed = effective_limit.changed() => {
+                        if changed.is_err() {
+                            return Ok(());
+                        }
+                    }
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            let progressed = match self.run_ready_work_once(worker_index, &shutdown).await {
                 Ok(progressed) => {
                     failure_backoff = Duration::from_millis(100);
                     progressed
@@ -225,6 +271,7 @@ impl LocalAgentHostCoordinator {
 
     async fn run_ready_work_once(
         &self,
+        worker_index: usize,
         shutdown: &watch::Receiver<bool>,
     ) -> Result<bool, LocalAgentCoordinatorError> {
         let mut progressed = false;
@@ -236,6 +283,11 @@ impl LocalAgentHostCoordinator {
             progressed |= committed;
         }
         if *shutdown.borrow() {
+            return Ok(progressed);
+        }
+        // A worker that became ineligible while model work was active must not
+        // cross a second durable claim boundary for tool work.
+        if worker_index >= *self.effective_maximum_concurrent_work_items.borrow() {
             return Ok(progressed);
         }
         if let Some(scheduler) = self.tool_scheduler.as_ref() {
@@ -258,7 +310,8 @@ impl LocalAgentHostCoordinator {
                 return Ok(());
             }
             let results = join_all(
-                (0..self.maximum_concurrent_work_items).map(|_| self.run_ready_work_once(shutdown)),
+                (0..self.maximum_concurrent_work_items)
+                    .map(|worker_index| self.run_ready_work_once(worker_index, shutdown)),
             )
             .await;
             let mut progressed = false;
@@ -426,6 +479,119 @@ impl LocalAgentHostCoordinator {
                 )
             })
     }
+
+    async fn apply_hook_preflight_to_external_claim(
+        &self,
+        mut response: HostResponseEnvelope,
+    ) -> HostResponseEnvelope {
+        let Some(hooks) = self.hook_coordinator.as_ref() else {
+            return response;
+        };
+        let invocation = match response.result.as_ref() {
+            Some(HostResult::ToolClaim { claim: Some(claim) }) => claim.invocation.clone(),
+            _ => return response,
+        };
+        let hook_preflight = match hooks.tool_preflight_outcome(&invocation).await {
+            Ok(outcome) => outcome,
+            Err(error) => Some(LocalAgentToolOutcome::Failed {
+                error: "trusted tool Hook preflight failed closed".to_string(),
+                detail: serde_json::json!({
+                    "phase": "trusted_plugin_hook",
+                    "error": error,
+                }),
+            }),
+        };
+        if let (Some(outcome), Some(HostResult::ToolClaim { claim: Some(claim) })) =
+            (hook_preflight, response.result.as_mut())
+        {
+            claim.preflight_outcome = Some(outcome);
+        }
+        response
+    }
+
+    async fn health_response(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
+        let mut response = self.runtime.handle(request.clone()).await;
+        if !response.ok {
+            return response;
+        }
+        let empty_tool_names: &[String] = &[];
+        let (include_tool_names, exclude_tool_names, execution_route) = self
+            .tool_scheduler
+            .as_ref()
+            .map(LocalToolScheduler::claim_filter)
+            .unwrap_or((None, empty_tool_names, None));
+        let queued_ready_work_items = match self
+            .runtime
+            .ready_host_work_count(
+                &self.owner_user_id,
+                include_tool_names,
+                exclude_tool_names,
+                execution_route,
+            )
+            .await
+        {
+            Ok(count) => count,
+            Err(error) => {
+                return HostResponseEnvelope::failure(
+                    request.command_id,
+                    HostError::new("host_snapshot_failed", error.to_string(), true),
+                );
+            }
+        };
+        let active_work_items = self.work_activity.active_count();
+        let scheduler = LocalAgentHostSchedulerSnapshot {
+            maximum_concurrent_work_items: self.maximum_concurrent_work_items,
+            effective_maximum_concurrent_work_items: *self
+                .effective_maximum_concurrent_work_items
+                .borrow(),
+            pressure_level: *self.pressure_level.borrow(),
+            active_work_items,
+            idle_workers: self
+                .maximum_concurrent_work_items
+                .saturating_sub(active_work_items),
+            queued_ready_work_items,
+        };
+        if let Some(HostResult::Health {
+            scheduler: result_scheduler,
+            ..
+        }) = response.result.as_mut()
+        {
+            *result_scheduler = Some(scheduler);
+        }
+        response
+    }
+
+    fn update_scheduler_pressure(
+        &self,
+        request: HostRequestEnvelope,
+        pressure_level: LocalAgentResourcePressureLevel,
+    ) -> HostResponseEnvelope {
+        let effective_maximum_concurrent_work_items =
+            effective_worker_limit(self.maximum_concurrent_work_items, pressure_level);
+        self.pressure_level.send_replace(pressure_level);
+        self.effective_maximum_concurrent_work_items
+            .send_replace(effective_maximum_concurrent_work_items);
+        HostResponseEnvelope::success(
+            request.command_id,
+            HostResult::SchedulerPressureUpdated {
+                pressure_level,
+                effective_maximum_concurrent_work_items,
+            },
+        )
+    }
+}
+
+fn effective_worker_limit(
+    configured: usize,
+    pressure_level: LocalAgentResourcePressureLevel,
+) -> usize {
+    let effective = match pressure_level {
+        LocalAgentResourcePressureLevel::Normal => configured,
+        LocalAgentResourcePressureLevel::Elevated => configured.saturating_mul(3).div_ceil(4),
+        LocalAgentResourcePressureLevel::Serious => configured.div_ceil(2),
+        LocalAgentResourcePressureLevel::Critical => 1,
+    };
+    effective.clamp(MIN_CONCURRENT_WORK_ITEMS, configured)
 }
 
 fn default_maximum_concurrent_work_items() -> usize {
@@ -438,6 +604,12 @@ fn default_maximum_concurrent_work_items() -> usize {
 #[async_trait]
 impl HostRequestHandler for LocalAgentHostCoordinator {
     async fn handle_request(&self, mut request: HostRequestEnvelope) -> HostResponseEnvelope {
+        if matches!(request.command, HostCommand::Health) {
+            return self.health_response(request).await;
+        }
+        if let HostCommand::SetSchedulerPressure(command) = request.command.clone() {
+            return self.update_scheduler_pressure(request, command.pressure_level);
+        }
         if request
             .command
             .owner_user_id()
@@ -451,6 +623,31 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
                     false,
                 ),
             );
+        }
+        if let HostCommand::StartConversationTurn(command) = &request.command {
+            if let Err(message) = request.validate() {
+                return HostResponseEnvelope::failure(
+                    request.command_id,
+                    HostError::new("invalid_request", message, false),
+                );
+            }
+            if let Some(hooks) = self.hook_coordinator.as_ref() {
+                match hooks.gate_user_prompt(command).await {
+                    Ok(LocalHookPromptDecision::Allow) => {}
+                    Ok(LocalHookPromptDecision::Block { reason }) => {
+                        return HostResponseEnvelope::failure(
+                            request.command_id,
+                            HostError::new("hook_blocked", reason, false),
+                        );
+                    }
+                    Err(message) => {
+                        return HostResponseEnvelope::failure(
+                            request.command_id,
+                            HostError::new("hook_execution_failed", message, true),
+                        );
+                    }
+                }
+            }
         }
         if matches!(request.command, HostCommand::CreateRequirementSurvey(_)) {
             return HostResponseEnvelope::failure(
@@ -500,6 +697,7 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
         let activity_policy = command_activity_signal_policy(&request.command);
         self.route_external_tool_claim(&mut request);
         let response = self.runtime.handle(request).await;
+        let response = self.apply_hook_preflight_to_external_claim(response).await;
         if response.ok {
             if wakes_scheduler {
                 self.wake();
@@ -530,6 +728,7 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::CancelConversationTurn(_)
         | HostCommand::ResolveRequirementSurvey(_) => true,
         HostCommand::Health
+        | HostCommand::SetSchedulerPressure(_)
         | HostCommand::GetMemorySyncStatus(_)
         | HostCommand::PutModelConfigSnapshot(_)
         | HostCommand::GetModelConfigSnapshot(_)
@@ -558,6 +757,9 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::GetPluginInstallation(_)
         | HostCommand::ListPluginInstallations(_)
         | HostCommand::RemovePluginInstallation(_)
+        | HostCommand::PutPluginHookBundle(_)
+        | HostCommand::ListPluginHookBundles(_)
+        | HostCommand::SetActivePluginHookBundles(_)
         | HostCommand::CreateConversation(_)
         | HostCommand::GetConversation(_)
         | HostCommand::GetConversationContext(_)

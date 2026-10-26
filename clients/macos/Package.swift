@@ -34,11 +34,12 @@ let package = Package(
             name: "ChatOSProcessRuntime",
             publicHeadersPath: "include"
         ),
+        .target(name: "ChatOSWorkerRuntime"),
         .target(name: "ChatOSNetworking"),
         .target(name: "ChatOSMediaWorkerProtocol"),
         .target(
             name: "ChatOSMediaWorkerClient",
-            dependencies: ["ChatOSMediaWorkerProtocol"]
+            dependencies: ["ChatOSMediaWorkerProtocol", "ChatOSWorkerRuntime"]
         ),
         .target(
             name: "ChatOSMediaWorkerCore",
@@ -53,7 +54,7 @@ let package = Package(
         .target(name: "ChatOSCodeReadWorkerProtocol"),
         .target(
             name: "ChatOSCodeReadWorkerClient",
-            dependencies: ["ChatOSCodeReadWorkerProtocol"]
+            dependencies: ["ChatOSCodeReadWorkerProtocol", "ChatOSWorkerRuntime"]
         ),
         .target(
             name: "ChatOSCodeReadWorkerCore",
@@ -88,6 +89,7 @@ let package = Package(
                 "ChatOSCore",
                 "ChatOSAgentRuntime",
                 "ChatOSNetworking",
+                "ChatOSWorkerRuntime",
                 "ChatOSProcessRuntime",
                 "ChatOSModelCapabilities",
                 "ChatOSAgentWorkerProtocol",
@@ -122,6 +124,7 @@ let package = Package(
                 "ChatOSMediaWorkerProtocol",
                 "ChatOSCodeReadWorkerClient",
                 "ChatOSCodeReadWorkerProtocol",
+                "ChatOSWorkerRuntime",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             linkerSettings: [
@@ -130,6 +133,7 @@ let package = Package(
                 .linkedFramework("Security"),
                 .linkedFramework("WebKit"),
                 .linkedFramework("AVFoundation"),
+                .linkedFramework("IOKit"),
                 .linkedLibrary("sqlite3"),
             ]
         ),
@@ -151,6 +155,10 @@ let package = Package(
             dependencies: ["ChatOSAgentRuntime", "ChatOSAgentWorkerProtocol"]
         ),
         .testTarget(
+            name: "ChatOSWorkerRuntimeTests",
+            dependencies: ["ChatOSWorkerRuntime"]
+        ),
+        .testTarget(
             name: "ChatOSCoreTests",
             dependencies: ["ChatOSCore", "ChatOSModelCapabilities"]
         ),
@@ -164,6 +172,7 @@ let package = Package(
                 "ChatOSConnector",
                 "ChatOSCore",
                 "ChatOSNetworking",
+                "ChatOSWorkerRuntime",
                 "ChatOSMediaWorkerClient",
                 "ChatOSMediaWorkerProtocol",
                 "ChatOSCodeReadWorkerClient",

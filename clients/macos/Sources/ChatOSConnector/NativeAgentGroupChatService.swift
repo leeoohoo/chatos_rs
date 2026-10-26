@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSCodeReadWorkerClient
 import Foundation
 
 public struct NativeAgentGroupChatChange: Sendable, Equatable {
@@ -39,22 +40,26 @@ public actor NativeAgentGroupChatService {
 
     private let databaseURL: URL
     private let agentArtifactStore: (any AgentArtifactServing)?
+    private let codeReadWorker: any CodeReadWorkerExecuting
     private var openedStore: SQLiteAgentGroupChatStore?
     private var changeObservers: [UUID: ChangeObserver] = [:]
 
     public init(
         databaseURL: URL,
-        agentArtifactStore: (any AgentArtifactServing)? = nil
+        agentArtifactStore: (any AgentArtifactServing)? = nil,
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
     ) {
         self.databaseURL = databaseURL
         self.agentArtifactStore = agentArtifactStore
+        self.codeReadWorker = codeReadWorker
     }
 
     public func store() throws -> SQLiteAgentGroupChatStore {
         if let openedStore { return openedStore }
         let store = try SQLiteAgentGroupChatStore(
             databaseURL: databaseURL,
-            agentArtifactStore: agentArtifactStore
+            agentArtifactStore: agentArtifactStore,
+            codeReadWorker: codeReadWorker
         )
         openedStore = store
         return store

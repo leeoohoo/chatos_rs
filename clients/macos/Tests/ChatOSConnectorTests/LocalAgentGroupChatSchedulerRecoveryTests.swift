@@ -5,6 +5,136 @@ import Foundation
 import XCTest
 
 extension LocalAgentGroupChatSchedulerTests {
+    func testAutomaticRecoveryCircuitCountsOnlyAttemptsAfterHumanRetry() {
+        func event(_ kind: String) -> AgentRunEvent {
+            .init(kind: kind, detail: kind, modelCalls: 0)
+        }
+        let events: [AgentRunEvent] = [
+            event(LocalAgentGroupChatScheduler.automaticRecoveryStartedEventKind),
+            event(LocalAgentGroupChatScheduler.automaticRecoveryStartedEventKind),
+            event("retry_authorized"),
+            event(LocalAgentGroupChatScheduler.automaticRecoveryStartedEventKind),
+            event("model_finished"),
+            event(LocalAgentGroupChatScheduler.automaticRecoveryStartedEventKind),
+        ]
+
+        XCTAssertEqual(
+            LocalAgentGroupChatScheduler.consecutiveAutomaticRecoveryCount(events),
+            2
+        )
+        XCTAssertEqual(LocalAgentGroupChatScheduler.maximumConsecutiveAutomaticRecoveries, 3)
+    }
+
+    func testRecoveryCircuitStopsOnlyRepeatedlyCrashingRunAndContinuesIndependentRun() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-recovery-circuit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        var deliveryIDs: [String] = []
+
+        for index in 0..<2 {
+            let agent = try await store.createAgent(
+                ownerUserID: "alice",
+                draft: .init(
+                    name: index == 0 ? "A 熔断任务" : "B 独立任务",
+                    rolePrompt: "验证恢复隔离。",
+                    modelConfigID: "local-model"
+                )
+            )
+            let room = try await store.openHumanAgentDirect(
+                ownerUserID: "alice",
+                agentID: agent.id
+            )
+            let post = try await store.postMessage(
+                ownerUserID: "alice",
+                roomID: room.id,
+                draft: .init(senderKind: .human, senderID: "alice", content: "恢复任务 \(index)"),
+                limits: .init()
+            )
+            let claimed = try await store.claimNextDelivery(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                nowUnixMs: Int64(100 + index)
+            )
+            let delivery = try XCTUnwrap(claimed)
+            deliveryIDs.append(delivery.id)
+            let runID = UUID()
+            let context = try LocalAgentChatRunContext(
+                ownerUserID: "alice",
+                projectID: room.projectID,
+                roomID: room.id,
+                agentID: agent.id,
+                deliveryID: delivery.id,
+                triggerMessageID: post.message.id,
+                rootMessageID: post.message.rootMessageID,
+                runID: runID.uuidString.lowercased(),
+                hopCount: delivery.hopCount
+            )
+            var checkpoint = AgentRunCheckpoint(
+                scope: LocalAgentGroupChatRun.runtimeScope(for: context),
+                messages: [.init(role: .system, content: "system")]
+            )
+            checkpoint.id = runID
+            checkpoint.status = .ready
+            let events = index == 0
+                ? (0..<LocalAgentGroupChatScheduler.maximumConsecutiveAutomaticRecoveries).map {
+                    AgentRunEvent(
+                        kind: LocalAgentGroupChatScheduler.automaticRecoveryStartedEventKind,
+                        detail: "attempt \($0)",
+                        modelCalls: 0
+                    )
+                }
+                : []
+            try await store.saveRun(try LocalAgentGroupChatRun(
+                id: runID,
+                context: context,
+                modelConfigID: agent.draft.modelConfigID,
+                policy: .init(),
+                checkpoint: checkpoint,
+                events: events,
+                createdAtUnixMs: Int64(100 + index),
+                updatedAtUnixMs: Int64(100 + index)
+            ))
+        }
+
+        let runtime = AlwaysInterruptedRecoveryRuntime()
+        let settingsSuite = "local-agent-recovery-circuit-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: SchedulerTestServices(),
+            settings: .init(suiteName: settingsSuite),
+            runtime: runtime,
+            maximumConcurrentExecutions: 1,
+            now: { 1_000 }
+        )
+
+        let receipts = try await scheduler.recoverInterruptedRuns(
+            store: store,
+            ownerUserID: "alice",
+            maximumRuns: 2
+        )
+
+        XCTAssertEqual(receipts.map(\.deliveryID), deliveryIDs)
+        XCTAssertEqual(receipts.map(\.outcome), [.failed, .suspended])
+        let executionCount = await runtime.executionCount()
+        let circuitDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: deliveryIDs[0]
+        )
+        let independentDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: deliveryIDs[1]
+        )
+        XCTAssertEqual(executionCount, 1)
+        XCTAssertEqual(circuitDelivery?.status, .failed)
+        XCTAssertEqual(independentDelivery?.status, .running)
+    }
+
     func testDirectResumeKeepsUnknownWriteInNeedsReviewUntilHumanExplicitlyRetriesIt() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-resume-\(UUID().uuidString)")
@@ -85,13 +215,33 @@ extension LocalAgentGroupChatSchedulerTests {
         let scheduler = LocalAgentGroupChatScheduler(
             service: nativeService,
             services: SchedulerTestServices(),
-            settings: .init(suiteName: settingsSuite)
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 1
         )
-        let result = try await scheduler.resumeDelivery(
+        let blockerValue = await scheduler.executionGovernor.acquire(priority: .background)
+        let blocker = try XCTUnwrap(blockerValue)
+        let resumeTask = Task {
+            try await scheduler.resumeDelivery(
+                ownerUserID: "alice",
+                projectID: room.projectID,
+                deliveryID: pending.id
+            )
+        }
+        for _ in 0..<200 {
+            if await scheduler.executionGovernorSnapshot().queuedCount == 1 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let queuedSnapshot = await scheduler.executionGovernorSnapshot()
+        XCTAssertEqual(queuedSnapshot.queuedCount, 1)
+        let stillUnmodified = try await store.run(
             ownerUserID: "alice",
-            projectID: room.projectID,
-            deliveryID: pending.id
+            deliveryID: delivery.id
         )
+        XCTAssertEqual(stillUnmodified?.checkpoint.status, .running)
+        XCTAssertEqual(stillUnmodified?.checkpoint.inFlightCallID, call.id)
+
+        await blocker.releaseAndWait()
+        let result = try await resumeTask.value
         XCTAssertEqual(result.outcome, .suspended)
         let loadedReviewed = try await store.run(
             ownerUserID: "alice",
@@ -114,11 +264,30 @@ extension LocalAgentGroupChatSchedulerTests {
         )
         XCTAssertEqual(listedRuns.map(\.id), [runID])
 
-        let retried = try await scheduler.retryInterruptedDelivery(
+        let retryBlockerValue = await scheduler.executionGovernor.acquire(priority: .background)
+        let retryBlocker = try XCTUnwrap(retryBlockerValue)
+        let retryTask = Task {
+            try await scheduler.retryInterruptedDelivery(
+                ownerUserID: "alice",
+                projectID: room.projectID,
+                deliveryID: delivery.id
+            )
+        }
+        for _ in 0..<200 {
+            if await scheduler.executionGovernorSnapshot().queuedCount == 1 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let queuedRetrySnapshot = await scheduler.executionGovernorSnapshot()
+        XCTAssertEqual(queuedRetrySnapshot.queuedCount, 1)
+        let stillNeedsReview = try await store.run(
             ownerUserID: "alice",
-            projectID: room.projectID,
             deliveryID: delivery.id
         )
+        XCTAssertEqual(stillNeedsReview?.checkpoint.status, .needsReview)
+        XCTAssertEqual(stillNeedsReview?.checkpoint.inFlightCallID, call.id)
+
+        await retryBlocker.releaseAndWait()
+        let retried = try await retryTask.value
         XCTAssertEqual(retried.outcome, .completed)
         let completedDelivery = try await store.delivery(
             ownerUserID: "alice",
@@ -427,4 +596,25 @@ extension LocalAgentGroupChatSchedulerTests {
         XCTAssertEqual(managerWake.triggerKind, .todoStatus)
     }
 
+}
+
+private actor AlwaysInterruptedRecoveryRuntime: AgentRuntimeExecuting {
+    private var executions = 0
+
+    func executeRun(
+        checkpoint: AgentRunCheckpoint,
+        scope: String,
+        policy: AgentRunPolicy,
+        model: any AgentModelClient,
+        tools: [AgentToolDefinition],
+        execute: @escaping AgentRuntime.Executor,
+        completionCheck: @escaping AgentRuntime.CompletionCheck,
+        contextProvider: (any AgentContextProviding)?,
+        record: @escaping AgentRuntime.Recorder
+    ) async throws -> AgentRunCheckpoint {
+        executions += 1
+        throw AgentWorkerProcessClientError.workerFailed("simulated repeated termination")
+    }
+
+    func executionCount() -> Int { executions }
 }

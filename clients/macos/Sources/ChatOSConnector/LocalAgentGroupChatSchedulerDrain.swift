@@ -525,9 +525,6 @@ extension LocalAgentGroupChatScheduler {
                 case let .finished(receipt):
                     if let receipt {
                         completed.append(receipt)
-                        if receipt.receipt.outcome != .completed {
-                            shouldSchedule = false
-                        }
                     }
                 case let .failed(error):
                     if firstError == nil { firstError = error }
@@ -564,16 +561,50 @@ extension LocalAgentGroupChatScheduler {
            ) else {
             return nil
         }
-        if currentRun.checkpoint.status == .needsReview {
-            try await suspendTodoForReview(
-                store: store,
-                ownerUserID: ownerUserID,
-                delivery: currentDelivery,
-                runID: currentRun.context.runID,
-                detail: currentRun.checkpoint.stopReason
-                    ?? "执行中断，需要检查副作用后再决定是否重试。"
+        if Self.interruptedCheckpointDisposition(currentRun.checkpoint) == .needsReview {
+            let detail = currentRun.checkpoint.stopReason
+                ?? "工具调用已开始但结果未被持久确认，需要检查副作用后再决定是否重试。"
+            if currentRun.checkpoint.status != .needsReview {
+                var reviewedRun = currentRun
+                reviewedRun.checkpoint.status = .needsReview
+                reviewedRun.checkpoint.stopReason = detail
+                reviewedRun.events.append(.init(
+                    kind: "needs_review",
+                    detail: detail,
+                    modelCalls: reviewedRun.checkpoint.modelCalls
+                ))
+                reviewedRun.updatedAtUnixMs = max(now(), reviewedRun.updatedAtUnixMs)
+                try await store.saveRun(reviewedRun)
+                await service.publishChange(.init(
+                    ownerUserID: ownerUserID,
+                    roomID: reviewedRun.context.roomID,
+                    agentID: reviewedRun.context.agentID,
+                    runID: reviewedRun.id,
+                    kind: .runUpdated
+                ))
+            }
+            if currentDelivery.lane == .executor {
+                try await suspendTodoForReview(
+                    store: store,
+                    ownerUserID: ownerUserID,
+                    delivery: currentDelivery,
+                    runID: currentRun.context.runID,
+                    detail: detail
+                )
+            } else {
+                _ = try await store.failDelivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: currentDelivery.id,
+                    error: detail,
+                    nowUnixMs: now()
+                )
+            }
+            return .init(
+                deliveryID: currentDelivery.id,
+                agentID: currentDelivery.targetAgentID,
+                outcome: .suspended,
+                detail: detail
             )
-            return nil
         }
         var isRecoveryEligible = Self.isAutomaticTriggerRecoveryEligible(
             currentRun.checkpoint
@@ -602,11 +633,108 @@ extension LocalAgentGroupChatScheduler {
             isRecoveryEligible = true
         }
         guard isRecoveryEligible else { return nil }
+
+        let automaticRecoveryCount = Self.consecutiveAutomaticRecoveryCount(currentRun.events)
+        if automaticRecoveryCount >= Self.maximumConsecutiveAutomaticRecoveries {
+            let detail = "该任务连续 \(automaticRecoveryCount) 次在自动恢复期间中断，已只终止本任务，避免反复拉起影响其他会话。"
+            var failedRun = currentRun
+            failedRun.checkpoint.status = .failed
+            failedRun.checkpoint.stopReason = detail
+            failedRun.events.append(.init(
+                kind: Self.automaticRecoveryCircuitOpenEventKind,
+                detail: detail,
+                modelCalls: failedRun.checkpoint.modelCalls
+            ))
+            failedRun.updatedAtUnixMs = max(now(), failedRun.updatedAtUnixMs)
+            try await store.saveRun(failedRun)
+            try await failDeliveryAndNotifyManager(
+                store: store,
+                ownerUserID: ownerUserID,
+                delivery: currentDelivery,
+                runID: currentRun.context.runID,
+                detail: detail,
+                stage: "automatic_recovery_circuit_open"
+            )
+            await service.publishChange(.init(
+                ownerUserID: ownerUserID,
+                roomID: currentRun.context.roomID,
+                agentID: currentRun.context.agentID,
+                runID: currentRun.id,
+                kind: .runUpdated
+            ))
+            return .init(
+                deliveryID: currentDelivery.id,
+                agentID: currentDelivery.targetAgentID,
+                outcome: .failed,
+                detail: detail
+            )
+        }
+
+        // Persist the attempt before launching another Worker. If the process is killed again,
+        // the next app launch observes the durable count and eventually opens a circuit for only
+        // this Delivery. A successful/terminal result needs no counter reset because this Run is
+        // no longer selected by the interrupted-run query; an explicit Human retry is a boundary.
+        var recoveringRun = currentRun
+        recoveringRun.events.append(.init(
+            kind: Self.automaticRecoveryStartedEventKind,
+            detail: "自动恢复第 \(automaticRecoveryCount + 1) 次。",
+            modelCalls: recoveringRun.checkpoint.modelCalls
+        ))
+        recoveringRun.updatedAtUnixMs = max(now(), recoveringRun.updatedAtUnixMs)
+        try await store.saveRun(recoveringRun)
+        await service.publishChange(.init(
+            ownerUserID: ownerUserID,
+            roomID: recoveringRun.context.roomID,
+            agentID: recoveringRun.context.agentID,
+            runID: recoveringRun.id,
+            kind: .runUpdated
+        ))
         return try await resumeRegisteredDelivery(
             ownerUserID: ownerUserID,
             projectID: currentRun.context.projectID,
             deliveryID: deliveryID
         )
+    }
+
+    static let automaticRecoveryStartedEventKind = "automatic_recovery_started"
+    static let automaticRecoveryCircuitOpenEventKind = "automatic_recovery_circuit_open"
+    static let maximumConsecutiveAutomaticRecoveries = 3
+
+    enum InterruptedCheckpointDisposition: Sendable, Equatable {
+        case safeRetry
+        case explicitFailure
+        case needsReview
+    }
+
+    static func interruptedCheckpointDisposition(
+        _ checkpoint: AgentRunCheckpoint
+    ) -> InterruptedCheckpointDisposition {
+        if checkpoint.inFlightCallID != nil || checkpoint.status == .needsReview {
+            return .needsReview
+        }
+        if checkpoint.status == .ready || checkpoint.status == .running {
+            return .safeRetry
+        }
+        guard checkpoint.status == .paused,
+              checkpoint.pendingCalls.isEmpty,
+              let reason = checkpoint.stopReason,
+              [
+                  AgentContextError.unavailable.localizedDescription,
+                  AgentContextError.syncUncertain.localizedDescription,
+              ].contains(reason) else {
+            return .explicitFailure
+        }
+        return .safeRetry
+    }
+
+    static func consecutiveAutomaticRecoveryCount(_ events: [AgentRunEvent]) -> Int {
+        let boundary = events.lastIndex(where: { event in
+            event.kind == "retry_authorized" || event.kind == automaticRecoveryCircuitOpenEventKind
+        })
+        let start = boundary.map { events.index(after: $0) } ?? events.startIndex
+        return events[start...]
+            .filter { $0.kind == automaticRecoveryStartedEventKind }
+            .count
     }
 
     static func isAutomaticTriggerRecoveryEligible(
@@ -617,15 +745,7 @@ extension LocalAgentGroupChatScheduler {
         // already `running` while the checkpoint is still `ready`. Replaying that checkpoint is
         // side-effect free and is required to keep the manager/executor lane from being occupied
         // forever after restart.
-        if checkpoint.status == .ready || checkpoint.status == .running { return true }
-        guard checkpoint.status == .paused,
-              checkpoint.pendingCalls.isEmpty,
-              checkpoint.inFlightCallID == nil,
-              let reason = checkpoint.stopReason else { return false }
-        return [
-            AgentContextError.unavailable.localizedDescription,
-            AgentContextError.syncUncertain.localizedDescription,
-        ].contains(reason)
+        interruptedCheckpointDisposition(checkpoint) == .safeRetry
     }
 
     func drain(

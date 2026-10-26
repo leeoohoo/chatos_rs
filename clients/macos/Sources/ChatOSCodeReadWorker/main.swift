@@ -51,6 +51,22 @@ private func writeLine<T: Encodable>(_ value: T) throws {
     }
 }
 
+private func readPayloadChunk(descriptor: Int32, maximumCount: Int) throws -> Data {
+    guard maximumCount > 0,
+          maximumCount <= 64 * 1_024 else {
+        throw WorkerFailure(message: "Invalid binary payload read size.")
+    }
+    var buffer = [UInt8](repeating: 0, count: maximumCount)
+    while true {
+        let count = Darwin.read(descriptor, &buffer, maximumCount)
+        if count < 0, errno == EINTR { continue }
+        guard count > 0 else {
+            throw WorkerFailure(message: "Inherited binary payload ended early.")
+        }
+        return Data(buffer[0..<count])
+    }
+}
+
 private func terminate(_ exit: WorkerExit) -> Never {
     Darwin._exit(exit.rawValue)
 }
@@ -85,6 +101,8 @@ do {
     guard hello.type == "hello",
           hello.parentProcessID == parentProcessID,
           hello.maximumInlineBytes == ChatOSCodeReadWorkerProtocol.maximumInlineBytes,
+          hello.maximumBinaryPayloadBytes
+            == ChatOSCodeReadWorkerProtocol.maximumBinaryPayloadBytes,
           hello.protocolMinVersion <= ChatOSCodeReadWorkerProtocol.maximumVersion,
           hello.protocolMaxVersion >= ChatOSCodeReadWorkerProtocol.minimumVersion else {
         try writeLine(CodeReadWorkerHelloResponse(
@@ -109,7 +127,14 @@ do {
         throw CodeReadWorkerCoreError.invalidRequest("The helper instance does not match the handshake.")
     }
     do {
-        let result = try ChatOSCodeReadWorkerEngine.execute(request)
+        let result: CodeReadWorkerJSONValue
+        if request.binaryPayloadByteCount == 0 {
+            result = try ChatOSCodeReadWorkerEngine.execute(request)
+        } else {
+            result = try ChatOSCodeReadWorkerEngine.executeStreaming(request) { maximumCount in
+                try readPayloadChunk(descriptor: STDIN_FILENO, maximumCount: maximumCount)
+            }
+        }
         try writeLine(CodeReadWorkerResponse(requestID: request.requestID, result: result))
     } catch let error as CodeReadWorkerCoreError {
         try writeLine(CodeReadWorkerResponse(

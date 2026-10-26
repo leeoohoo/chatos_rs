@@ -17,7 +17,7 @@ func waitForTestFile(at url: URL) async throws {
     throw CocoaError(.fileReadNoSuchFile)
 }
 
-struct ConnectorCoreCodeReadWorker: CodeReadWorkerExecuting {
+struct ConnectorCoreCodeReadWorker: CodeReadWorkerBinaryExecuting {
     func execute(
         operation: String,
         arguments: [String: CodeReadWorkerJSONValue],
@@ -61,6 +61,62 @@ struct ConnectorCoreCodeReadWorker: CodeReadWorkerExecuting {
                 ripgrepPath: ripgrepURL?.path,
                 ripgrepIdentity: ripgrepIdentity
             ))
+        } catch let error as CodeReadWorkerCoreError {
+            throw CodeReadWorkerProcessClientError.requestRejected(
+                code: error.payload.code,
+                message: error.payload.message
+            )
+        }
+    }
+
+
+    func execute(
+        operation: String,
+        arguments: [String: CodeReadWorkerJSONValue],
+        binaryPayloads: [Data],
+        projectRoot: URL,
+        requestCWD: String?,
+        defaultToolRoot: String?,
+        ripgrepURL: URL?
+    ) async throws -> CodeReadWorkerJSONValue {
+        var status = stat()
+        guard projectRoot.path.withCString({ Darwin.lstat($0, &status) }) == 0 else {
+            throw CodeReadWorkerProcessClientError.invalidResponse
+        }
+        let total = binaryPayloads.reduce(0) { $0 + $1.count }
+        let request = CodeReadWorkerRequest(
+            protocolVersion: ChatOSCodeReadWorkerProtocol.maximumVersion,
+            requestID: UUID().uuidString,
+            helperInstanceID: UUID().uuidString,
+            deadlineUnixMilliseconds: Int64((Date().timeIntervalSince1970 + 10) * 1_000),
+            operation: operation,
+            arguments: arguments,
+            projectRootPath: projectRoot.path,
+            projectRootIdentity: .init(
+                device: UInt64(status.st_dev),
+                inode: UInt64(status.st_ino)
+            ),
+            requestCWD: requestCWD,
+            defaultToolRoot: defaultToolRoot,
+            ripgrepPath: nil,
+            ripgrepIdentity: nil,
+            binaryPayloadByteCount: UInt64(total)
+        )
+        var payloadIndex = 0
+        var payloadOffset = 0
+        do {
+            return try ChatOSCodeReadWorkerEngine.executeStreaming(request) { maximumCount in
+                while payloadIndex < binaryPayloads.count,
+                      payloadOffset == binaryPayloads[payloadIndex].count {
+                    payloadIndex += 1
+                    payloadOffset = 0
+                }
+                guard payloadIndex < binaryPayloads.count else { return Data() }
+                let payload = binaryPayloads[payloadIndex]
+                let end = min(payload.count, payloadOffset + maximumCount)
+                defer { payloadOffset = end }
+                return payload.subdata(in: payloadOffset..<end)
+            }
         } catch let error as CodeReadWorkerCoreError {
             throw CodeReadWorkerProcessClientError.requestRejected(
                 code: error.payload.code,

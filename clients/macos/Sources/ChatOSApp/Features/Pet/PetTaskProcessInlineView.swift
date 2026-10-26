@@ -58,7 +58,8 @@ struct PetTaskProcessInlineView: View {
                             TaskProcessTimelineView(
                                 items: timelineItems,
                                 allowsTextSelection: false,
-                                liveActivity: task.lastRun?.activity
+                                liveActivity: task.lastRun?.activity,
+                                taskStatus: task.status
                             )
                         }
 

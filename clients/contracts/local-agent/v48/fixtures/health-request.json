@@ -1,5 +1,5 @@
 {
-  "protocol_version": 46,
+  "protocol_version": 48,
   "command_id": "contract-health-1",
   "command": {
     "type": "health"

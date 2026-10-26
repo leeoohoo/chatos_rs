@@ -12,11 +12,12 @@ use chatos_local_agent_protocol::{
     LocalConversationAttachmentRecord, LocalConversationDetail, LocalConversationHistoryPage,
     LocalConversationPage, LocalConversationRuntimeSettings, LocalConversationTurnStart,
     LocalConversationTurnUpdate, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
-    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
-    LocalRemoteConnection, LocalRequirementSurvey, LocalRequirementSurveyResolution,
-    LocalRequirementSurveyStatus, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
-    LocalTaskRecord, LocalTaskStatus, PutConversationRuntimeSettingsCommand,
-    ResumeConversationTurnCommand, StartConversationTurnCommand, UpdateNotepadNoteCommand,
+    LocalPluginHookBundleRecord, LocalPluginHookBundleSpec, LocalPluginInstallationPage,
+    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalRemoteConnection,
+    LocalRequirementSurvey, LocalRequirementSurveyResolution, LocalRequirementSurveyStatus,
+    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage, LocalTaskRecord, LocalTaskStatus,
+    PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
+    StartConversationTurnCommand, UpdateNotepadNoteCommand,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -143,6 +144,18 @@ pub trait LocalAgentRunStore: Send + Sync {
     /// Returns the earliest retry or active claim-expiry deadline that must
     /// wake the owner-scoped coordinator.
     async fn next_retry_at(&self, owner_user_id: &str) -> Result<Option<i64>, ClientStorageError>;
+
+    /// Counts durable model, task, and tool work that is ready for a Host worker to claim.
+    /// The tool filters must match the built-in tool scheduler so platform-owned work is not
+    /// reported as queued behind Host capacity.
+    async fn ready_host_work_count(
+        &self,
+        owner_user_id: &str,
+        now_unix_ms: i64,
+        include_tool_names: Option<&[String]>,
+        exclude_tool_names: &[String],
+        tool_execution_route: Option<chatos_local_agent_protocol::LocalAgentToolExecutionRoute>,
+    ) -> Result<u64, ClientStorageError>;
 
     async fn apply_transition(
         &self,
@@ -386,6 +399,129 @@ pub trait LocalPluginInstallationStore: Send + Sync {
         expected_version: u64,
         now_unix_ms: i64,
     ) -> Result<LocalPluginInstallationRecord, ClientStorageError>;
+}
+
+#[async_trait]
+pub trait LocalPluginHookBundleStore: Send + Sync {
+    /// Appends an immutable trust snapshot. Repeating the same bundle is
+    /// idempotent; reusing its identity for different material is a conflict.
+    async fn put_plugin_hook_bundle(
+        &self,
+        command: &IdempotentCommand,
+        bundle: &LocalPluginHookBundleSpec,
+        now_unix_ms: i64,
+    ) -> Result<LocalPluginHookBundleRecord, ClientStorageError>;
+
+    async fn list_plugin_hook_bundles(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<LocalPluginHookBundleRecord>, ClientStorageError>;
+
+    async fn set_active_plugin_hook_bundles(
+        &self,
+        command: &IdempotentCommand,
+        owner_user_id: &str,
+        bundle_ids: &[String],
+        now_unix_ms: i64,
+    ) -> Result<Vec<String>, ClientStorageError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalHookEventSpec {
+    pub event_id: String,
+    pub owner_user_id: String,
+    pub event_type: String,
+    pub subject_id: String,
+    pub sequence: u64,
+    pub payload_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalHookEventRecord {
+    pub spec: LocalHookEventSpec,
+    pub status: String,
+    pub additional_context: Option<String>,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalHookInvocationSpec {
+    pub invocation_id: String,
+    pub event_id: String,
+    pub bundle_id: String,
+    pub hook_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalHookInvocationRecord {
+    pub spec: LocalHookInvocationSpec,
+    pub attempt: u32,
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    pub stdout_sha256: Option<String>,
+    pub stdout_bytes: u64,
+    pub stderr_summary: Option<String>,
+    pub additional_context: Option<String>,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalHookInvocationCompletion {
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    pub stdout_sha256: Option<String>,
+    pub stdout_bytes: u64,
+    pub stderr_summary: Option<String>,
+    pub additional_context: Option<String>,
+}
+
+#[async_trait]
+pub trait LocalHookEventStore: Send + Sync {
+    async fn has_hook_event(
+        &self,
+        owner_user_id: &str,
+        event_type: &str,
+        subject_id: &str,
+    ) -> Result<bool, ClientStorageError>;
+
+    async fn get_hook_event(
+        &self,
+        owner_user_id: &str,
+        event_type: &str,
+        subject_id: &str,
+        sequence: u64,
+    ) -> Result<Option<LocalHookEventRecord>, ClientStorageError>;
+
+    async fn prepare_hook_event(
+        &self,
+        event: &LocalHookEventSpec,
+        now_unix_ms: i64,
+    ) -> Result<LocalHookEventRecord, ClientStorageError>;
+
+    async fn begin_hook_invocation(
+        &self,
+        invocation: &LocalHookInvocationSpec,
+        now_unix_ms: i64,
+    ) -> Result<LocalHookInvocationRecord, ClientStorageError>;
+
+    async fn complete_hook_invocation(
+        &self,
+        invocation_id: &str,
+        expected_attempt: u32,
+        completion: &LocalHookInvocationCompletion,
+        now_unix_ms: i64,
+    ) -> Result<LocalHookInvocationRecord, ClientStorageError>;
+
+    async fn complete_hook_event(
+        &self,
+        event_id: &str,
+        additional_context: Option<&str>,
+        now_unix_ms: i64,
+    ) -> Result<LocalHookEventRecord, ClientStorageError>;
 }
 
 #[async_trait]
@@ -761,6 +897,8 @@ pub trait LocalAgentStore:
     + LocalAgentToolStore
     + LocalAgentTaskStore
     + LocalPluginInstallationStore
+    + LocalPluginHookBundleStore
+    + LocalHookEventStore
     + LocalConversationStore
     + LocalConversationRuntimeSettingsStore
     + LocalNotepadStore
@@ -779,6 +917,8 @@ impl<T> LocalAgentStore for T where
         + LocalAgentToolStore
         + LocalAgentTaskStore
         + LocalPluginInstallationStore
+        + LocalPluginHookBundleStore
+        + LocalHookEventStore
         + LocalConversationStore
         + LocalConversationRuntimeSettingsStore
         + LocalNotepadStore

@@ -1,15 +1,18 @@
 import ChatOSCore
+import ChatOSCodeReadWorkerClient
 import Foundation
 
 public struct NativeLocalAgentArtifactClient: AgentArtifactFileServing, Sendable {
     private let host: any LocalAgentHostClientServicing
     private let artifactDirectoryURL: URL
     private let stagingDirectoryURL: URL
+    private let codeReadWorker: any CodeReadWorkerExecuting
 
     public init(
         host: any LocalAgentHostClientServicing,
         artifactDirectoryURL: URL,
-        stagingDirectoryURL: URL? = nil
+        stagingDirectoryURL: URL? = nil,
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
     ) {
         self.host = host
         self.artifactDirectoryURL = artifactDirectoryURL.standardizedFileURL
@@ -18,6 +21,7 @@ public struct NativeLocalAgentArtifactClient: AgentArtifactFileServing, Sendable
                 .deletingPathExtension()
                 .appendingPathExtension("artifact-staging")
         ).standardizedFileURL
+        self.codeReadWorker = codeReadWorker
     }
 
     public func store(
@@ -28,7 +32,8 @@ public struct NativeLocalAgentArtifactClient: AgentArtifactFileServing, Sendable
             from: request.fileURL,
             in: stagingDirectoryURL,
             expectedBytes: request.size,
-            expectedSHA256: request.sha256
+            expectedSHA256: request.sha256,
+            codeReadWorker: codeReadWorker
         )
         defer { AgentArtifactUploadStager.discard(staged) }
         let response: ArtifactResult = try await host.request(CreateCommand(

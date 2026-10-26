@@ -1,5 +1,6 @@
 @testable import ChatOSConnector
 import ChatOSCore
+import Darwin
 import Dispatch
 import Foundation
 import XCTest
@@ -66,12 +67,17 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         draft.jumpUsername = "jump-user"
         draft.jumpPassword = "jump-secret"
 
-        let config = try NativeSSHConnectionTester.sshConfig(for: draft)
+        let config = try NativeSSHConnectionTester.sshConfig(
+            for: draft,
+            knownHostsPath: "/tmp/chatos-test-known-hosts"
+        )
 
         XCTAssertTrue(config.contains("Host chatos-target"))
         XCTAssertTrue(config.contains("Host chatos-jump"))
         XCTAssertTrue(config.contains("ProxyJump chatos-jump"))
         XCTAssertTrue(config.contains("StrictHostKeyChecking accept-new"))
+        XCTAssertTrue(config.contains("UserKnownHostsFile \"/tmp/chatos-test-known-hosts\""))
+        XCTAssertTrue(config.contains("GlobalKnownHostsFile /dev/null"))
         XCTAssertFalse(config.contains("local_connector"))
         XCTAssertFalse(config.contains("local-secret"))
         XCTAssertFalse(config.contains("jump-secret"))
@@ -169,6 +175,7 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
     func testSSHConfigCanReuseAConnectionWithoutExposingTheControlPath() throws {
         let config = try NativeSSHConnectionTester.sshConfig(
             for: Self.passwordDraft,
+            knownHostsPath: "/tmp/chatos-test-known-hosts",
             controlPath: "/tmp/chatos-control-test"
         )
 
@@ -186,6 +193,7 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
 
         let config = try NativeSSHConnectionTester.sshConfig(
             for: draft,
+            knownHostsPath: "/tmp/chatos-test-known-hosts",
             targetConnectTimeoutSeconds: 300
         )
         let targetBlock = try XCTUnwrap(
@@ -198,6 +206,27 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertTrue(targetBlock.contains("ConnectTimeout 300"))
         XCTAssertTrue(jumpBlock.contains("ConnectTimeout 10"))
         XCTAssertFalse(jumpBlock.contains("ConnectTimeout 300"))
+    }
+
+    func testPrivateKnownHostsFileIsRegularOwnedAndPermissionRestricted() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-known-hosts-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let knownHosts = try NativeSSHConnectionTester.privateKnownHostsFile(
+            rootDirectory: root
+        )
+        let directoryAttributes = try FileManager.default.attributesOfItem(atPath: root.path)
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: knownHosts.path)
+
+        XCTAssertEqual(knownHosts.lastPathComponent, "known_hosts")
+        XCTAssertEqual(directoryAttributes[.type] as? FileAttributeType, .typeDirectory)
+        XCTAssertEqual((directoryAttributes[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+        XCTAssertEqual(fileAttributes[.type] as? FileAttributeType, .typeRegular)
+        XCTAssertEqual((fileAttributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        XCTAssertEqual((fileAttributes[.referenceCount] as? NSNumber)?.intValue, 1)
     }
 
     func testMFAAskpassWaitsForCodeFromTheExistingSSHSession() async throws {
@@ -219,7 +248,9 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
             ofItemAtPath: scriptURL.path
         )
 
-        let output = Pipe()
+        let outputURL = root.appendingPathComponent("submitted-code")
+        XCTAssertTrue(FileManager.default.createFile(atPath: outputURL.path, contents: nil))
+        let output = try FileHandle(forWritingTo: outputURL)
         let process = Process()
         process.executableURL = scriptURL
         process.arguments = ["(user@bastion.example.com) Please Input Mfa Code (SMS):"]
@@ -230,6 +261,8 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         environment["CHATOS_SSH_VERIFICATION_FILE"] = responseURL.path
         process.environment = environment
         try process.run()
+        output.closeFile()
+        let processID = process.processIdentifier
 
         // Fresh executable scripts can take a few seconds to start while macOS
         // performs security inspection, especially during a concurrent build.
@@ -243,19 +276,23 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
 
         try "614207".write(to: responseURL, atomically: true, encoding: .utf8)
         let completionDeadline = Date().addingTimeInterval(2)
-        while process.isRunning, Date() < completionDeadline {
+        while Self.processIsAlive(processID), Date() < completionDeadline {
             try await Task.sleep(for: .milliseconds(20))
         }
-        if process.isRunning {
-            process.terminate()
+        if Self.processIsAlive(processID) {
+            _ = Darwin.kill(processID, SIGTERM)
+            let terminationDeadline = Date().addingTimeInterval(1)
+            while Self.processIsAlive(processID), Date() < terminationDeadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            if Self.processIsAlive(processID) {
+                _ = Darwin.kill(processID, SIGKILL)
+            }
         }
-        process.waitUntilExit()
 
-        let submittedCode = String(
-            decoding: output.fileHandleForReading.readDataToEndOfFile(),
-            as: UTF8.self
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
-        XCTAssertEqual(process.terminationStatus, 0)
+        let submittedCode = try String(contentsOf: outputURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(Self.processIsAlive(processID))
         XCTAssertEqual(submittedCode, "614207")
     }
 
@@ -327,6 +364,92 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertEqual(NativeOpenSSHClient.remoteParent("build/result.bin"), "build")
     }
 
+    func testRemoteTransferCleanupScriptRemovesOnlyCanonicalStaleSingleLinkFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-remote-orphans-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prefix = ".chatos-upload-"
+        let stale = root.appendingPathComponent(
+            prefix + UUID().uuidString.lowercased() + ".tmp"
+        )
+        let fresh = root.appendingPathComponent(
+            prefix + UUID().uuidString.lowercased() + ".tmp"
+        )
+        let malformed = root.appendingPathComponent(prefix + "not-a-uuid.tmp")
+        let uppercase = root.appendingPathComponent(
+            prefix + UUID().uuidString.uppercased() + ".tmp"
+        )
+        let hardLinkSource = root.appendingPathComponent("hard-link-source")
+        let hardLink = root.appendingPathComponent(
+            prefix + UUID().uuidString.lowercased() + ".tmp"
+        )
+        let symlinkSource = root.appendingPathComponent("symlink-source")
+        let symlink = root.appendingPathComponent(
+            prefix + UUID().uuidString.lowercased() + ".tmp"
+        )
+        for url in [stale, fresh, malformed, uppercase, hardLinkSource, symlinkSource] {
+            try Data("temporary".utf8).write(to: url)
+        }
+        try FileManager.default.linkItem(at: hardLinkSource, to: hardLink)
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: symlinkSource)
+        let old = Date(timeIntervalSinceNow: -(25 * 60 * 60))
+        for url in [stale, malformed, uppercase, hardLink] {
+            try FileManager.default.setAttributes(
+                [.modificationDate: old],
+                ofItemAtPath: url.path
+            )
+        }
+
+        let result = try NativeOpenSSHClient.run(
+            executable: "/bin/sh",
+            arguments: [
+                "-c",
+                NativeOpenSSHClient.remoteTransferCleanupScript(for: root.path),
+            ],
+            environment: ProcessInfo.processInfo.environment,
+            input: nil,
+            timeout: 5,
+            maximumCapturedBytes: 64 * 1_024,
+            controller: NativeOpenSSHProcessController()
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
+        for preserved in [fresh, malformed, uppercase, hardLink, symlink] {
+            XCTAssertTrue(
+                FileManager.default.fileExists(atPath: preserved.path),
+                "Unexpectedly removed \(preserved.lastPathComponent)"
+            )
+        }
+    }
+
+    func testRemoteTransferCleanupScriptAcceptsNoMatchesUnderZsh() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-remote-empty-orphans-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = try NativeOpenSSHClient.run(
+            executable: "/bin/zsh",
+            arguments: [
+                "-c",
+                NativeOpenSSHClient.remoteTransferCleanupScript(for: root.path),
+            ],
+            environment: ProcessInfo.processInfo.environment,
+            input: nil,
+            timeout: 5,
+            maximumCapturedBytes: 64 * 1_024,
+            controller: NativeOpenSSHProcessController()
+        )
+
+        XCTAssertEqual(result.exitCode, 0, String(decoding: result.stderr, as: UTF8.self))
+    }
+
     func testOpenSSHBlockingWorkUsesConcurrentLanes() async throws {
         let firstStarted = expectation(description: "first blocking operation started")
         let secondStarted = expectation(description: "second blocking operation started")
@@ -354,25 +477,45 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertEqual(secondResult, 2)
     }
 
-    func testCancellingOpenSSHBlockingWorkTerminatesItsRegisteredProcess() async throws {
-        let started = expectation(description: "blocking child started")
-        let terminated = expectation(description: "blocking child terminated")
+    func testCancellingOpenSSHBlockingWorkTerminatesOnlyItsRegisteredProcessGroup() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-ssh-cancel-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let childPIDURL = root.appendingPathComponent("child.pid")
+        let unrelated = Process()
+        unrelated.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        unrelated.arguments = ["30"]
+        try unrelated.run()
+        defer {
+            if unrelated.isRunning { unrelated.terminate() }
+            unrelated.waitUntilExit()
+        }
         let task = Task {
             try await NativeOpenSSHClient.performBlockingWork { controller in
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/bin/sleep")
-                process.arguments = ["30"]
-                process.terminationHandler = { _ in terminated.fulfill() }
-                try process.run()
-                let registration = controller.register(process)
-                defer { controller.clear(process, registration: registration) }
-                started.fulfill()
-                process.waitUntilExit()
-                return process.terminationStatus
+                try NativeOpenSSHClient.run(
+                    executable: "/bin/sh",
+                    arguments: [
+                        "-c",
+                        "sleep 30 & child=$!; printf '%s' \"$child\" > \(childPIDURL.path); wait",
+                    ],
+                    environment: ProcessInfo.processInfo.environment,
+                    input: nil,
+                    timeout: 30,
+                    maximumCapturedBytes: 64 * 1_024,
+                    controller: controller
+                )
             }
         }
 
-        await fulfillment(of: [started], timeout: 2)
+        for _ in 0..<200 where !FileManager.default.fileExists(atPath: childPIDURL.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let childPID = try XCTUnwrap(pid_t(
+            String(contentsOf: childPIDURL, encoding: .utf8)
+        ))
         let cancellationStarted = ContinuousClock.now
         task.cancel()
         do {
@@ -381,12 +524,61 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         } catch is CancellationError {
             // Expected: cancellation is mapped after the owned child exits.
         }
-        await fulfillment(of: [terminated], timeout: 2)
         XCTAssertLessThan(
             cancellationStarted.duration(to: .now),
             .seconds(3),
-            "取消应终止所属子进程，而不是等待远程操作原始超时"
+            "取消应终止所属进程组，而不是等待远程操作原始超时"
         )
+        for _ in 0..<100 where Darwin.kill(childPID, 0) == 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(Darwin.kill(childPID, 0), -1, "SSH 孙进程不能在取消后残留")
+        XCTAssertTrue(unrelated.isRunning, "取消不能影响不属于该操作的进程")
+    }
+
+    func testSuspendedOpenSSHProcessGroupResumesWithoutBlockingIndependentWork() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-ssh-suspend-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let processGroupURL = root.appendingPathComponent("process-group.pid")
+        let suspendedTask = Task {
+            try await NativeOpenSSHClient.performBlockingWork { controller in
+                try NativeOpenSSHClient.run(
+                    executable: "/bin/sh",
+                    arguments: [
+                        "-c",
+                        "printf '%s' \"$$\" > \(processGroupURL.path); "
+                            + "kill -STOP \"$$\"; printf resumed",
+                    ],
+                    environment: ProcessInfo.processInfo.environment,
+                    input: nil,
+                    timeout: 10,
+                    maximumCapturedBytes: 64 * 1_024,
+                    controller: controller
+                )
+            }
+        }
+        var processGroup: pid_t?
+        for _ in 0..<200 {
+            if let value = try? String(contentsOf: processGroupURL, encoding: .utf8),
+               let parsed = pid_t(value) {
+                processGroup = parsed
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let suspendedProcessGroup = try XCTUnwrap(processGroup)
+        defer { _ = Darwin.kill(-suspendedProcessGroup, SIGCONT) }
+
+        let independent = try await NativeOpenSSHClient.performBlockingWork { _ in 7 }
+        XCTAssertEqual(independent, 7, "暂停的 SSH 生命周期不能占用其他操作的执行槽")
+        XCTAssertEqual(Darwin.kill(-suspendedProcessGroup, SIGCONT), 0)
+        let result = try await suspendedTask.value
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(String(decoding: result.stdout, as: UTF8.self), "resumed")
     }
 
     func testDownloadedFileCommitAtomicallyReplacesExistingDestination() throws {
@@ -398,6 +590,10 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         let temporary = root.appendingPathComponent(".transfer.tmp")
         try Data("old".utf8).write(to: destination)
         try Data("complete-new".utf8).write(to: temporary)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o640],
+            ofItemAtPath: destination.path
+        )
 
         try NativeOpenSSHClient.commitDownloadedFile(
             temporaryURL: temporary,
@@ -407,6 +603,8 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
 
         XCTAssertEqual(try Data(contentsOf: destination), Data("complete-new".utf8))
         XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path))
+        let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o640)
     }
 
     func testDownloadedFileCommitWithoutOverwriteRejectsDestinationRace() throws {
@@ -447,6 +645,34 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
             )
         )
         XCTAssertEqual(try Data(contentsOf: destination), Data("keep-me".utf8))
+    }
+
+    func testDownloadedFileCommitRejectsStagingOutsideDestinationDirectory() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-download-cross-directory-\(UUID().uuidString)", isDirectory: true)
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let destinationDirectory = root.appendingPathComponent("destination", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: destinationDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let temporary = staging.appendingPathComponent(".transfer.tmp")
+        let destination = destinationDirectory.appendingPathComponent("result.bin")
+        try Data("complete-new".utf8).write(to: temporary)
+        try Data("keep-me".utf8).write(to: destination)
+
+        XCTAssertThrowsError(
+            try NativeOpenSSHClient.commitDownloadedFile(
+                temporaryURL: temporary,
+                destinationURL: destination,
+                overwrite: true
+            )
+        )
+
+        XCTAssertEqual(try Data(contentsOf: destination), Data("keep-me".utf8))
+        XCTAssertEqual(try Data(contentsOf: temporary), Data("complete-new".utf8))
     }
 
     func testRemoteTerminalOutputKeepsVisibleTextAndUpdatesWorkingDirectory() {
@@ -514,6 +740,255 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertEqual(requestCount, 0)
     }
 
+    func testExplicitSSHFixturePreservesPermissionsAndReclaimsStaleStaging() async throws {
+        let draft = try Self.explicitSSHFixtureDraft()
+        let client = NativeOpenSSHClient()
+        let identifier = UUID().uuidString.lowercased()
+        let remoteDirectory = "/tmp/chatos-ssh-integration-\(identifier)"
+        let staleName = ".chatos-upload-\(UUID().uuidString.lowercased()).tmp"
+        let localRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-ssh-integration-\(identifier)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: localRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: localRoot) }
+        let upload = localRoot.appendingPathComponent("result.bin")
+        let download = localRoot.appendingPathComponent("download.bin")
+        let payload = Data("complete-new".utf8)
+        try payload.write(to: upload)
+
+        try await client.prepareAuthenticatedConnection(
+            draft: draft,
+            verificationCode: ""
+        )
+        do {
+            let setup = try await client.runCommand(
+                draft: draft,
+                command: "umask 077; mkdir -- '\(remoteDirectory)'; "
+                    + "printf old > '\(remoteDirectory)/result.bin'; "
+                    + "chmod 640 '\(remoteDirectory)/result.bin'; "
+                    + "printf stale > '\(remoteDirectory)/\(staleName)'; "
+                    + "touch -t 202001010000 '\(remoteDirectory)/\(staleName)'",
+                timeoutSeconds: 20,
+                maximumOutputCharacters: 4_096
+            )
+            XCTAssertEqual(setup.exitCode, 0, setup.stderr)
+
+            try await client.uploadFile(
+                draft: draft,
+                localURL: upload,
+                remotePath: remoteDirectory + "/result.bin",
+                overwrite: true
+            )
+            let verification = try await client.runCommand(
+                draft: draft,
+                command: "cat '\(remoteDirectory)/result.bin'; printf '\\n'; "
+                    + "(stat -c '%a' '\(remoteDirectory)/result.bin' 2>/dev/null "
+                    + "|| stat -f '%Lp' '\(remoteDirectory)/result.bin'); "
+                    + "test ! -e '\(remoteDirectory)/\(staleName)'",
+                timeoutSeconds: 20,
+                maximumOutputCharacters: 4_096
+            )
+            XCTAssertEqual(verification.exitCode, 0, verification.stderr)
+            XCTAssertEqual(
+                verification.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+                "complete-new\n640"
+            )
+
+            try await client.downloadFile(
+                draft: draft,
+                remotePath: remoteDirectory + "/result.bin",
+                localURL: download,
+                overwrite: false
+            )
+            XCTAssertEqual(try Data(contentsOf: download), payload)
+        } catch {
+            _ = try? await client.runCommand(
+                draft: draft,
+                command: "rm -rf -- '\(remoteDirectory)'",
+                timeoutSeconds: 20,
+                maximumOutputCharacters: 4_096
+            )
+            throw error
+        }
+        let cleanup = try await client.runCommand(
+            draft: draft,
+            command: "rm -rf -- '\(remoteDirectory)'",
+            timeoutSeconds: 20,
+            maximumOutputCharacters: 4_096
+        )
+        XCTAssertEqual(cleanup.exitCode, 0, cleanup.stderr)
+    }
+
+    func testExplicitSSHFixtureCancellationAfterCommitRequiresReconciliation() async throws {
+        let draft = try Self.explicitSSHFixtureDraft()
+        let client = NativeOpenSSHClient(remoteCommitAcknowledgementDelaySeconds: 5)
+        let verifier = NativeOpenSSHClient()
+        let identifier = UUID().uuidString.lowercased()
+        let remoteDirectory = "/tmp/chatos-ssh-uncertain-\(identifier)"
+        let remotePath = remoteDirectory + "/result.bin"
+        let localRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-ssh-uncertain-\(identifier)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: localRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: localRoot) }
+        let upload = localRoot.appendingPathComponent("result.bin")
+        try Data("committed-before-ack".utf8).write(to: upload)
+
+        try await client.prepareAuthenticatedConnection(draft: draft, verificationCode: "")
+        let setup = try await verifier.runCommand(
+            draft: draft,
+            command: "mkdir -- '\(remoteDirectory)'",
+            timeoutSeconds: 20,
+            maximumOutputCharacters: 4_096
+        )
+        XCTAssertEqual(setup.exitCode, 0, setup.stderr)
+        let uploadTask = Task {
+            try await client.uploadFile(
+                draft: draft,
+                localURL: upload,
+                remotePath: remotePath,
+                overwrite: true
+            )
+        }
+        var observedCommittedTarget = false
+        for _ in 0..<100 {
+            let observation = try await verifier.runCommand(
+                draft: draft,
+                command: "test -f '\(remotePath)'",
+                timeoutSeconds: 5,
+                maximumOutputCharacters: 4_096
+            )
+            if observation.exitCode == 0 {
+                observedCommittedTarget = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(observedCommittedTarget)
+        uploadTask.cancel()
+        do {
+            try await uploadTask.value
+            XCTFail("丢失提交确认的上传不能报告普通成功")
+        } catch let failure as RemoteFileMutationFailure {
+            XCTAssertTrue(
+                failure.requiresReconciliation,
+                "expected reconciliation-required failure, received \(failure)"
+            )
+        } catch {
+            XCTFail("应返回待对账结果，而不是 \(error)")
+        }
+        let verification = try await verifier.runCommand(
+            draft: draft,
+            command: "cat '\(remotePath)'",
+            timeoutSeconds: 20,
+            maximumOutputCharacters: 4_096
+        )
+        XCTAssertEqual(verification.exitCode, 0, verification.stderr)
+        XCTAssertEqual(verification.stdout, "committed-before-ack")
+        _ = try await verifier.runCommand(
+            draft: draft,
+            command: "rm -rf -- '\(remoteDirectory)'",
+            timeoutSeconds: 20,
+            maximumOutputCharacters: 4_096
+        )
+    }
+
+    func testExplicitSSHFixtureDisconnectAfterCommitRequiresReconciliation() async throws {
+        let draft = try Self.explicitSSHFixtureDraft()
+        let container = try Self.explicitSSHFixtureContainerName()
+        let client = NativeOpenSSHClient(remoteCommitAcknowledgementDelaySeconds: 30)
+        let verifier = NativeOpenSSHClient()
+        let identifier = UUID().uuidString.lowercased()
+        let remoteDirectory = "/tmp/chatos-ssh-disconnect-\(identifier)"
+        let remotePath = remoteDirectory + "/result.bin"
+        let localRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "chatos-ssh-disconnect-\(identifier)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: localRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: localRoot) }
+        let upload = localRoot.appendingPathComponent("result.bin")
+        try Data("committed-before-disconnect".utf8).write(to: upload)
+
+        try await client.prepareAuthenticatedConnection(draft: draft, verificationCode: "")
+        let setup = try await verifier.runCommand(
+            draft: draft,
+            command: "mkdir -- '\(remoteDirectory)'",
+            timeoutSeconds: 20,
+            maximumOutputCharacters: 4_096
+        )
+        XCTAssertEqual(setup.exitCode, 0, setup.stderr)
+        let uploadTask = Task {
+            try await client.uploadFile(
+                draft: draft,
+                localURL: upload,
+                remotePath: remotePath,
+                overwrite: true
+            )
+        }
+        var observedCommittedTarget = false
+        for _ in 0..<100 {
+            let observation = try await verifier.runCommand(
+                draft: draft,
+                command: "test -f '\(remotePath)'",
+                timeoutSeconds: 5,
+                maximumOutputCharacters: 4_096
+            )
+            if observation.exitCode == 0 {
+                observedCommittedTarget = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(observedCommittedTarget)
+
+        var fixtureWasStopped = false
+        defer {
+            if fixtureWasStopped {
+                _ = try? Self.runDockerFixtureCommand(["start", container])
+            }
+        }
+        try Self.runDockerFixtureCommand(["stop", "--time", "0", container])
+        fixtureWasStopped = true
+        do {
+            try await uploadTask.value
+            XCTFail("链路在提交确认前断开不能报告普通成功")
+        } catch let failure as RemoteFileMutationFailure {
+            XCTAssertTrue(
+                failure.requiresReconciliation,
+                "expected reconciliation-required failure, received \(failure)"
+            )
+        } catch {
+            XCTFail("应返回待对账结果，而不是 \(error)")
+        }
+
+        try Self.runDockerFixtureCommand(["start", container])
+        fixtureWasStopped = false
+        var verification: NativeRemoteCommandResult?
+        for _ in 0..<100 {
+            if let result = try? await verifier.runCommand(
+                draft: draft,
+                command: "cat '\(remotePath)'",
+                timeoutSeconds: 5,
+                maximumOutputCharacters: 4_096
+            ), result.exitCode == 0 {
+                verification = result
+                break
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let committed = try XCTUnwrap(verification)
+        XCTAssertEqual(committed.stdout, "committed-before-disconnect")
+        _ = try await verifier.runCommand(
+            draft: draft,
+            command: "rm -rf -- '\(remoteDirectory)'",
+            timeoutSeconds: 20,
+            maximumOutputCharacters: 4_096
+        )
+    }
+
     func testCoreTerminalPortWrapsNativeSession() async throws {
         let upstream = RemoteConnectionUpstreamStub()
         let tester = RemoteConnectionTesterSpy()
@@ -563,6 +1038,78 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         jumpCertificatePath: nil,
         jumpPassword: nil
     )
+
+    private static func explicitSSHFixtureDraft() throws -> RemoteConnectionDraft {
+        let environment = ProcessInfo.processInfo.environment
+        guard let host = environment["CHATOS_SSH_TEST_HOST"],
+              let portText = environment["CHATOS_SSH_TEST_PORT"],
+              let port = Int(portText),
+              let username = environment["CHATOS_SSH_TEST_USER"] else {
+            throw XCTSkip(
+                "Set CHATOS_SSH_TEST_HOST/PORT/USER and a password or key for an isolated SSH fixture"
+            )
+        }
+        var draft = passwordDraft
+        draft.host = host
+        draft.port = port
+        draft.username = username
+        if let privateKey = environment["CHATOS_SSH_TEST_PRIVATE_KEY"],
+           !privateKey.isEmpty {
+            draft.authenticationType = .privateKey
+            draft.password = nil
+            draft.privateKeyPath = privateKey
+        } else if let password = environment["CHATOS_SSH_TEST_PASSWORD"] {
+            draft.password = password
+        } else {
+            throw XCTSkip("Set CHATOS_SSH_TEST_PASSWORD or CHATOS_SSH_TEST_PRIVATE_KEY")
+        }
+        draft.defaultRemotePath = "/tmp"
+        return draft
+    }
+
+    private static func explicitSSHFixtureContainerName() throws -> String {
+        guard let name = ProcessInfo.processInfo.environment[
+            "CHATOS_SSH_TEST_DISCONNECT_CONTAINER"
+        ], !name.isEmpty else {
+            throw XCTSkip(
+                "Set CHATOS_SSH_TEST_DISCONNECT_CONTAINER to an isolated Docker SSH fixture"
+            )
+        }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_.-"))
+        guard name.unicodeScalars.allSatisfy(allowed.contains) else {
+            throw XCTSkip("SSH fixture container name contains unsupported characters")
+        }
+        return name
+    }
+
+    private static func processIsAlive(_ processID: Int32) -> Bool {
+        errno = 0
+        return Darwin.kill(processID, 0) == 0 || errno == EPERM
+    }
+
+    @discardableResult
+    private static func runDockerFixtureCommand(_ arguments: [String]) throws -> Int32 {
+        let process = Process()
+        let diagnostics = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["docker"] + arguments
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = diagnostics
+        process.standardError = diagnostics
+        try process.run()
+        process.waitUntilExit()
+        let output = diagnostics.fileHandleForReading.readDataToEndOfFile()
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "ChatOSSSHFixture",
+                code: Int(process.terminationStatus),
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(decoding: output, as: UTF8.self),
+                ]
+            )
+        }
+        return process.terminationStatus
+    }
 }
 
 private actor RemoteConnectionUpstreamStub: RemoteConnectionServicing {

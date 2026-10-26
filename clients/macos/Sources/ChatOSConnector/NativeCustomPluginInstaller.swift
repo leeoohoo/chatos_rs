@@ -169,10 +169,10 @@ extension NativePluginInstaller {
             guard manifest.schemaVersion == 3,
                   !manifest.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !manifest.version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !manifest.mcpServers.isEmpty || !manifest.skills.isEmpty,
+                  !manifest.mcpServers.isEmpty || !manifest.skills.isEmpty || !manifest.hooks.isEmpty,
                   manifest.mcpServers.values.allSatisfy({ $0.type == "stdio" }) else {
                 throw NativeConnectorError.pluginInstallation(
-                    "导入目录必须至少包含一个有效 Skill 或 stdio MCP"
+                    "导入目录必须至少包含一个有效 Skill、stdio MCP 或 Hook"
                 )
             }
             return try preparedCustomPlugin(
@@ -281,10 +281,10 @@ extension NativePluginInstaller {
             let imported = try NativeAgentPluginCompatibilityImporter.normalizePackage(at: packageRoot)
             let manifest = imported.manifest
             guard manifest.schemaVersion == 3,
-                  !manifest.mcpServers.isEmpty || !manifest.skills.isEmpty,
+                  !manifest.mcpServers.isEmpty || !manifest.skills.isEmpty || !manifest.hooks.isEmpty,
                   manifest.mcpServers.values.allSatisfy({ $0.type == "stdio" }) else {
                 throw NativeConnectorError.pluginInstallation(
-                    "该来源没有可安装的 Skill 或 stdio MCP"
+                    "该来源没有可安装的 Skill、stdio MCP 或 Hook"
                 )
             }
             let suffix = input.subdirectory.map { " · \($0)" } ?? ""

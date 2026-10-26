@@ -31,6 +31,7 @@ mod control_plane_runtime;
 mod conversation_query_tests;
 mod conversation_runtime;
 mod conversation_settings_runtime;
+mod hook_runtime;
 mod host_worker;
 mod message_task_graph;
 #[cfg(test)]
@@ -143,6 +144,27 @@ impl LocalAgentRuntime {
         Ok(self.store.next_retry_at(owner_user_id).await?)
     }
 
+    pub async fn ready_host_work_count(
+        &self,
+        owner_user_id: &str,
+        include_tool_names: Option<&[String]>,
+        exclude_tool_names: &[String],
+        tool_execution_route: Option<chatos_local_agent_protocol::LocalAgentToolExecutionRoute>,
+    ) -> Result<u64, LocalAgentRuntimeError> {
+        validate_identifier("owner_user_id", owner_user_id)
+            .map_err(LocalAgentRuntimeError::InvalidRequest)?;
+        Ok(self
+            .store
+            .ready_host_work_count(
+                owner_user_id,
+                self.now()?,
+                include_tool_names,
+                exclude_tool_names,
+                tool_execution_route,
+            )
+            .await?)
+    }
+
     pub async fn renew_run_claim(
         &self,
         owner_user_id: &str,
@@ -235,8 +257,12 @@ impl LocalAgentRuntime {
                     recovered_claims: self.recovered_claims.load(Ordering::Acquire),
                     max_frame_bytes: chatos_local_agent_protocol::LOCAL_AGENT_MAX_FRAME_BYTES,
                     max_message_bytes: chatos_local_agent_protocol::LOCAL_AGENT_MAX_MESSAGE_BYTES,
+                    scheduler: None,
                 })
             }
+            HostCommand::SetSchedulerPressure(_) => Err(LocalAgentRuntimeError::InvalidRequest(
+                "scheduler pressure is owned by the Host coordinator".to_string(),
+            )),
             HostCommand::GetMemorySyncStatus(command) => {
                 let status = self
                     .store
@@ -613,7 +639,10 @@ impl LocalAgentRuntime {
             command @ (HostCommand::PutPluginInstallation(_)
             | HostCommand::GetPluginInstallation(_)
             | HostCommand::ListPluginInstallations(_)
-            | HostCommand::RemovePluginInstallation(_)) => {
+            | HostCommand::RemovePluginInstallation(_)
+            | HostCommand::PutPluginHookBundle(_)
+            | HostCommand::ListPluginHookBundles(_)
+            | HostCommand::SetActivePluginHookBundles(_)) => {
                 self.handle_plugin_command(&idempotency, command).await
             }
             command @ (HostCommand::CreateConversation(_)
