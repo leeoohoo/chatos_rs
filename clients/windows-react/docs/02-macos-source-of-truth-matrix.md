@@ -1392,4 +1392,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 111. [部分完成] Local Agent Host 已新增真实 Windows AppContainer Hook coordinator 事件验证：在临时安装目录中通过 `.cmd` Hook 脚本触发 `UserPromptSubmit`，确认原生 runner 的 stdin/stdout、JSON 协议解析、可信上下文回传和 `gate_user_prompt` 放行；随后启用第二个 Bundle，确认 `continue=false` 的真实输出会阻断下一次 Prompt 并保留 `stopReason`。该测试只在 Windows 条件编译下运行，避免把 `cmd.exe` 转义差异误判为协议失败。Hook 事件执行与阻断/上下文回传已通过 Host 定向测试；最终 MSI/NSIS 安装包内的真实事件、安装后重启恢复和原生窗口逐态视觉取证仍未完成，因此本条继续保持部分完成。
 
+112. [已完成] Windows MSI 升级 smoke 已在当前 PowerShell 5 环境通过：使用旧版 `0.1.0` MSI 安装并启动，验证损坏升级拒绝（`1620`）、事务回滚（`1603`）与哨兵保留，再升级到 `3.0.9` 并验证运行中旧版进程可安全退出、升级后应用启动、降级保护和最终卸载清理。报告为 `%TEMP%\\chatos-windows-msi-upgrade-current-2.json`。期间修复 `smoke-msi-upgrade.ps1` 使用 PowerShell 7 专属 `utf8NoBOM` 导致 PowerShell 5 中止的问题。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

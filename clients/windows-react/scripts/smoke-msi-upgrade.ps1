@@ -584,7 +584,10 @@ try {
     $legacyApplicationHash = (Get-FileHash -LiteralPath $applicationPath -Algorithm SHA256).Hash
     $report.legacyApplicationExitCode = Invoke-ApplicationSmoke -ApplicationPath $applicationPath -UserDataRoot $userDataRoot -TimeoutSeconds $StartupTimeoutSeconds
     New-Item -ItemType Directory -Path (Split-Path -Parent $sentinelPath) -Force | Out-Null
-    Set-Content -LiteralPath $sentinelPath -Value $sentinelContent -Encoding utf8NoBOM
+    # Windows PowerShell 5 does not support the PowerShell 7-only utf8NoBOM
+    # encoding name. UTF8 is sufficient for this ASCII-only JSON sentinel and
+    # keeps the upgrade smoke runnable on the supported Windows shell.
+    Set-Content -LiteralPath $sentinelPath -Value $sentinelContent -Encoding UTF8
 
     $corruptedInstaller = Join-Path $installRoot "truncated-current.msi"
     New-TruncatedInstaller -Source $resolvedCurrent -Destination $corruptedInstaller
