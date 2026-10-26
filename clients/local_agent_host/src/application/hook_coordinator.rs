@@ -379,6 +379,48 @@ impl LocalHookCoordinator {
         Ok(None)
     }
 
+    pub(crate) async fn enqueue_interrupt(
+        self: &Arc<Self>,
+        run: &LocalAgentRunRecord,
+        reason: &str,
+    ) -> Result<(), String> {
+        let session_id = run
+            .input
+            .get("conversation_id")
+            .or_else(|| run.input.get("source_conversation_id"))
+            .and_then(Value::as_str)
+            .unwrap_or(&run.owner_entity_id);
+        let event = HookEvent::new_for_owner_with_sequence(
+            &run.owner_user_id,
+            "Interrupt",
+            &run.run_id,
+            run.version,
+            "",
+            json!({
+                "session_id": session_id,
+                "hook_event_name": "Interrupt",
+                "run_id": run.run_id,
+                "reason": reason,
+                "cwd": self.workspace_display(),
+            }),
+        )?;
+        let prepared = self
+            .runtime
+            .prepare_hook_event_for_host_worker(&event.spec)
+            .await
+            .map_err(|error| error.to_string())?;
+        if prepared.status == "completed" {
+            return Ok(());
+        }
+        let coordinator = Arc::clone(self);
+        tokio::spawn(async move {
+            // Interrupt is notification-only. Cancellation is already durable,
+            // and no Hook output may restore or otherwise mutate the Run.
+            let _ = coordinator.execute_event(event).await;
+        });
+        Ok(())
+    }
+
     async fn events_for_claim(&self, claim: &LocalAgentRunClaim) -> Result<Vec<HookEvent>, String> {
         let run = &claim.run;
         let mut events = Vec::new();
@@ -386,6 +428,22 @@ impl LocalHookCoordinator {
             let conversation_id = required_input_string(run, "conversation_id")?;
             let turn_id = required_input_string(run, "turn_id")?;
             let prompt = required_input_string(run, "message")?;
+            if let Some(marker) = latest_compaction_marker(run)? {
+                events.push(HookEvent::new_for_owner_with_sequence(
+                    &run.owner_user_id,
+                    "PostCompact",
+                    conversation_id,
+                    stable_sequence(&["post_compact", conversation_id, &marker]),
+                    "auto",
+                    json!({
+                        "session_id": conversation_id,
+                        "hook_event_name": "PostCompact",
+                        "trigger": "auto",
+                        "compact_marker": marker,
+                        "cwd": self.workspace_display(),
+                    }),
+                )?);
+            }
             let session = self.session_for(run, conversation_id).await?;
             events.push(HookEvent::new_for_owner_with_sequence(
                 &run.owner_user_id,
@@ -1350,11 +1408,11 @@ mod tests {
         IdempotentCommand, LocalAgentRunStore, LocalPluginHookBundleStore,
     };
     use chatos_local_agent_protocol::{
-        ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CreateConversationCommand,
-        CreateRunCommand, GetConversationHistoryCommand, HostCommand, HostRequestEnvelope,
-        HostResult, LocalAgentRunStatus, LocalAgentStepOutcome, LocalAgentToolApprovalStatus,
-        LocalAgentToolExecutionRoute, LocalAgentToolStatus, LocalPluginHookBundleSpec,
-        LOCAL_AGENT_PROTOCOL_VERSION,
+        CancelRunCommand, ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand,
+        CreateConversationCommand, CreateRunCommand, GetConversationHistoryCommand, HostCommand,
+        HostRequestEnvelope, HostResult, LocalAgentRunStatus, LocalAgentStepOutcome,
+        LocalAgentToolApprovalStatus, LocalAgentToolExecutionRoute, LocalAgentToolStatus,
+        LocalPluginHookBundleSpec, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
     use std::{
@@ -1832,7 +1890,10 @@ mod tests {
         activate_bundle(
             &storage,
             "bundle-1",
-            vec![hook("session", "SessionStart", "session context")],
+            vec![
+                hook("session", "SessionStart", "session context"),
+                hook("post-compact", "PostCompact", "compact context"),
+            ],
         )
         .await;
         let first = LocalHookCoordinator::new(runtime.clone(), runner.clone(), None).unwrap();
@@ -1859,11 +1920,26 @@ mod tests {
             .unwrap()
             .expect("compact marker");
         let compact_sequence = stable_sequence(&["compact", "conversation-1", &compact_marker]);
+        let post_compact_sequence =
+            stable_sequence(&["post_compact", "conversation-1", &compact_marker]);
+        let compact_events = resumed.events_for_claim(&compacted_claim).await.unwrap();
         assert_eq!(
-            resumed.events_for_claim(&compacted_claim).await.unwrap()[0]
+            compact_events
+                .iter()
+                .find(|event| event.event_type == "SessionStart")
+                .expect("compact SessionStart")
                 .spec
                 .sequence,
             compact_sequence
+        );
+        assert_eq!(
+            compact_events
+                .iter()
+                .find(|event| event.event_type == "PostCompact")
+                .expect("PostCompact")
+                .spec
+                .sequence,
+            post_compact_sequence
         );
         assert_eq!(
             runtime
@@ -1876,6 +1952,20 @@ mod tests {
                 .await
                 .unwrap()
                 .expect("compact event")
+                .status,
+            "completed"
+        );
+        assert_eq!(
+            runtime
+                .get_hook_event_for_host_worker(
+                    "user-1",
+                    "PostCompact",
+                    "conversation-1",
+                    post_compact_sequence,
+                )
+                .await
+                .unwrap()
+                .expect("PostCompact event")
                 .status,
             "completed"
         );
@@ -1915,6 +2005,21 @@ mod tests {
             runner.session_sources(),
             vec!["startup", "resume", "compact", "resume"]
         );
+        assert_eq!(
+            runner
+                .events()
+                .into_iter()
+                .filter(|event| event == "PostCompact")
+                .count(),
+            1
+        );
+        let compact_payload = runner
+            .payloads()
+            .into_iter()
+            .find(|payload| payload["hook_event_name"] == "PostCompact")
+            .expect("PostCompact payload");
+        assert_eq!(compact_payload["trigger"], "auto");
+        assert!(compact_payload.get("pre_compact").is_none());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2498,6 +2603,88 @@ mod tests {
 
         assert_eq!(gated, LocalAgentStepOutcome::Succeed { output });
         assert_eq!(runner.events(), vec!["Stop"]);
+    }
+
+    #[tokio::test]
+    async fn interrupt_is_enqueued_only_after_cancellation_and_cannot_restore_the_run() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-interrupt",
+            vec![hook("interrupt", "Interrupt", "block")],
+        )
+        .await;
+        runtime
+            .try_handle(envelope(
+                "create-interrupt-run",
+                HostCommand::CreateRun(CreateRunCommand {
+                    run_id: "run-interrupt".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation_turn".to_string(),
+                    owner_entity_id: "turn-interrupt".to_string(),
+                    profile_key: MAIN_CHAT_PROFILE_KEY.to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({
+                        "conversation_id": "conversation-interrupt",
+                        "turn_id": "turn-interrupt",
+                        "message": "work",
+                    }),
+                    max_iterations: 8,
+                }),
+            ))
+            .await
+            .expect("create interrupt run");
+        let hooks = Arc::new(
+            LocalHookCoordinator::new(runtime.clone(), runner.clone(), None).expect("hooks"),
+        );
+        let mut profiles = LocalAgentProfileRegistry::new();
+        profiles
+            .register(MAIN_CHAT_PROFILE_KEY, NeverModelProfile)
+            .expect("profile");
+        let scheduler =
+            LocalAgentScheduler::new(runtime.clone(), profiles, "user-1", "model-worker")
+                .expect("scheduler");
+        let host = LocalAgentHostCoordinator::new(runtime.clone(), "user-1", Some(scheduler), None)
+            .expect("host")
+            .with_hook_coordinator(hooks);
+
+        let response = host
+            .handle_request(envelope(
+                "cancel-interrupt-run",
+                HostCommand::CancelRun(CancelRunCommand {
+                    owner_user_id: "user-1".to_string(),
+                    run_id: "run-interrupt".to_string(),
+                    expected_version: Some(1),
+                    reason: "cancelled by user".to_string(),
+                }),
+            ))
+            .await;
+        let Some(HostResult::Run { run: cancelled }) = response.result.as_ref() else {
+            panic!("expected cancelled run: {response:?}")
+        };
+        assert_eq!(cancelled.status, LocalAgentRunStatus::Cancelled);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !runner.events().iter().any(|event| event == "Interrupt") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("Interrupt Hook completion");
+        let persisted = runtime
+            .get_run_for_host_worker("run-interrupt")
+            .await
+            .expect("get cancelled run")
+            .expect("cancelled run");
+        assert_eq!(persisted.status, LocalAgentRunStatus::Cancelled);
+        let interrupt = runner
+            .payloads()
+            .into_iter()
+            .find(|payload| payload["hook_event_name"] == "Interrupt")
+            .expect("Interrupt payload");
+        assert_eq!(interrupt["reason"], "cancelled by user");
     }
 
     #[test]

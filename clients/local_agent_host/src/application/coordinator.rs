@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     validate_identifier, HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope,
     HostResult, LocalAgentHostSchedulerSnapshot, LocalAgentResourcePressureLevel,
-    LocalAgentToolExecutionRoute, LocalAgentToolOutcome,
+    LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentToolExecutionRoute, LocalAgentToolOutcome,
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use futures::future::join_all;
@@ -693,12 +693,24 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
                 .wait_for_events(request.clone(), command.timeout_ms)
                 .await;
         }
+        let interrupt_reason = match &request.command {
+            HostCommand::CancelRun(command) => Some(command.reason.clone()),
+            HostCommand::CancelConversationTurn(command) => Some(command.reason.clone()),
+            _ => None,
+        };
         let wakes_scheduler = command_wakes_scheduler(&request.command);
         let activity_policy = command_activity_signal_policy(&request.command);
         self.route_external_tool_claim(&mut request);
         let response = self.runtime.handle(request).await;
         let response = self.apply_hook_preflight_to_external_claim(response).await;
         if response.ok {
+            if let (Some(reason), Some(hooks), Some(run)) = (
+                interrupt_reason.as_deref(),
+                self.hook_coordinator.as_ref(),
+                cancelled_run(&response),
+            ) {
+                let _ = hooks.enqueue_interrupt(run, reason).await;
+            }
             if wakes_scheduler {
                 self.wake();
             }
@@ -708,6 +720,15 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
         }
         response
     }
+}
+
+fn cancelled_run(response: &HostResponseEnvelope) -> Option<&LocalAgentRunRecord> {
+    let run = match response.result.as_ref()? {
+        HostResult::Run { run } => run,
+        HostResult::ConversationTurnUpdated { result } => &result.run,
+        _ => return None,
+    };
+    (run.status == LocalAgentRunStatus::Cancelled).then_some(run)
 }
 
 fn command_wakes_scheduler(command: &HostCommand) -> bool {
