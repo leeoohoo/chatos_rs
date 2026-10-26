@@ -349,6 +349,19 @@ async fn agent_catalog_hides_unresolvable_secret_or_argument_bindings() {
         .unwrap()
         .is_empty());
 
+    let mut unbound_manifest = CatalogFixture::valid_manifest();
+    unbound_manifest["mcpServers"]["server-1"]["env"] =
+        json!({"API_TOKEN": "${credential:primary-token}"});
+    fixture.write_manifest(unbound_manifest);
+    let mut unbound_record = fixture.record();
+    unbound_record.spec.args = vec!["mcp".into()];
+    assert!(manager
+        .list_agent_plugins(&catalog_client(&unbound_record), "owner-1")
+        .await
+        .unwrap()
+        .is_empty());
+
+    fixture.write_manifest(CatalogFixture::valid_manifest());
     let mut drifted_record = fixture.record();
     drifted_record.spec.args = vec!["different-mode".into()];
     assert!(manager

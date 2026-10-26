@@ -1054,6 +1054,7 @@ fn installation_specs(
             component_key,
             bin,
             args,
+            env,
             ..
         } = server
         else {
@@ -1076,7 +1077,11 @@ fn installation_specs(
             executable_path: executable.to_string_lossy().into_owned(),
             args: args.clone(),
             working_directory: Some(package.installation_root.to_string_lossy().into_owned()),
-            environment_secret_refs: BTreeMap::new(),
+            environment_secret_refs: environment_secret_references(
+                owner_user_id,
+                &source.catalog.id,
+                env,
+            )?,
             tool_prefix: None,
             allowed_tools: None,
             enabled,
@@ -1139,6 +1144,7 @@ fn local_installation_specs(
             component_key,
             bin,
             args,
+            env,
             ..
         } = server
         else {
@@ -1160,7 +1166,7 @@ fn local_installation_specs(
             executable_path: executable.to_string_lossy().into_owned(),
             args: args.clone(),
             working_directory: Some(package.installation_root.to_string_lossy().into_owned()),
-            environment_secret_refs: BTreeMap::new(),
+            environment_secret_refs: environment_secret_references(owner_user_id, plugin_id, env)?,
             tool_prefix: None,
             allowed_tools: None,
             enabled: true,
@@ -1896,6 +1902,39 @@ fn required_identifier(field: &str, value: String) -> Result<String, String> {
     Ok(value.to_owned())
 }
 
+fn environment_secret_references(
+    owner_user_id: &str,
+    plugin_id: &str,
+    environment: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, String> {
+    environment
+        .iter()
+        .map(|(variable, template)| {
+            let secret_name = template
+                .strip_prefix("${credential:")
+                .and_then(|value| value.strip_suffix('}'))
+                .filter(|value| {
+                    !value.is_empty()
+                        && value.len() <= 128
+                        && value.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
+                        })
+                })
+                .ok_or_else(|| "Plugin 凭据引用无效。".to_owned())?;
+            let mut digest = Sha256::new();
+            digest.update(owner_user_id.as_bytes());
+            digest.update([0]);
+            digest.update(plugin_id.as_bytes());
+            digest.update([0]);
+            digest.update(secret_name.as_bytes());
+            Ok((
+                variable.clone(),
+                format!("plugin-secret-{:x}", digest.finalize()),
+            ))
+        })
+        .collect()
+}
+
 fn validated_manual_selection_input(
     input: ManualPluginSelectionInput,
 ) -> Result<ManualPluginSelectionInput, String> {
@@ -2123,6 +2162,37 @@ mod tests {
                 assert!(metadata_is_reparse(&fs::symlink_metadata(&link).unwrap()));
             }
         }
+    }
+
+    #[test]
+    fn plugin_secret_references_are_opaque_owner_and_plugin_scoped() {
+        let environment = BTreeMap::from([
+            ("API_TOKEN".into(), "${credential:primary-token}".into()),
+            (
+                "SECONDARY_TOKEN".into(),
+                "${credential:primary-token}".into(),
+            ),
+        ]);
+        let first = environment_secret_references("owner-1", "plugin-1", &environment).unwrap();
+        let same = environment_secret_references("owner-1", "plugin-1", &environment).unwrap();
+        let other_owner =
+            environment_secret_references("owner-2", "plugin-1", &environment).unwrap();
+        let other_plugin =
+            environment_secret_references("owner-1", "plugin-2", &environment).unwrap();
+
+        assert_eq!(first, same);
+        assert_eq!(first["API_TOKEN"], first["SECONDARY_TOKEN"]);
+        assert_ne!(first["API_TOKEN"], other_owner["API_TOKEN"]);
+        assert_ne!(first["API_TOKEN"], other_plugin["API_TOKEN"]);
+        assert!(!first["API_TOKEN"].contains("owner-1"));
+        assert!(!first["API_TOKEN"].contains("plugin-1"));
+        assert!(!first["API_TOKEN"].contains("primary-token"));
+        assert!(environment_secret_references(
+            "owner-1",
+            "plugin-1",
+            &BTreeMap::from([("API_TOKEN".into(), "plaintext".into())]),
+        )
+        .is_err());
     }
 
     #[test]

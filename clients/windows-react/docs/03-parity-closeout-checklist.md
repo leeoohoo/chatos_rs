@@ -24,17 +24,18 @@ Windows 产品版本：`3.0.9`
 - [x] 常见 stdio MCP JSON 兼容导入已接入 source 指纹与原子安装链：支持 `mcp.json`、`.mcp.json`、Cursor、VS Code、Gemini、Claude Desktop、Cline 和 OpenCode 布局；只准入可冻结的 Node 或包内 Windows `.exe`、空环境变量和 stdio transport，转换只发生在隔离 staging，不修改用户源目录。`npx`/shell、远端 transport、明文 Secret 和越界命令均失败关闭。
 - [x] portable Agent Plugin、Codex Plugin、Claude Plugin、npm Agent Plugin 与独立 `SKILL.md` 已接入同一隔离 staging、内容指纹、原子安装和回滚链。根 Skill 会安全归入 `skills/<name>` 并携带 `scripts/references/assets`；纯 Skills 包使用完整性保护的 `skills-only` Host 记录，Agent runtime 不启动进程，只有 `capability_describe` 已披露的 Skill 才能激活并分页读取资源。
 - [x] Plugin 设置页已开放本机目录 typed 导入：React 只持有原生选择句柄与目录名，不接收绝对路径；预检显示清单、MCP/Skill 组件和内容指纹，确认安装时由原生端复验账号、页面、会话代次、选择租约及完全相同的指纹，再进入既有原子安装和回滚链。Git/npm 来源仍由安装助手处理。
+- [x] Plugin 凭据引用已按账号、Plugin 与清单声明生成不透明 Host 记录；清单 `${credential:...}` 不会以模板字面量进入进程环境，空引用或被篡改的记录也不会出现在 Agent 能力目录。Windows credential resolver 和用户配置入口完成前继续严格失败关闭。
 
 ## B. 本次交付前必须关闭
 
 - [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（133 个测试文件、498 项测试）。
-- [x] Windows Tauri Rust 全量测试、两项真实 sidecar 集成测试、一次公网 HTTPS Git 获取 smoke、一次公网 npm Registry 获取 smoke、一次公网 npm MCP 隔离预检与安装 smoke、一次兼容 MCP JSON 冻结 Node 预检与安装 smoke、Rustfmt 和 Clippy 全部通过（463 项常规测试 + 2 项真实 sidecar 测试 + 1 项 Git smoke + 1 项 npm Registry smoke + 1 项 npm MCP smoke + 1 项兼容 MCP JSON smoke）。
+- [x] Windows Tauri Rust 全量测试、两项真实 sidecar 集成测试、一次公网 HTTPS Git 获取 smoke、一次公网 npm Registry 获取 smoke、一次公网 npm MCP 隔离预检与安装 smoke、一次兼容 MCP JSON 冻结 Node 预检与安装 smoke、Rustfmt 和 Clippy 全部通过（464 项常规测试 + 2 项真实 sidecar 测试 + 1 项 Git smoke + 1 项 npm Registry smoke + 1 项 npm MCP smoke + 1 项兼容 MCP JSON smoke）。
 - [x] 重新生成版本为 `3.0.9` 的 Release EXE、MSI、NSIS，并记录 SHA-256：
-  - `chatos-windows-react.exe`：`3c9ffa00831a78b2b59388f4923c254bce3b3924d21e0a2296a94b708c3446cf`
+  - `chatos-windows-react.exe`：`430918c3a35ce0e0c1b35aba78ccdd66c414a639ed7d4559d5bddcc223cb7081`
   - `chatos_local_agent_host.exe`：`5f697fced2658ac59a3f9fb4ff5d167ac033545ed0f0c995363c754fcc0ebf66`
-  - `ChatOS_3.0.9_x64_en-US.msi`：`c6c520febc158274b9c9b1e380408ab5a042929bafae0f5ef7a30ee54287158a`
-  - `ChatOS_3.0.9_x64-setup.exe`：`feef215b29c061ea02d29423e035f36738030fa05fcfb19c0748dd598356d2bd`
-- [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、启动、正常退出、卸载和残留清理；本机目录 typed 导入构建产物连续两次通过 20 秒门限，成功报告为 `%TEMP%\chatos-windows-install-smoke-3.0.9-manual-folder-final-1.json` 和 `%TEMP%\chatos-windows-install-smoke-3.0.9-manual-folder-final-2.json`。
+  - `ChatOS_3.0.9_x64_en-US.msi`：`4105d96baa87fe7f5b69e4b973d4a04ffdf591202f68512f5e2a163fcfb6c25f`
+  - `ChatOS_3.0.9_x64-setup.exe`：`9c4813ba7396df8cee92a174c988ecac9830ff996ac68a5cfa75e2a842766695`
+- [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、启动、正常退出、卸载和残留清理；Plugin 凭据引用失败关闭构建产物连续两次通过 20 秒门限，成功报告为 `%TEMP%\chatos-windows-install-smoke-3.0.9-plugin-secret-refs-1.json` 和 `%TEMP%\chatos-windows-install-smoke-3.0.9-plugin-secret-refs-2.json`。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [ ] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息。代码默认状态与自动回归均为 workspace/首个消息资源，但原生窗口视觉取证仍受下一项工具故障阻塞。
 - [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。

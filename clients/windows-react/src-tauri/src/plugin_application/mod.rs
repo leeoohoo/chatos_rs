@@ -115,7 +115,8 @@ impl PluginApplicationManager {
             return Err(plugin_unavailable());
         }
         let server = manifest.mcp_servers.get(&expected.component_key);
-        if server.is_some_and(|server| record.spec.args != server.args)
+        if server.is_some_and(|server| !server.env.is_empty())
+            || server.is_some_and(|server| record.spec.args != server.args)
             || (server.is_none()
                 && (expected.component_key != SKILLS_ONLY_COMPONENT_KEY
                     || !record.spec.args.is_empty()))
@@ -201,7 +202,8 @@ impl PluginApplicationManager {
                 continue;
             };
             let server = manifest.mcp_servers.get(&option.component_key);
-            if server.is_some_and(|server| record.spec.args != server.args)
+            if server.is_some_and(|server| !server.env.is_empty())
+                || server.is_some_and(|server| record.spec.args != server.args)
                 || (server.is_none()
                     && (option.component_key != SKILLS_ONLY_COMPONENT_KEY
                         || !record.spec.args.is_empty()))
