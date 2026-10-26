@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunInspectorGraph } from "./runInspector";
-import { graphHasActiveTasks } from "./runInspector";
+import { graphHasActiveTasks, primaryTaskDisplayStatus } from "./runInspector";
 
 function graph(displayStatus: RunInspectorGraph["nodes"][number]["display_status"]): RunInspectorGraph {
   return {
@@ -39,5 +39,15 @@ describe("run inspector task activity", () => {
     expect(graphHasActiveTasks(graph("reviewing_followup"))).toBe(true);
     expect(graphHasActiveTasks(graph("waiting_confirmation"))).toBe(true);
     expect(graphHasActiveTasks(graph("succeeded"))).toBe(false);
+  });
+
+  it("prioritizes a confirmation gate over stale running activity", () => {
+    const value = graph("running");
+    value.nodes.push({
+      ...value.nodes[0]!,
+      task: { ...value.nodes[0]!.task, task_id: "task-2" },
+      display_status: "waiting_confirmation",
+    });
+    expect(primaryTaskDisplayStatus(value)).toBe("waiting_confirmation");
   });
 });

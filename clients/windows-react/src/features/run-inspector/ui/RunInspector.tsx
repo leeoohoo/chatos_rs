@@ -3,6 +3,7 @@ import { useRunInspectorStore } from "../application/runInspectorStore";
 import {
   graphHasActiveTasks,
   isTaskAttentionStatus,
+  primaryTaskDisplayStatus,
   type RunInspectorSection,
 } from "../domain/runInspector";
 import type { RunInspectorLookup, RunInspectorPort } from "../ports/RunInspectorPort";
@@ -35,16 +36,29 @@ export function RunInspectorLauncher({
 
   useEffect(() => {
     void probe(port, lookup);
-  }, [lookup, port, probe]);
+  }, [lookup.conversationId, lookup.ownerUserId, lookup.turnId, lookup.userMessageId, port, probe]);
+
+  const pollingKey = phase?.kind === "available" && graphHasActiveTasks(phase.graph)
+    ? phase.graph.nodes.map(({ task, display_status: status }) => `${task.task_id}:${status}`).join("|")
+    : null;
+  useEffect(() => {
+    if (!pollingKey) return;
+    const timer = window.setInterval(() => {
+      void probe(port, lookup, true);
+    }, POLL_INTERVAL_MILLISECONDS);
+    return () => window.clearInterval(timer);
+  }, [lookup.conversationId, lookup.ownerUserId, lookup.turnId, lookup.userMessageId, pollingKey, port, probe]);
 
   if (phase?.kind !== "available") return null;
+  const displayStatus = primaryTaskDisplayStatus(phase.graph);
   return (
     <button
-      className="run-inspector-launcher"
+      className={`run-inspector-launcher ${displayStatus && isTaskAttentionStatus(displayStatus) ? "run-inspector-launcher--attention" : ""}`}
       onClick={() => void open(port, lookup)}
       type="button"
     >
       <span aria-hidden="true">⌁</span>
+      {displayStatus ? <strong>任务 · {statusLabel(displayStatus)}</strong> : null}
       运行详情
     </button>
   );

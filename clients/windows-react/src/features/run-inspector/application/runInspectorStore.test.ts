@@ -142,6 +142,23 @@ describe("run inspector store", () => {
     expect(openPhase().selectedTaskId).toBe("task-1");
   });
 
+  it("refreshes an existing timeline probe without hiding its stable graph", async () => {
+    let graphCalls = 0;
+    const port = stubPort({
+      loadGraph: async () => {
+        graphCalls += 1;
+        return graphCalls === 1 ? graph : null;
+      },
+    });
+    await useRunInspectorStore.getState().probe(port, lookup);
+    await useRunInspectorStore.getState().probe(port, lookup, true);
+    expect(graphCalls).toBe(2);
+    expect(useRunInspectorStore.getState().probes[lookup.userMessageId]).toEqual({
+      kind: "available",
+      graph,
+    });
+  });
+
   it("rejects a late task response after the inspector closes", async () => {
     let resolveTask!: (value: TaskInspectorDetail) => void;
     const deferred = new Promise<TaskInspectorDetail>((resolve) => { resolveTask = resolve; });

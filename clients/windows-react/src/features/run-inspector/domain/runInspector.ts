@@ -99,6 +99,24 @@ export function graphHasActiveTasks(graph: RunInspectorGraph) {
   ].includes(normalizedTaskStatus(status)));
 }
 
+const taskTimelinePriority = [
+  "waiting_confirmation",
+  "reviewing_followup",
+  "blocked",
+  "failed",
+  "running",
+  "queued",
+  "ready",
+  "pending",
+  "succeeded",
+  "cancelled",
+] as const;
+
+export function primaryTaskDisplayStatus(graph: RunInspectorGraph) {
+  const statuses = new Set(graph.nodes.map(({ display_status: status }) => normalizedTaskStatus(status)));
+  return taskTimelinePriority.find((status) => statuses.has(status)) ?? null;
+}
+
 export function normalizedTaskStatus(status: string) {
   return status.trim().toLowerCase();
 }

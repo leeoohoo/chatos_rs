@@ -1378,4 +1378,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 104. [部分完成] Windows 已按 macOS `MessageTaskRunActivityPresentation` 与任务详情优先级修正任务审查投影：原生 Task Graph DTO 在保留 Host 原始 `pending/running` 状态的同时，为每个节点独立发布由 `followup_review_state` 推导的 `reviewing_followup` 或 `waiting_confirmation`，React 不再自行猜测。Task Graph 节点、详情标题与 Run Inspector 轮询统一消费展示状态；追加要求正在审查或等待确认时，新的任务级暂停门禁会以注意色覆盖旧 Run 活动，继续轮询状态变化，并隐藏上一轮可能仍存在的模型输出与结果摘要，明确说明后续执行已暂停。React 全量 136 个测试文件、506 项测试，Tauri 全量 515 项发现、509 项通过、6 项 ignored，类型检查、生产构建、Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 与 NSIS 隔离原生启动 smoke 均通过。对话 Timeline 内联活动、宠物活动摘要和原生窗口逐态视觉取证仍未完成，不能据此声称任务审查体验已完全与 macOS 一致。
 
+105. [部分完成] Windows 对话 Timeline 已补齐任务级状态摘要：每条拥有 Task Graph 的用户消息在“运行详情”入口旁展示最高优先级状态胶囊，`waiting_confirmation` 和 `reviewing_followup` 优先覆盖陈旧的 `running/pending` 并使用注意色。检查器未打开时，只要图中仍有活动任务就每 1.5 秒刷新；每条消息使用独立 probe request identity，迟到响应不能覆盖新状态，刷新期间继续保留最后可信图，临时空结果或请求错误不会让入口闪退。稳定身份依赖避免 React 对象重建触发重复 probe。React 全量 137 个测试文件、509 项测试，类型检查、生产构建、架构/Bundle 审计、Release EXE/MSI/NSIS 与 `%TEMP%\chatos-windows-task-timeline-final-nsis.json` 安装版隔离原生启动 smoke 均通过。Task Graph、Run Inspector 与 Timeline 状态胶囊已完成；宠物活动摘要和原生窗口逐态视觉取证仍未完成，不能据此声称任务审查体验已完全与 macOS 一致。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

@@ -808,6 +808,8 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .attachment-preview__message--error { color: #ff3b30; }
 .run-inspector-launcher { display: flex; align-items: center; gap: 5px; border: 0; padding: 2px 4px; color: var(--secondary); background: transparent; font-size: 10px; font-weight: 600; cursor: pointer; }
 .run-inspector-launcher:hover { color: var(--accent); }
+.run-inspector-launcher strong { border-radius: 999px; padding: 2px 7px; color: #3a3a3c; background: rgba(120,120,128,.10); font-size: 10px; font-weight: 650; }
+.run-inspector-launcher--attention strong { color: #a65300; background: rgba(255,149,0,.12); }
 .inspector-backdrop { position: fixed; z-index: 50; inset: 46px 0 0; display: grid; place-items: center; padding: 28px; background: rgba(20,20,24,.22); backdrop-filter: blur(8px); }
 .run-inspector { display: grid; grid-template-rows: auto minmax(0,1fr); width: min(1040px, 94vw); height: min(720px, 86vh); overflow: hidden; border: 1px solid rgba(255,255,255,.84); border-radius: 20px; background: var(--surface-solid); box-shadow: 0 34px 90px rgba(0,0,0,.28); }
 .run-inspector__header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--separator); padding: 17px 20px; background: var(--surface); }
