@@ -1217,14 +1217,18 @@ mod tests {
     use super::*;
     #[cfg(target_os = "macos")]
     use crate::infrastructure::MacOsSeatbeltHookRunner;
-    use crate::{HostRequestHandler, LocalAgentHostCoordinator, LocalAgentScheduler};
+    use crate::{
+        HostRequestHandler, LocalAgentHostCoordinator, LocalAgentScheduler, LocalToolExecutor,
+        LocalToolRegistry, LocalToolScheduler, ToolSchedulerTick,
+    };
     use chatos_agent_profiles::MAIN_CHAT_PROFILE_KEY;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_ports::{
         IdempotentCommand, LocalAgentRunStore, LocalPluginHookBundleStore,
     };
     use chatos_local_agent_protocol::{
-        CreateConversationCommand, GetConversationHistoryCommand, HostCommand, HostRequestEnvelope,
+        ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CreateConversationCommand,
+        CreateRunCommand, GetConversationHistoryCommand, HostCommand, HostRequestEnvelope,
         HostResult, LocalAgentRunStatus, LocalAgentStepOutcome, LocalAgentToolApprovalStatus,
         LocalAgentToolExecutionRoute, LocalAgentToolStatus, LocalPluginHookBundleSpec,
         LOCAL_AGENT_PROTOCOL_VERSION,
@@ -1241,12 +1245,30 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeHookRunner {
         calls: Arc<Mutex<Vec<String>>>,
+        payloads: Arc<Mutex<Vec<Value>>>,
         session_sources: Arc<Mutex<Vec<String>>>,
         active: Arc<AtomicUsize>,
         maximum_active: Arc<AtomicUsize>,
     }
 
     struct NeverModelProfile;
+
+    struct CountingToolExecutor {
+        executions: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl LocalToolExecutor for CountingToolExecutor {
+        async fn execute_tool(
+            &self,
+            _invocation: &LocalAgentToolInvocationRecord,
+        ) -> Result<LocalAgentToolOutcome, String> {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            Ok(LocalAgentToolOutcome::Succeeded {
+                output: json!({"executed": true}),
+            })
+        }
+    }
 
     #[async_trait]
     impl LocalAgentProfile for NeverModelProfile {
@@ -1267,6 +1289,10 @@ mod tests {
             self.calls.lock().expect("calls").clone()
         }
 
+        fn payloads(&self) -> Vec<Value> {
+            self.payloads.lock().expect("payloads").clone()
+        }
+
         fn session_sources(&self) -> Vec<String> {
             self.session_sources.lock().expect("sources").clone()
         }
@@ -1284,6 +1310,10 @@ mod tests {
                 .expect("event")
                 .to_string();
             self.calls.lock().expect("calls").push(event.clone());
+            self.payloads
+                .lock()
+                .expect("payloads")
+                .push(payload.clone());
             if event == "SessionStart" {
                 self.session_sources
                     .lock()
@@ -1510,6 +1540,18 @@ mod tests {
         ]
     }
 
+    fn tool_definition(name: &str) -> Value {
+        json!({
+            "type": "function",
+            "name": name,
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            }
+        })
+    }
+
     fn run(run_id: &str) -> LocalAgentRunRecord {
         LocalAgentRunRecord {
             run_id: run_id.to_string(),
@@ -1548,6 +1590,47 @@ mod tests {
             claim_token: "token-1".to_string(),
             run,
         }
+    }
+
+    async fn create_claimed_run(runtime: &LocalAgentRuntime, run_id: &str) -> LocalAgentRunClaim {
+        runtime
+            .try_handle(envelope(
+                &format!("create-{run_id}"),
+                HostCommand::CreateRun(CreateRunCommand {
+                    run_id: run_id.to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation_turn".to_string(),
+                    owner_entity_id: format!("turn-{run_id}"),
+                    profile_key: MAIN_CHAT_PROFILE_KEY.to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({
+                        "conversation_id": "conversation-1",
+                        "turn_id": format!("turn-{run_id}"),
+                        "message": "hello",
+                    }),
+                    max_iterations: 8,
+                }),
+            ))
+            .await
+            .expect("create run");
+        let result = runtime
+            .try_handle(envelope(
+                &format!("claim-{run_id}"),
+                HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".to_string(),
+                    worker_id: "model-worker".to_string(),
+                    lease_duration_ms: 10_000,
+                }),
+            ))
+            .await
+            .expect("claim run");
+        let HostResult::Claim { claim: Some(claim) } = result else {
+            panic!("expected run claim: {result:?}")
+        };
+        assert_eq!(claim.run.run_id, run_id);
+        claim
     }
 
     #[tokio::test]
@@ -1829,6 +1912,231 @@ mod tests {
 
         assert!(error.contains("schema validation failed"), "{error}");
         assert!(error.contains("read_file"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn denied_builtin_tool_never_reaches_its_executor() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-builtin-deny",
+            vec![matched_hook(
+                "deny-builtin",
+                "PreToolUse",
+                "^dangerous$",
+                "deny-tool",
+            )],
+        )
+        .await;
+        let hooks = Arc::new(LocalHookCoordinator::new(runtime.clone(), runner, None).unwrap());
+        let run_claim = create_claimed_run(&runtime, "run-builtin-deny").await;
+        let gated = hooks
+            .gate_tool_outcome(
+                &run_claim,
+                LocalAgentStepOutcome::WaitForTool {
+                    batch_id: "batch-builtin-deny".to_string(),
+                    tool_calls: vec![LocalAgentToolCall {
+                        call_id: "call-builtin-deny".to_string(),
+                        tool_name: "dangerous".to_string(),
+                        arguments: json!({}),
+                        side_effecting: true,
+                        requires_approval: false,
+                    }],
+                    checkpoint: json!({"response_id": "response-builtin-deny"}),
+                },
+                &[tool_definition("dangerous")],
+            )
+            .await
+            .expect("gate tool");
+        runtime
+            .try_handle(envelope(
+                "commit-builtin-deny",
+                HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".to_string(),
+                    run_id: run_claim.run.run_id,
+                    claim_token: run_claim.claim_token,
+                    expected_version: run_claim.run.version,
+                    outcome: gated,
+                }),
+            ))
+            .await
+            .expect("persist gated tool");
+        let executions = Arc::new(AtomicUsize::new(0));
+        let mut tools = LocalToolRegistry::new();
+        tools
+            .register(
+                "dangerous",
+                CountingToolExecutor {
+                    executions: Arc::clone(&executions),
+                },
+            )
+            .expect("register tool");
+        let scheduler = LocalToolScheduler::new(runtime, tools, "user-1", "tool-worker")
+            .expect("scheduler")
+            .with_hook_coordinator(hooks);
+
+        let ToolSchedulerTick::Committed(result) =
+            scheduler.run_once().await.expect("denial commit")
+        else {
+            panic!("expected committed denial")
+        };
+
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+        assert_eq!(result.invocation.status, LocalAgentToolStatus::Failed);
+        assert!(result
+            .invocation
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("Hook denied")));
+    }
+
+    #[tokio::test]
+    async fn denied_external_mcp_claim_carries_preflight_failure_to_native_worker() {
+        let (storage, runtime, runner) = fixture().await;
+        let tool_name = "external_mcp__search__query";
+        activate_bundle(
+            &storage,
+            "bundle-mcp-deny",
+            vec![matched_hook(
+                "deny-mcp",
+                "PreToolUse",
+                "^external_mcp__search__query$",
+                "deny-tool",
+            )],
+        )
+        .await;
+        let hooks = Arc::new(LocalHookCoordinator::new(runtime.clone(), runner, None).unwrap());
+        let run_claim = create_claimed_run(&runtime, "run-mcp-deny").await;
+        let gated = hooks
+            .gate_tool_outcome(
+                &run_claim,
+                LocalAgentStepOutcome::WaitForTool {
+                    batch_id: "batch-mcp-deny".to_string(),
+                    tool_calls: vec![LocalAgentToolCall {
+                        call_id: "call-mcp-deny".to_string(),
+                        tool_name: tool_name.to_string(),
+                        arguments: json!({}),
+                        side_effecting: true,
+                        requires_approval: false,
+                    }],
+                    checkpoint: json!({"response_id": "response-mcp-deny"}),
+                },
+                &[tool_definition(tool_name)],
+            )
+            .await
+            .expect("gate MCP tool");
+        runtime
+            .try_handle(envelope(
+                "commit-mcp-deny",
+                HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".to_string(),
+                    run_id: run_claim.run.run_id,
+                    claim_token: run_claim.claim_token,
+                    expected_version: run_claim.run.version,
+                    outcome: gated,
+                }),
+            ))
+            .await
+            .expect("persist gated MCP tool");
+        let mut profiles = LocalAgentProfileRegistry::new();
+        profiles
+            .register(MAIN_CHAT_PROFILE_KEY, NeverModelProfile)
+            .expect("profile");
+        let model_scheduler =
+            LocalAgentScheduler::new(runtime.clone(), profiles, "user-1", "model-worker")
+                .expect("model scheduler");
+        let host = LocalAgentHostCoordinator::new(runtime, "user-1", Some(model_scheduler), None)
+            .expect("host")
+            .with_hook_coordinator(hooks);
+
+        let response = host
+            .handle_request(envelope(
+                "claim-mcp-deny",
+                HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                    owner_user_id: "user-1".to_string(),
+                    worker_id: "native-worker".to_string(),
+                    lease_duration_ms: 10_000,
+                    include_tool_names: None,
+                    exclude_tool_names: Vec::new(),
+                    execution_route: None,
+                }),
+            ))
+            .await;
+        let Some(HostResult::ToolClaim { claim: Some(claim) }) = response.result else {
+            panic!("expected external MCP claim: {response:?}")
+        };
+
+        assert_eq!(
+            claim.invocation.execution_route,
+            LocalAgentToolExecutionRoute::Platform
+        );
+        let Some(LocalAgentToolOutcome::Failed { error, .. }) = claim.preflight_outcome else {
+            panic!("native worker must receive the persisted Hook denial")
+        };
+        assert!(error.contains("Hook denied"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn post_tool_use_preserves_tool_failure_and_user_rejection_contracts() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-post-failures",
+            vec![matched_hook(
+                "post-failures",
+                "PostToolUse",
+                "^(read_file|write_file)$",
+                "post failure context",
+            )],
+        )
+        .await;
+        let coordinator = LocalHookCoordinator::new(runtime, runner.clone(), None).unwrap();
+        let mut continued = run("run-post-failures");
+        continued.continuation_input = Some(json!({
+            "type": "tool_results",
+            "batch_id": "batch-failures",
+            "invocations": [
+                {
+                    "invocation_id": "invocation-tool-failed",
+                    "call_id": "call-tool-failed",
+                    "tool_name": "read_file",
+                    "arguments": {"path": "missing.txt"},
+                    "status": "failed",
+                    "error": "file not found"
+                },
+                {
+                    "invocation_id": "invocation-user-rejected",
+                    "call_id": "call-user-rejected",
+                    "tool_name": "write_file",
+                    "arguments": {"path": "output.txt"},
+                    "status": "failed",
+                    "error": "tool approval rejected by user",
+                    "approval_status": "rejected"
+                }
+            ]
+        }));
+        let original = continued.continuation_input.clone();
+
+        let context = coordinator
+            .prefixed_context(&claim(continued.clone()))
+            .await
+            .expect("post failure context");
+
+        let payloads = runner
+            .payloads()
+            .into_iter()
+            .filter(|payload| payload["hook_event_name"] == "PostToolUse")
+            .collect::<Vec<_>>();
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0]["tool_response"]["status"], "failed");
+        assert_eq!(payloads[0]["tool_response"]["error"], "file not found");
+        assert_eq!(payloads[1]["tool_response"]["status"], "failed");
+        assert_eq!(
+            payloads[1]["tool_response"]["error"],
+            "tool approval rejected by user"
+        );
+        assert!(combined_context(&context).contains("post failure context"));
+        assert_eq!(continued.continuation_input, original);
     }
 
     #[test]
