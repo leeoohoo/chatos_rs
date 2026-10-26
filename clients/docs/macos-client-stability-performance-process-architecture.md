@@ -2,7 +2,7 @@
 
 更新时间：2026-10-26
 
-状态：核心架构改造实施中；阶段记录见 12.1—12.113，完整 Release 验收待完成
+状态：核心架构改造实施中；阶段记录见 12.1—12.114a，完整 Release 验收待完成
 
 适用范围：`clients/macos`、`clients/local_agent_host` 以及 macOS 客户端启动的 Plugin/Companion 进程
 
@@ -2504,13 +2504,28 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批冻结所有权并统一观测语义，不改变任何现有并发额度，也不把 Snapshot 冒充统一准入。Host 尚未通过 IPC 报告实际 active/queued，Plugin Registry 与数据库 maintenance lease 尚未接入实时计数；这三项保持 `configuredLimitOnly`/`unavailable`，必须在 12.114 按各自所有权域补齐。当前策略仍是启动时静态额度，动态 memory/thermal/power 调额属于 12.115。
 
-### 12.114—12.120 剩余完整交付路径
+### 12.114a 第四十三完整里程碑：手动恢复路径 claim 前准入（2026-10-26）
+
+12.113 的所有权审计发现 Swift Agent 存在两条生产绕过：正常 communication/account/recovery drain 都会在 `claimNextDelivery` 前取得 `LocalAgentExecutionGovernor` permit，但用户直接“继续”调用的 `resumeDelivery`，以及人工核实未知副作用后调用的 `retryInterruptedDelivery`，会直接取得 in-process Delivery ownership 并启动独立 Agent Worker。它们既能突破自适应 Agent 并发上限，重试路径还会在容量未知时先清除 `inFlightCallID`、重新激活 Todo 并持久化“继续执行”状态。
+
+已实施：
+
+- 两条手动入口统一以 interactive 优先级取得现有 Agent Governor permit；permit 位于 active Delivery registry、Store 读取、Todo/Run 修改和 Worker 启动之前。
+- Governor 排队取消会释放自己的 waiter；队列满返回明确错误，不领取本地 Delivery ownership，也不修改 durable 状态。
+- ownership 冲突、执行成功、执行失败和取消路径均成对释放 permit；`resumeRegisteredDelivery` 保持不重复取 permit，使已经在 Governor 内的后台 recovery 与 Human retry 不发生嵌套 permit 死锁。
+- 不修改同 Agent/room/lane 因果规则；容量可用后，每次恢复仍启动自己的 `ChatOSAgentWorker` PID，不合并不同会话任务。
+
+验证：Debug 与原生 arm64 Release 各运行直接恢复/人工重试 2 项及 Agent 预算/Governor 9 项，共 11 项，0 跳过、0 失败。关键回归把 Agent 上限固定为 1 并占满唯一槽：直接恢复排队时原 Run 保持 `running + inFlightCallID`，人工重试排队时保持 `needsReview + inFlightCallID`；只有释放容量后才改变持久状态并完成执行。既有“Human retry 活跃时 recovery 不重入”回归同步通过。
+
+边界：本批关闭 Swift Agent 内部绕过，是 12.114 的第一部分，不宣称 Host、Agent、Media、Code Read 已能动态借用同一机器额度。Host 仍靠固定 worker 数在 claim 前限流，App 只能看到配置上限；跨所有权域的加权准入和 Host 实际 in-flight 观测仍属 12.114b。Large Transfer、进程内重媒体和 Plugin 仍禁止在已有 durable 身份外机械增加 permit。
+
+### 12.114b—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
 | --- | --- | --- |
-| 12.114 claim 前统一准入 | Agent 和可安全接入的 Helper 在领取持久任务前取得加权额度；Host 通过明确协议报告/约束实际 in-flight，不能靠 App 猜测 | 跨会话长短任务、Agent + Media + Code Read 组合测试通过；等待额度的任务不持有 delivery lease；取消只移除所属 waiter |
+| 12.114b claim 前统一准入 | Agent 和可安全接入的 Helper 在领取持久任务前取得加权额度；Host 通过明确协议报告/约束实际 in-flight，不能靠 App 猜测 | 跨会话长短任务、Agent + Media + Code Read 组合测试通过；等待额度的任务不持有 delivery lease；取消只移除所属 waiter |
 | 12.115 动态压力调额 | 接入 memory pressure、thermal state、低电量和电源模式；压力升高只阻止新 claim，不强杀已提交副作用的任务，并用迟滞恢复 | 压力注入测试验证降额、恢复、防抖和最小保留槽；交互任务不被后台恢复无限饿死 |
 | 12.116 文件生命周期收口 | 安全回收 workspace `.import-*`、UI exporter 临时文件和 registry 失败遗留空目录；补最终打开点 device/inode 再校验 | ownership、命名、年龄、锁/活跃 Worker、symlink、hardlink、跨账户和取消/SIGKILL 回归全部通过；不递归清理任意用户目录 |
 | 12.117 Agent/存储强杀矩阵 | 覆盖凭据交付、provider 网络、工具副作用、checkpoint、SQLite COMMIT/VACUUM 等不确定窗口 | 每个停点只有“安全重试、明确失败、待对账”三类结果；无重复副作用、跨账户写入或静默丢失；连续崩溃有隔离熔断 |

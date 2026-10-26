@@ -85,13 +85,33 @@ extension LocalAgentGroupChatSchedulerTests {
         let scheduler = LocalAgentGroupChatScheduler(
             service: nativeService,
             services: SchedulerTestServices(),
-            settings: .init(suiteName: settingsSuite)
+            settings: .init(suiteName: settingsSuite),
+            maximumConcurrentExecutions: 1
         )
-        let result = try await scheduler.resumeDelivery(
+        let blockerValue = await scheduler.executionGovernor.acquire(priority: .background)
+        let blocker = try XCTUnwrap(blockerValue)
+        let resumeTask = Task {
+            try await scheduler.resumeDelivery(
+                ownerUserID: "alice",
+                projectID: room.projectID,
+                deliveryID: pending.id
+            )
+        }
+        for _ in 0..<200 {
+            if await scheduler.executionGovernorSnapshot().queuedCount == 1 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let queuedSnapshot = await scheduler.executionGovernorSnapshot()
+        XCTAssertEqual(queuedSnapshot.queuedCount, 1)
+        let stillUnmodified = try await store.run(
             ownerUserID: "alice",
-            projectID: room.projectID,
-            deliveryID: pending.id
+            deliveryID: delivery.id
         )
+        XCTAssertEqual(stillUnmodified?.checkpoint.status, .running)
+        XCTAssertEqual(stillUnmodified?.checkpoint.inFlightCallID, call.id)
+
+        await blocker.releaseAndWait()
+        let result = try await resumeTask.value
         XCTAssertEqual(result.outcome, .suspended)
         let loadedReviewed = try await store.run(
             ownerUserID: "alice",
@@ -114,11 +134,30 @@ extension LocalAgentGroupChatSchedulerTests {
         )
         XCTAssertEqual(listedRuns.map(\.id), [runID])
 
-        let retried = try await scheduler.retryInterruptedDelivery(
+        let retryBlockerValue = await scheduler.executionGovernor.acquire(priority: .background)
+        let retryBlocker = try XCTUnwrap(retryBlockerValue)
+        let retryTask = Task {
+            try await scheduler.retryInterruptedDelivery(
+                ownerUserID: "alice",
+                projectID: room.projectID,
+                deliveryID: delivery.id
+            )
+        }
+        for _ in 0..<200 {
+            if await scheduler.executionGovernorSnapshot().queuedCount == 1 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let queuedRetrySnapshot = await scheduler.executionGovernorSnapshot()
+        XCTAssertEqual(queuedRetrySnapshot.queuedCount, 1)
+        let stillNeedsReview = try await store.run(
             ownerUserID: "alice",
-            projectID: room.projectID,
             deliveryID: delivery.id
         )
+        XCTAssertEqual(stillNeedsReview?.checkpoint.status, .needsReview)
+        XCTAssertEqual(stillNeedsReview?.checkpoint.inFlightCallID, call.id)
+
+        await retryBlocker.releaseAndWait()
+        let retried = try await retryTask.value
         XCTAssertEqual(retried.outcome, .completed)
         let completedDelivery = try await store.delivery(
             ownerUserID: "alice",

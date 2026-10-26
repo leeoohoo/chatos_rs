@@ -463,4 +463,18 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         await executionGovernor.snapshot()
     }
 
+    func acquireExecutionPermit(
+        priority: LocalAgentExecutionPriority
+    ) async throws -> LocalAgentExecutionPermit {
+        if let permit = await executionGovernor.acquire(priority: priority) {
+            if Task.isCancelled {
+                await permit.releaseAndWait()
+                throw CancellationError()
+            }
+            return permit
+        }
+        if Task.isCancelled { throw CancellationError() }
+        throw AgentGroupChatError.storage("Agent execution admission queue is full")
+    }
+
 }

@@ -35,7 +35,12 @@ extension LocalAgentGroupChatScheduler {
         projectID: String,
         deliveryID: String
     ) async throws -> DeliveryAttemptReceipt {
+        // Manual recovery is an interactive execution lane. Capacity must be acquired before
+        // in-process ownership or any durable read/write so a queued resume cannot look active,
+        // age a lease, or bypass the process-wide Agent limit.
+        let executionPermit = try await acquireExecutionPermit(priority: .interactive)
         guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else {
+            await executionPermit.releaseAndWait()
             throw AgentGroupChatError.conflict
         }
         do {
@@ -45,9 +50,11 @@ extension LocalAgentGroupChatScheduler {
                 deliveryID: deliveryID
             )
             await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+            await executionPermit.releaseAndWait()
             return result
         } catch {
             await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+            await executionPermit.releaseAndWait()
             throw error
         }
     }
@@ -136,7 +143,12 @@ extension LocalAgentGroupChatScheduler {
         projectID: String,
         deliveryID: String
     ) async throws -> DeliveryAttemptReceipt {
+        // Obtain capacity before clearing the uncertain-call marker or reactivating the Todo.
+        // Otherwise a saturated client can expose a durable "running" retry that is only waiting
+        // behind unrelated work and can also exceed the normal Agent Worker process limit.
+        let executionPermit = try await acquireExecutionPermit(priority: .interactive)
         guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else {
+            await executionPermit.releaseAndWait()
             throw AgentGroupChatError.conflict
         }
         do {
@@ -146,9 +158,11 @@ extension LocalAgentGroupChatScheduler {
                 deliveryID: deliveryID
             )
             await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+            await executionPermit.releaseAndWait()
             return result
         } catch {
             await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+            await executionPermit.releaseAndWait()
             throw error
         }
     }
