@@ -191,7 +191,7 @@ pub(crate) struct SandboxedChild {
     stdin: Option<File>,
     stdout: Option<File>,
     stderr: Option<File>,
-    lease: Option<DirectoryLease>,
+    leases: Vec<DirectoryLease>,
     _profile: AppContainerProfile,
 }
 
@@ -206,6 +206,12 @@ impl SandboxedChild {
 
     pub(crate) fn take_stderr(&mut self) -> Option<File> {
         self.stderr.take()
+    }
+
+    pub(crate) fn terminate(&self) -> Result<(), String> {
+        self.termination.terminate(true).map_err(|error| {
+            format!("Terminating the interactive AppContainer process failed: {error}")
+        })
     }
 
     pub(crate) fn wait(mut self, timeout: Duration) -> Result<i32, String> {
@@ -236,13 +242,7 @@ impl SandboxedChild {
                 Err(error)
             }
         };
-        let restored = self
-            .lease
-            .take()
-            .ok_or_else(|| {
-                "The interactive AppContainer workspace lease is unavailable.".to_owned()
-            })?
-            .restore();
+        let restored = restore_directory_leases(std::mem::take(&mut self.leases));
         match (process_result, restored) {
             (Ok(exit_code), Ok(())) => Ok(exit_code),
             (Err(process), Ok(())) => Err(process),
@@ -353,15 +353,71 @@ impl WorkspaceLeaseManager {
         network_policy: &str,
         environment: &[(OsString, OsString)],
     ) -> Result<SandboxedChild, String> {
-        let profile = AppContainerProfile::create_journaled(&self.profile_journal_root)?;
-        let lease = self.grant(workspace, profile.sid, access)?;
+        self.spawn_workspace_command_with_leases(
+            workspace,
+            executable,
+            arguments,
+            &[(workspace.to_owned(), access)],
+            network_policy,
+            environment,
+        )
+    }
+
+    pub(crate) fn spawn_workspace_command_with_leases(
+        &self,
+        current_directory: &Path,
+        executable: &Path,
+        arguments: &[String],
+        workspace_leases: &[(PathBuf, WorkspaceAccess)],
+        network_policy: &str,
+        environment: &[(OsString, OsString)],
+    ) -> Result<SandboxedChild, String> {
+        if workspace_leases.is_empty() || workspace_leases.len() > 16 {
+            return Err("The interactive AppContainer workspace lease set is invalid.".to_owned());
+        }
+        let mut canonical_leases: Vec<(PathBuf, WorkspaceAccess)> =
+            Vec::with_capacity(workspace_leases.len());
+        for (workspace, access) in workspace_leases {
+            let workspace = std::fs::canonicalize(workspace).map_err(|error| {
+                format!("Resolving an interactive AppContainer workspace failed: {error}")
+            })?;
+            if !workspace.is_dir()
+                || canonical_leases.iter().any(|(existing, _)| {
+                    workspace.starts_with(existing) || existing.starts_with(&workspace)
+                })
+            {
+                return Err(
+                    "The interactive AppContainer workspace leases overlap or are invalid."
+                        .to_owned(),
+                );
+            }
+            canonical_leases.push((workspace, *access));
+        }
+        let current_directory = std::fs::canonicalize(current_directory).map_err(|error| {
+            format!("Resolving the interactive AppContainer working directory failed: {error}")
+        })?;
+        if !current_directory.is_dir()
+            || !canonical_leases
+                .iter()
+                .any(|(workspace, _)| current_directory.starts_with(workspace))
+        {
+            return Err(
+                "The interactive AppContainer working directory is outside its leases.".to_owned(),
+            );
+        }
         let command_line = build_windows_command_line(executable.as_os_str(), arguments)?;
         let mut environment = build_environment_block(environment)?;
+        let network_access = NetworkAccess::from_policy(network_policy)?;
+        let profile = AppContainerProfile::create_journaled(&self.profile_journal_root)?;
+        let mut leases = Vec::with_capacity(canonical_leases.len());
+        for (workspace, access) in &canonical_leases {
+            leases.push(self.grant(workspace, profile.sid, *access)?);
+        }
         let process = profile.spawn_interactive(
             executable,
             &command_line,
-            workspace,
-            NetworkAccess::from_policy(network_policy)?,
+            &current_directory,
+            network_access,
             Some(&mut environment),
         );
         match process {
@@ -371,10 +427,10 @@ impl WorkspaceLeaseManager {
                 stdin: Some(process.stdin),
                 stdout: Some(process.stdout),
                 stderr: Some(process.stderr),
-                lease: Some(lease),
+                leases,
                 _profile: profile,
             }),
-            Err(process) => match lease.restore() {
+            Err(process) => match restore_directory_leases(leases) {
                 Ok(()) => Err(process),
                 Err(restore) => Err(format!(
                     "{process} Restoring the interactive AppContainer workspace also failed: {restore}"
@@ -971,7 +1027,7 @@ impl AppContainerProfile {
         if command_line.last().copied() != Some(0) {
             return Err("The captured AppContainer command line is invalid.".to_owned());
         }
-        let current_directory = wide_os(current_directory.as_os_str());
+        let current_directory = process_directory_wide(current_directory)?;
         let mut attribute_list = AttributeList::with_capacity(2)?;
         let mut capability_set = CapabilitySet::for_network_access(network_access)?;
         let capabilities = SECURITY_CAPABILITIES {
@@ -1133,7 +1189,7 @@ impl AppContainerProfile {
         if command_line.last().copied() != Some(0) {
             return Err("The interactive AppContainer command line is invalid.".to_owned());
         }
-        let current_directory = wide_os(current_directory.as_os_str());
+        let current_directory = process_directory_wide(current_directory)?;
         let mut attribute_list = AttributeList::with_capacity(2)?;
         let mut capability_set = CapabilitySet::for_network_access(network_access)?;
         let capabilities = SECURITY_CAPABILITIES {
@@ -1505,6 +1561,20 @@ impl DirectoryLease {
 impl Drop for DirectoryLease {
     fn drop(&mut self) {
         let _ = self.restore_inner();
+    }
+}
+
+fn restore_directory_leases(mut leases: Vec<DirectoryLease>) -> Result<(), String> {
+    let mut failures = Vec::new();
+    while let Some(lease) = leases.pop() {
+        if let Err(error) = lease.restore() {
+            failures.push(error);
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join(" "))
     }
 }
 
@@ -2650,6 +2720,26 @@ fn wide_os(value: &std::ffi::OsStr) -> Vec<u16> {
     value.encode_wide().chain(std::iter::once(0)).collect()
 }
 
+fn process_directory_wide(value: &Path) -> Result<Vec<u16>, String> {
+    let mut encoded = value.as_os_str().encode_wide().collect::<Vec<_>>();
+    let verbatim_prefix = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    if encoded.starts_with(&verbatim_prefix) {
+        encoded.drain(..verbatim_prefix.len());
+    }
+    if encoded.len() < 3
+        || !((b'A' as u16..=b'Z' as u16).contains(&encoded[0])
+            || (b'a' as u16..=b'z' as u16).contains(&encoded[0]))
+        || encoded[1] != b':' as u16
+        || encoded[2] != b'\\' as u16
+    {
+        return Err(
+            "The AppContainer process working directory must be on a local drive.".to_owned(),
+        );
+    }
+    encoded.push(0);
+    Ok(encoded)
+}
+
 fn last_error(context: &str) -> String {
     let code = unsafe { GetLastError() };
     format!("{context} (Win32 error {code}).")
@@ -2984,7 +3074,39 @@ mod tests {
             String::from_utf8_lossy(&stdout_bytes).trim(),
             "reply:mcp-roundtrip"
         );
-        assert!(stderr_bytes.is_empty());
+        assert!(
+            stderr_bytes.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&stderr_bytes)
+        );
+        assert_eq!(manager.journal_count(), 0);
+        assert_eq!(manager.profile_journal_count(), 0);
+    }
+
+    #[test]
+    fn interactive_runtime_rejects_overlapping_workspace_leases_before_launch() {
+        let system_root = std::env::var_os("SystemRoot").unwrap();
+        let shell = Path::new(&system_root).join("System32").join("cmd.exe");
+        let app_data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let nested = workspace.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
+        let failure = manager
+            .spawn_workspace_command_with_leases(
+                workspace.path(),
+                &shell,
+                &["/d".to_owned(), "/c".to_owned(), "exit 0".to_owned()],
+                &[
+                    (workspace.path().to_owned(), WorkspaceAccess::ReadOnly),
+                    (nested, WorkspaceAccess::ReadWrite),
+                ],
+                "disabled",
+                &restricted_runtime_environment(),
+            )
+            .err()
+            .expect("overlapping workspace leases must fail");
+        assert!(failure.contains("overlap"), "{failure}");
         assert_eq!(manager.journal_count(), 0);
         assert_eq!(manager.profile_journal_count(), 0);
     }

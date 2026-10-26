@@ -284,11 +284,6 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
-            #[cfg(target_os = "windows")]
-            app.manage(
-                windows_appcontainer::WorkspaceLeaseManager::open(&data_dir)
-                    .map_err(std::io::Error::other)?,
-            );
             let journal = ApprovalDecisionJournal::open(
                 data_dir.join("local-agent").join("approval-decisions"),
             )
@@ -306,7 +301,7 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             app.manage(PetPreferencesStore::new(data_dir.clone()));
             app.manage(PluginSettingsManager::new(data_dir.clone()));
-            app.manage(PluginApplicationManager::new(data_dir));
+            app.manage(PluginApplicationManager::try_new(data_dir).map_err(std::io::Error::other)?);
             let resource_directory = app
                 .path()
                 .resource_dir()

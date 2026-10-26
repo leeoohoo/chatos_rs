@@ -30,21 +30,21 @@ Windows 产品版本：`3.0.9`
 - [x] Windows MSI 事务中途故障回滚闭环已实测：仓库内受审计 WiX 模板把 `RemoveExistingProducts` 固定在 `InstallExecute` 之后（执行序号 `6501`）；在复制新文件后注入 Type 19 故障，两轮均返回 `1603`，并完整恢复旧 ProductCode、旧 EXE 哈希和 AppData 哨兵。随后正常升级和卸载成功，旧版、故障版与当前版 ProductCode 均为未安装状态，主 EXE 组件无残留 client。
 - [x] Windows MSI 在旧客户端保持原生窗口运行时的覆盖升级闭环已实测：两轮均由 Windows Installer 正常关闭 `0.1.0` 进程，升级返回 `0`，`3.0.9` 原生启动和最终卸载成功，AppData 哨兵保留；测试逐轮对比系统 `PendingFileRenameOperations`，确认未新增待重启文件操作。
 - [x] Windows NSIS 原生启动 smoke 已与真实用户数据隔离：每次运行使用独立的新 AppData/LocalAppData，完成后断言测试数据已清理，不再读取或污染当前登录账号的数据。当前安装包完成两轮、每轮 5 次隔离冷启动；第二轮安装 `1,970 ms`、启动中位数 `9,040 ms`、P95 `17,882 ms`、卸载 `619 ms`，全部在 20 秒门限内正常退出。
-- [x] Windows AppContainer 基础启动器与真实隔离探测已落地：使用临时 profile、`PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 和 `CREATE_SUSPENDED` 启动系统进程，先校验子进程 token 再恢复执行，策略不匹配时在用户代码运行前终止。`disabled` 档位实测 token 不含 capability、无法读取宿主临时文件且无法连接宿主 loopback；`controlled` 档位只生成并注入 Windows `internetClient` capability SID，随后从子进程 token 反查确认策略精确生效，`host` 明确拒绝映射到 AppContainer。租约 manager 会以不跟随 reparse point 的 Windows 句柄遍历非空目录树，逐项保存原 DACL、卷号和文件 ID，再以 v3 journal 原子落盘后通过同一对象句柄授权。正常释放通过保留句柄恢复原对象，因此支持租约内重命名；启动恢复会在写 ACL 前验证对象身份，同路径替换会失败关闭。运行期新增项的 AppContainer SID 会撤销，v1/v2 journal 继续兼容恢复，目录树数量与 journal 大小有界。可复用运行时启动器现已补齐显式工作目录、最小环境块、仅三个 stdio 句柄继承、有界 stdout/stderr 捕获、超时与 Job Object 进程树回收；真实 Git 仓库已在读写租约中完成 `git add`。每次运行使用独立 AppContainer SID/profile，profile journal 在创建前落盘，正常退出删除，模拟崩溃后启动恢复也已实测，避免并行执行链共享 SID 或遗留 profile。长驻运行时现可安全移交 stdin/stdout/stderr、保持 profile 与 workspace 租约，并在等待超时或句柄释放时回收整棵进程树；真实 stdin→stdout 往返和租约清理已通过。固定名称 Probe profile 重新持有全生命周期互斥锁，避免并行自检互相删除，UUID Runtime profile 仍可并行。尚未迁移的任务/Plugin/Agent 业务调用继续保持 `limited`，界面开关不提前开放。
+- [x] Windows AppContainer 基础启动器与真实隔离探测已落地：使用临时 profile、`PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 和 `CREATE_SUSPENDED` 启动系统进程，先校验子进程 token 再恢复执行，策略不匹配时在用户代码运行前终止。`disabled` 档位实测 token 不含 capability、无法读取宿主临时文件且无法连接宿主 loopback；`controlled` 档位只生成并注入 Windows `internetClient` capability SID，随后从子进程 token 反查确认策略精确生效，`host` 明确拒绝映射到 AppContainer。租约 manager 会以不跟随 reparse point 的 Windows 句柄遍历非空目录树，逐项保存原 DACL、卷号和文件 ID，再以 v3 journal 原子落盘后通过同一对象句柄授权。正常释放通过保留句柄恢复原对象，因此支持租约内重命名；启动恢复会在写 ACL 前验证对象身份，同路径替换会失败关闭。运行期新增项的 AppContainer SID 会撤销，v1/v2 journal 继续兼容恢复，目录树数量与 journal 大小有界。可复用运行时启动器现已补齐显式工作目录、最小环境块、仅三个 stdio 句柄继承、有界 stdout/stderr 捕获、超时与 Job Object 进程树回收；真实 Git 仓库已在读写租约中完成 `git add`。每次运行使用独立 AppContainer SID/profile，profile journal 在创建前落盘，正常退出删除，模拟崩溃后启动恢复也已实测，避免并行执行链共享 SID 或遗留 profile。长驻运行时现可安全移交 stdin/stdout/stderr、保持 profile 与多 workspace 租约，并在等待超时或句柄释放时回收整棵进程树；重叠租约会在启动前失败关闭。固定名称 Probe profile 重新持有全生命周期互斥锁，避免并行自检互相删除，UUID Runtime profile 仍可并行。Agent Plugin MCP 已迁移到独立 AppContainer，安装目录只读、项目目录读写、网络禁用，真实 initialize/tools/list/tools/call 与 ACL 恢复均已通过；尚未迁移的任务终端和 Plugin 应用后端继续保持 `limited`，界面开关不提前开放。
 
 ## B. 本次交付前必须关闭
 
 - [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（134 个测试文件、504 项测试）。
-- [x] 本批“长驻 AppContainer stdio 运行时与 Probe 并发修复”修改后，Windows Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：486 项测试被发现，480 项通过、0 项失败、6 项环境集成测试按预期 ignored。
+- [x] 本批“Agent Plugin MCP AppContainer 迁移”修改后，Windows Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：487 项测试被发现，481 项通过、0 项失败、6 项环境集成测试按预期 ignored。
 - [x] 重新生成版本为 `3.0.9` 的 Release EXE、MSI、NSIS，并记录 SHA-256：
-  - `chatos-windows-react.exe`：`75ea515ffd4a42ffa68b8bd17192455007facb66b0a3258f3e16b8dbb875112c`
+  - `chatos-windows-react.exe`：`bc559077f64c67d2e615dd05ba22c53cdf4be374efda60910dbbf87eab87c182`
   - `chatos_local_agent_host.exe`：`5f697fced2658ac59a3f9fb4ff5d167ac033545ed0f0c995363c754fcc0ebf66`
-  - `ChatOS_3.0.9_x64_en-US.msi`：`c8054a08e64bc13df7c58dfee2ae16275e0e17889ffe020274a70bc61c31a040`
-  - `ChatOS_3.0.9_x64-setup.exe`：`9ae56885257a809bef0bd1432db4523d95c7f2e86ab592d2c06baed5b6bffceb`
+  - `ChatOS_3.0.9_x64_en-US.msi`：`1456586c7918aaa7dd5a9ef5e0777072f459ea79a7c3b8a99d98f2d205f8a533`
+  - `ChatOS_3.0.9_x64-setup.exe`：`046f87c80006b7dd05edcef788c984b2c6d06311d78f1d39af908c8904f11e59`
 - [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、隔离 AppData 原生启动、正常退出、卸载和残留清理；当前事务安全构建产物先连续两次通过单次启动门限，再完成两轮各 5 次冷启动基线，最新报告为 `%TEMP%\chatos-windows-nsis-startup-performance-1.json` 和 `%TEMP%\chatos-windows-nsis-startup-performance-2.json`。
 - [x] MSI 升级 smoke 在既有四轮基础上，以事务安全模板再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-1.json` 和 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-2.json` 同时记录 `0.1.0 → 3.0.9`、两代原生启动退出、截断包 `1620` 失败、事务中途故障 `1603` 回滚、AppData 哨兵保留、卸载以及降级检测规则。
 - [x] MSI 运行中客户端升级 smoke 再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-running-upgrade-1.json` 和 `%TEMP%\chatos-windows-msi-running-upgrade-2.json` 记录旧版原生窗口进程、Installer 正常关闭、无重启升级、新版原生启动、数据保留、卸载和系统待重启队列不变。
-- [x] 本批“长驻 AppContainer stdio 运行时与 Probe 并发修复”已重新生成到 MSI/NSIS，并通过 `%TEMP%\chatos-windows-appcontainer-interactive-final-nsis.json` 的全新目录安装、隔离 AppData 原生启动、正常退出、卸载和清理验证：安装 `2,080 ms`、原生启动 `12,743 ms`、卸载 `666 ms`，三者退出码均为 `0`；Probe 与 Runtime AppContainer profile 注册表残留合计为 `0`。
+- [x] 本批“Agent Plugin MCP AppContainer 迁移”已重新生成到 MSI/NSIS，并通过 `%TEMP%\chatos-windows-agent-plugin-appcontainer-functional-nsis.json` 的全新目录安装、隔离 AppData 原生启动、正常退出、卸载和清理验证：安装 `1,947 ms`、原生启动 `27,398 ms`、卸载 `614 ms`，三者退出码均为 `0`；Probe 与 Runtime AppContainer profile 注册表残留合计为 `0`。同一哈希的 20 秒门限报告 `%TEMP%\chatos-windows-agent-plugin-appcontainer-final-nsis.json` 以 `3,099 ms` 通过，但另一全新安装路径超过 20 秒；该性能不稳定项继续保留，不伪报为稳定通过。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [ ] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息。代码默认状态与自动回归均为 workspace/首个消息资源，但原生窗口视觉取证仍受下一项工具故障阻塞。
 - [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。
@@ -54,7 +54,7 @@ Windows 产品版本：`3.0.9`
 ### P1：用户能直接感知
 
 - [ ] Computer Use / 屏幕采集的受信发布闭环。Windows Worker 源码、x64/arm64 构建和 smoke 已通过，但当前用户 Plugin 目录为空；还需产出跨平台 `.tgz`、进入签名 Marketplace Release，并从 Windows 客户端完成安装、启用、`doctor`、屏幕采集和输入实测。
-- [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、disabled/controlled capability token、句柄绑定的非空目录逐项 DACL 快照、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 拒绝，带最小环境、一次性输出捕获、长驻交互 stdio、超时与 Job Object 回收的可复用启动器，以及独立 profile SID/journal 崩溃恢复已经通过；仍需实现目标级出站规则，并把任务、Plugin 与 Agent 的业务调用统一迁移到该启动器后才能开放第 31 页开关。迁移完成前继续只发布账号/项目边界、审批策略和现有 Job Object 进程树回收。
+- [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、disabled/controlled capability token、句柄绑定的非空目录逐项 DACL 快照、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 拒绝，带最小环境、一次性输出捕获、长驻交互 stdio、多 workspace 租约、超时与 Job Object 回收的可复用启动器，以及独立 profile SID/journal 崩溃恢复已经通过；Agent Plugin MCP 已迁移并以安装目录只读、项目目录读写、禁网策略实测。仍需实现目标级出站规则，并迁移任务终端和 Plugin 应用后端后才能开放第 31 页开关。迁移完成前继续只发布账号/项目边界、审批策略和现有 Job Object 进程树回收。
 
 ### P2：平台/发布质量
 
@@ -62,6 +62,7 @@ Windows 产品版本：`3.0.9`
 - [ ] Windows Installer 无法由 Restart Manager 正常关闭的强制文件锁及需重启场景仍需在一次性 Windows VM 中补验；客户端正常运行造成的文件占用、事务中途故障回滚均已关闭。本机已有其他软件留下的待重启文件操作，不能为了测试篡改系统队列。历史 `0.1.0` 安装包自身允许降级，已发布二进制无法由新版本追溯修改。
 - [ ] 固定分辨率与 100%/125%/150% 缩放的原生截图对照、键盘导航、焦点顺序、屏幕阅读器标签和对比度验收。
 - [ ] Host ready、首屏会话、万级消息、大目录、Git Diff、终端大输出和 8 小时运行的 Windows 性能/稳定性基线；安装包隔离冷启动基线已经完成。
+- [ ] 本批未签名 EXE/sidecar 在全新安装路径的首次启动性能不稳定：同一最终哈希曾在 `3,099 ms` 内通过 20 秒门限，也曾两次超过门限；60 秒功能 smoke 在 `27,398 ms` 正常退出，同路径复跑为 `2,783 ms`。需结合正式代码签名与一次性干净 Windows VM 复验首次扫描/冷启动门限。
 
 ## D. 已确认的平台差异，不伪装为缺陷已修复
 

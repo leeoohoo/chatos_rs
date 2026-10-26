@@ -6,25 +6,32 @@ use chatos_plugin_management_sdk::SkillGateDeclaration;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
+#[cfg(windows)]
+use std::ffi::OsString;
+#[cfg(not(windows))]
+use std::process::Stdio;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
     time::Duration,
 };
+#[cfg(not(windows))]
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     sync::Mutex,
 };
 
+#[cfg(not(windows))]
+use crate::terminal_runtime::process::ProcessTermination;
+#[cfg(windows)]
+use crate::windows_appcontainer::{SandboxedChild, WorkspaceAccess, WorkspaceLeaseManager};
 use crate::{
     host_lifecycle::HostManager,
     plugin_application::{
         PluginApplicationManager, ResolvedAgentPluginExecution, TrustedAgentPluginOption,
     },
-    terminal_runtime::process::ProcessTermination,
 };
 
 pub(crate) const CAPABILITY_SEARCH_TOOL_NAME: &str = "capability_search";
@@ -920,6 +927,8 @@ impl AgentPluginRuntime {
                 context,
                 resolved,
                 runtime_fingerprint.clone(),
+                #[cfg(windows)]
+                manager.workspace_leases(),
             )
             .await?,
         );
@@ -1024,11 +1033,26 @@ struct McpSession {
     connection: Option<Mutex<McpConnection>>,
 }
 
+#[cfg(windows)]
+type McpStdin = tokio::fs::File;
+#[cfg(not(windows))]
+type McpStdin = ChildStdin;
+#[cfg(windows)]
+type McpStdout = tokio::fs::File;
+#[cfg(not(windows))]
+type McpStdout = ChildStdout;
+
 struct McpConnection {
+    #[cfg(windows)]
+    child: Option<SandboxedChild>,
+    #[cfg(not(windows))]
     child: Child,
+    #[cfg(not(windows))]
     _termination: ProcessTermination,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    stdin: McpStdin,
+    stdout: BufReader<McpStdout>,
+    #[cfg(windows)]
+    stderr_task: tokio::task::JoinHandle<()>,
     next_request_id: u64,
     unusable: bool,
 }
@@ -1039,6 +1063,7 @@ impl McpSession {
         context: &AgentPluginRunContext,
         resolved: ResolvedAgentPluginExecution,
         runtime_fingerprint: String,
+        #[cfg(windows)] workspace_leases: &WorkspaceLeaseManager,
     ) -> Result<Self, String> {
         let skills_by_option = resolved
             .skill_snapshot
@@ -1078,33 +1103,91 @@ impl McpSession {
         if !executable.is_file() || !executable.starts_with(&plugin_root) {
             return Err(plugin_runtime_error());
         }
-        let mut command = Command::new(&executable);
-        command
-            .args(&resolved.args)
-            .current_dir(
-                resolved
-                    .working_directory
-                    .as_deref()
-                    .unwrap_or(&context.execution_root),
-            )
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(false)
-            .env_clear();
-        command.envs(safe_environment(context, &resolved.environment));
+        #[cfg(windows)]
+        let connection = {
+            let installation_root = resolved
+                .installation_root
+                .canonicalize()
+                .map_err(|_| plugin_runtime_error())?;
+            if !installation_root.is_dir()
+                || !installation_root.starts_with(&plugin_root)
+                || !executable.starts_with(&installation_root)
+            {
+                return Err(plugin_runtime_error());
+            }
+            let current_directory = resolved
+                .working_directory
+                .as_deref()
+                .unwrap_or(&context.execution_root);
+            let environment = safe_environment(context, &resolved.environment)
+                .into_iter()
+                .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+                .collect::<Vec<_>>();
+            let mut child = workspace_leases.spawn_workspace_command_with_leases(
+                current_directory,
+                &executable,
+                &resolved.args,
+                &[
+                    (installation_root, WorkspaceAccess::ReadOnly),
+                    (context.execution_root.clone(), WorkspaceAccess::ReadWrite),
+                ],
+                "disabled",
+                &environment,
+            )?;
+            let stdin = child.take_stdin().ok_or_else(plugin_runtime_error)?;
+            let stdout = child.take_stdout().ok_or_else(plugin_runtime_error)?;
+            let stderr = child.take_stderr().ok_or_else(plugin_runtime_error)?;
+            let stderr_task = tokio::spawn(async move {
+                let mut stderr = tokio::fs::File::from_std(stderr);
+                let mut sink = tokio::io::sink();
+                let _ = tokio::io::copy(&mut stderr, &mut sink).await;
+            });
+            McpConnection {
+                child: Some(child),
+                stdin: tokio::fs::File::from_std(stdin),
+                stdout: BufReader::new(tokio::fs::File::from_std(stdout)),
+                stderr_task,
+                next_request_id: 1,
+                unusable: false,
+            }
+        };
         #[cfg(not(windows))]
-        {
-            use std::os::unix::process::CommandExt;
-            command.as_std_mut().process_group(0);
-        }
-        let mut child = command.spawn().map_err(|_| plugin_runtime_error())?;
-        let termination = ProcessTermination::attach(&child).map_err(|_| {
-            let _ = child.start_kill();
-            plugin_runtime_error()
-        })?;
-        let stdin = child.stdin.take().ok_or_else(plugin_runtime_error)?;
-        let stdout = child.stdout.take().ok_or_else(plugin_runtime_error)?;
+        let connection = {
+            let mut command = Command::new(&executable);
+            command
+                .args(&resolved.args)
+                .current_dir(
+                    resolved
+                        .working_directory
+                        .as_deref()
+                        .unwrap_or(&context.execution_root),
+                )
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .kill_on_drop(false)
+                .env_clear();
+            command.envs(safe_environment(context, &resolved.environment));
+            {
+                use std::os::unix::process::CommandExt;
+                command.as_std_mut().process_group(0);
+            }
+            let mut child = command.spawn().map_err(|_| plugin_runtime_error())?;
+            let termination = ProcessTermination::attach(&child).map_err(|_| {
+                let _ = child.start_kill();
+                plugin_runtime_error()
+            })?;
+            let stdin = child.stdin.take().ok_or_else(plugin_runtime_error)?;
+            let stdout = child.stdout.take().ok_or_else(plugin_runtime_error)?;
+            McpConnection {
+                child,
+                _termination: termination,
+                stdin,
+                stdout: BufReader::new(stdout),
+                next_request_id: 1,
+                unusable: false,
+            }
+        };
         let session = Self {
             runtime_fingerprint: runtime_fingerprint.clone(),
             definitions: Vec::new(),
@@ -1112,14 +1195,7 @@ impl McpSession {
             described: Mutex::new(HashSet::new()),
             disclosed_skills: Mutex::new(HashSet::new()),
             activated_skills: Mutex::new(HashSet::new()),
-            connection: Some(Mutex::new(McpConnection {
-                child,
-                _termination: termination,
-                stdin,
-                stdout: BufReader::new(stdout),
-                next_request_id: 1,
-                unusable: false,
-            })),
+            connection: Some(Mutex::new(connection)),
         };
         let initialization = session
             .request(
@@ -1450,9 +1526,20 @@ impl McpSession {
             return;
         }
         connection.unusable = true;
-        let _ = connection._termination.terminate(true);
-        let _ = connection.child.start_kill();
-        let _ = tokio::time::timeout(PROCESS_REAP_TIMEOUT, connection.child.wait()).await;
+        #[cfg(windows)]
+        {
+            if let Some(child) = connection.child.take() {
+                let _ = child.terminate();
+                let _ = tokio::task::spawn_blocking(move || child.wait(PROCESS_REAP_TIMEOUT)).await;
+            }
+            connection.stderr_task.abort();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = connection._termination.terminate(true);
+            let _ = connection.child.start_kill();
+            let _ = tokio::time::timeout(PROCESS_REAP_TIMEOUT, connection.child.wait()).await;
+        }
     }
 }
 
@@ -1478,7 +1565,10 @@ impl McpError {
     }
 }
 
-async fn write_message(stdin: &mut ChildStdin, value: &Value) -> Result<(), McpError> {
+async fn write_message(
+    stdin: &mut (impl AsyncWrite + Unpin),
+    value: &Value,
+) -> Result<(), McpError> {
     let mut payload = serde_json::to_vec(value)
         .map_err(|_| McpError::known("Plugin MCP request could not be encoded."))?;
     payload.push(b'\n');
@@ -1492,7 +1582,7 @@ async fn write_message(stdin: &mut ChildStdin, value: &Value) -> Result<(), McpE
         .map_err(|_| McpError::unknown("Plugin MCP request could not be flushed."))
 }
 
-async fn read_message(stdout: &mut BufReader<ChildStdout>) -> Result<Value, McpError> {
+async fn read_message(stdout: &mut (impl AsyncBufRead + Unpin)) -> Result<Value, McpError> {
     let mut payload = Vec::new();
     loop {
         let available = stdout
@@ -1696,9 +1786,32 @@ fn safe_environment(
     manifest_environment: &BTreeMap<String, String>,
 ) -> BTreeMap<String, String> {
     let mut environment = BTreeMap::new();
-    for key in ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP"] {
+    #[cfg(windows)]
+    const ALLOWED_HOST_ENVIRONMENT: &[&str] = &[
+        "ALLUSERSPROFILE",
+        "APPDATA",
+        "ComSpec",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LOCALAPPDATA",
+        "PATH",
+        "PATHEXT",
+        "PROGRAMDATA",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "SystemDrive",
+        "SystemRoot",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "WINDIR",
+    ];
+    #[cfg(not(windows))]
+    const ALLOWED_HOST_ENVIRONMENT: &[&str] = &["HOME", "LANG", "LC_ALL", "TEMP", "TMP"];
+    for key in ALLOWED_HOST_ENVIRONMENT {
         if let Ok(value) = std::env::var(key) {
-            environment.insert(key.to_owned(), value);
+            environment.insert((*key).to_owned(), value);
         }
     }
     #[cfg(not(windows))]
@@ -1786,6 +1899,10 @@ fn resolved_runtime_fingerprint(resolved: &ResolvedAgentPluginExecution) -> Resu
         hasher.update(value);
     }
 
+    let installation_root = resolved
+        .installation_root
+        .canonicalize()
+        .map_err(|_| plugin_runtime_error())?;
     let executable = resolved
         .executable
         .as_ref()
@@ -1801,6 +1918,7 @@ fn resolved_runtime_fingerprint(resolved: &ResolvedAgentPluginExecution) -> Resu
         allowed_tools.sort();
     }
     let identity = resolved.identity.frozen_identity();
+    let installation_root = installation_root.to_string_lossy().into_owned();
     let executable = executable
         .as_ref()
         .map(|path| path.to_string_lossy().into_owned())
@@ -1817,6 +1935,7 @@ fn resolved_runtime_fingerprint(resolved: &ResolvedAgentPluginExecution) -> Resu
     let mut hasher = Sha256::new();
     for value in [
         identity.as_bytes(),
+        installation_root.as_bytes(),
         executable.as_bytes(),
         working_directory.as_bytes(),
         arguments.as_bytes(),
@@ -2337,7 +2456,8 @@ mod tests {
         assert!(frozen_plugin_selections(&context).unwrap().is_empty());
 
         let directory = tempfile::tempdir().unwrap();
-        let manager = PluginApplicationManager::new(directory.path().join("app-data"));
+        let app_data = directory.path().join("app-data");
+        let manager = PluginApplicationManager::new(app_data.clone());
         let host = HostManager::default();
         let runtime = AgentPluginRuntime::new(
             directory.path().join("plugins"),
@@ -2550,6 +2670,7 @@ mod tests {
         .unwrap();
         let resolved = ResolvedAgentPluginExecution {
             identity: frozen_plugin_selections(&context).unwrap().remove(0),
+            installation_root: installation.clone(),
             executable: None,
             args: Vec::new(),
             working_directory: Some(installation),
@@ -2559,9 +2680,17 @@ mod tests {
         };
         let fingerprint = resolved_runtime_fingerprint(&resolved).unwrap();
 
-        let session = McpSession::connect(&plugin_root, &context, resolved, fingerprint)
-            .await
-            .unwrap();
+        let manager = PluginApplicationManager::new(directory.path().join("app-data"));
+        let session = McpSession::connect(
+            &plugin_root,
+            &context,
+            resolved,
+            fingerprint,
+            #[cfg(windows)]
+            manager.workspace_leases(),
+        )
+        .await
+        .unwrap();
 
         assert!(session.connection.is_none());
         assert!(session.definitions.is_empty());
@@ -2638,7 +2767,7 @@ mod tests {
         std::fs::write(
             &fixture_source,
             r###"
-use std::io::{self, BufRead, Write};
+use std::{env, fs, io::{self, BufRead, Write}, path::PathBuf};
 
 fn main() {
     let stdin = io::stdin();
@@ -2648,11 +2777,15 @@ fn main() {
         let Some(id_tail) = line.split("\"id\":").nth(1) else { continue };
         let id = id_tail.chars().take_while(|value| value.is_ascii_digit()).collect::<String>();
         let response = if line.contains("\"method\":\"initialize\"") {
-            r#"{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}}}"#
+            r#"{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}}}"#.to_owned()
         } else if line.contains("\"method\":\"tools/list\"") {
-            r#"{"jsonrpc":"2.0","id":0,"result":{"tools":[{"name":"echo_document","description":"Echo a bounded document request.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false},"_meta":{"chatos/skillGate":{"allOf":["document-helper"]}}}]}}"#
+            r#"{"jsonrpc":"2.0","id":0,"result":{"tools":[{"name":"echo_document","description":"Echo a bounded document request.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false},"_meta":{"chatos/skillGate":{"allOf":["document-helper"]}}}]}}"#.to_owned()
         } else if line.contains("\"method\":\"tools/call\"") {
-            r#"{"jsonrpc":"2.0","id":0,"result":{"content":[{"type":"text","text":"verified"},{"type":"image","data":"/9j/2Q==","mimeType":"image/jpeg"}],"structuredContent":{"captureRegionGlobal":{"x":0,"y":0,"width":1,"height":1}},"isError":false}}"#
+            let workspace = PathBuf::from(env::var_os("CHATOS_WORKSPACE_ROOT").unwrap());
+            let workspace_written = fs::write(workspace.join("plugin-output.txt"), b"verified").is_ok();
+            let installation = env::current_exe().unwrap().parent().unwrap().to_path_buf();
+            let installation_write_denied = fs::write(installation.join("plugin-escape.txt"), b"escape").is_err();
+            format!(r#"{{"jsonrpc":"2.0","id":0,"result":{{"content":[{{"type":"text","text":"verified"}},{{"type":"image","data":"/9j/2Q==","mimeType":"image/jpeg"}}],"structuredContent":{{"captureRegionGlobal":{{"x":0,"y":0,"width":1,"height":1}},"workspaceWritten":{workspace_written},"installationWriteDenied":{installation_write_denied}}},"isError":false}}}}"#)
         } else {
             continue;
         };
@@ -2683,18 +2816,28 @@ fn main() {
         .unwrap();
         let resolved = ResolvedAgentPluginExecution {
             identity: frozen_plugin_selections(&context).unwrap().remove(0),
+            installation_root: installation.clone(),
             executable: Some(executable),
             args: Vec::new(),
-            working_directory: Some(installation),
+            working_directory: Some(installation.clone()),
             environment: BTreeMap::new(),
             allowed_tools: Some(vec!["echo_document".into()]),
             skill_snapshot,
         };
 
         let fingerprint = resolved_runtime_fingerprint(&resolved).unwrap();
-        let session = McpSession::connect(&plugin_root, &context, resolved, fingerprint)
-            .await
-            .unwrap();
+        let app_data = directory.path().join("app-data");
+        let manager = PluginApplicationManager::new(app_data.clone());
+        let session = McpSession::connect(
+            &plugin_root,
+            &context,
+            resolved,
+            fingerprint,
+            #[cfg(windows)]
+            manager.workspace_leases(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(session.definitions.len(), 1);
         assert_eq!(session.definitions[0].name, "echo_document");
@@ -2762,6 +2905,29 @@ fn main() {
             result["structuredContent"]["captureRegionGlobal"]["width"],
             1
         );
+        assert_eq!(result["structuredContent"]["workspaceWritten"], true);
+        assert_eq!(
+            std::fs::read(context.execution_root.join("plugin-output.txt")).unwrap(),
+            b"verified"
+        );
+        #[cfg(windows)]
+        {
+            assert_eq!(result["structuredContent"]["installationWriteDenied"], true);
+            assert!(!installation.join("plugin-escape.txt").exists());
+        }
+        #[cfg(not(windows))]
+        let _ = std::fs::remove_file(installation.join("plugin-escape.txt"));
         session.invalidate().await;
+        #[cfg(windows)]
+        for journal in [
+            app_data
+                .join("local-agent")
+                .join("appcontainer-workspace-leases"),
+            app_data
+                .join("local-agent")
+                .join("appcontainer-profile-leases"),
+        ] {
+            assert_eq!(std::fs::read_dir(journal).unwrap().count(), 0);
+        }
     }
 }

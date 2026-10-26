@@ -24,6 +24,8 @@ use crate::plugin_credentials::{
     validate_secret, PluginCredentialStore,
 };
 use crate::plugin_integrity::{requires_installation_integrity, verify_installation_integrity};
+#[cfg(target_os = "windows")]
+use crate::windows_appcontainer::WorkspaceLeaseManager;
 use runtime::{
     PluginApplicationBridgeRequest, PluginApplicationLaunchRequest, PluginApplicationRuntime,
     PresentedPluginApplicationBridgeResponse, PresentedPluginApplicationLaunch,
@@ -55,19 +57,38 @@ pub(crate) struct PluginApplicationManager {
     credentials: Arc<dyn PluginCredentialStore>,
     runtime: PluginApplicationRuntime,
     pub(crate) agent_runtime: AgentPluginRuntime,
+    #[cfg(target_os = "windows")]
+    workspace_leases: Arc<WorkspaceLeaseManager>,
 }
 
 impl PluginApplicationManager {
+    #[cfg(test)]
     pub(crate) fn new(app_data_directory: PathBuf) -> Self {
-        Self::with_credential_store(app_data_directory, platform_plugin_credential_store())
+        Self::try_new(app_data_directory)
+            .unwrap_or_else(|error| panic!("Plugin runtime initialization failed: {error}"))
     }
 
+    pub(crate) fn try_new(app_data_directory: PathBuf) -> Result<Self, String> {
+        Self::try_with_credential_store(app_data_directory, platform_plugin_credential_store())
+    }
+
+    #[cfg(test)]
     fn with_credential_store(
         app_data_directory: PathBuf,
         credentials: Arc<dyn PluginCredentialStore>,
     ) -> Self {
+        Self::try_with_credential_store(app_data_directory, credentials)
+            .unwrap_or_else(|error| panic!("Plugin runtime initialization failed: {error}"))
+    }
+
+    fn try_with_credential_store(
+        app_data_directory: PathBuf,
+        credentials: Arc<dyn PluginCredentialStore>,
+    ) -> Result<Self, String> {
         let plugin_root = app_data_directory.join("NativeConnector").join("Plugins");
-        Self {
+        #[cfg(target_os = "windows")]
+        let workspace_leases = Arc::new(WorkspaceLeaseManager::open(&app_data_directory)?);
+        Ok(Self {
             plugin_root: plugin_root.clone(),
             credentials,
             runtime: PluginApplicationRuntime::new(
@@ -82,7 +103,14 @@ impl PluginApplicationManager {
                     .join("PluginRuntime")
                     .join("InvocationJournal"),
             ),
-        }
+            #[cfg(target_os = "windows")]
+            workspace_leases,
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(crate) fn workspace_leases(&self) -> &WorkspaceLeaseManager {
+        &self.workspace_leases
     }
 
     pub(crate) async fn reset(&self) {
@@ -157,6 +185,7 @@ impl PluginApplicationManager {
         };
         Ok(ResolvedAgentPluginExecution {
             identity: projected,
+            installation_root,
             executable: server.map(|_| PathBuf::from(&record.spec.executable_path)),
             args: record.spec.args,
             working_directory,
@@ -493,6 +522,7 @@ pub(crate) struct TrustedAgentPluginOption {
 #[derive(Clone)]
 pub(crate) struct ResolvedAgentPluginExecution {
     pub(crate) identity: TrustedAgentPluginOption,
+    pub(crate) installation_root: PathBuf,
     pub(crate) executable: Option<PathBuf>,
     pub(crate) args: Vec<String>,
     pub(crate) working_directory: Option<PathBuf>,
@@ -506,6 +536,7 @@ impl fmt::Debug for ResolvedAgentPluginExecution {
         formatter
             .debug_struct("ResolvedAgentPluginExecution")
             .field("identity", &self.identity)
+            .field("installation_root", &self.installation_root)
             .field("executable", &self.executable)
             .field("args", &self.args)
             .field("working_directory", &self.working_directory)
