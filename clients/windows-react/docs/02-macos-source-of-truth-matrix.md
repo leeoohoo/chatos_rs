@@ -1370,4 +1370,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 100. [部分完成] Windows 项目文件保存已从无归属的 `NamedTempFile` 迁移到公共用户目录原子替换边界：继续在保存前校验当前内容 revision、普通非 reparse 文件与可写权限；在 canonical parent 内使用 `.chatos-project-file-<小写 UUID>.tmp` 独占新建，继承原文件权限、分块写入、flush/fsync 并复验文件类型和精确长度后，以 Windows `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` 发布。失败由 RAII 清理本次临时文件；每次保存只回收同一目录、同用途、超过 24 小时的 canonical 残留，不扫描项目树，也不处理未知名称、symlink、Windows reparse 或多硬链接。Windows Tauri 511 项发现、505 项通过、6 条环境集成测试 ignored，Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 和 NSIS 隔离原生启动 smoke 均通过。其余用户目录及 App-owned 写入根继续按所有权逐项审计。
 
+101. [部分完成] Windows AppContainer workspace ACL lease 与 runtime profile lease journal 已迁移到公共无覆盖 AppData 事务：分别使用 `.appcontainer-workspace-<小写 UUID>.tmp` 和 `.appcontainer-profile-<小写 UUID>.tmp` 独占写入、flush/fsync、普通非 reparse 与长度复验，再以 Windows `MoveFileExW(WRITE_THROUGH)` 发布到新的 journal，目标即使在校验后并发出现也不会被覆盖。启动恢复只丢弃 canonical 新版临时名与兼容旧版 `<小写 UUID>.tmp`，畸形/未知临时文件失败关闭；workspace 已提交 `.json` 继续由严格 schema/version/对象身份恢复器兼容 v1/v2/v3 历史名称，避免旧 ACL 授权无法撤销，profile 已提交记录保持 UUID 限定。Windows AppContainer 13 项真实隔离/恢复测试通过；Tauri 全量 512 项发现、506 项通过、6 条环境集成测试 ignored，Rustfmt、Clippy `-D warnings`、架构/Bundle 审计、Release EXE/MSI/NSIS 和 NSIS 隔离原生启动 smoke 均通过。其余事务根继续按恢复语义逐项审计。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

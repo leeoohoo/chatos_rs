@@ -58,7 +58,9 @@ use windows_sys::Win32::{
     },
 };
 
-use crate::terminal_runtime::process::ProcessTermination;
+use crate::{
+    app_data_transaction::create_owned_file, terminal_runtime::process::ProcessTermination,
+};
 
 #[cfg(test)]
 use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SetNamedSecurityInfoW};
@@ -80,6 +82,8 @@ static FIXED_PROFILE_IN_USE: Mutex<bool> = Mutex::new(false);
 static FIXED_PROFILE_AVAILABLE: Condvar = Condvar::new();
 const MAXIMUM_LEASE_TREE_ENTRIES: usize = 100_000;
 const MAXIMUM_LEASE_JOURNAL_BYTES: usize = 64 * 1_024 * 1_024;
+const WORKSPACE_JOURNAL_TEMPORARY_PREFIX: &str = ".appcontainer-workspace-";
+const PROFILE_JOURNAL_TEMPORARY_PREFIX: &str = ".appcontainer-profile-";
 
 #[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -498,20 +502,21 @@ impl WorkspaceLeaseManager {
                 return Err("The AppContainer workspace lease directory is invalid.".to_owned());
             }
             let path = entry.path();
-            match path.extension().and_then(|value| value.to_str()) {
-                Some("tmp") => std::fs::remove_file(&path).map_err(|error| {
+            let name = entry.file_name();
+            if canonical_uuid_name(&name, WORKSPACE_JOURNAL_TEMPORARY_PREFIX, ".tmp")
+                || canonical_uuid_name(&name, "", ".tmp")
+            {
+                std::fs::remove_file(&path).map_err(|error| {
                     format!("Removing an incomplete workspace lease journal failed: {error}")
-                })?,
-                Some("json") => {
-                    DirectoryLease::recover(&path)?;
-                    recovered += 1;
-                }
-                _ => {
-                    return Err(
-                        "The AppContainer workspace lease directory contains an unknown record."
-                            .to_owned(),
-                    )
-                }
+                })?;
+            } else if path.extension().and_then(|value| value.to_str()) == Some("json") {
+                DirectoryLease::recover(&path)?;
+                recovered += 1;
+            } else {
+                return Err(
+                    "The AppContainer workspace lease directory contains an unknown record."
+                        .to_owned(),
+                );
             }
         }
         Ok(recovered)
@@ -535,20 +540,21 @@ impl WorkspaceLeaseManager {
                 return Err("The AppContainer profile lease directory is invalid.".to_owned());
             }
             let path = entry.path();
-            match path.extension().and_then(|value| value.to_str()) {
-                Some("tmp") => std::fs::remove_file(&path).map_err(|error| {
+            let name = entry.file_name();
+            if canonical_uuid_name(&name, PROFILE_JOURNAL_TEMPORARY_PREFIX, ".tmp")
+                || canonical_uuid_name(&name, "", ".tmp")
+            {
+                std::fs::remove_file(&path).map_err(|error| {
                     format!("Removing an incomplete AppContainer profile lease failed: {error}")
-                })?,
-                Some("json") => {
-                    recover_profile_journal(&path)?;
-                    recovered += 1;
-                }
-                _ => {
-                    return Err(
-                        "The AppContainer profile lease directory contains an unknown record."
-                            .to_owned(),
-                    )
-                }
+                })?;
+            } else if canonical_uuid_name(&name, "", ".json") {
+                recover_profile_journal(&path)?;
+                recovered += 1;
+            } else {
+                return Err(
+                    "The AppContainer profile lease directory contains an unknown record."
+                        .to_owned(),
+                );
             }
         }
         Ok(recovered)
@@ -2252,25 +2258,16 @@ fn write_profile_journal(journal_path: &Path, profile_name: &str) -> Result<(), 
         profile_name: profile_name.to_owned(),
     })
     .map_err(|error| format!("Encoding the AppContainer profile lease failed: {error}"))?;
-    let temporary_path = journal_path.with_extension("tmp");
-    let result = (|| -> Result<(), String> {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary_path)
-            .map_err(|error| format!("Creating the AppContainer profile lease failed: {error}"))?;
-        file.write_all(&payload)
-            .map_err(|error| format!("Writing the AppContainer profile lease failed: {error}"))?;
-        file.sync_all()
-            .map_err(|error| format!("Flushing the AppContainer profile lease failed: {error}"))?;
-        drop(file);
-        std::fs::rename(&temporary_path, journal_path)
-            .map_err(|error| format!("Publishing the AppContainer profile lease failed: {error}"))
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(temporary_path);
-    }
-    result
+    let directory = journal_path
+        .parent()
+        .ok_or_else(|| "The AppContainer profile lease has no parent directory.".to_owned())?;
+    create_owned_file(
+        directory,
+        journal_path,
+        PROFILE_JOURNAL_TEMPORARY_PREFIX,
+        &payload,
+    )
+    .map_err(|error| format!("Publishing the AppContainer profile lease failed: {error}"))
 }
 
 fn recover_profile_journal(journal_path: &Path) -> Result<(), String> {
@@ -2313,35 +2310,29 @@ fn write_lease_journal(journal_path: &Path, journal: &DirectoryLeaseJournal) -> 
         .ok_or_else(|| "The workspace ACL journal has no parent directory.".to_owned())?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("Creating the workspace ACL journal directory failed: {error}"))?;
-    let temporary_path = journal_path.with_extension("tmp");
-    if temporary_path.exists() {
-        std::fs::remove_file(&temporary_path).map_err(|error| {
-            format!("Removing a stale workspace ACL journal draft failed: {error}")
-        })?;
-    }
     let payload = serde_json::to_vec(journal)
         .map_err(|error| format!("Encoding the workspace ACL journal failed: {error}"))?;
     if payload.len() > MAXIMUM_LEASE_JOURNAL_BYTES {
         return Err("The workspace ACL journal exceeds its safety limit.".to_owned());
     }
-    let result = (|| -> Result<(), String> {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary_path)
-            .map_err(|error| format!("Creating the workspace ACL journal failed: {error}"))?;
-        file.write_all(&payload)
-            .map_err(|error| format!("Writing the workspace ACL journal failed: {error}"))?;
-        file.sync_all()
-            .map_err(|error| format!("Flushing the workspace ACL journal failed: {error}"))?;
-        drop(file);
-        std::fs::rename(&temporary_path, journal_path)
-            .map_err(|error| format!("Publishing the workspace ACL journal failed: {error}"))
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary_path);
-    }
-    result
+    create_owned_file(
+        parent,
+        journal_path,
+        WORKSPACE_JOURNAL_TEMPORARY_PREFIX,
+        &payload,
+    )
+    .map_err(|error| format!("Publishing the workspace ACL journal failed: {error}"))
+}
+
+fn canonical_uuid_name(name: &OsStr, prefix: &str, suffix: &str) -> bool {
+    let Some(value) = name
+        .to_str()
+        .and_then(|value| value.strip_prefix(prefix))
+        .and_then(|value| value.strip_suffix(suffix))
+    else {
+        return false;
+    };
+    uuid::Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value)
 }
 
 impl Drop for AppContainerProfile {
@@ -3134,14 +3125,53 @@ mod tests {
             .join("local-agent")
             .join("appcontainer-workspace-leases");
         std::fs::create_dir_all(&journal_root).unwrap();
-        let draft = journal_root.join("interrupted.tmp");
-        std::fs::write(&draft, b"not-published").unwrap();
+        let token = "00000000-0000-0000-0000-000000000000";
+        let legacy_draft = journal_root.join(format!("{token}.tmp"));
+        let owned_draft =
+            journal_root.join(format!("{WORKSPACE_JOURNAL_TEMPORARY_PREFIX}{token}.tmp"));
+        std::fs::write(&legacy_draft, b"legacy-not-published").unwrap();
+        std::fs::write(&owned_draft, b"not-published").unwrap();
 
         let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
-        assert!(!draft.exists());
+        assert!(!legacy_draft.exists());
+        assert!(!owned_draft.exists());
         assert_eq!(manager.journal_count(), 0);
 
-        std::fs::write(journal_root.join("unexpected.txt"), b"untrusted").unwrap();
+        std::fs::write(
+            journal_root.join(format!(
+                "{WORKSPACE_JOURNAL_TEMPORARY_PREFIX}not-a-uuid.tmp"
+            )),
+            b"untrusted",
+        )
+        .unwrap();
+        assert!(WorkspaceLeaseManager::open(app_data.path()).is_err());
+    }
+
+    #[test]
+    fn profile_lease_startup_recovery_discards_only_owned_or_legacy_drafts() {
+        let app_data = tempfile::tempdir().unwrap();
+        let journal_root = app_data
+            .path()
+            .join("local-agent")
+            .join("appcontainer-profile-leases");
+        std::fs::create_dir_all(&journal_root).unwrap();
+        let token = "00000000-0000-0000-0000-000000000000";
+        let legacy_draft = journal_root.join(format!("{token}.tmp"));
+        let owned_draft =
+            journal_root.join(format!("{PROFILE_JOURNAL_TEMPORARY_PREFIX}{token}.tmp"));
+        std::fs::write(&legacy_draft, b"legacy-not-published").unwrap();
+        std::fs::write(&owned_draft, b"not-published").unwrap();
+
+        let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
+        assert!(!legacy_draft.exists());
+        assert!(!owned_draft.exists());
+        assert_eq!(manager.profile_journal_count(), 0);
+
+        std::fs::write(
+            journal_root.join(format!("{PROFILE_JOURNAL_TEMPORARY_PREFIX}not-a-uuid.tmp")),
+            b"untrusted",
+        )
+        .unwrap();
         assert!(WorkspaceLeaseManager::open(app_data.path()).is_err());
     }
 }
