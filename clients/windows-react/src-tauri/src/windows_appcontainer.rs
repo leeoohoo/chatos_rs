@@ -2,19 +2,19 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::{c_void, OsStr, OsString},
     fs::{File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     mem::{size_of, zeroed},
     net::TcpListener,
     os::windows::{
         ffi::{OsStrExt, OsStringExt},
         fs::{MetadataExt, OpenOptionsExt},
-        io::{AsRawHandle, RawHandle},
+        io::{AsRawHandle, FromRawHandle, RawHandle},
     },
     path::{Path, PathBuf},
     ptr::{null, null_mut},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex, OnceLock,
+        Arc, Condvar, Mutex, OnceLock,
     },
     thread,
     time::Duration,
@@ -76,7 +76,8 @@ pub(crate) struct AppContainerProbe {
 }
 
 static PROBE: OnceLock<Result<AppContainerProbe, String>> = OnceLock::new();
-static PROFILE_LOCK: Mutex<()> = Mutex::new(());
+static FIXED_PROFILE_IN_USE: Mutex<bool> = Mutex::new(false);
+static FIXED_PROFILE_AVAILABLE: Condvar = Condvar::new();
 const MAXIMUM_LEASE_TREE_ENTRIES: usize = 100_000;
 const MAXIMUM_LEASE_JOURNAL_BYTES: usize = 64 * 1_024 * 1_024;
 
@@ -169,11 +170,90 @@ struct AppContainerCapturedProcessResult {
     capability_policy_verified: bool,
 }
 
+struct AppContainerInteractiveProcess {
+    termination: ProcessTermination,
+    process: ProcessHandles,
+    stdin: File,
+    stdout: File,
+    stderr: File,
+}
+
 #[derive(Debug)]
 pub(crate) struct SandboxedCommandOutput {
     pub(crate) exit_code: i32,
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: Vec<u8>,
+}
+
+pub(crate) struct SandboxedChild {
+    termination: ProcessTermination,
+    process: ProcessHandles,
+    stdin: Option<File>,
+    stdout: Option<File>,
+    stderr: Option<File>,
+    lease: Option<DirectoryLease>,
+    _profile: AppContainerProfile,
+}
+
+impl SandboxedChild {
+    pub(crate) fn take_stdin(&mut self) -> Option<File> {
+        self.stdin.take()
+    }
+
+    pub(crate) fn take_stdout(&mut self) -> Option<File> {
+        self.stdout.take()
+    }
+
+    pub(crate) fn take_stderr(&mut self) -> Option<File> {
+        self.stderr.take()
+    }
+
+    pub(crate) fn wait(mut self, timeout: Duration) -> Result<i32, String> {
+        drop(self.stdin.take());
+        let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+        let process_result = match unsafe { WaitForSingleObject(self.process.process, timeout_ms) }
+        {
+            WAIT_OBJECT_0 => {
+                let _ = self.termination.terminate(true);
+                let mut exit_code = 0;
+                if unsafe { GetExitCodeProcess(self.process.process, &mut exit_code) } == 0 {
+                    Err(last_error(
+                        "Reading the interactive AppContainer process exit code failed",
+                    ))
+                } else {
+                    Ok(i32::try_from(exit_code).unwrap_or(-1))
+                }
+            }
+            WAIT_TIMEOUT => {
+                let _ = self.termination.terminate(true);
+                unsafe { WaitForSingleObject(self.process.process, 5_000) };
+                Err("The interactive AppContainer process timed out.".to_owned())
+            }
+            _ => {
+                let error = last_error("Waiting for the interactive AppContainer process failed");
+                let _ = self.termination.terminate(true);
+                unsafe { WaitForSingleObject(self.process.process, 5_000) };
+                Err(error)
+            }
+        };
+        let restored = self
+            .lease
+            .take()
+            .ok_or_else(|| {
+                "The interactive AppContainer workspace lease is unavailable.".to_owned()
+            })?
+            .restore();
+        match (process_result, restored) {
+            (Ok(exit_code), Ok(())) => Ok(exit_code),
+            (Err(process), Ok(())) => Err(process),
+            (Ok(_), Err(restore)) => Err(format!(
+                "Restoring the interactive AppContainer workspace failed: {restore}"
+            )),
+            (Err(process), Err(restore)) => Err(format!(
+                "{process} Restoring the interactive AppContainer workspace also failed: {restore}"
+            )),
+        }
+    }
 }
 
 pub(crate) struct WorkspaceLeaseManager {
@@ -260,6 +340,46 @@ impl WorkspaceLeaseManager {
             (Err(process), Err(restore)) => Err(format!(
                 "{process} Restoring the AppContainer runtime workspace also failed: {restore}"
             )),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn spawn_workspace_command(
+        &self,
+        workspace: &Path,
+        executable: &Path,
+        arguments: &[String],
+        access: WorkspaceAccess,
+        network_policy: &str,
+        environment: &[(OsString, OsString)],
+    ) -> Result<SandboxedChild, String> {
+        let profile = AppContainerProfile::create_journaled(&self.profile_journal_root)?;
+        let lease = self.grant(workspace, profile.sid, access)?;
+        let command_line = build_windows_command_line(executable.as_os_str(), arguments)?;
+        let mut environment = build_environment_block(environment)?;
+        let process = profile.spawn_interactive(
+            executable,
+            &command_line,
+            workspace,
+            NetworkAccess::from_policy(network_policy)?,
+            Some(&mut environment),
+        );
+        match process {
+            Ok(process) => Ok(SandboxedChild {
+                termination: process.termination,
+                process: process.process,
+                stdin: Some(process.stdin),
+                stdout: Some(process.stdout),
+                stderr: Some(process.stderr),
+                lease: Some(lease),
+                _profile: profile,
+            }),
+            Err(process) => match lease.restore() {
+                Ok(()) => Err(process),
+                Err(restore) => Err(format!(
+                    "{process} Restoring the interactive AppContainer workspace also failed: {restore}"
+                )),
+            },
         }
     }
 
@@ -517,9 +637,48 @@ fn run_probe() -> Result<AppContainerProbe, String> {
         Duration::from_secs(10),
         64 * 1_024,
     )?;
+    let mut interactive = lease_manager.spawn_workspace_command(
+        workspace.path(),
+        &shell,
+        &[
+            "/d".to_owned(),
+            "/q".to_owned(),
+            "/v:on".to_owned(),
+            "/c".to_owned(),
+            "set /p CHATOS_LINE=& echo reply:!CHATOS_LINE!".to_owned(),
+        ],
+        WorkspaceAccess::ReadOnly,
+        "disabled",
+        &runtime_environment,
+    )?;
+    let mut interactive_stdin = interactive
+        .take_stdin()
+        .ok_or_else(|| "AppContainer 交互运行时 stdin 不可用。".to_owned())?;
+    let mut interactive_stdout = interactive
+        .take_stdout()
+        .ok_or_else(|| "AppContainer 交互运行时 stdout 不可用。".to_owned())?;
+    let mut interactive_stderr = interactive
+        .take_stderr()
+        .ok_or_else(|| "AppContainer 交互运行时 stderr 不可用。".to_owned())?;
+    interactive_stdin
+        .write_all(b"runtime-roundtrip\r\n")
+        .map_err(|error| format!("写入 AppContainer 交互运行时失败：{error}"))?;
+    drop(interactive_stdin);
+    let interactive_exit = interactive.wait(Duration::from_secs(10))?;
+    let mut interactive_stdout_bytes = Vec::new();
+    interactive_stdout
+        .read_to_end(&mut interactive_stdout_bytes)
+        .map_err(|error| format!("读取 AppContainer 交互运行时 stdout 失败：{error}"))?;
+    let mut interactive_stderr_bytes = Vec::new();
+    interactive_stderr
+        .read_to_end(&mut interactive_stderr_bytes)
+        .map_err(|error| format!("读取 AppContainer 交互运行时 stderr 失败：{error}"))?;
     let runtime_launcher_verified = runtime_output.exit_code == 0
         && String::from_utf8_lossy(&runtime_output.stdout).trim() == "captured-launcher"
-        && runtime_output.stderr.is_empty();
+        && runtime_output.stderr.is_empty()
+        && interactive_exit == 0
+        && String::from_utf8_lossy(&interactive_stdout_bytes).trim() == "reply:runtime-roundtrip"
+        && interactive_stderr_bytes.is_empty();
     Ok(AppContainerProbe {
         filesystem_denied: disabled_network_process.exit_code != 0
             && controlled_network_process.exit_code != 0,
@@ -603,24 +762,52 @@ fn probe_network_isolation(
 }
 
 struct AppContainerProfile {
+    _fixed_name_permit: Option<FixedProfilePermit>,
     name: Vec<u16>,
     sid: PSID,
     journal_path: Option<PathBuf>,
     delete_on_drop: bool,
 }
 
-impl AppContainerProfile {
-    fn create(name: &str) -> Result<Self, String> {
-        let _guard = PROFILE_LOCK
+unsafe impl Send for AppContainerProfile {}
+
+struct FixedProfilePermit;
+
+impl FixedProfilePermit {
+    fn acquire() -> Self {
+        let mut in_use = FIXED_PROFILE_IN_USE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while *in_use {
+            in_use = FIXED_PROFILE_AVAILABLE
+                .wait(in_use)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        *in_use = true;
+        Self
+    }
+}
+
+impl Drop for FixedProfilePermit {
+    fn drop(&mut self) {
+        let mut in_use = FIXED_PROFILE_IN_USE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *in_use = false;
+        FIXED_PROFILE_AVAILABLE.notify_one();
+    }
+}
+
+impl AppContainerProfile {
+    fn create(name: &str) -> Result<Self, String> {
+        let permit = FixedProfilePermit::acquire();
         let encoded_name = wide(name);
         unsafe {
             // A process termination can bypass Rust destructors. The deterministic probe
             // identity lets the next run remove a stale profile before recreating it.
             DeleteAppContainerProfile(encoded_name.as_ptr());
         }
-        Self::create_named(name, None)
+        Self::create_named(name, None, Some(permit))
     }
 
     fn create_journaled(journal_root: &Path) -> Result<Self, String> {
@@ -628,7 +815,7 @@ impl AppContainerProfile {
         let name = format!("ChatOS.AppContainer.Runtime.{}", id.simple());
         let journal_path = journal_root.join(format!("{id}.json"));
         write_profile_journal(&journal_path, &name)?;
-        match Self::create_named(&name, Some(journal_path.clone())) {
+        match Self::create_named(&name, Some(journal_path.clone()), None) {
             Ok(profile) => Ok(profile),
             Err(error) => {
                 let _ = std::fs::remove_file(journal_path);
@@ -637,7 +824,11 @@ impl AppContainerProfile {
         }
     }
 
-    fn create_named(name: &str, journal_path: Option<PathBuf>) -> Result<Self, String> {
+    fn create_named(
+        name: &str,
+        journal_path: Option<PathBuf>,
+        fixed_name_permit: Option<FixedProfilePermit>,
+    ) -> Result<Self, String> {
         let name = wide(name);
         let display_name = wide("ChatOS AppContainer Probe");
         let description = wide("Temporary ChatOS Windows isolation capability probe");
@@ -659,6 +850,7 @@ impl AppContainerProfile {
             ));
         }
         Ok(Self {
+            _fixed_name_permit: fixed_name_permit,
             name,
             sid,
             journal_path,
@@ -925,6 +1117,129 @@ impl AppContainerProfile {
             stdout,
             stderr,
             capability_policy_verified: true,
+        })
+    }
+
+    fn spawn_interactive(
+        &self,
+        executable: &Path,
+        command_line: &[u16],
+        current_directory: &Path,
+        network_access: NetworkAccess,
+        environment: Option<&mut [u16]>,
+    ) -> Result<AppContainerInteractiveProcess, String> {
+        let executable = wide_os(executable.as_os_str());
+        let mut command_line = command_line.to_vec();
+        if command_line.last().copied() != Some(0) {
+            return Err("The interactive AppContainer command line is invalid.".to_owned());
+        }
+        let current_directory = wide_os(current_directory.as_os_str());
+        let mut attribute_list = AttributeList::with_capacity(2)?;
+        let mut capability_set = CapabilitySet::for_network_access(network_access)?;
+        let capabilities = SECURITY_CAPABILITIES {
+            AppContainerSid: self.sid,
+            Capabilities: capability_set.pointer(),
+            CapabilityCount: capability_set.attributes.len() as u32,
+            Reserved: 0,
+        };
+        attribute_list.set_security_capabilities(&capabilities)?;
+
+        let stdin_pipe = InheritedPipe::input()?;
+        let stdout_pipe = InheritedPipe::output()?;
+        let stderr_pipe = InheritedPipe::output()?;
+        let mut inherited_handles = [stdin_pipe.child.0, stdout_pipe.child.0, stderr_pipe.child.0];
+        attribute_list.set_inherited_handles(&mut inherited_handles)?;
+
+        let mut startup: STARTUPINFOEXW = unsafe { zeroed() };
+        startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdInput = stdin_pipe.child.0;
+        startup.StartupInfo.hStdOutput = stdout_pipe.child.0;
+        startup.StartupInfo.hStdError = stderr_pipe.child.0;
+        startup.lpAttributeList = attribute_list.pointer;
+        let mut process: PROCESS_INFORMATION = unsafe { zeroed() };
+        let environment_pointer = environment
+            .as_ref()
+            .map_or(null(), |block| block.as_ptr().cast::<c_void>());
+        let environment_flag = if environment.is_some() {
+            CREATE_UNICODE_ENVIRONMENT
+        } else {
+            0
+        };
+        let created = unsafe {
+            CreateProcessW(
+                executable.as_ptr(),
+                command_line.as_mut_ptr(),
+                null(),
+                null(),
+                1,
+                EXTENDED_STARTUPINFO_PRESENT
+                    | CREATE_NO_WINDOW
+                    | CREATE_SUSPENDED
+                    | environment_flag,
+                environment_pointer,
+                current_directory.as_ptr(),
+                &startup.StartupInfo,
+                &mut process,
+            )
+        };
+        if created == 0 {
+            return Err(last_error(
+                "Windows interactive AppContainer process creation failed",
+            ));
+        }
+        let process = ProcessHandles::new(process);
+        match process_capabilities_match(process.process, capability_set.expected_sid()) {
+            Ok(true) => {}
+            Ok(false) => {
+                terminate_suspended_process(&process);
+                return Err(
+                    "The interactive AppContainer process capability policy did not match."
+                        .to_owned(),
+                );
+            }
+            Err(error) => {
+                terminate_suspended_process(&process);
+                return Err(error);
+            }
+        }
+        let termination = ProcessTermination::attach_raw_handle(process.process as RawHandle)
+            .map_err(|error| {
+                terminate_suspended_process(&process);
+                format!("Isolating the interactive AppContainer process tree failed: {error}")
+            })?;
+
+        let InheritedPipe {
+            parent: stdin_parent,
+            child: stdin_child,
+        } = stdin_pipe;
+        let InheritedPipe {
+            parent: stdout_parent,
+            child: stdout_child,
+        } = stdout_pipe;
+        let InheritedPipe {
+            parent: stderr_parent,
+            child: stderr_child,
+        } = stderr_pipe;
+        drop(stdin_child);
+        drop(stdout_child);
+        drop(stderr_child);
+        let stdin = stdin_parent.into_file();
+        let stdout = stdout_parent.into_file();
+        let stderr = stderr_parent.into_file();
+
+        if unsafe { ResumeThread(process.thread) } == u32::MAX {
+            terminate_suspended_process(&process);
+            return Err(last_error(
+                "Resuming the interactive AppContainer process failed",
+            ));
+        }
+        Ok(AppContainerInteractiveProcess {
+            termination,
+            process,
+            stdin,
+            stdout,
+            stderr,
         })
     }
 }
@@ -2071,9 +2386,19 @@ struct ProcessHandles {
     thread: HANDLE,
 }
 
+unsafe impl Send for ProcessHandles {}
+
 struct OwnedHandle(HANDLE);
 
 unsafe impl Send for OwnedHandle {}
+
+impl OwnedHandle {
+    fn into_file(mut self) -> File {
+        let handle = self.0;
+        self.0 = null_mut();
+        unsafe { File::from_raw_handle(handle as RawHandle) }
+    }
+}
 
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
@@ -2333,6 +2658,13 @@ fn last_error(context: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_send<T: Send>() {}
+
+    #[test]
+    fn interactive_runtime_handle_can_move_to_a_blocking_worker() {
+        assert_send::<SandboxedChild>();
+    }
 
     fn read_file_exit_code(profile: &AppContainerProfile, file: &Path) -> Result<u32, String> {
         let system_root = std::env::var_os("SystemRoot")
@@ -2615,6 +2947,49 @@ mod tests {
     }
 
     #[test]
+    fn interactive_runtime_round_trips_stdio_and_restores_its_leases() {
+        let system_root = std::env::var_os("SystemRoot").unwrap();
+        let shell = Path::new(&system_root).join("System32").join("cmd.exe");
+        let app_data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
+        let mut child = manager
+            .spawn_workspace_command(
+                workspace.path(),
+                &shell,
+                &[
+                    "/d".to_owned(),
+                    "/q".to_owned(),
+                    "/v:on".to_owned(),
+                    "/c".to_owned(),
+                    "set /p CHATOS_LINE=& echo reply:!CHATOS_LINE!".to_owned(),
+                ],
+                WorkspaceAccess::ReadOnly,
+                "disabled",
+                &restricted_runtime_environment(),
+            )
+            .unwrap();
+        let mut stdin = child.take_stdin().unwrap();
+        let mut stdout = child.take_stdout().unwrap();
+        let mut stderr = child.take_stderr().unwrap();
+        stdin.write_all(b"mcp-roundtrip\r\n").unwrap();
+        drop(stdin);
+
+        assert_eq!(child.wait(Duration::from_secs(10)).unwrap(), 0);
+        let mut stdout_bytes = Vec::new();
+        stdout.read_to_end(&mut stdout_bytes).unwrap();
+        let mut stderr_bytes = Vec::new();
+        stderr.read_to_end(&mut stderr_bytes).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&stdout_bytes).trim(),
+            "reply:mcp-roundtrip"
+        );
+        assert!(stderr_bytes.is_empty());
+        assert_eq!(manager.journal_count(), 0);
+        assert_eq!(manager.profile_journal_count(), 0);
+    }
+
+    #[test]
     fn runtime_profile_journal_recovers_a_crash_abandoned_profile() {
         let app_data = tempfile::tempdir().unwrap();
         let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
@@ -2625,7 +3000,7 @@ mod tests {
 
         assert_eq!(manager.recover_profiles().unwrap(), 1);
         assert_eq!(manager.profile_journal_count(), 0);
-        let recreated = AppContainerProfile::create_named(&profile_name, None).unwrap();
+        let recreated = AppContainerProfile::create_named(&profile_name, None, None).unwrap();
         drop(recreated);
     }
 
