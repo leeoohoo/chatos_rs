@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     ffi::{c_void, OsString},
     fs::OpenOptions,
     io::Write,
@@ -7,7 +8,7 @@ use std::{
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     ptr::{null, null_mut},
-    sync::{Mutex, MutexGuard, OnceLock},
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
     time::Duration,
 };
 
@@ -25,7 +26,9 @@ use windows_sys::Win32::{
         SetFileSecurityW, ACL, DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
         SECURITY_CAPABILITIES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
     },
-    Storage::FileSystem::{FILE_GENERIC_EXECUTE, FILE_GENERIC_READ},
+    Storage::FileSystem::{
+        FILE_DELETE_CHILD, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+    },
     System::Threading::{
         CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
         InitializeProcThreadAttributeList, TerminateProcess, UpdateProcThreadAttribute,
@@ -41,10 +44,128 @@ pub(crate) struct AppContainerProbe {
     pub network_denied: bool,
     pub workspace_lease_verified: bool,
     pub workspace_recovery_verified: bool,
+    pub workspace_permission_tiers_verified: bool,
 }
 
 static PROBE: OnceLock<Result<AppContainerProbe, String>> = OnceLock::new();
 static PROFILE_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum WorkspaceAccess {
+    ReadOnly,
+    ReadWrite,
+}
+
+pub(crate) struct WorkspaceLeaseManager {
+    journal_root: PathBuf,
+    active_workspaces: Arc<Mutex<HashSet<PathBuf>>>,
+}
+
+impl WorkspaceLeaseManager {
+    pub(crate) fn open(app_data_directory: &Path) -> Result<Self, String> {
+        let journal_root = app_data_directory
+            .join("local-agent")
+            .join("appcontainer-workspace-leases");
+        std::fs::create_dir_all(&journal_root).map_err(|error| {
+            format!("Creating the AppContainer workspace lease directory failed: {error}")
+        })?;
+        let journal_root = std::fs::canonicalize(&journal_root).map_err(|error| {
+            format!("Resolving the AppContainer workspace lease directory failed: {error}")
+        })?;
+        let manager = Self {
+            journal_root,
+            active_workspaces: Arc::new(Mutex::new(HashSet::new())),
+        };
+        manager.recover_all()?;
+        Ok(manager)
+    }
+
+    fn grant(
+        &self,
+        workspace: &Path,
+        sid: PSID,
+        access: WorkspaceAccess,
+    ) -> Result<DirectoryLease, String> {
+        let workspace = std::fs::canonicalize(workspace)
+            .map_err(|error| format!("Resolving the AppContainer workspace failed: {error}"))?;
+        if !workspace.is_dir() {
+            return Err("The AppContainer workspace is not a directory.".to_owned());
+        }
+        {
+            let mut active = self.active_workspaces.lock().map_err(|_| {
+                "The AppContainer workspace lease registry is unavailable.".to_owned()
+            })?;
+            if !active.insert(workspace.clone()) {
+                return Err("The AppContainer workspace already has an active lease.".to_owned());
+            }
+        }
+        let journal_path = self
+            .journal_root
+            .join(format!("{}.json", uuid::Uuid::new_v4()));
+        match DirectoryLease::grant(
+            &workspace,
+            sid,
+            access,
+            &journal_path,
+            self.active_workspaces.clone(),
+        ) {
+            Ok(lease) => Ok(lease),
+            Err(error) => {
+                if let Ok(mut active) = self.active_workspaces.lock() {
+                    active.remove(&workspace);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn recover_all(&self) -> Result<usize, String> {
+        let mut entries = std::fs::read_dir(&self.journal_root)
+            .map_err(|error| format!("Reading AppContainer workspace leases failed: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Reading AppContainer workspace leases failed: {error}"))?;
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        if entries.len() > 1_024 {
+            return Err(
+                "Too many AppContainer workspace lease records require recovery.".to_owned(),
+            );
+        }
+        let mut recovered = 0;
+        for entry in entries {
+            let file_type = entry.file_type().map_err(|error| {
+                format!("Inspecting an AppContainer workspace lease failed: {error}")
+            })?;
+            if !file_type.is_file() {
+                return Err("The AppContainer workspace lease directory is invalid.".to_owned());
+            }
+            let path = entry.path();
+            match path.extension().and_then(|value| value.to_str()) {
+                Some("tmp") => std::fs::remove_file(&path).map_err(|error| {
+                    format!("Removing an incomplete workspace lease journal failed: {error}")
+                })?,
+                Some("json") => {
+                    DirectoryLease::recover(&path)?;
+                    recovered += 1;
+                }
+                _ => {
+                    return Err(
+                        "The AppContainer workspace lease directory contains an unknown record."
+                            .to_owned(),
+                    )
+                }
+            }
+        }
+        Ok(recovered)
+    }
+
+    #[cfg(test)]
+    fn journal_count(&self) -> usize {
+        std::fs::read_dir(&self.journal_root)
+            .map(|entries| entries.filter_map(Result::ok).count())
+            .unwrap_or(usize::MAX)
+    }
+}
 
 pub(crate) fn probe_isolation() -> Result<AppContainerProbe, String> {
     PROBE.get_or_init(run_probe).clone()
@@ -75,28 +196,53 @@ fn run_probe() -> Result<AppContainerProbe, String> {
     let network_denied = probe_network_isolation(&profile, Path::new(&system_root))?;
     let workspace = tempfile::tempdir()
         .map_err(|error| format!("无法创建 AppContainer 工作区租约探测目录：{error}"))?;
-    let journal_path = directory.path().join("workspace-lease.json");
-    let lease = DirectoryReadLease::grant(workspace.path(), profile.sid, &journal_path)?;
+    let lease_data = tempfile::tempdir()
+        .map_err(|error| format!("无法创建 AppContainer 租约 journal 探测目录：{error}"))?;
+    let lease_manager = WorkspaceLeaseManager::open(lease_data.path())?;
+    let lease = lease_manager.grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly)?;
+    let journal_path = lease.journal_path.clone();
     let workspace_file = workspace.path().join("workspace.txt");
     std::fs::write(&workspace_file, b"lease-readable")
         .map_err(|error| format!("无法写入 AppContainer 工作区租约探测文件：{error}"))?;
     let granted_exit = read_probe_file(&profile, &reader, &workspace_file)?;
+    let read_only_write_file = workspace.path().join("read-only-write.txt");
+    let read_only_write_exit =
+        write_probe_file(&profile, Path::new(&system_root), &read_only_write_file)?;
     lease.restore()?;
     let restored_exit = read_probe_file(&profile, &reader, &workspace_file)?;
-    let recovery_journal_path = directory.path().join("workspace-recovery-lease.json");
     let recovery_lease =
-        DirectoryReadLease::grant(workspace.path(), profile.sid, &recovery_journal_path)?;
+        lease_manager.grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly)?;
+    let recovery_journal_path = recovery_lease.journal_path.clone();
     let recovery_granted_exit = read_probe_file(&profile, &reader, &workspace_file)?;
     recovery_lease.abandon_for_recovery();
-    DirectoryReadLease::recover(&recovery_journal_path)?;
+    let recovered_count = lease_manager.recover_all()?;
     let recovered_exit = read_probe_file(&profile, &reader, &workspace_file)?;
+    let read_write_lease =
+        lease_manager.grant(workspace.path(), profile.sid, WorkspaceAccess::ReadWrite)?;
+    let read_write_file = workspace.path().join("read-write.txt");
+    let read_write_exit = write_probe_file(&profile, Path::new(&system_root), &read_write_file)?;
+    let read_write_created = std::fs::read_to_string(&read_write_file)
+        .map(|value| value.trim() == "lease-written")
+        .unwrap_or(false);
+    read_write_lease.restore()?;
+    std::fs::remove_file(&read_write_file)
+        .map_err(|error| format!("无法清理 AppContainer 读写探测文件：{error}"))?;
+    let after_read_write_restore_exit =
+        write_probe_file(&profile, Path::new(&system_root), &read_write_file)?;
     Ok(AppContainerProbe {
         filesystem_denied: exit_code != 0,
         network_denied,
         workspace_lease_verified: granted_exit == 0 && restored_exit != 0 && !journal_path.exists(),
         workspace_recovery_verified: recovery_granted_exit == 0
             && recovered_exit != 0
+            && recovered_count == 1
             && !recovery_journal_path.exists(),
+        workspace_permission_tiers_verified: read_only_write_exit != 0
+            && !read_only_write_file.exists()
+            && read_write_exit == 0
+            && read_write_created
+            && after_read_write_restore_exit != 0
+            && !read_write_file.exists(),
     })
 }
 
@@ -111,6 +257,23 @@ fn read_probe_file(
         file.display()
     );
     profile.run(reader, &command_line, Duration::from_secs(10))
+}
+
+fn write_probe_file(
+    profile: &AppContainerProfile,
+    system_root: &Path,
+    file: &Path,
+) -> Result<u32, String> {
+    let shell = system_root.join("System32").join("cmd.exe");
+    if !shell.is_file() {
+        return Err("Windows cmd.exe 不存在，无法验证 AppContainer 工作区写权限。".into());
+    }
+    let command_line = format!(
+        "\"{}\" /d /c echo lease-written>\"{}\"",
+        shell.display(),
+        file.display()
+    );
+    profile.run(&shell, &command_line, Duration::from_secs(10))
 }
 
 fn probe_network_isolation(
@@ -244,23 +407,33 @@ impl AppContainerProfile {
     }
 }
 
-struct DirectoryReadLease {
+struct DirectoryLease {
+    workspace: PathBuf,
     path: Vec<u16>,
     journal_path: PathBuf,
+    active_workspaces: Arc<Mutex<HashSet<PathBuf>>>,
     original_descriptor: PSECURITY_DESCRIPTOR,
     original_dacl: *mut ACL,
     restored: bool,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
-struct DirectoryReadLeaseJournal {
+#[serde(deny_unknown_fields)]
+struct DirectoryLeaseJournal {
     version: u32,
+    access: WorkspaceAccess,
     workspace_path_utf16: Vec<u16>,
     original_dacl_sddl: String,
 }
 
-impl DirectoryReadLease {
-    fn grant(path: &Path, sid: PSID, journal_path: &Path) -> Result<Self, String> {
+impl DirectoryLease {
+    fn grant(
+        path: &Path,
+        sid: PSID,
+        access: WorkspaceAccess,
+        journal_path: &Path,
+        active_workspaces: Arc<Mutex<HashSet<PathBuf>>>,
+    ) -> Result<Self, String> {
         if journal_path.exists() {
             Self::recover(journal_path)?;
         }
@@ -294,8 +467,9 @@ impl DirectoryReadLease {
                 return Err(error);
             }
         };
-        let journal = DirectoryReadLeaseJournal {
+        let journal = DirectoryLeaseJournal {
             version: 1,
+            access,
             workspace_path_utf16,
             original_dacl_sddl,
         };
@@ -307,7 +481,12 @@ impl DirectoryReadLease {
         }
 
         let mut entry: EXPLICIT_ACCESS_W = unsafe { zeroed() };
-        entry.grfAccessPermissions = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
+        entry.grfAccessPermissions = match access {
+            WorkspaceAccess::ReadOnly => FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+            WorkspaceAccess::ReadWrite => {
+                FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | FILE_DELETE_CHILD
+            }
+        };
         entry.grfAccessMode = GRANT_ACCESS;
         entry.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
         entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
@@ -349,8 +528,10 @@ impl DirectoryReadLease {
             ));
         }
         Ok(Self {
+            workspace: path_from_wide(&path),
             path,
             journal_path: journal_path.to_path_buf(),
+            active_workspaces,
             original_descriptor,
             original_dacl,
             restored: false,
@@ -360,7 +541,7 @@ impl DirectoryReadLease {
     fn recover(journal_path: &Path) -> Result<(), String> {
         let bytes = std::fs::read(journal_path)
             .map_err(|error| format!("Reading the workspace ACL journal failed: {error}"))?;
-        let journal: DirectoryReadLeaseJournal = serde_json::from_slice(&bytes)
+        let journal: DirectoryLeaseJournal = serde_json::from_slice(&bytes)
             .map_err(|error| format!("Parsing the workspace ACL journal failed: {error}"))?;
         if journal.version != 1
             || journal.workspace_path_utf16.is_empty()
@@ -385,6 +566,7 @@ impl DirectoryReadLease {
         self.original_descriptor = null_mut();
         self.original_dacl = null_mut();
         self.restored = true;
+        self.release_active_workspace();
     }
 
     fn restore_inner(&mut self) -> Result<(), String> {
@@ -413,12 +595,19 @@ impl DirectoryReadLease {
         self.original_descriptor = null_mut();
         self.original_dacl = null_mut();
         self.restored = true;
+        self.release_active_workspace();
         std::fs::remove_file(&self.journal_path)
             .map_err(|error| format!("Removing the restored workspace ACL journal failed: {error}"))
     }
+
+    fn release_active_workspace(&self) {
+        if let Ok(mut active) = self.active_workspaces.lock() {
+            active.remove(&self.workspace);
+        }
+    }
 }
 
-impl Drop for DirectoryReadLease {
+impl Drop for DirectoryLease {
     fn drop(&mut self) {
         let _ = self.restore_inner();
         if !self.original_descriptor.is_null() {
@@ -486,10 +675,7 @@ fn restore_dacl_from_sddl(path: &Path, sddl: &str) -> Result<(), String> {
     }
 }
 
-fn write_lease_journal(
-    journal_path: &Path,
-    journal: &DirectoryReadLeaseJournal,
-) -> Result<(), String> {
+fn write_lease_journal(journal_path: &Path, journal: &DirectoryLeaseJournal) -> Result<(), String> {
     let parent = journal_path
         .parent()
         .ok_or_else(|| "The workspace ACL journal has no parent directory.".to_owned())?;
@@ -634,6 +820,11 @@ fn wide_os(value: &std::ffi::OsStr) -> Vec<u16> {
     value.encode_wide().chain(std::iter::once(0)).collect()
 }
 
+fn path_from_wide(value: &[u16]) -> PathBuf {
+    let value = value.strip_suffix(&[0]).unwrap_or(value);
+    PathBuf::from(OsString::from_wide(value))
+}
+
 fn last_error(context: &str) -> String {
     let code = unsafe { GetLastError() };
     format!("{context} (Win32 error {code}).")
@@ -662,6 +853,7 @@ mod tests {
         assert!(probe.network_denied);
         assert!(probe.workspace_lease_verified);
         assert!(probe.workspace_recovery_verified);
+        assert!(probe.workspace_permission_tiers_verified);
     }
 
     #[test]
@@ -671,9 +863,14 @@ mod tests {
         let outside_file = outside.path().join("outside.txt");
         std::fs::write(&outside_file, b"lease-readable").unwrap();
         let profile = AppContainerProfile::create("ChatOS.AppContainer.Probe").unwrap();
-        let journal_path = outside.path().join("workspace-lease.json");
-        let lease =
-            DirectoryReadLease::grant(workspace.path(), profile.sid, &journal_path).unwrap();
+        let manager = WorkspaceLeaseManager::open(outside.path()).unwrap();
+        let lease = manager
+            .grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly)
+            .unwrap();
+        let journal_path = lease.journal_path.clone();
+        assert!(manager
+            .grant(workspace.path(), profile.sid, WorkspaceAccess::ReadWrite)
+            .is_err());
         let workspace_file = workspace.path().join("workspace.txt");
         std::fs::write(&workspace_file, b"lease-readable").unwrap();
 
@@ -684,13 +881,36 @@ mod tests {
         assert!(!journal_path.exists());
         assert_ne!(read_file_exit_code(&profile, &workspace_file).unwrap(), 0);
 
-        let lease =
-            DirectoryReadLease::grant(workspace.path(), profile.sid, &journal_path).unwrap();
+        let lease = manager
+            .grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly)
+            .unwrap();
+        let journal_path = lease.journal_path.clone();
         assert_eq!(read_file_exit_code(&profile, &workspace_file).unwrap(), 0);
         lease.abandon_for_recovery();
         assert!(journal_path.exists());
-        DirectoryReadLease::recover(&journal_path).unwrap();
+        drop(manager);
+        let manager = WorkspaceLeaseManager::open(outside.path()).unwrap();
         assert!(!journal_path.exists());
+        assert_eq!(manager.journal_count(), 0);
         assert_ne!(read_file_exit_code(&profile, &workspace_file).unwrap(), 0);
+    }
+
+    #[test]
+    fn workspace_lease_startup_recovery_discards_only_unpublished_drafts() {
+        let app_data = tempfile::tempdir().unwrap();
+        let journal_root = app_data
+            .path()
+            .join("local-agent")
+            .join("appcontainer-workspace-leases");
+        std::fs::create_dir_all(&journal_root).unwrap();
+        let draft = journal_root.join("interrupted.tmp");
+        std::fs::write(&draft, b"not-published").unwrap();
+
+        let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
+        assert!(!draft.exists());
+        assert_eq!(manager.journal_count(), 0);
+
+        std::fs::write(journal_root.join("unexpected.txt"), b"untrusted").unwrap();
+        assert!(WorkspaceLeaseManager::open(app_data.path()).is_err());
     }
 }

@@ -284,6 +284,11 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
+            #[cfg(target_os = "windows")]
+            app.manage(
+                windows_appcontainer::WorkspaceLeaseManager::open(&data_dir)
+                    .map_err(std::io::Error::other)?,
+            );
             let journal = ApprovalDecisionJournal::open(
                 data_dir.join("local-agent").join("approval-decisions"),
             )
