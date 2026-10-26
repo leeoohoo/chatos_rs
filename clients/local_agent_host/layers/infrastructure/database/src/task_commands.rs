@@ -191,6 +191,21 @@ async fn cancel_one_task(
             "task changed while cancelling: {task_id}"
         )));
     }
+    // Keep the follow-up gate consistent even when Main Chat uses the ordinary
+    // cancel_task tool instead of resolving this candidate with
+    // resolve_task_followup. Leaving a cancelled Task in a pending/held review
+    // blocks every replacement graph and can strand sibling Tasks forever.
+    sqlx::query(
+        "UPDATE local_task_followup_reviews SET state = 'cancelled', \
+         reason = ?, updated_at_unix_ms = ? \
+         WHERE task_id = ? AND state IN ('pending','held')",
+    )
+    .bind(reason)
+    .bind(now_unix_ms)
+    .bind(task_id)
+    .execute(&mut *connection)
+    .await
+    .db()?;
     if let Some(run_id) = cancelled_run_id {
         SqliteClientStorage::insert_event(
             connection,

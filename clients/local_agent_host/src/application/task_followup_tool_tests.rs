@@ -209,7 +209,7 @@ async fn invalid_pending_reviews_do_not_cancel_tasks_and_can_be_corrected() {
         graph["created_tasks"][1]["task_id"].clone(),
     ];
     guide_review(&runtime, "current").await;
-    for call in [
+    for (index, call) in [
         review_invocation("stale", "old-message", &ids),
         review_invocation("omitted", "current", &ids[..1]),
         review_invocation(
@@ -218,9 +218,16 @@ async fn invalid_pending_reviews_do_not_cancel_tasks_and_can_be_corrected() {
             &[ids[0].clone(), json!("foreign-task")],
         ),
         review_invocation("duplicate", "current", &[ids[0].clone(), ids[0].clone()]),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let error = preparation_error(executor.execute_tool(&call).await.unwrap());
         assert!(!error.is_empty());
+        if index < 3 {
+            assert!(error.contains("authoritative current review"));
+            assert!(error.contains("current"));
+        }
         let parent = runtime
             .get_run_for_host_worker("parent-run")
             .await

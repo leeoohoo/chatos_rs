@@ -558,9 +558,22 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
         }
         if let Some(review) = pending_review {
             // Program-owned facts only. New Runs get behavior from their frozen Product Skill.
-            capabilities
-                .prefixed_input_items
-                .push(message_item("system", Value::String(review.to_string())));
+            let mut authoritative_review = review.clone();
+            if let Some(object) = authoritative_review.as_object_mut() {
+                object.insert("context_authority".into(), json!("current_run"));
+                object.insert(
+                    "supersedes_all_prior_task_followup_reviews".into(),
+                    json!(true),
+                );
+                object.insert(
+                    "guidance".into(),
+                    json!("This is the only authoritative current follow-up review. Ignore every older task_followup_review retained in conversation or checkpoint history. Copy this review_message_id and decide every task whose review_state is pending exactly once before creating or reusing work."),
+                );
+            }
+            capabilities.prefixed_input_items.push(message_item(
+                "system",
+                Value::String(authoritative_review.to_string()),
+            ));
         }
         let async_handoff_confirmed = self.profile_key == MAIN_CHAT_PROFILE_KEY
             && completed_async_task_handoff(claim.run.continuation_input.as_ref())

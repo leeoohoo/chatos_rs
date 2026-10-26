@@ -26,6 +26,30 @@ fn plugin_installer_main_chat_exposes_only_installer_tools() {
     );
 }
 
+#[test]
+fn pending_followup_review_hides_conflicting_task_mutations() {
+    let tools = vec![
+        json!({"name": "list_tasks"}),
+        json!({"name": "get_task"}),
+        json!({"name": "create_task"}),
+        json!({"name": "create_tasks_with_prerequisites"}),
+        json!({"name": "cancel_task"}),
+        json!({"name": "resolve_task_followup"}),
+        json!({"name": "agent_skill_read_resource"}),
+    ];
+    let scoped = main_chat_scoped_tools(tools, &json!({"task_followup_review": {"pending": true}}));
+    let names = scoped.iter().filter_map(tool_name).collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        vec![
+            "list_tasks",
+            "get_task",
+            "resolve_task_followup",
+            "agent_skill_read_resource"
+        ]
+    );
+}
+
 #[async_trait]
 impl LocalModelRuntimeResolver for OwnerCheckingModelResolver {
     async fn resolve_model_runtime(
@@ -1183,12 +1207,24 @@ async fn managed_prompt_is_authoritative_and_pending_review_prevents_handoff_clo
         prepared.request.model_request.tools[0]["name"],
         "resolve_task_followup"
     );
-    assert!(prepared.request.prefixed_input_items.iter().any(|item| {
-        item["content"]
-            .as_str()
-            .and_then(|text| serde_json::from_str::<Value>(text).ok())
-            == Some(review.clone())
-    }));
+    let authoritative = prepared
+        .request
+        .prefixed_input_items
+        .iter()
+        .filter_map(|item| item["content"].as_str())
+        .filter_map(|text| serde_json::from_str::<Value>(text).ok())
+        .find(|item| item["type"] == "task_followup_review")
+        .expect("current follow-up review context");
+    assert_eq!(
+        authoritative["review_message_id"],
+        review["review_message_id"]
+    );
+    assert_eq!(authoritative["tasks"], review["tasks"]);
+    assert_eq!(authoritative["context_authority"], "current_run");
+    assert_eq!(
+        authoritative["supersedes_all_prior_task_followup_reviews"],
+        true
+    );
 }
 
 #[test]

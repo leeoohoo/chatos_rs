@@ -170,7 +170,7 @@ pub fn task_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": CANCEL_TASK_TOOL,
-            "description": "Cancel a pending or running task from the current conversation/project because it conflicts with the user's latest intent.",
+            "description": "Cancel a pending or running task from the current conversation/project because it conflicts with the user's latest intent. When the current Run contains a pending task_followup_review, prefer resolve_task_followup so every candidate is decided together. A direct cancellation is reconciled atomically with that Task's review, but every remaining pending candidate must still be resolved before replacement work can be created.",
             "parameters": {
                 "type": "object",
                 "properties": {

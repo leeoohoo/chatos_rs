@@ -53,6 +53,18 @@ pub(super) fn main_chat_scoped_tools(mut tools: Vec<Value>, input: &Value) -> Ve
         });
         return tools;
     }
+    if input.pointer("/task_followup_review/pending") == Some(&Value::Bool(true)) {
+        // A pending review is the single mutation boundary for the affected
+        // Tasks. Do not invite the model to cancel one candidate separately or
+        // attempt replacement creation before the atomic review is complete.
+        // Read-only status tools remain available for evidence gathering.
+        tools.retain(|tool| {
+            !matches!(
+                tool_name(tool),
+                Some("create_task" | "create_tasks_with_prerequisites" | "cancel_task")
+            )
+        });
+    }
     let explicitly_selected_plugin = input
         .pointer("/explicit_capability_selection/kind")
         .and_then(Value::as_str)
