@@ -141,6 +141,8 @@ public enum ChatOSCodeReadWorkerEngine {
             return try context.searchText(mapped)
         case "open_file_in_pet":
             return try context.resolvePetFile(request.arguments)
+        case "verify_file_identity_v1":
+            return try context.verifyFileIdentity(request.arguments)
         case "project_list_v1":
             return try context.projectList(request.arguments)
         case "project_search_entries_v1":
@@ -334,6 +336,94 @@ private struct Context {
             "relative_path": .string(relativePath(url)),
             "line": line,
             "mode": .string(mode),
+        ])
+    }
+
+    func verifyFileIdentity(
+        _ arguments: [String: CodeReadWorkerJSONValue]
+    ) throws -> CodeReadWorkerJSONValue {
+        try checkDeadline()
+        let name = try requiredString(arguments, "name")
+        let expectedBytesValue = try requiredNumber(arguments, "byte_size")
+        let expectedDigest = try requiredString(arguments, "sha256").lowercased()
+        guard !name.contains("/"), !name.contains("\\"), name != ".", name != "..",
+              name.utf8.count <= 255,
+              expectedBytesValue.isFinite,
+              expectedBytesValue.rounded() == expectedBytesValue,
+              expectedBytesValue > 0,
+              expectedBytesValue <= 20 * 1_024 * 1_024,
+              expectedDigest.utf8.count == 64,
+              expectedDigest.utf8.allSatisfy({
+                  (48...57).contains($0) || (97...102).contains($0)
+              }) else {
+            throw CodeReadWorkerCoreError.invalidRequest("文件身份校验参数无效")
+        }
+        let expectedBytes = Int64(expectedBytesValue)
+        let rootDescriptor = root.path.withCString {
+            Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard rootDescriptor >= 0 else { throw CodeReadWorkerCoreError.notDirectory }
+        defer { _ = Darwin.close(rootDescriptor) }
+        let descriptor = name.withCString {
+            Darwin.openat(rootDescriptor, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else { throw CodeReadWorkerCoreError.notFile }
+        defer { _ = Darwin.close(descriptor) }
+
+        var before = stat()
+        guard Darwin.fstat(descriptor, &before) == 0,
+              (before.st_mode & S_IFMT) == S_IFREG,
+              before.st_uid == geteuid(),
+              before.st_size == expectedBytes,
+              Darwin.lseek(descriptor, 0, SEEK_SET) == 0 else {
+            throw CodeReadWorkerCoreError.attachmentIntegrityMismatch
+        }
+        var hasher = SHA256()
+        var total: Int64 = 0
+        var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
+        while total < expectedBytes {
+            try checkDeadline()
+            let requested = min(buffer.count, Int(expectedBytes - total))
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, requested)
+            }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else {
+                throw CodeReadWorkerCoreError.attachmentIntegrityMismatch
+            }
+            buffer.withUnsafeBytes { bytes in
+                hasher.update(bufferPointer: UnsafeRawBufferPointer(
+                    rebasing: bytes.prefix(count)
+                ))
+            }
+            total += Int64(count)
+        }
+        var trailingByte: UInt8 = 0
+        while true {
+            let trailingCount = Darwin.read(descriptor, &trailingByte, 1)
+            if trailingCount == 0 { break }
+            if trailingCount < 0, errno == EINTR { continue }
+            throw CodeReadWorkerCoreError.attachmentIntegrityMismatch
+        }
+        var after = stat()
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        guard Darwin.fstat(descriptor, &after) == 0,
+              before.st_dev == after.st_dev,
+              before.st_ino == after.st_ino,
+              before.st_size == after.st_size,
+              before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+              before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+              before.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
+              before.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec,
+              digest == expectedDigest else {
+            throw CodeReadWorkerCoreError.attachmentIntegrityMismatch
+        }
+        return .object([
+            "device": .string(String(after.st_dev)),
+            "inode": .string(String(after.st_ino)),
+            "byte_count": .number(Double(after.st_size)),
+            "modified_seconds": .string(String(after.st_mtimespec.tv_sec)),
+            "modified_nanoseconds": .string(String(after.st_mtimespec.tv_nsec)),
         ])
     }
 

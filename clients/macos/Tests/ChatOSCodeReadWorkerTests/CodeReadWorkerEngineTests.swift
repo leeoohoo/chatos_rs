@@ -48,6 +48,36 @@ final class CodeReadWorkerEngineTests: XCTestCase {
         XCTAssertEqual(try presented.string("mode"), "edit")
     }
 
+    func testVerifiesFileIdentityAndRejectsDigestMismatchAndSymlink() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let data = Data(repeating: 0x7a, count: 96 * 1_024)
+        let file = fixture.root.appendingPathComponent("preview.png")
+        try data.write(to: file)
+        let arguments: [String: CodeReadWorkerJSONValue] = [
+            "name": .string(file.lastPathComponent),
+            "byte_size": .number(Double(data.count)),
+            "sha256": .string(sha256(data)),
+        ]
+        let result = try fixture.execute("verify_file_identity_v1", arguments).object
+        XCTAssertEqual(try result.number("byte_count"), Double(data.count))
+        XCTAssertFalse(try result.string("device").isEmpty)
+        XCTAssertFalse(try result.string("inode").isEmpty)
+
+        XCTAssertThrowsError(try fixture.execute(
+            "verify_file_identity_v1",
+            arguments.merging(["sha256": .string(String(repeating: "0", count: 64))]) {
+                _, new in new
+            }
+        ))
+        let link = fixture.root.appendingPathComponent("linked.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+        XCTAssertThrowsError(try fixture.execute(
+            "verify_file_identity_v1",
+            arguments.merging(["name": .string(link.lastPathComponent)]) { _, new in new }
+        ))
+    }
+
     func testRejectsSymbolicLinkEscapeAndChangedRootIdentity() throws {
         let fixture = try Fixture()
         defer { fixture.dispose() }

@@ -2412,6 +2412,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：附件草稿在用户发送前仍作为 UI `Data` 存在，本批消除的是发送时第二份 Base64/整块落盘工作，不把草稿采集本身改为文件原生。创建 vault 根目录仍是发送路径上的一次小型元数据操作；真实慢速、只读和 ENOSPC 移动卷需要发布故障注入。Worker 在 `linkat` 前被 `SIGKILL` 仍可能留下 `.chatos-write-*.tmp`，在 App 已取消但 Worker 已安装并回包前中断也可能留下无 Host 引用的 token；必须用 ownership、年龄和活跃 Worker 门禁回收，禁止无条件递归删除。附件历史 `previewURL`、Artifact stage/restore 和统一跨进程动态资源预算仍待实施。
 
+### 12.108 第三十七完整里程碑：附件历史零 I/O 映射与按需 Worker 预览校验（2026-10-26）
+
+本里程碑关闭附件历史加载的同步元数据旁路。此前 `mapTurns` 为每条历史附件调用 `previewURL`，在 Conversation Service actor 内逐个读取 regular-file/symlink/size 元数据并解析真实路径；长历史或慢卷会在图片尚未进入视口前阻塞整个页面刷新。直接为每条历史记录启动 Worker 又会形成列表级进程风暴。现在历史映射只做纯内存授权字段校验和确定性候选路径计算，真实文件只在图片进入 SwiftUI `.task` 后按需校验。
+
+已实施：
+
+- `NativeLocalAgentAttachmentVault.previewURL` 删除 `resourceValues`、`resolvingSymlinksInPath` 和文件存在性检查；它仍严格校验 conversation、UUID token、字节上限和 SHA 字段，只返回 owner/conversation 哈希目录下的候选 URL。缺失或损坏文件不会拖慢历史映射，也不会被误认为已验证。
+- Code Read Worker 新增 `verify_file_identity_v1`。每次可见图片校验启动独立 PID，在父目录 device/inode 授权根内通过 `openat(..., O_NOFOLLOW)` 打开单一文件名，要求当前用户所有的普通文件、1--20 MiB 精确大小，并以 64 KiB 缓冲计算完整 SHA-256；读取前后核对 device、inode、size、mtime 和 ctime，拒绝 symlink、摘要不符和读取期间替换。
+- `ConversationAttachmentImageLoader` 删除两段 App 内 `AppCancellableDetachedWork` 文件扫描。现在先由 Code Read Worker 返回源 identity，再把 identity 交给 Media Worker 解码；解码完成后用第二个独立 Code Read Worker 重新校验完整摘要与身份。任一 Worker 挂起、取消、崩溃或发现替换只影响当前可见图片，不会占用主 App cooperative executor。
+- 历史列表不创建 Worker；只有真正呈现的本地图片才产生校验/解码进程。文件附件 chip 不读取正文，离屏图片的 SwiftUI task 可取消，因此进程成本与可见工作量而不是历史总条数绑定。
+- 新增纯映射回归证明候选 vault 文件不存在时仍可生成 file URL；Core 与真实 Worker 回归覆盖 96/128 KiB 跨块摘要、identity、symlink 和摘要不符；App 回归继续覆盖正常缩略图、摘要错误、symlink 及 Media Worker 执行期间源 inode 被替换。
+
+验证：Debug 与原生 arm64 Release `warnings-as-errors` 的联合矩阵各执行 27 项，0 跳过、0 失败；Release 完成 Worker、Connector 与 App 优化编译。构建证据工具 25 项全部通过，两个打包脚本通过 zsh 语法校验，`git diff --check` 通过。未运行 launch smoke，未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：普通非图片附件当前只显示名称与大小，不提供点击导出，因此不会触发按需文件校验；未来增加打开/导出必须复用 Worker identity，不得直接信任候选 URL。每张可见图片当前需要校验 Worker、Media Worker、复核 Worker 三个短进程，这是优先保证隔离和列表无阻塞的模型；真实快速滚动、20 MiB 图片列表和低端机器 trace 应决定是否增加带硬上限的可取消批处理，但不能退回全局单槽或历史全量预热。Artifact stage/restore、临时文件安全回收和跨 Helper 动态资源预算仍待实施。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

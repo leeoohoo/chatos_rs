@@ -389,6 +389,32 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         }
     }
 
+    func testRealWorkerVerifiesPreviewFileIdentity() async throws {
+        let executable = try realWorkerExecutable()
+        let fixture = try WorkerFixture()
+        defer { fixture.dispose() }
+        let data = Data(repeating: 0x39, count: 128 * 1_024)
+        let file = fixture.root.appendingPathComponent("preview.bin")
+        try data.write(to: file)
+        let result = try await CodeReadWorkerProcessClient(
+            executableURL: executable,
+            timeout: 5
+        ).execute(
+            operation: "verify_file_identity_v1",
+            arguments: [
+                "name": .string(file.lastPathComponent),
+                "byte_size": .number(Double(data.count)),
+                "sha256": .string(processSHA256(data)),
+            ],
+            projectRoot: fixture.root
+        )
+        guard case let .object(fields) = result,
+              case let .number(byteCount)? = fields["byte_count"] else {
+            return XCTFail("real worker returned an invalid file identity")
+        }
+        XCTAssertEqual(byteCount, Double(data.count))
+    }
+
     func testAttachmentVaultProductionAuthorizationUsesBinaryWorker() async throws {
         let executable = try realWorkerExecutable()
         let fixture = try WorkerFixture()

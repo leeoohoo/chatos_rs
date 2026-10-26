@@ -238,11 +238,10 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         ownerUserID: String,
         conversationID: String
     ) throws -> URL {
-        try validatedFileURL(
-            record,
-            ownerUserID: ownerUserID,
-            conversationID: conversationID
-        )
+        _ = try arguments(record, ownerUserID: ownerUserID, conversationID: conversationID)
+        let token = String(record.authorizedLocalRef.dropFirst(Self.referencePrefix.count))
+        return scopedDirectory(ownerUserID: ownerUserID, conversationID: conversationID)
+            .appendingPathComponent(token, isDirectory: false)
     }
 
     private func execute(
@@ -300,26 +299,6 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         ]
     }
 
-    private func validatedFileURL(
-        _ record: LocalAgentConversationAttachmentRecord,
-        ownerUserID: String,
-        conversationID: String
-    ) throws -> URL {
-        _ = try arguments(record, ownerUserID: ownerUserID, conversationID: conversationID)
-        let token = String(record.authorizedLocalRef.dropFirst(Self.referencePrefix.count))
-        let directory = scopedDirectory(ownerUserID: ownerUserID, conversationID: conversationID)
-        let file = directory.appendingPathComponent(token, isDirectory: false)
-        let values = try file.resourceValues(forKeys: [
-            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
-        ])
-        guard values.isRegularFile == true, values.isSymbolicLink != true,
-              values.fileSize == Int(record.byteSize),
-              Self.isContained(file: file, in: directory) else {
-            throw NativeLocalAgentAttachmentVaultError.invalidAttachment
-        }
-        return file
-    }
-
     private func scopedDirectory(ownerUserID: String, conversationID: String) -> URL {
         rootURL
             .appendingPathComponent(Self.scopeComponent(ownerUserID), isDirectory: true)
@@ -332,10 +311,6 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func isContained(file: URL, in directory: URL) -> Bool {
-        file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
-            == directory.resolvingSymlinksInPath().standardizedFileURL
-    }
 }
 
 enum NativeLocalAgentAttachmentVaultError: LocalizedError, Equatable {

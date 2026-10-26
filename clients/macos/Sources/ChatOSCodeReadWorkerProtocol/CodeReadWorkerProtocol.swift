@@ -8,7 +8,7 @@ public enum ChatOSCodeReadWorkerProtocol {
     public static let maximumBinaryPayloadBytes = 20 * 1_024 * 1_024
     public static let operations = [
         "read_file_raw", "read_file_range", "list_dir", "search_text",
-        "read_file", "search_files", "open_file_in_pet",
+        "read_file", "search_files", "open_file_in_pet", "verify_file_identity_v1",
         "project_list_v1", "project_search_entries_v1",
         "project_run_analyze_v1", "project_write_file_v1",
         "project_create_directory_v1", "project_delete_entry_v1",
