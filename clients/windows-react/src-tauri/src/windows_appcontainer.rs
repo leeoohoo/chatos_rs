@@ -14,7 +14,7 @@ use std::{
     ptr::{null, null_mut},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex, MutexGuard, OnceLock,
+        Arc, Mutex, OnceLock,
     },
     thread,
     time::Duration,
@@ -178,6 +178,7 @@ pub(crate) struct SandboxedCommandOutput {
 
 pub(crate) struct WorkspaceLeaseManager {
     journal_root: PathBuf,
+    profile_journal_root: PathBuf,
     active_workspaces: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
@@ -192,11 +193,23 @@ impl WorkspaceLeaseManager {
         let journal_root = std::fs::canonicalize(&journal_root).map_err(|error| {
             format!("Resolving the AppContainer workspace lease directory failed: {error}")
         })?;
+        let profile_journal_root = app_data_directory
+            .join("local-agent")
+            .join("appcontainer-profile-leases");
+        std::fs::create_dir_all(&profile_journal_root).map_err(|error| {
+            format!("Creating the AppContainer profile lease directory failed: {error}")
+        })?;
+        let profile_journal_root =
+            std::fs::canonicalize(&profile_journal_root).map_err(|error| {
+                format!("Resolving the AppContainer profile lease directory failed: {error}")
+            })?;
         let manager = Self {
             journal_root,
+            profile_journal_root,
             active_workspaces: Arc::new(Mutex::new(HashSet::new())),
         };
         manager.recover_all()?;
+        manager.recover_profiles()?;
         Ok(manager)
     }
 
@@ -215,7 +228,7 @@ impl WorkspaceLeaseManager {
         if maximum_output_bytes == 0 || maximum_output_bytes > 64 * 1_024 * 1_024 {
             return Err("The AppContainer process output limit is invalid.".to_owned());
         }
-        let profile = AppContainerProfile::create("ChatOS.AppContainer.Runtime")?;
+        let profile = AppContainerProfile::create_journaled(&self.profile_journal_root)?;
         let lease = self.grant(workspace, profile.sid, access)?;
         let command_line = build_windows_command_line(executable.as_os_str(), arguments)?;
         let mut environment = build_environment_block(environment)?;
@@ -328,10 +341,54 @@ impl WorkspaceLeaseManager {
         Ok(recovered)
     }
 
+    fn recover_profiles(&self) -> Result<usize, String> {
+        let mut entries = std::fs::read_dir(&self.profile_journal_root)
+            .map_err(|error| format!("Reading AppContainer profile leases failed: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Reading AppContainer profile leases failed: {error}"))?;
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        if entries.len() > 1_024 {
+            return Err("Too many AppContainer profile leases require recovery.".to_owned());
+        }
+        let mut recovered = 0;
+        for entry in entries {
+            let file_type = entry.file_type().map_err(|error| {
+                format!("Inspecting an AppContainer profile lease failed: {error}")
+            })?;
+            if !file_type.is_file() {
+                return Err("The AppContainer profile lease directory is invalid.".to_owned());
+            }
+            let path = entry.path();
+            match path.extension().and_then(|value| value.to_str()) {
+                Some("tmp") => std::fs::remove_file(&path).map_err(|error| {
+                    format!("Removing an incomplete AppContainer profile lease failed: {error}")
+                })?,
+                Some("json") => {
+                    recover_profile_journal(&path)?;
+                    recovered += 1;
+                }
+                _ => {
+                    return Err(
+                        "The AppContainer profile lease directory contains an unknown record."
+                            .to_owned(),
+                    )
+                }
+            }
+        }
+        Ok(recovered)
+    }
+
     #[cfg(test)]
     fn journal_count(&self) -> usize {
         std::fs::read_dir(&self.journal_root)
             .map(|entries| entries.filter_map(Result::ok).count())
+            .unwrap_or(usize::MAX)
+    }
+
+    #[cfg(test)]
+    fn profile_journal_count(&self) -> usize {
+        std::fs::read_dir(&self.profile_journal_root)
+            .map(|entries| entries.count())
             .unwrap_or(usize::MAX)
     }
 }
@@ -546,24 +603,44 @@ fn probe_network_isolation(
 }
 
 struct AppContainerProfile {
-    _guard: MutexGuard<'static, ()>,
     name: Vec<u16>,
     sid: PSID,
+    journal_path: Option<PathBuf>,
+    delete_on_drop: bool,
 }
 
 impl AppContainerProfile {
     fn create(name: &str) -> Result<Self, String> {
-        let guard = PROFILE_LOCK
+        let _guard = PROFILE_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let name = wide(name);
-        let display_name = wide("ChatOS AppContainer Probe");
-        let description = wide("Temporary ChatOS Windows isolation capability probe");
+        let encoded_name = wide(name);
         unsafe {
             // A process termination can bypass Rust destructors. The deterministic probe
             // identity lets the next run remove a stale profile before recreating it.
-            DeleteAppContainerProfile(name.as_ptr());
+            DeleteAppContainerProfile(encoded_name.as_ptr());
         }
+        Self::create_named(name, None)
+    }
+
+    fn create_journaled(journal_root: &Path) -> Result<Self, String> {
+        let id = uuid::Uuid::new_v4();
+        let name = format!("ChatOS.AppContainer.Runtime.{}", id.simple());
+        let journal_path = journal_root.join(format!("{id}.json"));
+        write_profile_journal(&journal_path, &name)?;
+        match Self::create_named(&name, Some(journal_path.clone())) {
+            Ok(profile) => Ok(profile),
+            Err(error) => {
+                let _ = std::fs::remove_file(journal_path);
+                Err(error)
+            }
+        }
+    }
+
+    fn create_named(name: &str, journal_path: Option<PathBuf>) -> Result<Self, String> {
+        let name = wide(name);
+        let display_name = wide("ChatOS AppContainer Probe");
+        let description = wide("Temporary ChatOS Windows isolation capability probe");
         let mut sid = null_mut();
         let result = unsafe {
             CreateAppContainerProfile(
@@ -582,10 +659,16 @@ impl AppContainerProfile {
             ));
         }
         Ok(Self {
-            _guard: guard,
             name,
             sid,
+            journal_path,
+            delete_on_drop: true,
         })
+    }
+
+    #[cfg(test)]
+    fn abandon_for_recovery(mut self) {
+        self.delete_on_drop = false;
     }
 
     fn run(&self, executable: &Path, command_line: &str, timeout: Duration) -> Result<u32, String> {
@@ -964,6 +1047,13 @@ struct DirectoryLeaseJournalEntry {
     volume_serial_number: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     file_index: Option<u64>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileLeaseJournal {
+    version: u32,
+    profile_name: String,
 }
 
 impl DirectoryLease {
@@ -1768,6 +1858,70 @@ fn restore_dacl_from_sddl_handle(file: &File, sddl: &str) -> Result<(), String> 
     }
 }
 
+fn write_profile_journal(journal_path: &Path, profile_name: &str) -> Result<(), String> {
+    if !valid_runtime_profile_name(profile_name) {
+        return Err("The AppContainer runtime profile name is invalid.".to_owned());
+    }
+    let payload = serde_json::to_vec(&ProfileLeaseJournal {
+        version: 1,
+        profile_name: profile_name.to_owned(),
+    })
+    .map_err(|error| format!("Encoding the AppContainer profile lease failed: {error}"))?;
+    let temporary_path = journal_path.with_extension("tmp");
+    let result = (|| -> Result<(), String> {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary_path)
+            .map_err(|error| format!("Creating the AppContainer profile lease failed: {error}"))?;
+        file.write_all(&payload)
+            .map_err(|error| format!("Writing the AppContainer profile lease failed: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("Flushing the AppContainer profile lease failed: {error}"))?;
+        drop(file);
+        std::fs::rename(&temporary_path, journal_path)
+            .map_err(|error| format!("Publishing the AppContainer profile lease failed: {error}"))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary_path);
+    }
+    result
+}
+
+fn recover_profile_journal(journal_path: &Path) -> Result<(), String> {
+    let bytes = std::fs::read(journal_path)
+        .map_err(|error| format!("Reading the AppContainer profile lease failed: {error}"))?;
+    if bytes.len() > 1_024 {
+        return Err("The AppContainer profile lease exceeds its safety limit.".to_owned());
+    }
+    let journal: ProfileLeaseJournal = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Parsing the AppContainer profile lease failed: {error}"))?;
+    if journal.version != 1 || !valid_runtime_profile_name(&journal.profile_name) {
+        return Err("The AppContainer profile lease is invalid.".to_owned());
+    }
+    let name = wide(&journal.profile_name);
+    let deleted = unsafe { DeleteAppContainerProfile(name.as_ptr()) };
+    let error_code = deleted as u32 & 0xffff;
+    if deleted < 0 && error_code != 2 && error_code != 1_168 {
+        return Err(format!(
+            "Recovering the AppContainer profile lease failed (HRESULT 0x{:08X}).",
+            deleted as u32
+        ));
+    }
+    std::fs::remove_file(journal_path)
+        .map_err(|error| format!("Removing the AppContainer profile lease failed: {error}"))
+}
+
+fn valid_runtime_profile_name(value: &str) -> bool {
+    let Some(suffix) = value.strip_prefix("ChatOS.AppContainer.Runtime.") else {
+        return false;
+    };
+    suffix.len() == 32
+        && suffix
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+}
+
 fn write_lease_journal(journal_path: &Path, journal: &DirectoryLeaseJournal) -> Result<(), String> {
     let parent = journal_path
         .parent()
@@ -1811,7 +1965,14 @@ impl Drop for AppContainerProfile {
             if !self.sid.is_null() {
                 FreeSid(self.sid);
             }
-            DeleteAppContainerProfile(self.name.as_ptr());
+        }
+        if self.delete_on_drop {
+            let deleted = unsafe { DeleteAppContainerProfile(self.name.as_ptr()) };
+            if deleted >= 0 {
+                if let Some(journal_path) = self.journal_path.as_ref() {
+                    let _ = std::fs::remove_file(journal_path);
+                }
+            }
         }
     }
 }
@@ -2451,6 +2612,21 @@ mod tests {
             .unwrap_err();
         assert!(failure.contains("output exceeded"), "{failure}");
         assert_eq!(manager.journal_count(), 0);
+    }
+
+    #[test]
+    fn runtime_profile_journal_recovers_a_crash_abandoned_profile() {
+        let app_data = tempfile::tempdir().unwrap();
+        let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
+        let profile = AppContainerProfile::create_journaled(&manager.profile_journal_root).unwrap();
+        let profile_name = String::from_utf16(profile.name.strip_suffix(&[0]).unwrap()).unwrap();
+        assert_eq!(manager.profile_journal_count(), 1);
+        profile.abandon_for_recovery();
+
+        assert_eq!(manager.recover_profiles().unwrap(), 1);
+        assert_eq!(manager.profile_journal_count(), 0);
+        let recreated = AppContainerProfile::create_named(&profile_name, None).unwrap();
+        drop(recreated);
     }
 
     #[test]
