@@ -20,6 +20,7 @@ final class ClientMachineResourcePressureMonitor: @unchecked Sendable {
     }
 
     private let governor: ClientMachineResourceGovernor
+    private let hostPressureUpdate: @Sendable (ClientMachinePressureLevel) async -> Void
     private let stateQueue = DispatchQueue(
         label: "com.chatos.machine-resource-pressure",
         qos: .utility
@@ -34,8 +35,12 @@ final class ClientMachineResourcePressureMonitor: @unchecked Sendable {
     private var lowPowerObserver: NSObjectProtocol?
     private var powerSourceRunLoopSource: CFRunLoopSource?
 
-    init(governor: ClientMachineResourceGovernor) {
+    init(
+        governor: ClientMachineResourceGovernor,
+        hostPressureUpdate: @escaping @Sendable (ClientMachinePressureLevel) async -> Void = { _ in }
+    ) {
         self.governor = governor
+        self.hostPressureUpdate = hostPressureUpdate
     }
 
     @MainActor
@@ -130,9 +135,11 @@ final class ClientMachineResourcePressureMonitor: @unchecked Sendable {
 
         let previous = submissionTask
         let governor = governor
+        let hostPressureUpdate = hostPressureUpdate
         submissionTask = Task {
             await previous?.value
             await governor.updatePressureState(state)
+            await hostPressureUpdate(state.level)
         }
     }
 

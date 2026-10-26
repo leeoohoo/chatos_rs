@@ -9,7 +9,8 @@ use crate::{
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     validate_identifier, HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope,
-    HostResult, LocalAgentHostSchedulerSnapshot, LocalAgentToolExecutionRoute,
+    HostResult, LocalAgentHostSchedulerSnapshot, LocalAgentResourcePressureLevel,
+    LocalAgentToolExecutionRoute,
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use futures::future::join_all;
@@ -49,6 +50,8 @@ pub struct LocalAgentHostCoordinator {
     work_activity: HostWorkActivity,
     reserved_ipc_tools: Vec<String>,
     maximum_concurrent_work_items: usize,
+    effective_maximum_concurrent_work_items: watch::Sender<usize>,
+    pressure_level: watch::Sender<LocalAgentResourcePressureLevel>,
 }
 
 impl LocalAgentHostCoordinator {
@@ -75,6 +78,10 @@ impl LocalAgentHostCoordinator {
             );
         }
         let (activity, _) = watch::channel(0);
+        let maximum_concurrent_work_items = default_maximum_concurrent_work_items();
+        let (effective_maximum_concurrent_work_items, _) =
+            watch::channel(maximum_concurrent_work_items);
+        let (pressure_level, _) = watch::channel(LocalAgentResourcePressureLevel::Normal);
         let work_activity = HostWorkActivity::default();
         Ok(Self {
             runtime,
@@ -89,7 +96,9 @@ impl LocalAgentHostCoordinator {
             activity,
             work_activity,
             reserved_ipc_tools: Vec::new(),
-            maximum_concurrent_work_items: default_maximum_concurrent_work_items(),
+            maximum_concurrent_work_items,
+            effective_maximum_concurrent_work_items,
+            pressure_level,
         })
     }
 
@@ -100,6 +109,8 @@ impl LocalAgentHostCoordinator {
             ));
         }
         self.maximum_concurrent_work_items = maximum;
+        self.effective_maximum_concurrent_work_items
+            .send_replace(maximum);
         Ok(self)
     }
 
@@ -165,8 +176,9 @@ impl LocalAgentHostCoordinator {
         &self,
         shutdown: watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
-        let workers = (0..self.maximum_concurrent_work_items)
-            .map(|_| self.run_scheduler_worker_until_shutdown(shutdown.clone()));
+        let workers = (0..self.maximum_concurrent_work_items).map(|worker_index| {
+            self.run_scheduler_worker_until_shutdown(worker_index, shutdown.clone())
+        });
         for result in join_all(workers).await {
             result?;
         }
@@ -182,14 +194,30 @@ impl LocalAgentHostCoordinator {
     /// global concurrency limit across model and tool work.
     async fn run_scheduler_worker_until_shutdown(
         &self,
+        worker_index: usize,
         mut shutdown: watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
+        let mut effective_limit = self.effective_maximum_concurrent_work_items.subscribe();
         let mut failure_backoff = Duration::from_millis(100);
         loop {
             if *shutdown.borrow() {
                 return Ok(());
             }
-            let progressed = match self.run_ready_work_once(&shutdown).await {
+            while worker_index >= *effective_limit.borrow() {
+                tokio::select! {
+                    changed = effective_limit.changed() => {
+                        if changed.is_err() {
+                            return Ok(());
+                        }
+                    }
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            let progressed = match self.run_ready_work_once(worker_index, &shutdown).await {
                 Ok(progressed) => {
                     failure_backoff = Duration::from_millis(100);
                     progressed
@@ -232,6 +260,7 @@ impl LocalAgentHostCoordinator {
 
     async fn run_ready_work_once(
         &self,
+        worker_index: usize,
         shutdown: &watch::Receiver<bool>,
     ) -> Result<bool, LocalAgentCoordinatorError> {
         let mut progressed = false;
@@ -243,6 +272,11 @@ impl LocalAgentHostCoordinator {
             progressed |= committed;
         }
         if *shutdown.borrow() {
+            return Ok(progressed);
+        }
+        // A worker that became ineligible while model work was active must not
+        // cross a second durable claim boundary for tool work.
+        if worker_index >= *self.effective_maximum_concurrent_work_items.borrow() {
             return Ok(progressed);
         }
         if let Some(scheduler) = self.tool_scheduler.as_ref() {
@@ -265,7 +299,8 @@ impl LocalAgentHostCoordinator {
                 return Ok(());
             }
             let results = join_all(
-                (0..self.maximum_concurrent_work_items).map(|_| self.run_ready_work_once(shutdown)),
+                (0..self.maximum_concurrent_work_items)
+                    .map(|worker_index| self.run_ready_work_once(worker_index, shutdown)),
             )
             .await;
             let mut progressed = false;
@@ -466,6 +501,10 @@ impl LocalAgentHostCoordinator {
         let active_work_items = self.work_activity.active_count();
         let scheduler = LocalAgentHostSchedulerSnapshot {
             maximum_concurrent_work_items: self.maximum_concurrent_work_items,
+            effective_maximum_concurrent_work_items: *self
+                .effective_maximum_concurrent_work_items
+                .borrow(),
+            pressure_level: *self.pressure_level.borrow(),
             active_work_items,
             idle_workers: self
                 .maximum_concurrent_work_items
@@ -481,6 +520,38 @@ impl LocalAgentHostCoordinator {
         }
         response
     }
+
+    fn update_scheduler_pressure(
+        &self,
+        request: HostRequestEnvelope,
+        pressure_level: LocalAgentResourcePressureLevel,
+    ) -> HostResponseEnvelope {
+        let effective_maximum_concurrent_work_items =
+            effective_worker_limit(self.maximum_concurrent_work_items, pressure_level);
+        self.pressure_level.send_replace(pressure_level);
+        self.effective_maximum_concurrent_work_items
+            .send_replace(effective_maximum_concurrent_work_items);
+        HostResponseEnvelope::success(
+            request.command_id,
+            HostResult::SchedulerPressureUpdated {
+                pressure_level,
+                effective_maximum_concurrent_work_items,
+            },
+        )
+    }
+}
+
+fn effective_worker_limit(
+    configured: usize,
+    pressure_level: LocalAgentResourcePressureLevel,
+) -> usize {
+    let effective = match pressure_level {
+        LocalAgentResourcePressureLevel::Normal => configured,
+        LocalAgentResourcePressureLevel::Elevated => configured.saturating_mul(3).div_ceil(4),
+        LocalAgentResourcePressureLevel::Serious => configured.div_ceil(2),
+        LocalAgentResourcePressureLevel::Critical => 1,
+    };
+    effective.clamp(MIN_CONCURRENT_WORK_ITEMS, configured)
 }
 
 fn default_maximum_concurrent_work_items() -> usize {
@@ -495,6 +566,9 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
     async fn handle_request(&self, mut request: HostRequestEnvelope) -> HostResponseEnvelope {
         if matches!(request.command, HostCommand::Health) {
             return self.health_response(request).await;
+        }
+        if let HostCommand::SetSchedulerPressure(command) = request.command.clone() {
+            return self.update_scheduler_pressure(request, command.pressure_level);
         }
         if request
             .command
@@ -588,6 +662,7 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::CancelConversationTurn(_)
         | HostCommand::ResolveRequirementSurvey(_) => true,
         HostCommand::Health
+        | HostCommand::SetSchedulerPressure(_)
         | HostCommand::GetMemorySyncStatus(_)
         | HostCommand::PutModelConfigSnapshot(_)
         | HostCommand::GetModelConfigSnapshot(_)

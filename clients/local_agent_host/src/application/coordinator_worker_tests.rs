@@ -10,7 +10,8 @@ use chatos_ai_runtime::{MemoryRecordWriter, SaveRecordInput};
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
     ClaimNextRunCommand, CommitStepCommand, CreateRunCommand, CreateTaskGraphCommand, HostCommand,
-    HostRequestEnvelope, HostResult, LocalAgentRunClaim, LocalAgentStepOutcome, LocalTaskSpec,
+    HostRequestEnvelope, HostResult, LocalAgentResourcePressureLevel, LocalAgentRunClaim,
+    LocalAgentStepOutcome, LocalTaskSpec, SetSchedulerPressureCommand,
     LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry, LocalAgentRuntime};
@@ -432,9 +433,161 @@ async fn health_reports_active_idle_and_durable_queue_at_the_claim_boundary() {
         panic!("expected scheduler health snapshot: {health:?}")
     };
     assert_eq!(snapshot.maximum_concurrent_work_items, 2);
+    assert_eq!(snapshot.effective_maximum_concurrent_work_items, 2);
+    assert_eq!(
+        snapshot.pressure_level,
+        LocalAgentResourcePressureLevel::Normal
+    );
     assert_eq!(snapshot.active_work_items, 2);
     assert_eq!(snapshot.idle_workers, 0);
     assert_eq!(snapshot.queued_ready_work_items, 1);
+
+    shutdown_sender.send(true).expect("shutdown");
+    release.notify_waiters();
+    coordinator.wake();
+    coordinator_task
+        .await
+        .expect("coordinator task")
+        .expect("coordinator shutdown");
+}
+
+#[tokio::test]
+async fn pressure_gate_applies_before_the_next_claim_without_cancelling_active_work() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = Arc::new(LocalAgentRuntime::new(storage));
+    runtime.initialize("user-1").await.expect("initialize");
+    for index in 0..4 {
+        runtime
+            .try_handle(envelope(
+                &format!("create-pressure-run-{index}"),
+                HostCommand::CreateRun(CreateRunCommand {
+                    run_id: format!("pressure-run-{index}"),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation".to_string(),
+                    owner_entity_id: format!("pressure-conversation-{index}"),
+                    profile_key: "blocking".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"message": index}),
+                    max_iterations: 4,
+                }),
+            ))
+            .await
+            .expect("create pressure Run");
+    }
+    let (started_sender, mut started_receiver) = mpsc::unbounded_channel();
+    let release = Arc::new(Notify::new());
+    let mut profiles = LocalAgentProfileRegistry::new();
+    profiles
+        .register(
+            "blocking",
+            BlockingProfile {
+                started: started_sender,
+                release: Arc::clone(&release),
+            },
+        )
+        .expect("profile");
+    let scheduler = LocalAgentScheduler::new(
+        Arc::clone(&runtime),
+        profiles,
+        "user-1",
+        "local-pressure-worker",
+    )
+    .expect("scheduler");
+    let coordinator = Arc::new(
+        LocalAgentHostCoordinator::new(Arc::clone(&runtime), "user-1", Some(scheduler), None)
+            .expect("coordinator")
+            .with_maximum_concurrent_work_items(2)
+            .expect("concurrency"),
+    );
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let coordinator_task = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move { coordinator.run_until_shutdown(shutdown_receiver).await }
+    });
+    coordinator.wake();
+    for _ in 0..2 {
+        tokio::time::timeout(std::time::Duration::from_secs(1), started_receiver.recv())
+            .await
+            .expect("initial worker started before timeout")
+            .expect("initial worker start");
+    }
+
+    let pressure = coordinator
+        .handle_request(envelope(
+            "set-critical-pressure",
+            HostCommand::SetSchedulerPressure(SetSchedulerPressureCommand {
+                pressure_level: LocalAgentResourcePressureLevel::Critical,
+            }),
+        ))
+        .await;
+    assert!(matches!(
+        pressure.result,
+        Some(HostResult::SchedulerPressureUpdated {
+            pressure_level: LocalAgentResourcePressureLevel::Critical,
+            effective_maximum_concurrent_work_items: 1,
+        })
+    ));
+    let health = coordinator
+        .handle_request(envelope("health-under-pressure", HostCommand::Health))
+        .await;
+    let Some(HostResult::Health {
+        scheduler: Some(snapshot),
+        ..
+    }) = health.result
+    else {
+        panic!("expected scheduler health snapshot: {health:?}")
+    };
+    assert_eq!(snapshot.maximum_concurrent_work_items, 2);
+    assert_eq!(snapshot.effective_maximum_concurrent_work_items, 1);
+    assert_eq!(
+        snapshot.pressure_level,
+        LocalAgentResourcePressureLevel::Critical
+    );
+    assert_eq!(
+        snapshot.active_work_items, 2,
+        "active claims are not cancelled"
+    );
+
+    release.notify_waiters();
+    tokio::time::timeout(std::time::Duration::from_secs(1), started_receiver.recv())
+        .await
+        .expect("one worker remains eligible")
+        .expect("third Run start");
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            started_receiver.recv()
+        )
+        .await
+        .is_err(),
+        "critical pressure must leave the fourth durable Run unclaimed"
+    );
+
+    let recovery = coordinator
+        .handle_request(envelope(
+            "restore-normal-pressure",
+            HostCommand::SetSchedulerPressure(SetSchedulerPressureCommand {
+                pressure_level: LocalAgentResourcePressureLevel::Normal,
+            }),
+        ))
+        .await;
+    assert!(matches!(
+        recovery.result,
+        Some(HostResult::SchedulerPressureUpdated {
+            pressure_level: LocalAgentResourcePressureLevel::Normal,
+            effective_maximum_concurrent_work_items: 2,
+        })
+    ));
+    tokio::time::timeout(std::time::Duration::from_secs(1), started_receiver.recv())
+        .await
+        .expect("restored worker started before timeout")
+        .expect("fourth Run start");
 
     shutdown_sender.send(true).expect("shutdown");
     release.notify_waiters();

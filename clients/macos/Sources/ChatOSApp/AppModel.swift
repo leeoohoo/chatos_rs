@@ -485,7 +485,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             }
         )
         self.machineResourcePressureMonitor = ClientMachineResourcePressureMonitor(
-            governor: .shared
+            governor: .shared,
+            hostPressureUpdate: { level in
+                await localAgentHost?.updateResourcePressure(level)
+            }
         )
         self.agentGroupChatBuilderService = LocalAgentBuilderService(
             groupChatService: agentGroupChatService,

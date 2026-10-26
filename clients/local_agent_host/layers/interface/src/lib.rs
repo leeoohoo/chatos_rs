@@ -126,7 +126,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 47;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 48;
 /// Maximum bytes in one physical IPC frame. The high bit of the frame prefix is reserved
 /// as the continuation flag, so this limit must stay below `i32::MAX`.
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
@@ -163,6 +163,7 @@ impl HostRequestEnvelope {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HostCommand {
     Health,
+    SetSchedulerPressure(SetSchedulerPressureCommand),
     GetMemorySyncStatus(GetMemorySyncStatusCommand),
     PutModelConfigSnapshot(PutModelConfigSnapshotCommand),
     GetModelConfigSnapshot(GetModelConfigSnapshotCommand),
@@ -246,7 +247,7 @@ pub enum HostCommand {
 impl HostCommand {
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Health => Ok(()),
+            Self::Health | Self::SetSchedulerPressure(_) => Ok(()),
             Self::GetMemorySyncStatus(command) => command.validate(),
             Self::PutModelConfigSnapshot(command) => command.validate(),
             Self::GetModelConfigSnapshot(command) => command.validate(),
@@ -327,6 +328,20 @@ impl HostCommand {
             Self::ConfirmRequirementPlan(command) => command.validate(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalAgentResourcePressureLevel {
+    Normal,
+    Elevated,
+    Serious,
+    Critical,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SetSchedulerPressureCommand {
+    pub pressure_level: LocalAgentResourcePressureLevel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

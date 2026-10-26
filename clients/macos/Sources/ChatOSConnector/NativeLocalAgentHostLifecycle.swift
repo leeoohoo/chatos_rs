@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSWorkerRuntime
 import CryptoKit
 import Darwin
 import Foundation
@@ -13,11 +14,34 @@ public extension Notification.Name {
 }
 
 enum NativeLocalAgentHostProtocol {
-    static let version = 47
+    static let version = 48
+}
+
+public enum NativeLocalAgentHostPressureLevel: String, Codable, Sendable, Comparable {
+    case normal
+    case elevated
+    case serious
+    case critical
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        let order: [Self] = [.normal, .elevated, .serious, .critical]
+        return order.firstIndex(of: lhs)! < order.firstIndex(of: rhs)!
+    }
+
+    init(_ level: ClientMachinePressureLevel) {
+        switch level {
+        case .normal: self = .normal
+        case .elevated: self = .elevated
+        case .serious: self = .serious
+        case .critical: self = .critical
+        }
+    }
 }
 
 public struct NativeLocalAgentHostResourceSnapshot: Sendable, Equatable {
     public let maximumConcurrentWorkItems: Int
+    public let effectiveMaximumConcurrentWorkItems: Int
+    public let pressureLevel: NativeLocalAgentHostPressureLevel
     public let activeWorkItems: Int
     public let idleWorkers: Int
     public let queuedReadyWorkItems: Int
@@ -177,12 +201,23 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     private let configuration: NativeLocalAgentHostConfiguration
     private var managedProcess: ManagedLocalAgentHostProcess?
     private var transition: HostTransition?
+    private var settlingTransitionID: UUID?
     private var credentialFingerprint: Data?
     private var workersEnabled = false
+    private var pressureLevel: NativeLocalAgentHostPressureLevel = .normal
+    private var pendingRecoveryLevel: NativeLocalAgentHostPressureLevel?
+    private var pressureRecoveryTask: Task<Void, Never>?
+    private var pressureRecoveryGeneration: UInt64 = 0
+    private let pressureRecoveryDelay: Duration
     public private(set) var activeOwnerUserID: String?
 
-    public init(configuration: NativeLocalAgentHostConfiguration) {
+    public init(
+        configuration: NativeLocalAgentHostConfiguration,
+        pressureRecoveryDelay: Duration = .seconds(30)
+    ) {
+        precondition(pressureRecoveryDelay >= .zero)
         self.configuration = configuration
+        self.pressureRecoveryDelay = pressureRecoveryDelay
     }
 
     public var isRunning: Bool {
@@ -192,6 +227,66 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     public var processIdentifier: Int32? {
         guard managedProcess?.process.isRunning == true else { return nil }
         return managedProcess?.process.processIdentifier
+    }
+
+    public func updateResourcePressure(_ level: ClientMachinePressureLevel) async {
+        await updateResourcePressure(.init(level))
+    }
+
+    public func updateResourcePressure(_ level: NativeLocalAgentHostPressureLevel) async {
+        if level >= pressureLevel {
+            cancelPressureRecovery()
+            guard level != pressureLevel else { return }
+            pressureLevel = level
+            await applyPressureToRunningProcess()
+            return
+        }
+
+        pendingRecoveryLevel = level
+        pressureRecoveryGeneration &+= 1
+        let generation = pressureRecoveryGeneration
+        pressureRecoveryTask?.cancel()
+        let delay = pressureRecoveryDelay
+        pressureRecoveryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            await self?.completePressureRecovery(generation: generation, level: level)
+        }
+    }
+
+    private func completePressureRecovery(
+        generation: UInt64,
+        level: NativeLocalAgentHostPressureLevel
+    ) async {
+        guard generation == pressureRecoveryGeneration,
+              pendingRecoveryLevel == level else { return }
+        pendingRecoveryLevel = nil
+        pressureRecoveryTask = nil
+        pressureLevel = level
+        await applyPressureToRunningProcess()
+    }
+
+    private func cancelPressureRecovery() {
+        pressureRecoveryGeneration &+= 1
+        pendingRecoveryLevel = nil
+        pressureRecoveryTask?.cancel()
+        pressureRecoveryTask = nil
+    }
+
+    private func applyPressureToRunningProcess() async {
+        guard let process = managedProcess, process.process.isRunning else { return }
+        do {
+            try await process.updateSchedulerPressure(
+                pressureLevel,
+                timeoutMilliseconds: 1_000
+            )
+        } catch {
+            invalidateAfterTransportFailure(process)
+            process.terminateAndWait()
+        }
     }
 
     /// Returns a point-in-time Host scheduler view without launching or recovering the Host.
@@ -488,18 +583,50 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     }
 
     private func settle(_ observed: HostTransition) async throws {
-        let result = await observed.task.result
+        if settlingTransitionID == observed.id {
+            while settlingTransitionID == observed.id {
+                try Task.checkCancellation()
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            return
+        }
         guard transition?.id == observed.id else { return }
-        transition = nil
+        settlingTransitionID = observed.id
+        let result = await observed.task.result
+        guard transition?.id == observed.id else {
+            settlingTransitionID = nil
+            return
+        }
         switch result {
         case let .success(managed):
-            guard let managed else { return }
-            managedProcess = managed
-            guard let intent = observed.target else {
-                managed.terminateAndWait()
-                managedProcess = nil
+            guard let managed else {
+                transition = nil
+                settlingTransitionID = nil
                 return
             }
+            guard let intent = observed.target else {
+                managed.terminateAndWait()
+                transition = nil
+                settlingTransitionID = nil
+                return
+            }
+            do {
+                try await managed.updateSchedulerPressure(
+                    pressureLevel,
+                    timeoutMilliseconds: 1_000
+                )
+            } catch {
+                managed.terminateAndWait()
+                transition = nil
+                settlingTransitionID = nil
+                _ = detachManagedProcess()
+                throw error
+            }
+            guard transition?.id == observed.id else {
+                settlingTransitionID = nil
+                return
+            }
+            managedProcess = managed
             activeOwnerUserID = intent.ownerUserID
             workersEnabled = intent.workersEnabled
             credentialFingerprint = intent.credentialFingerprint
@@ -511,7 +638,11 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
                     )
                 }
             }
+            transition = nil
+            settlingTransitionID = nil
         case let .failure(error):
+            transition = nil
+            settlingTransitionID = nil
             _ = detachManagedProcess()
             throw error
         }

@@ -1,5 +1,6 @@
 @testable import ChatOSConnector
 import ChatOSCore
+import ChatOSWorkerRuntime
 import Darwin
 import Foundation
 import SQLite3
@@ -42,9 +43,73 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             let resourceSnapshot = await lifecycle.resourceSnapshot()
             let resources = try XCTUnwrap(resourceSnapshot)
             XCTAssertEqual(resources.maximumConcurrentWorkItems, 3)
+            XCTAssertEqual(resources.effectiveMaximumConcurrentWorkItems, 3)
+            XCTAssertEqual(resources.pressureLevel, .normal)
             XCTAssertEqual(resources.activeWorkItems, 0)
             XCTAssertEqual(resources.idleWorkers, 3)
             XCTAssertEqual(resources.queuedReadyWorkItems, 0)
+            await lifecycle.stop()
+        } catch {
+            await lifecycle.stop()
+            throw error
+        }
+    }
+
+    func testPressureIsReplayedAtLaunchAndRecoveryWaitsBeforeExpanding() async throws {
+        let executable = try nativeHostExecutable()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-pressure-replay-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let lifecycle = NativeLocalAgentHostLifecycle(
+            configuration: .init(
+                executableURL: executable,
+                databaseURL: root.appendingPathComponent("agent.sqlite3"),
+                maximumConcurrentWorkItems: 4
+            ),
+            pressureRecoveryDelay: .milliseconds(100)
+        )
+
+        do {
+            await lifecycle.updateResourcePressure(ClientMachinePressureLevel.critical)
+            try await lifecycle.startForBootstrap(ownerUserID: "user-1")
+            var observed = await lifecycle.resourceSnapshot()
+            var resources = try XCTUnwrap(observed)
+            XCTAssertEqual(resources.maximumConcurrentWorkItems, 4)
+            XCTAssertEqual(resources.effectiveMaximumConcurrentWorkItems, 1)
+            XCTAssertEqual(resources.pressureLevel, .critical)
+
+            await lifecycle.updateResourcePressure(ClientMachinePressureLevel.normal)
+            try await Task.sleep(for: .milliseconds(30))
+            observed = await lifecycle.resourceSnapshot()
+            resources = try XCTUnwrap(observed)
+            XCTAssertEqual(resources.effectiveMaximumConcurrentWorkItems, 1)
+            XCTAssertEqual(resources.pressureLevel, .critical)
+
+            try await Task.sleep(for: .milliseconds(120))
+            observed = await lifecycle.resourceSnapshot()
+            resources = try XCTUnwrap(observed)
+            XCTAssertEqual(resources.effectiveMaximumConcurrentWorkItems, 4)
+            XCTAssertEqual(resources.pressureLevel, .normal)
+
+            await lifecycle.updateResourcePressure(ClientMachinePressureLevel.serious)
+            observed = await lifecycle.resourceSnapshot()
+            resources = try XCTUnwrap(observed)
+            XCTAssertEqual(resources.effectiveMaximumConcurrentWorkItems, 2)
+            XCTAssertEqual(resources.pressureLevel, .serious)
+
+            let firstPID = await lifecycle.processIdentifier
+            try await lifecycle.restart(
+                ownerUserID: "user-1",
+                credentialEnvironment: [
+                    "CHATOS_LOCAL_AGENT_MODEL_TEST": "test-only-secret",
+                ]
+            )
+            let restartedPID = await lifecycle.processIdentifier
+            XCTAssertNotEqual(restartedPID, firstPID)
+            observed = await lifecycle.resourceSnapshot()
+            resources = try XCTUnwrap(observed)
+            XCTAssertEqual(resources.effectiveMaximumConcurrentWorkItems, 2)
+            XCTAssertEqual(resources.pressureLevel, .serious)
             await lifecycle.stop()
         } catch {
             await lifecycle.stop()

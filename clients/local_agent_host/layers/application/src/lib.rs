@@ -259,6 +259,9 @@ impl LocalAgentRuntime {
                     scheduler: None,
                 })
             }
+            HostCommand::SetSchedulerPressure(_) => Err(LocalAgentRuntimeError::InvalidRequest(
+                "scheduler pressure is owned by the Host coordinator".to_string(),
+            )),
             HostCommand::GetMemorySyncStatus(command) => {
                 let status = self
                     .store

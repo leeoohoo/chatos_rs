@@ -329,10 +329,45 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         }
         return .init(
             maximumConcurrentWorkItems: scheduler.maximumConcurrentWorkItems,
+            effectiveMaximumConcurrentWorkItems:
+                scheduler.effectiveMaximumConcurrentWorkItems,
+            pressureLevel: scheduler.pressureLevel,
             activeWorkItems: scheduler.activeWorkItems,
             idleWorkers: scheduler.idleWorkers,
             queuedReadyWorkItems: scheduler.queuedReadyWorkItems
         )
+    }
+
+    func updateSchedulerPressure(
+        _ pressureLevel: NativeLocalAgentHostPressureLevel,
+        timeoutMilliseconds: Int
+    ) async throws {
+        let commandID = "native-pressure-\(UUID().uuidString.lowercased())"
+        let request = NativeLocalAgentSchedulerPressureRequest(
+            protocolVersion: NativeLocalAgentHostProtocol.version,
+            commandId: commandID,
+            command: .init(
+                type: "set_scheduler_pressure",
+                pressureLevel: pressureLevel
+            )
+        )
+        let payload = try await roundTripAsync(
+            try JSONEncoder.localAgent.encode(request),
+            timeoutMilliseconds: timeoutMilliseconds
+        )
+        let response = try JSONDecoder.localAgent.decode(
+            NativeLocalAgentSchedulerPressureResponse.self,
+            from: payload
+        )
+        guard response.protocolVersion == NativeLocalAgentHostProtocol.version,
+              response.commandId == commandID,
+              response.ok,
+              response.result?.type == "scheduler_pressure_updated",
+              response.result?.pressureLevel == pressureLevel,
+              let effective = response.result?.effectiveMaximumConcurrentWorkItems,
+              NativeLocalAgentConcurrencyPolicy.validated(effective) != nil else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
     }
 
     func roundTrip(
@@ -823,17 +858,46 @@ struct NativeLocalAgentHealthResult: Codable, Equatable {
 
 struct NativeLocalAgentHealthScheduler: Codable, Equatable {
     let maximumConcurrentWorkItems: Int
+    let effectiveMaximumConcurrentWorkItems: Int
+    let pressureLevel: NativeLocalAgentHostPressureLevel
     let activeWorkItems: Int
     let idleWorkers: Int
     let queuedReadyWorkItems: Int
 
     var isValid: Bool {
         NativeLocalAgentConcurrencyPolicy.validated(maximumConcurrentWorkItems) != nil
+            && (1...maximumConcurrentWorkItems).contains(
+                effectiveMaximumConcurrentWorkItems
+            )
             && (0...maximumConcurrentWorkItems).contains(activeWorkItems)
             && (0...maximumConcurrentWorkItems).contains(idleWorkers)
             && queuedReadyWorkItems >= 0
             && activeWorkItems + idleWorkers == maximumConcurrentWorkItems
     }
+}
+
+private struct NativeLocalAgentSchedulerPressureRequest: Codable {
+    let protocolVersion: Int
+    let commandId: String
+    let command: NativeLocalAgentSchedulerPressureCommand
+}
+
+private struct NativeLocalAgentSchedulerPressureCommand: Codable {
+    let type: String
+    let pressureLevel: NativeLocalAgentHostPressureLevel
+}
+
+private struct NativeLocalAgentSchedulerPressureResponse: Codable {
+    let protocolVersion: Int
+    let commandId: String
+    let ok: Bool
+    let result: NativeLocalAgentSchedulerPressureResult?
+}
+
+private struct NativeLocalAgentSchedulerPressureResult: Codable {
+    let type: String
+    let pressureLevel: NativeLocalAgentHostPressureLevel
+    let effectiveMaximumConcurrentWorkItems: Int
 }
 
 struct NativeLocalAgentHealthError: Codable, Equatable {

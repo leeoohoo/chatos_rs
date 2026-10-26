@@ -377,6 +377,12 @@ async fn coordinator_executes_independent_tool_calls_concurrently() {
 fn read_only_ipc_does_not_wake_scheduler_or_signal_activity() {
     let commands = [
         HostCommand::Health,
+        HostCommand::SetSchedulerPressure(
+            chatos_local_agent_protocol::SetSchedulerPressureCommand {
+                pressure_level:
+                    chatos_local_agent_protocol::LocalAgentResourcePressureLevel::Elevated,
+            },
+        ),
         HostCommand::GetEventCursor(GetEventCursorCommand {
             owner_user_id: "user-1".to_string(),
         }),
@@ -431,6 +437,21 @@ fn read_only_ipc_does_not_wake_scheduler_or_signal_activity() {
         command_activity_signal_policy(&tool_renewal),
         ActivitySignalPolicy::Never
     );
+}
+
+#[test]
+fn pressure_policy_scales_configured_workers_and_keeps_one_critical_worker() {
+    use chatos_local_agent_protocol::LocalAgentResourcePressureLevel::{
+        Critical, Elevated, Normal, Serious,
+    };
+
+    assert_eq!(effective_worker_limit(1, Normal), 1);
+    assert_eq!(effective_worker_limit(1, Critical), 1);
+    assert_eq!(effective_worker_limit(3, Elevated), 3);
+    assert_eq!(effective_worker_limit(4, Elevated), 3);
+    assert_eq!(effective_worker_limit(3, Serious), 2);
+    assert_eq!(effective_worker_limit(4, Serious), 2);
+    assert_eq!(effective_worker_limit(16, Critical), 1);
 }
 
 #[async_trait]

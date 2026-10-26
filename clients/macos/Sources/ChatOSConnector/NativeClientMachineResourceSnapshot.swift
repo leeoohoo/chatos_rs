@@ -226,7 +226,10 @@ public struct NativeClientMachineResourceSnapshotProvider: Sendable {
                 configuredLimit: hostSnapshot?.maximumConcurrentWorkItems
                     ?? logicalJobBudget.localAgentHostWorkItems,
                 sharedPoolID: hostPoolID,
-                sharedPoolLimit: machineSnapshot?.budget.reservedHostResourceUnits,
+                sharedPoolLimit: hostSnapshot.map {
+                    $0.effectiveMaximumConcurrentWorkItems
+                        * ClientMachineResourceBudget.agentRunUnitCost
+                } ?? machineSnapshot?.budget.reservedHostResourceUnits,
                 activeCount: hostSnapshot?.activeWorkItems,
                 queuedCount: hostSnapshot?.queuedReadyWorkItems
             ),

@@ -2,7 +2,7 @@
 
 更新时间：2026-10-26
 
-状态：核心架构改造实施中；阶段记录见 12.1—12.114c，剩余 12.115—12.120 按完整里程碑验收
+状态：核心架构改造实施中；阶段记录见 12.1—12.115b，剩余 12.116—12.120 按完整里程碑验收
 
 适用范围：`clients/macos`、`clients/local_agent_host` 以及 macOS 客户端启动的 Plugin/Companion 进程
 
@@ -2573,13 +2573,28 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：Rust Host 仍使用 12.114b 的进程内固定 worker 数和独立硬预留；App 不能伪造 Host permit。Host 在 durable claim 前读取动态上限、压力状态 IPC/协议兼容、最低一个 Host worker 和恢复迟滞属于 12.115b。Large Transfer、进程内重媒体、Plugin 与数据库 maintenance 仍可能已持有 durable 身份，不能机械套外层 permit；它们的组合压力留给 12.119。
 
-### 12.115b—12.120 剩余完整交付路径
+### 12.115b 第四十七完整里程碑：Rust Host 动态压力调额（2026-10-26）
+
+本里程碑把同一份机器压力状态扩展到 Rust Host 的 durable claim 边界。Local Agent 协议升级到 v48，新增版本化 `set_scheduler_pressure` 命令；Host 自己根据配置 worker 数计算有效上限：normal 为 100%、elevated 向上取整约 75%、serious 向上取整约 50%、critical 固定保留一个 worker，始终限制在 `1...configured`。
+
+已实施：
+
+- 每个常驻 scheduler worker 在领取下一项 durable work 前读取动态有效上限。压力升高只阻止新的 claim；已经 active 的 model/tool work 不撤销、不强杀，完成后超出新上限的 worker 才进入等待。model 与 tool 两个 claim 边界之间也会再次复核资格，避免 worker 在降额后跨过第二个领取点。
+- Swift 生命周期保存稳定压力状态。升压立即发送；降压默认等待 30 秒，期间重新升压会取消恢复、不同降压目标会重新计时。Host 尚未运行或发生重启时状态不会丢失；新进程通过基础 Health 后必须先成功应用保存的压力，才会登记为可用进程。
+- 并发启动/重启的 lifecycle transition 继续只允许一个 settle 操作；压力握手引入的 actor suspension 不会制造第二个 Host 或争抢同一数据库锁。
+- Host Health/Snapshot 同时报告 configured worker 数、effective worker 数、pressure level、active、idle 和 durable ready queue。机器级 Host domain 保留 configured limit，同时把 `sharedPoolLimit` 改为当前 effective Host 资源单位，不再把静态硬预留冒充实时容量。
+- Rust、Swift 与 Windows 共享协议 fixture 已同步到 v48；保留 v47 历史 fixture，不覆盖旧版本证据。Windows 当前仍使用 normal 基线，但能够严格验证 v48 Health 新字段。
+
+验收：Rust interface 37 项和 Host lib 115 项测试通过；新增真实并发测试覆盖 configured=2 时两个 active claim 降到 critical 后均继续完成、后续只允许一个 claim、恢复 normal 后第二个 worker 重新领取。macOS Debug 与原生 arm64 Release `warnings-as-errors` 各通过 21 项受影响测试；Host 生命周期覆盖启动前 critical 重放、降压迟滞、恢复扩容、serious 状态跨 Host 重启重放，以及并发 bootstrap/credential restart 无重叠，Release 同时完成完整 App 优化依赖图。Windows v48 fixture 10 项测试及 Tauri `cargo check --all-targets` 通过。此阶段没有停止、替换或启动当前安装的 ChatOS，也没有访问活动用户数据库。
+
+边界：Host 动态额度只控制 scheduler durable claim，不撤销 active claim，也不机械包裹 Memory Sync。Large Transfer、进程内重媒体、Plugin 与数据库 maintenance 的组合压力仍留给 12.119；真实移动盘/ENOSPC/睡眠/断网门禁、长时间 Release soak 和正式分发仍分别属于 12.118—12.120。
+
+### 12.116—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
 | --- | --- | --- |
-| 12.115b Host 动态压力调额 | 把 App 压力级别和 Host 动态 worker 上限通过版本化 IPC 传给 Rust Host，在 durable claim 前生效并至少保留一个 Host worker | Host 协议兼容、立即降额、不撤销 active claim、30 秒迟滞恢复和断连回退测试通过；Host Snapshot 报告配置/有效上限 |
 | 12.116 文件生命周期收口 | 安全回收 workspace `.import-*`、UI exporter 临时文件和 registry 失败遗留空目录；补最终打开点 device/inode 再校验 | ownership、命名、年龄、锁/活跃 Worker、symlink、hardlink、跨账户和取消/SIGKILL 回归全部通过；不递归清理任意用户目录 |
 | 12.117 Agent/存储强杀矩阵 | 覆盖凭据交付、provider 网络、工具副作用、checkpoint、SQLite COMMIT/VACUUM 等不确定窗口 | 每个停点只有“安全重试、明确失败、待对账”三类结果；无重复副作用、跨账户写入或静默丢失；连续崩溃有隔离熔断 |
 | 12.118 外部环境故障门禁 | 在真实 Linux/macOS SSH 端和移动盘验证 staging、权限继承、原子提交、孤儿扫描、断网、睡眠、只读卷与 ENOSPC | 旧目标不被失败写覆盖；临时文件可识别回收；取消只终止所属进程组；远端不可确认结果进入待对账 |

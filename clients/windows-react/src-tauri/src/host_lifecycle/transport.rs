@@ -79,6 +79,8 @@ pub(super) async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
             ..
         } if service == "chatos-local-agent-host"
             && (1..=16).contains(&scheduler.maximum_concurrent_work_items)
+            && (1..=scheduler.maximum_concurrent_work_items)
+                .contains(&scheduler.effective_maximum_concurrent_work_items)
             && scheduler.active_work_items <= scheduler.maximum_concurrent_work_items
             && scheduler.idle_workers <= scheduler.maximum_concurrent_work_items
             && scheduler.active_work_items + scheduler.idle_workers
@@ -86,7 +88,7 @@ pub(super) async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
         {
             Ok(())
         }
-        _ => Err("Host health response does not match protocol v47.".to_string()),
+        _ => Err("Host health response does not match protocol v48.".to_string()),
     }
 }
 

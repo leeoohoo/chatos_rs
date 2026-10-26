@@ -60,6 +60,10 @@ pub enum HostResult {
         #[serde(skip_serializing_if = "Option::is_none")]
         scheduler: Option<LocalAgentHostSchedulerSnapshot>,
     },
+    SchedulerPressureUpdated {
+        pressure_level: crate::LocalAgentResourcePressureLevel,
+        effective_maximum_concurrent_work_items: usize,
+    },
     MemorySyncStatus {
         status: LocalMemorySyncStatus,
     },
@@ -222,6 +226,8 @@ pub enum HostResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalAgentHostSchedulerSnapshot {
     pub maximum_concurrent_work_items: usize,
+    pub effective_maximum_concurrent_work_items: usize,
+    pub pressure_level: crate::LocalAgentResourcePressureLevel,
     pub active_work_items: usize,
     pub idle_workers: usize,
     pub queued_ready_work_items: u64,

@@ -28,6 +28,7 @@ impl CommandReceiptPolicy {
         // Do not classify by a wire name/prefix or add a fallback arm here.
         match command {
             HostCommand::Health
+            | HostCommand::SetSchedulerPressure(_)
             | HostCommand::GetMemorySyncStatus(_)
             | HostCommand::GetModelConfigSnapshot(_)
             | HostCommand::ListLatestModelConfigSnapshots(_)

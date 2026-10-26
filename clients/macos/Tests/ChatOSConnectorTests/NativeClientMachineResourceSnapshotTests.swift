@@ -24,6 +24,8 @@ final class NativeClientMachineResourceSnapshotTests: XCTestCase {
             machineSnapshot: await machineGovernor.snapshot(),
             hostSnapshot: .init(
                 maximumConcurrentWorkItems: 3,
+                effectiveMaximumConcurrentWorkItems: 2,
+                pressureLevel: .serious,
                 activeWorkItems: 2,
                 idleWorkers: 1,
                 queuedReadyWorkItems: 4
@@ -99,6 +101,8 @@ final class NativeClientMachineResourceSnapshotTests: XCTestCase {
             machineSnapshot: await machineGovernor.snapshot(),
             hostSnapshot: .init(
                 maximumConcurrentWorkItems: 2,
+                effectiveMaximumConcurrentWorkItems: 1,
+                pressureLevel: .critical,
                 activeWorkItems: 1,
                 idleWorkers: 1,
                 queuedReadyWorkItems: 1
@@ -124,7 +128,7 @@ final class NativeClientMachineResourceSnapshotTests: XCTestCase {
         XCTAssertEqual(host.observationLevel, .exact)
         XCTAssertEqual(host.configuredLimit, 2)
         XCTAssertEqual(host.sharedPoolID, "host-reserved-resource-units")
-        XCTAssertEqual(host.sharedPoolLimit, 4)
+        XCTAssertEqual(host.sharedPoolLimit, 2)
         XCTAssertEqual(host.activeCount, 1)
         XCTAssertEqual(host.queuedCount, 1)
 
