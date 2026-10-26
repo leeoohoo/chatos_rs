@@ -1,6 +1,7 @@
 @testable import ChatOSConnector
 import ChatOSCore
 import ChatOSMediaWorkerClient
+import CryptoKit
 import Foundation
 import XCTest
 
@@ -126,15 +127,28 @@ struct AttachmentDispatchFixture {
         self.bytes = bytes
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("attachment-dispatch-\(UUID().uuidString)", isDirectory: true)
-        let vault = NativeLocalAgentAttachmentVault(rootURL: root)
-        spec = try XCTUnwrap(vault.authorize([
-            .init(id: "attachment-1", name: name,
-                  mimeType: mediaType,
-                  kind: .file, origin: .pastedText, data: bytes),
-        ], ownerUserID: "user-1", conversationID: "conversation-1").first)
+        let token = UUID().uuidString.lowercased()
+        let directory = root
+            .appendingPathComponent(Self.sha256(Data("user-1".utf8)), isDirectory: true)
+            .appendingPathComponent(Self.sha256(Data("conversation-1".utf8)), isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try bytes.write(to: directory.appendingPathComponent(token), options: .atomic)
+        spec = .init(
+            attachmentID: "attachment-1",
+            displayName: name,
+            mediaType: mediaType,
+            byteSize: UInt64(bytes.count),
+            sha256: Self.sha256(bytes),
+            authorizedLocalRef: NativeLocalAgentAttachmentVault.referencePrefix + token,
+            metadata: .object(["kind": .string(ConversationAttachmentKind.file.rawValue)])
+        )
     }
 
     func cleanup() { try? FileManager.default.removeItem(at: root) }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
 
     func executor(
         projectTools: (any NativeLocalAgentProjectToolExecuting)? = nil,

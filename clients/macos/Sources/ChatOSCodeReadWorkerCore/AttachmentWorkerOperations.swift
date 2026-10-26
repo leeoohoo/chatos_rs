@@ -5,12 +5,94 @@ import Foundation
 
 struct AttachmentWorkerOperations {
     private static let maximumAttachmentBytes = 20 * 1_024 * 1_024
+    private static let maximumAttachmentCount = 20
     private static let maximumReadBytes = 64 * 1_024
     private static let maximumExactJSONInteger = 9_007_199_254_740_991.0
 
     let root: URL
     let rootIdentity: CodeReadWorkerFileIdentity
     let deadlineUnixMilliseconds: Int64
+
+    func authorize(
+        arguments: [String: CodeReadWorkerJSONValue],
+        binaryPayloadByteCount: UInt64,
+        readBinaryChunk: (Int) throws -> Data
+    ) throws -> CodeReadWorkerJSONValue {
+        let ownerUserID = try requiredString(arguments, "owner_user_id")
+        let conversationID = try requiredString(arguments, "conversation_id")
+        guard !ownerUserID.isEmpty, !conversationID.isEmpty,
+              case let .array(rawItems)? = arguments["items"],
+              !rawItems.isEmpty, rawItems.count <= Self.maximumAttachmentCount else {
+            throw CodeReadWorkerCoreError.attachmentInvalid
+        }
+        let items = try rawItems.map { raw -> AuthorizationItem in
+            guard case let .object(object) = raw else {
+                throw CodeReadWorkerCoreError.attachmentInvalid
+            }
+            let token = try requiredString(object, "token")
+            let byteSize = try requiredUInt64(object, "byte_size")
+            guard let uuid = UUID(uuidString: token), uuid.uuidString.lowercased() == token,
+                  byteSize > 0, byteSize <= UInt64(Self.maximumAttachmentBytes) else {
+                throw CodeReadWorkerCoreError.attachmentInvalid
+            }
+            return .init(token: token, byteSize: byteSize)
+        }
+        guard Set(items.map(\.token)).count == items.count else {
+            throw CodeReadWorkerCoreError.attachmentInvalid
+        }
+        var expectedTotal: UInt64 = 0
+        for item in items {
+            let (next, overflow) = expectedTotal.addingReportingOverflow(item.byteSize)
+            guard !overflow,
+                  next <= UInt64(ChatOSCodeReadWorkerProtocol.maximumBinaryPayloadBytes) else {
+                throw CodeReadWorkerCoreError.attachmentInvalid
+            }
+            expectedTotal = next
+        }
+        guard expectedTotal == binaryPayloadByteCount else {
+            throw CodeReadWorkerCoreError.attachmentInvalid
+        }
+
+        let rootDescriptor = try openRoot()
+        defer { _ = Darwin.close(rootDescriptor) }
+        let directory: Int32
+        do {
+            directory = try createDirectoryChain(
+                [hash(Data(ownerUserID.utf8)), hash(Data(conversationID.utf8))],
+                from: rootDescriptor
+            )
+        } catch {
+            throw CodeReadWorkerCoreError.attachmentWriteFailed
+        }
+        defer { _ = Darwin.close(directory) }
+
+        var installedTokens: [String] = []
+        do {
+            var results: [CodeReadWorkerJSONValue] = []
+            results.reserveCapacity(items.count)
+            for item in items {
+                try checkDeadline()
+                let digest = try authorizeOne(
+                    item,
+                    directory: directory,
+                    readBinaryChunk: readBinaryChunk
+                )
+                installedTokens.append(item.token)
+                results.append(.object([
+                    "token": .string(item.token),
+                    "byte_size": .number(Double(item.byteSize)),
+                    "sha256": .string(digest),
+                ]))
+            }
+            return .object(["items": .array(results)])
+        } catch {
+            for token in installedTokens {
+                token.withCString { _ = Darwin.unlinkat(directory, $0, 0) }
+            }
+            if error is CodeReadWorkerCoreError { throw error }
+            throw CodeReadWorkerCoreError.attachmentWriteFailed
+        }
+    }
 
     func execute(
         operation: String,
@@ -59,6 +141,56 @@ struct AttachmentWorkerOperations {
             "encoding": .string(text == nil ? "base64" : "utf-8"),
             "content": .string(text ?? verified.capture.base64EncodedString()),
         ])
+    }
+
+    private func authorizeOne(
+        _ item: AuthorizationItem,
+        directory: Int32,
+        readBinaryChunk: (Int) throws -> Data
+    ) throws -> String {
+        let temporaryName = ".chatos-write-\(UUID().uuidString.lowercased()).tmp"
+        let temporary = temporaryName.withCString {
+            Darwin.openat(
+                directory,
+                $0,
+                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                0o600
+            )
+        }
+        guard temporary >= 0 else { throw CodeReadWorkerCoreError.attachmentWriteFailed }
+        defer {
+            _ = Darwin.close(temporary)
+            temporaryName.withCString { _ = Darwin.unlinkat(directory, $0, 0) }
+        }
+
+        var remaining = item.byteSize
+        var hasher = SHA256()
+        while remaining > 0 {
+            try checkDeadline()
+            let maximum = Int(min(remaining, 64 * 1_024))
+            let chunk = try readBinaryChunk(maximum)
+            guard !chunk.isEmpty, chunk.count <= maximum else {
+                throw CodeReadWorkerCoreError.attachmentWriteFailed
+            }
+            hasher.update(data: chunk)
+            do {
+                try writeAll(chunk, to: temporary)
+            } catch {
+                throw CodeReadWorkerCoreError.attachmentWriteFailed
+            }
+            remaining -= UInt64(chunk.count)
+        }
+        guard Darwin.fchmod(temporary, 0o600) == 0,
+              Darwin.fsync(temporary) == 0 else {
+            throw CodeReadWorkerCoreError.attachmentWriteFailed
+        }
+        let installed = temporaryName.withCString { temporaryPointer in
+            item.token.withCString { tokenPointer in
+                Darwin.linkat(directory, temporaryPointer, directory, tokenPointer, 0)
+            }
+        }
+        guard installed == 0 else { throw CodeReadWorkerCoreError.attachmentWriteFailed }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private func verifyFile(_ authorization: Authorization) throws -> CodeReadWorkerJSONValue {
@@ -458,6 +590,11 @@ struct AttachmentWorkerOperations {
                 token,
             ].joined(separator: "/")
         }
+    }
+
+    private struct AuthorizationItem {
+        let token: String
+        let byteSize: UInt64
     }
 
     private static func hashStatic(_ data: Data) -> String {

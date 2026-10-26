@@ -1,9 +1,11 @@
 import ChatOSCodeReadWorkerClient
 import ChatOSCodeReadWorkerProtocol
+import ChatOSCore
 import CryptoKit
 import Darwin
 import Foundation
 import XCTest
+@testable import ChatOSConnector
 
 final class CodeReadWorkerProcessIsolationTests: XCTestCase {
     func testRealWorkerReadsThroughAuthenticatedProcessBoundary() async throws {
@@ -340,6 +342,118 @@ final class CodeReadWorkerProcessIsolationTests: XCTestCase {
         )
     }
 
+    func testRealWorkerStreamsAttachmentAuthorizationWithoutJSONPayloadCopies() async throws {
+        let executable = try realWorkerExecutable()
+        let fixture = try WorkerFixture()
+        defer { fixture.dispose() }
+        let first = Data("streamed attachment\n".utf8)
+        let second = Data(repeating: 0xa5, count: 256 * 1_024)
+        let tokens = [UUID().uuidString.lowercased(), UUID().uuidString.lowercased()]
+        let client = CodeReadWorkerProcessClient(executableURL: executable, timeout: 5)
+
+        let result = try await client.execute(
+            operation: "attachment_authorize_v1",
+            arguments: [
+                "owner_user_id": .string("stream-owner"),
+                "conversation_id": .string("stream-conversation"),
+                "items": .array(tokens.indices.map { index in
+                    .object([
+                        "token": .string(tokens[index]),
+                        "byte_size": .number(Double([first, second][index].count)),
+                    ])
+                }),
+            ],
+            binaryPayloads: [first, second],
+            projectRoot: fixture.root
+        )
+        guard case let .object(payload) = result,
+              case let .array(items)? = payload["items"],
+              items.count == 2 else {
+            return XCTFail("real worker returned an invalid authorization payload")
+        }
+        let directory = fixture.root
+            .appendingPathComponent(processSHA256(Data("stream-owner".utf8)))
+            .appendingPathComponent(processSHA256(Data("stream-conversation".utf8)))
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(tokens[0])), first)
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(tokens[1])), second)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted(),
+            tokens.sorted()
+        )
+        for (index, rawItem) in items.enumerated() {
+            guard case let .object(item) = rawItem,
+                  case let .string(digest)? = item["sha256"] else {
+                return XCTFail("real worker returned an invalid digest")
+            }
+            XCTAssertEqual(digest, processSHA256([first, second][index]))
+        }
+    }
+
+    func testAttachmentVaultProductionAuthorizationUsesBinaryWorker() async throws {
+        let executable = try realWorkerExecutable()
+        let fixture = try WorkerFixture()
+        defer { fixture.dispose() }
+        let client = CodeReadWorkerProcessClient(executableURL: executable, timeout: 5)
+        let vault = NativeLocalAgentAttachmentVault(
+            rootURL: fixture.root,
+            codeReadWorker: client,
+            binaryCodeReadWorker: client
+        )
+        let bytes = Data(repeating: 0x6d, count: 512 * 1_024)
+        let specs = try await vault.authorizeInWorker(
+            [.init(
+                id: "draft-1",
+                name: "payload.bin",
+                mimeType: "application/octet-stream",
+                kind: .file,
+                origin: .file,
+                data: bytes
+            )],
+            ownerUserID: "vault-owner",
+            conversationID: "vault-conversation"
+        )
+        let spec = try XCTUnwrap(specs.first)
+        XCTAssertEqual(spec.attachmentID, "draft-1")
+        XCTAssertEqual(spec.byteSize, UInt64(bytes.count))
+        XCTAssertEqual(spec.sha256, processSHA256(bytes))
+        let token = String(spec.authorizedLocalRef.dropFirst(
+            NativeLocalAgentAttachmentVault.referencePrefix.count
+        ))
+        let file = fixture.root
+            .appendingPathComponent(processSHA256(Data("vault-owner".utf8)))
+            .appendingPathComponent(processSHA256(Data("vault-conversation".utf8)))
+            .appendingPathComponent(token)
+        XCTAssertEqual(try Data(contentsOf: file), bytes)
+    }
+
+    func testWorkerExitDuringBinaryUploadDoesNotSignalParentProcess() async throws {
+        let fixture = try WorkerFixture()
+        defer { fixture.dispose() }
+        let worker = try fixture.makePayloadExitWorker()
+        let token = UUID().uuidString.lowercased()
+        do {
+            _ = try await CodeReadWorkerProcessClient(
+                executableURL: worker,
+                timeout: 5
+            ).execute(
+                operation: "attachment_authorize_v1",
+                arguments: [
+                    "owner_user_id": .string("owner"),
+                    "conversation_id": .string("conversation"),
+                    "items": .array([.object([
+                        "token": .string(token),
+                        "byte_size": .number(2 * 1_024 * 1_024),
+                    ])]),
+                ],
+                binaryPayloads: [Data(repeating: 0xcd, count: 2 * 1_024 * 1_024)],
+                projectRoot: fixture.root
+            )
+            XCTFail("worker exit during binary upload must fail")
+        } catch let error as CodeReadWorkerProcessClientError {
+            XCTAssertEqual(error, .invalidResponse)
+        }
+    }
+
     func testHungAttachmentDoesNotBlockIndependentAttachmentWorker() async throws {
         let fixture = try WorkerFixture()
         defer { fixture.dispose() }
@@ -446,9 +560,26 @@ private struct WorkerFixture {
         let script = """
         #!/bin/zsh
         IFS= read -r hello
-        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":1,"worker_build_version":"code-read-worker-v1","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files","open_file_in_pet","project_list_v1","project_search_entries_v1","project_run_analyze_v1","project_write_file_v1","project_create_directory_v1","project_delete_entry_v1","attachment_resolve_v1","attachment_verify_file_v1","attachment_materialize_v1"],"maximum_inline_bytes":16777216,"error":null}'
+        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":2,"worker_build_version":"code-read-worker-v2","helper_instance_id":"fixture-helper","operations":["read_file_raw","read_file_range","list_dir","search_text","read_file","search_files","open_file_in_pet","project_list_v1","project_search_entries_v1","project_run_analyze_v1","project_write_file_v1","project_create_directory_v1","project_delete_entry_v1","attachment_authorize_v1","attachment_resolve_v1","attachment_verify_file_v1","attachment_materialize_v1"],"maximum_inline_bytes":16777216,"maximum_binary_payload_bytes":20971520,"error":null}'
         IFS= read -r request
         \(behavior)
+        """
+        try Data(script.utf8).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o700))],
+            ofItemAtPath: url.path
+        )
+        return url
+    }
+
+    func makePayloadExitWorker() throws -> URL {
+        let url = root.appendingPathComponent("payload-exit-worker.py")
+        let script = """
+        #!/bin/zsh
+        IFS= read -r hello
+        print -r -- '{"type":"hello_response","ok":true,"selected_protocol_version":2,"worker_build_version":"code-read-worker-v2","helper_instance_id":"fixture-helper","operations":["attachment_authorize_v1"],"maximum_inline_bytes":16777216,"maximum_binary_payload_bytes":20971520,"error":null}'
+        IFS= read -r request
+        exit 0
         """
         try Data(script.utf8).write(to: url, options: .atomic)
         try FileManager.default.setAttributes(

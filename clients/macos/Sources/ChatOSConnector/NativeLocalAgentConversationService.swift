@@ -87,7 +87,7 @@ public actor NativeLocalAgentConversationService:
             throw NativeLocalAgentConversationServiceError.notConfigured
         }
         let messageID = "message_\(UUID().uuidString.lowercased())"
-        let attachments = try attachmentVault.authorize(
+        let attachments = try await attachmentVault.authorizeInWorker(
             command.attachments,
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID
@@ -158,7 +158,7 @@ public actor NativeLocalAgentConversationService:
             throw ConversationCommandError.guidanceTargetInactive
         }
         let messageID = "message_\(UUID().uuidString.lowercased())"
-        let attachments = try attachmentVault.authorize(
+        let attachments = try await attachmentVault.authorizeInWorker(
             command.attachments,
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID

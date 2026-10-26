@@ -411,6 +411,67 @@ final class CodeReadWorkerEngineTests: XCTestCase {
             )
         }
     }
+
+    func testAttachmentAuthorizationStreamsMultipleFilesAndRejectsShortPayload() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let first = Data("first attachment".utf8)
+        let second = Data(repeating: 0x4b, count: 96 * 1_024)
+        let firstToken = UUID().uuidString.lowercased()
+        let secondToken = UUID().uuidString.lowercased()
+        let arguments: [String: CodeReadWorkerJSONValue] = [
+            "owner_user_id": .string("owner-stream"),
+            "conversation_id": .string("conversation-stream"),
+            "items": .array([
+                .object([
+                    "token": .string(firstToken),
+                    "byte_size": .number(Double(first.count)),
+                ]),
+                .object([
+                    "token": .string(secondToken),
+                    "byte_size": .number(Double(second.count)),
+                ]),
+            ]),
+        ]
+        let result = try fixture.executeStreaming(
+            "attachment_authorize_v1",
+            arguments,
+            payload: first + second
+        )
+        guard case let .object(payload) = result,
+              case let .array(items)? = payload["items"] else {
+            return XCTFail("Expected streamed attachment authorization result")
+        }
+        XCTAssertEqual(items.count, 2)
+        let directory = fixture.root
+            .appendingPathComponent(sha256(Data("owner-stream".utf8)))
+            .appendingPathComponent(sha256(Data("conversation-stream".utf8)))
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(firstToken)), first)
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(secondToken)), second)
+
+        let shortToken = UUID().uuidString.lowercased()
+        XCTAssertThrowsError(try fixture.executeStreaming(
+            "attachment_authorize_v1",
+            [
+                "owner_user_id": .string("owner-stream"),
+                "conversation_id": .string("short-stream"),
+                "items": .array([.object([
+                    "token": .string(shortToken),
+                    "byte_size": .number(16),
+                ])]),
+            ],
+            payload: Data(repeating: 0x1, count: 8),
+            advertisedByteCount: 16
+        ))
+        let shortDirectory = fixture.root
+            .appendingPathComponent(sha256(Data("owner-stream".utf8)))
+            .appendingPathComponent(sha256(Data("short-stream".utf8)))
+        if FileManager.default.fileExists(atPath: shortDirectory.path) {
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(
+                atPath: shortDirectory.path
+            ).isEmpty)
+        }
+    }
 }
 
 private struct Fixture {
@@ -427,6 +488,37 @@ private struct Fixture {
         _ arguments: [String: CodeReadWorkerJSONValue]
     ) throws -> CodeReadWorkerJSONValue {
         try ChatOSCodeReadWorkerEngine.execute(request(operation, arguments))
+    }
+
+    func executeStreaming(
+        _ operation: String,
+        _ arguments: [String: CodeReadWorkerJSONValue],
+        payload: Data,
+        advertisedByteCount: UInt64? = nil
+    ) throws -> CodeReadWorkerJSONValue {
+        let base = try request(operation, arguments)
+        let streaming = CodeReadWorkerRequest(
+            protocolVersion: base.protocolVersion,
+            requestID: base.requestID,
+            helperInstanceID: base.helperInstanceID,
+            deadlineUnixMilliseconds: base.deadlineUnixMilliseconds,
+            operation: base.operation,
+            arguments: base.arguments,
+            projectRootPath: base.projectRootPath,
+            projectRootIdentity: base.projectRootIdentity,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            ripgrepPath: nil,
+            ripgrepIdentity: nil,
+            binaryPayloadByteCount: advertisedByteCount ?? UInt64(payload.count)
+        )
+        var offset = 0
+        return try ChatOSCodeReadWorkerEngine.executeStreaming(streaming) { maximumCount in
+            guard offset < payload.count else { return Data() }
+            let end = min(payload.count, offset + maximumCount)
+            defer { offset = end }
+            return payload.subdata(in: offset..<end)
+        }
     }
 
     func request(

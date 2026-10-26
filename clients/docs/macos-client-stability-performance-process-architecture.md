@@ -2396,6 +2396,22 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：Worker 校验完成到 UI 真正打开文件之间仍存在文件被同一授权项目内替换的时间窗；当前返回路径会在 App 再次 canonicalize 并拒绝项目外目标，但 Pet 文件台尚未消费 device/inode 身份。若后续允许自动执行或编辑，必须把身份传到最终打开点并再次核对。附件发送授权、附件历史预览、Artifact stage/restore、其他 UI 文件加载器和临时文件回收仍待继续审计。
 
+### 12.107 第三十六完整里程碑：附件发送使用一请求一 Worker 二进制流（2026-10-26）
+
+本里程碑关闭 12.104 明确记录的发送阻塞点。此前新消息与运行中 guidance 都在 `NativeLocalAgentConversationService` actor 内同步把附件 `Data` 写入 vault 并计算 SHA-256；慢卷、空间压力或 20 MiB 草稿会占住该服务 actor，进而延迟同服务上的其他会话命令。现有 Code Read Worker 的逐行 JSON IPC 又不能直接承载附件：Base64 会产生额外字符串、编码缓冲和约 33% 体积放大。现在附件元数据仍使用有界 JSON，原始字节改用握手后紧随请求帧的二进制流，由一次性 Worker 完成落盘和摘要计算。
+
+已实施：
+
+- Code Read Worker 协议升级为 v2，握手同时协商 16 MiB JSON 上限与 20 MiB 二进制总载荷上限；请求显式声明 `binary_payload_byte_count`，只有 `attachment_authorize_v1` 可携带二进制。普通读写请求必须声明零载荷，未知组合失败关闭，避免协议错位把原始字节当下一条 JSON。
+- `CodeReadWorkerProcessClient` 增加二进制执行契约。App 直接遍历既有 `Data` 的只读字节，以最多 64 KiB 的 `write(2)` 分块写入 pipe，不构造 Base64、合并 `Data` 或临时输入文件；生命周期继续是一请求一 PID/进程组，复用取消、墙钟超时、父进程死亡和强杀边界。写端启用 `F_SETNOSIGPIPE`，Worker 在上传中途退出只让所属请求失败，不会终止主 App。
+- Worker 一次处理同一发送命令的最多 20 个附件，总字节仍不得超过 20 MiB。owner/conversation 目录使用哈希组件、目录描述符、`mkdirat`/`openat` 与 `O_NOFOLLOW`；每个附件流式写入 0600 `.chatos-write-*.tmp`，同步计算 SHA-256，`fsync` 后通过 `linkat` 原子无覆盖安装随机 UUID token。批次后项失败会删除本批已安装 token，不把部分授权结果交给 Host。
+- 新消息和 guidance 两个生产入口都改为等待 `authorizeInWorker`；旧的 App 内同步授权实现已删除。App 只在首次使用时确保 vault 根目录存在，附件正文写入、哈希、临时文件和原子安装均不再发生在 App 进程。
+- Core 回归覆盖多附件跨 64 KiB 边界流式写入、摘要、短载荷拒绝和失败清理；真实 Worker 回归覆盖 256 KiB/512 KiB 原始二进制链路、vault 结果映射与上传中途退出。既有附件分发、图片、workspace、联系人和篡改拒绝回归继续通过。
+
+验证：Debug 与原生 arm64 Release `warnings-as-errors` 的联合矩阵各执行 48 项，其中 2 项为显式外部 Media Worker/文档 Plugin 集成开关跳过，0 失败；Release 完成协议、Worker、Connector 和 App 优化编译。构建证据工具 25 项全部通过，两个打包脚本通过 zsh 语法校验，`git diff --check` 通过。未运行 launch smoke，未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：附件草稿在用户发送前仍作为 UI `Data` 存在，本批消除的是发送时第二份 Base64/整块落盘工作，不把草稿采集本身改为文件原生。创建 vault 根目录仍是发送路径上的一次小型元数据操作；真实慢速、只读和 ENOSPC 移动卷需要发布故障注入。Worker 在 `linkat` 前被 `SIGKILL` 仍可能留下 `.chatos-write-*.tmp`，在 App 已取消但 Worker 已安装并回包前中断也可能留下无 Host 引用的 token；必须用 ownership、年龄和活跃 Worker 门禁回收，禁止无条件递归删除。附件历史 `previewURL`、Artifact stage/restore 和统一跨进程动态资源预算仍待实施。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

@@ -22,6 +22,7 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
     case attachmentInvalid
     case attachmentReferenceInvalid
     case attachmentIntegrityMismatch
+    case attachmentWriteFailed
     case attachmentWorkspaceUnavailable
     case attachmentWorkspaceConflict
 
@@ -45,6 +46,7 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
         case .attachmentInvalid: "The local attachment is unavailable or exceeds its safety limit."
         case .attachmentReferenceInvalid: "The local attachment reference is invalid."
         case .attachmentIntegrityMismatch: "The local attachment failed its integrity check."
+        case .attachmentWriteFailed: "The local attachment could not be stored safely."
         case .attachmentWorkspaceUnavailable:
             "The authorized attachment could not be imported into the task workspace."
         case .attachmentWorkspaceConflict:
@@ -73,6 +75,7 @@ public enum CodeReadWorkerCoreError: LocalizedError, Sendable {
         case .attachmentInvalid: code = "attachment_invalid"
         case .attachmentReferenceInvalid: code = "attachment_reference_invalid"
         case .attachmentIntegrityMismatch: code = "attachment_integrity_mismatch"
+        case .attachmentWriteFailed: code = "attachment_write_failed"
         case .attachmentWorkspaceUnavailable: code = "attachment_workspace_unavailable"
         case .attachmentWorkspaceConflict: code = "attachment_workspace_conflict"
         }
@@ -94,6 +97,7 @@ public enum ChatOSCodeReadWorkerEngine {
         guard request.type == "request",
               request.protocolVersion == ChatOSCodeReadWorkerProtocol.maximumVersion,
               ChatOSCodeReadWorkerProtocol.operations.contains(request.operation),
+              request.binaryPayloadByteCount == 0,
               request.deadlineUnixMilliseconds > nowMilliseconds() else {
             throw CodeReadWorkerCoreError.invalidRequest("代码读取请求无效或已经过期")
         }
@@ -161,6 +165,34 @@ public enum ChatOSCodeReadWorkerEngine {
         default:
             throw CodeReadWorkerCoreError.unsupportedTool(request.operation)
         }
+    }
+
+    public static func executeStreaming(
+        _ request: CodeReadWorkerRequest,
+        readBinaryChunk: (Int) throws -> Data
+    ) throws -> CodeReadWorkerJSONValue {
+        guard request.type == "request",
+              request.protocolVersion == ChatOSCodeReadWorkerProtocol.maximumVersion,
+              request.operation == "attachment_authorize_v1",
+              request.binaryPayloadByteCount > 0,
+              request.binaryPayloadByteCount
+                <= UInt64(ChatOSCodeReadWorkerProtocol.maximumBinaryPayloadBytes),
+              request.deadlineUnixMilliseconds > nowMilliseconds() else {
+            throw CodeReadWorkerCoreError.invalidRequest("附件授权请求无效或已经过期")
+        }
+        let root = try validatedRoot(
+            path: request.projectRootPath,
+            identity: request.projectRootIdentity
+        )
+        return try AttachmentWorkerOperations(
+            root: root,
+            rootIdentity: request.projectRootIdentity,
+            deadlineUnixMilliseconds: request.deadlineUnixMilliseconds
+        ).authorize(
+            arguments: request.arguments,
+            binaryPayloadByteCount: request.binaryPayloadByteCount,
+            readBinaryChunk: readBinaryChunk
+        )
     }
 
     private static func validatedRoot(
