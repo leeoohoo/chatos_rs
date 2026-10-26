@@ -19,6 +19,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tauri::{AppHandle, Manager, State};
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
     authentication::AuthenticationManager,
@@ -33,7 +34,8 @@ use crate::{
         resolve_executable, CommittedPluginPackage, NpmMcpDraft, NpmMcpInspection,
     },
     plugin_integrity::{
-        requires_installation_integrity, secure_component_revision, verify_installation_integrity,
+        recover_interrupted_installations, requires_installation_integrity,
+        secure_component_revision, verify_installation_integrity,
     },
 };
 
@@ -57,6 +59,7 @@ impl PluginSettingsHost for HostManager {
 pub(crate) struct PluginSettingsManager {
     plugin_root: PathBuf,
     manual_selections: Arc<Mutex<BTreeMap<String, ManualPluginSelection>>>,
+    installation_transactions: Arc<AsyncMutex<()>>,
 }
 
 impl PluginSettingsManager {
@@ -64,6 +67,7 @@ impl PluginSettingsManager {
         Self {
             plugin_root: app_data_directory.join("NativeConnector").join("Plugins"),
             manual_selections: Arc::new(Mutex::new(BTreeMap::new())),
+            installation_transactions: Arc::new(AsyncMutex::new(())),
         }
     }
 
@@ -475,6 +479,7 @@ pub(crate) async fn install_local_plugin_source(
     let generation = authentication
         .session_generation_for_owner(owner_user_id)
         .await?;
+    let _transaction = settings.installation_transactions.lock().await;
     if source_path.is_empty() || source_path.len() > 4_096 || source_path.contains('\0') {
         return Err("本地 Plugin 来源路径无效。".into());
     }
@@ -515,6 +520,7 @@ pub(crate) async fn install_git_plugin_source(
     let generation = authentication
         .session_generation_for_owner(owner_user_id)
         .await?;
+    let _transaction = settings.installation_transactions.lock().await;
     let package = install_git_package(
         &settings.plugin_root,
         &repository_url,
@@ -549,6 +555,7 @@ pub(crate) async fn install_npm_plugin_source(
     let generation = authentication
         .session_generation_for_owner(owner_user_id)
         .await?;
+    let _transaction = settings.installation_transactions.lock().await;
     let package = install_npm_package_source(
         &settings.plugin_root,
         &package_name,
@@ -581,6 +588,7 @@ pub(crate) async fn install_custom_npm_mcp(
     let generation = authentication
         .session_generation_for_owner(owner_user_id)
         .await?;
+    let _transaction = settings.installation_transactions.lock().await;
     let (package, inspection) =
         install_npm_mcp(&settings.plugin_root, &draft, &expected_fingerprint).await?;
     let result = finish_local_plugin_install(
@@ -677,6 +685,7 @@ pub async fn load_plugin_settings(
     let generation = authentication
         .session_generation_for_owner(&owner_user_id)
         .await?;
+    let _transaction = manager.installation_transactions.lock().await;
     let (sources, records) = tokio::join!(
         authentication.plugin_install_sources_for_owner(&owner_user_id),
         list_installation_records(&*host, &owner_user_id),
@@ -688,6 +697,27 @@ pub async fn load_plugin_settings(
         return Err(
             "Plugin Marketplace 与本机安装目录均不可用，请检查网络和 Local Agent Host。".into(),
         );
+    }
+    if let Ok(records) = &records {
+        let expected =
+            records
+                .iter()
+                .filter(|record| requires_installation_integrity(&record.spec.component_revision))
+                .filter_map(|record| {
+                    record.spec.working_directory.as_ref().map(|directory| {
+                        (PathBuf::from(directory), record.spec.release_digest.clone())
+                    })
+                })
+                .collect::<Vec<_>>();
+        let plugin_root = manager.plugin_root.clone();
+        let recovered = tauri::async_runtime::spawn_blocking(move || {
+            recover_interrupted_installations(&plugin_root, &expected)
+        })
+        .await
+        .map_err(|_| plugin_catalog_error())??;
+        if recovered > 0 {
+            applications.reset().await;
+        }
     }
     project_snapshot(
         &manager.plugin_root,
@@ -1072,6 +1102,7 @@ pub async fn install_marketplace_plugin(
     let generation = authentication
         .session_generation_for_owner(&owner_user_id)
         .await?;
+    let _transaction = settings.installation_transactions.lock().await;
     let sources = authentication
         .plugin_install_sources_for_owner(&owner_user_id)
         .await
