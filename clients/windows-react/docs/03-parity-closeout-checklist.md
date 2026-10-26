@@ -30,21 +30,21 @@ Windows 产品版本：`3.0.9`
 - [x] Windows MSI 事务中途故障回滚闭环已实测：仓库内受审计 WiX 模板把 `RemoveExistingProducts` 固定在 `InstallExecute` 之后（执行序号 `6501`）；在复制新文件后注入 Type 19 故障，两轮均返回 `1603`，并完整恢复旧 ProductCode、旧 EXE 哈希和 AppData 哨兵。随后正常升级和卸载成功，旧版、故障版与当前版 ProductCode 均为未安装状态，主 EXE 组件无残留 client。
 - [x] Windows MSI 在旧客户端保持原生窗口运行时的覆盖升级闭环已实测：两轮均由 Windows Installer 正常关闭 `0.1.0` 进程，升级返回 `0`，`3.0.9` 原生启动和最终卸载成功，AppData 哨兵保留；测试逐轮对比系统 `PendingFileRenameOperations`，确认未新增待重启文件操作。
 - [x] Windows NSIS 原生启动 smoke 已与真实用户数据隔离：每次运行使用独立的新 AppData/LocalAppData，完成后断言测试数据已清理，不再读取或污染当前登录账号的数据。当前安装包完成两轮、每轮 5 次隔离冷启动；第二轮安装 `1,970 ms`、启动中位数 `9,040 ms`、P95 `17,882 ms`、卸载 `619 ms`，全部在 20 秒门限内正常退出。
-- [x] Windows AppContainer 基础启动器与真实隔离探测已落地：使用临时 profile、`PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 和 `CREATE_SUSPENDED` 启动系统进程，先校验子进程 token 再恢复执行，策略不匹配时在用户代码运行前终止。`disabled` 档位实测 token 不含 capability、无法读取宿主临时文件且无法连接宿主 loopback；`controlled` 档位只生成并注入 Windows `internetClient` capability SID，随后从子进程 token 反查确认策略精确生效，`host` 明确拒绝映射到 AppContainer。租约 manager 会以不跟随 reparse point 的 Windows 句柄遍历非空目录树，逐项保存原 DACL、卷号和文件 ID，再以 v3 journal 原子落盘后通过同一对象句柄授权。正常释放通过保留句柄恢复原对象，因此支持租约内重命名；启动恢复会在写 ACL 前验证对象身份，同路径替换会失败关闭。运行期新增项的 AppContainer SID 会撤销，v1/v2 journal 继续兼容恢复，目录树数量与 journal 大小有界。尚未迁移的任务/Plugin/Agent 启动链继续保持 `limited`，界面开关不提前开放。
+- [x] Windows AppContainer 基础启动器与真实隔离探测已落地：使用临时 profile、`PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 和 `CREATE_SUSPENDED` 启动系统进程，先校验子进程 token 再恢复执行，策略不匹配时在用户代码运行前终止。`disabled` 档位实测 token 不含 capability、无法读取宿主临时文件且无法连接宿主 loopback；`controlled` 档位只生成并注入 Windows `internetClient` capability SID，随后从子进程 token 反查确认策略精确生效，`host` 明确拒绝映射到 AppContainer。租约 manager 会以不跟随 reparse point 的 Windows 句柄遍历非空目录树，逐项保存原 DACL、卷号和文件 ID，再以 v3 journal 原子落盘后通过同一对象句柄授权。正常释放通过保留句柄恢复原对象，因此支持租约内重命名；启动恢复会在写 ACL 前验证对象身份，同路径替换会失败关闭。运行期新增项的 AppContainer SID 会撤销，v1/v2 journal 继续兼容恢复，目录树数量与 journal 大小有界。可复用运行时启动器现已补齐显式工作目录、最小环境块、仅三个 stdio 句柄继承、有界 stdout/stderr 捕获、超时与 Job Object 进程树回收；真实 Git 仓库已在读写租约中完成 `git add`。尚未迁移的任务/Plugin/Agent 业务调用继续保持 `limited`，界面开关不提前开放。
 
 ## B. 本次交付前必须关闭
 
 - [x] Windows React 前端全量测试、类型检查、生产构建、架构审计和 Bundle 审计全部通过（134 个测试文件、504 项测试）。
-- [x] 本批“句柄绑定的非空目录 ACL 租约”修改后，Windows Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：481 项测试被发现，475 项通过、0 项失败、6 项环境集成测试按预期 ignored。
+- [x] 本批“可复用 AppContainer 运行时启动器”修改后，Windows Tauri Rust 全量测试、Rustfmt、Clippy 和 Bundle 审计重新通过：483 项测试被发现，477 项通过、0 项失败、6 项环境集成测试按预期 ignored。
 - [x] 重新生成版本为 `3.0.9` 的 Release EXE、MSI、NSIS，并记录 SHA-256：
-  - `chatos-windows-react.exe`：`c8d33cbc6c4d4f4d2685b7048efb5233a80fffd5264a37084279700709345dde`
+  - `chatos-windows-react.exe`：`3ab585bfcf6b9df2952554127b18a5302939bed5fd1f1547ecb5ac8ce2e05402`
   - `chatos_local_agent_host.exe`：`5f697fced2658ac59a3f9fb4ff5d167ac033545ed0f0c995363c754fcc0ebf66`
-  - `ChatOS_3.0.9_x64_en-US.msi`：`72c332fa07ae680aa2352ff6d2a072ea67731647e48b8e33e9cdb761ab7883fa`
-  - `ChatOS_3.0.9_x64-setup.exe`：`216b72b47064b372f7a149124bd2cf738c003440a40c80beb082362a73f15d0e`
+  - `ChatOS_3.0.9_x64_en-US.msi`：`e667462e6670ea027478bfc5671f4735c4aa5bd5d0749673d4c4b8e43a86a03a`
+  - `ChatOS_3.0.9_x64-setup.exe`：`c066d679ef0394561c72e1e76e87e2c7671b5c30be183a2bc751992c940c10d3`
 - [x] 用新 NSIS 安装到全新临时目录，验证主程序、Host、资源、隔离 AppData 原生启动、正常退出、卸载和残留清理；当前事务安全构建产物先连续两次通过单次启动门限，再完成两轮各 5 次冷启动基线，最新报告为 `%TEMP%\chatos-windows-nsis-startup-performance-1.json` 和 `%TEMP%\chatos-windows-nsis-startup-performance-2.json`。
 - [x] MSI 升级 smoke 在既有四轮基础上，以事务安全模板再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-1.json` 和 `%TEMP%\chatos-windows-msi-upgrade-transactional-safe-2.json` 同时记录 `0.1.0 → 3.0.9`、两代原生启动退出、截断包 `1620` 失败、事务中途故障 `1603` 回滚、AppData 哨兵保留、卸载以及降级检测规则。
 - [x] MSI 运行中客户端升级 smoke 再连续通过两轮；报告 `%TEMP%\chatos-windows-msi-running-upgrade-1.json` 和 `%TEMP%\chatos-windows-msi-running-upgrade-2.json` 记录旧版原生窗口进程、Installer 正常关闭、无重启升级、新版原生启动、数据保留、卸载和系统待重启队列不变。
-- [x] 本批“句柄绑定的非空目录 ACL 租约”已重新生成到 MSI/NSIS，并通过 `%TEMP%\chatos-windows-handle-bound-acl-final-nsis.json` 的全新目录安装、隔离 AppData 原生启动、正常退出、卸载和清理验证：安装 `2,077 ms`、原生启动 `3,163 ms`、卸载 `628 ms`，三者退出码均为 `0`；AppContainer profile 注册表残留为 `0`。
+- [x] 本批“可复用 AppContainer 运行时启动器”已重新生成到 MSI/NSIS，并通过 `%TEMP%\chatos-windows-appcontainer-runtime-final-nsis.json` 的全新目录安装、隔离 AppData 原生启动、正常退出、卸载和清理验证：安装 `2,096 ms`、原生启动 `12,240 ms`、卸载 `629 ms`，三者退出码均为 `0`；AppContainer profile 注册表残留为 `0`。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [ ] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息。代码默认状态与自动回归均为 workspace/首个消息资源，但原生窗口视觉取证仍受下一项工具故障阻塞。
 - [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。
@@ -54,7 +54,7 @@ Windows 产品版本：`3.0.9`
 ### P1：用户能直接感知
 
 - [ ] Computer Use / 屏幕采集的受信发布闭环。Windows Worker 源码、x64/arm64 构建和 smoke 已通过，但当前用户 Plugin 目录为空；还需产出跨平台 `.tgz`、进入签名 Marketplace Release，并从 Windows 客户端完成安装、启用、`doctor`、屏幕采集和输入实测。
-- [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、disabled/controlled capability token、句柄绑定的非空目录逐项 DACL 快照、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验和 reparse point 拒绝已经通过；仍需实现目标级出站规则，并把任务、Plugin 与 Agent 的所有子进程统一迁移到该启动器后才能开放第 31 页开关。迁移完成前继续只发布账号/项目边界、审批策略和 Job Object 进程树回收。
+- [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、disabled/controlled capability token、句柄绑定的非空目录逐项 DACL 快照、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 拒绝，以及带最小环境、stdio 捕获、超时与 Job Object 回收的可复用启动器已经通过；仍需实现目标级出站规则，并把任务、Plugin 与 Agent 的业务调用统一迁移到该启动器后才能开放第 31 页开关。迁移完成前继续只发布账号/项目边界、审批策略和现有 Job Object 进程树回收。
 
 ### P2：平台/发布质量
 
@@ -76,5 +76,5 @@ Windows 产品版本：`3.0.9`
 2. [已完成] Plugin 安装助手专用 capability、受限平台工具与原生 ChatOS Plugin 本地目录 inspect/install 闭环。
 3. [已完成] Git、固定版本 npm 来源、普通 npm MCP、常见 stdio MCP JSON、portable Agent、Codex、Claude、独立 Skill、skills-only、设置页本机目录 typed 导入与 Windows Credential Manager Secret resolver 均已完成。
 4. [外部依赖] 完成 Computer Use `.tgz`、Marketplace 签名发布/客户端安装闭环，以及 Windows 安装包正式代码签名。
-5. [进行中] Windows AppContainer 启动、文件/网络拒绝、disabled/controlled 网络 capability、句柄绑定的非空目录逐项 ACL 租约与 v1/v2/v3 journal 恢复已完成；下一步实现目标级出站规则和统一子进程启动器，全部执行链迁移后再开放第 31 页开关。审批策略和审批人已经接入真实执行门禁。
+5. [进行中] Windows AppContainer 启动、文件/网络拒绝、disabled/controlled 网络 capability、句柄绑定的非空目录逐项 ACL 租约、v1/v2/v3 journal 恢复和可复用受限进程启动器已完成；下一步实现目标级出站规则并逐条迁移任务、Plugin 与 Agent 业务调用，全部执行链迁移后再开放第 31 页开关。审批策略和审批人已经接入真实执行门禁。
 6. [待验证] 工具恢复后完成 31 页原生逐页视觉、缩放和无障碍验收；升级、失败前置保护、事务中途故障回滚、客户端运行中升级及安装包冷启动基线已完成，后续在一次性 VM 补强制锁/需重启场景并继续 Host ready、首屏与长稳性能基线。

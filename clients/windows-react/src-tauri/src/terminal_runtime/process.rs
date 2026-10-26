@@ -376,36 +376,10 @@ impl ProcessTermination {
     pub(crate) fn attach(child: &Child) -> io::Result<Self> {
         #[cfg(windows)]
         {
-            use std::os::windows::io::{FromRawHandle, RawHandle};
-            use windows_sys::Win32::System::JobObjects::{
-                AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-                SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            };
             let raw = child
                 .raw_handle()
                 .ok_or_else(|| io::Error::other("missing child process handle"))?;
-            let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-            if job.is_null() {
-                return Err(io::Error::last_os_error());
-            }
-            let owned =
-                unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(job as RawHandle) };
-            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            let configured = unsafe {
-                SetInformationJobObject(
-                    job,
-                    JobObjectExtendedLimitInformation,
-                    &limits as *const _ as *const std::ffi::c_void,
-                    std::mem::size_of_val(&limits) as u32,
-                )
-            };
-            let assigned = unsafe { AssignProcessToJobObject(job, raw as _) };
-            if configured == 0 || assigned == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(Self::WindowsJob(owned))
+            Self::attach_raw_handle(raw)
         }
         #[cfg(not(windows))]
         {
@@ -414,6 +388,39 @@ impl ProcessTermination {
                 .ok_or_else(|| io::Error::other("missing child process id"))?;
             Ok(Self::UnixProcessGroup(pid as i32))
         }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn attach_raw_handle(raw: std::os::windows::io::RawHandle) -> io::Result<Self> {
+        use std::os::windows::io::{FromRawHandle, RawHandle};
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if job.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let owned = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(job as RawHandle) };
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const std::ffi::c_void,
+                std::mem::size_of_val(&limits) as u32,
+            )
+        };
+        if configured == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let assigned = unsafe { AssignProcessToJobObject(job, raw as _) };
+        if assigned == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self::WindowsJob(owned))
     }
 
     pub(crate) fn terminate(&self, force: bool) -> io::Result<()> {
