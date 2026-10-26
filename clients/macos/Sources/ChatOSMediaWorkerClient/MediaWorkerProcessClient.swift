@@ -1,4 +1,5 @@
 import ChatOSMediaWorkerProtocol
+import ChatOSWorkerRuntime
 import CryptoKit
 import Darwin
 import Dispatch
@@ -49,6 +50,7 @@ public enum MediaWorkerProcessClientError: LocalizedError, Equatable {
     case incompatibleProtocol
     case invalidResponse
     case requestRejected(code: String)
+    case resourceBusy
     case timedOut
 
     public var errorDescription: String? {
@@ -65,6 +67,8 @@ public enum MediaWorkerProcessClientError: LocalizedError, Equatable {
             "图片处理进程返回了无效结果。"
         case let .requestRejected(code):
             "图片处理失败（\(code)）。"
+        case .resourceBusy:
+            "图片处理任务过多，请稍后重试。"
         case .timedOut:
             "图片处理超时，已终止独立处理进程。"
         }
@@ -87,10 +91,16 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
     )
     public let executableURL: URL?
     public let timeout: TimeInterval
+    private let resourceGovernor: ClientFileWorkerResourceGovernor
 
-    public init(executableURL: URL? = nil, timeout: TimeInterval = 60) {
+    public init(
+        executableURL: URL? = nil,
+        timeout: TimeInterval = 60,
+        resourceGovernor: ClientFileWorkerResourceGovernor = .shared
+    ) {
         self.executableURL = executableURL
         self.timeout = timeout
+        self.resourceGovernor = resourceGovernor
     }
 
     public func normalizePNG(
@@ -162,6 +172,18 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
             throw MediaWorkerProcessClientError.invalidResponse
         }
         let resolvedExecutable = try executableURL ?? Self.resolveExecutable()
+        let permit: ClientFileWorkerPermit
+        do {
+            permit = try await resourceGovernor.acquire(context: .init(
+                kind: .media,
+                priority: .interactive,
+                operation: "normalize_image"
+            ))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MediaWorkerProcessClientError.resourceBusy
+        }
         let controller = MediaWorkerProcessController()
         do {
             let result = try await withTaskCancellationHandler {
@@ -204,10 +226,13 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
             } onCancel: {
                 controller.terminate()
             }
+            await permit.releaseAndWait()
             return result
         } catch is CancellationError {
+            await permit.releaseAndWait()
             throw CancellationError()
         } catch let error as MediaWorkerProcessClientError {
+            await permit.releaseAndWait()
             if Task.isCancelled { throw CancellationError() }
             if controller.didTimeOut { throw MediaWorkerProcessClientError.timedOut }
             if case .requestRejected = error {
@@ -215,6 +240,7 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
             }
             throw error
         } catch {
+            await permit.releaseAndWait()
             if controller.didTimeOut { throw MediaWorkerProcessClientError.timedOut }
             throw MediaWorkerProcessClientError.invalidResponse
         }
@@ -235,6 +261,18 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
             throw MediaWorkerProcessClientError.invalidResponse
         }
         let resolvedExecutable = try executableURL ?? Self.resolveExecutable()
+        let permit: ClientFileWorkerPermit
+        do {
+            permit = try await resourceGovernor.acquire(context: .init(
+                kind: .media,
+                priority: .interactive,
+                operation: "extract_last_video_frame_png"
+            ))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MediaWorkerProcessClientError.resourceBusy
+        }
         let controller = MediaWorkerProcessController()
         do {
             let result = try await withTaskCancellationHandler {
@@ -277,15 +315,19 @@ public struct MediaWorkerProcessClient: MediaWorkerImageNormalizing,
             } onCancel: {
                 controller.terminate()
             }
+            await permit.releaseAndWait()
             return result
         } catch is CancellationError {
+            await permit.releaseAndWait()
             throw CancellationError()
         } catch let error as MediaWorkerProcessClientError {
+            await permit.releaseAndWait()
             if Task.isCancelled { throw CancellationError() }
             if controller.didTimeOut { throw MediaWorkerProcessClientError.timedOut }
             if case .requestRejected = error { throw error }
             throw error
         } catch {
+            await permit.releaseAndWait()
             if controller.didTimeOut { throw MediaWorkerProcessClientError.timedOut }
             throw MediaWorkerProcessClientError.invalidResponse
         }

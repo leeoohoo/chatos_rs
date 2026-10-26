@@ -2458,6 +2458,21 @@ Schema 升至 v37。序列化后 UTF-8 JSON 正文 **不超过 512 KiB（含等�
 
 边界：本批只回收上述三个状态目录中的 `.chatos-write-*` 与 `.chatos-artifact-copy-*`；项目 workspace 内的 `.import-*` 和其他 UI exporter 临时文件没有纳入，也不会为了释放空间扩大为任意目录递归清理。24 小时宽限优先保护跨睡眠、暂停和长时 I/O，不承诺崩溃后立即释放空间。跨 Helper 动态资源预算、8 小时 soak、真实磁盘满/只读卷、低端机器组合负载和发布级 SLO 仍待后续里程碑完成。
 
+### 12.111 第四十完整里程碑：Media/Code Read 跨 Helper 自适应资源预算（2026-10-26）
+
+本里程碑治理“一请求一进程”落地后的进程数量反压。Media 与 Code Read 的请求此前彼此独立且没有共享上限；快速滚动图片列表、批量项目扫描和附件校验可以同时拉起大量短进程。它们不会因软件单槽互相串行，却可能共同耗尽 CPU、内存、FD 和进程表，最终让所有会话一起变慢。本批新增共享 `ChatOSWorkerRuntime` 准入层，只限制同时存活的文件/媒体 Worker 数，不合并请求、不复用常驻进程，获准的每个任务仍拥有独立 PID、超时和取消域。
+
+已实施：
+
+- 默认总额度同时受逻辑处理器和物理内存约束：预留两个逻辑核和 2 GiB 给 App/系统，每个短 Worker 按 1 GiB 份额估算，总并发落在 3--10；Media 单类上限为 4，Code Read 单类上限为 8。最低总额 3 时同一类仍可并行两个独立 Worker，不退回全局单槽。
+- Media 与 Code Read 各有一个不可被另一类借走的硬保留槽，其余额度共享。一批挂起或高延迟 Media 请求因此不能占掉最后一个 Code Read 槽，反向同理；只有对应类别自身达到上限或共享额确实耗尽时才排队。
+- 所有 `MediaWorkerProcessClient` 图片归一化、JPEG 和视频尾帧请求，以及 `CodeReadWorkerProcessClient` 普通/二进制请求，都在启动子进程前取得 permit，并在成功、协议失败、超时或取消后同步归还。临时文件启动维护被标为 background，交互请求优先；连续四次交互插队后会给已可准入的后台请求一次机会，避免长期饥饿。
+- 队列最多 256 项；排队任务取消只移除自己的 waiter，队列满只拒绝新请求并返回明确 busy 错误，不终止正在工作的其他进程。Snapshot 暴露总/分类预算、active/queued 的 request/kind/priority/operation，以及准入、排队、释放、取消、满队列和峰值计数，供后续组合负载与发布 trace 使用。
+
+验证：Debug 与原生 arm64 Release 的 `warnings-as-errors` 联合矩阵各执行 32 项，0 跳过、0 失败；包含 4 项确定性预算/Governor 回归、12 项真实 Code Read 进程隔离，以及 16 项真实 Media 进程、超时、取消、父进程死亡和并发回归。新增跨类型真实进程用例故意挂起两个 Media Worker，在媒体额度占满时确认真实 Code Read Worker 仍使用保留槽立即完成文件读取，观测到总活跃峰值精确为 3；反向保留、同类双并行、排队取消和队列溢出由确定性 actor 测试覆盖。未启动、安装或替换正式 App，不访问活动用户数据库。
+
+边界：本批统一的是 Media 与 Code Read 两类短生命周期文件 Worker。Agent Run 已有领取 durable Delivery 前的独立自适应 Governor，不能在进程客户端上简单再套一层、让已领取 lease 排队；Host 工作额度也属于另一所有权域。将 Agent/Host 纳入同一机器级观测需要把 permit 提前到 claim 之前并统一权重，仍是后续里程碑。当前预算在 App 进程启动时按硬件确定，不随实时 memory pressure、热状态或电源模式自动缩放；1 GiB 是起始估算而非每类精确峰值，仍需低端机器组合 trace、压力迟滞和 8 小时 soak 校准。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |

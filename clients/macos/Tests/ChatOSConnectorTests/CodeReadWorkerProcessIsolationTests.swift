@@ -1,6 +1,8 @@
 import ChatOSCodeReadWorkerClient
 import ChatOSCodeReadWorkerProtocol
 import ChatOSCore
+import ChatOSMediaWorkerClient
+import ChatOSWorkerRuntime
 import CryptoKit
 import Darwin
 import Foundation
@@ -8,6 +10,99 @@ import XCTest
 @testable import ChatOSConnector
 
 final class CodeReadWorkerProcessIsolationTests: XCTestCase {
+    func testMediaBurstCannotConsumeReservedCodeReadWorkerSlot() async throws {
+        let executable = try realWorkerExecutable()
+        let fixture = try WorkerFixture()
+        defer { fixture.dispose() }
+        let governor = ClientFileWorkerResourceGovernor(budget: .init(
+            totalConcurrentWorkers: 3,
+            maximumMediaWorkers: 2,
+            maximumCodeReadWorkers: 2
+        ))
+        let script = fixture.root.appendingPathComponent("hanging-media-worker.sh")
+        try Data("#!/bin/sh\nexec /bin/sleep 60\n".utf8).write(to: script)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o700))],
+            ofItemAtPath: script.path
+        )
+        let source = fixture.root.appendingPathComponent("source.png")
+        let firstDestination = fixture.root.appendingPathComponent("first.png")
+        let secondDestination = fixture.root.appendingPathComponent("second.png")
+        try Data("image".utf8).write(to: source)
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: firstDestination.path,
+            contents: nil
+        ))
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: secondDestination.path,
+            contents: nil
+        ))
+        let client = MediaWorkerProcessClient(
+            executableURL: script,
+            timeout: 30,
+            resourceGovernor: governor
+        )
+        let firstMedia = Task {
+            try await client.normalizePNG(
+                sourceURL: source,
+                destinationURL: firstDestination,
+                ownerUserID: "resource-test",
+                maximumSourceBytes: 1_024,
+                maximumSourcePixelCount: 1_024,
+                maximumOutputPixelSize: 32,
+                maximumOutputBytes: 1_024
+            )
+        }
+        let secondMedia = Task {
+            try await client.normalizePNG(
+                sourceURL: source,
+                destinationURL: secondDestination,
+                ownerUserID: "resource-test",
+                maximumSourceBytes: 1_024,
+                maximumSourcePixelCount: 1_024,
+                maximumOutputPixelSize: 32,
+                maximumOutputBytes: 1_024
+            )
+        }
+        defer {
+            firstMedia.cancel()
+            secondMedia.cancel()
+        }
+        for _ in 0..<1_000 {
+            if await governor.snapshot().active.count == 2 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let saturatedSnapshot = await governor.snapshot()
+        XCTAssertEqual(saturatedSnapshot.active.count, 2)
+        let readable = fixture.root.appendingPathComponent("README.md")
+        try Data("reserved-code-slot\n".utf8).write(to: readable)
+
+        let result = try await CodeReadWorkerProcessClient(
+            executableURL: executable,
+            timeout: 5,
+            resourceGovernor: governor
+        ).execute(
+            operation: "read_file_raw",
+            arguments: ["path": .string("README.md")],
+            projectRoot: fixture.root,
+            requestCWD: nil,
+            defaultToolRoot: nil,
+            ripgrepURL: nil
+        )
+
+        guard case let .object(payload) = result,
+              case let .string(content)? = payload["content"] else {
+            return XCTFail("real worker returned an invalid read payload")
+        }
+        XCTAssertEqual(content, "reserved-code-slot\n")
+        let snapshot = await governor.snapshot()
+        XCTAssertEqual(snapshot.metrics.maximumObservedActive, 3)
+        firstMedia.cancel()
+        secondMedia.cancel()
+        _ = try? await firstMedia.value
+        _ = try? await secondMedia.value
+    }
+
     func testRealWorkerReadsThroughAuthenticatedProcessBoundary() async throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

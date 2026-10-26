@@ -1,4 +1,5 @@
 import ChatOSCodeReadWorkerProtocol
+import ChatOSWorkerRuntime
 import Darwin
 import Dispatch
 import Foundation
@@ -33,6 +34,7 @@ public enum CodeReadWorkerProcessClientError: LocalizedError, Equatable {
     case incompatibleProtocol
     case invalidResponse
     case requestRejected(code: String, message: String)
+    case resourceBusy
     case timedOut
 
     public var errorDescription: String? {
@@ -43,6 +45,7 @@ public enum CodeReadWorkerProcessClientError: LocalizedError, Equatable {
         case .incompatibleProtocol: "代码读取独立进程版本与客户端不兼容。"
         case .invalidResponse: "代码读取独立进程返回了无效结果。"
         case let .requestRejected(_, message): message
+        case .resourceBusy: "代码读取任务过多，请稍后重试。"
         case .timedOut: "代码读取超时，已终止对应的独立进程。"
         }
     }
@@ -62,10 +65,16 @@ public struct CodeReadWorkerProcessClient: CodeReadWorkerBinaryExecuting {
 
     public let executableURL: URL?
     public let timeout: TimeInterval
+    private let resourceGovernor: ClientFileWorkerResourceGovernor
 
-    public init(executableURL: URL? = nil, timeout: TimeInterval = 60) {
+    public init(
+        executableURL: URL? = nil,
+        timeout: TimeInterval = 60,
+        resourceGovernor: ClientFileWorkerResourceGovernor = .shared
+    ) {
         self.executableURL = executableURL
         self.timeout = timeout
+        self.resourceGovernor = resourceGovernor
     }
 
     public func execute(
@@ -105,9 +114,22 @@ public struct CodeReadWorkerProcessClient: CodeReadWorkerBinaryExecuting {
             throw CodeReadWorkerProcessClientError.invalidResponse
         }
         let resolvedExecutable = try executableURL ?? Self.resolveExecutable()
+        let permit: ClientFileWorkerPermit
+        do {
+            permit = try await resourceGovernor.acquire(context: .init(
+                kind: .codeRead,
+                priority: operation == "cleanup_stale_temporary_files_v1"
+                    ? .background : .interactive,
+                operation: operation
+            ))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw CodeReadWorkerProcessClientError.resourceBusy
+        }
         let controller = CodeReadWorkerProcessController()
         do {
-            return try await withTaskCancellationHandler {
+            let result = try await withTaskCancellationHandler {
                 try await withThrowingTaskGroup(of: CodeReadWorkerJSONValue.self) { group in
                     group.addTask {
                         try await withTaskCancellationHandler {
@@ -144,13 +166,18 @@ public struct CodeReadWorkerProcessClient: CodeReadWorkerBinaryExecuting {
             } onCancel: {
                 controller.terminate()
             }
+            await permit.releaseAndWait()
+            return result
         } catch is CancellationError {
+            await permit.releaseAndWait()
             throw CancellationError()
         } catch let error as CodeReadWorkerProcessClientError {
+            await permit.releaseAndWait()
             if Task.isCancelled { throw CancellationError() }
             if controller.didTimeOut { throw CodeReadWorkerProcessClientError.timedOut }
             throw error
         } catch {
+            await permit.releaseAndWait()
             if controller.didTimeOut { throw CodeReadWorkerProcessClientError.timedOut }
             throw CodeReadWorkerProcessClientError.invalidResponse
         }
