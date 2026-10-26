@@ -94,6 +94,7 @@ $report = [ordered]@{
     hookBundleStored = $false
     hookBundleActivated = $false
     hookBlockedVerified = $false
+    hostRestartVerified = $false
     hostExitCode = $null
     uninstallExitCode = $null
     error = $null
@@ -204,9 +205,47 @@ try {
     if (-not $hostProcess.WaitForExit($HostTimeoutSeconds * 1000)) {
         $hostProcess.Kill()
         $hostProcess.WaitForExit()
-        throw "Installed Local Agent Host did not exit after stdio close."
+        throw "Installed Local Agent Host did not exit after the first stdio close."
     }
     $report.hostExitCode = $hostProcess.ExitCode
+
+    # Reopen the same durable database. The active Hook set must survive a
+    # Host restart and still gate a fresh turn before conversation lookup.
+    $hostProcess.Dispose()
+    $hostProcess = New-Object System.Diagnostics.Process
+    $hostProcess.StartInfo = $psi
+    if (-not $hostProcess.Start()) { throw "Installed Local Agent Host failed to restart." }
+    $restartHealth = Send-HostRequest -Process $hostProcess -Sequence 10 -Command @{ type = 'health' }
+    if (-not $restartHealth.ok -or $restartHealth.result.type -ne 'health') {
+        throw "Installed Host health handshake failed after restart."
+    }
+    $restartTurn = Send-HostRequest -Process $hostProcess -Sequence 11 -Command @{
+        type = 'start_conversation_turn'
+        owner_user_id = 'user-1'
+        conversation_id = 'missing-conversation-after-restart'
+        expected_conversation_version = 1
+        turn_id = 'installed-hook-restart-turn'
+        message_id = 'installed-hook-restart-message'
+        run_id = 'installed-hook-restart-run'
+        message = 'installed hook restart smoke'
+        message_metadata = @{}
+        attachments = @()
+        model_config_ref = 'model-1'
+        model_config_revision = 'revision-1'
+        capability_policy_revision = 'policy-1'
+        max_iterations = 1
+    }
+    if ($restartTurn.ok -or $restartTurn.error.code -ne 'hook_blocked' -or $restartTurn.error.message -ne 'installed-hook-blocked') {
+        throw "Installed Host did not preserve Hook activation after restart: $($restartTurn | ConvertTo-Json -Depth 10 -Compress)"
+    }
+    $report.hostRestartVerified = $true
+    $hostProcess.StandardInput.Close()
+    if (-not $hostProcess.WaitForExit($HostTimeoutSeconds * 1000)) {
+        $hostProcess.Kill()
+        $hostProcess.WaitForExit()
+        throw "Installed Local Agent Host did not exit after the restart stdio close."
+    }
+    if ($null -eq $report.hostExitCode) { $report.hostExitCode = $hostProcess.ExitCode }
     $report.status = 'passed'
 }
 catch {

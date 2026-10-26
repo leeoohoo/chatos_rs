@@ -1394,6 +1394,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 112. [已完成] Windows MSI 升级 smoke 已在当前 PowerShell 5 环境通过：使用旧版 `0.1.0` MSI 安装并启动，验证损坏升级拒绝（`1620`）、事务回滚（`1603`）与哨兵保留，再升级到 `3.0.9` 并验证运行中旧版进程可安全退出、升级后应用启动、降级保护和最终卸载清理。报告为 `%TEMP%\\chatos-windows-msi-upgrade-current-2.json`。期间修复 `smoke-msi-upgrade.ps1` 使用 PowerShell 7 专属 `utf8NoBOM` 导致 PowerShell 5 中止的问题。
 
-113. [已完成] 新增最终 NSIS 安装包的真实 Hook 事件 smoke：脚本安装包后直接启动安装目录中的 `chatos_local_agent_host.exe`，通过生产 stdio IPC 写入并激活一个 `UserPromptSubmit` Bundle，再发起真实 `StartConversationTurn` 请求；安装版 Host 完成 health handshake，并返回 `hook_blocked` 与精确 `stopReason`，随后正常退出并静默卸载。报告为 `%TEMP%\\chatos-windows-installed-hook-current-3.json`，安装包 SHA-256 为 `8eba5473cadba513498254df6cb74d88c559a14b2a1132f758a8451ea1b54f3a`。该 smoke 已证明最终安装包内的 Hook runner、Bundle 激活、事件协调器和阻断链路可运行；安装后重启恢复和原生窗口逐态视觉取证仍待完成。
+113. [已完成] 最终 NSIS 安装包的真实 Hook 事件 smoke 已扩展到重启恢复：脚本安装包后直接启动安装目录中的 `chatos_local_agent_host.exe`，通过生产 stdio IPC 写入并激活一个 `UserPromptSubmit` Bundle，发起真实 `StartConversationTurn` 并验证 `hook_blocked` 与精确 `stopReason`；随后关闭 Host、复用同一个 SQLite 数据库重新启动，第二次 Prompt 仍被同一 Bundle 阻断，最后正常退出并静默卸载。报告为 `%TEMP%\\chatos-windows-installed-hook-restart.json`，安装包 SHA-256 为 `8eba5473cadba513498254df6cb74d88c559a14b2a1132f758a8451ea1b54f3a`。该 smoke 已证明最终安装包内的 Hook runner、Bundle 激活、事件协调器和安装后重启恢复链路可运行；原生窗口逐态视觉取证仍待完成。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
