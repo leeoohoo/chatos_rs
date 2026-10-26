@@ -631,8 +631,31 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
     .execute(&storage.pool)
     .await
     .expect("legacy Hook event");
+    sqlx::query(
+        "INSERT INTO local_plugin_hook_bundles(\
+         owner_user_id, bundle_id, spec_json, created_at_unix_ms) VALUES(\
+         'user-1', 'legacy-hook-bundle', '{\"plugin_id\":\"plugin-legacy\"}', 1)",
+    )
+    .execute(&storage.pool)
+    .await
+    .expect("legacy Hook bundle");
+    sqlx::query(
+        "INSERT INTO local_hook_invocations(\
+         invocation_id, event_id, bundle_id, hook_id, attempt, status, exit_code, timed_out, \
+         stdout_sha256, stdout_bytes, stderr_summary, additional_context, created_at_unix_ms, \
+         updated_at_unix_ms) VALUES(\
+         'legacy-hook-invocation', 'legacy-hook-event', 'legacy-hook-bundle', 'hook-1', 1, \
+         'succeeded', 0, 0, NULL, 0, NULL, NULL, 1, 1)",
+    )
+    .execute(&storage.pool)
+    .await
+    .expect("legacy Hook invocation");
     let mut connection = storage.pool.acquire().await.expect("connection");
     for statement in [
+        "DROP INDEX local_hook_invocations_plugin_history",
+        "ALTER TABLE local_hook_invocations DROP COLUMN plugin_id",
+        "ALTER TABLE local_hook_invocations DROP COLUMN owner_user_id",
+        "DELETE FROM client_schema_migrations WHERE version = 43",
         "DROP INDEX local_hook_events_async_session",
         "DROP INDEX local_hook_invocations_async_delivery",
         "ALTER TABLE local_hook_invocations DROP COLUMN async_delivery_key",
@@ -654,7 +677,7 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
         .fetch_one(&migrated.pool)
         .await
         .expect("schema version");
-    assert_eq!(version, 42);
+    assert_eq!(version, 43);
     let legacy_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM local_hook_events WHERE event_id = ?")
             .bind("legacy-hook-event")
@@ -662,6 +685,14 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
             .await
             .expect("legacy Hook event preserved");
     assert_eq!(legacy_count, 1);
+    let scope: (String, String) = sqlx::query_as(
+        "SELECT owner_user_id, plugin_id FROM local_hook_invocations \
+         WHERE invocation_id = 'legacy-hook-invocation'",
+    )
+    .fetch_one(&migrated.pool)
+    .await
+    .expect("backfilled Hook invocation scope");
+    assert_eq!(scope, ("user-1".to_string(), "plugin-legacy".to_string()));
     migrated.pool.close().await;
     for backup in migration_backups(&database_path) {
         std::fs::remove_file(backup).expect("remove migration backup");
@@ -694,6 +725,7 @@ pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
 
 pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
     for statement in [
+        "DELETE FROM client_schema_migrations WHERE version = 43",
         "DELETE FROM client_schema_migrations WHERE version = 42",
         "DELETE FROM client_schema_migrations WHERE version = 41",
         "DROP TABLE local_hook_output_blobs",

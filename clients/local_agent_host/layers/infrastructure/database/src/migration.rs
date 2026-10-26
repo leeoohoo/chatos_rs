@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    hook_event_store::{SCHEMA_V39, SCHEMA_V40, SCHEMA_V41, SCHEMA_V42},
+    hook_event_store::{SCHEMA_V39, SCHEMA_V40, SCHEMA_V41, SCHEMA_V42, SCHEMA_V43},
     plugin_hook_store::SCHEMA_V38,
     receipt_cache::SCHEMA_V36,
     receipt_result::{FINISH_SCHEMA_V37, SCHEMA_V37},
@@ -17,7 +17,7 @@ use super::{
 };
 use sqlx::SqliteConnection;
 
-pub(super) const SCHEMA_VERSION: i64 = 42;
+pub(super) const SCHEMA_VERSION: i64 = 43;
 
 pub(super) const fn requires_compaction(previous_version: i64) -> bool {
     previous_version < 33
@@ -109,6 +109,7 @@ impl SqliteClientStorage {
             (40, SCHEMA_V40),
             (41, SCHEMA_V41),
             (42, SCHEMA_V42),
+            (43, SCHEMA_V43),
         ] {
             if version < next_version {
                 Self::begin_immediate(&mut connection).await.db()?;

@@ -88,7 +88,7 @@ pub(super) async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
         {
             Ok(())
         }
-        _ => Err("Host health response does not match protocol v49.".to_string()),
+        _ => Err("Host health response does not match protocol v50.".to_string()),
     }
 }
 

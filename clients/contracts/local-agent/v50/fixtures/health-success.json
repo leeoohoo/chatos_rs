@@ -1,0 +1,21 @@
+{
+  "protocol_version": 50,
+  "command_id": "contract-health-1",
+  "ok": true,
+  "result": {
+    "type": "health",
+    "service": "chatos-local-agent-host",
+    "storage_ready": true,
+    "recovered_claims": 0,
+    "max_frame_bytes": 4194304,
+    "max_message_bytes": 67108864,
+    "scheduler": {
+      "maximum_concurrent_work_items": 4,
+      "effective_maximum_concurrent_work_items": 3,
+      "pressure_level": "elevated",
+      "active_work_items": 2,
+      "idle_workers": 2,
+      "queued_ready_work_items": 3
+    }
+  }
+}

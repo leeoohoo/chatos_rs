@@ -71,6 +71,19 @@ impl LocalAgentRuntime {
                     .await?;
                 Ok(HostResult::PluginHookBundles { bundles })
             }
+            HostCommand::ListPluginHookInvocations(command) => {
+                let page = self
+                    .store
+                    .list_plugin_hook_invocations(
+                        &command.owner_user_id,
+                        &command.plugin_id,
+                        command.before_updated_at_unix_ms,
+                        command.before_invocation_id.as_deref(),
+                        command.limit,
+                    )
+                    .await?;
+                Ok(HostResult::PluginHookInvocations { page })
+            }
             HostCommand::SetActivePluginHookBundles(command) => {
                 let active_bundle_ids = self
                     .store
@@ -93,9 +106,9 @@ mod tests {
     use super::*;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        GetPluginInstallationCommand, HostRequestEnvelope, ListPluginInstallationsCommand,
-        LocalPluginInstallationSpec, PutPluginInstallationCommand, RemovePluginInstallationCommand,
-        LOCAL_AGENT_PROTOCOL_VERSION,
+        GetPluginInstallationCommand, HostRequestEnvelope, ListPluginHookInvocationsCommand,
+        ListPluginInstallationsCommand, LocalPluginInstallationSpec, PutPluginInstallationCommand,
+        RemovePluginInstallationCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use std::{collections::BTreeMap, sync::Arc};
 
@@ -166,6 +179,26 @@ mod tests {
         assert!(matches!(
             listed,
             HostResult::PluginInstallations { page } if page.installations.len() == 1
+        ));
+
+        let hook_history = runtime
+            .try_handle(request(
+                "list-plugin-hook-history-1",
+                HostCommand::ListPluginHookInvocations(ListPluginHookInvocationsCommand {
+                    owner_user_id: "user-1".to_string(),
+                    plugin_id: "plugin-1".to_string(),
+                    before_updated_at_unix_ms: None,
+                    before_invocation_id: None,
+                    limit: 20,
+                }),
+            ))
+            .await
+            .expect("list Hook history");
+        assert!(matches!(
+            hook_history,
+            HostResult::PluginHookInvocations { page }
+                if page.invocations.is_empty()
+                    && page.next_before_invocation_id.is_none()
         ));
 
         runtime

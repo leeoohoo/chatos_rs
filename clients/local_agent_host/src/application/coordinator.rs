@@ -791,6 +791,7 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::RemovePluginInstallation(_)
         | HostCommand::PutPluginHookBundle(_)
         | HostCommand::ListPluginHookBundles(_)
+        | HostCommand::ListPluginHookInvocations(_)
         | HostCommand::SetActivePluginHookBundles(_)
         | HostCommand::CreateConversation(_)
         | HostCommand::GetConversation(_)

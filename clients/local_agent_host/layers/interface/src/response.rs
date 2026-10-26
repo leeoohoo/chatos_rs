@@ -9,9 +9,10 @@ use crate::{
     LocalConversationPage, LocalConversationRuntimeSettings, LocalConversationTurnStart,
     LocalConversationTurnUpdate, LocalMemorySyncStatus, LocalMessageTaskGraph,
     LocalModelConfigSnapshot, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
-    LocalPluginHookBundleRecord, LocalPluginInstallationPage, LocalPluginInstallationRecord,
-    LocalRemoteConnection, LocalRequirementSurvey, LocalRequirementSurveyResolution,
-    LocalSkillBundleSnapshot, LocalTaskGraph, LocalTaskGraphPage, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalPluginHookBundleRecord, LocalPluginHookInvocationPage, LocalPluginInstallationPage,
+    LocalPluginInstallationRecord, LocalRemoteConnection, LocalRequirementSurvey,
+    LocalRequirementSurveyResolution, LocalSkillBundleSnapshot, LocalTaskGraph, LocalTaskGraphPage,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -146,6 +147,9 @@ pub enum HostResult {
     },
     PluginHookBundles {
         bundles: Vec<LocalPluginHookBundleRecord>,
+    },
+    PluginHookInvocations {
+        page: LocalPluginHookInvocationPage,
     },
     ActivePluginHookBundlesUpdated {
         active_bundle_ids: Vec<String>,

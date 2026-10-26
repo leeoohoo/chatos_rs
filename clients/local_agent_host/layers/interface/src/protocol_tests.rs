@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 fn shared_fixture(name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../contracts/local-agent/v49/fixtures")
+        .join("../../../contracts/local-agent/v50/fixtures")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|error| {
         panic!(
@@ -17,7 +17,7 @@ fn shared_fixture(name: &str) -> Vec<u8> {
 }
 
 #[test]
-fn shared_health_fixtures_match_protocol_v49() {
+fn shared_health_fixtures_match_protocol_v50() {
     let request: HostRequestEnvelope =
         serde_json::from_slice(&shared_fixture("health-request.json")).expect("health request");
     request.validate().expect("valid health request");
@@ -109,6 +109,46 @@ fn shared_conversation_run_fixtures_preserve_cross_platform_links() {
         .all(|pair| pair[0].cursor > pair[1].cursor));
     assert!(events.iter().all(|event| event.run_id == "run-1"));
     assert_eq!(next_cursor, events.last().expect("oldest event").cursor);
+}
+
+#[test]
+fn shared_hook_history_fixture_exposes_metadata_only() {
+    let request: HostRequestEnvelope =
+        serde_json::from_slice(&shared_fixture("plugin-hook-invocations-request.json"))
+            .expect("Hook history request");
+    request.validate().expect("valid Hook history request");
+    assert!(matches!(
+        request.command,
+        HostCommand::ListPluginHookInvocations(ListPluginHookInvocationsCommand {
+            owner_user_id,
+            plugin_id,
+            limit: 20,
+            ..
+        }) if owner_user_id == "user-1" && plugin_id == "plugin-1"
+    ));
+
+    let response_bytes = shared_fixture("plugin-hook-invocations-success.json");
+    let response: HostResponseEnvelope =
+        serde_json::from_slice(&response_bytes).expect("Hook history response");
+    let HostResult::PluginHookInvocations { page } = response.result.expect("result") else {
+        panic!("unexpected Hook history result")
+    };
+    assert_eq!(page.invocations[0].event_type, "SessionStart");
+    let json: serde_json::Value = serde_json::from_slice(&response_bytes).expect("fixture json");
+    let diagnostic = &json["result"]["page"]["invocations"][0];
+    for forbidden in [
+        "payload_json",
+        "subject_id",
+        "stdout_sha256",
+        "stderr_sha256",
+        "stderr_summary",
+        "additional_context",
+    ] {
+        assert!(
+            diagnostic.get(forbidden).is_none(),
+            "leaked field: {forbidden}"
+        );
+    }
 }
 
 #[test]

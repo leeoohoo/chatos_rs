@@ -7,6 +7,7 @@ use std::collections::HashSet;
 
 pub const LOCAL_PLUGIN_HOOK_MAX_BUNDLES: usize = 200;
 pub const LOCAL_PLUGIN_HOOK_MAX_DEFINITIONS: usize = 64;
+pub const LOCAL_PLUGIN_HOOK_HISTORY_MAX_PAGE_SIZE: u32 = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalPluginHookDefinition {
@@ -172,6 +173,73 @@ pub struct ListPluginHookBundlesCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListPluginHookInvocationsCommand {
+    pub owner_user_id: String,
+    pub plugin_id: String,
+    pub before_updated_at_unix_ms: Option<i64>,
+    pub before_invocation_id: Option<String>,
+    pub limit: u32,
+}
+
+impl ListPluginHookInvocationsCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        validate_identifier("plugin_id", &self.plugin_id)?;
+        if !(1..=LOCAL_PLUGIN_HOOK_HISTORY_MAX_PAGE_SIZE).contains(&self.limit) {
+            return Err(format!(
+                "limit must be between 1 and {LOCAL_PLUGIN_HOOK_HISTORY_MAX_PAGE_SIZE}"
+            ));
+        }
+        match (
+            self.before_updated_at_unix_ms,
+            self.before_invocation_id.as_deref(),
+        ) {
+            (None, None) => Ok(()),
+            (Some(timestamp), Some(invocation_id)) => {
+                if timestamp < 0 {
+                    return Err("before_updated_at_unix_ms must not be negative".to_string());
+                }
+                validate_identifier("before_invocation_id", invocation_id)
+            }
+            _ => Err(
+                "before_updated_at_unix_ms and before_invocation_id must be provided together"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
+/// A deliberately metadata-only Hook execution diagnostic. Hook payloads,
+/// stdout/stderr contents, hashes, subjects, and model context never cross the
+/// management IPC boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalPluginHookInvocationDiagnostic {
+    pub invocation_id: String,
+    pub bundle_id: String,
+    pub hook_id: String,
+    pub event_type: String,
+    pub is_async: bool,
+    pub attempt: u32,
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    pub duration_ms: u64,
+    pub stdout_bytes: u64,
+    pub stdout_overflow: bool,
+    pub stderr_bytes: u64,
+    pub stderr_overflow: bool,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalPluginHookInvocationPage {
+    pub invocations: Vec<LocalPluginHookInvocationDiagnostic>,
+    pub next_before_updated_at_unix_ms: Option<i64>,
+    pub next_before_invocation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SetActivePluginHookBundlesCommand {
     pub owner_user_id: String,
     #[serde(default)]
@@ -219,6 +287,24 @@ mod tests {
         let mut bundle = fixture();
         bundle.hooks[0].event = "PreCompact".to_string();
         assert!(bundle.validate().is_err());
+    }
+
+    #[test]
+    fn invocation_history_requires_bounded_pages_and_complete_cursor_pairs() {
+        let mut command = ListPluginHookInvocationsCommand {
+            owner_user_id: "user-1".to_string(),
+            plugin_id: "plugin-1".to_string(),
+            before_updated_at_unix_ms: None,
+            before_invocation_id: None,
+            limit: 20,
+        };
+        command.validate().expect("valid first page");
+        command.before_updated_at_unix_ms = Some(100);
+        assert!(command.validate().is_err());
+        command.before_invocation_id = Some("invocation-1".to_string());
+        command.validate().expect("valid cursor pair");
+        command.limit = LOCAL_PLUGIN_HOOK_HISTORY_MAX_PAGE_SIZE + 1;
+        assert!(command.validate().is_err());
     }
 
     fn fixture() -> LocalPluginHookBundleSpec {

@@ -279,6 +279,29 @@ final class LocalConnectorControlCenterViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoading)
     }
 
+    func testHookHistoryLoadsOnDemandAndAppendsStablePages() async throws {
+        let service = BrowserExtensionPairingServiceStub()
+        let viewModel = LocalConnectorControlCenterViewModel(service: service)
+
+        viewModel.loadPluginHookHistory(id: "plugin-1", reset: true)
+        try await waitUntil { viewModel.pluginHookHistory["plugin-1"]?.invocations.count == 1 }
+        XCTAssertEqual(
+            viewModel.pluginHookHistory["plugin-1"]?.invocations.map(\.invocationID),
+            ["invocation-new"]
+        )
+        XCTAssertEqual(viewModel.pluginHookHistory["plugin-1"]?.nextBeforeInvocationID, "cursor-1")
+
+        viewModel.loadPluginHookHistory(id: "plugin-1")
+        try await waitUntil { viewModel.pluginHookHistory["plugin-1"]?.invocations.count == 2 }
+        XCTAssertEqual(
+            viewModel.pluginHookHistory["plugin-1"]?.invocations.map(\.invocationID),
+            ["invocation-new", "invocation-old"]
+        )
+        XCTAssertNil(viewModel.pluginHookHistory["plugin-1"]?.nextBeforeInvocationID)
+        let requestCount = await service.hookHistoryRequestCount()
+        XCTAssertEqual(requestCount, 2)
+    }
+
     func testManualPermissionRefreshBypassesPermissionSnapshot() async throws {
         let service = BrowserExtensionPairingServiceStub()
         let viewModel = LocalConnectorControlCenterViewModel(service: service)
@@ -441,6 +464,7 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
     private var pairingCalls = 0
     private var suspensionCalls = 0
     private var requestedPluginRefreshFlags: [Bool] = []
+    private var hookHistoryRequests = 0
     private var connected = false
 
     func isBrowserExtensionPaired(pluginID: String) async throws -> Bool {
@@ -678,12 +702,27 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
         requestedPluginRefreshFlags.append(refresh)
         return []
     }
+    func fetchPluginHookHistory(
+        pluginID: String,
+        beforeUpdatedAtUnixMs: Int64?,
+        beforeInvocationID: String?,
+        limit: Int
+    ) async throws -> LocalConnectorPluginHookHistoryPage {
+        hookHistoryRequests += 1
+        let isFirstPage = beforeInvocationID == nil
+        return .init(
+            invocations: [Self.hookInvocation(id: isFirstPage ? "invocation-new" : "invocation-old")],
+            nextBeforeUpdatedAtUnixMs: isFirstPage ? 100 : nil,
+            nextBeforeInvocationID: isFirstPage ? "cursor-1" : nil
+        )
+    }
     func installPlugin(id: String) async throws { pluginMutations += 1 }
     func uninstallPlugin(id: String) async throws { pluginMutations += 1 }
     func updatePluginEnabled(id: String, enabled: Bool) async throws { pluginMutations += 1 }
 
     func pluginRefreshFlags() -> [Bool] { requestedPluginRefreshFlags }
     func pluginMutationCount() -> Int { pluginMutations }
+    func hookHistoryRequestCount() -> Int { hookHistoryRequests }
 
     private static func historyEntry(id: String) -> LocalConnectorCommandHistoryEntry {
         .init(
@@ -698,6 +737,27 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
             stderrPreview: nil,
             error: nil,
             startedAt: "2026-10-03T00:00:00Z"
+        )
+    }
+
+    private static func hookInvocation(id: String) -> LocalConnectorPluginHookInvocation {
+        .init(
+            invocationID: id,
+            bundleID: "bundle-1",
+            hookID: "hook-1",
+            eventType: "SessionStart",
+            isAsync: false,
+            attempt: 1,
+            status: "succeeded",
+            exitCode: 0,
+            timedOut: false,
+            durationMs: 10,
+            stdoutBytes: 0,
+            stdoutOverflow: false,
+            stderrBytes: 0,
+            stderrOverflow: false,
+            createdAtUnixMs: 1,
+            updatedAtUnixMs: 2
         )
     }
 

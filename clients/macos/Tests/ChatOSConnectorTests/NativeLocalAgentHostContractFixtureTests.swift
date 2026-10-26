@@ -82,6 +82,35 @@ final class NativeLocalAgentHostContractFixtureTests: XCTestCase {
         XCTAssertEqual(eventsResult.nextCursor, eventsResult.events.last?.cursor)
     }
 
+    func testSharedHookHistoryFixtureContainsOnlySafeDiagnostics() throws {
+        let envelope = try JSONDecoder().decode(
+            ContractEnvelope<HookHistoryFixtureResult>.self,
+            from: fixture("plugin-hook-invocations-success.json")
+        )
+        let result = try XCTUnwrap(envelope.result)
+        let invocation = try XCTUnwrap(result.page.invocations.first)
+        XCTAssertEqual(invocation.invocationID, "invocation-1")
+        XCTAssertEqual(invocation.eventType, "SessionStart")
+        XCTAssertTrue(invocation.isAsync)
+        XCTAssertEqual(invocation.durationMs, 12)
+
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: fixture("plugin-hook-invocations-success.json")
+            ) as? [String: Any]
+        )
+        let resultObject = try XCTUnwrap(object["result"] as? [String: Any])
+        let pageObject = try XCTUnwrap(resultObject["page"] as? [String: Any])
+        let invocations = try XCTUnwrap(pageObject["invocations"] as? [[String: Any]])
+        let diagnostic = try XCTUnwrap(invocations.first)
+        for forbidden in [
+            "payload_json", "subject_id", "stdout_sha256", "stderr_sha256",
+            "stderr_summary", "additional_context",
+        ] {
+            XCTAssertNil(diagnostic[forbidden], "leaked field: \(forbidden)")
+        }
+    }
+
     private func fixture(_ name: String) throws -> Data {
         let clients = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -89,7 +118,7 @@ final class NativeLocalAgentHostContractFixtureTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         return try Data(contentsOf: clients
-            .appendingPathComponent("contracts/local-agent/v49/fixtures")
+            .appendingPathComponent("contracts/local-agent/v50/fixtures")
             .appendingPathComponent(name))
     }
 
@@ -129,5 +158,28 @@ private struct RunEventsFixtureResult: Decodable {
     private enum CodingKeys: String, CodingKey {
         case type, events
         case nextCursor = "next_cursor"
+    }
+}
+
+private struct HookHistoryFixtureResult: Decodable {
+    let type: String
+    let page: HookHistoryFixturePage
+}
+
+private struct HookHistoryFixturePage: Decodable {
+    let invocations: [HookHistoryFixtureInvocation]
+}
+
+private struct HookHistoryFixtureInvocation: Decodable {
+    let invocationID: String
+    let eventType: String
+    let isAsync: Bool
+    let durationMs: UInt64
+
+    private enum CodingKeys: String, CodingKey {
+        case invocationID = "invocation_id"
+        case eventType = "event_type"
+        case isAsync = "is_async"
+        case durationMs = "duration_ms"
     }
 }

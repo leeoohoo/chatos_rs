@@ -8,6 +8,10 @@ use chatos_local_agent_ports::{
     LocalHookInvocationCompletion, LocalHookInvocationRecord, LocalHookInvocationSpec,
     LocalHookOutputBlobRecord,
 };
+use chatos_local_agent_protocol::{
+    ListPluginHookInvocationsCommand, LocalPluginHookInvocationDiagnostic,
+    LocalPluginHookInvocationPage,
+};
 use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqliteRow, Row};
 use std::{fs::OpenOptions, io::Write, path::Path};
@@ -93,6 +97,24 @@ pub(super) const SCHEMA_V42: &[&str] = &[
      )",
     "CREATE INDEX local_hook_invocations_async_delivery ON local_hook_invocations(\
        event_id, is_async, status, async_delivery_key, updated_at_unix_ms, invocation_id\
+     )",
+];
+
+pub(super) const SCHEMA_V43: &[&str] = &[
+    "ALTER TABLE local_hook_invocations ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE local_hook_invocations ADD COLUMN plugin_id TEXT NOT NULL DEFAULT ''",
+    "UPDATE local_hook_invocations SET owner_user_id = COALESCE((\
+       SELECT e.owner_user_id FROM local_hook_events e \
+       WHERE e.event_id = local_hook_invocations.event_id\
+     ), '')",
+    "UPDATE local_hook_invocations SET plugin_id = COALESCE((\
+       SELECT json_extract(b.spec_json, '$.plugin_id') \
+       FROM local_plugin_hook_bundles b \
+       WHERE b.owner_user_id = local_hook_invocations.owner_user_id \
+       AND b.bundle_id = local_hook_invocations.bundle_id\
+     ), '')",
+    "CREATE INDEX local_hook_invocations_plugin_history ON local_hook_invocations(\
+       owner_user_id, plugin_id, updated_at_unix_ms DESC, invocation_id DESC\
      )",
 ];
 
@@ -205,6 +227,86 @@ impl LocalHookEventStore for SqliteClientStorage {
         .collect()
     }
 
+    async fn list_plugin_hook_invocations(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        before_updated_at_unix_ms: Option<i64>,
+        before_invocation_id: Option<&str>,
+        limit: u32,
+    ) -> Result<LocalPluginHookInvocationPage, ClientStorageError> {
+        ListPluginHookInvocationsCommand {
+            owner_user_id: owner_user_id.to_string(),
+            plugin_id: plugin_id.to_string(),
+            before_updated_at_unix_ms,
+            before_invocation_id: before_invocation_id.map(str::to_string),
+            limit,
+        }
+        .validate()
+        .map_err(ClientStorageError::InvalidState)?;
+
+        const DIAGNOSTIC_SELECT: &str =
+            "SELECT i.invocation_id, i.bundle_id, i.hook_id, e.event_type, i.is_async, \
+             i.attempt, i.status, i.exit_code, i.timed_out, i.duration_ms, i.stdout_bytes, \
+             i.stdout_overflow, i.stderr_bytes, i.stderr_overflow, i.created_at_unix_ms, \
+             i.updated_at_unix_ms FROM local_hook_invocations i \
+             INNER JOIN local_hook_events e ON e.event_id = i.event_id \
+             AND e.owner_user_id = i.owner_user_id WHERE i.owner_user_id = ? \
+             AND i.plugin_id = ?";
+        let fetch_limit = i64::from(limit) + 1;
+        let mut connection = self.pool.acquire().await.db()?;
+        let rows = if let (Some(before_updated), Some(before_id)) =
+            (before_updated_at_unix_ms, before_invocation_id)
+        {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "{DIAGNOSTIC_SELECT} AND (i.updated_at_unix_ms < ? OR \
+                 (i.updated_at_unix_ms = ? AND i.invocation_id < ?)) \
+                 ORDER BY i.updated_at_unix_ms DESC, i.invocation_id DESC LIMIT ?"
+            )))
+            .bind(owner_user_id)
+            .bind(plugin_id)
+            .bind(before_updated)
+            .bind(before_updated)
+            .bind(before_id)
+            .bind(fetch_limit)
+            .fetch_all(&mut *connection)
+            .await
+            .db()?
+        } else {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "{DIAGNOSTIC_SELECT} ORDER BY i.updated_at_unix_ms DESC, \
+                 i.invocation_id DESC LIMIT ?"
+            )))
+            .bind(owner_user_id)
+            .bind(plugin_id)
+            .bind(fetch_limit)
+            .fetch_all(&mut *connection)
+            .await
+            .db()?
+        };
+        let has_more = rows.len() > limit as usize;
+        let mut invocations = rows
+            .into_iter()
+            .take(limit as usize)
+            .map(decode_invocation_diagnostic)
+            .collect::<Result<Vec<_>, _>>()?;
+        let (next_before_updated_at_unix_ms, next_before_invocation_id) = if has_more {
+            let last = invocations.last().expect("page with more rows has an item");
+            (
+                Some(last.updated_at_unix_ms),
+                Some(last.invocation_id.clone()),
+            )
+        } else {
+            (None, None)
+        };
+        invocations.shrink_to_fit();
+        Ok(LocalPluginHookInvocationPage {
+            invocations,
+            next_before_updated_at_unix_ms,
+            next_before_invocation_id,
+        })
+    }
+
     async fn prepare_hook_event(
         &self,
         event: &LocalHookEventSpec,
@@ -310,18 +412,33 @@ impl LocalHookEventStore for SqliteClientStorage {
                     .await?
                     .ok_or_else(|| ClientStorageError::NotFound(invocation.invocation_id.clone()));
             }
+            let scope = sqlx::query(
+                "SELECT e.owner_user_id, COALESCE(json_extract(b.spec_json, '$.plugin_id'), '') \
+                 AS plugin_id FROM local_hook_events e LEFT JOIN local_plugin_hook_bundles b \
+                 ON b.owner_user_id = e.owner_user_id AND b.bundle_id = ? WHERE e.event_id = ?",
+            )
+            .bind(&invocation.bundle_id)
+            .bind(&invocation.event_id)
+            .fetch_optional(&mut *connection)
+            .await
+            .db()?
+            .ok_or_else(|| ClientStorageError::NotFound(invocation.event_id.clone()))?;
+            let owner_user_id: String = scope.try_get("owner_user_id").db()?;
+            let plugin_id: String = scope.try_get("plugin_id").db()?;
             sqlx::query(
                 "INSERT INTO local_hook_invocations(\
-                 invocation_id, event_id, bundle_id, hook_id, is_async, attempt, status, exit_code, \
-                 timed_out, stdout_sha256, stdout_bytes, stderr_summary, additional_context, \
-                 created_at_unix_ms, updated_at_unix_ms) \
-                 VALUES(?, ?, ?, ?, ?, 1, 'running', NULL, 0, NULL, 0, NULL, NULL, ?, ?)",
+                 invocation_id, event_id, bundle_id, hook_id, is_async, owner_user_id, plugin_id, \
+                 attempt, status, exit_code, timed_out, stdout_sha256, stdout_bytes, stderr_summary, \
+                 additional_context, created_at_unix_ms, updated_at_unix_ms) \
+                 VALUES(?, ?, ?, ?, ?, ?, ?, 1, 'running', NULL, 0, NULL, 0, NULL, NULL, ?, ?)",
             )
             .bind(&invocation.invocation_id)
             .bind(&invocation.event_id)
             .bind(&invocation.bundle_id)
             .bind(&invocation.hook_id)
             .bind(invocation.is_async)
+            .bind(owner_user_id)
+            .bind(plugin_id)
             .bind(now_unix_ms)
             .bind(now_unix_ms)
             .execute(&mut *connection)
@@ -939,6 +1056,31 @@ fn decode_invocation(row: SqliteRow) -> Result<LocalHookInvocationRecord, Client
     })
 }
 
+fn decode_invocation_diagnostic(
+    row: SqliteRow,
+) -> Result<LocalPluginHookInvocationDiagnostic, ClientStorageError> {
+    Ok(LocalPluginHookInvocationDiagnostic {
+        invocation_id: row.try_get("invocation_id").db()?,
+        bundle_id: row.try_get("bundle_id").db()?,
+        hook_id: row.try_get("hook_id").db()?,
+        event_type: row.try_get("event_type").db()?,
+        is_async: row.try_get("is_async").db()?,
+        attempt: u32::try_from(row.try_get::<i64, _>("attempt").db()?).map_err(|_| {
+            ClientStorageError::InvalidState("invalid Hook invocation attempt".to_string())
+        })?,
+        status: row.try_get("status").db()?,
+        exit_code: row.try_get("exit_code").db()?,
+        timed_out: row.try_get("timed_out").db()?,
+        duration_ms: to_u64(row.try_get("duration_ms").db()?, "Hook duration")?,
+        stdout_bytes: to_u64(row.try_get("stdout_bytes").db()?, "Hook stdout size")?,
+        stdout_overflow: row.try_get("stdout_overflow").db()?,
+        stderr_bytes: to_u64(row.try_get("stderr_bytes").db()?, "Hook stderr size")?,
+        stderr_overflow: row.try_get("stderr_overflow").db()?,
+        created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
+        updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
+    })
+}
+
 #[derive(Debug)]
 struct PreparedOutputBlob {
     record: LocalHookOutputBlobRecord,
@@ -1132,6 +1274,8 @@ fn to_u64(value: i64, name: &str) -> Result<u64, ClientStorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chatos_local_agent_ports::{IdempotentCommand, LocalPluginHookBundleStore};
+    use chatos_local_agent_protocol::{LocalPluginHookBundleSpec, LocalPluginHookDefinition};
 
     fn event() -> LocalHookEventSpec {
         let payload_json = "{}".to_string();
@@ -1146,6 +1290,175 @@ mod tests {
             matcher_value: String::new(),
             active_bundle_ids: vec!["bundle-1".to_string()],
         }
+    }
+
+    fn hook_bundle(bundle_id: &str, plugin_id: &str) -> LocalPluginHookBundleSpec {
+        LocalPluginHookBundleSpec {
+            bundle_id: bundle_id.to_string(),
+            owner_user_id: "user-1".to_string(),
+            plugin_id: plugin_id.to_string(),
+            release_id: "release-1".to_string(),
+            component_key: format!("hooks-{plugin_id}"),
+            artifact_sha256: "a".repeat(64),
+            content_sha256: "b".repeat(64),
+            normalized_hook_sha256: "c".repeat(64),
+            command_sha256: "d".repeat(64),
+            permission_snapshot_sha256: "e".repeat(64),
+            runner_policy_version: 1,
+            installation_root: format!("/plugins/{plugin_id}"),
+            permissions: vec!["process.spawn".to_string()],
+            hooks: vec![LocalPluginHookDefinition {
+                hook_id: "hook-1".to_string(),
+                event: "SessionStart".to_string(),
+                matcher: None,
+                command: "node hook.js".to_string(),
+                is_async: false,
+                timeout_ms: 5_000,
+                additional_context_limit: 65_536,
+            }],
+            enabled: true,
+            trusted_at_unix_ms: 1,
+        }
+    }
+
+    fn command(command_id: &str) -> IdempotentCommand {
+        IdempotentCommand {
+            command_id: command_id.to_string(),
+            request_fingerprint: format!("fingerprint-{command_id}"),
+            persist_receipt: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn plugin_hook_history_is_owner_scoped_safe_and_stably_paginated() {
+        let store = SqliteClientStorage::connect_memory().await.expect("store");
+        for (bundle_id, plugin_id) in [
+            ("bundle-history", "plugin-history"),
+            ("bundle-other", "plugin-other"),
+        ] {
+            store
+                .put_plugin_hook_bundle(
+                    &command(&format!("put-{bundle_id}")),
+                    &hook_bundle(bundle_id, plugin_id),
+                    1,
+                )
+                .await
+                .expect("put bundle");
+        }
+
+        for (suffix, bundle_id, updated_at, status) in [
+            ("older", "bundle-history", 30, "failed"),
+            ("newer", "bundle-history", 40, "succeeded"),
+            ("other", "bundle-other", 50, "succeeded"),
+        ] {
+            let mut hook_event = event();
+            hook_event.event_id = format!("hook-event-{suffix}");
+            hook_event.subject_id = format!("conversation-{suffix}");
+            hook_event.sequence = updated_at as u64;
+            hook_event.active_bundle_ids = vec![bundle_id.to_string()];
+            store
+                .prepare_hook_event(&hook_event, updated_at - 10)
+                .await
+                .expect("prepare event");
+            let invocation = LocalHookInvocationSpec {
+                invocation_id: format!("hook-invocation-{suffix}"),
+                event_id: hook_event.event_id,
+                bundle_id: bundle_id.to_string(),
+                hook_id: "hook-1".to_string(),
+                is_async: suffix == "newer",
+            };
+            store
+                .begin_hook_invocation(&invocation, updated_at - 5)
+                .await
+                .expect("begin invocation");
+            store
+                .complete_hook_invocation(
+                    &invocation.invocation_id,
+                    1,
+                    &LocalHookInvocationCompletion {
+                        status: status.to_string(),
+                        exit_code: Some(if status == "succeeded" { 0 } else { 7 }),
+                        timed_out: status == "failed",
+                        duration_ms: updated_at as u64,
+                        stdout_sha256: Some("f".repeat(64)),
+                        stdout_bytes: 12,
+                        stdout_overflow: false,
+                        stderr_sha256: Some("0".repeat(64)),
+                        stderr_bytes: 34,
+                        stderr_overflow: true,
+                        stderr_summary: Some("secret stderr must not cross IPC".to_string()),
+                        additional_context: Some("secret model context".to_string()),
+                        stdout_spill: None,
+                        stderr_spill: None,
+                    },
+                    updated_at,
+                )
+                .await
+                .expect("complete invocation");
+        }
+
+        let first = store
+            .list_plugin_hook_invocations("user-1", "plugin-history", None, None, 1)
+            .await
+            .expect("first page");
+        assert_eq!(first.invocations.len(), 1);
+        assert_eq!(first.invocations[0].invocation_id, "hook-invocation-newer");
+        assert!(first.invocations[0].is_async);
+        let encoded = serde_json::to_value(&first.invocations[0]).expect("diagnostic json");
+        for forbidden in [
+            "stderr_summary",
+            "additional_context",
+            "stdout_sha256",
+            "stderr_sha256",
+            "subject_id",
+            "payload_json",
+        ] {
+            assert!(
+                encoded.get(forbidden).is_none(),
+                "leaked field: {forbidden}"
+            );
+        }
+        let second = store
+            .list_plugin_hook_invocations(
+                "user-1",
+                "plugin-history",
+                first.next_before_updated_at_unix_ms,
+                first.next_before_invocation_id.as_deref(),
+                1,
+            )
+            .await
+            .expect("second page");
+        assert_eq!(second.invocations[0].invocation_id, "hook-invocation-older");
+        assert!(second.next_before_invocation_id.is_none());
+        assert!(store
+            .list_plugin_hook_invocations("user-2", "plugin-history", None, None, 10)
+            .await
+            .expect("other owner")
+            .invocations
+            .is_empty());
+
+        let plan = sqlx::query(
+            "EXPLAIN QUERY PLAN SELECT i.invocation_id, e.event_type \
+             FROM local_hook_invocations i INNER JOIN local_hook_events e \
+             ON e.event_id = i.event_id AND e.owner_user_id = i.owner_user_id \
+             WHERE i.owner_user_id = ? AND i.plugin_id = ? \
+             ORDER BY i.updated_at_unix_ms DESC, i.invocation_id DESC LIMIT ?",
+        )
+        .bind("user-1")
+        .bind("plugin-history")
+        .bind(21_i64)
+        .fetch_all(&store.pool)
+        .await
+        .expect("history query plan")
+        .into_iter()
+        .map(|row| row.get::<String, _>("detail"))
+        .collect::<Vec<_>>()
+        .join("\n");
+        assert!(
+            plan.contains("local_hook_invocations_plugin_history"),
+            "{plan}"
+        );
+        assert!(!plan.contains("TEMP B-TREE"), "{plan}");
     }
 
     #[tokio::test]

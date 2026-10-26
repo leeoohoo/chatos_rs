@@ -103,6 +103,29 @@ extension NativeLocalConnectorService {
         }
     }
 
+    public func fetchPluginHookHistory(
+        pluginID: String,
+        beforeUpdatedAtUnixMs: Int64?,
+        beforeInvocationID: String?,
+        limit: Int
+    ) async throws -> LocalConnectorPluginHookHistoryPage {
+        guard let ownerUserID = state.user?.id,
+              let host = localAgentHostClient else {
+            throw NativeConnectorError.notPaired
+        }
+        guard (1...100).contains(limit),
+              (beforeUpdatedAtUnixMs == nil) == (beforeInvocationID == nil) else {
+            throw NativeConnectorError.invalidResponse("Hook 运行历史查询参数无效")
+        }
+        return try await NativeLocalAgentHookBundleClient(host: host).listInvocations(
+            ownerUserID: ownerUserID,
+            pluginID: pluginID,
+            beforeUpdatedAtUnixMs: beforeUpdatedAtUnixMs,
+            beforeInvocationID: beforeInvocationID,
+            limit: limit
+        )
+    }
+
     private func fetchPluginsWithCurrentPairing(
         forceRefresh: Bool
     ) async throws -> [LocalConnectorPlugin] {

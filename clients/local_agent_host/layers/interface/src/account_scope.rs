@@ -50,6 +50,7 @@ impl HostCommand {
             Self::RemovePluginInstallation(command) => Some(&command.owner_user_id),
             Self::PutPluginHookBundle(command) => Some(&command.bundle.owner_user_id),
             Self::ListPluginHookBundles(command) => Some(&command.owner_user_id),
+            Self::ListPluginHookInvocations(command) => Some(&command.owner_user_id),
             Self::SetActivePluginHookBundles(command) => Some(&command.owner_user_id),
             Self::CreateConversation(command) => Some(&command.owner_user_id),
             Self::GetConversation(command) => Some(&command.owner_user_id),

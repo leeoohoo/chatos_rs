@@ -12,12 +12,12 @@ use chatos_local_agent_protocol::{
     LocalConversationAttachmentRecord, LocalConversationDetail, LocalConversationHistoryPage,
     LocalConversationPage, LocalConversationRuntimeSettings, LocalConversationTurnStart,
     LocalConversationTurnUpdate, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
-    LocalPluginHookBundleRecord, LocalPluginHookBundleSpec, LocalPluginInstallationPage,
-    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalRemoteConnection,
-    LocalRequirementSurvey, LocalRequirementSurveyResolution, LocalRequirementSurveyStatus,
-    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage, LocalTaskRecord, LocalTaskStatus,
-    PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
-    StartConversationTurnCommand, UpdateNotepadNoteCommand,
+    LocalPluginHookBundleRecord, LocalPluginHookBundleSpec, LocalPluginHookInvocationPage,
+    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
+    LocalRemoteConnection, LocalRequirementSurvey, LocalRequirementSurveyResolution,
+    LocalRequirementSurveyStatus, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
+    LocalTaskRecord, LocalTaskStatus, PutConversationRuntimeSettingsCommand,
+    ResumeConversationTurnCommand, StartConversationTurnCommand, UpdateNotepadNoteCommand,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -577,6 +577,15 @@ pub trait LocalHookEventStore: Send + Sync {
         owner_user_id: &str,
         limit: u32,
     ) -> Result<Vec<LocalHookEventRecord>, ClientStorageError>;
+
+    async fn list_plugin_hook_invocations(
+        &self,
+        owner_user_id: &str,
+        plugin_id: &str,
+        before_updated_at_unix_ms: Option<i64>,
+        before_invocation_id: Option<&str>,
+        limit: u32,
+    ) -> Result<LocalPluginHookInvocationPage, ClientStorageError>;
 
     async fn prepare_hook_event(
         &self,
