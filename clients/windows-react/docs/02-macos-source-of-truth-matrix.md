@@ -1388,4 +1388,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 109. [部分完成] Windows Hook 的安装与运行链已继续接通：Hook-only Plugin 现在会生成 `hooks-only` 非可执行 Host 安装记录，Agent Plugin catalog 可安全列出并解析该组件；Marketplace/本机目录安装准入不再因 runner 已存在而拒绝 Hook-only 包。设置页将 Hook runner 投影为“已就绪”，并说明启用后在 AppContainer 中执行。安装升级会先清空 active set，再按安装记录、启用状态、Bundle 校验和完整性恢复有效 Bundle；新增 Host `ListPluginHookBundleRecords` 读取全部已发布记录，使禁用/重新启用和卸载后恢复其他插件 Bundle 不会丢失。Windows React 137 个测试文件、511 项测试，Tauri 521 项通过、6 项 ignored；Local Agent Host 127+7+4 项测试通过。仍需用最终 MSI/NSIS 安装包执行真实 Hook 事件触发、阻断/上下文回传和安装后重启恢复 smoke，并补齐原生窗口逐态视觉取证，因此本项仍不能标记为完全关闭。
 
+110. [部分完成] Hook activation 代码已重新生成 3.0.9 Release EXE、MSI、NSIS，并用最终 NSIS 安装包完成隔离目录 smoke：安装 `3,074 ms`、安装版原生启动 `9,719 ms`、卸载 `1,152 ms`，全部退出码为 `0`；安装版 sidecar SHA-256 为 `f84cb09c16451e092fe6e0fe2a382202258ba0de17fc4492c4a30dfc0a0fc893`，资源文件存在，隔离 AppData 已清理，报告为 `%TEMP%\chatos-windows-hook-activation-nsis-2.json`。本次同时修复了 Windows PowerShell 5 不支持 `Path.GetRelativePath` 导致 smoke 误报失败的问题。该 smoke 只证明安装/启动/卸载边界，真实 Hook 事件触发和阻断/上下文回传仍需单独验证。
+
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

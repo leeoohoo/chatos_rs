@@ -34,6 +34,28 @@ function Assert-FileExists {
     }
 }
 
+function Get-PortableRelativePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$BasePath,
+        [Parameter(Mandatory = $true)][string]$TargetPath
+    )
+
+    $getRelativePath = [System.IO.Path].GetMethod(
+        "GetRelativePath",
+        [System.Reflection.BindingFlags]"Public,Static",
+        $null,
+        [Type[]]@([string], [string]),
+        $null
+    )
+    if ($null -ne $getRelativePath) {
+        return $getRelativePath.Invoke($null, @($BasePath, $TargetPath)).Replace("\", "/")
+    }
+
+    $baseUri = [Uri]::new(((Resolve-Path -LiteralPath $BasePath).Path.TrimEnd("\") + "\"))
+    $targetUri = [Uri]::new((Resolve-Path -LiteralPath $TargetPath).Path)
+    return [Uri]::UnescapeDataString($baseUri.MakeRelativeUri($targetUri).ToString())
+}
+
 function Wait-FileRemoved {
     param(
         [Parameter(Mandatory = $true)]
@@ -149,7 +171,7 @@ try {
     $report.applicationVersion = $applicationVersion
     $report.sidecarSha256 = $sidecarHash
     $report.resources = @($requiredResources | ForEach-Object {
-        [System.IO.Path]::GetRelativePath($InstallDirectory, $_).Replace("\", "/")
+        Get-PortableRelativePath -BasePath $InstallDirectory -TargetPath $_
     })
 
     $previousEnvironment = @{}
