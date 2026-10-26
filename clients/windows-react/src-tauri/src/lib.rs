@@ -254,6 +254,7 @@ pub fn run() {
         .expect("failed to configure Agent conversation store");
     let agent_skill_store =
         AgentSkillStore::from_runtime().expect("failed to configure Agent Skill store");
+    let agent_skill_cleanup_root = agent_skill_store.temporary_cleanup_root();
     let protocol_attachment_manager = attachment_manager.clone();
     let protocol_media_studio_manager = media_studio_manager.clone();
     let protocol_story_studio_manager = story_studio_manager.clone();
@@ -338,6 +339,9 @@ pub fn run() {
                 let _ = story_studio_manager.cleanup_stale_temporaries().await;
                 let _ = app_data_maintenance::cleanup_stale_temporaries(app_data_maintenance_root)
                     .await;
+                let _ =
+                    app_data_maintenance::cleanup_agent_skill_temporaries(agent_skill_cleanup_root)
+                        .await;
             });
             resource_pressure::start_monitor(app.handle().clone());
             #[cfg(target_os = "windows")]

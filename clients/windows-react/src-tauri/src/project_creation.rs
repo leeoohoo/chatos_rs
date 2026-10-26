@@ -1,6 +1,6 @@
 use crate::{
-    authentication::AuthenticationManager, connector_state, host_lifecycle::validate_owner,
-    workspace_index::open_project_registry,
+    app_data_transaction::create_owned_file, authentication::AuthenticationManager,
+    connector_state, host_lifecycle::validate_owner, workspace_index::open_project_registry,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -665,14 +665,8 @@ fn persist_journal(
     if bytes.len() as u64 > MAXIMUM_JOURNAL_BYTES {
         return Err(creation_error());
     }
-    let mut temporary =
-        tempfile::NamedTempFile::new_in(&directory).map_err(|_| creation_error())?;
-    std::io::Write::write_all(&mut temporary, &bytes).map_err(|_| creation_error())?;
-    temporary
-        .as_file()
-        .sync_all()
+    create_owned_file(&directory, &path, ".project-creation-", &bytes)
         .map_err(|_| creation_error())?;
-    temporary.persist(&path).map_err(|_| creation_error())?;
     Ok(path)
 }
 

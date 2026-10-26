@@ -3,14 +3,16 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
-    io::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
 };
 use tauri::State;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owner};
+use crate::{
+    app_data_transaction::replace_owned_file, authentication::AuthenticationManager,
+    host_lifecycle::validate_owner,
+};
 
 const SKILL_CATALOG: &str =
     include_str!("../../../macos/Sources/ChatOSCore/AgentSkills/Catalog/ChatOSSkillCatalog.json");
@@ -208,6 +210,13 @@ impl AgentSkillStore {
             .join("connector")
             .join("AgentSkillOverrides.json");
         Self::new(file)
+    }
+
+    pub(crate) fn temporary_cleanup_root(&self) -> PathBuf {
+        self.file
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
     }
 
     fn catalog(&self, owner_user_id: &str) -> Result<Vec<AgentSkillDefinition>, String> {
@@ -941,45 +950,7 @@ fn persist_payload(file: &Path, payload: &OverridePayload) -> Result<(), String>
     if bytes.len() as u64 > MAXIMUM_PAYLOAD_BYTES {
         return Err("Skill 配置超过本地存储上限。".to_owned());
     }
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|_| storage_error())?;
-    temporary.write_all(&bytes).map_err(|_| storage_error())?;
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|_| storage_error())?;
-    replace_file(temporary.into_temp_path().as_ref(), file)?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
-    fs::rename(source, destination).map_err(|_| storage_error())
-}
-
-#[cfg(target_os = "windows")]
-fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    let result = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(storage_error())
-    } else {
-        Ok(())
-    }
+    replace_owned_file(parent, file, ".agent-skill-overrides-", &bytes).map_err(|_| storage_error())
 }
 
 fn symlink_safe_metadata(path: &Path) -> Result<Option<fs::Metadata>, String> {

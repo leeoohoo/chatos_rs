@@ -20,6 +20,8 @@ const CLIPBOARD_PREFIXES: &[&str] = &[".clipboard-"];
 const APPROVAL_PREFIXES: &[&str] = &[".approval-"];
 const INVOCATION_JOURNAL_PREFIXES: &[&str] = &["."];
 const CONNECTOR_PREFIXES: &[&str] = &[".connector-state-", ".approval-history-"];
+const PROJECT_CREATION_PREFIXES: &[&str] = &[".project-creation-"];
+const AGENT_SKILL_PREFIXES: &[&str] = &[".agent-skill-overrides-"];
 
 const CLEANUP_SCOPES: &[CleanupScope] = &[
     CleanupScope {
@@ -58,6 +60,10 @@ const CLEANUP_SCOPES: &[CleanupScope] = &[
         components: &["NativeConnector"],
         pattern: CleanupNamePattern::Uuid(CONNECTOR_PREFIXES),
     },
+    CleanupScope {
+        components: &["NativeConnector", "ProjectCreationJournal"],
+        pattern: CleanupNamePattern::Uuid(PROJECT_CREATION_PREFIXES),
+    },
 ];
 
 const DIRECTORY_CLEANUP_SCOPES: &[DirectoryCleanupScope] = &[
@@ -89,6 +95,24 @@ pub(crate) async fn cleanup_stale_temporaries(root: PathBuf) -> usize {
             .checked_sub(STALE_APP_DATA_TEMPORARY_AGE)
             .unwrap_or(UNIX_EPOCH);
         cleanup_stale_temporaries_before(&root, cutoff)
+    })
+    .await
+    .unwrap_or_default()
+}
+
+pub(crate) async fn cleanup_agent_skill_temporaries(directory: PathBuf) -> usize {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cutoff = SystemTime::now()
+            .checked_sub(STALE_APP_DATA_TEMPORARY_AGE)
+            .unwrap_or(UNIX_EPOCH);
+        cleanup_scope(
+            &directory,
+            &CleanupScope {
+                components: &[],
+                pattern: CleanupNamePattern::Uuid(AGENT_SKILL_PREFIXES),
+            },
+            cutoff,
+        )
     })
     .await
     .unwrap_or_default()
@@ -344,6 +368,10 @@ mod tests {
             ),
             ("NativeConnector", format!(".connector-state-{token}.tmp")),
             ("NativeConnector", format!(".approval-history-{token}.tmp")),
+            (
+                "NativeConnector/ProjectCreationJournal",
+                format!(".project-creation-{token}.tmp"),
+            ),
         ]
         .into_iter()
         .map(|(directory, name)| {
@@ -470,5 +498,32 @@ mod tests {
         assert!(linked_tree.exists());
         assert!(outside.exists());
         assert!(committed.exists());
+    }
+
+    #[test]
+    fn agent_skill_cleanup_is_limited_to_its_fixed_local_data_directory() {
+        let root = tempdir().unwrap();
+        let token = "00000000-0000-0000-0000-000000000000";
+        let owned = root
+            .path()
+            .join(format!(".agent-skill-overrides-{token}.tmp"));
+        let unrelated = root.path().join(format!(".other-{token}.tmp"));
+        fs::write(&owned, b"owned").unwrap();
+        fs::write(&unrelated, b"unrelated").unwrap();
+        let scope = CleanupScope {
+            components: &[],
+            pattern: CleanupNamePattern::Uuid(AGENT_SKILL_PREFIXES),
+        };
+
+        assert_eq!(
+            cleanup_scope(
+                root.path(),
+                &scope,
+                SystemTime::now() + Duration::from_secs(1),
+            ),
+            1
+        );
+        assert!(!owned.exists());
+        assert!(unrelated.exists());
     }
 }
