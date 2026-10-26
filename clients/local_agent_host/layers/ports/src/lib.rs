@@ -481,6 +481,21 @@ pub struct LocalHookInvocationCompletion {
 
 #[async_trait]
 pub trait LocalHookEventStore: Send + Sync {
+    async fn has_hook_event(
+        &self,
+        owner_user_id: &str,
+        event_type: &str,
+        subject_id: &str,
+    ) -> Result<bool, ClientStorageError>;
+
+    async fn get_hook_event(
+        &self,
+        owner_user_id: &str,
+        event_type: &str,
+        subject_id: &str,
+        sequence: u64,
+    ) -> Result<Option<LocalHookEventRecord>, ClientStorageError>;
+
     async fn prepare_hook_event(
         &self,
         event: &LocalHookEventSpec,

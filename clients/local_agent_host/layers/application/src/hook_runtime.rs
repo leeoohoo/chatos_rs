@@ -10,6 +10,33 @@ use chatos_local_agent_protocol::LocalPluginHookBundleRecord;
 
 impl LocalAgentRuntime {
     #[doc(hidden)]
+    pub async fn has_hook_event_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        event_type: &str,
+        subject_id: &str,
+    ) -> Result<bool, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .has_hook_event(owner_user_id, event_type, subject_id)
+            .await?)
+    }
+
+    #[doc(hidden)]
+    pub async fn get_hook_event_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        event_type: &str,
+        subject_id: &str,
+        sequence: u64,
+    ) -> Result<Option<LocalHookEventRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .get_hook_event(owner_user_id, event_type, subject_id, sequence)
+            .await?)
+    }
+
+    #[doc(hidden)]
     pub async fn active_plugin_hook_bundles_for_host_worker(
         &self,
         owner_user_id: &str,

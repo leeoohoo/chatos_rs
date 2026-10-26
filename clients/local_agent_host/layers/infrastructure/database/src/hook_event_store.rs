@@ -58,6 +58,70 @@ const INVOCATION_SELECT: &str = "SELECT invocation_id, event_id, bundle_id, hook
 
 #[async_trait]
 impl LocalHookEventStore for SqliteClientStorage {
+    async fn has_hook_event(
+        &self,
+        owner_user_id: &str,
+        event_type: &str,
+        subject_id: &str,
+    ) -> Result<bool, ClientStorageError> {
+        for (name, value) in [
+            ("owner_user_id", owner_user_id),
+            ("event_type", event_type),
+            ("subject_id", subject_id),
+        ] {
+            if value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+                return Err(ClientStorageError::InvalidState(format!("invalid {name}")));
+            }
+        }
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM local_hook_events \
+             WHERE owner_user_id = ? AND event_type = ? AND subject_id = ?",
+        )
+        .bind(owner_user_id)
+        .bind(event_type)
+        .bind(subject_id)
+        .fetch_one(&self.pool)
+        .await
+        .db()?;
+        Ok(count != 0)
+    }
+
+    async fn get_hook_event(
+        &self,
+        owner_user_id: &str,
+        event_type: &str,
+        subject_id: &str,
+        sequence: u64,
+    ) -> Result<Option<LocalHookEventRecord>, ClientStorageError> {
+        if sequence == 0 || i64::try_from(sequence).is_err() {
+            return Err(ClientStorageError::InvalidState(
+                "invalid Hook event sequence".to_string(),
+            ));
+        }
+        for (name, value) in [
+            ("owner_user_id", owner_user_id),
+            ("event_type", event_type),
+            ("subject_id", subject_id),
+        ] {
+            if value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+                return Err(ClientStorageError::InvalidState(format!("invalid {name}")));
+            }
+        }
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "{EVENT_SELECT} WHERE owner_user_id = ? AND event_type = ? \
+             AND subject_id = ? AND sequence = ?"
+        )))
+        .bind(owner_user_id)
+        .bind(event_type)
+        .bind(subject_id)
+        .bind(i64::try_from(sequence).expect("validated Hook sequence"))
+        .fetch_optional(&self.pool)
+        .await
+        .db()?
+        .map(decode_event)
+        .transpose()
+    }
+
     async fn prepare_hook_event(
         &self,
         event: &LocalHookEventSpec,
@@ -463,9 +527,34 @@ mod tests {
     #[tokio::test]
     async fn event_and_invocation_resume_without_repeating_completed_work() {
         let store = SqliteClientStorage::connect_memory().await.expect("store");
+        let mut large_event = event();
+        large_event.event_id = "hook-event-large".to_string();
+        large_event.sequence = 5_000_000_000;
+        store
+            .prepare_hook_event(&large_event, 5)
+            .await
+            .expect("large event");
+        assert!(store
+            .get_hook_event("user-1", "SessionStart", "conversation-1", 5_000_000_000,)
+            .await
+            .expect("get large event")
+            .is_some());
         let event = event();
         let prepared = store.prepare_hook_event(&event, 10).await.expect("event");
         assert_eq!(prepared.status, "pending");
+        assert!(store
+            .has_hook_event("user-1", "SessionStart", "conversation-1")
+            .await
+            .expect("event exists"));
+        assert_eq!(
+            store
+                .get_hook_event("user-1", "SessionStart", "conversation-1", 1)
+                .await
+                .expect("get event")
+                .expect("event record")
+                .spec,
+            event
+        );
         let invocation = LocalHookInvocationSpec {
             invocation_id: "hook-invocation-1".to_string(),
             event_id: event.event_id.clone(),

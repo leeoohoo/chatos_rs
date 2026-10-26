@@ -19,7 +19,12 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+use uuid::Uuid;
 
 const MAXIMUM_EVENT_CONTEXT_BYTES: usize = 512 * 1_024;
 const MAXIMUM_STDERR_SUMMARY_BYTES: usize = 4_096;
@@ -32,6 +37,8 @@ pub struct LocalHookCoordinator {
     runtime: Arc<LocalAgentRuntime>,
     runner: Arc<dyn LocalHookRunner>,
     workspace_root: Option<PathBuf>,
+    process_session_sequence: u64,
+    active_sessions: Mutex<HashMap<String, ActiveHookSession>>,
 }
 
 pub(crate) enum LocalHookPromptDecision {
@@ -58,6 +65,8 @@ impl LocalHookCoordinator {
             runtime,
             runner: Arc::new(runner),
             workspace_root,
+            process_session_sequence: stable_sequence(&["process", &Uuid::new_v4().to_string()]),
+            active_sessions: Mutex::new(HashMap::new()),
         })
     }
 
@@ -131,16 +140,18 @@ impl LocalHookCoordinator {
             let conversation_id = required_input_string(run, "conversation_id")?;
             let turn_id = required_input_string(run, "turn_id")?;
             let prompt = required_input_string(run, "message")?;
+            let session = self.session_for(run, conversation_id).await?;
             return Ok(vec![
-                HookEvent::new(
-                    run,
+                HookEvent::new_for_owner_with_sequence(
+                    &run.owner_user_id,
                     "SessionStart",
                     conversation_id,
-                    "startup",
+                    session.sequence,
+                    &session.source,
                     json!({
                         "session_id": conversation_id,
                         "hook_event_name": "SessionStart",
-                        "source": "startup",
+                        "source": session.source,
                         "cwd": self.workspace_display(),
                     }),
                 )?,
@@ -179,6 +190,71 @@ impl LocalHookCoordinator {
                 "cwd": self.workspace_display(),
             }),
         )?])
+    }
+
+    async fn session_for(
+        &self,
+        run: &LocalAgentRunRecord,
+        conversation_id: &str,
+    ) -> Result<ActiveHookSession, String> {
+        let compact_marker = latest_compaction_marker(run)?;
+        if let Some(active) = self
+            .active_sessions
+            .lock()
+            .map_err(|_| "Hook session state lock is poisoned".to_string())?
+            .get(conversation_id)
+            .cloned()
+        {
+            if compact_marker.is_none() || compact_marker == active.compact_marker {
+                return Ok(active);
+            }
+        }
+
+        let selected = if let Some(marker) = compact_marker.clone() {
+            let compact_sequence = stable_sequence(&["compact", conversation_id, &marker]);
+            let existing = self
+                .runtime
+                .get_hook_event_for_host_worker(
+                    &run.owner_user_id,
+                    "SessionStart",
+                    conversation_id,
+                    compact_sequence,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if existing
+                .as_ref()
+                .is_none_or(|event| event.status != "completed")
+            {
+                ActiveHookSession {
+                    sequence: compact_sequence,
+                    source: "compact".to_string(),
+                    compact_marker: Some(marker),
+                }
+            } else {
+                ActiveHookSession {
+                    sequence: self.process_session_sequence,
+                    source: "resume".to_string(),
+                    compact_marker: Some(marker),
+                }
+            }
+        } else {
+            let existed = self
+                .runtime
+                .has_hook_event_for_host_worker(&run.owner_user_id, "SessionStart", conversation_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            ActiveHookSession {
+                sequence: self.process_session_sequence,
+                source: if existed { "resume" } else { "startup" }.to_string(),
+                compact_marker: None,
+            }
+        };
+        self.active_sessions
+            .lock()
+            .map_err(|_| "Hook session state lock is poisoned".to_string())?
+            .insert(conversation_id.to_string(), selected.clone());
+        Ok(selected)
     }
 
     async fn is_delegated_task(&self, run: &LocalAgentRunRecord) -> Result<bool, String> {
@@ -361,6 +437,13 @@ struct HookEvent {
     stdin_json: Vec<u8>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ActiveHookSession {
+    sequence: u64,
+    source: String,
+    compact_marker: Option<String>,
+}
+
 impl HookEvent {
     fn new(
         run: &LocalAgentRunRecord,
@@ -385,16 +468,37 @@ impl HookEvent {
         matcher_value: &str,
         payload: Value,
     ) -> Result<Self, String> {
+        Self::new_for_owner_with_sequence(
+            owner_user_id,
+            event_type,
+            subject_id,
+            1,
+            matcher_value,
+            payload,
+        )
+    }
+
+    fn new_for_owner_with_sequence(
+        owner_user_id: &str,
+        event_type: &str,
+        subject_id: &str,
+        sequence: u64,
+        matcher_value: &str,
+        payload: Value,
+    ) -> Result<Self, String> {
         let stdin_json = serde_json::to_vec(&payload)
             .map_err(|error| format!("encode Hook event payload failed: {error}"))?;
         let payload_sha256 = sha256(&stdin_json);
         Ok(Self {
             spec: LocalHookEventSpec {
-                event_id: stable_id("hook-event", &[owner_user_id, event_type, subject_id, "1"]),
+                event_id: stable_id(
+                    "hook-event",
+                    &[owner_user_id, event_type, subject_id, &sequence.to_string()],
+                ),
                 owner_user_id: owner_user_id.to_string(),
                 event_type: event_type.to_string(),
                 subject_id: subject_id.to_string(),
-                sequence: 1,
+                sequence,
                 payload_sha256,
             },
             event_type: event_type.to_string(),
@@ -616,6 +720,41 @@ fn safe_summary(bytes: &[u8]) -> String {
     summary
 }
 
+fn latest_compaction_marker(run: &LocalAgentRunRecord) -> Result<Option<String>, String> {
+    for pointer in [
+        "/response/response_output_items",
+        "/response/request_input_items",
+    ] {
+        if let Some(item) = run
+            .checkpoint
+            .pointer(pointer)
+            .and_then(Value::as_array)
+            .and_then(|items| {
+                items
+                    .iter()
+                    .rfind(|item| item.get("type").and_then(Value::as_str) == Some("compaction"))
+            })
+        {
+            let encoded = serde_json::to_vec(item)
+                .map_err(|error| format!("encode compaction marker failed: {error}"))?;
+            return Ok(Some(sha256(&encoded)));
+        }
+    }
+    Ok(None)
+}
+
+fn stable_sequence(fields: &[&str]) -> u64 {
+    let mut digest = Sha256::new();
+    for field in fields {
+        digest.update(field.as_bytes());
+        digest.update([0]);
+    }
+    let bytes: [u8; 8] = digest.finalize()[..8]
+        .try_into()
+        .expect("SHA-256 prefix is eight bytes");
+    (u64::from_be_bytes(bytes) & (i64::MAX as u64)).max(2)
+}
+
 fn stable_id(prefix: &str, fields: &[&str]) -> String {
     let mut digest = Sha256::new();
     for field in fields {
@@ -655,6 +794,7 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeHookRunner {
         calls: Arc<Mutex<Vec<String>>>,
+        session_sources: Arc<Mutex<Vec<String>>>,
         active: Arc<AtomicUsize>,
         maximum_active: Arc<AtomicUsize>,
     }
@@ -679,6 +819,10 @@ mod tests {
         fn events(&self) -> Vec<String> {
             self.calls.lock().expect("calls").clone()
         }
+
+        fn session_sources(&self) -> Vec<String> {
+            self.session_sources.lock().expect("sources").clone()
+        }
     }
 
     #[async_trait]
@@ -693,6 +837,12 @@ mod tests {
                 .expect("event")
                 .to_string();
             self.calls.lock().expect("calls").push(event.clone());
+            if event == "SessionStart" {
+                self.session_sources
+                    .lock()
+                    .expect("sources")
+                    .push(payload["source"].as_str().expect("source").to_string());
+            }
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.maximum_active.fetch_max(active, Ordering::SeqCst);
             if invocation.hook.command.contains("delay") {
@@ -887,6 +1037,97 @@ mod tests {
         assert!(combined.contains("session context"));
         assert!(combined.contains("prompt context"));
         assert!(!combined.contains("private failure"));
+    }
+
+    #[tokio::test]
+    async fn session_context_rebuilds_for_process_resume_and_new_compaction() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-1",
+            vec![hook("session", "SessionStart", "session context")],
+        )
+        .await;
+        let first = LocalHookCoordinator::new(runtime.clone(), runner.clone(), None).unwrap();
+        let initial_claim = claim(run("run-main"));
+        first.prefixed_context(&initial_claim).await.unwrap();
+
+        let resumed = LocalHookCoordinator::new(runtime.clone(), runner.clone(), None).unwrap();
+        resumed.prefixed_context(&initial_claim).await.unwrap();
+        let mut compacted_run = run("run-main");
+        compacted_run.checkpoint = json!({
+            "response": {
+                "request_input_items": [{"role": "user", "content": "hello"}],
+                "response_output_items": [{
+                    "type": "compaction",
+                    "id": "cmp-1",
+                    "encrypted_content": "opaque",
+                }]
+            }
+        });
+        let compacted_claim = claim(compacted_run);
+        resumed.prefixed_context(&compacted_claim).await.unwrap();
+        resumed.prefixed_context(&compacted_claim).await.unwrap();
+        let compact_marker = latest_compaction_marker(&compacted_claim.run)
+            .unwrap()
+            .expect("compact marker");
+        let compact_sequence = stable_sequence(&["compact", "conversation-1", &compact_marker]);
+        assert_eq!(
+            resumed.events_for_claim(&compacted_claim).await.unwrap()[0]
+                .spec
+                .sequence,
+            compact_sequence
+        );
+        assert_eq!(
+            runtime
+                .get_hook_event_for_host_worker(
+                    "user-1",
+                    "SessionStart",
+                    "conversation-1",
+                    compact_sequence,
+                )
+                .await
+                .unwrap()
+                .expect("compact event")
+                .status,
+            "completed"
+        );
+
+        let after_restart =
+            LocalHookCoordinator::new(runtime.clone(), runner.clone(), None).unwrap();
+        assert_ne!(
+            resumed.process_session_sequence,
+            after_restart.process_session_sequence
+        );
+        assert!(runtime
+            .get_hook_event_for_host_worker(
+                "user-1",
+                "SessionStart",
+                "conversation-1",
+                after_restart.process_session_sequence,
+            )
+            .await
+            .unwrap()
+            .is_none());
+        after_restart
+            .prefixed_context(&compacted_claim)
+            .await
+            .unwrap();
+        assert!(runtime
+            .get_hook_event_for_host_worker(
+                "user-1",
+                "SessionStart",
+                "conversation-1",
+                after_restart.process_session_sequence,
+            )
+            .await
+            .unwrap()
+            .is_some());
+
+        assert_eq!(
+            runner.session_sources(),
+            vec!["startup", "resume", "compact", "resume"]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
