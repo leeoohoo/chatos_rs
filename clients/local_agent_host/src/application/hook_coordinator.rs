@@ -25,7 +25,11 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, Weak,
+    },
+    time::{Duration, Instant},
 };
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
@@ -45,6 +49,8 @@ pub struct LocalHookCoordinator {
     workspace_root: Option<PathBuf>,
     process_session_sequence: u64,
     active_sessions: Mutex<HashMap<String, ActiveHookSession>>,
+    session_generations: Mutex<HashMap<String, u64>>,
+    connected_clients: AtomicUsize,
     inflight_events: Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
 }
 
@@ -74,8 +80,22 @@ impl LocalHookCoordinator {
             workspace_root,
             process_session_sequence: stable_sequence(&["process", &Uuid::new_v4().to_string()]),
             active_sessions: Mutex::new(HashMap::new()),
+            session_generations: Mutex::new(HashMap::new()),
+            connected_clients: AtomicUsize::new(0),
             inflight_events: Mutex::new(HashMap::new()),
         })
+    }
+
+    pub(crate) fn client_connected(&self) {
+        self.connected_clients.fetch_add(1, Ordering::AcqRel);
+    }
+
+    pub(crate) fn client_disconnected(&self) {
+        let _ =
+            self.connected_clients
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                    Some(current.saturating_sub(1))
+                });
     }
 
     async fn contexts_for_claim(&self, claim: &LocalAgentRunClaim) -> Result<Vec<Value>, String> {
@@ -486,20 +506,78 @@ impl LocalHookCoordinator {
         owner_user_id: &str,
         reason: &str,
     ) -> Result<usize, String> {
-        let session_ids = self
+        let sessions = self
             .active_sessions
             .lock()
             .map_err(|_| "Hook session state lock is poisoned".to_string())?
-            .keys()
-            .cloned()
+            .iter()
+            .map(|(session_id, session)| (session_id.clone(), session.sequence))
             .collect::<Vec<_>>();
+        self.enqueue_session_end_for(owner_user_id, reason, sessions)
+            .await
+    }
+
+    pub(crate) async fn expire_idle_sessions(
+        self: &Arc<Self>,
+        owner_user_id: &str,
+        now: Instant,
+        idle_timeout: Duration,
+    ) -> Result<usize, String> {
+        if self.connected_clients.load(Ordering::Acquire) != 0 {
+            return Ok(0);
+        }
+        let expired = {
+            let mut active = self
+                .active_sessions
+                .lock()
+                .map_err(|_| "Hook session state lock is poisoned".to_string())?;
+            let expired_ids = active
+                .iter()
+                .filter(|(_, session)| {
+                    now.checked_duration_since(session.last_active_at)
+                        .is_some_and(|idle| idle >= idle_timeout)
+                })
+                .map(|(session_id, _)| session_id.clone())
+                .collect::<Vec<_>>();
+            expired_ids
+                .into_iter()
+                .filter_map(|session_id| {
+                    active
+                        .remove(&session_id)
+                        .map(|session| (session_id, session.sequence))
+                })
+                .collect::<Vec<_>>()
+        };
+        if expired.is_empty() {
+            return Ok(0);
+        }
+        {
+            let mut generations = self
+                .session_generations
+                .lock()
+                .map_err(|_| "Hook session generation lock is poisoned".to_string())?;
+            for (session_id, _) in &expired {
+                let generation = generations.entry(session_id.clone()).or_default();
+                *generation = generation.saturating_add(1);
+            }
+        }
+        self.enqueue_session_end_for(owner_user_id, "idle_timeout", expired)
+            .await
+    }
+
+    async fn enqueue_session_end_for(
+        self: &Arc<Self>,
+        owner_user_id: &str,
+        reason: &str,
+        sessions: Vec<(String, u64)>,
+    ) -> Result<usize, String> {
         let mut enqueued = 0;
-        for session_id in session_ids {
+        for (session_id, sequence) in sessions {
             let mut event = HookEvent::new_for_owner_with_sequence(
                 owner_user_id,
                 "SessionEnd",
                 &session_id,
-                self.process_session_sequence,
+                sequence,
                 reason,
                 json!({
                     "session_id": session_id,
@@ -612,6 +690,7 @@ impl LocalHookCoordinator {
                 .get("source_conversation_id")
                 .and_then(Value::as_str)
                 .unwrap_or(&run.owner_entity_id);
+            self.touch_session(session_id)?;
             events.push(HookEvent::new(
                 run,
                 "SubagentStart",
@@ -683,15 +762,16 @@ impl LocalHookCoordinator {
         conversation_id: &str,
     ) -> Result<ActiveHookSession, String> {
         let compact_marker = latest_compaction_marker(run)?;
-        if let Some(active) = self
-            .active_sessions
-            .lock()
-            .map_err(|_| "Hook session state lock is poisoned".to_string())?
-            .get(conversation_id)
-            .cloned()
         {
-            if compact_marker.is_none() || compact_marker == active.compact_marker {
-                return Ok(active);
+            let mut active_sessions = self
+                .active_sessions
+                .lock()
+                .map_err(|_| "Hook session state lock is poisoned".to_string())?;
+            if let Some(active) = active_sessions.get_mut(conversation_id) {
+                if compact_marker.is_none() || compact_marker == active.compact_marker {
+                    active.last_active_at = Instant::now();
+                    return Ok(active.clone());
+                }
             }
         }
 
@@ -715,12 +795,14 @@ impl LocalHookCoordinator {
                     sequence: compact_sequence,
                     source: "compact".to_string(),
                     compact_marker: Some(marker),
+                    last_active_at: Instant::now(),
                 }
             } else {
                 ActiveHookSession {
-                    sequence: self.process_session_sequence,
+                    sequence: self.session_sequence(conversation_id)?,
                     source: "resume".to_string(),
                     compact_marker: Some(marker),
+                    last_active_at: Instant::now(),
                 }
             }
         } else {
@@ -730,9 +812,10 @@ impl LocalHookCoordinator {
                 .await
                 .map_err(|error| error.to_string())?;
             ActiveHookSession {
-                sequence: self.process_session_sequence,
+                sequence: self.session_sequence(conversation_id)?,
                 source: if existed { "resume" } else { "startup" }.to_string(),
                 compact_marker: None,
+                last_active_at: Instant::now(),
             }
         };
         self.active_sessions
@@ -740,6 +823,37 @@ impl LocalHookCoordinator {
             .map_err(|_| "Hook session state lock is poisoned".to_string())?
             .insert(conversation_id.to_string(), selected.clone());
         Ok(selected)
+    }
+
+    fn session_sequence(&self, conversation_id: &str) -> Result<u64, String> {
+        let generation = self
+            .session_generations
+            .lock()
+            .map_err(|_| "Hook session generation lock is poisoned".to_string())?
+            .get(conversation_id)
+            .copied()
+            .unwrap_or(0);
+        if generation == 0 {
+            return Ok(self.process_session_sequence);
+        }
+        Ok(stable_sequence(&[
+            "process-session",
+            &self.process_session_sequence.to_string(),
+            conversation_id,
+            &generation.to_string(),
+        ]))
+    }
+
+    fn touch_session(&self, conversation_id: &str) -> Result<(), String> {
+        if let Some(session) = self
+            .active_sessions
+            .lock()
+            .map_err(|_| "Hook session state lock is poisoned".to_string())?
+            .get_mut(conversation_id)
+        {
+            session.last_active_at = Instant::now();
+        }
+        Ok(())
     }
 
     async fn is_delegated_task(&self, run: &LocalAgentRunRecord) -> Result<bool, String> {
@@ -1072,6 +1186,7 @@ struct ActiveHookSession {
     sequence: u64,
     source: String,
     compact_marker: Option<String>,
+    last_active_at: Instant,
 }
 
 impl HookEvent {
@@ -3116,6 +3231,103 @@ mod tests {
                 .expect("completed SessionEnd replay"),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn idle_session_end_waits_for_zero_clients_and_reopens_with_a_new_generation() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-idle-session",
+            vec![
+                hook("session-start", "SessionStart", "session context"),
+                hook("session-end", "SessionEnd", "session cleanup"),
+            ],
+        )
+        .await;
+        let coordinator = Arc::new(
+            LocalHookCoordinator::new(runtime.clone(), runner.clone(), None).expect("hooks"),
+        );
+        let session_claim = claim(run("run-idle-session"));
+        coordinator
+            .prefixed_context(&session_claim)
+            .await
+            .expect("establish session");
+        let first_sequence = coordinator.process_session_sequence;
+        coordinator
+            .active_sessions
+            .lock()
+            .expect("active sessions")
+            .get_mut("conversation-1")
+            .expect("session")
+            .last_active_at = Instant::now() - Duration::from_secs(31 * 60);
+
+        coordinator.client_connected();
+        assert_eq!(
+            coordinator
+                .expire_idle_sessions("user-1", Instant::now(), Duration::from_secs(30 * 60),)
+                .await
+                .expect("connected session remains active"),
+            0
+        );
+        coordinator.client_disconnected();
+        assert_eq!(
+            coordinator
+                .expire_idle_sessions("user-1", Instant::now(), Duration::from_secs(30 * 60),)
+                .await
+                .expect("expire idle session"),
+            1
+        );
+        let persisted = runtime
+            .get_hook_event_for_host_worker(
+                "user-1",
+                "SessionEnd",
+                "conversation-1",
+                first_sequence,
+            )
+            .await
+            .expect("read idle SessionEnd")
+            .expect("idle SessionEnd is durable");
+        assert!(matches!(persisted.status.as_str(), "pending" | "completed"));
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !runner.events().iter().any(|event| event == "SessionEnd") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("idle SessionEnd delivery");
+        let payload = runner
+            .payloads()
+            .into_iter()
+            .find(|payload| payload["hook_event_name"] == "SessionEnd")
+            .expect("idle SessionEnd payload");
+        assert_eq!(payload["reason"], "idle_timeout");
+
+        let reopened = coordinator
+            .events_for_claim(&session_claim)
+            .await
+            .expect("reopen session");
+        let reopened_sequence = reopened
+            .iter()
+            .find(|event| event.event_type == "SessionStart")
+            .expect("reopened SessionStart")
+            .spec
+            .sequence;
+        assert_ne!(reopened_sequence, first_sequence);
+        coordinator
+            .prefixed_context(&session_claim)
+            .await
+            .expect("execute reopened session");
+        assert_eq!(
+            runner
+                .events()
+                .into_iter()
+                .filter(|event| event == "SessionStart")
+                .count(),
+            2
+        );
+        assert_eq!(runner.session_sources(), vec!["startup", "resume"]);
     }
 
     #[tokio::test]

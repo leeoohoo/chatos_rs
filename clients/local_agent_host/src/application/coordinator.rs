@@ -14,7 +14,10 @@ use chatos_local_agent_protocol::{
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use futures::future::join_all;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use tokio::sync::{watch, Notify};
 
@@ -24,6 +27,8 @@ use super::work_activity::HostWorkActivity;
 const MIN_CONCURRENT_WORK_ITEMS: usize = 1;
 const MAX_CONCURRENT_WORK_ITEMS: usize = 16;
 const IDLE_RECOVERY_INTERVAL: Duration = Duration::from_secs(30);
+const HOOK_SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const HOOK_SESSION_REAPER_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Error)]
 pub enum LocalAgentCoordinatorError {
@@ -178,20 +183,55 @@ impl LocalAgentHostCoordinator {
                 .await;
             let _ = hooks.recover_pending_events(&self.owner_user_id).await;
         }
-        let result = if self.memory_sync_worker.is_none() {
-            self.run_schedulers_until_shutdown(shutdown).await
-        } else {
-            let scheduler_loop = self.run_schedulers_until_shutdown(shutdown.clone());
-            let memory_loop = self.run_memory_until_shutdown(shutdown);
-            let (scheduler_result, memory_result) = tokio::join!(scheduler_loop, memory_loop);
-            scheduler_result.and(memory_result)
+        let work_shutdown = shutdown.clone();
+        let work = async move {
+            if self.memory_sync_worker.is_none() {
+                self.run_schedulers_until_shutdown(work_shutdown).await
+            } else {
+                let scheduler_loop = self.run_schedulers_until_shutdown(work_shutdown.clone());
+                let memory_loop = self.run_memory_until_shutdown(work_shutdown);
+                let (scheduler_result, memory_result) = tokio::join!(scheduler_loop, memory_loop);
+                scheduler_result.and(memory_result)
+            }
         };
+        let hook_sessions = self.run_hook_session_reaper_until_shutdown(shutdown);
+        let (work_result, hook_result) = tokio::join!(work, hook_sessions);
+        let result = work_result.and(hook_result);
         if let Some(hooks) = self.hook_coordinator.as_ref() {
             let _ = hooks
                 .enqueue_session_end(&self.owner_user_id, "shutdown")
                 .await;
         }
         result
+    }
+
+    async fn run_hook_session_reaper_until_shutdown(
+        &self,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> Result<(), LocalAgentCoordinatorError> {
+        let mut interval = tokio::time::interval(HOOK_SESSION_REAPER_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+        loop {
+            tokio::select! {
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        return Ok(());
+                    }
+                }
+                _ = interval.tick() => {
+                    if self.work_activity.active_count() == 0 {
+                        if let Some(hooks) = self.hook_coordinator.as_ref() {
+                            let _ = hooks.expire_idle_sessions(
+                                &self.owner_user_id,
+                                Instant::now(),
+                                HOOK_SESSION_IDLE_TIMEOUT,
+                            ).await;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     async fn run_schedulers_until_shutdown(
@@ -614,6 +654,18 @@ fn default_maximum_concurrent_work_items() -> usize {
 
 #[async_trait]
 impl HostRequestHandler for LocalAgentHostCoordinator {
+    fn client_connected(&self) {
+        if let Some(hooks) = self.hook_coordinator.as_ref() {
+            hooks.client_connected();
+        }
+    }
+
+    fn client_disconnected(&self) {
+        if let Some(hooks) = self.hook_coordinator.as_ref() {
+            hooks.client_disconnected();
+        }
+    }
+
     async fn handle_request(&self, mut request: HostRequestEnvelope) -> HostResponseEnvelope {
         if matches!(request.command, HostCommand::Health) {
             return self.health_response(request).await;
