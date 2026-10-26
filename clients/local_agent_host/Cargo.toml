@@ -18,6 +18,7 @@ chatos_local_agent_runtime = { path = "layers/application" }
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 fs2 = "0.4"
+jsonschema = { version = "0.60.1", default-features = false }
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 regex = "1"

@@ -26,7 +26,39 @@ pub trait LocalAiStepExecutor: Send + Sync {
     async fn execute_ai_step(
         &self,
         claim: &LocalAgentRunClaim,
-    ) -> Result<AiSingleStepOutcome, String>;
+    ) -> Result<ExecutedLocalAiStep, String>;
+}
+
+pub struct ExecutedLocalAiStep {
+    pub outcome: AiSingleStepOutcome,
+    pub tool_definitions: Vec<Value>,
+}
+
+#[async_trait]
+pub trait LocalToolHookGate: Send + Sync {
+    async fn gate_tool_outcome(
+        &self,
+        claim: &LocalAgentRunClaim,
+        outcome: LocalAgentStepOutcome,
+        tool_definitions: &[Value],
+    ) -> Result<LocalAgentStepOutcome, String>;
+}
+
+#[async_trait]
+impl<T> LocalToolHookGate for Arc<T>
+where
+    T: LocalToolHookGate + ?Sized,
+{
+    async fn gate_tool_outcome(
+        &self,
+        claim: &LocalAgentRunClaim,
+        outcome: LocalAgentStepOutcome,
+        tool_definitions: &[Value],
+    ) -> Result<LocalAgentStepOutcome, String> {
+        (**self)
+            .gate_tool_outcome(claim, outcome, tool_definitions)
+            .await
+    }
 }
 
 pub struct PreparedLocalAiStep {
@@ -67,7 +99,7 @@ impl LocalAiStepExecutor for ChatosAiRuntimeStepExecutor {
     async fn execute_ai_step(
         &self,
         claim: &LocalAgentRunClaim,
-    ) -> Result<AiSingleStepOutcome, String> {
+    ) -> Result<ExecutedLocalAiStep, String> {
         let prepared = self.planner.prepare_ai_step(claim).await?;
         if prepared.reason.trim().is_empty() {
             return Err("Local AI step reason must not be empty".to_string());
@@ -83,10 +115,15 @@ impl LocalAiStepExecutor for ChatosAiRuntimeStepExecutor {
             .map_err(|_| "Local Agent iteration exceeds usize".to_string())?;
         let model_attempt = usize::try_from(claim.run.model_attempt)
             .map_err(|_| "model attempt exceeds usize".to_string())?;
-        prepared
+        let tool_definitions = prepared.request.model_request.tools.clone();
+        let outcome = prepared
             .runner
             .execute_once(prepared.request, iteration, prepared.reason, model_attempt)
-            .await
+            .await?;
+        Ok(ExecutedLocalAiStep {
+            outcome,
+            tool_definitions,
+        })
     }
 }
 
@@ -169,6 +206,7 @@ pub struct DurableAiProfile {
     executor: Arc<dyn LocalAiStepExecutor>,
     tool_safety: Arc<dyn ToolSafetyPolicy>,
     clock: ProfileClock,
+    tool_hook_gate: Option<Arc<dyn LocalToolHookGate>>,
 }
 
 impl DurableAiProfile {
@@ -189,7 +227,16 @@ impl DurableAiProfile {
             executor: Arc::new(executor),
             tool_safety: Arc::new(tool_safety),
             clock,
+            tool_hook_gate: None,
         }
+    }
+
+    pub fn with_tool_hook_gate<G>(mut self, gate: G) -> Self
+    where
+        G: LocalToolHookGate + 'static,
+    {
+        self.tool_hook_gate = Some(Arc::new(gate));
+        self
     }
 }
 
@@ -199,8 +246,29 @@ impl LocalAgentProfile for DurableAiProfile {
         &self,
         claim: &LocalAgentRunClaim,
     ) -> Result<LocalAgentStepOutcome, String> {
-        let outcome = self.executor.execute_ai_step(claim).await?;
-        reduce_ai_step_outcome_for_claim(outcome, claim, (self.clock)()?, self.tool_safety.as_ref())
+        let executed = self.executor.execute_ai_step(claim).await?;
+        let outcome = reduce_ai_step_outcome_for_claim(
+            executed.outcome,
+            claim,
+            (self.clock)()?,
+            self.tool_safety.as_ref(),
+        )?;
+        match self.tool_hook_gate.as_ref() {
+            Some(gate) => match gate
+                .gate_tool_outcome(claim, outcome, &executed.tool_definitions)
+                .await
+            {
+                Ok(outcome) => Ok(outcome),
+                Err(error) => Ok(LocalAgentStepOutcome::NeedsReview {
+                    reason: "trusted tool Hook gate failed closed".to_string(),
+                    detail: json!({
+                        "phase": "trusted_plugin_hook",
+                        "error": error,
+                    }),
+                }),
+            },
+            None => Ok(outcome),
+        }
     }
 }
 

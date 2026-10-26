@@ -11,8 +11,8 @@ mod planner_tools;
 
 pub use ai_step::{
     reduce_ai_step_outcome, ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy,
-    DurableAiProfile, LocalAiStepExecutor, LocalAiStepPlanner, NamedReadOnlyTools,
-    PreparedLocalAiStep, ToolSafetyPolicy,
+    DurableAiProfile, ExecutedLocalAiStep, LocalAiStepExecutor, LocalAiStepPlanner,
+    LocalToolHookGate, NamedReadOnlyTools, PreparedLocalAiStep, ToolSafetyPolicy,
 };
 pub use planner::{
     ControlPlaneLocalAiStepPlanner, LocalCapabilityResolver, LocalHookContextProvider,

@@ -131,9 +131,6 @@ impl LocalAgentHostCoordinator {
     }
 
     pub fn with_hook_coordinator(mut self, coordinator: Arc<LocalHookCoordinator>) -> Self {
-        self.model_scheduler = self
-            .model_scheduler
-            .map(|scheduler| scheduler.with_hook_coordinator(Arc::clone(&coordinator)));
         self.tool_scheduler = self
             .tool_scheduler
             .map(|scheduler| scheduler.with_hook_coordinator(Arc::clone(&coordinator)));

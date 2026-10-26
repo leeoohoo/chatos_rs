@@ -3,7 +3,9 @@
 
 use crate::infrastructure::{LocalHookInvocation, LocalHookInvocationResult, LocalHookRunner};
 use async_trait::async_trait;
-use chatos_agent_profiles::{LocalHookContextProvider, TASK_EXECUTION_PROFILE_KEY};
+use chatos_agent_profiles::{
+    LocalHookContextProvider, LocalToolHookGate, TASK_EXECUTION_PROFILE_KEY,
+};
 use chatos_ai_runtime::message_item;
 use chatos_local_agent_ports::{
     LocalHookEventSpec, LocalHookInvocationCompletion, LocalHookInvocationRecord,
@@ -139,6 +141,7 @@ impl LocalHookCoordinator {
         &self,
         claim: &LocalAgentRunClaim,
         outcome: LocalAgentStepOutcome,
+        tool_definitions: &[Value],
     ) -> Result<LocalAgentStepOutcome, String> {
         let LocalAgentStepOutcome::WaitForTool {
             batch_id,
@@ -151,7 +154,7 @@ impl LocalHookCoordinator {
         let tool_calls = join_all(
             tool_calls
                 .into_iter()
-                .map(|call| self.gate_tool_call(claim, call)),
+                .map(|call| self.gate_tool_call(claim, call, tool_definitions)),
         )
         .await
         .into_iter()
@@ -167,6 +170,7 @@ impl LocalHookCoordinator {
         &self,
         claim: &LocalAgentRunClaim,
         mut call: LocalAgentToolCall,
+        tool_definitions: &[Value],
     ) -> Result<LocalAgentToolCall, String> {
         let subject_id = tool_hook_subject(&claim.run.run_id, &call.call_id);
         let pre = self
@@ -186,7 +190,7 @@ impl LocalHookCoordinator {
                 ),
             )?)
             .await?;
-        apply_updated_input(&mut call, &pre)?;
+        apply_updated_input(&mut call, &pre, tool_definitions)?;
         if tool_event_denied(&pre) {
             call.requires_approval = false;
             return Ok(call);
@@ -212,7 +216,7 @@ impl LocalHookCoordinator {
                     ),
                 )?)
                 .await?;
-            apply_updated_input(&mut call, &permission)?;
+            apply_updated_input(&mut call, &permission, tool_definitions)?;
             if tool_event_denied(&permission) {
                 call.requires_approval = false;
             }
@@ -619,6 +623,18 @@ impl LocalHookContextProvider for LocalHookCoordinator {
     }
 }
 
+#[async_trait]
+impl LocalToolHookGate for LocalHookCoordinator {
+    async fn gate_tool_outcome(
+        &self,
+        claim: &LocalAgentRunClaim,
+        outcome: LocalAgentStepOutcome,
+        tool_definitions: &[Value],
+    ) -> Result<LocalAgentStepOutcome, String> {
+        LocalHookCoordinator::gate_tool_outcome(self, claim, outcome, tool_definitions).await
+    }
+}
+
 struct HookEvent {
     spec: LocalHookEventSpec,
     event_type: String,
@@ -816,6 +832,7 @@ fn tool_event_denied(outcome: &PersistedEventOutcome) -> bool {
 fn apply_updated_input(
     call: &mut LocalAgentToolCall,
     outcome: &PersistedEventOutcome,
+    tool_definitions: &[Value],
 ) -> Result<(), String> {
     let Some(updated) = outcome.updated_input.as_ref() else {
         return Ok(());
@@ -829,8 +846,47 @@ fn apply_updated_input(
             outcome.event_type, call.tool_name
         ));
     }
+    validate_tool_input(&call.tool_name, updated, tool_definitions).map_err(|error| {
+        format!(
+            "trusted {} Hook updatedInput for {} is invalid: {error}",
+            outcome.event_type, call.tool_name
+        )
+    })?;
     call.arguments = updated.clone();
     call.validate()
+}
+
+fn validate_tool_input(
+    tool_name: &str,
+    input: &Value,
+    tool_definitions: &[Value],
+) -> Result<(), String> {
+    let mut matching = tool_definitions
+        .iter()
+        .filter(|definition| tool_definition_name(definition) == Some(tool_name));
+    let definition = matching
+        .next()
+        .ok_or_else(|| "the tool was not present in this model request".to_string())?;
+    if matching.next().is_some() {
+        return Err("the model request contained duplicate tool definitions".to_string());
+    }
+    let schema = definition
+        .pointer("/parameters")
+        .or_else(|| definition.pointer("/function/parameters"))
+        .ok_or_else(|| "the model-visible tool definition has no parameters schema".to_string())?;
+    let validator = jsonschema::validator_for(schema)
+        .map_err(|error| format!("the model-visible tool schema is invalid: {error}"))?;
+    if let Some(error) = validator.iter_errors(input).next() {
+        return Err(format!("schema validation failed: {error}"));
+    }
+    Ok(())
+}
+
+fn tool_definition_name(definition: &Value) -> Option<&str> {
+    definition
+        .pointer("/name")
+        .and_then(Value::as_str)
+        .or_else(|| definition.pointer("/function/name").and_then(Value::as_str))
 }
 
 fn hook_tool_denial(event_type: &str, reason: &str) -> LocalAgentToolOutcome {
@@ -1243,6 +1299,18 @@ mod tests {
                     .expect("update output"),
                     Vec::new(),
                 ),
+                "invalid-update-tool" => (
+                    Some(0),
+                    serde_json::to_vec(&json!({
+                        "hookSpecificOutput": {
+                            "hookEventName": event,
+                            "permissionDecision": "allow",
+                            "updatedInput": {"path": 42},
+                        }
+                    }))
+                    .expect("invalid update output"),
+                    Vec::new(),
+                ),
                 "permission-deny" => (
                     Some(0),
                     serde_json::to_vec(&json!({
@@ -1375,6 +1443,43 @@ mod tests {
         let mut hook = hook(hook_id, event, command);
         hook.matcher = Some(matcher.to_string());
         hook
+    }
+
+    fn tool_definitions() -> Vec<Value> {
+        vec![
+            json!({
+                "type": "function",
+                "name": "dangerous",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"value": {"type": "integer"}},
+                    "required": ["value"],
+                    "additionalProperties": false
+                }
+            }),
+            json!({
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                        "required": ["path"],
+                        "additionalProperties": false
+                    }
+                }
+            }),
+            json!({
+                "type": "function",
+                "name": "write_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                    "additionalProperties": false
+                }
+            }),
+        ]
     }
 
     fn run(run_id: &str) -> LocalAgentRunRecord {
@@ -1629,6 +1734,7 @@ mod tests {
                     ],
                     checkpoint: json!({"response_id": "response-1"}),
                 },
+                &tool_definitions(),
             )
             .await
             .unwrap();
@@ -1657,6 +1763,69 @@ mod tests {
             permission_denied,
             Some(LocalAgentToolOutcome::Failed { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn invalid_hook_updated_input_fails_closed_before_tool_persistence() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-invalid-update",
+            vec![matched_hook(
+                "invalid-update",
+                "PreToolUse",
+                "^read_file$",
+                "invalid-update-tool",
+            )],
+        )
+        .await;
+        let coordinator = LocalHookCoordinator::new(runtime, runner, None).unwrap();
+        let error = coordinator
+            .gate_tool_outcome(
+                &claim(run("run-invalid-update")),
+                LocalAgentStepOutcome::WaitForTool {
+                    batch_id: "batch-invalid".to_string(),
+                    tool_calls: vec![LocalAgentToolCall {
+                        call_id: "call-invalid".to_string(),
+                        tool_name: "read_file".to_string(),
+                        arguments: json!({"path": "original.txt"}),
+                        side_effecting: false,
+                        requires_approval: false,
+                    }],
+                    checkpoint: json!({"response_id": "response-invalid"}),
+                },
+                &tool_definitions(),
+            )
+            .await
+            .expect_err("schema-invalid updatedInput must fail closed");
+
+        assert!(error.contains("schema validation failed"), "{error}");
+        assert!(error.contains("read_file"), "{error}");
+    }
+
+    #[test]
+    fn hook_updated_input_requires_an_exact_valid_model_visible_schema() {
+        let definitions = tool_definitions();
+        validate_tool_input("dangerous", &json!({"value": 1}), definitions.as_slice())
+            .expect("flat tool schema");
+        validate_tool_input(
+            "read_file",
+            &json!({"path": "README.md"}),
+            definitions.as_slice(),
+        )
+        .expect("nested tool schema");
+
+        let missing = validate_tool_input("unknown", &json!({}), definitions.as_slice())
+            .expect_err("missing tool must fail closed");
+        assert!(missing.contains("not present"), "{missing}");
+
+        let invalid_schema = [json!({
+            "name": "broken",
+            "parameters": {"type": 7}
+        })];
+        let invalid = validate_tool_input("broken", &json!({}), &invalid_schema)
+            .expect_err("invalid schema must fail closed");
+        assert!(invalid.contains("schema is invalid"), "{invalid}");
     }
 
     #[tokio::test]

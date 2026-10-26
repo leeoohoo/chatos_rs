@@ -253,21 +253,21 @@ impl LocalAgentHostAssembly {
             main_chat_planner = main_chat_planner.with_memory_source_id(source_id.clone())?;
             task_execution_planner = task_execution_planner.with_memory_source_id(source_id)?;
         }
+        let mut main_profile = DurableAiProfile::new(
+            ChatosAiRuntimeStepExecutor::new(main_chat_planner),
+            safety.clone(),
+        );
+        let mut task_profile = DurableAiProfile::new(
+            ChatosAiRuntimeStepExecutor::new(task_execution_planner),
+            safety,
+        );
+        if let Some(hooks) = hook_context_provider.as_ref() {
+            main_profile = main_profile.with_tool_hook_gate(Arc::clone(hooks));
+            task_profile = task_profile.with_tool_hook_gate(Arc::clone(hooks));
+        }
         let mut profiles = LocalAgentProfileRegistry::new();
-        profiles.register(
-            MAIN_CHAT_PROFILE_KEY,
-            DurableAiProfile::new(
-                ChatosAiRuntimeStepExecutor::new(main_chat_planner),
-                safety.clone(),
-            ),
-        )?;
-        profiles.register(
-            TASK_EXECUTION_PROFILE_KEY,
-            DurableAiProfile::new(
-                ChatosAiRuntimeStepExecutor::new(task_execution_planner),
-                safety,
-            ),
-        )?;
+        profiles.register(MAIN_CHAT_PROFILE_KEY, main_profile)?;
+        profiles.register(TASK_EXECUTION_PROFILE_KEY, task_profile)?;
         let model_scheduler = LocalAgentScheduler::new(
             Arc::clone(&runtime),
             profiles,
