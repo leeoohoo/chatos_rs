@@ -15,22 +15,26 @@ struct TeamTodoRunPresentation: Equatable, Sendable {
         runs: [LocalAgentGroupChatRun],
         deliveriesByRunID: [UUID: ProjectAgentDelivery]
     ) -> [String: TeamTodoRunPresentation] {
-        var result: [String: TeamTodoRunPresentation] = [:]
-        for run in runs {
-            guard let delivery = deliveriesByRunID[run.id],
-                  let todoID = delivery.todoID else { continue }
-            guard result[todoID] == nil else { continue }
-            result[todoID] = .init(run: run)
+        ChatOSPerformanceSignpost.measure(.todoPresentationBuild) {
+            var result: [String: TeamTodoRunPresentation] = [:]
+            for run in runs {
+                guard let delivery = deliveriesByRunID[run.id],
+                      let todoID = delivery.todoID else { continue }
+                guard result[todoID] == nil else { continue }
+                result[todoID] = .init(run: run)
+            }
+            return result
         }
-        return result
     }
 
     static func presentationsByTodoID(
         summaries: [LocalAgentTodoRunSummary]
     ) -> [String: TeamTodoRunPresentation] {
-        Dictionary(uniqueKeysWithValues: summaries.map { summary in
-            (summary.todoID, TeamTodoRunPresentation(summary: summary))
-        })
+        ChatOSPerformanceSignpost.measure(.todoPresentationBuild) {
+            Dictionary(uniqueKeysWithValues: summaries.map { summary in
+                (summary.todoID, TeamTodoRunPresentation(summary: summary))
+            })
+        }
     }
 
     init(summary: LocalAgentTodoRunSummary) {

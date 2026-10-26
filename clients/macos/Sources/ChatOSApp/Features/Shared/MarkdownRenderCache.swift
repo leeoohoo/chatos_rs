@@ -50,7 +50,9 @@ final class MarkdownRenderCache: @unchecked Sendable {
             return cached.value
         }
 
-        let parsed = MarkdownBlockParser.parse(source)
+        let parsed = ChatOSPerformanceSignpost.measure(.markdownParse) {
+            MarkdownBlockParser.parse(source)
+        }
         guard !Task.isCancelled else { return parsed }
         blockCache.setObject(
             BlockEntry(parsed),

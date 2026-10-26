@@ -376,7 +376,9 @@ private struct NativeCodeTextView: NSViewRepresentable {
                       let textView,
                       self.highlightGeneration == generation else { return }
                 let worker = Task.detached(priority: .userInitiated) {
-                    CodeSyntaxHighlighter.spans(in: text, fileName: fileName)
+                    ChatOSPerformanceSignpost.measure(.codeHighlightScan) {
+                        CodeSyntaxHighlighter.spans(in: text, fileName: fileName)
+                    }
                 }
                 self.highlightWorker = worker
                 let spans = await worker.value
@@ -386,11 +388,13 @@ private struct NativeCodeTextView: NSViewRepresentable {
                 self.highlightWorker = nil
                 if !spans.isEmpty || resetsExistingStyles {
                     self.isApplyingText = true
-                    CodeSyntaxHighlighter.apply(
-                        spans,
-                        to: textView.textStorage,
-                        fontSize: fontSize
-                    )
+                    ChatOSPerformanceSignpost.measure(.codeHighlightApply) {
+                        CodeSyntaxHighlighter.apply(
+                            spans,
+                            to: textView.textStorage,
+                            fontSize: fontSize
+                        )
+                    }
                     self.isApplyingText = false
                 }
                 self.ruler?.update(text: text, fontSize: fontSize)

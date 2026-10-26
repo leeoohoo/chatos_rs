@@ -35,7 +35,30 @@ macOS 仅支持 arm64，不提供 Intel 或 universal 构建。统一入口使�
 
 夹具为 20 Agent、10 房间、500 消息、500 Run、100 Todo 和一份 128 KiB 附件。记录的是夹具规则/源码哈希：UUID/时间戳仍有变化，所以 `dataset_byte_sha256` 明确为 null，不伪称固定数据库文件。不能在一次运行期间修改源码，也不要并行运行使用同一 Swift scratch path 的打包/测试。
 
-此基准没有测量 App 切页、首个可交互帧、主线程 hang、physical footprint、Host IPC 或媒体链路；小样本分位数不是发布 SLO 证明。应在固定机器、数据集、供电、热状态、缓存和负载下比较，不把不同运行环境直接合并。正式导航脚本、signpost/trace、真实组合负载与干净提交的基线/候选对照仍待完成。
+此基准没有测量 App 切页、首个可交互帧、主线程 hang、physical footprint、Host IPC 或媒体链路；小样本分位数不是发布 SLO 证明。应在固定机器、数据集、供电、热状态、缓存和负载下比较，不把不同运行环境直接合并。正式导航脚本、真实组合负载与干净提交的基线/候选对照仍待完成。
+
+## App 性能 Signpost
+
+Release 与 Debug 客户端都在 `com.chatos.native / Performance` 下发布以下稳定 interval，可在 Instruments 的 Time Profiler、SwiftUI 或 Logging 录制中对齐交互和主线程热点：
+
+- `ConversationTimelineBuild`：消息/任务版本变化后的时间线快照构建。
+- `MarkdownParse`、`MarkdownLayout`：Markdown 缓存未命中的后台解析与 AppKit 测量。
+- `TodoPresentationBuild`：任务板轻量 Run presentation 构建。
+- `PetFrameUpdate`：单个 CALayer 精灵帧提交。
+- `ActivationRecoveryDispatch`：应用重新激活时幂等恢复任务的同步调度成本。
+- `CodeHighlightScan`、`CodeHighlightApply`：后台语法扫描和主线程最小样式提交。
+
+例如在不停止当前客户端的情况下附加 60 秒 Time Profiler：
+
+```sh
+xcrun xctrace record \
+  --template 'Time Profiler' \
+  --attach ChatOSSwift \
+  --time-limit 60s \
+  --output /tmp/ChatOS-performance.trace
+```
+
+录制期间按固定验证矩阵执行对应操作；结束后按上述 interval 过滤并同时检查 Hangs、主线程调用栈与 SwiftUI invalidation。Signpost 只提供精确边界，不会自动生成输入、判断 P95/P99 是否达标，也不替代固定机器上的基线/候选对照。
 
 ## 进程组资源曲线与 8 小时 soak
 

@@ -219,14 +219,16 @@ private struct MarkdownNativeTextView: NSViewRepresentable {
         nsView textView: MarkdownLayoutTextView,
         context: Context
     ) -> CGSize? {
-        guard let proposedWidth = MarkdownLayoutGeometry.finitePositiveWidth(proposal.width) else {
-            return nil
+        ChatOSPerformanceSignpost.measure(.markdownLayout) {
+            guard let proposedWidth = MarkdownLayoutGeometry.finitePositiveWidth(proposal.width) else {
+                return nil
+            }
+            let width = switch widthBehavior {
+            case .fill: proposedWidth
+            case .fitContent: textView.width(fittingMaxWidth: proposedWidth)
+            }
+            return CGSize(width: width, height: textView.height(fittingWidth: width))
         }
-        let width = switch widthBehavior {
-        case .fill: proposedWidth
-        case .fitContent: textView.width(fittingMaxWidth: proposedWidth)
-        }
-        return CGSize(width: width, height: textView.height(fittingWidth: width))
     }
 }
 
@@ -256,20 +258,22 @@ private struct MarkdownNativeScrollView: NSViewRepresentable {
         nsView scrollView: MarkdownScrollContainerView,
         context: Context
     ) -> CGSize? {
-        guard let proposedWidth = MarkdownLayoutGeometry.finitePositiveWidth(proposal.width) else {
-            return nil
+        ChatOSPerformanceSignpost.measure(.markdownLayout) {
+            guard let proposedWidth = MarkdownLayoutGeometry.finitePositiveWidth(proposal.width) else {
+                return nil
+            }
+            let width = switch widthBehavior {
+            case .fill: proposedWidth
+            case .fitContent: scrollView.textWidth(fittingMaxWidth: proposedWidth)
+            }
+            let contentHeight = scrollView.textHeight(fittingWidth: width)
+            let height = MarkdownLayoutGeometry.resolvedHeight(
+                contentHeight: contentHeight,
+                proposedHeight: proposal.height,
+                viewport: viewport
+            )
+            return CGSize(width: width, height: height)
         }
-        let width = switch widthBehavior {
-        case .fill: proposedWidth
-        case .fitContent: scrollView.textWidth(fittingMaxWidth: proposedWidth)
-        }
-        let contentHeight = scrollView.textHeight(fittingWidth: width)
-        let height = MarkdownLayoutGeometry.resolvedHeight(
-            contentHeight: contentHeight,
-            proposedHeight: proposal.height,
-            viewport: viewport
-        )
-        return CGSize(width: width, height: height)
     }
 }
 

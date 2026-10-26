@@ -203,10 +203,12 @@ private final class PetSpriteLayerView: NSView {
 
     private func displayCurrentFrame() {
         guard let configuration else { return }
-        layer?.contents = PetSpriteResource.frame(
-            row: configuration.row,
-            column: frameIndex
-        )
+        ChatOSPerformanceSignpost.measure(.petFrameUpdate) {
+            layer?.contents = PetSpriteResource.frame(
+                row: configuration.row,
+                column: frameIndex
+            )
+        }
     }
 }
 
