@@ -21,19 +21,21 @@ use windows_sys::Win32::{
             SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W, GRANT_ACCESS,
             SDDL_REVISION_1, SE_FILE_OBJECT, TRUSTEE_IS_SID, TRUSTEE_IS_WELL_KNOWN_GROUP,
         },
-        FreeSid,
+        CreateWellKnownSid, FreeSid, GetTokenInformation,
         Isolation::{CreateAppContainerProfile, DeleteAppContainerProfile},
-        SetFileSecurityW, ACL, DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-        SECURITY_CAPABILITIES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+        SetFileSecurityW, TokenCapabilities, WinCapabilityInternetClientSid, ACL,
+        DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_CAPABILITIES,
+        SECURITY_MAX_SID_SIZE, SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+        TOKEN_GROUPS, TOKEN_QUERY,
     },
     Storage::FileSystem::{
         FILE_DELETE_CHILD, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
     },
     System::Threading::{
         CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
-        InitializeProcThreadAttributeList, TerminateProcess, UpdateProcThreadAttribute,
-        WaitForSingleObject, CREATE_NO_WINDOW, EXTENDED_STARTUPINFO_PRESENT,
-        LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
+        InitializeProcThreadAttributeList, OpenProcessToken, ResumeThread, TerminateProcess,
+        UpdateProcThreadAttribute, WaitForSingleObject, CREATE_NO_WINDOW, CREATE_SUSPENDED,
+        EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
         PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTUPINFOEXW,
     },
 };
@@ -45,6 +47,7 @@ pub(crate) struct AppContainerProbe {
     pub workspace_lease_verified: bool,
     pub workspace_recovery_verified: bool,
     pub workspace_permission_tiers_verified: bool,
+    pub network_capability_policy_verified: bool,
 }
 
 static PROBE: OnceLock<Result<AppContainerProbe, String>> = OnceLock::new();
@@ -55,6 +58,81 @@ static PROFILE_LOCK: Mutex<()> = Mutex::new(());
 enum WorkspaceAccess {
     ReadOnly,
     ReadWrite,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NetworkAccess {
+    Disabled,
+    Controlled,
+}
+
+impl NetworkAccess {
+    fn from_policy(value: &str) -> Result<Self, String> {
+        match value {
+            "disabled" => Ok(Self::Disabled),
+            "controlled" => Ok(Self::Controlled),
+            _ => Err("The AppContainer network access policy is unsupported.".to_owned()),
+        }
+    }
+}
+
+struct CapabilitySet {
+    _sid_storage: Vec<u8>,
+    attributes: Vec<SID_AND_ATTRIBUTES>,
+}
+
+impl CapabilitySet {
+    fn for_network_access(access: NetworkAccess) -> Result<Self, String> {
+        match access {
+            NetworkAccess::Disabled => Ok(Self {
+                _sid_storage: Vec::new(),
+                attributes: Vec::new(),
+            }),
+            NetworkAccess::Controlled => {
+                let mut sid_storage = vec![0u8; SECURITY_MAX_SID_SIZE as usize];
+                let mut sid_size = sid_storage.len() as u32;
+                let created = unsafe {
+                    CreateWellKnownSid(
+                        WinCapabilityInternetClientSid,
+                        null_mut(),
+                        sid_storage.as_mut_ptr().cast(),
+                        &mut sid_size,
+                    )
+                };
+                if created == 0 {
+                    return Err(last_error(
+                        "Creating the Windows internetClient capability SID failed",
+                    ));
+                }
+                sid_storage.truncate(sid_size as usize);
+                let attributes = vec![SID_AND_ATTRIBUTES {
+                    Sid: sid_storage.as_mut_ptr().cast(),
+                    Attributes: 0x4,
+                }];
+                Ok(Self {
+                    _sid_storage: sid_storage,
+                    attributes,
+                })
+            }
+        }
+    }
+
+    fn pointer(&mut self) -> *mut SID_AND_ATTRIBUTES {
+        if self.attributes.is_empty() {
+            null_mut()
+        } else {
+            self.attributes.as_mut_ptr()
+        }
+    }
+
+    fn expected_sid(&self) -> Option<PSID> {
+        self.attributes.first().map(|entry| entry.Sid)
+    }
+}
+
+struct AppContainerProcessResult {
+    exit_code: u32,
+    capability_policy_verified: bool,
 }
 
 pub(crate) struct WorkspaceLeaseManager {
@@ -192,7 +270,18 @@ fn run_probe() -> Result<AppContainerProbe, String> {
         reader.display(),
         protected_file.display()
     );
-    let exit_code = profile.run(&reader, &command_line, Duration::from_secs(10))?;
+    let disabled_network_process = profile.run_with_network(
+        &reader,
+        &command_line,
+        Duration::from_secs(10),
+        NetworkAccess::from_policy("disabled")?,
+    )?;
+    let controlled_network_process = profile.run_with_network(
+        &reader,
+        &command_line,
+        Duration::from_secs(10),
+        NetworkAccess::from_policy("controlled")?,
+    )?;
     let network_denied = probe_network_isolation(&profile, Path::new(&system_root))?;
     let workspace = tempfile::tempdir()
         .map_err(|error| format!("无法创建 AppContainer 工作区租约探测目录：{error}"))?;
@@ -230,7 +319,8 @@ fn run_probe() -> Result<AppContainerProbe, String> {
     let after_read_write_restore_exit =
         write_probe_file(&profile, Path::new(&system_root), &read_write_file)?;
     Ok(AppContainerProbe {
-        filesystem_denied: exit_code != 0,
+        filesystem_denied: disabled_network_process.exit_code != 0
+            && controlled_network_process.exit_code != 0,
         network_denied,
         workspace_lease_verified: granted_exit == 0 && restored_exit != 0 && !journal_path.exists(),
         workspace_recovery_verified: recovery_granted_exit == 0
@@ -243,6 +333,8 @@ fn run_probe() -> Result<AppContainerProbe, String> {
             && read_write_created
             && after_read_write_restore_exit != 0
             && !read_write_file.exists(),
+        network_capability_policy_verified: disabled_network_process.capability_policy_verified
+            && controlled_network_process.capability_policy_verified,
     })
 }
 
@@ -316,7 +408,7 @@ impl AppContainerProfile {
     fn create(name: &str) -> Result<Self, String> {
         let guard = PROFILE_LOCK
             .lock()
-            .map_err(|_| "Windows AppContainer profile lock is poisoned.".to_owned())?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let name = wide(name);
         let display_name = wide("ChatOS AppContainer Probe");
         let description = wide("Temporary ChatOS Windows isolation capability probe");
@@ -350,13 +442,25 @@ impl AppContainerProfile {
     }
 
     fn run(&self, executable: &Path, command_line: &str, timeout: Duration) -> Result<u32, String> {
+        self.run_with_network(executable, command_line, timeout, NetworkAccess::Disabled)
+            .map(|result| result.exit_code)
+    }
+
+    fn run_with_network(
+        &self,
+        executable: &Path,
+        command_line: &str,
+        timeout: Duration,
+        network_access: NetworkAccess,
+    ) -> Result<AppContainerProcessResult, String> {
         let executable = wide_os(executable.as_os_str());
         let mut command_line = wide(command_line);
         let mut attribute_list = AttributeList::new()?;
+        let mut capability_set = CapabilitySet::for_network_access(network_access)?;
         let capabilities = SECURITY_CAPABILITIES {
             AppContainerSid: self.sid,
-            Capabilities: null_mut(),
-            CapabilityCount: 0,
+            Capabilities: capability_set.pointer(),
+            CapabilityCount: capability_set.attributes.len() as u32,
             Reserved: 0,
         };
         attribute_list.set_security_capabilities(&capabilities)?;
@@ -372,7 +476,7 @@ impl AppContainerProfile {
                 null(),
                 null(),
                 0,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_SUSPENDED,
                 null(),
                 null(),
                 &startup.StartupInfo,
@@ -383,6 +487,26 @@ impl AppContainerProfile {
             return Err(last_error("Windows AppContainer process creation failed"));
         }
         let process = ProcessHandles::new(process);
+        let capability_policy_verified =
+            match process_capabilities_match(process.process, capability_set.expected_sid()) {
+                Ok(true) => true,
+                Ok(false) => {
+                    terminate_suspended_process(&process);
+                    return Err(
+                        "The AppContainer process capability policy did not match.".to_owned()
+                    );
+                }
+                Err(error) => {
+                    terminate_suspended_process(&process);
+                    return Err(error);
+                }
+            };
+        if unsafe { ResumeThread(process.thread) } == u32::MAX {
+            terminate_suspended_process(&process);
+            return Err(last_error(
+                "Resuming the verified AppContainer process failed",
+            ));
+        }
         let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
         match unsafe { WaitForSingleObject(process.process, timeout_ms) } {
             WAIT_OBJECT_0 => {}
@@ -403,8 +527,77 @@ impl AppContainerProfile {
         if unsafe { GetExitCodeProcess(process.process, &mut exit_code) } == 0 {
             return Err(last_error("Reading Windows AppContainer exit code failed"));
         }
-        Ok(exit_code)
+        Ok(AppContainerProcessResult {
+            exit_code,
+            capability_policy_verified,
+        })
     }
+}
+
+fn terminate_suspended_process(process: &ProcessHandles) {
+    unsafe {
+        TerminateProcess(process.process, 125);
+        WaitForSingleObject(process.process, 5_000);
+    }
+}
+
+fn process_capabilities_match(process: HANDLE, expected: Option<PSID>) -> Result<bool, String> {
+    let mut token = null_mut();
+    if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
+        return Err(last_error("Opening the AppContainer process token failed"));
+    }
+    let token = OwnedHandle(token);
+    let mut required = 0;
+    unsafe {
+        GetTokenInformation(token.0, TokenCapabilities, null_mut(), 0, &mut required);
+    }
+    if required < size_of::<u32>() as u32 {
+        return Err(last_error("Sizing AppContainer token capabilities failed"));
+    }
+    let buffer_size = required.max(size_of::<TOKEN_GROUPS>() as u32);
+    let words = (buffer_size as usize).div_ceil(size_of::<usize>());
+    let mut storage = vec![0usize; words];
+    if unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenCapabilities,
+            storage.as_mut_ptr().cast(),
+            buffer_size,
+            &mut required,
+        )
+    } == 0
+    {
+        return Err(last_error("Reading AppContainer token capabilities failed"));
+    }
+    let groups = unsafe { &*storage.as_ptr().cast::<TOKEN_GROUPS>() };
+    let count = groups.GroupCount as usize;
+    if count == 0 {
+        return Ok(expected.is_none());
+    }
+    let groups_offset = std::mem::offset_of!(TOKEN_GROUPS, Groups);
+    let required_bytes = groups_offset
+        .checked_add(count.saturating_mul(size_of::<SID_AND_ATTRIBUTES>()))
+        .ok_or_else(|| "The AppContainer token capability list is invalid.".to_owned())?;
+    if required_bytes > required as usize || count > 64 {
+        return Err("The AppContainer token capability list is invalid.".to_owned());
+    }
+    let entries = unsafe {
+        std::slice::from_raw_parts(
+            storage
+                .as_ptr()
+                .cast::<u8>()
+                .add(groups_offset)
+                .cast::<SID_AND_ATTRIBUTES>(),
+            count,
+        )
+    };
+    Ok(match expected {
+        None => entries.is_empty(),
+        Some(expected) => {
+            entries.len() == 1
+                && unsafe { windows_sys::Win32::Security::EqualSid(entries[0].Sid, expected) } != 0
+        }
+    })
 }
 
 struct DirectoryLease {
@@ -787,6 +980,18 @@ struct ProcessHandles {
     thread: HANDLE,
 }
 
+struct OwnedHandle(HANDLE);
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.0.is_null() {
+                CloseHandle(self.0);
+            }
+        }
+    }
+}
+
 impl ProcessHandles {
     fn new(process: PROCESS_INFORMATION) -> Self {
         Self {
@@ -854,6 +1059,16 @@ mod tests {
         assert!(probe.workspace_lease_verified);
         assert!(probe.workspace_recovery_verified);
         assert!(probe.workspace_permission_tiers_verified);
+        assert!(probe.network_capability_policy_verified);
+        assert_eq!(
+            NetworkAccess::from_policy("disabled").unwrap(),
+            NetworkAccess::Disabled
+        );
+        assert_eq!(
+            NetworkAccess::from_policy("controlled").unwrap(),
+            NetworkAccess::Controlled
+        );
+        assert!(NetworkAccess::from_policy("host").is_err());
     }
 
     #[test]
