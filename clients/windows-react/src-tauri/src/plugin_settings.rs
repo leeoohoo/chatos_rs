@@ -31,7 +31,8 @@ use crate::{
     plugin_installer::{
         inspect_local_package_source, install_git_package, install_local_package,
         install_marketplace_package, install_npm_mcp, install_npm_package_source,
-        resolve_executable, CommittedPluginPackage, NpmMcpDraft, NpmMcpInspection,
+        resolve_executable, CommittedPluginPackage, LocalPluginHookSummary, NpmMcpDraft,
+        NpmMcpInspection,
     },
     plugin_integrity::{
         recover_interrupted_installations, requires_installation_integrity,
@@ -366,6 +367,8 @@ struct PresentedPlugin {
     source: &'static str,
     runtime_status: &'static str,
     mcp_server_count: usize,
+    hook_count: usize,
+    hook_runtime_status: Option<&'static str>,
     skills: Vec<String>,
     permissions: Vec<PresentedPluginPermission>,
     installation_issue: Option<&'static str>,
@@ -437,6 +440,9 @@ pub struct ManualPluginInspection {
 struct ManualPluginComponent {
     kind: &'static str,
     display_name: String,
+    hook_count: Option<usize>,
+    events: Vec<String>,
+    runtime_status: Option<&'static str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -797,7 +803,7 @@ pub async fn inspect_manual_plugin_directory(
     }
     match result {
         Ok(inspection) => {
-            let components = manual_plugin_components(&inspection.manifest);
+            let components = manual_plugin_components(&inspection.manifest, &inspection.hooks);
             let presented = ManualPluginInspection {
                 selection_id: input.selection_id.clone(),
                 directory_name: selection.directory_name,
@@ -1578,6 +1584,8 @@ fn project_marketplace_plugin(
         source: "marketplace",
         runtime_status: runtime_status(installed, enabled),
         mcp_server_count: manifest.mcp_servers.len(),
+        hook_count: manifest.hooks.len(),
+        hook_runtime_status: (!manifest.hooks.is_empty()).then_some("runner_unavailable"),
         skills: presented_skills(manifest),
         permissions: presented_permissions(&manifest.permissions),
         installation_issue: installed_projection.and_then(|projection| projection.issue),
@@ -1631,6 +1639,10 @@ fn project_local_plugin(
         source: "local",
         runtime_status: runtime_status(true, projection.enabled),
         mcp_server_count: manifest.map_or(0, |manifest| manifest.mcp_servers.len()),
+        hook_count: manifest.map_or(0, |manifest| manifest.hooks.len()),
+        hook_runtime_status: manifest
+            .is_some_and(|manifest| !manifest.hooks.is_empty())
+            .then_some("runner_unavailable"),
         skills: manifest.map_or_else(Vec::new, presented_skills),
         permissions: manifest.map_or_else(Vec::new, |manifest| {
             presented_permissions(&manifest.permissions)
@@ -2176,13 +2188,19 @@ fn metadata_is_reparse(metadata: &fs::Metadata) -> bool {
     }
 }
 
-fn manual_plugin_components(manifest: &PluginManifest) -> Vec<ManualPluginComponent> {
+fn manual_plugin_components(
+    manifest: &PluginManifest,
+    hook_summaries: &[LocalPluginHookSummary],
+) -> Vec<ManualPluginComponent> {
     let mut components = manifest
         .mcp_servers
         .iter()
         .map(|server| ManualPluginComponent {
             kind: "mcp",
             display_name: server.component_key().to_owned(),
+            hook_count: None,
+            events: Vec::new(),
+            runtime_status: None,
         })
         .chain(manifest.skills.iter().map(|skill| {
             ManualPluginComponent {
@@ -2192,7 +2210,17 @@ fn manual_plugin_components(manifest: &PluginManifest) -> Vec<ManualPluginCompon
                     .and_then(|value| value.to_str())
                     .unwrap_or("Skill")
                     .to_owned(),
+                hook_count: None,
+                events: Vec::new(),
+                runtime_status: None,
             }
+        }))
+        .chain(hook_summaries.iter().map(|hook| ManualPluginComponent {
+            kind: "hook",
+            display_name: hook.component_key.clone(),
+            hook_count: Some(hook.hook_count),
+            events: hook.events.clone(),
+            runtime_status: Some("runner_unavailable"),
         }))
         .collect::<Vec<_>>();
     components.sort_by(|left, right| {

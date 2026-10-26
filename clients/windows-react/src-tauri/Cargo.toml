@@ -31,6 +31,7 @@ flate2 = "1"
 tar = "0.4"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 sha2 = "0.10"
+regex = "1"
 uuid = { version = "1", features = ["v4"] }
 unicode-segmentation = "1"
 unicode-normalization = "0.1"

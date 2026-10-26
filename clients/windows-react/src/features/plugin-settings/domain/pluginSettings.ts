@@ -29,6 +29,8 @@ export const managedPluginSchema = z.object({
   source: z.enum(["marketplace", "local"]),
   runtimeStatus: z.enum(["not_installed", "not_checked", "disabled"]),
   mcpServerCount: z.number().int().nonnegative(),
+  hookCount: z.number().int().nonnegative(),
+  hookRuntimeStatus: z.literal("runner_unavailable").nullable(),
   skills: z.array(z.string().min(1)).max(128),
   permissions: z.array(pluginPermissionSchema).max(128),
   installationIssue: z.enum(["metadata_invalid", "integrity_check_failed"]).nullable(),
@@ -53,8 +55,11 @@ export const manualPluginDirectorySelectionSchema = z.object({
 });
 
 export const manualPluginComponentSchema = z.object({
-  kind: z.enum(["mcp", "skill"]),
+  kind: z.enum(["mcp", "skill", "hook"]),
   displayName: z.string().min(1),
+  hookCount: z.number().int().nonnegative().nullable(),
+  events: z.array(z.string().min(1)).max(11),
+  runtimeStatus: z.literal("runner_unavailable").nullable(),
 });
 
 export const manualPluginInspectionSchema = z.object({
@@ -83,5 +88,6 @@ export function filterPlugins(plugins: ManagedPlugin[], queryInput: string) {
     plugin.packageName ?? "",
     plugin.pluginKey ?? "",
     ...plugin.skills,
+    plugin.hookCount > 0 ? "hook hooks lifecycle" : "",
   ].join(" ").toLocaleLowerCase().includes(query));
 }

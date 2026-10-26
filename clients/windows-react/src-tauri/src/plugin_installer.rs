@@ -4,6 +4,7 @@ use chatos_plugin_management_sdk::{
     PluginInstallSource, PluginManifest, PluginMcpServer, PluginReleaseVerificationContext,
 };
 use flate2::read::GzDecoder;
+use regex::Regex;
 use reqwest::Response;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256, Sha512};
@@ -49,11 +50,40 @@ const MAXIMUM_MCP_TOOL_CATALOG_BYTES: usize = 16 * 1_024 * 1_024;
 const MAXIMUM_MCP_TOOL_PAGES: usize = 100;
 const MAXIMUM_MCP_TOOLS: usize = 512;
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+const MAXIMUM_HOOK_BUNDLE_BYTES: u64 = 512 * 1_024;
+const MAXIMUM_HOOK_BUNDLES: usize = 16;
+const MAXIMUM_HOOK_COUNT: usize = 64;
+const MAXIMUM_HOOK_COMMAND_BYTES: usize = 8 * 1_024;
+const MAXIMUM_HOOK_MATCHER_BYTES: usize = 1_024;
+const MAXIMUM_HOOK_ADDITIONAL_CONTEXT_BYTES: u64 = 256 * 1_024;
+const MINIMUM_HOOK_TIMEOUT_SECONDS: f64 = 0.1;
+const MAXIMUM_HOOK_TIMEOUT_SECONDS: f64 = 30.0;
+const SUPPORTED_CODEX_HOOK_EVENTS: &[&str] = &[
+    "SessionStart",
+    "UserPromptSubmit",
+    "SubagentStart",
+    "PreToolUse",
+    "PermissionRequest",
+    "PostToolUse",
+    "Stop",
+    "SubagentStop",
+    "Interrupt",
+    "SessionEnd",
+    "PostCompact",
+];
 
 #[derive(Clone)]
 pub(crate) struct LocalPluginInspection {
     pub(crate) manifest: PluginManifest,
     pub(crate) fingerprint: String,
+    pub(crate) hooks: Vec<LocalPluginHookSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LocalPluginHookSummary {
+    pub(crate) component_key: String,
+    pub(crate) hook_count: usize,
+    pub(crate) events: Vec<String>,
 }
 
 pub(crate) struct CommittedPluginPackage {
@@ -159,9 +189,11 @@ pub(crate) fn inspect_local_package(
     let source_root = local_source_root(source, subdirectory)?;
     let fingerprint = snapshot_local_tree(&source_root, None)?;
     let manifest = validate_local_package(&source_root)?;
+    let hooks = inspect_plugin_hooks(&source_root, &manifest)?;
     Ok(LocalPluginInspection {
         manifest,
         fingerprint,
+        hooks,
     })
 }
 
@@ -392,9 +424,9 @@ const COMPATIBLE_MCP_CONFIGURATIONS: &[&str] = &[
 ];
 
 const COMPATIBLE_PLUGIN_MANIFESTS: &[(&str, &str)] = &[
-    ("plugin.json", "Agent Plugin"),
     (".codex-plugin/plugin.json", "Codex Plugin"),
     (".claude-plugin/plugin.json", "Claude Plugin"),
+    ("plugin.json", "Agent Plugin"),
     ("package.json", "npm Agent Plugin"),
 ];
 
@@ -409,11 +441,21 @@ struct CompatiblePluginIdentity {
 }
 
 fn normalize_compatible_mcp_package(package_root: &Path) -> Result<(), String> {
-    if package_root.join("chatos.plugin.json").is_file() {
-        return Ok(());
+    let native_manifest = package_root.join("chatos.plugin.json");
+    if native_manifest.is_file() {
+        let raw = read_bounded_text(&native_manifest, MAXIMUM_MANIFEST_BYTES)?;
+        if let Ok(manifest) = parse_plugin_manifest(&raw) {
+            if validate_plugin_manifest(&manifest).is_ok() {
+                return Ok(());
+            }
+        }
     }
     let identity = compatible_plugin_identity(package_root)?;
     let skills = normalize_compatible_skills(package_root)?;
+    let hooks = match identity.as_ref() {
+        Some(identity) => normalize_compatible_hooks(package_root, &identity.document)?,
+        None => Vec::new(),
+    };
     let external_configuration = COMPATIBLE_MCP_CONFIGURATIONS
         .iter()
         .map(|name| (*name, package_root.join(name)))
@@ -460,7 +502,7 @@ fn normalize_compatible_mcp_package(package_root: &Path) -> Result<(), String> {
         }
         None => None,
     };
-    if identity.is_none() && skills.is_empty() && servers.is_none() {
+    if identity.is_none() && skills.is_empty() && servers.is_none() && hooks.is_empty() {
         return Ok(());
     }
 
@@ -587,16 +629,35 @@ fn normalize_compatible_mcp_package(package_root: &Path) -> Result<(), String> {
         .chars()
         .take(120)
         .collect::<String>();
-    let permissions = if normalized_servers.is_empty() {
-        Vec::new()
-    } else {
-        vec![json!({
+    let mut permissions = Vec::new();
+    if !normalized_servers.is_empty() {
+        permissions.push(json!({
             "permission": "process.spawn",
             "required": true,
             "reason": "启动用户确认导入的本机 MCP Server",
             "components": components
-        })]
-    };
+        }));
+    }
+    if !hooks.is_empty() {
+        let hook_components = hooks
+            .iter()
+            .filter_map(|hook| hook.get("componentKey").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        permissions.extend([
+            json!({
+                "permission": "process.spawn",
+                "required": true,
+                "reason": "运行用户逐条确认的生命周期 Hook 命令",
+                "components": hook_components
+            }),
+            json!({
+                "permission": "workspace.read",
+                "required": true,
+                "reason": "向本机只读 Hook 提供当前授权工作区",
+                "components": hook_components
+            }),
+        ]);
+    }
     write_json_file(
         &package_root.join("chatos.plugin.json"),
         &json!({
@@ -614,65 +675,130 @@ fn normalize_compatible_mcp_package(package_root: &Path) -> Result<(), String> {
             },
             "skills": skills,
             "mcpServers": normalized_servers,
+            "hooks": hooks,
             "permissions": permissions
         }),
     )
 }
 
+fn normalize_compatible_hooks(
+    package_root: &Path,
+    document: &serde_json::Map<String, Value>,
+) -> Result<Vec<Value>, String> {
+    let Some(raw) = document.get("hooks") else {
+        return Ok(Vec::new());
+    };
+    let paths = match raw {
+        Value::String(path) => vec![path.as_str()],
+        Value::Array(paths) if paths.iter().all(Value::is_string) => {
+            paths.iter().filter_map(Value::as_str).collect()
+        }
+        _ => {
+            return Err(install_error(
+                "Codex Plugin hooks 必须是路径字符串或路径数组",
+            ))
+        }
+    };
+    if paths.is_empty() || paths.len() > MAXIMUM_HOOK_BUNDLES {
+        return Err(install_error("Codex Hook Bundle 数量无效"));
+    }
+    let mut component_keys = BTreeSet::new();
+    paths
+        .into_iter()
+        .enumerate()
+        .map(|(index, raw_path)| {
+            let relative = normalized_hook_relative_path(raw_path)?;
+            secure_hook_source(package_root, &relative)?;
+            let file_stem = relative
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("lifecycle-hooks-{index}"));
+            let component_key = compatibility_identifier(&file_stem, "Hook component key")?;
+            if !component_keys.insert(component_key.clone()) {
+                return Err(install_error("Hook component key 重复"));
+            }
+            Ok(json!({
+                "componentKey": component_key,
+                "source": format!("./{}", relative.to_string_lossy().replace('\\', "/"))
+            }))
+        })
+        .collect()
+}
+
 fn compatible_plugin_identity(
     package_root: &Path,
 ) -> Result<Option<CompatiblePluginIdentity>, String> {
+    let mut diagnostics = Vec::new();
     for (relative, format_name) in COMPATIBLE_PLUGIN_MANIFESTS {
         let path = package_root.join(relative);
         if !path.is_file() {
             continue;
         }
-        let raw = read_bounded_text(&path, MAXIMUM_MANIFEST_BYTES)?;
-        let document = serde_json::from_str::<Value>(&raw)
-            .map_err(|_| install_error(&format!("{format_name} 清单不是有效 JSON")))?
-            .as_object()
-            .cloned()
-            .ok_or_else(|| install_error(&format!("{format_name} 清单必须是 JSON 对象")))?;
-        let raw_name = document
-            .get("name")
-            .and_then(Value::as_str)
-            .ok_or_else(|| install_error(&format!("{format_name} 清单必须声明 name 和 version")))?;
-        let raw_version = document
-            .get("version")
-            .and_then(Value::as_str)
-            .ok_or_else(|| install_error(&format!("{format_name} 清单必须声明 name 和 version")))?;
-        let name = compatibility_identifier(raw_name, "Plugin name")?;
-        let version = raw_version.trim();
-        if version.is_empty() || version.len() > 128 || version.chars().any(char::is_control) {
-            return Err(install_error("Plugin version 无效"));
+        match parse_compatible_plugin_identity(&path, format_name) {
+            Ok(identity) => return Ok(Some(identity)),
+            Err(error) => diagnostics.push(format!("{format_name}：{error}")),
         }
-        let description = document
-            .get("description")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .chars()
-            .take(2_000)
-            .collect::<String>();
-        let display_name = compatible_display_name(&document)
-            .unwrap_or(raw_name)
-            .trim()
-            .chars()
-            .take(120)
-            .collect::<String>();
-        if display_name.is_empty() || display_name.chars().any(char::is_control) {
-            return Err(install_error("Plugin displayName 无效"));
-        }
-        return Ok(Some(CompatiblePluginIdentity {
-            name,
-            version: version.to_owned(),
-            description,
-            display_name,
-            format_name: (*format_name).to_owned(),
-            document,
-        }));
     }
-    Ok(None)
+    if diagnostics.is_empty() {
+        Ok(None)
+    } else {
+        Err(install_error(&format!(
+            "没有找到有效的兼容 Plugin 清单：{}",
+            diagnostics.join("；")
+        )))
+    }
+}
+
+fn parse_compatible_plugin_identity(
+    path: &Path,
+    format_name: &str,
+) -> Result<CompatiblePluginIdentity, String> {
+    let raw = read_bounded_text(path, MAXIMUM_MANIFEST_BYTES)?;
+    let document = serde_json::from_str::<Value>(&raw)
+        .map_err(|_| install_error(&format!("{format_name} 清单不是有效 JSON")))?
+        .as_object()
+        .cloned()
+        .ok_or_else(|| install_error(&format!("{format_name} 清单必须是 JSON 对象")))?;
+    let raw_name = document
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| install_error(&format!("{format_name} 清单必须声明 name 和 version")))?;
+    let raw_version = document
+        .get("version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| install_error(&format!("{format_name} 清单必须声明 name 和 version")))?;
+    let name = compatibility_identifier(raw_name, "Plugin name")?;
+    let version = raw_version.trim();
+    if version.is_empty() || version.len() > 128 || version.chars().any(char::is_control) {
+        return Err(install_error("Plugin version 无效"));
+    }
+    let description = document
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(2_000)
+        .collect::<String>();
+    let display_name = compatible_display_name(&document)
+        .unwrap_or(raw_name)
+        .trim()
+        .chars()
+        .take(120)
+        .collect::<String>();
+    if display_name.is_empty() || display_name.chars().any(char::is_control) {
+        return Err(install_error("Plugin displayName 无效"));
+    }
+    Ok(CompatiblePluginIdentity {
+        name,
+        version: version.to_owned(),
+        description,
+        display_name,
+        format_name: format_name.to_owned(),
+        document,
+    })
 }
 
 fn compatible_display_name(document: &serde_json::Map<String, Value>) -> Option<&str> {
@@ -2609,6 +2735,7 @@ fn validate_local_package(package_root: &Path) -> Result<PluginManifest, String>
         manifest.skills.iter().map(|skill| skill.path.as_str()),
     )
     .map_err(|_| install_error("本地 Plugin Skill 无效"))?;
+    let hook_summaries = inspect_plugin_hooks(package_root, &manifest)?;
     let mut executable_count = 0_usize;
     for server in &manifest.mcp_servers {
         if let PluginMcpServer::Stdio { bin, .. } = server {
@@ -2617,11 +2744,176 @@ fn validate_local_package(package_root: &Path) -> Result<PluginManifest, String>
         }
     }
     if executable_count == 0 && manifest.skills.is_empty() {
+        if !hook_summaries.is_empty() {
+            return Err(install_error(
+                "Codex Hook 已通过安全预检，但 Windows AppContainer Hook runner 尚未接入；Hook-only Plugin 暂不能安装",
+            ));
+        }
         return Err(install_error(
             "本地 Plugin 尚无可运行的 stdio MCP 或有效 Skill",
         ));
     }
     Ok(manifest)
+}
+
+fn inspect_plugin_hooks(
+    package_root: &Path,
+    manifest: &PluginManifest,
+) -> Result<Vec<LocalPluginHookSummary>, String> {
+    if manifest.hooks.len() > MAXIMUM_HOOK_BUNDLES {
+        return Err(install_error("Codex Hook Bundle 数量无效"));
+    }
+    manifest
+        .hooks
+        .iter()
+        .map(|hook| {
+            let relative = normalized_hook_relative_path(&hook.source.path)?;
+            let source = secure_hook_source(package_root, &relative)?;
+            let raw = read_bounded_text(&source, MAXIMUM_HOOK_BUNDLE_BYTES)?;
+            let (hook_count, events) = parse_codex_hook_bundle(&raw)?;
+            Ok(LocalPluginHookSummary {
+                component_key: hook.component_key.clone(),
+                hook_count,
+                events,
+            })
+        })
+        .collect()
+}
+
+fn normalized_hook_relative_path(raw_path: &str) -> Result<PathBuf, String> {
+    let mut path = raw_path.trim();
+    while let Some(stripped) = path.strip_prefix("./") {
+        path = stripped;
+    }
+    if path.is_empty() || path.contains('\0') {
+        return Err(install_error("Hook path 必须位于 Plugin 目录内"));
+    }
+    safe_relative_path(Path::new(path))
+        .map_err(|_| install_error("Hook path 必须位于 Plugin 目录内"))
+}
+
+fn secure_hook_source(package_root: &Path, relative: &Path) -> Result<PathBuf, String> {
+    let root = package_root
+        .canonicalize()
+        .map_err(|_| install_error("Plugin 安装目录无效"))?;
+    let source = package_root.join(relative);
+    let metadata = fs::symlink_metadata(&source)
+        .map_err(|_| install_error("Hook 文件不存在或发生链接逃逸"))?;
+    if !metadata.is_file() || is_symlink_or_reparse(&metadata) {
+        return Err(install_error("Hook 文件不存在或发生链接逃逸"));
+    }
+    let resolved = source
+        .canonicalize()
+        .map_err(|_| install_error("Hook 文件不存在或发生链接逃逸"))?;
+    if !resolved.starts_with(&root) || resolved == root {
+        return Err(install_error("Hook 文件不存在或发生链接逃逸"));
+    }
+    Ok(resolved)
+}
+
+fn parse_codex_hook_bundle(raw: &str) -> Result<(usize, Vec<String>), String> {
+    let root = serde_json::from_str::<Value>(raw)
+        .map_err(|_| install_error("Codex Hook 文件不是有效 JSON"))?;
+    let event_map = root
+        .as_object()
+        .and_then(|root| root.get("hooks"))
+        .and_then(Value::as_object)
+        .filter(|hooks| !hooks.is_empty())
+        .ok_or_else(|| install_error("Codex Hook 文件必须包含非空 hooks 对象"))?;
+    let mut events = event_map.keys().cloned().collect::<Vec<_>>();
+    events.sort();
+    let mut hook_count = 0_usize;
+    for event in &events {
+        if !SUPPORTED_CODEX_HOOK_EVENTS.contains(&event.as_str()) {
+            return Err(if event == "PreCompact" {
+                install_error("当前 runtime 无法准确触发 PreCompact；请使用 PostCompact")
+            } else {
+                install_error(&format!("不支持的 Codex Hook 事件：{event}"))
+            });
+        }
+        let groups = event_map[event]
+            .as_array()
+            .filter(|groups| !groups.is_empty())
+            .ok_or_else(|| install_error(&format!("Codex Hook {event} 必须是非空数组")))?;
+        for (group_index, group) in groups.iter().enumerate() {
+            let group = group.as_object().ok_or_else(|| {
+                install_error(&format!("Codex Hook {event}[{group_index}] 必须是对象"))
+            })?;
+            if let Some(matcher) = group.get("matcher") {
+                let matcher = matcher.as_str().ok_or_else(|| {
+                    install_error(&format!("Codex Hook {event} matcher 必须是字符串"))
+                })?;
+                let matcher = matcher.trim();
+                if matcher.is_empty()
+                    || matcher.len() > MAXIMUM_HOOK_MATCHER_BYTES
+                    || matcher.contains('\0')
+                    || Regex::new(matcher).is_err()
+                {
+                    return Err(install_error(&format!(
+                        "Codex Hook {event} matcher 不是有效正则表达式"
+                    )));
+                }
+            }
+            let handlers = group
+                .get("hooks")
+                .and_then(Value::as_array)
+                .filter(|handlers| !handlers.is_empty())
+                .ok_or_else(|| {
+                    install_error(&format!("Codex Hook {event}[{group_index}] 缺少 handlers"))
+                })?;
+            for handler in handlers {
+                let handler = handler.as_object().ok_or_else(|| {
+                    install_error(&format!("Codex Hook {event} handler 必须是对象"))
+                })?;
+                if hook_count >= MAXIMUM_HOOK_COUNT {
+                    return Err(install_error("Codex Hook 数量超过 64 个"));
+                }
+                if handler.get("type").and_then(Value::as_str) != Some("command") {
+                    return Err(install_error(
+                        "当前只接受同步 command Hook；mcp_tool 尚未接入",
+                    ));
+                }
+                if handler.get("async").and_then(Value::as_bool) == Some(true) {
+                    return Err(install_error(
+                        "当前版本尚未支持 async Codex Hook，不能静默改为同步执行",
+                    ));
+                }
+                handler
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|command| {
+                        !command.is_empty()
+                            && command.len() <= MAXIMUM_HOOK_COMMAND_BYTES
+                            && !command.contains('\0')
+                    })
+                    .ok_or_else(|| install_error("Codex Hook command 无效或超过限制"))?;
+                if let Some(timeout) = handler.get("timeout") {
+                    timeout
+                        .as_f64()
+                        .filter(|timeout| {
+                            timeout.is_finite()
+                                && *timeout >= MINIMUM_HOOK_TIMEOUT_SECONDS
+                                && *timeout <= MAXIMUM_HOOK_TIMEOUT_SECONDS
+                        })
+                        .ok_or_else(|| install_error("Codex Hook timeout 必须在 0.1–30 秒之间"))?;
+                }
+                if let Some(limit) = handler.get("additionalContextLimit") {
+                    limit
+                        .as_f64()
+                        .filter(|limit| {
+                            limit.is_finite()
+                                && *limit >= 0.0
+                                && limit.fract() == 0.0
+                                && *limit <= MAXIMUM_HOOK_ADDITIONAL_CONTEXT_BYTES as f64
+                        })
+                        .ok_or_else(|| install_error("additionalContextLimit 超过安全限制"))?;
+                }
+                hook_count += 1;
+            }
+        }
+    }
+    Ok((hook_count, events))
 }
 
 fn local_source_root(source: &Path, subdirectory: Option<&str>) -> Result<PathBuf, String> {
@@ -3151,7 +3443,7 @@ fn executable_candidates(bin_root: &Path, bin: &str, windows_arch: Option<&str>)
 fn read_bounded_text(path: &Path, maximum_bytes: u64) -> Result<String, String> {
     let metadata = fs::symlink_metadata(path).map_err(|_| install_error("Plugin 文件缺失"))?;
     if !metadata.is_file()
-        || metadata.file_type().is_symlink()
+        || is_symlink_or_reparse(&metadata)
         || metadata.len() == 0
         || metadata.len() > maximum_bytes
     {
@@ -3415,6 +3707,113 @@ mod tests {
         fs::create_dir_all(&source).unwrap();
         fs::write(source.join("chatos.plugin.json"), b"{}").unwrap();
         assert!(inspect_local_package(&source, Some("../escape")).is_err());
+    }
+
+    #[test]
+    fn codex_hook_preflight_returns_only_safe_event_summary() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path();
+        fs::create_dir_all(source.join("bin")).unwrap();
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        fs::write(source.join("bin/local-tool.exe"), b"tool").unwrap();
+        fs::write(
+            source.join("hooks/lifecycle.json"),
+            r#"{
+                "hooks": {
+                    "SessionStart": [{
+                        "matcher": "startup|resume",
+                        "hooks": [{
+                            "type": "command",
+                            "command": "node secret-command.js",
+                            "timeout": 5,
+                            "additionalContextLimit": 65536
+                        }]
+                    }],
+                    "UserPromptSubmit": [{
+                        "hooks": [{"type": "command", "command": "node tracker.js"}]
+                    }]
+                }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join("chatos.plugin.json"),
+            r#"{
+                "schemaVersion": 3,
+                "name": "hook-mixed-plugin",
+                "version": "1.0.0",
+                "description": "Hook fixture",
+                "author": { "name": "Local" },
+                "interface": {
+                    "displayName": "Hook Fixture",
+                    "shortDescription": "Hook fixture",
+                    "longDescription": "Hook fixture",
+                    "developerName": "Local",
+                    "category": "Productivity"
+                },
+                "mcpServers": {
+                    "local-tool": { "type": "stdio", "bin": "local-tool" }
+                },
+                "hooks": [{"componentKey": "lifecycle", "source": "./hooks/lifecycle.json"}],
+                "permissions": [
+                    {"permission": "process.spawn", "required": true, "components": ["local-tool", "lifecycle"]},
+                    {"permission": "workspace.read", "required": true, "components": ["lifecycle"]}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let inspection = inspect_local_package(source, None).unwrap();
+        assert_eq!(inspection.hooks.len(), 1);
+        assert_eq!(inspection.hooks[0].component_key, "lifecycle");
+        assert_eq!(inspection.hooks[0].hook_count, 2);
+        assert_eq!(
+            inspection.hooks[0].events,
+            ["SessionStart", "UserPromptSubmit"]
+        );
+    }
+
+    #[test]
+    fn codex_hook_preflight_rejects_unsupported_and_unsafe_handlers() {
+        let async_hook = r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node hook.js","async":true}]}]}}"#;
+        assert!(parse_codex_hook_bundle(async_hook).is_err());
+        let pre_compact =
+            r#"{"hooks":{"PreCompact":[{"hooks":[{"type":"command","command":"node hook.js"}]}]}}"#;
+        assert!(parse_codex_hook_bundle(pre_compact).is_err());
+        let invalid_matcher = r#"{"hooks":{"SessionStart":[{"matcher":"(","hooks":[{"type":"command","command":"node hook.js"}]}]}}"#;
+        assert!(parse_codex_hook_bundle(invalid_matcher).is_err());
+        let invalid_timeout = r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node hook.js","timeout":31}]}]}}"#;
+        assert!(parse_codex_hook_bundle(invalid_timeout).is_err());
+        let mcp_tool =
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"mcp_tool","command":"ignored"}]}]}}"#;
+        assert!(parse_codex_hook_bundle(mcp_tool).is_err());
+    }
+
+    #[test]
+    fn ponytail_compatibility_import_preserves_and_preflights_hooks() {
+        let repository_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .unwrap();
+        let source = repository_root.join("clients/fixtures/codex-hooks/ponytail-5.3.2");
+        let directory = tempfile::tempdir().unwrap();
+        let inspection =
+            inspect_local_package_source(&directory.path().join("plugins"), &source, None).unwrap();
+
+        assert_eq!(inspection.manifest.name, "ponytail");
+        assert_eq!(inspection.manifest.hooks.len(), 1);
+        assert_eq!(inspection.hooks.len(), 1);
+        assert_eq!(inspection.hooks[0].hook_count, 3);
+        assert_eq!(
+            inspection.hooks[0].events,
+            ["SessionStart", "SubagentStart", "UserPromptSubmit"]
+        );
+        assert!(inspection.manifest.permissions.iter().any(|permission| {
+            permission.permission == "workspace.read"
+                && permission
+                    .components
+                    .contains(&inspection.hooks[0].component_key)
+        }));
     }
 
     #[test]
