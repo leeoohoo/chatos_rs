@@ -586,7 +586,7 @@ async fn crash_and_recover(point: &str, committed_version: i64, incomplete: bool
         after.len(),
         match committed_version {
             34 => 1,
-            35..=40 => 2,
+            35..=41 => 2,
             _ => unreachable!(),
         }
     );
@@ -692,6 +692,13 @@ crash_case!(
     false
 );
 crash_case!(kill_after_v40_commit, "schema_v40_after_commit", 40, false);
+crash_case!(
+    kill_before_v41_commit,
+    "schema_v41_before_commit",
+    40,
+    false
+);
+crash_case!(kill_after_v41_commit, "schema_v41_after_commit", 41, false);
 
 async fn kill_business_commit_and_reconcile(point: &str) {
     let directory = tempfile::tempdir().unwrap();

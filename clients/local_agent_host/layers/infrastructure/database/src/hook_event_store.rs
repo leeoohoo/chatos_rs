@@ -74,8 +74,18 @@ pub(super) const SCHEMA_V40: &[&str] = &[
      )",
 ];
 
+pub(super) const SCHEMA_V41: &[&str] = &[
+    "ALTER TABLE local_hook_events ADD COLUMN payload_json TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE local_hook_events ADD COLUMN matcher_value TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE local_hook_events ADD COLUMN active_bundle_ids_json TEXT NOT NULL DEFAULT '[]'",
+    "CREATE INDEX local_hook_events_pending ON local_hook_events(\
+       owner_user_id, status, created_at_unix_ms, event_id\
+     )",
+];
+
 const EVENT_SELECT: &str = "SELECT event_id, owner_user_id, event_type, subject_id, sequence, \
-    payload_sha256, status, additional_context, created_at_unix_ms, updated_at_unix_ms \
+    payload_sha256, payload_json, matcher_value, active_bundle_ids_json, status, \
+    additional_context, created_at_unix_ms, updated_at_unix_ms \
     FROM local_hook_events";
 const INVOCATION_SELECT: &str = "SELECT invocation_id, event_id, bundle_id, hook_id, attempt, \
     status, exit_code, timed_out, duration_ms, stdout_sha256, stdout_bytes, stdout_overflow, \
@@ -153,6 +163,34 @@ impl LocalHookEventStore for SqliteClientStorage {
         .transpose()
     }
 
+    async fn list_pending_hook_events(
+        &self,
+        owner_user_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalHookEventRecord>, ClientStorageError> {
+        if owner_user_id.trim().is_empty()
+            || owner_user_id.len() > 256
+            || owner_user_id.chars().any(char::is_control)
+            || !(1..=1_000).contains(&limit)
+        {
+            return Err(ClientStorageError::InvalidState(
+                "invalid pending Hook event query".to_string(),
+            ));
+        }
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "{EVENT_SELECT} WHERE owner_user_id = ? AND status = 'pending' \
+             ORDER BY created_at_unix_ms, event_id LIMIT ?"
+        )))
+        .bind(owner_user_id)
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await
+        .db()?
+        .into_iter()
+        .map(decode_event)
+        .collect()
+    }
+
     async fn prepare_hook_event(
         &self,
         event: &LocalHookEventSpec,
@@ -188,8 +226,9 @@ impl LocalHookEventStore for SqliteClientStorage {
             sqlx::query(
                 "INSERT INTO local_hook_events(\
                  event_id, owner_user_id, event_type, subject_id, sequence, payload_sha256, \
-                 status, additional_context, created_at_unix_ms, updated_at_unix_ms) \
-                 VALUES(?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)",
+                 payload_json, matcher_value, active_bundle_ids_json, status, \
+                 additional_context, created_at_unix_ms, updated_at_unix_ms) \
+                 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)",
             )
             .bind(&event.event_id)
             .bind(&event.owner_user_id)
@@ -199,6 +238,9 @@ impl LocalHookEventStore for SqliteClientStorage {
                 ClientStorageError::InvalidState("Hook event sequence overflow".to_string())
             })?)
             .bind(&event.payload_sha256)
+            .bind(&event.payload_json)
+            .bind(&event.matcher_value)
+            .bind(serde_json::to_string(&event.active_bundle_ids)?)
             .bind(now_unix_ms)
             .bind(now_unix_ms)
             .execute(&mut *connection)
@@ -520,6 +562,32 @@ fn validate_event(event: &LocalHookEventSpec) -> Result<(), ClientStorageError> 
             "invalid Hook event sequence or payload hash".to_string(),
         ));
     }
+    if event.payload_json.is_empty()
+        || event.payload_json.len() > 1024 * 1024
+        || serde_json::from_str::<serde_json::Value>(&event.payload_json).is_err()
+        || format!("{:x}", Sha256::digest(event.payload_json.as_bytes())) != event.payload_sha256
+        || event.matcher_value.len() > 1_024
+        || event.matcher_value.contains('\0')
+    {
+        return Err(ClientStorageError::InvalidState(
+            "invalid Hook event recovery material".to_string(),
+        ));
+    }
+    let mut bundle_ids = event.active_bundle_ids.clone();
+    bundle_ids.sort();
+    bundle_ids.dedup();
+    if bundle_ids != event.active_bundle_ids
+        || bundle_ids.len() > chatos_local_agent_protocol::LOCAL_PLUGIN_HOOK_MAX_BUNDLES
+        || bundle_ids.iter().any(|bundle_id| {
+            bundle_id.trim().is_empty()
+                || bundle_id.len() > 256
+                || bundle_id.chars().any(char::is_control)
+        })
+    {
+        return Err(ClientStorageError::InvalidState(
+            "invalid Hook event bundle snapshot".to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -663,6 +731,11 @@ fn decode_event(row: SqliteRow) -> Result<LocalHookEventRecord, ClientStorageErr
                 ClientStorageError::InvalidState("invalid Hook event sequence".to_string())
             })?,
             payload_sha256: row.try_get("payload_sha256").db()?,
+            payload_json: row.try_get("payload_json").db()?,
+            matcher_value: row.try_get("matcher_value").db()?,
+            active_bundle_ids: serde_json::from_str(
+                &row.try_get::<String, _>("active_bundle_ids_json").db()?,
+            )?,
         },
         status: row.try_get("status").db()?,
         additional_context: row.try_get("additional_context").db()?,
@@ -909,13 +982,17 @@ mod tests {
     use super::*;
 
     fn event() -> LocalHookEventSpec {
+        let payload_json = "{}".to_string();
         LocalHookEventSpec {
             event_id: "hook-event-1".to_string(),
             owner_user_id: "user-1".to_string(),
             event_type: "SessionStart".to_string(),
             subject_id: "conversation-1".to_string(),
             sequence: 1,
-            payload_sha256: "a".repeat(64),
+            payload_sha256: format!("{:x}", Sha256::digest(payload_json.as_bytes())),
+            payload_json,
+            matcher_value: String::new(),
+            active_bundle_ids: vec!["bundle-1".to_string()],
         }
     }
 
@@ -937,6 +1014,11 @@ mod tests {
         let event = event();
         let prepared = store.prepare_hook_event(&event, 10).await.expect("event");
         assert_eq!(prepared.status, "pending");
+        assert!(store
+            .list_pending_hook_events("user-1", 10)
+            .await
+            .expect("pending events")
+            .contains(&prepared));
         assert!(store
             .has_hook_event("user-1", "SessionStart", "conversation-1")
             .await
@@ -997,6 +1079,12 @@ mod tests {
             .await
             .expect("complete event");
         assert_eq!(completed.status, "completed");
+        assert!(!store
+            .list_pending_hook_events("user-1", 10)
+            .await
+            .expect("completed events are not pending")
+            .iter()
+            .any(|record| record.spec.event_id == event.event_id));
         assert_eq!(
             store
                 .prepare_hook_event(&event, 70)

@@ -417,6 +417,14 @@ pub trait LocalPluginHookBundleStore: Send + Sync {
         owner_user_id: &str,
     ) -> Result<Vec<LocalPluginHookBundleRecord>, ClientStorageError>;
 
+    /// Loads immutable trusted bundles by their exact event-time identities,
+    /// regardless of their current activation state.
+    async fn get_plugin_hook_bundles(
+        &self,
+        owner_user_id: &str,
+        bundle_ids: &[String],
+    ) -> Result<Vec<LocalPluginHookBundleRecord>, ClientStorageError>;
+
     async fn set_active_plugin_hook_bundles(
         &self,
         command: &IdempotentCommand,
@@ -434,6 +442,9 @@ pub struct LocalHookEventSpec {
     pub subject_id: String,
     pub sequence: u64,
     pub payload_sha256: String,
+    pub payload_json: String,
+    pub matcher_value: String,
+    pub active_bundle_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -547,6 +558,12 @@ pub trait LocalHookEventStore: Send + Sync {
         subject_id: &str,
         sequence: u64,
     ) -> Result<Option<LocalHookEventRecord>, ClientStorageError>;
+
+    async fn list_pending_hook_events(
+        &self,
+        owner_user_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalHookEventRecord>, ClientStorageError>;
 
     async fn prepare_hook_event(
         &self,

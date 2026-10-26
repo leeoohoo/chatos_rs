@@ -172,15 +172,23 @@ impl LocalAgentHostCoordinator {
         &self,
         shutdown: watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
-        if self.memory_sync_worker.is_none() {
-            return self.run_schedulers_until_shutdown(shutdown).await;
+        if let Some(hooks) = self.hook_coordinator.as_ref() {
+            let _ = hooks.recover_pending_events(&self.owner_user_id).await;
         }
-        let scheduler_loop = self.run_schedulers_until_shutdown(shutdown.clone());
-        let memory_loop = self.run_memory_until_shutdown(shutdown);
-        let (scheduler_result, memory_result) = tokio::join!(scheduler_loop, memory_loop);
-        scheduler_result?;
-        memory_result?;
-        Ok(())
+        let result = if self.memory_sync_worker.is_none() {
+            self.run_schedulers_until_shutdown(shutdown).await
+        } else {
+            let scheduler_loop = self.run_schedulers_until_shutdown(shutdown.clone());
+            let memory_loop = self.run_memory_until_shutdown(shutdown);
+            let (scheduler_result, memory_result) = tokio::join!(scheduler_loop, memory_loop);
+            scheduler_result.and(memory_result)
+        };
+        if let Some(hooks) = self.hook_coordinator.as_ref() {
+            let _ = hooks
+                .enqueue_session_end(&self.owner_user_id, "shutdown")
+                .await;
+        }
+        result
     }
 
     async fn run_schedulers_until_shutdown(

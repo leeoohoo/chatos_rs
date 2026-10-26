@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     LocalPluginHookBundleRecord, LocalPluginHookBundleSpec, LOCAL_PLUGIN_HOOK_MAX_BUNDLES,
 };
-use sqlx::Row;
+use sqlx::{QueryBuilder, Row, Sqlite};
+use std::collections::HashMap;
 
 pub(super) const SCHEMA_V38: &[&str] = &[
     "CREATE TABLE local_plugin_hook_bundles (\
@@ -135,6 +136,60 @@ impl LocalPluginHookBundleStore for SqliteClientStorage {
             .collect()
     }
 
+    async fn get_plugin_hook_bundles(
+        &self,
+        owner_user_id: &str,
+        bundle_ids: &[String],
+    ) -> Result<Vec<LocalPluginHookBundleRecord>, ClientStorageError> {
+        if bundle_ids.len() > LOCAL_PLUGIN_HOOK_MAX_BUNDLES {
+            return Err(ClientStorageError::InvalidState(
+                "plugin Hook bundle lookup exceeds its limit".to_string(),
+            ));
+        }
+        let mut requested = bundle_ids.to_vec();
+        requested.sort();
+        requested.dedup();
+        if requested.len() != bundle_ids.len() {
+            return Err(ClientStorageError::InvalidState(
+                "plugin Hook bundle lookup contains duplicates".to_string(),
+            ));
+        }
+        if requested.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT spec_json, created_at_unix_ms FROM local_plugin_hook_bundles \
+             WHERE owner_user_id = ",
+        );
+        query.push_bind(owner_user_id).push(" AND bundle_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for bundle_id in &requested {
+                separated.push_bind(bundle_id);
+            }
+        }
+        query.push(")");
+        let rows = query.build().fetch_all(&self.pool).await.db()?;
+        let mut records = HashMap::new();
+        for row in rows {
+            let record = LocalPluginHookBundleRecord {
+                spec: serde_json::from_str(&row.try_get::<String, _>("spec_json").db()?)?,
+                created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
+            };
+            if requested.binary_search(&record.spec.bundle_id).is_ok() {
+                records.insert(record.spec.bundle_id.clone(), record);
+            }
+        }
+        requested
+            .into_iter()
+            .map(|bundle_id| {
+                records
+                    .remove(&bundle_id)
+                    .ok_or(ClientStorageError::NotFound(bundle_id))
+            })
+            .collect()
+    }
+
     async fn set_active_plugin_hook_bundles(
         &self,
         command: &IdempotentCommand,
@@ -253,6 +308,15 @@ mod tests {
             .await
             .expect("inactive list")
             .is_empty());
+        assert_eq!(
+            store
+                .get_plugin_hook_bundles("user-1", std::slice::from_ref(&original.bundle_id))
+                .await
+                .expect("immutable event-time lookup")
+                .first()
+                .map(|record| record.spec.bundle_id.as_str()),
+            Some("bundle-1")
+        );
         store
             .set_active_plugin_hook_bundles(
                 &command("activate-1"),

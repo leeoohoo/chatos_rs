@@ -8,8 +8,8 @@ use chatos_agent_profiles::{
 };
 use chatos_ai_runtime::message_item;
 use chatos_local_agent_ports::{
-    LocalHookEventSpec, LocalHookInvocationCompletion, LocalHookInvocationRecord,
-    LocalHookInvocationSpec, LocalHookOutputSpill,
+    LocalHookEventRecord, LocalHookEventSpec, LocalHookInvocationCompletion,
+    LocalHookInvocationRecord, LocalHookInvocationSpec, LocalHookOutputSpill,
 };
 use chatos_local_agent_protocol::{
     LocalAgentRunClaim, LocalAgentRunRecord, LocalAgentStepOutcome, LocalAgentToolCall,
@@ -25,8 +25,9 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
+use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 const MAXIMUM_EVENT_CONTEXT_BYTES: usize = 512 * 1_024;
@@ -44,6 +45,7 @@ pub struct LocalHookCoordinator {
     workspace_root: Option<PathBuf>,
     process_session_sequence: u64,
     active_sessions: Mutex<HashMap<String, ActiveHookSession>>,
+    inflight_events: Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
 }
 
 pub(crate) enum LocalHookPromptDecision {
@@ -72,6 +74,7 @@ impl LocalHookCoordinator {
             workspace_root,
             process_session_sequence: stable_sequence(&["process", &Uuid::new_v4().to_string()]),
             active_sessions: Mutex::new(HashMap::new()),
+            inflight_events: Mutex::new(HashMap::new()),
         })
     }
 
@@ -390,7 +393,7 @@ impl LocalHookCoordinator {
             .or_else(|| run.input.get("source_conversation_id"))
             .and_then(Value::as_str)
             .unwrap_or(&run.owner_entity_id);
-        let event = HookEvent::new_for_owner_with_sequence(
+        let mut event = HookEvent::new_for_owner_with_sequence(
             &run.owner_user_id,
             "Interrupt",
             &run.run_id,
@@ -404,11 +407,7 @@ impl LocalHookCoordinator {
                 "cwd": self.workspace_display(),
             }),
         )?;
-        let prepared = self
-            .runtime
-            .prepare_hook_event_for_host_worker(&event.spec)
-            .await
-            .map_err(|error| error.to_string())?;
+        let prepared = self.persist_event_snapshot(&mut event).await?;
         if prepared.status == "completed" {
             return Ok(());
         }
@@ -419,6 +418,72 @@ impl LocalHookCoordinator {
             let _ = coordinator.execute_event(event).await;
         });
         Ok(())
+    }
+
+    pub(crate) async fn enqueue_session_end(
+        self: &Arc<Self>,
+        owner_user_id: &str,
+        reason: &str,
+    ) -> Result<usize, String> {
+        let session_ids = self
+            .active_sessions
+            .lock()
+            .map_err(|_| "Hook session state lock is poisoned".to_string())?
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut enqueued = 0;
+        for session_id in session_ids {
+            let mut event = HookEvent::new_for_owner_with_sequence(
+                owner_user_id,
+                "SessionEnd",
+                &session_id,
+                self.process_session_sequence,
+                reason,
+                json!({
+                    "session_id": session_id,
+                    "hook_event_name": "SessionEnd",
+                    "reason": reason,
+                    "cwd": self.workspace_display(),
+                }),
+            )?;
+            let prepared = self.persist_event_snapshot(&mut event).await?;
+            if prepared.status == "completed" {
+                continue;
+            }
+            enqueued += 1;
+            let coordinator = Arc::clone(self);
+            tokio::spawn(async move {
+                // SessionEnd is notification-only. Persist it before returning
+                // from shutdown, but never make process exit wait on a plugin.
+                let _ = coordinator.execute_event(event).await;
+            });
+        }
+        Ok(enqueued)
+    }
+
+    pub(crate) async fn recover_pending_events(
+        self: &Arc<Self>,
+        owner_user_id: &str,
+    ) -> Result<usize, String> {
+        let pending = self
+            .runtime
+            .list_pending_hook_events_for_host_worker(owner_user_id, 256)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut recovered = 0;
+        for record in pending {
+            let event = match HookEvent::from_record(&record) {
+                Ok(event) => event,
+                Err(_) => continue,
+            };
+            recovered += 1;
+            let coordinator = Arc::clone(self);
+            tokio::spawn(async move {
+                let _ = coordinator.execute_event(event).await;
+            });
+        }
+        Ok(recovered)
     }
 
     async fn events_for_claim(&self, claim: &LocalAgentRunClaim) -> Result<Vec<HookEvent>, String> {
@@ -645,18 +710,39 @@ impl LocalHookCoordinator {
     }
 
     async fn execute_event(&self, event: HookEvent) -> Result<PersistedEventOutcome, String> {
-        let prepared = self
-            .runtime
-            .prepare_hook_event_for_host_worker(&event.spec)
-            .await
-            .map_err(|error| error.to_string())?;
+        let event_lock = {
+            let mut inflight = self
+                .inflight_events
+                .lock()
+                .map_err(|_| "Hook event lock registry is poisoned".to_string())?;
+            inflight.retain(|_, event_lock| event_lock.strong_count() != 0);
+            if let Some(event_lock) = inflight.get(&event.spec.event_id).and_then(Weak::upgrade) {
+                event_lock
+            } else {
+                let event_lock = Arc::new(AsyncMutex::new(()));
+                inflight.insert(event.spec.event_id.clone(), Arc::downgrade(&event_lock));
+                event_lock
+            }
+        };
+        let _event_guard = event_lock.lock().await;
+        self.execute_event_serial(event).await
+    }
+
+    async fn execute_event_serial(
+        &self,
+        mut event: HookEvent,
+    ) -> Result<PersistedEventOutcome, String> {
+        let prepared = self.persist_event_snapshot(&mut event).await?;
         if prepared.status == "completed" {
             return decode_persisted_outcome(&event.event_type, prepared.additional_context);
         }
 
         let bundles = self
             .runtime
-            .active_plugin_hook_bundles_for_host_worker(&event.spec.owner_user_id)
+            .plugin_hook_bundles_for_host_worker(
+                &event.spec.owner_user_id,
+                &event.spec.active_bundle_ids,
+            )
             .await
             .map_err(|error| error.to_string())?;
         let mut matches = matching_hooks(bundles, &event)?;
@@ -701,6 +787,50 @@ impl LocalHookCoordinator {
             .await
             .map_err(|error| error.to_string())?;
         Ok(outcome)
+    }
+
+    async fn persist_event_snapshot(
+        &self,
+        event: &mut HookEvent,
+    ) -> Result<LocalHookEventRecord, String> {
+        if let Some(existing) = self
+            .runtime
+            .get_hook_event_for_host_worker(
+                &event.spec.owner_user_id,
+                &event.event_type,
+                &event.spec.subject_id,
+                event.spec.sequence,
+            )
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            if existing.spec.payload_json.is_empty() && existing.status != "completed" {
+                return Err(format!(
+                    "pending Hook event predates recoverable payload storage: {}",
+                    existing.spec.event_id
+                ));
+            }
+            if !existing.spec.payload_json.is_empty() {
+                *event = HookEvent::from_record(&existing)?;
+            }
+            return Ok(existing);
+        }
+        let bundles = self
+            .runtime
+            .active_plugin_hook_bundles_for_host_worker(&event.spec.owner_user_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut bundle_ids = bundles
+            .into_iter()
+            .map(|bundle| bundle.spec.bundle_id)
+            .collect::<Vec<_>>();
+        bundle_ids.sort();
+        bundle_ids.dedup();
+        event.spec.active_bundle_ids = bundle_ids;
+        self.runtime
+            .prepare_hook_event_for_host_worker(&event.spec)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     async fn execute_invocation(
@@ -867,6 +997,8 @@ impl HookEvent {
         let stdin_json = serde_json::to_vec(&payload)
             .map_err(|error| format!("encode Hook event payload failed: {error}"))?;
         let payload_sha256 = sha256(&stdin_json);
+        let payload_json = String::from_utf8(stdin_json.clone())
+            .map_err(|error| format!("Hook event payload was not UTF-8 JSON: {error}"))?;
         Ok(Self {
             spec: LocalHookEventSpec {
                 event_id: stable_id(
@@ -878,9 +1010,34 @@ impl HookEvent {
                 subject_id: subject_id.to_string(),
                 sequence,
                 payload_sha256,
+                payload_json,
+                matcher_value: matcher_value.to_string(),
+                active_bundle_ids: Vec::new(),
             },
             event_type: event_type.to_string(),
             matcher_value: matcher_value.to_string(),
+            stdin_json,
+        })
+    }
+
+    fn from_record(record: &LocalHookEventRecord) -> Result<Self, String> {
+        if record.spec.payload_json.is_empty() {
+            return Err(format!(
+                "Hook event has no recoverable payload: {}",
+                record.spec.event_id
+            ));
+        }
+        let stdin_json = record.spec.payload_json.as_bytes().to_vec();
+        if sha256(&stdin_json) != record.spec.payload_sha256 {
+            return Err(format!(
+                "Hook event recovery payload hash changed: {}",
+                record.spec.event_id
+            ));
+        }
+        Ok(Self {
+            spec: record.spec.clone(),
+            event_type: record.spec.event_type.clone(),
+            matcher_value: record.spec.matcher_value.clone(),
             stdin_json,
         })
     }
@@ -2685,6 +2842,219 @@ mod tests {
             .find(|payload| payload["hook_event_name"] == "Interrupt")
             .expect("Interrupt payload");
         assert_eq!(interrupt["reason"], "cancelled by user");
+    }
+
+    #[tokio::test]
+    async fn session_end_is_durable_before_background_delivery_and_cannot_block_shutdown() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-session-end",
+            vec![hook("session-end", "SessionEnd", "block")],
+        )
+        .await;
+        let coordinator = Arc::new(
+            LocalHookCoordinator::new(runtime.clone(), runner.clone(), None).expect("hooks"),
+        );
+        coordinator
+            .prefixed_context(&claim(run("run-session-end")))
+            .await
+            .expect("establish session");
+
+        assert_eq!(
+            coordinator
+                .enqueue_session_end("user-1", "shutdown")
+                .await
+                .expect("enqueue SessionEnd"),
+            1
+        );
+        let sequence = coordinator.process_session_sequence;
+        let pending_or_completed = runtime
+            .get_hook_event_for_host_worker("user-1", "SessionEnd", "conversation-1", sequence)
+            .await
+            .expect("read durable SessionEnd")
+            .expect("SessionEnd persisted before enqueue returns");
+        assert!(matches!(
+            pending_or_completed.status.as_str(),
+            "pending" | "completed"
+        ));
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let event = runtime
+                    .get_hook_event_for_host_worker(
+                        "user-1",
+                        "SessionEnd",
+                        "conversation-1",
+                        sequence,
+                    )
+                    .await
+                    .expect("read SessionEnd")
+                    .expect("SessionEnd");
+                if event.status == "completed" {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("SessionEnd delivery");
+        assert_eq!(
+            runner
+                .events()
+                .into_iter()
+                .filter(|event| event == "SessionEnd")
+                .count(),
+            1
+        );
+        let payload = runner
+            .payloads()
+            .into_iter()
+            .find(|payload| payload["hook_event_name"] == "SessionEnd")
+            .expect("SessionEnd payload");
+        assert_eq!(payload["reason"], "shutdown");
+        assert_eq!(
+            coordinator
+                .enqueue_session_end("user-1", "shutdown")
+                .await
+                .expect("completed SessionEnd replay"),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_event_recovers_with_its_event_time_bundle_snapshot() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-original",
+            vec![hook("interrupt-original", "Interrupt", "original context")],
+        )
+        .await;
+        let first = Arc::new(
+            LocalHookCoordinator::new(runtime.clone(), runner.clone(), None).expect("hooks"),
+        );
+        let mut event = HookEvent::new_for_owner_with_sequence(
+            "user-1",
+            "Interrupt",
+            "run-recovery",
+            2,
+            "",
+            json!({
+                "session_id": "conversation-recovery",
+                "hook_event_name": "Interrupt",
+                "run_id": "run-recovery",
+                "reason": "process interrupted",
+                "cwd": "",
+            }),
+        )
+        .expect("recovery event");
+        let prepared = first
+            .persist_event_snapshot(&mut event)
+            .await
+            .expect("persist pending event");
+        assert_eq!(prepared.status, "pending");
+        assert_eq!(
+            prepared.spec.active_bundle_ids,
+            vec!["bundle-original".to_string()]
+        );
+        activate_bundle(
+            &storage,
+            "bundle-new",
+            vec![hook("interrupt-new", "Interrupt", "new context")],
+        )
+        .await;
+        storage
+            .set_active_plugin_hook_bundles(
+                &command("activate-only-new"),
+                "user-1",
+                &["bundle-new".to_string()],
+                10_100,
+            )
+            .await
+            .expect("replace active bundles");
+
+        let recovered = Arc::new(
+            LocalHookCoordinator::new(runtime.clone(), runner.clone(), None).expect("recovered"),
+        );
+        assert_eq!(
+            recovered
+                .recover_pending_events("user-1")
+                .await
+                .expect("recover pending events"),
+            1
+        );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let record = runtime
+                    .get_hook_event_for_host_worker("user-1", "Interrupt", "run-recovery", 2)
+                    .await
+                    .expect("read recovery event")
+                    .expect("recovery event");
+                if record.status == "completed" {
+                    let outcome = decode_persisted_outcome("Interrupt", record.additional_context)
+                        .expect("decode recovery outcome");
+                    assert!(outcome
+                        .additional_context
+                        .as_deref()
+                        .is_some_and(|context| context.contains("original context")));
+                    assert!(!outcome
+                        .additional_context
+                        .as_deref()
+                        .is_some_and(|context| context.contains("new context")));
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pending event recovery");
+        assert_eq!(runner.events(), vec!["Interrupt"]);
+    }
+
+    #[tokio::test]
+    async fn concurrent_event_replay_executes_each_hook_only_once_in_process() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-concurrent-replay",
+            vec![hook(
+                "interrupt-concurrent-replay",
+                "Interrupt",
+                "delay:replayed once",
+            )],
+        )
+        .await;
+        let coordinator = LocalHookCoordinator::new(runtime, runner.clone(), None).expect("hooks");
+        let replay_event = || {
+            HookEvent::new_for_owner_with_sequence(
+                "user-1",
+                "Interrupt",
+                "run-concurrent-replay",
+                7,
+                "",
+                json!({
+                    "session_id": "conversation-concurrent-replay",
+                    "hook_event_name": "Interrupt",
+                    "run_id": "run-concurrent-replay",
+                    "reason": "process interrupted",
+                    "cwd": "",
+                }),
+            )
+            .expect("replay event")
+        };
+
+        let (first, second) = tokio::join!(
+            coordinator.execute_event(replay_event()),
+            coordinator.execute_event(replay_event())
+        );
+        for outcome in [first.expect("first replay"), second.expect("second replay")] {
+            assert!(outcome
+                .additional_context
+                .as_deref()
+                .is_some_and(|context| context.contains("replayed once")));
+        }
+        assert_eq!(runner.events(), vec!["Interrupt"]);
     }
 
     #[test]

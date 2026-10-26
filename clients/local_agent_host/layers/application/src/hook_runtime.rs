@@ -37,11 +37,35 @@ impl LocalAgentRuntime {
     }
 
     #[doc(hidden)]
+    pub async fn list_pending_hook_events_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalHookEventRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .list_pending_hook_events(owner_user_id, limit)
+            .await?)
+    }
+
+    #[doc(hidden)]
     pub async fn active_plugin_hook_bundles_for_host_worker(
         &self,
         owner_user_id: &str,
     ) -> Result<Vec<LocalPluginHookBundleRecord>, LocalAgentRuntimeError> {
         Ok(self.store.list_plugin_hook_bundles(owner_user_id).await?)
+    }
+
+    #[doc(hidden)]
+    pub async fn plugin_hook_bundles_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        bundle_ids: &[String],
+    ) -> Result<Vec<LocalPluginHookBundleRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .get_plugin_hook_bundles(owner_user_id, bundle_ids)
+            .await?)
     }
 
     #[doc(hidden)]
