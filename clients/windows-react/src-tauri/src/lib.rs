@@ -43,6 +43,7 @@ mod project_run;
 mod quick_search;
 mod remote_connection;
 mod requirement_survey;
+mod resource_pressure;
 mod run_inspector;
 mod story_studio;
 mod system_permissions;
@@ -309,6 +310,7 @@ pub fn run() {
             app.state::<PetAssetStore>()
                 .load(&resource_directory)
                 .map_err(std::io::Error::other)?;
+            resource_pressure::start_monitor(app.handle().clone());
             #[cfg(target_os = "windows")]
             if std::env::var_os("CHATOS_INSTALL_SMOKE_EXIT_AFTER_STARTUP").as_deref()
                 == Some(std::ffi::OsStr::new("1"))

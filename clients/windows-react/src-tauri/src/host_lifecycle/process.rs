@@ -138,8 +138,13 @@ fn safe_environment(credential_environment: &BTreeMap<String, String>) -> BTreeM
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host_lifecycle::transport::{health_check, request, terminate};
-    use chatos_local_agent_protocol::{HostCommand, HostResult, ListConversationsCommand};
+    use crate::host_lifecycle::{
+        apply_scheduler_pressure,
+        transport::{health_check, request, terminate},
+    };
+    use chatos_local_agent_protocol::{
+        HostCommand, HostResult, ListConversationsCommand, LocalAgentResourcePressureLevel,
+    };
 
     #[tokio::test]
     #[ignore = "requires CHATOS_LOCAL_AGENT_HOST_TEST_PATH"]
@@ -160,6 +165,27 @@ mod tests {
         .expect("spawn prepared Host");
 
         health_check(&mut host).await.expect("v49 health handshake");
+        apply_scheduler_pressure(&mut host, LocalAgentResourcePressureLevel::Serious)
+            .await
+            .expect("apply serious resource pressure");
+        let health = request(&mut host, HostCommand::Health)
+            .await
+            .expect("pressure-aware health");
+        let HostResult::Health {
+            scheduler: Some(scheduler),
+            ..
+        } = health
+        else {
+            panic!("expected scheduler health snapshot")
+        };
+        assert_eq!(
+            scheduler.pressure_level,
+            LocalAgentResourcePressureLevel::Serious
+        );
+        assert_eq!(
+            scheduler.effective_maximum_concurrent_work_items,
+            scheduler.maximum_concurrent_work_items.div_ceil(2)
+        );
         terminate(&mut host).await;
 
         assert!(host.child.try_wait().expect("child status").is_some());

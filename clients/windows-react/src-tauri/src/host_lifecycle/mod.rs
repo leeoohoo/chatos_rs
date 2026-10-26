@@ -14,7 +14,10 @@ use crate::{
     terminal_tool_worker::TerminalToolWorker,
     tool_approval::session::ApprovalSessionAllowlist,
 };
-use chatos_local_agent_protocol::{HostCommand, HostResult, LOCAL_AGENT_PROTOCOL_VERSION};
+use chatos_local_agent_protocol::{
+    HostCommand, HostResult, LocalAgentResourcePressureLevel, SetSchedulerPressureCommand,
+    LOCAL_AGENT_PROTOCOL_VERSION,
+};
 use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
 use process::spawn;
 use serde::Serialize;
@@ -55,12 +58,24 @@ impl HostLifecycleSnapshot {
     }
 }
 
-#[derive(Default)]
 pub struct HostManager {
     process: Mutex<Option<ManagedHost>>,
     model_catalog: Mutex<Option<(String, Vec<control_plane::ControlPlaneModelOption>)>>,
+    scheduler_pressure: Mutex<LocalAgentResourcePressureLevel>,
     diagnostics: HostDiagnostics,
     approval_sessions: ApprovalSessionAllowlist,
+}
+
+impl Default for HostManager {
+    fn default() -> Self {
+        Self {
+            process: Mutex::new(None),
+            model_catalog: Mutex::new(None),
+            scheduler_pressure: Mutex::new(LocalAgentResourcePressureLevel::Normal),
+            diagnostics: HostDiagnostics::default(),
+            approval_sessions: ApprovalSessionAllowlist::default(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -84,6 +99,44 @@ impl HostManager {
         self.diagnostics.record("host_shutdown", "requested").await;
         self.terminate_process().await;
         self.diagnostics.record("host_shutdown", "stopped").await;
+    }
+
+    async fn current_scheduler_pressure(&self) -> LocalAgentResourcePressureLevel {
+        *self.scheduler_pressure.lock().await
+    }
+
+    pub(crate) async fn update_scheduler_pressure(
+        &self,
+        pressure_level: LocalAgentResourcePressureLevel,
+    ) -> Result<(), String> {
+        *self.scheduler_pressure.lock().await = pressure_level;
+        if self.process.lock().await.is_none() {
+            return Ok(());
+        }
+        match self
+            .execute_detailed(HostCommand::SetSchedulerPressure(
+                SetSchedulerPressureCommand { pressure_level },
+            ))
+            .await
+        {
+            Ok(HostResult::SchedulerPressureUpdated {
+                pressure_level: applied,
+                effective_maximum_concurrent_work_items,
+            }) if applied == pressure_level
+                && (1..=16).contains(&effective_maximum_concurrent_work_items) =>
+            {
+                Ok(())
+            }
+            Ok(_) => {
+                self.terminate_process().await;
+                Err("Local Agent Host scheduler pressure response is invalid.".to_string())
+            }
+            Err(error) if error.code.as_deref() == Some("host_unavailable") => Ok(()),
+            Err(error) => {
+                self.terminate_process().await;
+                Err(error.message)
+            }
+        }
     }
 
     pub(crate) async fn execute(&self, command: HostCommand) -> Result<HostResult, String> {
@@ -278,17 +331,20 @@ pub async fn start_local_agent_host(
             .is_some_and(|(owner, options)| owner == &owner_user_id && !options.is_empty());
         if host.owner_user_id == owner_user_id && catalog_ready && health_check(host).await.is_ok()
         {
-            attachment_worker
-                .configure(app.clone(), owner_user_id.clone())
-                .await;
-            terminal_worker
-                .configure(app.clone(), owner_user_id.clone())
-                .await;
-            manager
-                .diagnostics
-                .record("host_start", "already_ready")
-                .await;
-            return Ok(HostLifecycleSnapshot::ready());
+            let pressure = manager.current_scheduler_pressure().await;
+            if apply_scheduler_pressure(host, pressure).await.is_ok() {
+                attachment_worker
+                    .configure(app.clone(), owner_user_id.clone())
+                    .await;
+                terminal_worker
+                    .configure(app.clone(), owner_user_id.clone())
+                    .await;
+                manager
+                    .diagnostics
+                    .record("host_start", "already_ready")
+                    .await;
+                return Ok(HostLifecycleSnapshot::ready());
+            }
         }
         terminate(host).await;
         *process = None;
@@ -420,6 +476,16 @@ pub async fn start_local_agent_host(
             .await;
         return Err(error);
     }
+    if let Err(error) =
+        apply_scheduler_pressure(&mut host, manager.current_scheduler_pressure().await).await
+    {
+        terminate(&mut host).await;
+        manager
+            .diagnostics
+            .record("host_scheduler_pressure", classify_error(&error))
+            .await;
+        return Err(error);
+    }
     let worker_owner_user_id = host.owner_user_id.clone();
     *manager.model_catalog.lock().await = Some((worker_owner_user_id.clone(), model_options));
     *process = Some(host);
@@ -455,6 +521,29 @@ pub async fn start_local_agent_host(
         .record("host_start_handshake", "ready")
         .await;
     Ok(HostLifecycleSnapshot::ready())
+}
+
+async fn apply_scheduler_pressure(
+    host: &mut ManagedHost,
+    pressure_level: LocalAgentResourcePressureLevel,
+) -> Result<(), String> {
+    match request(
+        host,
+        HostCommand::SetSchedulerPressure(SetSchedulerPressureCommand { pressure_level }),
+    )
+    .await
+    .map_err(|error| error.message)?
+    {
+        HostResult::SchedulerPressureUpdated {
+            pressure_level: applied,
+            effective_maximum_concurrent_work_items,
+        } if applied == pressure_level
+            && (1..=16).contains(&effective_maximum_concurrent_work_items) =>
+        {
+            Ok(())
+        }
+        _ => Err("Local Agent Host scheduler pressure response is invalid.".to_string()),
+    }
 }
 
 async fn host_owner_for_recovery(manager: &HostManager) -> Option<String> {
@@ -542,5 +631,18 @@ mod tests {
             .insert_if_current(generation, "v2:test-scope".into()));
         manager.shutdown().await;
         assert!(manager.approval_sessions().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pressure_is_retained_before_the_host_is_started() {
+        let manager = HostManager::default();
+        manager
+            .update_scheduler_pressure(LocalAgentResourcePressureLevel::Serious)
+            .await
+            .expect("store pressure without a running Host");
+        assert_eq!(
+            manager.current_scheduler_pressure().await,
+            LocalAgentResourcePressureLevel::Serious
+        );
     }
 }
