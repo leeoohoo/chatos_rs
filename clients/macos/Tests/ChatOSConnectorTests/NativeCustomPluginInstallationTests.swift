@@ -580,6 +580,74 @@ struct NativeCustomPluginInstallationTests {
         #expect(installed.installationIssue != nil)
     }
 
+    @Test("Ponytail 5.3.2 imports through the generic Codex Hook path")
+    func ponytailFixtureImportsWithoutPluginSpecificLogic() async throws {
+        var repositoryRoot = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 { repositoryRoot.deleteLastPathComponent() }
+        let source = repositoryRoot.appendingPathComponent(
+            "clients/fixtures/codex-hooks/ponytail-5.3.2",
+            isDirectory: true
+        )
+        let hookDocument = try #require(
+            JSONSerialization.jsonObject(
+                with: Data(contentsOf: source.appendingPathComponent(
+                    "hooks/claude-codex-hooks.json"
+                ))
+            ) as? [String: Any]
+        )
+        let hookGroups = try #require(hookDocument["hooks"] as? [String: Any])
+        let expectedEvents = ["SessionStart", "SubagentStart", "UserPromptSubmit"]
+        let expectedCommands = try expectedEvents.map { event in
+            let matchers = try #require(hookGroups[event] as? [[String: Any]])
+            let handlers = try #require(matchers.first?["hooks"] as? [[String: Any]])
+            return try #require(handlers.first?["command"] as? String)
+        }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PonytailImport-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(
+            id: "owner-ponytail",
+            username: "ponytail",
+            displayName: "Ponytail",
+            role: "user"
+        )
+        state.deviceID = "device-ponytail"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+
+        let inspection = try await service.inspectLocalPlugin(atPath: source.path)
+
+        #expect(inspection.version == "5.3.2")
+        #expect(inspection.sourceSummary.contains("Codex Plugin"))
+        #expect(inspection.sourceSummary.contains(".codex-plugin/plugin.json"))
+        let hook = try #require(inspection.components.first(where: { $0.kind == .hook }))
+        #expect(hook.hookDialect == "codex")
+        #expect(hook.hookEvents == expectedEvents)
+        #expect(hook.hookCommands == expectedCommands)
+        #expect(hook.hookRuntimes.count == 1)
+        #expect(hook.hookRuntimes.first?.hasPrefix("node: /") == true)
+
+        try await service.installLocalPlugin(
+            atPath: source.path,
+            expectedFingerprint: inspection.fingerprint
+        )
+        let installed = try NativeConnectorStateStore(stateURL: stateURL).load()
+        let trust = try #require(installed.pluginHookTrustRecords?.values.first)
+        #expect(trust.hooks.map(\.event).sorted() == expectedEvents)
+        #expect(trust.hooks.map(\.command) == expectedCommands)
+        #expect(trust.permissions == ["process.spawn", "workspace.read"])
+    }
+
     @Test("Codex Hook parser rejects unsupported async handlers and path escapes")
     func codexHookParserRejectsUnsafeInputs() throws {
         let async = Data(#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node hook.js","async":true}]}]}}"#.utf8)

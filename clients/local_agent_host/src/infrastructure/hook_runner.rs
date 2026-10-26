@@ -118,11 +118,15 @@ impl MacOsSeatbeltHookRunner {
             .as_deref()
             .map(|path| canonical_directory(path, "Hook workspace root"))
             .transpose()?;
-        let data_root = self.plugin_data_path(&invocation.bundle);
-        std::fs::create_dir_all(&data_root)
+        let configured_data_root = self.plugin_data_path(&invocation.bundle);
+        std::fs::create_dir_all(&configured_data_root)
             .map_err(|error| format!("create Hook data directory failed: {error}"))?;
-        std::fs::set_permissions(&data_root, std::fs::Permissions::from_mode(0o700))
-            .map_err(|error| format!("protect Hook data directory failed: {error}"))?;
+        std::fs::set_permissions(
+            &configured_data_root,
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .map_err(|error| format!("protect Hook data directory failed: {error}"))?;
+        let data_root = canonical_directory(&configured_data_root, "Hook data root")?;
         let temporary_root = data_root.join("tmp");
         std::fs::create_dir_all(&temporary_root)
             .map_err(|error| format!("create Hook temporary directory failed: {error}"))?;
@@ -469,5 +473,91 @@ mod tests {
         let result = runner.run(invocation).await.expect("run");
         assert!(result.timed_out);
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[tokio::test]
+    async fn node_hook_can_write_plugin_data_but_not_workspace_or_network() {
+        let (root, mut invocation) = fixture("node \"$PLUGIN_ROOT/security-probe.js\"", 5_000);
+        let installation = PathBuf::from(&invocation.bundle.installation_root);
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::write(workspace.join("readable.txt"), "workspace-visible")
+            .expect("workspace fixture");
+        std::fs::write(
+            installation.join("security-probe.js"),
+            r#"
+const fs = require('fs');
+const net = require('net');
+const path = require('path');
+const outcome = {
+  workspaceRead: fs.readFileSync(path.join(process.env.CLAUDE_PROJECT_DIR, 'readable.txt'), 'utf8'),
+  pluginDataWrite: false,
+  workspaceWriteBlocked: false,
+  networkError: null,
+};
+fs.writeFileSync(path.join(process.env.PLUGIN_DATA, 'written.txt'), 'plugin-data-writable');
+outcome.pluginDataWrite = true;
+try {
+  fs.writeFileSync(path.join(process.env.CLAUDE_PROJECT_DIR, 'forbidden.txt'), 'must-not-exist');
+} catch (_) {
+  outcome.workspaceWriteBlocked = true;
+}
+let finished = false;
+function finish(networkError) {
+  if (finished) return;
+  finished = true;
+  outcome.networkError = networkError;
+  process.stdout.write(JSON.stringify(outcome));
+}
+const socket = net.connect({host: '127.0.0.1', port: 9});
+socket.on('connect', () => { socket.destroy(); finish('connected'); });
+socket.on('error', (error) => finish(error.code || String(error)));
+setTimeout(() => { socket.destroy(); finish('timeout'); }, 1000);
+"#,
+        )
+        .expect("security probe");
+        invocation.bundle.permissions =
+            vec!["process.spawn".to_string(), "workspace.read".to_string()];
+        invocation.hook = LocalPluginHookDefinition {
+            hook_id: "hook-1".to_string(),
+            event: "SessionStart".to_string(),
+            matcher: None,
+            command: "node \"$PLUGIN_ROOT/security-probe.js\"".to_string(),
+            timeout_ms: 5_000,
+            additional_context_limit: 65_536,
+        };
+        invocation.bundle.hooks = vec![invocation.hook.clone()];
+        invocation.workspace_root = Some(workspace.clone());
+
+        let data_root = root.path().join("data");
+        let runner = MacOsSeatbeltHookRunner::new(data_root.clone()).expect("runner");
+        let result = runner.run(invocation).await.expect("run");
+
+        assert_eq!(
+            result.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let outcome: serde_json::Value =
+            serde_json::from_slice(&result.stdout).expect("probe json");
+        assert_eq!(outcome["workspaceRead"], "workspace-visible");
+        assert_eq!(outcome["pluginDataWrite"], true);
+        assert_eq!(outcome["workspaceWriteBlocked"], true);
+        assert!(matches!(
+            outcome["networkError"].as_str(),
+            Some("EPERM" | "EACCES")
+        ));
+        assert!(!workspace.join("forbidden.txt").exists());
+        let plugin_data = std::fs::read_dir(&data_root)
+            .expect("data root")
+            .next()
+            .expect("plugin data directory")
+            .expect("plugin data entry")
+            .path();
+        assert_eq!(
+            std::fs::read_to_string(plugin_data.join("written.txt")).expect("plugin data"),
+            "plugin-data-writable"
+        );
     }
 }

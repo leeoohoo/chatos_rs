@@ -611,6 +611,10 @@ fn completion_from_result(
     {
         return completion;
     }
+    if result.stdout.iter().all(u8::is_ascii_whitespace) {
+        completion.status = "succeeded".to_string();
+        return completion;
+    }
     let Ok(output) = serde_json::from_slice::<HookOutput>(&result.stdout) else {
         return completion;
     };
@@ -771,6 +775,8 @@ fn sha256(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    use crate::infrastructure::MacOsSeatbeltHookRunner;
     use crate::{HostRequestHandler, LocalAgentHostCoordinator, LocalAgentScheduler};
     use chatos_agent_profiles::MAIN_CHAT_PROFILE_KEY;
     use chatos_client_storage::SqliteClientStorage;
@@ -1205,6 +1211,173 @@ mod tests {
             .contains("task context"));
     }
 
+    #[test]
+    fn successful_silent_hook_output_is_a_valid_continue_decision() {
+        let hook = hook("silent", "UserPromptSubmit", "silent");
+        let result = LocalHookInvocationResult {
+            exit_code: Some(0),
+            stdout: b" \n\t".to_vec(),
+            stderr: Vec::new(),
+            stdout_overflow: false,
+            stderr_overflow: false,
+            timed_out: false,
+            duration_ms: 1,
+        };
+
+        let completion = completion_from_result("UserPromptSubmit", &hook, &result);
+
+        assert_eq!(completion.status, "succeeded");
+        assert!(completion.additional_context.is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn ponytail_fixture_runs_real_session_prompt_and_subagent_hooks() {
+        let (storage, runtime, _) = fixture().await;
+        let fixture_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/codex-hooks/ponytail-5.3.2")
+            .canonicalize()
+            .expect("Ponytail fixture root");
+        let hooks = ponytail_fixture_hooks(&fixture_root);
+        let sandbox = tempfile::tempdir().expect("sandbox root");
+        let workspace = sandbox.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::write(workspace.join("visible.txt"), "visible").expect("workspace file");
+        let data_root = sandbox.path().join("plugin-data");
+        let bundle = LocalPluginHookBundleSpec {
+            bundle_id: "bundle-ponytail-5-3-2".to_string(),
+            owner_user_id: "user-1".to_string(),
+            plugin_id: "ponytail".to_string(),
+            release_id: "5-3-2".to_string(),
+            component_key: "lifecycle-hooks".to_string(),
+            artifact_sha256: "a".repeat(64),
+            content_sha256: "b".repeat(64),
+            normalized_hook_sha256: "c".repeat(64),
+            command_sha256: "d".repeat(64),
+            permission_snapshot_sha256: "e".repeat(64),
+            runner_policy_version: 1,
+            installation_root: fixture_root.display().to_string(),
+            permissions: vec!["process.spawn".to_string(), "workspace.read".to_string()],
+            hooks,
+            enabled: true,
+            trusted_at_unix_ms: 9_000,
+        };
+        storage
+            .put_plugin_hook_bundle(&command("put-ponytail"), &bundle, 10_000)
+            .await
+            .expect("put Ponytail bundle");
+        storage
+            .set_active_plugin_hook_bundles(
+                &command("activate-ponytail"),
+                "user-1",
+                &[bundle.bundle_id.clone()],
+                10_001,
+            )
+            .await
+            .expect("activate Ponytail bundle");
+        let runner = MacOsSeatbeltHookRunner::new(data_root.clone()).expect("runner");
+        let coordinator = LocalHookCoordinator::new(
+            runtime.clone(),
+            runner,
+            Some(workspace.canonicalize().expect("canonical workspace")),
+        )
+        .expect("coordinator");
+
+        let initial_prompt = StartConversationTurnCommand {
+            owner_user_id: "user-1".to_string(),
+            conversation_id: "conversation-1".to_string(),
+            expected_conversation_version: 1,
+            turn_id: "turn-initial".to_string(),
+            message_id: "message-initial".to_string(),
+            run_id: "run-initial".to_string(),
+            message: "inspect this project".to_string(),
+            message_metadata: json!({"source": "composer"}),
+            attachments: Vec::new(),
+            model_config_ref: "model-1".to_string(),
+            model_config_revision: "revision-1".to_string(),
+            capability_policy_revision: "policy-1".to_string(),
+            max_iterations: 8,
+        };
+        assert!(matches!(
+            coordinator.gate_user_prompt(&initial_prompt).await.unwrap(),
+            LocalHookPromptDecision::Allow
+        ));
+        let mut initial_run = run("run-initial");
+        initial_run.input = json!({
+            "conversation_id": "conversation-1",
+            "turn_id": "turn-initial",
+            "message": "inspect this project",
+        });
+        let initial_context = coordinator
+            .prefixed_context(&claim(initial_run.clone()))
+            .await
+            .expect("initial context");
+        assert!(combined_context(&initial_context).contains("PONYTAIL MODE ACTIVE — level: full"));
+
+        let switch_prompt = StartConversationTurnCommand {
+            turn_id: "turn-ultra".to_string(),
+            message_id: "message-ultra".to_string(),
+            run_id: "run-ultra".to_string(),
+            message: "/ponytail ultra".to_string(),
+            expected_conversation_version: 2,
+            ..initial_prompt
+        };
+        assert!(matches!(
+            coordinator.gate_user_prompt(&switch_prompt).await.unwrap(),
+            LocalHookPromptDecision::Allow
+        ));
+        let mut ultra_run = run("run-ultra");
+        ultra_run.input = json!({
+            "conversation_id": "conversation-1",
+            "turn_id": "turn-ultra",
+            "message": "/ponytail ultra",
+        });
+        let ultra_context = coordinator
+            .prefixed_context(&claim(ultra_run))
+            .await
+            .expect("ultra context");
+        let ultra_context = combined_context(&ultra_context);
+        assert!(
+            ultra_context.contains("PONYTAIL MODE CHANGED — level: ultra"),
+            "{ultra_context}"
+        );
+
+        storage
+            .create_run(
+                &command("create-parent-for-ponytail"),
+                &initial_run,
+                "parent-event",
+            )
+            .await
+            .expect("create parent run");
+        let mut task = run("task-ponytail");
+        task.owner_entity_type = "task".to_string();
+        task.owner_entity_id = "task-1".to_string();
+        task.profile_key = TASK_EXECUTION_PROFILE_KEY.to_string();
+        task.input = json!({
+            "prompt": "perform delegated work",
+            "source_run_id": "run-initial",
+            "source_conversation_id": "conversation-1",
+        });
+        let task_context = coordinator
+            .prefixed_context(&claim(task))
+            .await
+            .expect("task context");
+        assert!(combined_context(&task_context).contains("PONYTAIL MODE ACTIVE — level: ultra"));
+
+        let plugin_data = std::fs::read_dir(&data_root)
+            .expect("plugin data root")
+            .next()
+            .expect("plugin data directory")
+            .expect("plugin data entry")
+            .path();
+        assert_eq!(
+            std::fs::read_to_string(plugin_data.join(".ponytail-active"))
+                .expect("Ponytail mode file"),
+            "ultra"
+        );
+    }
+
     #[tokio::test]
     async fn prompt_block_prevents_planner_context_and_invalid_output_stays_private() {
         let (storage, runtime, runner) = fixture().await;
@@ -1317,5 +1490,47 @@ mod tests {
             command_id: command_id.to_string(),
             command,
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn ponytail_fixture_hooks(fixture_root: &std::path::Path) -> Vec<LocalPluginHookDefinition> {
+        let document: Value = serde_json::from_slice(
+            &std::fs::read(fixture_root.join("hooks/claude-codex-hooks.json"))
+                .expect("Ponytail Hook manifest"),
+        )
+        .expect("Ponytail Hook JSON");
+        ["SessionStart", "SubagentStart", "UserPromptSubmit"]
+            .into_iter()
+            .map(|event| {
+                let group = document["hooks"][event]
+                    .as_array()
+                    .and_then(|groups| groups.first())
+                    .expect("Ponytail event group");
+                let handler = group["hooks"]
+                    .as_array()
+                    .and_then(|handlers| handlers.first())
+                    .expect("Ponytail Hook handler");
+                LocalPluginHookDefinition {
+                    hook_id: format!("ponytail-{}", event.to_ascii_lowercase()),
+                    event: event.to_string(),
+                    matcher: group["matcher"].as_str().map(ToString::to_string),
+                    command: handler["command"]
+                        .as_str()
+                        .expect("Ponytail Hook command")
+                        .to_string(),
+                    timeout_ms: handler["timeout"].as_u64().expect("Ponytail timeout") * 1_000,
+                    additional_context_limit: 256 * 1_024,
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn combined_context(items: &[Value]) -> String {
+        items
+            .iter()
+            .filter_map(|item| item["content"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
