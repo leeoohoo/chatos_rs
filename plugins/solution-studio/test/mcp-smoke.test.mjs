@@ -24,8 +24,9 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     await client.connect(transport);
     const listed = await client.listTools();
     const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
-    for (const name of ['solution_get_active_context', 'solution_upsert_requirements', 'solution_upsert_design', 'solution_upsert_design_block', 'solution_upsert_execution_plan', 'solution_validate', 'solution_export', 'solution_finalize']) assert.ok(tools.has(name));
+    for (const name of ['solution_get_active_context', 'solution_upsert_requirements', 'solution_upsert_design', 'solution_upsert_design_block', 'solution_upsert_execution_plan', 'solution_append_execution_tasks', 'solution_validate', 'solution_export', 'solution_finalize']) assert.ok(tools.has(name));
     assert.deepEqual(tools.get('solution_upsert_execution_plan')._meta['chatos/skillGate'].allOf, ['solution-studio', 'solution-execution-plan']);
+    assert.deepEqual(tools.get('solution_append_execution_tasks')._meta['chatos/skillGate'].allOf, ['solution-studio', 'solution-execution-plan']);
     const planSchema = tools.get('solution_upsert_execution_plan').inputSchema.properties.executionPlan;
     assert.deepEqual(planSchema.required, ['status', 'basedOnDesignRevision', 'objective', 'tasks']);
     assert.ok(planSchema.properties.tasks.items.required.includes('dependsOn'));
@@ -236,14 +237,45 @@ test('executor exposes only task execution tools and enforces prerequisites and 
       assert.deepEqual(updated.executionPlan.tasks.map(task => task.status), ['done', 'in_progress']);
       assert.deepEqual(updated.executionPlan.positions, withLayout.executionPlan.positions);
       assert.deepEqual(updated.executionPlan.viewport, withLayout.executionPlan.viewport);
+      const reorderedTasks = businessPlan.tasks.map(task => Object.fromEntries(Object.entries(task).reverse()));
+      const reordered = await call(author, 'solution_upsert_execution_plan', {
+        title: workspace.title,
+        executionPlan: { ...businessPlan, tasks: reorderedTasks }
+      });
+      assert.deepEqual(reordered.executionPlan.tasks.map(task => task.status), ['done', 'in_progress']);
+
+      const appendedTask = task('T-003', ['T-001']);
+      const appended = await call(author, 'solution_append_execution_tasks', {
+        workspaceId: saved.workspaceId,
+        expectedRevision: reordered.workspace.revision,
+        basedOnDesignRevision: 1,
+        tasks: [appendedTask]
+      });
+      assert.deepEqual(appended.appendedTaskIds, ['T-003']);
+      assert.deepEqual(appended.executionPlan.tasks.map(task => task.status), ['done', 'in_progress', 'planned']);
+      assert.deepEqual(appended.executionPlan.statusEvents, withLayout.executionPlan.statusEvents);
+      assert.deepEqual(appended.executionPlan.positions, withLayout.executionPlan.positions);
+      assert.deepEqual(appended.executionPlan.viewport, withLayout.executionPlan.viewport);
+      const duplicate = await author.callTool({
+        name: 'solution_append_execution_tasks',
+        arguments: {
+          workspaceId: saved.workspaceId,
+          expectedRevision: appended.workspace.revision,
+          basedOnDesignRevision: 1,
+          tasks: [task('T-001', [])]
+        }
+      });
+      assert.equal(duplicate.isError, true);
+      assert.match(duplicate.structuredContent.error, /已存在/);
       for (const tasks of [[], businessPlan.tasks.map(task => ({ ...task, title: '篡改定义' }))]) {
         const rejected = await author.callTool({ name: 'solution_upsert_execution_plan', arguments: { title: workspace.title, executionPlan: { ...businessPlan, tasks } } });
         assert.equal(rejected.isError, true);
         assert.match(rejected.structuredContent.error, /不能删除|不能修改/);
       }
       const afterAuthoring = await store.read(saved.workspaceId);
-      assert.equal(afterAuthoring.revision, updated.workspace.revision);
+      assert.equal(afterAuthoring.revision, appended.workspace.revision);
       assert.deepEqual(afterAuthoring.executionPlan.statusEvents, withLayout.executionPlan.statusEvents);
+      assert.equal(afterAuthoring.executionPlan.tasks.length, 3);
     } finally {
       await author.close();
     }

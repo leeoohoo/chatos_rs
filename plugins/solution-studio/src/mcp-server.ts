@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { assertSolutionWorkspace, validateDesignBlockExpectations, validateWorkspace, workspaceSummary, workspaceToMarkdown, type DesignBlockExpectation, type DesignContentBlock, type ProjectProfile, type RequirementsDocument, type SolutionDesignDocument, type ExecutionPlan, type SourceMode, type TaskStatus, type ValidationIssue } from './schema.js';
 import { SolutionWorkspaceStore } from './store.js';
 import { readHostRuntimeContext } from './runtime-context.js';
-import { executionPlanInputSchema, normalizeAuthoringPlan } from './execution-plan-input.js';
+import { executionPlanInputSchema, executionTaskInputSchema, normalizeAuthoringPlan } from './execution-plan-input.js';
 
 const store = new SolutionWorkspaceStore();
 const runtimeContext = readHostRuntimeContext();
@@ -94,6 +95,21 @@ const AUTHORING_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object', properties: { ...workspaceIdentityProperties, executionPlan: executionPlanInputSchema },
       required: ['title', 'executionPlan'], additionalProperties: false
+    },
+    _meta: gate('solution-execution-plan')
+  },
+  {
+    name: 'solution_append_execution_tasks',
+    description: 'Atomically append new planned tasks to the existing execution plan without resubmitting or rewriting completed task definitions. Use this when a design increment adds work to a plan that already has execution history.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspaceId: { type: 'string' }, expectedRevision: { type: 'integer', minimum: 0 },
+        basedOnDesignRevision: { type: 'integer', minimum: 0 },
+        tasks: { type: 'array', minItems: 1, maxItems: 2_000, items: executionTaskInputSchema }
+      },
+      required: ['workspaceId', 'expectedRevision', 'basedOnDesignRevision', 'tasks'],
+      additionalProperties: false
     },
     _meta: gate('solution-execution-plan')
   },
@@ -255,7 +271,7 @@ function protectedAuthoringPlan(current: ExecutionPlan, proposed: ExecutionPlan)
     const previous = currentById.get(task.id);
     if (!previous && task.status !== 'planned') throw new Error(`新任务 ${task.id} 的状态必须是 planned。`);
     if (previous && previous.status !== 'planned') {
-      if (JSON.stringify(taskDefinition(previous)) !== JSON.stringify(taskDefinition(task))) {
+      if (!isDeepStrictEqual(taskDefinition(previous), taskDefinition(task))) {
         throw new Error(`任务 ${task.id} 已进入 ${previous.status}，方案创建器不能修改其定义或依赖。`);
       }
     }
@@ -403,6 +419,34 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const validation = validateWorkspace(result.workspace);
       return { created: result.created, workspace: workspaceSummary(result.workspace), executionPlan: result.workspace.executionPlan, validation, completionRequirement: completionRequirement(result.workspace.workspaceId) };
     }
+    case 'solution_append_execution_tasks': {
+      const workspace = await store.read(String(input.workspaceId));
+      const newTasks = structuredClone(input.tasks as ExecutionPlan['tasks']);
+      const currentIds = new Set(workspace.executionPlan.tasks.map((task) => task.id));
+      for (const task of newTasks) {
+        if (currentIds.has(task.id)) throw new Error(`任务 ${task.id} 已存在；增量追加只能提交新任务。`);
+        if (task.status !== 'planned') throw new Error(`新任务 ${task.id} 的状态必须是 planned。`);
+        currentIds.add(task.id);
+      }
+      const executionPlan = normalizeAuthoringPlan({
+        status: workspace.executionPlan.status,
+        basedOnDesignRevision: Number(input.basedOnDesignRevision),
+        objective: workspace.executionPlan.objective,
+        tasks: [...workspace.executionPlan.tasks, ...newTasks]
+      }, workspace.executionPlan);
+      workspace.executionPlan = protectedAuthoringPlan(workspace.executionPlan, executionPlan);
+      const validation = validateWorkspace(workspace);
+      const dependencyIssues = validation.issues.filter((issue) => ['unknown_dependency', 'self_dependency', 'dependency_cycle', 'redundant_dependency'].includes(issue.code));
+      if (dependencyIssues.length > 0) throw new Error(dependencyIssues.map((issue) => issue.message).join(' '));
+      const saved = await store.replace(workspace, Number(input.expectedRevision));
+      return {
+        workspace: workspaceSummary(saved),
+        appendedTaskIds: newTasks.map((task) => task.id),
+        executionPlan: saved.executionPlan,
+        validation: validateWorkspace(saved),
+        completionRequirement: completionRequirement(saved.workspaceId)
+      };
+    }
     case 'solution_claim_task':
     case 'solution_resume_task':
     case 'solution_block_task':
@@ -477,7 +521,7 @@ function result(value: Record<string, unknown>, isError = false) {
   return response;
 }
 
-const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.2' }, { capabilities: { tools: {} } });
+const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.3' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }

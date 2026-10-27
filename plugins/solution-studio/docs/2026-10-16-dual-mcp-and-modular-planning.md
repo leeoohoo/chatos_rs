@@ -190,6 +190,7 @@ interface ExecutionPlan {
 - `solution_upsert_design`
 - `solution_upsert_design_block`
 - `solution_upsert_execution_plan`
+- `solution_append_execution_tasks`
 - `solution_validate`
 - `solution_export`
 - `solution_finalize`
@@ -201,6 +202,8 @@ interface ExecutionPlan {
 - `in_progress`、`done`、`cancelled` 任务的定义、依赖和验收条件不可被覆盖或删除。
 - 修改 `blocked` 任务的定义前必须先通过执行器恢复或取消；创建器不能借“改计划”绕过状态机。
 - 保存前执行模块引用、依赖、环、冗余边和密度分析。
+
+已有执行历史且设计增量只增加工作时，方案创建器应调用 `solution_append_execution_tasks`，仅提交新的 `planned` 任务。服务端保留既有任务、状态历史和画布布局，并对合并后的依赖图做完整校验，避免为了追加任务而重写已完成任务。
 
 ### 5.2 任务执行器工具
 

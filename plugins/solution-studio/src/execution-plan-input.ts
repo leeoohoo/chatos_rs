@@ -8,6 +8,20 @@ const point = {
   required: ['x', 'y'], additionalProperties: false
 } as const;
 
+export const executionTaskInputSchema = {
+  type: 'object',
+  properties: {
+    id: identifier, moduleId: identifier, title: { ...text, minLength: 1 },
+    description: text, type: { type: 'string', enum: ['task', 'review', 'milestone'] },
+    phase: text, dependsOn: stringList,
+    status: { type: 'string', enum: ['planned', 'in_progress', 'blocked', 'done', 'cancelled'], description: 'New tasks must be planned. Existing execution status is preserved by the server.' },
+    blockedReason: text, requirementIds: stringList, designSectionIds: stringList,
+    deliverables: stringList, acceptanceCriteria: stringList, sourceReferences: stringList
+  },
+  required: ['id', 'moduleId', 'title', 'description', 'type', 'phase', 'dependsOn', 'status', 'requirementIds', 'designSectionIds', 'deliverables', 'acceptanceCriteria', 'sourceReferences'],
+  additionalProperties: false
+} as const;
+
 export const executionPlanInputSchema = {
   type: 'object',
   description: 'Execution plan business content. Revision and updatedAt are server-managed. Omit statusEvents; executor history is preserved. Omitted positions/viewport preserve the current layout.',
@@ -17,19 +31,7 @@ export const executionPlanInputSchema = {
     objective: text,
     tasks: {
       type: 'array', maxItems: 2_000,
-      items: {
-        type: 'object',
-        properties: {
-          id: identifier, moduleId: identifier, title: { ...text, minLength: 1 },
-          description: text, type: { type: 'string', enum: ['task', 'review', 'milestone'] },
-          phase: text, dependsOn: stringList,
-          status: { type: 'string', enum: ['planned', 'in_progress', 'blocked', 'done', 'cancelled'], description: 'New tasks must be planned. Existing execution status is preserved by the server.' },
-          blockedReason: text, requirementIds: stringList, designSectionIds: stringList,
-          deliverables: stringList, acceptanceCriteria: stringList, sourceReferences: stringList
-        },
-        required: ['id', 'moduleId', 'title', 'description', 'type', 'phase', 'dependsOn', 'status', 'requirementIds', 'designSectionIds', 'deliverables', 'acceptanceCriteria', 'sourceReferences'],
-        additionalProperties: false
-      }
+      items: executionTaskInputSchema
     },
     statusEvents: { type: 'array', maxItems: 0, description: 'Executor-owned. Omit or send an empty array; existing history is never replaced.' },
     positions: { type: 'object', propertyNames: identifier, additionalProperties: point },
