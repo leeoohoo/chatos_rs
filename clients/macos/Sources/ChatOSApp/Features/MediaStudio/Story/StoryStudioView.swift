@@ -80,7 +80,7 @@ struct StoryStudioView: View {
                     }.buttonStyle(.borderedProminent).tint(.indigo).disabled(!viewModel.canCreate)
                 }
                 .padding(24)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.indigo.opacity(0.13)))
                 .shadow(color: Color.black.opacity(0.035), radius: 14, y: 5)
                 if viewModel.isBusy {
@@ -101,7 +101,7 @@ struct StoryStudioView: View {
                         Button(appModel.localized("创建第一个剧情", english: "Create Your First Story")) { showsCreate = true }
                             .buttonStyle(.borderedProminent).tint(.indigo).disabled(!viewModel.canCreate)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 } else {
                     HStack {
                         Text(appModel.localized("我的剧情", english: "My Stories")).font(.title2.bold())
@@ -192,7 +192,7 @@ struct StoryStudioView: View {
             }.font(.caption).foregroundStyle(.secondary)
         }
         .padding(20).frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(projectStatusColor(project).opacity(0.13)))
         .shadow(color: Color.black.opacity(0.035), radius: 12, y: 4)
         .contentShape(Rectangle())

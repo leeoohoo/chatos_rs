@@ -74,7 +74,21 @@ final class StoryStudioViewModel: ObservableObject {
         var projectID: UUID
         var segmentID: String
     }
-    @Published var projects: [StoryProject] = []
+    private struct ProjectFingerprints {
+        var current: String
+        var legacy: String?
+
+        func matches(_ persisted: String) -> Bool {
+            persisted == current || persisted == legacy
+        }
+    }
+
+    @Published var projects: [StoryProject] = [] {
+        didSet {
+            cachedCreationHistoryGroups = nil
+            projectFingerprintCache = [:]
+        }
+    }
     @Published var selectedProjectID: UUID?
     @Published var selectedSegmentID: String?
     @Published var selectedSegments: Set<String> = []
@@ -90,7 +104,9 @@ final class StoryStudioViewModel: ObservableObject {
     @Published var activeProjectID: UUID?
     @Published var activeAgentRunID: UUID?
     @Published var pauseRequested = false
-    @Published var agentRuns: [StoryPlanningRunSnapshot] = []
+    @Published var agentRuns: [StoryPlanningRunSnapshot] = [] {
+        didSet { agentDraftFingerprintCache = [:] }
+    }
     @Published var isLoadingAgentRuns = false
     @Published var isLoadingMoreAgentRuns = false
     @Published var hasMoreAgentRuns = false
@@ -150,6 +166,9 @@ final class StoryStudioViewModel: ObservableObject {
     var videoBatchTask: Task<Void, Never>?
     var sourceDrafts: [UUID: SourceDraft] = [:]
     var hasLoadedInitialProjects = false
+    private var cachedCreationHistoryGroups: [CreationHistoryGroup]?
+    private var projectFingerprintCache: [UUID: ProjectFingerprints] = [:]
+    private var agentDraftFingerprintCache: [UUID: String] = [:]
 
     init(
         planner: (any StoryPlanningServicing)?,
@@ -201,7 +220,8 @@ final class StoryStudioViewModel: ObservableObject {
         mediaBatches.filter { $0.projectID == selectedProjectID }
     }
     var creationHistoryGroups: [CreationHistoryGroup] {
-        projects.compactMap { project in
+        if let cachedCreationHistoryGroups { return cachedCreationHistoryGroups }
+        let groups: [CreationHistoryGroup] = projects.compactMap { project -> CreationHistoryGroup? in
             var images: [CreationHistoryImage] = []
             for resource in project.resources {
                 for image in resource.images where isGenerated(image) {
@@ -272,6 +292,8 @@ final class StoryStudioViewModel: ObservableObject {
                          images: images, videos: videos)
         }
         .sorted { $0.updatedAt > $1.updatedAt }
+        cachedCreationHistoryGroups = groups
+        return groups
     }
     func reusableStoryImages(kind: StoryResource.Kind, excluding projectID: UUID) -> [ReusableStoryImage] {
         projects
@@ -351,15 +373,12 @@ final class StoryStudioViewModel: ObservableObject {
     /// be resumed explicitly from the banner.
     func recoverableAgentRun(projectID: UUID) -> StoryPlanningRunSnapshot? {
         guard let canonical = projects.first(where: { $0.id == projectID }),
-              let canonicalDigest = try? StoryProjectFingerprint.current(canonical) else { return nil }
+              let canonicalFingerprints = fingerprints(for: canonical) else { return nil }
         return agentRuns.first { run in
             guard run.projectID == projectID, !run.applied, run.abandonedAt == nil,
-                  (try? StoryProjectFingerprint.matches(
-                    run.baseProjectFingerprint,
-                    project: canonical
-                  )) == true,
-                  let draftDigest = try? StoryProjectFingerprint.current(run.draft) else { return false }
-            return draftDigest != canonicalDigest
+                  canonicalFingerprints.matches(run.baseProjectFingerprint),
+                  let draftDigest = fingerprint(forAgentDraft: run) else { return false }
+            return draftDigest != canonicalFingerprints.current
         }
     }
 
@@ -367,17 +386,32 @@ final class StoryStudioViewModel: ObservableObject {
         // Only show the mutable draft while its in-memory task is actually running. A saved
         // interrupted draft must never replace the normal workbench after a fresh login.
         guard isBusy, activeProjectID == canonical.id, let activeAgentRunID else { return nil }
-        guard let canonicalDigest = try? StoryProjectFingerprint.current(canonical) else { return nil }
+        guard let canonicalFingerprints = fingerprints(for: canonical) else { return nil }
         return agentRuns.first { run in
             guard run.id == activeAgentRunID, run.projectID == canonical.id,
                   !run.applied, run.abandonedAt == nil,
-                  (try? StoryProjectFingerprint.matches(
-                    run.baseProjectFingerprint,
-                    project: canonical
-                  )) == true,
-                  let draftDigest = try? StoryProjectFingerprint.current(run.draft) else { return false }
-            return draftDigest != canonicalDigest
+                  canonicalFingerprints.matches(run.baseProjectFingerprint),
+                  let draftDigest = fingerprint(forAgentDraft: run) else { return false }
+            return draftDigest != canonicalFingerprints.current
         }
+    }
+
+    private func fingerprints(for project: StoryProject) -> ProjectFingerprints? {
+        if let cached = projectFingerprintCache[project.id] { return cached }
+        guard let current = try? StoryProjectFingerprint.current(project) else { return nil }
+        let value = ProjectFingerprints(
+            current: current,
+            legacy: try? StoryProjectFingerprint.legacyIncludingCapabilities(project)
+        )
+        projectFingerprintCache[project.id] = value
+        return value
+    }
+
+    private func fingerprint(forAgentDraft run: StoryPlanningRunSnapshot) -> String? {
+        if let cached = agentDraftFingerprintCache[run.id] { return cached }
+        guard let value = try? StoryProjectFingerprint.current(run.draft) else { return nil }
+        agentDraftFingerprintCache[run.id] = value
+        return value
     }
 
     func activate(userID: String) {
