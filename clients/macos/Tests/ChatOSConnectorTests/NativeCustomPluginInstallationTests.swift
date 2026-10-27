@@ -835,6 +835,10 @@ struct NativeCustomPluginInstallationTests {
             "clients/fixtures/codex-hooks/ponytail-5.3.2",
             isDirectory: true
         )
+        let openCodeConfiguration = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: source.appendingPathComponent("opencode.json"))
+        ) as? [String: Any]
+        #expect(openCodeConfiguration?["$schema"] as? String == "https://opencode.ai/config.json")
         let hookDocument = try #require(
             JSONSerialization.jsonObject(
                 with: Data(contentsOf: source.appendingPathComponent(

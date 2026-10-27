@@ -155,7 +155,7 @@ enum NativeAgentPluginCompatibilityImporter {
         }
 
         let hasMCP = mcpConfigurationCandidates.contains {
-            FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path)
+            FileManager.default.fileExists(atPath: root.appendingPathComponent($0.path).path)
         }
         let hasStandaloneSkill = FileManager.default.fileExists(
             atPath: root.appendingPathComponent("SKILL.md").path
@@ -319,15 +319,30 @@ enum NativeAgentPluginCompatibilityImporter {
         inlineManifest: [String: Any]?
     ) throws -> [String: Any] {
         var rawServers: [String: Any]?
-        for file in mcpConfigurationCandidates {
+        for candidate in mcpConfigurationCandidates {
+            let file = candidate.path
             let url = root.appendingPathComponent(file)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            let object = try readJSONObject(url)
-            rawServers = (object["mcpServers"] ?? object["servers"] ?? object["mcp"])
-                as? [String: Any]
-            if rawServers == nil {
+            let object: [String: Any]
+            do {
+                object = try readJSONObject(url)
+            } catch {
+                if candidate.isDedicatedMCPConfiguration { throw error }
+                continue
+            }
+            let declaredServers = object["mcpServers"] ?? object["servers"] ?? object["mcp"]
+            guard let declaredServers else {
+                if candidate.isDedicatedMCPConfiguration {
+                    throw NativeConnectorError.pluginInstallation(
+                        "\(file) 缺少 mcpServers 或 servers 对象"
+                    )
+                }
+                continue
+            }
+            guard let servers = declaredServers as? [String: Any] else {
                 throw NativeConnectorError.pluginInstallation("\(file) 缺少 mcpServers 或 servers 对象")
             }
+            rawServers = servers
             break
         }
         if rawServers == nil {
@@ -381,16 +396,21 @@ enum NativeAgentPluginCompatibilityImporter {
         return result
     }
 
+    private struct MCPConfigurationCandidate {
+        let path: String
+        let isDedicatedMCPConfiguration: Bool
+    }
+
     private static let mcpConfigurationCandidates = [
-        "mcp.json",
-        ".mcp.json",
-        ".cursor/mcp.json",
-        ".vscode/mcp.json",
-        ".gemini/settings.json",
-        "claude_desktop_config.json",
-        "mcp_config.json",
-        "cline_mcp_settings.json",
-        "opencode.json",
+        MCPConfigurationCandidate(path: "mcp.json", isDedicatedMCPConfiguration: true),
+        MCPConfigurationCandidate(path: ".mcp.json", isDedicatedMCPConfiguration: true),
+        MCPConfigurationCandidate(path: ".cursor/mcp.json", isDedicatedMCPConfiguration: true),
+        MCPConfigurationCandidate(path: ".vscode/mcp.json", isDedicatedMCPConfiguration: true),
+        MCPConfigurationCandidate(path: ".gemini/settings.json", isDedicatedMCPConfiguration: false),
+        MCPConfigurationCandidate(path: "claude_desktop_config.json", isDedicatedMCPConfiguration: true),
+        MCPConfigurationCandidate(path: "mcp_config.json", isDedicatedMCPConfiguration: true),
+        MCPConfigurationCandidate(path: "cline_mcp_settings.json", isDedicatedMCPConfiguration: true),
+        MCPConfigurationCandidate(path: "opencode.json", isDedicatedMCPConfiguration: false),
     ]
 
     private static func commandAndArguments(
