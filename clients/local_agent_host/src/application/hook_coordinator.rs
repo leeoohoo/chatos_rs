@@ -35,6 +35,8 @@ use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 const MAXIMUM_EVENT_CONTEXT_BYTES: usize = 512 * 1_024;
+const MAXIMUM_INLINE_HOOK_TOOL_RESPONSE_BYTES: usize = 256 * 1_024;
+const MINIMUM_INLINE_BINARY_REDACTION_BYTES: usize = 16 * 1_024;
 const MAXIMUM_STDERR_SUMMARY_BYTES: usize = 4_096;
 const MAXIMUM_PARENT_DEPTH: usize = 64;
 const OUTPUT_SPILL_THRESHOLD_BYTES: usize = 16 * 1_024;
@@ -1392,9 +1394,67 @@ fn tool_hook_payload(
         "cwd": cwd,
     });
     if let Some(response) = response {
-        payload["tool_response"] = response.clone();
+        payload["tool_response"] = hook_tool_response(response);
     }
     payload
+}
+
+fn hook_tool_response(response: &Value) -> Value {
+    let original = serde_json::to_vec(response).unwrap_or_default();
+    let mut sanitized = response.clone();
+    redact_inline_binary(&mut sanitized);
+    if serde_json::to_vec(&sanitized)
+        .is_ok_and(|encoded| encoded.len() <= MAXIMUM_INLINE_HOOK_TOOL_RESPONSE_BYTES)
+    {
+        return sanitized;
+    }
+
+    let mut summary = serde_json::Map::new();
+    for key in ["status", "error", "is_error", "made_progress"] {
+        if let Some(value) = response.get(key) {
+            summary.insert(key.to_string(), value.clone());
+        }
+    }
+    summary.insert(
+        "_chatos_hook_response".to_string(),
+        json!({
+            "omitted": true,
+            "reason": "tool response exceeded the Hook inline payload limit",
+            "original_bytes": original.len(),
+            "sha256": sha256(&original),
+        }),
+    );
+    Value::Object(summary)
+}
+
+fn redact_inline_binary(value: &mut Value) {
+    match value {
+        Value::Array(values) => values.iter_mut().for_each(redact_inline_binary),
+        Value::Object(object) => {
+            let media_block = object
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| matches!(kind, "image" | "audio"));
+            for (key, child) in object.iter_mut() {
+                let Some(encoded) = child.as_str() else {
+                    redact_inline_binary(child);
+                    continue;
+                };
+                let inline_binary = (media_block && key == "data")
+                    || matches!(key.as_str(), "base64" | "data_base64" | "blob")
+                    || encoded.starts_with("data:image/")
+                    || encoded.starts_with("data:audio/");
+                if inline_binary && encoded.len() > MINIMUM_INLINE_BINARY_REDACTION_BYTES {
+                    *child = Value::String(format!(
+                        "[inline binary omitted from Hook payload: {} encoded bytes, sha256={}]",
+                        encoded.len(),
+                        sha256(encoded.as_bytes())
+                    ));
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn tool_event_denied(outcome: &PersistedEventOutcome) -> bool {
@@ -3613,6 +3673,106 @@ mod tests {
             continued.continuation_input.as_ref().unwrap()["invocations"][0]["result"],
             json!({"content": "immutable real result"})
         );
+    }
+
+    #[tokio::test]
+    async fn post_tool_use_redacts_large_inline_media_before_persisting_the_event() {
+        let (storage, runtime, runner) = fixture().await;
+        activate_bundle(
+            &storage,
+            "bundle-post-media",
+            vec![matched_hook(
+                "post-media",
+                "PostToolUse",
+                "^capability_invoke$",
+                "post media context",
+            )],
+        )
+        .await;
+        let coordinator = LocalHookCoordinator::new(runtime, runner.clone(), None).unwrap();
+        let screenshot = "a".repeat(1_340_288);
+        let mut continued = run("run-post-media");
+        continued.continuation_input = Some(json!({
+            "type": "tool_results",
+            "batch_id": "batch-media",
+            "invocations": [{
+                "invocation_id": "invocation-media",
+                "call_id": "call-media",
+                "tool_name": "capability_invoke",
+                "arguments": {},
+                "status": "succeeded",
+                "result": {
+                    "content": {
+                        "_meta": {
+                            "chatos/artifacts": [{
+                                "artifact": {
+                                    "artifact_id": "artifact-screenshot",
+                                    "sha256": "artifact-sha256",
+                                    "size_bytes": 3_193_997
+                                }
+                            }]
+                        },
+                        "content": [
+                            {"type": "text", "text": "screenshot captured"},
+                            {"type": "image", "data": screenshot, "mimeType": "image/jpeg"}
+                        ]
+                    },
+                    "is_error": false,
+                    "made_progress": true
+                }
+            }]
+        }));
+
+        let context = coordinator
+            .prefixed_context(&claim(continued.clone()))
+            .await
+            .expect("large screenshot Hook event");
+
+        assert!(combined_context(&context).contains("post media context"));
+        let payload = runner
+            .payloads()
+            .into_iter()
+            .find(|payload| payload["hook_event_name"] == "PostToolUse")
+            .expect("PostToolUse payload");
+        assert!(serde_json::to_vec(&payload).unwrap().len() < 1024 * 1024);
+        assert_eq!(
+            payload["tool_response"]["content"]["_meta"]["chatos/artifacts"][0]["artifact"]
+                ["artifact_id"],
+            "artifact-screenshot"
+        );
+        let image_data = payload["tool_response"]["content"]["content"][1]["data"]
+            .as_str()
+            .expect("redacted image data");
+        assert!(image_data.contains("inline binary omitted"), "{image_data}");
+        assert!(!image_data.contains(&"a".repeat(8_192)));
+        assert_eq!(
+            continued.continuation_input.as_ref().unwrap()["invocations"][0]["result"]["content"]
+                ["content"][1]["data"]
+                .as_str()
+                .unwrap()
+                .len(),
+            1_340_288
+        );
+    }
+
+    #[test]
+    fn oversized_non_binary_tool_response_uses_a_bounded_integrity_summary() {
+        let response = json!({
+            "status": "succeeded",
+            "is_error": false,
+            "content": "x".repeat(MAXIMUM_INLINE_HOOK_TOOL_RESPONSE_BYTES + 1),
+        });
+
+        let bounded = hook_tool_response(&response);
+
+        assert_eq!(bounded["status"], "succeeded");
+        assert_eq!(bounded["is_error"], false);
+        assert_eq!(bounded["_chatos_hook_response"]["omitted"], true);
+        assert_eq!(
+            bounded["_chatos_hook_response"]["sha256"],
+            sha256(&serde_json::to_vec(&response).unwrap())
+        );
+        assert!(serde_json::to_vec(&bounded).unwrap().len() < 1_024);
     }
 
     #[tokio::test]
