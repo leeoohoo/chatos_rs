@@ -2,7 +2,7 @@ import ChatOSCore
 import SwiftUI
 
 struct StoryVideoRegenerationStartView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: StoryStudioViewModel
     let project: StoryProject
@@ -139,7 +139,7 @@ struct StoryVideoRegenerationStartView: View {
 }
 
 struct StoryMediaBatchStartView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: StoryStudioViewModel
     let project: StoryProject
@@ -294,7 +294,7 @@ struct StoryMediaBatchStartView: View {
 }
 
 struct StoryMediaBatchPanel: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @ObservedObject var viewModel: StoryStudioViewModel
     @State private var history = false
     @State private var resumeID: UUID?

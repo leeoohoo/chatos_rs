@@ -2,7 +2,7 @@ import ChatOSCore
 import SwiftUI
 
 struct StoryAdditionalIdeasField: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @Binding var text: String
     let help: String
     let maximumLength: Int
@@ -43,7 +43,7 @@ struct StoryPlanningConfirmation: Identifiable {
 }
 
 struct StoryAgentStartView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: StoryStudioViewModel
     let confirmation: StoryPlanningConfirmation
@@ -171,7 +171,7 @@ struct StoryAgentStartView: View {
 }
 
 struct StoryAgentRunPanel: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @ObservedObject var viewModel: StoryStudioViewModel
     @ObservedObject private var planningActivity: StoryPlanningActivityState
     @State private var showsHistory = false
@@ -320,7 +320,7 @@ struct StoryAgentRunPanel: View {
 }
 
 struct StoryCharacterProfileView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     let profile: StoryCharacterProfile
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -344,7 +344,7 @@ struct StoryCharacterProfileView: View {
 }
 
 struct StorySceneProfileView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     let profile: StorySceneProfile
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

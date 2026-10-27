@@ -4,7 +4,7 @@ import SwiftUI
 /// Product-facing audit surface for every prompt used by Story Studio.
 /// The catalog invokes the same builders as generation and planning requests.
 struct StoryPromptInspectorView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @Environment(\.dismiss) private var dismiss
     @State private var selectedCategory: StoryPromptCatalog.Category?
     @State private var selectedItemID: String?
@@ -223,7 +223,7 @@ struct StoryPromptInspectorView: View {
 }
 
 private struct StoryPromptDetailView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     let item: StoryPromptCatalog.Item
     let color: Color
     @State private var copied = false

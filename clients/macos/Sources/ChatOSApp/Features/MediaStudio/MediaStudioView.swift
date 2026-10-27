@@ -164,7 +164,15 @@ struct MediaStudioView: View {
         case .video:
             videoWorkspace
         case .story:
-            StoryStudioView(viewModel: stories, mediaStudio: viewModel)
+            StoryStudioScene(
+                viewModel: stories,
+                mediaStudio: viewModel,
+                context: StoryViewContext(
+                    interfaceLanguage: appModel.interfaceLanguage,
+                    authenticatedUserID: appModel.authenticatedUserID
+                )
+            )
+            .equatable()
         case .history:
             historyWorkspace
         }

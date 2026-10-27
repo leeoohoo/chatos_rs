@@ -27,7 +27,7 @@ extension View {
 }
 
 struct StoryThumbnail: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     let asset: GeneratedMediaAsset?
     @State private var image: NSImage?
     var body: some View {

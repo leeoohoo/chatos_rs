@@ -2,7 +2,7 @@ import ChatOSCore
 import SwiftUI
 
 struct StoryStudioView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @ObservedObject var viewModel: StoryStudioViewModel
     @ObservedObject var mediaStudio: MediaStudioViewModel
     @State private var showsCreate = false
@@ -31,17 +31,14 @@ struct StoryStudioView: View {
         }
         .sheet(isPresented: $showsCreate) {
             StoryProjectForm(viewModel: viewModel, mediaStudio: mediaStudio, project: nil)
-                .environmentObject(appModel)
         }
         .sheet(isPresented: $showsPrompts) {
             StoryPromptInspectorView()
-                .environmentObject(appModel)
         }
         .sheet(item: $settingsProject) { project in
             StoryProjectForm(viewModel: viewModel, mediaStudio: mediaStudio, project: project)
-                .environmentObject(appModel)
         }
-        .onChange(of: appModel.authentication.phase) { _, _ in
+        .onChange(of: appModel.authenticatedUserID) { _, _ in
             showsCreate = false; showsPrompts = false; settingsProject = nil
         }
     }
@@ -224,7 +221,7 @@ struct StoryStudioView: View {
 }
 
 struct StoryProjectForm: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: StoryStudioViewModel
     @ObservedObject var mediaStudio: MediaStudioViewModel
