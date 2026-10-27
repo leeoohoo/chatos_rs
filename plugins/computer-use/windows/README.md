@@ -87,6 +87,7 @@ Windows 的 `activate_application` 使用 `application` 参数，可传进程名
 7. 在记事本测试中英文、Emoji、换行输入和常用快捷键。
 8. 在 100%、150%、200% 缩放及横向/纵向混合显示器布局下复测截图与 Overlay 对齐。
 
-仓库中的 `npm run smoke:windows` 会自动执行前两步：先运行 `--doctor`，再通过
-真实 stdio MCP 进程完成 `initialize` 和 `tools/list`，并严格校验服务身份及 11 个工具的
-顺序和名称；它不会把仅能启动进程误判为协议可用。
+仓库中的 `npm run smoke:windows` 会自动执行前两步并调用一个只读工具：先运行
+`--doctor`，再通过真实 stdio MCP 进程完成 `initialize`、`tools/list` 和
+`tools/call(check_permissions)`，严格校验服务身份、11 个工具的顺序和名称及权限快照字段；
+它不会把仅能启动进程误判为协议可用。
