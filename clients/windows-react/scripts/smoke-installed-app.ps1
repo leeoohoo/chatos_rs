@@ -13,7 +13,9 @@ param(
     [int]$StartupRuns = 1,
 
     [ValidateRange(5, 120)]
-    [int]$StartupTimeoutSeconds = 20
+    [int]$StartupTimeoutSeconds = 20,
+
+    [string]$ExpectedWindowTitle = "ChatOS"
 )
 
 Set-StrictMode -Version Latest
@@ -92,6 +94,7 @@ function Wait-NativeWindow {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
         [Parameter(Mandatory = $true)][string]$ExpectedPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedTitle,
         [int]$TimeoutSeconds = 10
     )
 
@@ -104,7 +107,7 @@ function Wait-NativeWindow {
                 $processPath = $process.MainModule.FileName
                 if ([String]::Equals($processPath, $ExpectedPath, [StringComparison]::OrdinalIgnoreCase) -and
                     $process.MainWindowHandle -ne [IntPtr]::Zero -and
-                    -not [String]::IsNullOrWhiteSpace($process.MainWindowTitle)) {
+                    [String]::Equals($process.MainWindowTitle, $ExpectedTitle, [StringComparison]::Ordinal)) {
                     return [pscustomobject]@{
                         observed = $true
                         processPath = $processPath
@@ -229,12 +232,12 @@ try {
 
             $startupWatch = [System.Diagnostics.Stopwatch]::StartNew()
             $launched = Start-Process -FilePath $applicationPath -PassThru
-            $nativeWindow = Wait-NativeWindow -ProcessId $launched.Id -ExpectedPath $applicationPath -TimeoutSeconds $StartupTimeoutSeconds
+            $nativeWindow = Wait-NativeWindow -ProcessId $launched.Id -ExpectedPath $applicationPath -ExpectedTitle $ExpectedWindowTitle -TimeoutSeconds $StartupTimeoutSeconds
             if (-not $nativeWindow.observed) {
                 if (-not $launched.HasExited) {
                     Stop-Process -Id $launched.Id -Force -ErrorAction SilentlyContinue
                 }
-                throw "Installed ChatOS application did not expose a native window from $applicationPath during startup run $index."
+                throw "Installed ChatOS application did not expose a native '$ExpectedWindowTitle' window from $applicationPath during startup run $index."
             }
             if (-not $launched.WaitForExit($StartupTimeoutSeconds * 1000)) {
                 Stop-Process -Id $launched.Id -Force -ErrorAction SilentlyContinue
