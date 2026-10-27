@@ -182,11 +182,11 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         }
         if process.isRunning {
             _ = kill(process.processIdentifier, SIGKILL)
-            let forcedDeadline = ContinuousClock.now.advanced(by: .milliseconds(100))
-            while process.isRunning, ContinuousClock.now < forcedDeadline {
-                usleep(10_000)
-            }
         }
+        // `isRunning == false` does not guarantee that Foundation has finished reaping the child.
+        // Waiting here ensures process-owned file descriptors and advisory locks are gone before a
+        // successor transition is allowed to launch. Callers always run this method off-actor.
+        process.waitUntilExit()
     }
 
     func installTerminationHandler(

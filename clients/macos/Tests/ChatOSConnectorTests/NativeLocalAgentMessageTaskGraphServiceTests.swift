@@ -158,6 +158,55 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
                        "A failed lookup must retry once; only a successful empty response is cached")
     }
 
+    func testEmbeddedLatestRunsRemoveTaskGraphNPlusOneRequests() async throws {
+        let host = BlockedDependencyTaskHostStub(embedLatestRuns: true)
+        let service = NativeLocalAgentMessageTaskGraphService(host: host)
+        await service.configure(ownerUserID: "user-1")
+        let lookup = MessageTaskLookup(
+            sessionID: "conversation-1",
+            turnID: "turn-1",
+            sourceUserMessageID: "message-1"
+        )
+
+        let graph = try await service.fetchGraph(messageID: "message-1", lookup: lookup)
+
+        XCTAssertEqual(graph.nodes[0].task.presentationStatus, .resultBlocked)
+        XCTAssertEqual(graph.nodes[1].task.presentationStatus, .dependencyBlocked)
+        let totalRunRequests = await host.totalRunRequests()
+        XCTAssertEqual(totalRunRequests, 0)
+    }
+
+    func testEmbeddedActiveRunsLoadPluginActivityInOneBatch() async throws {
+        let host = BlockedDependencyTaskHostStub(
+            embedLatestRuns: true,
+            embedActiveRuns: true
+        )
+        let probe = PluginActivityBatchProbe()
+        let service = NativeLocalAgentMessageTaskGraphService(
+            host: host,
+            pluginActivities: { runIDs in
+                await probe.load(runIDs)
+            }
+        )
+        await service.configure(ownerUserID: "user-1")
+
+        let graph = try await service.fetchGraph(
+            messageID: "message-1",
+            lookup: .init(
+                sessionID: "conversation-1",
+                turnID: "turn-1",
+                sourceUserMessageID: "message-1"
+            )
+        )
+
+        let activityRequests = await probe.requests()
+        let totalRunRequests = await host.totalRunRequests()
+        XCTAssertEqual(activityRequests, [["run-task-1", "run-task-2"]])
+        XCTAssertEqual(graph.nodes[0].task.lastRun?.activity?.operation, "batched-plugin")
+        XCTAssertEqual(graph.nodes[1].task.lastRun?.activity?.operation, "batched-plugin")
+        XCTAssertEqual(totalRunRequests, 0)
+    }
+
     func testRetryPersistsAdditionalInstructionInLocalCommand() async throws {
         let host = LocalTaskHostStub()
         let service = NativeLocalAgentMessageTaskGraphService(
@@ -422,10 +471,18 @@ private actor BlockedDependencyTaskHostStub: LocalAgentHostClientServicing {
     private var maximumRunRequests = 0
     private var runRequests = 0
     private let failFirstMissingRunRequest: Bool
+    private let embedLatestRuns: Bool
+    private let embedActiveRuns: Bool
     private var didFailMissingRunRequest = false
 
-    init(failFirstMissingRunRequest: Bool = false) {
+    init(
+        failFirstMissingRunRequest: Bool = false,
+        embedLatestRuns: Bool = false,
+        embedActiveRuns: Bool = false
+    ) {
         self.failFirstMissingRunRequest = failFirstMissingRunRequest
+        self.embedLatestRuns = embedLatestRuns
+        self.embedActiveRuns = embedActiveRuns
     }
 
     func start(ownerUserID: String) async throws {}
@@ -443,8 +500,20 @@ private actor BlockedDependencyTaskHostStub: LocalAgentHostClientServicing {
                 "graph": [
                     "root_task_ids": ["task-1"],
                     "nodes": [
-                        node(task(id: "task-1", status: "succeeded"), depth: 0, root: true),
-                        node(task(id: "task-2", status: "blocked"), depth: 1, root: false),
+                        node(
+                            task(id: "task-1", status: embedActiveRuns ? "running" : "succeeded"),
+                            latestRun: embedActiveRuns
+                                ? activeRun(taskID: "task-1") : blockedRun(),
+                            depth: 0,
+                            root: true
+                        ),
+                        node(
+                            task(id: "task-2", status: embedActiveRuns ? "running" : "blocked"),
+                            latestRun: embedActiveRuns
+                                ? activeRun(taskID: "task-2") : nil,
+                            depth: 1,
+                            root: false
+                        ),
                     ],
                     "edges": [[
                         "source_task_id": "task-1",
@@ -477,8 +546,22 @@ private actor BlockedDependencyTaskHostStub: LocalAgentHostClientServicing {
         }
     }
 
-    private func node(_ task: [String: Any], depth: Int, root: Bool) -> [String: Any] {
-        ["task": task, "depth": depth, "is_root": root, "is_current_message": true]
+    private func node(
+        _ task: [String: Any],
+        latestRun: [String: Any]?,
+        depth: Int,
+        root: Bool
+    ) -> [String: Any] {
+        var node: [String: Any] = [
+            "task": task,
+            "depth": depth,
+            "is_root": root,
+            "is_current_message": true,
+        ]
+        if embedLatestRuns {
+            node["latest_run"] = latestRun ?? NSNull()
+        }
+        return node
     }
 
     private func task(id: String, status: String) -> [String: Any] {
@@ -522,9 +605,33 @@ private actor BlockedDependencyTaskHostStub: LocalAgentHostClientServicing {
         ]
     }
 
+    private func activeRun(taskID: String) -> [String: Any] {
+        [
+            "run_id": "run-\(taskID)",
+            "owner_entity_id": taskID,
+            "status": "waiting_tool_result",
+            "terminal_outcome": NSNull(),
+            "created_at_unix_ms": 1,
+            "updated_at_unix_ms": 2,
+        ]
+    }
+
     private func json(_ value: Any) throws -> Data {
         try JSONSerialization.data(withJSONObject: value)
     }
+}
+
+private actor PluginActivityBatchProbe {
+    private var batches: [[String]] = []
+
+    func load(_ runIDs: Set<String>) -> [String: MessageTaskRunActivity] {
+        batches.append(runIDs.sorted())
+        return Dictionary(uniqueKeysWithValues: runIDs.map { runID in
+            (runID, MessageTaskRunActivity(kind: .waitingTool, operation: "batched-plugin"))
+        })
+    }
+
+    func requests() -> [[String]] { batches }
 }
 
 private actor LocalTaskHostStub: LocalAgentHostClientServicing {

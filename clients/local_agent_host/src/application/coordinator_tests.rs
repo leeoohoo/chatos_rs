@@ -18,7 +18,7 @@ use chatos_local_agent_protocol::{
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::sync::{Barrier, Notify};
+use tokio::sync::{mpsc, Barrier, Notify};
 use uuid::Uuid;
 
 struct ModelProfile;
@@ -34,6 +34,15 @@ struct LateArrivalProfile {
     second_started: Arc<Notify>,
 }
 
+struct BlockingMixedProfile {
+    started: mpsc::UnboundedSender<String>,
+    release: Arc<Notify>,
+}
+
+struct SignalingToolExecutor {
+    started: Arc<Notify>,
+}
+
 struct ConcurrentToolExecutor {
     barrier: Arc<Barrier>,
     started: Arc<AtomicUsize>,
@@ -47,6 +56,19 @@ impl LocalToolExecutor for ConcurrentToolExecutor {
     ) -> Result<LocalAgentToolOutcome, String> {
         self.started.fetch_add(1, Ordering::SeqCst);
         self.barrier.wait().await;
+        Ok(LocalAgentToolOutcome::Succeeded {
+            output: json!({"invocation_id": invocation.invocation_id}),
+        })
+    }
+}
+
+#[async_trait]
+impl LocalToolExecutor for SignalingToolExecutor {
+    async fn execute_tool(
+        &self,
+        invocation: &LocalAgentToolInvocationRecord,
+    ) -> Result<LocalAgentToolOutcome, String> {
+        self.started.notify_one();
         Ok(LocalAgentToolOutcome::Succeeded {
             output: json!({"invocation_id": invocation.invocation_id}),
         })
@@ -79,6 +101,22 @@ impl LocalAgentProfile for LateArrivalProfile {
         } else if claim.run.run_id == "run-second" {
             self.second_started.notify_one();
         }
+        Ok(LocalAgentStepOutcome::Succeed {
+            output: json!({"run_id": claim.run.run_id}),
+        })
+    }
+}
+
+#[async_trait]
+impl LocalAgentProfile for BlockingMixedProfile {
+    async fn execute_step(
+        &self,
+        claim: &LocalAgentRunClaim,
+    ) -> Result<LocalAgentStepOutcome, String> {
+        self.started
+            .send(claim.run.run_id.clone())
+            .map_err(|_| "model start observer closed".to_string())?;
+        self.release.notified().await;
         Ok(LocalAgentStepOutcome::Succeed {
             output: json!({"run_id": claim.run.run_id}),
         })
@@ -371,6 +409,170 @@ async fn coordinator_executes_independent_tool_calls_concurrently() {
     .expect("drain concurrent tools");
 
     assert_eq!(started.load(Ordering::SeqCst), 4);
+}
+
+#[tokio::test]
+async fn ready_tool_is_not_stranded_behind_slow_model_backlog() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = Arc::new(LocalAgentRuntime::new(storage));
+    runtime.initialize("user-1").await.expect("initialize");
+
+    runtime
+        .try_handle(HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "create-tool-owner".to_string(),
+            command: HostCommand::CreateRun(CreateRunCommand {
+                run_id: "run-tool-owner".to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "conversation".to_string(),
+                owner_entity_id: "conversation-tool".to_string(),
+                profile_key: "mixed".to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({"message": "tool owner"}),
+                max_iterations: 4,
+            }),
+        })
+        .await
+        .expect("create Tool owner Run");
+    let HostResult::Claim {
+        claim: Some(tool_owner_claim),
+    } = runtime
+        .try_handle(HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "claim-tool-owner".to_string(),
+            command: HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
+                worker_id: "fixture-model-worker".to_string(),
+                lease_duration_ms: 30_000,
+            }),
+        })
+        .await
+        .expect("claim Tool owner Run")
+    else {
+        panic!("expected Tool owner claim")
+    };
+    runtime
+        .try_handle(HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "enqueue-ready-tool".to_string(),
+            command: HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
+                run_id: tool_owner_claim.run.run_id,
+                claim_token: tool_owner_claim.claim_token,
+                expected_version: tool_owner_claim.run.version,
+                outcome: LocalAgentStepOutcome::WaitForTool {
+                    batch_id: "mixed-batch".to_string(),
+                    tool_calls: vec![LocalAgentToolCall {
+                        call_id: "mixed-tool-call".to_string(),
+                        tool_name: "signaling_tool".to_string(),
+                        arguments: json!({}),
+                        side_effecting: false,
+                        requires_approval: false,
+                    }],
+                    checkpoint: json!({"phase": "waiting_for_tool"}),
+                },
+            }),
+        })
+        .await
+        .expect("enqueue ready Tool");
+
+    for index in 0..2 {
+        runtime
+            .try_handle(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: format!("create-slow-model-{index}"),
+                command: HostCommand::CreateRun(CreateRunCommand {
+                    run_id: format!("run-slow-model-{index}"),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation".to_string(),
+                    owner_entity_id: format!("conversation-slow-{index}"),
+                    profile_key: "mixed".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"message": index}),
+                    max_iterations: 4,
+                }),
+            })
+            .await
+            .expect("create slow model Run");
+    }
+
+    let (model_started_tx, mut model_started_rx) = mpsc::unbounded_channel();
+    let model_release = Arc::new(Notify::new());
+    let mut profiles = LocalAgentProfileRegistry::new();
+    profiles
+        .register(
+            "mixed",
+            BlockingMixedProfile {
+                started: model_started_tx,
+                release: Arc::clone(&model_release),
+            },
+        )
+        .expect("mixed profile");
+    let model_scheduler = LocalAgentScheduler::new(
+        Arc::clone(&runtime),
+        profiles,
+        "user-1",
+        "mixed-model-worker",
+    )
+    .expect("model scheduler");
+    let tool_started = Arc::new(Notify::new());
+    let mut tools = LocalToolRegistry::new();
+    tools
+        .register(
+            "signaling_tool",
+            SignalingToolExecutor {
+                started: Arc::clone(&tool_started),
+            },
+        )
+        .expect("signaling Tool");
+    let tool_scheduler =
+        LocalToolScheduler::new(Arc::clone(&runtime), tools, "user-1", "mixed-tool-worker")
+            .expect("tool scheduler");
+    let coordinator = Arc::new(
+        LocalAgentHostCoordinator::new(
+            Arc::clone(&runtime),
+            "user-1",
+            Some(model_scheduler),
+            Some(tool_scheduler),
+        )
+        .expect("coordinator")
+        .with_maximum_concurrent_work_items(2)
+        .expect("two shared slots"),
+    );
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let coordinator_task = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move { coordinator.run_until_shutdown(shutdown_rx).await }
+    });
+    coordinator.wake();
+
+    tokio::time::timeout(Duration::from_secs(1), model_started_rx.recv())
+        .await
+        .expect("a model Run started")
+        .expect("model start event");
+    tokio::time::timeout(Duration::from_secs(1), tool_started.notified())
+        .await
+        .expect("ready Tool must receive a shared slot while model work is blocked");
+    tokio::time::timeout(Duration::from_secs(1), model_started_rx.recv())
+        .await
+        .expect("the released Tool slot refills with the second model Run")
+        .expect("second model start event");
+
+    model_release.notify_waiters();
+    shutdown_tx.send(true).expect("shutdown");
+    coordinator.wake();
+    coordinator_task
+        .await
+        .expect("coordinator task")
+        .expect("coordinator shutdown");
 }
 
 #[test]

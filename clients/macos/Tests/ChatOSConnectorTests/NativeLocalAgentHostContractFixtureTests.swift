@@ -71,6 +71,8 @@ final class NativeLocalAgentHostContractFixtureTests: XCTestCase {
         XCTAssertEqual(graph.sourceTurnID, history.turns.first?.turnID)
         XCTAssertEqual(graph.sourceUserMessageID, history.messages.first?.messageID)
         XCTAssertEqual(graph.nodes.first?.task.activeRunID, "run-1")
+        XCTAssertEqual(graph.nodes.first?.latestRun?.runID, "run-1")
+        XCTAssertEqual(graph.nodes.first?.hasEmbeddedLatestRun, true)
 
         let eventsEnvelope = try JSONDecoder().decode(
             ContractEnvelope<RunEventsFixtureResult>.self,
@@ -118,7 +120,7 @@ final class NativeLocalAgentHostContractFixtureTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         return try Data(contentsOf: clients
-            .appendingPathComponent("contracts/local-agent/v50/fixtures")
+            .appendingPathComponent("contracts/local-agent/v51/fixtures")
             .appendingPathComponent(name))
     }
 

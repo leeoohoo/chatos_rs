@@ -119,9 +119,10 @@ pub use task::{
     resolve_local_task_graph_notification_policy, CancelTaskCommand, CreateTaskGraphCommand,
     GetMessageTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand, ListTaskGraphsCommand,
     LocalMessageTaskGraph, LocalMessageTaskGraphEdge, LocalMessageTaskGraphNode,
-    LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphNotificationPolicy,
-    LocalTaskGraphPage, LocalTaskGraphStatus, LocalTaskGraphSummary, LocalTaskRecord,
-    LocalTaskSpec, LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
+    LocalMessageTaskGraphRunSummary, LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope,
+    LocalTaskGraphNotificationPolicy, LocalTaskGraphPage, LocalTaskGraphStatus,
+    LocalTaskGraphSummary, LocalTaskRecord, LocalTaskSpec, LocalTaskStatus, RestartTaskCommand,
+    RetryTaskCommand,
 };
 pub use task_write_scope::{
     local_task_runtime_write_scope, local_task_write_scope, local_task_write_scope_overlap,
@@ -134,7 +135,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 50;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 51;
 /// Maximum bytes in one physical IPC frame. The high bit of the frame prefix is reserved
 /// as the continuation flag, so this limit must stay below `i32::MAX`.
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;

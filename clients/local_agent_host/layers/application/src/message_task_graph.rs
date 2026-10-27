@@ -124,12 +124,23 @@ impl LocalAgentRuntime {
         for graph in graphs.values() {
             append_context_edges(graph, &task_ids, &mut edge_ids, &mut edges);
         }
+        let latest_runs = self
+            .store
+            .latest_task_runs(
+                &command.owner_user_id,
+                &tasks.keys().cloned().collect::<Vec<_>>(),
+            )
+            .await?
+            .into_iter()
+            .map(|run| (run.owner_entity_id.clone(), run))
+            .collect::<HashMap<_, _>>();
         let root_set = root_task_ids.iter().cloned().collect::<HashSet<_>>();
         let nodes = ordered_ids
             .into_iter()
             .filter_map(|task_id| {
                 let task = tasks.remove(&task_id)?;
                 Some(LocalMessageTaskGraphNode {
+                    latest_run: latest_runs.get(&task_id).cloned(),
                     depth: depths.get(&task_id).copied().unwrap_or(0),
                     is_root: root_set.contains(&task_id),
                     is_current_message: root_set.contains(&task_id),

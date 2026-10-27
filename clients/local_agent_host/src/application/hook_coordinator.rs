@@ -1610,11 +1610,13 @@ fn completion_from_result(
                 Some("async Hook stdout contained no protocol JSON".to_string());
             return completion;
         };
-        let mut persisted = PersistedInvocationOutput::default();
-        persisted.system_message = value
-            .get("systemMessage")
-            .and_then(Value::as_str)
-            .map(ToString::to_string);
+        let mut persisted = PersistedInvocationOutput {
+            system_message: value
+                .get("systemMessage")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            ..PersistedInvocationOutput::default()
+        };
         if let Some(specific) = value.get("hookSpecificOutput").and_then(Value::as_object) {
             if specific.get("hookEventName").and_then(Value::as_str) == Some(event_type) {
                 persisted.additional_context = specific
@@ -3931,7 +3933,7 @@ mod tests {
             .set_active_plugin_hook_bundles(
                 &command("activate-ponytail"),
                 "user-1",
-                &[bundle.bundle_id.clone()],
+                std::slice::from_ref(&bundle.bundle_id),
                 10_001,
             )
             .await

@@ -261,6 +261,12 @@ impl LocalAgentHostCoordinator {
     ) -> Result<(), LocalAgentCoordinatorError> {
         let mut effective_limit = self.effective_maximum_concurrent_work_items.subscribe();
         let mut failure_backoff = Duration::from_millis(100);
+        // Split the initial preference across workers, then rotate it after every committed
+        // item. Model steps and Tool calls share one machine budget, but neither lane may own
+        // every slot merely because it is always checked first. This is especially important
+        // when several slow model requests are active while an earlier Run is already waiting
+        // for a Tool result.
+        let mut prefer_tool = worker_index % 2 == 1;
         loop {
             if *shutdown.borrow() {
                 return Ok(());
@@ -279,7 +285,10 @@ impl LocalAgentHostCoordinator {
                     }
                 }
             }
-            let progressed = match self.run_ready_work_once(worker_index, &shutdown).await {
+            let progressed = match self
+                .run_ready_work_once(worker_index, prefer_tool, &shutdown)
+                .await
+            {
                 Ok(progressed) => {
                     failure_backoff = Duration::from_millis(100);
                     progressed
@@ -302,6 +311,7 @@ impl LocalAgentHostCoordinator {
                 return Ok(());
             }
             if progressed {
+                prefer_tool = !prefer_tool;
                 continue;
             }
             let delay = match self.next_run_retry_delay().await {
@@ -323,32 +333,69 @@ impl LocalAgentHostCoordinator {
     async fn run_ready_work_once(
         &self,
         worker_index: usize,
+        prefer_tool: bool,
         shutdown: &watch::Receiver<bool>,
     ) -> Result<bool, LocalAgentCoordinatorError> {
-        let mut progressed = false;
-        if let Some(scheduler) = self.model_scheduler.as_ref() {
-            let committed = matches!(scheduler.run_once().await?, SchedulerTick::Committed(_));
-            if committed {
-                self.signal_activity();
+        let first = if prefer_tool {
+            self.run_tool_once().await
+        } else {
+            self.run_model_once().await
+        };
+        match first {
+            Ok(true) => return Ok(true),
+            Ok(false) => {}
+            Err(first_error) => {
+                // A broken or temporarily unavailable lane must not suppress independent work in
+                // the other lane. Preserve the first error only if the fallback also cannot make
+                // progress, allowing the outer loop to apply its bounded failure backoff.
+                if !self.worker_can_claim(worker_index, shutdown) {
+                    return Err(first_error);
+                }
+                let fallback = if prefer_tool {
+                    self.run_model_once().await
+                } else {
+                    self.run_tool_once().await
+                };
+                return match fallback {
+                    Ok(true) => Ok(true),
+                    Ok(false) | Err(_) => Err(first_error),
+                };
             }
-            progressed |= committed;
         }
-        if *shutdown.borrow() {
-            return Ok(progressed);
+        if !self.worker_can_claim(worker_index, shutdown) {
+            return Ok(false);
         }
-        // A worker that became ineligible while model work was active must not
-        // cross a second durable claim boundary for tool work.
-        if worker_index >= *self.effective_maximum_concurrent_work_items.borrow() {
-            return Ok(progressed);
+        if prefer_tool {
+            self.run_model_once().await
+        } else {
+            self.run_tool_once().await
         }
-        if let Some(scheduler) = self.tool_scheduler.as_ref() {
-            let committed = matches!(scheduler.run_once().await?, ToolSchedulerTick::Committed(_));
-            if committed {
-                self.signal_activity();
-            }
-            progressed |= committed;
+    }
+
+    fn worker_can_claim(&self, worker_index: usize, shutdown: &watch::Receiver<bool>) -> bool {
+        !*shutdown.borrow() && worker_index < *self.effective_maximum_concurrent_work_items.borrow()
+    }
+
+    async fn run_model_once(&self) -> Result<bool, LocalAgentCoordinatorError> {
+        let Some(scheduler) = self.model_scheduler.as_ref() else {
+            return Ok(false);
+        };
+        let committed = matches!(scheduler.run_once().await?, SchedulerTick::Committed(_));
+        if committed {
+            self.signal_activity();
         }
-        Ok(progressed)
+        Ok(committed)
+    }
+
+    async fn run_tool_once(&self) -> Result<bool, LocalAgentCoordinatorError> {
+        let Some(scheduler) = self.tool_scheduler.as_ref() else {
+            return Ok(false);
+        };
+        let committed = matches!(scheduler.run_once().await?, ToolSchedulerTick::Committed(_));
+        if committed {
+            self.signal_activity();
+        }
+        Ok(committed)
     }
 
     #[cfg(test)]
@@ -356,14 +403,14 @@ impl LocalAgentHostCoordinator {
         &self,
         shutdown: &watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
+        let mut round = 0usize;
         loop {
             if *shutdown.borrow() {
                 return Ok(());
             }
-            let results = join_all(
-                (0..self.maximum_concurrent_work_items)
-                    .map(|worker_index| self.run_ready_work_once(worker_index, shutdown)),
-            )
+            let results = join_all((0..self.maximum_concurrent_work_items).map(|worker_index| {
+                self.run_ready_work_once(worker_index, (worker_index + round) % 2 == 1, shutdown)
+            }))
             .await;
             let mut progressed = false;
             for result in results {
@@ -372,6 +419,7 @@ impl LocalAgentHostCoordinator {
             if !progressed {
                 return Ok(());
             }
+            round = round.wrapping_add(1);
         }
     }
 

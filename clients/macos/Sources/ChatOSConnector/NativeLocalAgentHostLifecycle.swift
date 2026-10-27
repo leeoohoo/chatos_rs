@@ -14,7 +14,7 @@ public extension Notification.Name {
 }
 
 enum NativeLocalAgentHostProtocol {
-    static let version = 50
+    static let version = 51
 }
 
 public enum NativeLocalAgentHostPressureLevel: String, Codable, Sendable, Comparable {
@@ -284,8 +284,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
                 timeoutMilliseconds: 1_000
             )
         } catch {
-            invalidateAfterTransportFailure(process)
-            process.terminateAndWait()
+            await invalidateAfterTransportFailure(process)
         }
     }
 
@@ -479,19 +478,19 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
             if await process.respondsToHealthCheck(timeoutMilliseconds: 1_000) {
                 throw error
             }
-            invalidateAfterTransportFailure(process)
+            await invalidateAfterTransportFailure(process)
             throw error
         } catch let error as NativeLocalAgentHostError where error == .notRunning {
-            invalidateAfterTransportFailure(process)
+            await invalidateAfterTransportFailure(process)
             let recovered = try await waitForRunningProcess(commandOwner: commandOwner)
             do {
                 responseData = try await recovered.roundTripAsync(request)
             } catch {
-                invalidateAfterTransportFailure(recovered)
+                await invalidateAfterTransportFailure(recovered)
                 throw error
             }
         } catch {
-            invalidateAfterTransportFailure(process)
+            await invalidateAfterTransportFailure(process)
             throw error
         }
         guard let response = try JSONSerialization.jsonObject(with: responseData)
@@ -672,14 +671,26 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         )
     }
 
-    private func invalidateAfterTransportFailure(_ managedProcess: ManagedLocalAgentHostProcess) {
+    private func invalidateAfterTransportFailure(
+        _ managedProcess: ManagedLocalAgentHostProcess
+    ) async {
         guard self.managedProcess?.identity == managedProcess.identity else { return }
         let processIdentifier = managedProcess.process.processIdentifier
-        activeOwnerUserID = nil
-        credentialFingerprint = nil
-        workersEnabled = false
-        self.managedProcess = nil
-        managedProcess.terminate()
+        _ = detachManagedProcess()
+
+        // Transport failure and operating-system process exit are different states. Keep the
+        // teardown in the lifecycle transition chain so a concurrent recovery cannot launch a
+        // replacement while the failed Host still owns its SQLite advisory lock.
+        let operation = HostTransition(
+            id: UUID(),
+            target: nil,
+            task: Task.detached(priority: .userInitiated) {
+                managedProcess.terminateAndWait()
+                return nil
+            }
+        )
+        transition = operation
+        try? await settle(operation)
         NotificationCenter.default.post(
             name: .nativeLocalAgentHostDidExit,
             object: nil,

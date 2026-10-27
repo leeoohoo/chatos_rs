@@ -30,6 +30,7 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         let largeCodeFallbackMilliseconds: Double
         let largeCodeSpanCount: Int
         let mainActorMaximumGapMilliseconds: Double
+        let mainActorMaximumGapPhase: String
         let concurrentWallMilliseconds: Double
     }
 
@@ -48,8 +49,31 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         XCTAssertGreaterThan(markdown.utf8.count, 1_000_000)
         XCTAssertGreaterThan(code.utf16.count, 600_000)
 
+        // A real chat-page transition reuses the application's existing top-level window.
+        // Construct the synthetic XCTest window before sampling so the gate still covers
+        // ChatOS scroll/table creation and layout, but not AppKit's unrelated process-wide
+        // first-NSWindow initialization.
+        let timelineWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        timelineWindow.isReleasedWhenClosed = false
+        defer { timelineWindow.close() }
+
         let probe = AppScenarioMainActorGapProbe()
-        let probeTask = Task { await probe.run() }
+        let probeTask = Task.detached(priority: .userInitiated) { [probe] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .milliseconds(1))
+                } catch {
+                    return
+                }
+                let enqueuedAt = DispatchTime.now().uptimeNanoseconds
+                await probe.record(enqueuedAt: enqueuedAt)
+            }
+        }
         await Task.yield()
         let wallStart = DispatchTime.now().uptimeNanoseconds
 
@@ -68,6 +92,7 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
             return (spans.count, Self.milliseconds(since: start))
         }
 
+        probe.phase = "timeline_projection"
         let timelineStart = DispatchTime.now().uptimeNanoseconds
         let timelineItems = ConversationTimelineItem.build(
             turns: turns,
@@ -76,14 +101,20 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         )
         let timelineMilliseconds = Self.milliseconds(since: timelineStart)
 
+        probe.phase = "todo_projection"
         let todoStart = DispatchTime.now().uptimeNanoseconds
         let todoPresentations = TeamTodoRunPresentation.presentationsByTodoID(
             summaries: todoSummaries
         )
         let todoMilliseconds = Self.milliseconds(since: todoStart)
 
-        let nativeTimeline = try await measureNativeTimeline(rows: 1_000)
+        probe.phase = "native_timeline"
+        let nativeTimeline = try await measureNativeTimeline(
+            rows: 1_000,
+            window: timelineWindow
+        )
 
+        probe.phase = "background_results"
         let (markdownBlockCount, markdownMilliseconds) = await markdownTask.value
         let (codeSpanCount, codeMilliseconds) = await codeTask.value
         let wallMilliseconds = Self.milliseconds(since: wallStart)
@@ -134,6 +165,7 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
             largeCodeFallbackMilliseconds: codeMilliseconds,
             largeCodeSpanCount: codeSpanCount,
             mainActorMaximumGapMilliseconds: probe.maximumGapMilliseconds,
+            mainActorMaximumGapPhase: probe.maximumGapPhase,
             concurrentWallMilliseconds: wallMilliseconds
         )
         let encoder = JSONEncoder()
@@ -184,7 +216,10 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         }
     }
 
-    private func measureNativeTimeline(rows: Int) async throws -> (
+    private func measureNativeTimeline(
+        rows: Int,
+        window: NSWindow
+    ) async throws -> (
         rows: Int,
         initialConstructedRows: Int,
         scrolledConstructedRows: Int,
@@ -192,20 +227,12 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         scrollLayoutMilliseconds: Double
     ) {
         let coordinator = AgentChatTimelineCoordinator()
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.isReleasedWhenClosed = false
         let scrollView = coordinator.makeScrollView()
         scrollView.frame = window.contentView?.bounds
             ?? NSRect(x: 0, y: 0, width: 900, height: 600)
         window.contentView = scrollView
         defer {
             coordinator.stop()
-            window.close()
         }
 
         var constructedIDs = Set<String>()
@@ -263,23 +290,17 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
 @MainActor
 private final class AppScenarioMainActorGapProbe {
     private(set) var maximumGapMilliseconds = 0.0
+    private(set) var maximumGapPhase = "unassigned"
     private(set) var sampleCount = 0
+    var phase = "setup"
 
-    func run() async {
-        var previous = DispatchTime.now().uptimeNanoseconds
-        while !Task.isCancelled {
-            do {
-                try await Task.sleep(for: .milliseconds(1))
-            } catch {
-                return
-            }
-            let current = DispatchTime.now().uptimeNanoseconds
-            maximumGapMilliseconds = max(
-                maximumGapMilliseconds,
-                Double(current - previous) / 1_000_000
-            )
-            sampleCount += 1
-            previous = current
+    func record(enqueuedAt: UInt64) {
+        let current = DispatchTime.now().uptimeNanoseconds
+        let gap = Double(current - enqueuedAt) / 1_000_000
+        if gap > maximumGapMilliseconds {
+            maximumGapMilliseconds = gap
+            maximumGapPhase = phase
         }
+        sampleCount += 1
     }
 }

@@ -43,6 +43,16 @@ pub trait LocalAgentTaskStore: Send + Sync {
         limit: u32,
     ) -> Result<Vec<LocalAgentRunRecord>, ClientStorageError>;
 
+    /// Returns at most one newest Run presentation for each requested Task. Implementations must
+    /// neither sort nor return full Run input, checkpoint, continuation, Tool batch, or claim data.
+    /// Terminal presentation text is bounded because this snapshot shares the multiplexed IPC
+    /// transport with unrelated conversations.
+    async fn latest_task_runs(
+        &self,
+        owner_user_id: &str,
+        task_ids: &[String],
+    ) -> Result<Vec<LocalMessageTaskGraphRunSummary>, ClientStorageError>;
+
     async fn list_tasks_for_conversation(
         &self,
         owner_user_id: &str,

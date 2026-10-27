@@ -281,3 +281,55 @@ async fn message_graph_restores_server_task_runner_root_and_cross_turn_semantics
         edge.source_task_id == "task-b" && edge.target_task_id == "task-a" && edge.kind == "context"
     }));
 }
+
+#[tokio::test]
+async fn message_graph_embeds_latest_task_runs_in_one_snapshot() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = LocalAgentRuntime::new(storage);
+    create_conversation(&runtime, "conversation-batch").await;
+    let _turn = start_turn(&runtime, "conversation-batch", "turn-batch", 1).await;
+    create_graph(
+        &runtime,
+        "graph-batch",
+        CreateTaskGraphCommand {
+            graph_id: "graph-batch".to_string(),
+            owner_user_id: "user-1".to_string(),
+            source_entity_type: "conversation_turn".to_string(),
+            source_entity_id: "turn-batch".to_string(),
+            tasks: vec![task("task-batch", "conversation-batch", json!({}))],
+            dependencies: Vec::new(),
+        },
+    )
+    .await;
+    let runs = runtime
+        .start_ready_task_runs_for_graph("user-1", "graph-batch")
+        .await
+        .expect("materialize ready Task");
+    assert_eq!(runs.len(), 1);
+
+    let result = runtime
+        .try_handle(request(
+            "message-graph-batch",
+            HostCommand::GetMessageTaskGraph(GetMessageTaskGraphCommand {
+                owner_user_id: "user-1".to_string(),
+                source_conversation_id: "conversation-batch".to_string(),
+                source_turn_id: "turn-batch".to_string(),
+                source_user_message_id: Some("message-turn-batch".to_string()),
+            }),
+        ))
+        .await
+        .expect("message graph");
+    let HostResult::MessageTaskGraph { graph } = result else {
+        panic!("expected message Task Graph");
+    };
+    let node = graph.nodes.first().expect("Task node");
+    assert_eq!(node.task.task_id, "task-batch");
+    assert_eq!(
+        node.latest_run.as_ref().map(|run| run.run_id.as_str()),
+        Some(runs[0].run_id.as_str())
+    );
+}

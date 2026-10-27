@@ -11,13 +11,14 @@ use chatos_local_agent_protocol::{
     LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
     LocalConversationAttachmentRecord, LocalConversationDetail, LocalConversationHistoryPage,
     LocalConversationPage, LocalConversationRuntimeSettings, LocalConversationTurnStart,
-    LocalConversationTurnUpdate, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
-    LocalPluginHookBundleRecord, LocalPluginHookBundleSpec, LocalPluginHookInvocationPage,
-    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
-    LocalRemoteConnection, LocalRequirementSurvey, LocalRequirementSurveyResolution,
-    LocalRequirementSurveyStatus, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
-    LocalTaskRecord, LocalTaskStatus, PutConversationRuntimeSettingsCommand,
-    ResumeConversationTurnCommand, StartConversationTurnCommand, UpdateNotepadNoteCommand,
+    LocalConversationTurnUpdate, LocalMessageTaskGraphRunSummary, LocalNotepadImage,
+    LocalNotepadNote, LocalNotepadNoteDetail, LocalPluginHookBundleRecord,
+    LocalPluginHookBundleSpec, LocalPluginHookInvocationPage, LocalPluginInstallationPage,
+    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalRemoteConnection,
+    LocalRequirementSurvey, LocalRequirementSurveyResolution, LocalRequirementSurveyStatus,
+    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage, LocalTaskRecord, LocalTaskStatus,
+    PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
+    StartConversationTurnCommand, UpdateNotepadNoteCommand,
 };
 use serde_json::Value;
 use thiserror::Error;

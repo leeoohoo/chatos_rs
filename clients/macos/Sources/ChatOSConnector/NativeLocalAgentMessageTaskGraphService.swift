@@ -23,7 +23,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     private let beforeRetry: @Sendable (String) async -> Void
     private let afterRetry: @Sendable () async -> Void
     private let afterCancel: @Sendable (String) async -> Void
-    private let pluginActivity: @Sendable (String) async -> MessageTaskRunActivity?
+    private let pluginActivities: @Sendable (Set<String>) async -> [String: MessageTaskRunActivity]
     private var ownerUserID: String?
     private var terminalRunCache: [String: TerminalRunCacheEntry] = [:]
 
@@ -32,7 +32,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         beforeRetry: @escaping @Sendable (String) async -> Void = { _ in },
         afterRetry: @escaping @Sendable () async -> Void = {},
         afterCancel: @escaping @Sendable (String) async -> Void = { _ in },
-        pluginActivity: @escaping @Sendable (String) async -> MessageTaskRunActivity? = { _ in nil }
+        pluginActivities: @escaping @Sendable (Set<String>) async -> [String: MessageTaskRunActivity] = { _ in [:] }
     ) {
         self.client = NativeLocalAgentTaskClient(host: host)
         self.toolClient = NativeLocalAgentToolClient(host: host)
@@ -40,7 +40,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         self.beforeRetry = beforeRetry
         self.afterRetry = afterRetry
         self.afterCancel = afterCancel
-        self.pluginActivity = pluginActivity
+        self.pluginActivities = pluginActivities
     }
 
     public func configure(ownerUserID: String) {
@@ -58,7 +58,37 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         lookup: MessageTaskLookup?
     ) async throws -> MessageTaskGraphSnapshot {
         if let graph = try await messageGraph(lookup: lookup) {
-            return await addingTerminalResults(mapMessageGraph(graph, messageID: messageID, lookup: lookup))
+            guard graph.nodes.allSatisfy(\.hasEmbeddedLatestRun) else {
+                let snapshot = mapMessageGraph(
+                    graph,
+                    messageID: messageID,
+                    lookup: lookup,
+                    pendingApprovals: []
+                )
+                return await addingTerminalResults(snapshot)
+            }
+            let activeRunIDs = Set(graph.nodes.compactMap { node in
+                node.latestRun.flatMap { Self.isTerminal($0.status) ? nil : $0.runID }
+            })
+            let owner = try requireOwner()
+            async let pendingApprovalsRequest = Self.loadPendingApprovals(
+                client: toolClient,
+                ownerUserID: owner,
+                required: !activeRunIDs.isEmpty
+            )
+            async let pluginActivitiesRequest = pluginActivities(activeRunIDs)
+            let (pendingApprovals, livePluginActivities) = await (
+                pendingApprovalsRequest,
+                pluginActivitiesRequest
+            )
+            let snapshot = mapMessageGraph(
+                graph,
+                messageID: messageID,
+                lookup: lookup,
+                pendingApprovals: pendingApprovals,
+                livePluginActivities: livePluginActivities
+            )
+            return applyingDependencyPresentations(to: snapshot)
         }
         let graphs = try await matchingGraphs(lookup: lookup)
         return await addingTerminalResults(mapGraphs(graphs, messageID: messageID, lookup: lookup))
@@ -100,7 +130,15 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             ownerUserID: owner,
             taskIDs: taskIDsToFetch
         )
-        let pendingApprovals = await pendingApprovalsRequest
+        let activeRunIDs = Set(fetchedRuns.values.compactMap { result -> String? in
+            guard case let .found(run) = result, !Self.isTerminal(run.status) else { return nil }
+            return run.runID
+        })
+        async let pluginActivitiesRequest = pluginActivities(activeRunIDs)
+        let (pendingApprovals, livePluginActivities) = await (
+            pendingApprovalsRequest,
+            pluginActivitiesRequest
+        )
 
         for index in result.nodes.indices {
             let task = result.nodes[index].task
@@ -120,9 +158,10 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
                 // Do not turn a transient IPC failure into a durable negative cache.
                 continue
             case let .found(run)?:
-                let mapped = await mapRunWithLiveActivity(
+                let mapped = mapRun(
                     run,
-                    pendingApprovals: pendingApprovals
+                    pendingApprovals: pendingApprovals,
+                    livePluginActivity: livePluginActivities[run.runID]
                 )
                 result.nodes[index].task = task.merging(run: mapped)
                 if isTerminal {
@@ -435,7 +474,9 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     private func mapMessageGraph(
         _ graph: LocalAgentMessageTaskGraph,
         messageID: String,
-        lookup: MessageTaskLookup?
+        lookup: MessageTaskLookup?,
+        pendingApprovals: [LocalAgentToolInvocationRecord],
+        livePluginActivities: [String: MessageTaskRunActivity] = [:]
     ) -> MessageTaskGraphSnapshot {
         let prerequisiteIDsByTask = Dictionary(grouping: graph.edges.filter {
             $0.kind == "prerequisite"
@@ -443,7 +484,9 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         let tasksByID = Dictionary(uniqueKeysWithValues: graph.nodes.map {
             ($0.task.taskID, $0.task)
         })
-        let nodes = graph.nodes.map { node in
+        var nodes: [MessageTaskGraphNode] = []
+        nodes.reserveCapacity(graph.nodes.count)
+        for node in graph.nodes {
             var task = mapTaskWithoutRun(
                 node.task,
                 dependencies: (prerequisiteIDsByTask[node.task.taskID] ?? []).map {
@@ -462,12 +505,19 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
                     )
                 }
             }
-            return MessageTaskGraphNode(
+            if let run = node.latestRun {
+                task = task.merging(run: mapRun(
+                    run,
+                    pendingApprovals: pendingApprovals,
+                    livePluginActivity: livePluginActivities[run.runID]
+                ))
+            }
+            nodes.append(MessageTaskGraphNode(
                 task: task,
                 depth: Int(node.depth),
                 isRoot: node.isRoot,
                 isCurrentMessage: node.isCurrentMessage
-            )
+            ))
         }
         return MessageTaskGraphSnapshot(
             rootTaskIDs: graph.rootTaskIDs,
@@ -660,6 +710,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             status: Self.taskDisplayStatus(task),
             defaultModelConfigID: task.modelConfigRef,
             thinkingLevel: Self.taskThinkingLevel(in: task.input),
+            resultSummary: task.resultSummary,
             lastRunID: task.activeRunID,
             sourceTurnID: task.sourceEntityType == "conversation_turn"
                 ? task.sourceEntityID : nil,
@@ -690,7 +741,8 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
 
     private func mapRun(
         _ run: LocalAgentRunRecord,
-        pendingApprovals: [LocalAgentToolInvocationRecord] = []
+        pendingApprovals: [LocalAgentToolInvocationRecord] = [],
+        livePluginActivity: MessageTaskRunActivity? = nil
     ) -> MessageTaskRun {
         let modelOutput = run.terminalOutcome.flatMap(Self.modelOutput)
         return MessageTaskRun(
@@ -708,10 +760,40 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             acceptanceReport: run.terminalOutcome.flatMap {
                 Self.value("task_acceptance", in: $0).flatMap { MessageTaskAcceptanceReport.decode(json: Self.json($0)) }
             },
-            activity: NativeLocalAgentRunActivityProjector.project(
-                run: run,
-                pendingApprovals: pendingApprovals
-            )
+            activity: livePluginActivity
+                ?? NativeLocalAgentRunActivityProjector.project(
+                    run: run,
+                    pendingApprovals: pendingApprovals
+                )
+        )
+    }
+
+    private func mapRun(
+        _ run: LocalAgentMessageTaskGraphRunSummary,
+        pendingApprovals: [LocalAgentToolInvocationRecord] = [],
+        livePluginActivity: MessageTaskRunActivity? = nil
+    ) -> MessageTaskRun {
+        let modelOutput = run.terminalOutcome.flatMap(Self.modelOutput)
+        return MessageTaskRun(
+            id: run.runID,
+            taskID: run.ownerEntityID,
+            status: run.status,
+            modelPhaseStatus: run.status,
+            startedAt: Self.date(run.createdAtUnixMs),
+            finishedAt: (Self.isTerminal(run.status) || run.status == "needs_review")
+                ? Self.date(run.updatedAtUnixMs) : nil,
+            resultSummary: modelOutput,
+            reportContent: run.terminalOutcome.flatMap {
+                Self.string("report", in: $0) ?? Self.modelOutput($0)
+            },
+            errorMessage: run.terminalOutcome.flatMap(Self.executionError),
+            acceptanceReport: run.terminalOutcome.flatMap {
+                Self.value("task_acceptance", in: $0).flatMap {
+                    MessageTaskAcceptanceReport.decode(json: Self.json($0))
+                }
+            },
+            activity: livePluginActivity
+                ?? Self.graphActivity(run, pendingApprovals: pendingApprovals)
         )
     }
 
@@ -721,10 +803,48 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     ) async -> MessageTaskRun {
         var mapped = mapRun(run, pendingApprovals: pendingApprovals)
         if !Self.isTerminal(run.status),
-           let activity = await pluginActivity(run.runID) {
+           let activity = await pluginActivities([run.runID])[run.runID] {
             mapped.activity = activity
         }
         return mapped
+    }
+
+    private static func graphActivity(
+        _ run: LocalAgentMessageTaskGraphRunSummary,
+        pendingApprovals: [LocalAgentToolInvocationRecord]
+    ) -> MessageTaskRunActivity? {
+        let startedAt = date(run.updatedAtUnixMs)
+        let approval = pendingApprovals.first { $0.runID == run.runID }
+        if let approval, ["waiting_tool_result", "needs_review"].contains(run.status) {
+            return .init(
+                kind: .waitingApproval,
+                operation: approval.toolName,
+                detail: approval.approvalReason,
+                startedAt: startedAt
+            )
+        }
+        switch run.status {
+        case "queued", "model_ready", "continuation_ready":
+            return .init(kind: .waitingModel, startedAt: startedAt)
+        case "model_running":
+            return .init(kind: .runningModel, startedAt: startedAt)
+        case "waiting_user":
+            return .init(kind: .waitingUser, startedAt: startedAt)
+        case "needs_review":
+            return .init(kind: .waitingApproval, startedAt: startedAt)
+        case "waiting_tool_result":
+            return .init(kind: .waitingTool, startedAt: startedAt)
+        case "retry_scheduled":
+            return .init(
+                kind: .retryScheduled,
+                detail: run.nextAttemptAtUnixMs.map { date($0).formatted() },
+                startedAt: startedAt
+            )
+        case "paused":
+            return .init(kind: .paused, startedAt: startedAt)
+        default:
+            return nil
+        }
     }
 
     static func executionError(_ outcome: LocalAgentJSONValue) -> String? {

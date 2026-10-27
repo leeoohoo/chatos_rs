@@ -586,11 +586,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             XCTAssertEqual(error, .requestTimedOut)
         }
         await fulfillment(of: [timeoutNotification], timeout: 2)
-        let timeoutResumeResult = kill(stalledProcessIdentifier, SIGCONT)
-        XCTAssertTrue(
-            timeoutResumeResult == 0 || (timeoutResumeResult == -1 && errno == ESRCH),
-            "The timed-out Host must either resume for cleanup or already be reaped"
-        )
+        XCTAssertEqual(kill(stalledProcessIdentifier, 0), -1)
+        XCTAssertEqual(errno, ESRCH, "The exit notification must follow process reaping")
         let isRunningAfterTimeout = await lifecycle.isRunning
         let ownerAfterTimeout = await lifecycle.activeOwnerUserID
         XCTAssertFalse(isRunningAfterTimeout)
@@ -612,11 +609,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         await lifecycle.stop()
         let stopElapsed = stopStartedAt.duration(to: clock.now)
         XCTAssertLessThan(stopElapsed, .milliseconds(250))
-        let stopResumeResult = kill(responsiveProcessIdentifier, SIGCONT)
-        XCTAssertTrue(
-            stopResumeResult == 0 || (stopResumeResult == -1 && errno == ESRCH),
-            "The stopped Host must either resume for cleanup or already be reaped"
-        )
+        XCTAssertEqual(kill(responsiveProcessIdentifier, 0), -1)
+        XCTAssertEqual(errno, ESRCH, "Stopping must reap the Host before returning")
         _ = await stalledRequest.result
         owner = await lifecycle.activeOwnerUserID
         XCTAssertNil(owner)

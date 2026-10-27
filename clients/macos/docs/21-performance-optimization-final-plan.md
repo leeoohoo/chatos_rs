@@ -2,7 +2,7 @@
 
 更新时间：2026-09-28
 
-状态：待实施
+状态：P0/P1/P2 代码已实施；当前进行 Release 深度回归与最终实机验收
 
 本文是当前 macOS 客户端性能工作的最终执行基线。`20-performance-remediation-plan.md` 保留为 2026-09-20 第一轮资源泄漏与生命周期治理记录；本文覆盖本轮发现的发布构建、SwiftUI 更新边界、Agent 任务板、Markdown 主线程工作、桌面宠物、轮询和代码预览问题。
 
@@ -318,6 +318,22 @@ Markdown 解析与块级 RenderModel
 7. **批次 7：完整 Release 回归、灰度和性能报告。** 达标后才替换 `/Applications/ChatOS.app`。
 
 批次 2–6 可以在代码层并行开发，但性能验收必须基于批次 1 的 Release 构建，并在合并后重新跑完整矩阵。
+
+## 八-A、2026-10-27 当前分支深度复核
+
+本节记录 `3.0.9.4` 的当前事实，避免把历史“待实施”标题误当成进度，也避免用零散单测替代完成定义。
+
+已复核：
+
+- Release 合成场景连续三轮通过：1,000 turn 时间线构造 P95 `0.62 ms`，原生时间线首次/滚动布局 P95 `43.59/14.24 ms`，100 Todo projection P95 `0.05 ms`，600,000 UTF-16 大源码回退 P95 `0.05 ms`；1 MiB Markdown 后台解析 P95 `197.53 ms`，整套并发场景 P95 `199.16 ms`。Markdown 解析器不再逐行重复编译相同正则，也会让不含行内有序列表标记的普通文档绕过正则展开，较本轮修复前的 `561.90/563.56 ms` 分别下降约 65%。
+- MainActor 门禁改为测量“工作进入 MainActor 队列到实际执行”的排队延迟，不再把 `Task.sleep` 的系统定时器合并误报为 UI hang；合成场景 P95/最大值为 `27.61 ms`。测试在采样前创建复用的顶层 `NSWindow`，模拟真实页面复用应用主窗口，但 ChatOS timeline scroll/table 创建、1,000 行更新、可见行构造和布局仍全部纳入门禁。
+- Agent Store Release 基准通过：500 消息/500 Run/100 Todo 工作区快照约 `5.24–5.94 ms`；500 次空闲 heartbeat 查询约 `7.09–7.45 ms`，空闲 heartbeat 与 account drain 数据库变化数均为 0。
+- Host 调度器不再固定“模型优先”：持久 worker 的初始偏好在模型/工具间分片，并在每次提交后轮转；一条 lane 失败时仍尝试另一条。两个慢模型占用共享预算时，已经 ready 的工具调用仍可立即取得独立槽位。
+- IPC v51 将消息任务图与每个节点最新 Run 的**有界展示摘要**合并为一个一致快照。数据库只对 Run ID/Task ID 排序，最终投影不读取或返回 Run input、checkpoint、continuation、Tool batch 与 claim；终态展示文本单字段最多 4,096 字符，内联验收数据最多 16 KiB。正式路径从最多 200 次逐节点 IPC/SQL 收敛为 1 次任务图 IPC + 1 次批量窄查询，同时避免把 N+1 延迟替换成几十 MiB 的单响应队头阻塞。旧夹具缺少新字段时才使用有界兼容路径。
+- Swift 侧对一张活跃任务图只做一次 Plugin Runtime actor 调用和一次会话扫描，不再对每个 Run 跨 actor 串行查询并反复扫描全部插件会话。
+- Host 传输失败恢复不再把“从 Swift 生命周期解绑”误当成“操作系统进程已退出”。失败 Host 的 `SIGTERM`/`SIGKILL` 与 `waitUntilExit()` 被纳入同一个 lifecycle transition；只有旧 PID 被回收、SQLite advisory lock 释放后才发布退出通知或允许替代 Host 越过清理阶段启动。暂停 Host 的真实回归连续五轮通过。
+
+本轮阶段退出条件：Rust/Swift 完整回归、格式与差异检查全部通过，提交并推送后才算代码阶段完成。替换 `/Applications/ChatOS.app`、真实账户 Instruments 录制、30 次应用切换、进程退出检查和 8 小时 soak 仍属于最终实机验收；按照当前约定，本阶段不停止或重装正在运行的客户端。
 
 ## 九、上线与回滚
 

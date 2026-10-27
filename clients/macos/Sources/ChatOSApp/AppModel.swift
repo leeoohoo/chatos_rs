@@ -350,8 +350,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 afterCancel: { runID in
                     await localAgentPlatformToolWorker?.releaseRun(runID)
                 },
-                pluginActivity: { runID in
-                    await localConnectorService.agentPluginActivity(runID: runID)
+                pluginActivities: { runIDs in
+                    await localConnectorService.agentPluginActivities(runIDs: runIDs)
                 }
             )
         }
