@@ -1396,6 +1396,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 
 113. [已完成] 最终 NSIS 安装包的真实 Hook 事件 smoke 已扩展到重启恢复：脚本安装包后直接启动安装目录中的 `chatos_local_agent_host.exe`，通过生产 stdio IPC 写入并激活一个 `UserPromptSubmit` Bundle，发起真实 `StartConversationTurn` 并验证 `hook_blocked` 与精确 `stopReason`；随后关闭 Host、复用同一个 SQLite 数据库重新启动，第二次 Prompt 仍被同一 Bundle 阻断，最后正常退出并静默卸载。报告为 `%TEMP%\\chatos-windows-installed-hook-restart.json`，安装包 SHA-256 为 `8eba5473cadba513498254df6cb74d88c559a14b2a1132f758a8451ea1b54f3a`。该 smoke 已证明最终安装包内的 Hook runner、Bundle 激活、事件协调器和安装后重启恢复链路可运行；原生窗口逐态视觉取证仍待完成。
 
-114. [已完成] Windows 登录后的默认入口已增加纯函数回归保护：认证 Shell 首帧保持 `workspace`，owner-scoped 资源索引到达后优先选择首个项目，没有项目时选择首个联系人；显式设置页、用户已选资源和其他账号索引不会被覆盖，避免首屏再次落入设置页或空 workbench。React 全量 138 个测试文件、514 项通过，新增 `workspaceEntry` 3 项回归测试；最新 NSIS 安装版原生启动 smoke 通过，安装 `3,203 ms`、启动 `9,826 ms`、卸载 `1,163 ms`，报告为 `%TEMP%\\chatos-windows-workspace-entry-nsis.json`，同包 Hook/重启恢复 smoke 也通过，报告为 `%TEMP%\\chatos-windows-workspace-entry-hook.json`。
+114. [已完成] Windows 登录后的默认入口已增加纯函数回归保护：认证 Shell 首帧保持 `workspace`，owner-scoped 资源索引到达后优先选择首个项目，没有项目时选择首个联系人；显式设置页、用户已选资源和其他账号索引不会被覆盖，避免首屏再次落入设置页或空 workbench。React 全量 138 个测试文件、514 项通过，新增 `workspaceEntry` 3 项回归测试；最新 NSIS 安装版原生启动 smoke 通过，安装 `3,203 ms`、启动 `9,826 ms`、卸载 `1,163 ms`，报告为 `%TEMP%\\chatos-windows-workspace-entry-nsis.json`，同包 Hook/重启恢复 smoke 也通过，报告为 `%TEMP%\\chatos-windows-workspace-entry-hook.json`。直接启动 Release EXE 的原生窗口观察到标题 `ChatOS Pet`，首屏已进入 `chatos` 项目的“用户消息”工作区，未进入设置页；截图取证保存在本机临时目录，不进入仓库。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
