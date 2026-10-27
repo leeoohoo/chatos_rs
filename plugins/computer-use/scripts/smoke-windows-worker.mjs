@@ -100,6 +100,7 @@ function readMcpHandshake() {
         params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "1" } },
       }),
       JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+      JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "check_permissions", arguments: {} } }),
       "",
     ].join("\n"));
   });
@@ -127,4 +128,11 @@ const expectedTools = [
 if (!Array.isArray(tools) || JSON.stringify(tools.map((tool) => tool.name)) !== JSON.stringify(expectedTools)) {
   throw new Error("Windows worker MCP tools/list did not expose the expected 11-tool contract.");
 }
-console.log("Packaged Windows Computer Use worker passed doctor and MCP initialize/tools/list.");
+const permissionResult = responses.find((response) => response.id === 3)?.result;
+const permissionSnapshot = permissionResult?.structuredContent;
+for (const field of ["screenCaptureAvailable", "inputDesktopAvailable", "processElevated", "allGranted"]) {
+  if (typeof permissionSnapshot?.[field] !== "boolean") {
+    throw new Error(`Windows worker MCP check_permissions did not return boolean ${field}.`);
+  }
+}
+console.log("Packaged Windows Computer Use worker passed doctor, MCP initialize/tools/list, and check_permissions.");
