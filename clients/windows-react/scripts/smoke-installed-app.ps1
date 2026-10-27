@@ -88,6 +88,44 @@ function Get-NearestRankPercentile {
     return $sorted[$index]
 }
 
+function Wait-NativeWindow {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][string]$ExpectedPath,
+        [int]$TimeoutSeconds = 10
+    )
+
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTimeOffset]::UtcNow -lt $deadline) {
+        $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+        if ($null -ne $process) {
+            try {
+                $process.Refresh()
+                $processPath = $process.MainModule.FileName
+                if ([String]::Equals($processPath, $ExpectedPath, [StringComparison]::OrdinalIgnoreCase) -and
+                    $process.MainWindowHandle -ne [IntPtr]::Zero -and
+                    -not [String]::IsNullOrWhiteSpace($process.MainWindowTitle)) {
+                    return [pscustomobject]@{
+                        observed = $true
+                        processPath = $processPath
+                        windowTitle = $process.MainWindowTitle
+                    }
+                }
+            }
+            catch {
+                # The process may be between startup and WebView/window creation.
+            }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+
+    return [pscustomobject]@{
+        observed = $false
+        processPath = $null
+        windowTitle = $null
+    }
+}
+
 $resolvedInstaller = (Resolve-Path -LiteralPath $InstallerPath).Path
 if (Test-Path -LiteralPath $InstallDirectory) {
     throw "Smoke install directory already exists; refusing to reuse it: $InstallDirectory"
@@ -117,6 +155,9 @@ $report = [ordered]@{
     installDurationMs = $null
     applicationExitCode = $null
     applicationRuns = @()
+    nativeWindowObserved = $false
+    nativeWindowTitles = @()
+    nativeProcessPaths = @()
     startupProfile = "isolated-cold"
     startupMedianMs = $null
     startupP95Ms = $null
@@ -188,6 +229,13 @@ try {
 
             $startupWatch = [System.Diagnostics.Stopwatch]::StartNew()
             $launched = Start-Process -FilePath $applicationPath -PassThru
+            $nativeWindow = Wait-NativeWindow -ProcessId $launched.Id -ExpectedPath $applicationPath -TimeoutSeconds $StartupTimeoutSeconds
+            if (-not $nativeWindow.observed) {
+                if (-not $launched.HasExited) {
+                    Stop-Process -Id $launched.Id -Force -ErrorAction SilentlyContinue
+                }
+                throw "Installed ChatOS application did not expose a native window from $applicationPath during startup run $index."
+            }
             if (-not $launched.WaitForExit($StartupTimeoutSeconds * 1000)) {
                 Stop-Process -Id $launched.Id -Force -ErrorAction SilentlyContinue
                 throw "Installed ChatOS application did not complete startup run $index within $StartupTimeoutSeconds seconds."
@@ -198,7 +246,13 @@ try {
                 run = $index
                 durationMs = $startupWatch.ElapsedMilliseconds
                 exitCode = $launched.ExitCode
+                nativeWindowObserved = $nativeWindow.observed
+                nativeWindowTitle = $nativeWindow.windowTitle
+                nativeProcessPath = $nativeWindow.processPath
             }
+            $report.nativeWindowObserved = $true
+            $report.nativeWindowTitles += $nativeWindow.windowTitle
+            $report.nativeProcessPaths += $nativeWindow.processPath
             if ($launched.ExitCode -ne 0) {
                 throw "Installed ChatOS application startup run $index exited with code $($launched.ExitCode)"
             }

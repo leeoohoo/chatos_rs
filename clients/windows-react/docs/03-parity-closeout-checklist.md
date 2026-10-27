@@ -14,6 +14,7 @@ Windows 产品版本：`3.0.9`
 
 - Hook 链路当前已完成：最终 NSIS 安装包能够真实启动 AppContainer runner，写入并激活受信 Bundle，触发 `UserPromptSubmit`，回传上下文，按 `continue=false` 阻断 Prompt，并在 Host 重启后恢复 active Bundle。证据：`%TEMP%\\chatos-windows-installed-hook-restart.json`。
 - 登录入口当前已完成：原生安装版首屏进入 owner-scoped 项目工作区，不再默认落到设置页。证据：`%TEMP%\\chatos-windows-workspace-entry-nsis.json` 与本机原生窗口观察记录。
+- 安装包原生启动 smoke 已增加硬门禁：每次启动都必须观察到安装目录中的 `chatos-windows-react.exe` 自己创建的非零窗口句柄和非空窗口标题，不能只靠进程退出码把浏览器/空进程误判为客户端。最新报告 `%TEMP%\\chatos-windows-native-window-smoke.json` 通过（安装 `3,060 ms`、原生窗口启动 `11,657 ms`、卸载 `1,150 ms`，窗口标题 `ChatOS`，隔离用户数据已清理）。这仍不替代 31 张 macOS 截图的逐页视觉走查。
 - 插件应用 Bridge 当前与 macOS 的真实实现一致：两端只实现 `host.context.read`；`artifact.*` 等尚未闭环的能力不会在 Windows 中伪装成可调用能力。
 - 静态 Plugin 页面当前补齐 `navigate-to 'self'` CSP，页面不能自行导航到外部地址；`local_http` 后端仍保持现有 loopback/origin 门禁，未把尚未解决的 AppContainer loopback 代理问题伪装成完成。
 - 当前仍未完全拉齐的基础差异只有三类：访问控制尚未把目标级出站规则覆盖到任务终端和 Plugin 应用后端；任务终端与 Plugin 应用后端仍使用 `limited` 本机进程边界；任务审查的原生窗口逐态视觉取证尚未完成。这些差异继续保持为不可编辑/不可用状态，不对用户虚报为已支持。
