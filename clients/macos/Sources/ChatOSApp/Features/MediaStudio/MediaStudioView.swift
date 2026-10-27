@@ -45,9 +45,11 @@ struct MediaStudioView: View {
             content
         }
         .background(studioBackground)
+        .onAppear {
+            activateForCurrentSession()
+        }
         .task(id: appModel.authentication.phase) {
-            guard case let .authenticated(session) = appModel.authentication.phase else { return }
-            viewModel.activate(userID: session.user.id)
+            activateForCurrentSession()
         }
         .onChange(of: viewModel.section) { _, section in
             viewModel.loadSelectedSectionIfNeeded()
@@ -82,6 +84,11 @@ struct MediaStudioView: View {
             showsGeneratedImagePicker = false
             showsGeneratedReferencePicker = false
         }
+    }
+
+    private func activateForCurrentSession() {
+        guard case let .authenticated(session) = appModel.authentication.phase else { return }
+        viewModel.activate(userID: session.user.id)
     }
 
     private var studioBackground: some View {

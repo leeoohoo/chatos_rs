@@ -112,8 +112,19 @@ struct StoryStudioView: View {
                         VStack(spacing: 18) {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 500), spacing: 18)], spacing: 18) {
                                 ForEach(viewModel.projects) { project in
-                                    Button { viewModel.open(project.id) } label: { projectCard(project) }
-                                        .buttonStyle(.plain).disabled(viewModel.isBusy && viewModel.activeProjectID != project.id)
+                                    Button { viewModel.open(project.id) } label: {
+                                        projectCard(project)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(viewModel.isBusy && viewModel.activeProjectID != project.id)
+                                    .accessibilityElement(children: .ignore)
+                                    .accessibilityLabel(project.title)
+                                    .accessibilityValue(projectAccessibilityValue(project))
+                                    .accessibilityHint(appModel.localized(
+                                        "打开剧情工作台",
+                                        english: "Open the story workspace"
+                                    ))
                                 }
                             }
                             if viewModel.hasMoreProjects {
@@ -159,8 +170,17 @@ struct StoryStudioView: View {
                         Spacer()
                         Text("\(project.completedCount) / \(project.segments.count)").font(.caption.bold().monospacedDigit())
                     }
-                    ProgressView(value: Double(project.completedCount), total: Double(max(1, project.segments.count)))
-                        .tint(projectStatusColor(project))
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.secondary.opacity(0.14))
+                            Capsule()
+                                .fill(projectStatusColor(project))
+                                .frame(width: proxy.size.width * projectProgress(project))
+                        }
+                    }
+                    .frame(height: 5)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 }
             }
             HStack {
@@ -176,6 +196,16 @@ struct StoryStudioView: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(projectStatusColor(project).opacity(0.13)))
         .shadow(color: Color.black.opacity(0.035), radius: 12, y: 4)
         .contentShape(Rectangle())
+    }
+
+    private func projectProgress(_ project: StoryProject) -> CGFloat {
+        CGFloat(project.completedCount) / CGFloat(max(1, project.segments.count))
+    }
+
+    private func projectAccessibilityValue(_ project: StoryProject) -> String {
+        let status = projectStatus(project)
+        guard !project.segments.isEmpty else { return status }
+        return "\(status)，\(project.completedCount) / \(project.segments.count)"
     }
 
     private func projectStatus(_ project: StoryProject) -> String {

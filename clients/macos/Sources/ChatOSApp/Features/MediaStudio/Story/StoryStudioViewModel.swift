@@ -149,6 +149,7 @@ final class StoryStudioViewModel: ObservableObject {
     var videoFrameExtractionTasks: [VideoGenerationKey: Task<Void, Never>] = [:]
     var videoBatchTask: Task<Void, Never>?
     var sourceDrafts: [UUID: SourceDraft] = [:]
+    var hasLoadedInitialProjects = false
 
     init(
         planner: (any StoryPlanningServicing)?,
@@ -380,11 +381,19 @@ final class StoryStudioViewModel: ObservableObject {
     }
 
     func activate(userID: String) {
-        guard owner != userID else { return }
+        if owner == userID {
+            guard !hasLoadedInitialProjects, !isLoading, loadTask == nil else { return }
+            beginInitialProjectLoad(userID: userID)
+            return
+        }
         if owner != nil {
             reset()
         }
         owner = userID
+        beginInitialProjectLoad(userID: userID)
+    }
+
+    private func beginInitialProjectLoad(userID: String) {
         let accountSessionID = session
         let request = projectCatalogLoadState.begin(
             ownerUserID: userID,
@@ -392,6 +401,7 @@ final class StoryStudioViewModel: ObservableObject {
             kind: .initial
         )
         let projectCatalog = projectCatalog
+        errorMessage = nil
         isLoading = true
         loadTask = Task { [weak self, projectCatalog] in
             let result: Result<StoryProjectCatalogPage, Error>
@@ -405,15 +415,20 @@ final class StoryStudioViewModel: ObservableObject {
                     request,
                     ownerUserID: self.owner,
                     accountSessionID: self.session
-                  ),
-                  !Task.isCancelled else { return }
-            _ = self.projectCatalogLoadState.finish(request)
+                  ) else { return }
+            defer {
+                _ = self.projectCatalogLoadState.finish(request)
+                self.isLoading = false
+                self.loadTask = nil
+            }
+            guard !Task.isCancelled else { return }
             switch result {
             case .success(let snapshot):
                 let collection = projectCatalog.replacing(with: snapshot)
                 projects = collection.projects
                 projectCursor = collection.nextCursor
                 hasMoreProjects = collection.nextCursor != nil
+                hasLoadedInitialProjects = true
                 enqueueDurableVideoRecoveries(
                     collection.projects,
                     owner: userID,
@@ -421,10 +436,9 @@ final class StoryStudioViewModel: ObservableObject {
                 )
                 if collection.unreadableCount > 0 { errorMessage = "有 \(collection.unreadableCount) 个剧情无法读取，原文件已保留。" }
             case .failure(let error):
+                hasLoadedInitialProjects = false
                 errorMessage = error.localizedDescription
             }
-            isLoading = false
-            loadTask = nil
         }
     }
 
@@ -516,6 +530,7 @@ final class StoryStudioViewModel: ObservableObject {
         isLoadingMoreAgentRuns = false; hasMoreAgentRuns = false; agentRunCursor = nil
         isLoadingMoreMediaBatches = false; hasMoreMediaBatches = false; mediaBatchCursor = nil
         isLoadingMoreProjects = false; hasMoreProjects = false; projectCursor = nil
+        hasLoadedInitialProjects = false
         projects = []; selectedProjectID = nil; selectedSegmentID = nil; selectedSegments = []
         sourceDrafts = [:]; optimizationSuggestion = nil; optimizationTarget = nil
         isBusy = false; isLoading = false; operation = ""; errorMessage = nil; activeSegmentID = nil; activeProjectID = nil; activeAgentRunID = nil; pauseRequested = false
@@ -525,11 +540,14 @@ final class StoryStudioViewModel: ObservableObject {
 
     func open(_ id: UUID) {
         guard !isBusy || activeProjectID == id else { return }
+        guard let openedProject = projects.first(where: { $0.id == id }) else { return }
+        selectedProjectID = id
+        selectedSegmentID = activeSegmentID ?? openedProject.segments.first?.id
+        selectedSegments = []
         storyHistoryLoadState.reset()
         agentRunPageTask?.cancel(); agentRunPageTask = nil
         mediaBatchPageTask?.cancel(); mediaBatchPageTask = nil
         isLoadingMoreAgentRuns = false; isLoadingMoreMediaBatches = false
-        selectedProjectID = id; selectedSegmentID = activeSegmentID ?? project?.segments.first?.id; selectedSegments = []
         errorMessage = nil
         agentRuns = []; mediaBatches = []
         agentRunCursor = nil; mediaBatchCursor = nil
@@ -537,12 +555,14 @@ final class StoryStudioViewModel: ObservableObject {
         loadAgentHistory(id)
     }
     func backToList() {
+        selectedProjectID = nil
+        selectedSegmentID = nil
+        selectedSegments = []
         storyHistoryLoadState.reset()
         historyTask?.cancel(); historyTask = nil
         agentRunPageTask?.cancel(); agentRunPageTask = nil
         mediaBatchPageTask?.cancel(); mediaBatchPageTask = nil
         isLoadingAgentRuns = false; isLoadingMoreAgentRuns = false; isLoadingMoreMediaBatches = false
-        selectedProjectID = nil; selectedSegmentID = nil; selectedSegments = []
         agentRunCursor = nil; mediaBatchCursor = nil
         hasMoreAgentRuns = false; hasMoreMediaBatches = false
         if !isBusy { agentRuns = []; mediaBatches = [] }
