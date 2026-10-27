@@ -2,6 +2,17 @@ import ChatOSCore
 import Foundation
 
 public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing {
+    private struct TerminalRunCacheEntry: Sendable {
+        let taskUpdatedAt: Date?
+        let run: MessageTaskRun?
+    }
+
+    private enum LatestRunFetchResult: Sendable {
+        case found(LocalAgentRunRecord)
+        case missing
+        case failed
+    }
+
     private static let taskProcessRecordTool = "task_run_process_record_process"
     private static let eventPageLimit: UInt32 = 500
     private static let maximumProcessEventPages = 10
@@ -14,7 +25,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     private let afterCancel: @Sendable (String) async -> Void
     private let pluginActivity: @Sendable (String) async -> MessageTaskRunActivity?
     private var ownerUserID: String?
-    private var terminalRunCache: [String: (Date?, MessageTaskRun)] = [:]
+    private var terminalRunCache: [String: TerminalRunCacheEntry] = [:]
 
     public init(
         host: any LocalAgentHostClientServicing,
@@ -57,26 +68,155 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         guard let owner = ownerUserID else { return snapshot }
         var result = snapshot
         if terminalRunCache.count > 500 { terminalRunCache.removeAll() }
-        let pendingApprovals = (try? await toolClient.pendingApprovals(
-            ownerUserID: owner,
-            limit: 100
-        )) ?? []
+        var taskIDsToFetch: [String] = []
         for index in result.nodes.indices {
             let task = result.nodes[index].task
             let isTerminal = ["succeeded", "completed", "failed", "blocked"].contains(
                 task.status ?? ""
             )
             guard isTerminal || task.isActive else { continue }
-            if isTerminal, let cached = terminalRunCache[task.id], cached.0 == task.updatedAt {
-                result.nodes[index].task = task.merging(run: cached.1)
-            } else if let run = try? await client.runs(ownerUserID: owner, taskID: task.id).first {
+            if isTerminal,
+               let cached = terminalRunCache[task.id],
+               cached.taskUpdatedAt == task.updatedAt {
+                if let run = cached.run {
+                    result.nodes[index].task = task.merging(run: run)
+                }
+            } else {
+                taskIDsToFetch.append(task.id)
+            }
+        }
+
+        let activeTaskIDs = Set(result.nodes.lazy.filter { $0.task.isActive }.map(\.task.id))
+        async let pendingApprovalsRequest = Self.loadPendingApprovals(
+            client: toolClient,
+            ownerUserID: owner,
+            required: taskIDsToFetch.contains(where: activeTaskIDs.contains)
+        )
+        // A graph can contain many sibling Tasks. Fetch latest Runs with bounded
+        // concurrency; serial N+1 IPC delayed first paint, while an unbounded fan-out
+        // would overload the Host on unusually large graphs.
+        let fetchedRuns = await Self.fetchLatestRuns(
+            client: client,
+            ownerUserID: owner,
+            taskIDs: taskIDsToFetch
+        )
+        let pendingApprovals = await pendingApprovalsRequest
+
+        for index in result.nodes.indices {
+            let task = result.nodes[index].task
+            let isTerminal = ["succeeded", "completed", "failed", "blocked"].contains(
+                task.status ?? ""
+            )
+            switch fetchedRuns[task.id] {
+            case .missing?:
+                if isTerminal {
+                    terminalRunCache[task.id] = TerminalRunCacheEntry(
+                        taskUpdatedAt: task.updatedAt,
+                        run: nil
+                    )
+                }
+                continue
+            case .failed?, nil:
+                // Do not turn a transient IPC failure into a durable negative cache.
+                continue
+            case let .found(run)?:
                 let mapped = await mapRunWithLiveActivity(
                     run,
                     pendingApprovals: pendingApprovals
                 )
                 result.nodes[index].task = task.merging(run: mapped)
-                if isTerminal { terminalRunCache[task.id] = (task.updatedAt, mapped) }
+                if isTerminal {
+                    terminalRunCache[task.id] = TerminalRunCacheEntry(
+                        taskUpdatedAt: task.updatedAt,
+                        run: mapped
+                    )
+                }
             }
+        }
+        return applyingDependencyPresentations(to: result)
+    }
+
+    private static func fetchLatestRuns(
+        client: NativeLocalAgentTaskClient,
+        ownerUserID: String,
+        taskIDs: [String]
+    ) async -> [String: LatestRunFetchResult] {
+        let maximumConcurrentRequests = 8
+        return await withTaskGroup(
+            of: (String, LatestRunFetchResult).self,
+            returning: [String: LatestRunFetchResult].self
+        ) { group in
+            var iterator = taskIDs.makeIterator()
+            for _ in 0..<min(maximumConcurrentRequests, taskIDs.count) {
+                guard let taskID = iterator.next() else { break }
+                group.addTask {
+                    do {
+                        let run = try await client.runs(
+                            ownerUserID: ownerUserID,
+                            taskID: taskID,
+                            limit: 1
+                        ).first
+                        return (taskID, run.map(LatestRunFetchResult.found) ?? .missing)
+                    } catch {
+                        return (taskID, .failed)
+                    }
+                }
+            }
+            var resultsByTaskID: [String: LatestRunFetchResult] = [:]
+            while let (taskID, result) = await group.next() {
+                resultsByTaskID[taskID] = result
+                guard let nextTaskID = iterator.next() else { continue }
+                group.addTask {
+                    do {
+                        let run = try await client.runs(
+                            ownerUserID: ownerUserID,
+                            taskID: nextTaskID,
+                            limit: 1
+                        ).first
+                        return (nextTaskID, run.map(LatestRunFetchResult.found) ?? .missing)
+                    } catch {
+                        return (nextTaskID, .failed)
+                    }
+                }
+            }
+            return resultsByTaskID
+        }
+    }
+
+    private static func loadPendingApprovals(
+        client: NativeLocalAgentToolClient,
+        ownerUserID: String,
+        required: Bool
+    ) async -> [LocalAgentToolInvocationRecord] {
+        guard required else { return [] }
+        return (try? await client.pendingApprovals(
+            ownerUserID: ownerUserID,
+            limit: 100
+        )) ?? []
+    }
+
+    private func applyingDependencyPresentations(
+        to snapshot: MessageTaskGraphSnapshot
+    ) -> MessageTaskGraphSnapshot {
+        var result = snapshot
+        let tasksByID = Dictionary(uniqueKeysWithValues: result.nodes.map { ($0.task.id, $0.task) })
+        for index in result.nodes.indices {
+            let previousReferences = Dictionary(uniqueKeysWithValues:
+                result.nodes[index].task.prerequisiteTasks.map { ($0.id, $0) })
+            result.nodes[index].task.prerequisiteTasks = result.nodes[index].task
+                .prerequisiteTaskIDs.map { prerequisiteID in
+                    guard let prerequisite = tasksByID[prerequisiteID] else {
+                        return previousReferences[prerequisiteID]
+                            ?? MessageTaskReference(id: prerequisiteID)
+                    }
+                    return MessageTaskReference(
+                        id: prerequisite.id,
+                        title: prerequisite.title,
+                        status: prerequisite.status,
+                        resultStatus: prerequisite.lastRun?.acceptanceReport?.resultStatus,
+                        displayStatus: prerequisite.presentationStatus.rawValue
+                    )
+                }
         }
         return result
     }

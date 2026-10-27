@@ -131,7 +131,9 @@ ZStack
 
 ## 加载与分页
 
-- 任务图接口只返回绘图需要的轻量节点，不在图加载阶段逐节点补齐模型配置、Run、过程日志和前置任务详情。
+- 任务图接口只返回绘图需要的轻量节点，不在图加载阶段补齐模型配置、过程日志或 Run 事件。为了正确区分“执行成功”和内部交付结果，客户端只补最近一次 Run 的轻量终态摘要；请求并发上限为 8，并按任务更新时间缓存命中与空结果，禁止轮询阶段重复串行 N+1。
+- Task 生命周期状态和 `result_status` 必须分别保留：`succeeded + result_status=blocked` 显示“执行结束 · 交付阻塞”，不能显示绿色“已完成”；因此未启动的后续节点显示“前置任务交付阻塞 · 未启动”。
+- Host 汇总、聊天回调、任务图、Inspector 和桌面宠物共用同一组稳定展示状态：`completed`、`execution_failed`、`result_blocked`、`dependency_blocked`、`evidence_incomplete`、`acceptance_failed` 等；未知状态不得由已知状态映射遗漏产生。
 - 选择节点后再请求任务详情；只有切换到“运行详情”时才请求 Run。
 - Run 事件首屏加载 40 条，后续每页 50 条，通过 `event_limit` 与 `event_offset` 增量加载。
 - SwiftUI 的过程和事件时间线使用惰性容器，禁止一次性创建全部诊断事件视图。

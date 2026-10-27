@@ -226,6 +226,7 @@ Markdown 解析与块级 RenderModel
 - 剪贴板保留系统能力，但连续无变化后退避；读取、哈希和持久化尽量离开 MainActor。
 - `didBecomeActive` 不再无条件 cancel/restart Artifact 同步；改为幂等 `ensureRunning`，只在任务不存在、身份变化、断流或超过过期时间时恢复。
 - 连接恢复、Heartbeat、Artifact Sync 和工作区刷新使用去重协调器，短时间多次激活合并为一次。
+- 任务图终态摘要按任务更新时间缓存，包括“没有 Run”的空结果；最近 Run 查询使用最多 8 路有界并发，避免节点数线性叠加 IPC 延迟，也避免大图无界扇出。
 
 验收：完全空闲 60 秒内没有 450 ms/2 秒级永久唤醒；连续切换应用 30 次不会创建重复同步任务，切回交互无大于 100 ms hang。
 

@@ -318,6 +318,31 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         XCTAssertEqual(reply.taskCallback?.status, "evidence_incomplete")
     }
 
+    func testTaskCallbackPreservesBlockedDeliveryInsteadOfGreenCompletion() throws {
+        let message = LocalAgentConversationMessageRecord(
+            messageID: "task_runner_callback::message-1::task-1::run-1",
+            conversationID: "conversation-1",
+            turnID: "turn-1",
+            ordinal: 2,
+            role: "assistant",
+            content: .string("执行已经结束，但方案没有成功写入。"),
+            metadata: .object([
+                "kind": .string("task_execution_callback"),
+                "task_runner_async": .object([
+                    "event": .string("task.completed"),
+                    "task_id": .string("task-1"),
+                    "status": .string("succeeded"),
+                    "display_status": .string("result_blocked"),
+                ]),
+            ]),
+            createdAtUnixMs: 2
+        )
+
+        let reply = try XCTUnwrap(message.replyProjections(sourceUserMessageID: "message-1").first)
+        XCTAssertEqual(reply.taskCallback?.event, "task.completed")
+        XCTAssertEqual(reply.taskCallback?.status, "result_blocked")
+    }
+
     func testLegacyTaskGraphTerminalExpandsIntoIndependentTaskCallbacks() {
         let message = LocalAgentConversationMessageRecord(
             messageID: "task-graph:graph-1:1",

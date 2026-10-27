@@ -42,7 +42,8 @@ struct MessageTaskGraphNodeCard: View {
             Text(node.task.title)
                 .appFont(.system(size: scaledFont(13), weight: .semibold))
                 .lineLimit(2)
-            Text(currentActivity?.detail
+            Text(dependencyBlockedDetail
+                 ?? currentActivity?.detail
                  ?? node.task.description
                  ?? node.task.objective
                  ?? model.localized("暂无任务描述", english: "No task description"))
@@ -131,14 +132,12 @@ struct MessageTaskGraphNodeCard: View {
     }
 
     private var statusTitle: String {
-        if let disposition = node.task.resultDisposition {
-            return switch disposition {
-            case .executionFailed: model.localized("执行失败", english: "Execution Failed")
-            case .blocked: model.localized("执行完成，结果受阻", english: "Execution Complete, Result Blocked")
-            case .evidenceIncomplete: model.localized("核验不完整", english: "Verification Incomplete")
-            case .acceptanceFailed: model.localized("未通过验收", english: "Acceptance Not Met")
-            case .acceptancePassed: model.localized("验收通过", english: "Acceptance Passed")
-            }
+        if node.task.resultDisposition != nil
+            || node.task.presentationStatus == .dependencyBlocked {
+            return MessageTaskStatusPresentation.title(
+                for: node.task,
+                localized: { model.localized($0, english: $1) }
+            )
         }
         if let override = MessageTaskRunActivityPresentation.taskStatusTitleOverride(
             for: node.task.status,
@@ -151,17 +150,10 @@ struct MessageTaskGraphNodeCard: View {
                 model.localized($0, english: $1)
             }
         }
-        return switch node.task.normalizedStatus {
-        case "completed", "succeeded", "success", "done": model.localized("已完成", english: "Completed")
-        case "running", "processing", "in_progress", "doing": model.localized("运行中", english: "Running")
-        case "blocked": model.localized("被阻塞", english: "Blocked")
-        case "result_blocked": model.localized("执行完成，结果受阻", english: "Execution Complete, Result Blocked")
-        case "reviewing_followup": model.localized("审查追加要求", english: "Reviewing Follow-up")
-        case "waiting_confirmation": model.localized("等待确认", english: "Awaiting Confirmation")
-        case "failed", "error": model.localized("任务未完成", english: "Task Incomplete")
-        case "cancelled", "canceled": model.localized("已取消", english: "Cancelled")
-        default: model.localized("等待执行", english: "Waiting")
-        }
+        return MessageTaskStatusPresentation.title(
+            for: node.task,
+            localized: { model.localized($0, english: $1) }
+        )
     }
 
     private var currentActivity: MessageTaskRunActivity? {
@@ -184,12 +176,9 @@ struct MessageTaskGraphNodeCard: View {
     }
 
     private var statusColor: Color {
-        if let disposition = node.task.resultDisposition {
-            return switch disposition {
-            case .blocked, .evidenceIncomplete: .orange
-            case .executionFailed, .acceptanceFailed: .red
-            case .acceptancePassed: .green
-            }
+        if node.task.resultDisposition != nil
+            || node.task.presentationStatus == .dependencyBlocked {
+            return MessageTaskStatusPresentation.color(for: node.task)
         }
         if MessageTaskRunActivityPresentation.taskStatusTitleOverride(
             for: node.task.status,
@@ -206,14 +195,24 @@ struct MessageTaskGraphNodeCard: View {
                 AppPalette.ai
             }
         }
-        return switch node.task.normalizedStatus {
-        case "completed", "succeeded", "success", "done": .green
-        case "running", "processing", "in_progress", "doing": AppPalette.ai
-        case "blocked": .orange
-        case "reviewing_followup", "waiting_confirmation": .orange
-        case "failed", "error", "cancelled", "canceled": .red
-        default: .secondary
+        return MessageTaskStatusPresentation.color(for: node.task)
+    }
+
+    private var dependencyBlockedDetail: String? {
+        guard node.task.presentationStatus == .dependencyBlocked else { return nil }
+        let blockers = node.task.dependencyBlockingPrerequisites
+        let candidates = blockers.isEmpty ? node.task.prerequisiteTasks : blockers
+        let names = candidates.prefix(2).map { $0.title ?? $0.id }.joined(separator: "、")
+        guard !names.isEmpty else {
+            return model.localized(
+                "前置任务的交付条件未满足，当前任务没有启动。",
+                english: "A prerequisite delivery condition was not met, so this task did not start."
+            )
         }
+        return model.localized(
+            "前置任务「\(names)」的交付条件未满足，当前任务没有启动。",
+            english: "Prerequisite \(names) did not meet its delivery condition, so this task did not start."
+        )
     }
 }
 

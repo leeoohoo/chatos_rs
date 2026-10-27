@@ -226,6 +226,31 @@ fn completed_task_acceptance_display_preserves_result_and_check_precedence() {
 }
 
 #[test]
+fn blocked_delivery_summary_never_falls_back_to_unknown() {
+    let summary = super::graph_summary_text(
+        LocalTaskGraphStatus::Failed,
+        &[
+            json!({
+                "title": "Create plan",
+                "status": "succeeded",
+                "display_status": "result_blocked",
+                "summary": "The saved revision did not change"
+            }),
+            json!({
+                "title": "Implement plan",
+                "status": "blocked",
+                "display_status": "dependency_blocked"
+            }),
+        ],
+        false,
+    );
+    assert!(summary.starts_with("任务组因前置任务交付阻塞而停止，依赖任务没有启动。"));
+    assert!(summary.contains("[执行结束，交付阻塞]"));
+    assert!(summary.contains("[未启动，前置任务未满足]"));
+    assert!(!summary.contains("unknown"));
+}
+
+#[test]
 fn progress_delivery_without_synthesis_includes_all_full_reports_in_one_text() {
     let first = format!("# 第一份\n{}\nFIRST_REPORT_END", "财务依据\n".repeat(2000));
     let second = "# 第二份\n完整独立结论\nSECOND_REPORT_END";
@@ -2196,7 +2221,7 @@ async fn failed_branch_reports_partial_success_and_blocked_dependents_then_retry
         "{text}"
     );
     assert!(text.contains("- Required foundation [execution failed]:"));
-    assert!(text.contains("- Dependent integration [blocked]"));
+    assert!(text.contains("- Dependent integration [not started; prerequisite not satisfied]"));
     assert!(!text.contains('：'));
 
     let failed_version = failed_graph.tasks[1].version;

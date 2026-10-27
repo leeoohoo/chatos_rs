@@ -98,6 +98,10 @@ pub(super) async fn graph_task_summaries(
 ) -> Result<Vec<Value>, ClientStorageError> {
     let rows = sqlx::query(
         "SELECT t.task_id, t.title, t.status, t.input_json, \
+         EXISTS(SELECT 1 FROM local_task_dependencies d \
+                WHERE d.graph_id = t.graph_id AND d.task_id = t.task_id) \
+         OR EXISTS(SELECT 1 FROM local_task_external_dependencies d \
+                   WHERE d.task_id = t.task_id) AS has_prerequisites, \
          (SELECT r.run_id FROM local_agent_runs r \
           WHERE r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
           AND r.status IN ('succeeded','failed','cancelled','needs_review') \
@@ -120,6 +124,7 @@ pub(super) async fn graph_task_summaries(
             .map_err(ClientStorageError::InvalidState)?;
         let input_json: String = row.try_get("input_json").db()?;
         let input: Value = serde_json::from_str(&input_json)?;
+        let has_prerequisites: bool = row.try_get("has_prerequisites").db()?;
         let objective = input
             .get("objective")
             .and_then(Value::as_str)
@@ -178,11 +183,16 @@ pub(super) async fn graph_task_summaries(
         };
         let summary = user_visible_callback_detail(objective, event, terminal_outcome, english)
             .map(|(_, detail)| truncate_chars(&detail, 420));
-        let display_status = task_display_status(
-            status.as_str(),
-            run.as_ref().map(|run| run.status.as_str()),
-            run.as_ref().and_then(|run| run.terminal_outcome.as_ref()),
-        );
+        let display_status =
+            if status == LocalTaskStatus::Blocked && run.is_none() && has_prerequisites {
+                "dependency_blocked"
+            } else {
+                task_display_status(
+                    status.as_str(),
+                    run.as_ref().map(|run| run.status.as_str()),
+                    run.as_ref().and_then(|run| run.terminal_outcome.as_ref()),
+                )
+            };
         tasks.push(json!({
             "task_id": task_id,
             "title": title,
@@ -243,17 +253,20 @@ pub(super) fn graph_summary_text(
     let failed = count("failed");
     let blocked = count("blocked");
     let cancelled = count("cancelled");
+    let result_blocked = tasks
+        .iter()
+        .any(|task| task.get("display_status").and_then(Value::as_str) == Some("result_blocked"));
     let evidence_incomplete = tasks.iter().any(|task| {
-        matches!(
-            task.get("display_status").and_then(Value::as_str),
-            Some("evidence_incomplete" | "result_blocked")
-        )
+        task.get("display_status").and_then(Value::as_str) == Some("evidence_incomplete")
     });
     let acceptance_failed = tasks.iter().any(|task| {
         task.get("display_status").and_then(Value::as_str) == Some("acceptance_failed")
     });
     let headline = if english {
         match status {
+            LocalTaskGraphStatus::Succeeded if result_blocked => {
+                "All tasks finished, but at least one delivery is blocked.".to_string()
+            }
             LocalTaskGraphStatus::Succeeded if acceptance_failed => {
                 "All tasks finished; acceptance found unmet requirements.".to_string()
             }
@@ -262,6 +275,9 @@ pub(super) fn graph_summary_text(
             }
             LocalTaskGraphStatus::Succeeded => {
                 format!("All {succeeded} tasks completed successfully.")
+            }
+            LocalTaskGraphStatus::Failed if result_blocked => {
+                "The work stopped because a prerequisite delivery was blocked; dependent tasks did not start.".to_string()
             }
             LocalTaskGraphStatus::Failed if evidence_incomplete => {
                 "The work has partial results; some items still need verification.".to_string()
@@ -281,6 +297,9 @@ pub(super) fn graph_summary_text(
         }
     } else {
         match status {
+            LocalTaskGraphStatus::Succeeded if result_blocked => {
+                "全部任务均已执行结束，但至少一项交付仍处于阻塞状态。".to_string()
+            }
             LocalTaskGraphStatus::Succeeded if acceptance_failed => {
                 "全部任务均已执行完成，但验收发现了未满足的要求。".to_string()
             }
@@ -288,6 +307,9 @@ pub(super) fn graph_summary_text(
                 "全部任务均已执行完成，但仍有验收证据不完整。".to_string()
             }
             LocalTaskGraphStatus::Succeeded => format!("全部 {succeeded} 个任务均已完成。"),
+            LocalTaskGraphStatus::Failed if result_blocked => {
+                "任务组因前置任务交付阻塞而停止，依赖任务没有启动。".to_string()
+            }
             LocalTaskGraphStatus::Failed if evidence_incomplete => {
                 "这组工作已有部分结果，但还有内容未核验。".to_string()
             }
@@ -341,10 +363,14 @@ fn localized_task_status(status: &str, english: bool) -> &'static str {
         (true, "execution_failed") => "execution failed",
         (true, "acceptance_failed") => "requirements not met",
         (true, "evidence_incomplete") => "partially complete; not fully verified",
+        (true, "result_blocked") => "execution ended; delivery blocked",
+        (true, "dependency_blocked") => "not started; prerequisite not satisfied",
         (false, "completed") => "已完成",
         (false, "execution_failed") => "执行失败",
         (false, "acceptance_failed") => "未通过验收",
         (false, "evidence_incomplete") => "部分完成，尚未核验",
+        (false, "result_blocked") => "执行结束，交付阻塞",
+        (false, "dependency_blocked") => "未启动，前置任务未满足",
         (true, "succeeded") => "succeeded",
         (true, "failed") => "failed",
         (true, "blocked") => "blocked",

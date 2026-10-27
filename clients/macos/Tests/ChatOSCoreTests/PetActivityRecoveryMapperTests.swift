@@ -75,6 +75,40 @@ struct PetActivityRecoveryMapperTests {
     }
 
     @Test
+    func blockedDeliveryDoesNotRecoverAsSuccessfulCompletion() throws {
+        let now = Date()
+        var turn = makeTurn(status: .completed, startedAt: now.addingTimeInterval(-30))
+        turn.assistantReplies = [
+            ConversationAssistantReply(
+                message: ChatMessage(
+                    id: "reply-blocked",
+                    role: .assistant,
+                    text: "执行结束，但交付阻塞。",
+                    createdAt: now.addingTimeInterval(-5)
+                ),
+                taskCallback: TaskExecutionCallbackReference(
+                    taskID: "task-blocked",
+                    runID: "run-blocked",
+                    event: "task.completed",
+                    status: "result_blocked",
+                    sourceTurnID: "turn-1"
+                )
+            ),
+        ]
+
+        let activities = PetActivityRecoveryMapper.activities(
+            conversationID: "conversation-1",
+            projectID: nil,
+            turns: [turn],
+            now: now
+        )
+
+        let activity = try #require(activities.first)
+        #expect(activity.kind == .blocked)
+        #expect(activity.title == "任务执行结束，交付受阻")
+    }
+
+    @Test
     func authoritativeCancelledTaskRemovesStaleRunningCallback() {
         let now = Date()
         let staleActivity = PetActivity(

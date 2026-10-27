@@ -155,6 +155,24 @@ public enum PetActivityRecoveryMapper {
         now: Date
     ) -> (kind: PetActivityKind, title: String, expiresAt: Date?)? {
         let status = normalized(callback.status ?? callback.event)
+        if status.contains("dependency_blocked") {
+            return transient(
+                .blocked,
+                title: "前置任务未满足，任务未启动",
+                date: date,
+                duration: legacyTaskTerminalRetention,
+                now: now
+            )
+        }
+        if status.contains("result_blocked") {
+            return transient(
+                .blocked,
+                title: "任务执行结束，交付受阻",
+                date: date,
+                duration: legacyTaskTerminalRetention,
+                now: now
+            )
+        }
         if status.contains("blocked") {
             return transient(
                 .blocked,

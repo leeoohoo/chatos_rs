@@ -17,8 +17,29 @@ struct MessageTaskDetailSections: View {
 
     @ViewBuilder
     private var sections: some View {
+        if task.presentationStatus == .dependencyBlocked {
+            TaskDetailDisclosureSection(title: "未启动原因", defaultExpanded: true) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(dependencyBlockExplanation)
+                    ForEach(dependencyBlockers) { prerequisite in
+                        HStack(spacing: 8) {
+                            Text(prerequisite.title ?? prerequisite.id)
+                            Spacer(minLength: 8)
+                            Text(taskStatusTitle(prerequisite.displayStatus ?? prerequisite.status))
+                                .appFont(.caption2.weight(.semibold))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Text("请先处理对应的前置任务；其交付条件满足后，后续任务才应重新执行。")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
         if let report = task.lastRun?.acceptanceReport {
-            TaskDetailDisclosureSection(title: "验收结果", defaultExpanded: true) {
+            TaskDetailDisclosureSection(
+                title: report.checks.isEmpty ? "交付结果" : "验收结果",
+                defaultExpanded: true
+            ) {
                 VStack(alignment: .leading, spacing: 10) {
                     TaskDetailMarkdownText(text: report.reason, allowsTextSelection: allowsTextSelection)
                     ForEach(report.checks, id: \.criterionIndex) { check in
@@ -178,7 +199,13 @@ struct MessageTaskDetailSections: View {
     private var basicInformation: some View {
         VStack(alignment: .leading, spacing: 8) {
             LabeledContent("任务 ID", value: task.id)
-            LabeledContent("状态", value: taskStatusTitle(task.status))
+            LabeledContent(
+                "状态",
+                value: MessageTaskStatusPresentation.title(
+                    for: task,
+                    localized: { model.localized($0, english: $1) }
+                )
+            )
             LabeledContent("创建人", value: creatorDisplayName)
             LabeledContent("模型", value: modelDisplayName)
             LabeledContent("思考等级", value: thinkingLevelDisplayName)
@@ -215,7 +242,7 @@ struct MessageTaskDetailSections: View {
                                 .appFont(.callout.weight(.medium))
                             Spacer(minLength: 8)
                             if let status = item.status {
-                                Text(taskStatusTitle(status))
+                                Text(taskStatusTitle(item.displayStatus ?? status))
                                     .appFont(.caption2.weight(.semibold))
                                     .foregroundStyle(.secondary)
                             }
@@ -306,21 +333,29 @@ struct MessageTaskDetailSections: View {
     }
 
     private func taskStatusTitle(_ status: String?) -> String {
-        switch status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "pending", "ready", "queued": model.localized("等待执行", english: "Waiting")
-        case "running", "processing", "in_progress", "doing": model.localized("执行中", english: "Running")
-        case "completed", "succeeded", "success", "done": model.localized("已完成", english: "Completed")
-        case "blocked": model.localized("被阻塞", english: "Blocked")
-        case "failed", "error", "execution_failed": model.localized("失败", english: "Failed")
-        case "acceptance_failed": model.localized("未通过验收", english: "Acceptance Not Met")
-        case "evidence_incomplete": model.localized("部分完成，待核验", english: "Partially Complete")
-        case "result_blocked": model.localized("执行完成，内部结果受阻", english: "Execution Complete, Result Blocked")
-        case "cancelled", "canceled", "stopped": model.localized("已取消", english: "Cancelled")
-        case "reviewing_followup": model.localized("审查追加要求", english: "Reviewing Follow-up")
-        case "waiting_confirmation": model.localized("等待确认", english: "Awaiting Confirmation")
-        case .none, "": model.localized("未知", english: "Unknown")
-        default: status ?? model.localized("未知", english: "Unknown")
+        MessageTaskStatusPresentation.title(
+            forRawStatus: status,
+            localized: { model.localized($0, english: $1) }
+        )
+    }
+
+    private var dependencyBlockers: [MessageTaskReference] {
+        let blockers = task.dependencyBlockingPrerequisites
+        return blockers.isEmpty ? prerequisiteItems : blockers
+    }
+
+    private var dependencyBlockExplanation: String {
+        let names = dependencyBlockers.prefix(3).map { $0.title ?? $0.id }.joined(separator: "、")
+        guard !names.isEmpty else {
+            return model.localized(
+                "前置任务的交付条件未满足，因此本任务没有启动。",
+                english: "A prerequisite delivery condition was not met, so this task did not start."
+            )
         }
+        return model.localized(
+            "前置任务「\(names)」的交付条件未满足，因此本任务没有启动。",
+            english: "Prerequisite \(names) did not meet its delivery condition, so this task did not start."
+        )
     }
 
     private var prerequisiteItems: [MessageTaskReference] {
@@ -336,7 +371,7 @@ struct MessageTaskDetailSections: View {
 
     private func referenceDisplay(_ reference: MessageTaskReference?, fallbackID: String?) -> String {
         guard let reference else { return fallbackID?.nonEmpty ?? "-" }
-        return [reference.title?.nonEmpty, reference.status?.nonEmpty, reference.id.nonEmpty]
+        return [reference.title?.nonEmpty, reference.displayStatus?.nonEmpty ?? reference.status?.nonEmpty, reference.id.nonEmpty]
             .compactMap { $0 }
             .joined(separator: " · ")
     }

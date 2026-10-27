@@ -5,6 +5,46 @@ import XCTest
 
 @MainActor
 final class MessageTaskWorkspaceViewModelTests: XCTestCase {
+    func testBlockedDeliveryAndItsDependentUseDistinctNonSuccessTitles() throws {
+        let report = try XCTUnwrap(MessageTaskAcceptanceReport.decode(
+            json: #"{"result_status":"blocked","reason":"方案没有写入。"}"#
+        ))
+        let prerequisite = MessageTask(
+            id: "plan",
+            title: "写入方案",
+            status: "succeeded"
+        ).merging(run: MessageTaskRun(
+            id: "run-plan",
+            taskID: "plan",
+            status: "succeeded",
+            acceptanceReport: report
+        ))
+        let reference = MessageTaskReference(
+            id: prerequisite.id,
+            title: prerequisite.title,
+            status: prerequisite.status,
+            resultStatus: report.resultStatus,
+            displayStatus: prerequisite.presentationStatus.rawValue
+        )
+        let dependent = MessageTask(
+            id: "implementation",
+            title: "执行方案",
+            status: "blocked",
+            prerequisiteTaskIDs: [reference.id],
+            prerequisiteTasks: [reference]
+        )
+        let chinese: MessageTaskStatusPresentation.Localizer = { value, _ in value }
+
+        XCTAssertEqual(
+            MessageTaskStatusPresentation.title(for: prerequisite, localized: chinese),
+            "执行结束 · 交付阻塞"
+        )
+        XCTAssertEqual(
+            MessageTaskStatusPresentation.title(for: dependent, localized: chinese),
+            "前置任务交付阻塞 · 未启动"
+        )
+    }
+
     func testCancellingSelectedRunningTaskCallsServiceAndClearsConfirmation() async throws {
         let service = CancellationMessageTaskGraphServiceStub()
         let viewModel = makeViewModel(service: service)

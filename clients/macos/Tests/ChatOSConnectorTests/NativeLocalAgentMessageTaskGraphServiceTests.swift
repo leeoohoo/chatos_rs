@@ -106,6 +106,58 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertEqual(Array(lifecycle.suffix(2)), ["command:cancel_task", "release:run-task-2"])
     }
 
+    func testGraphPropagatesBlockedDeliveryToDependentPresentationAndLoadsRunsConcurrently() async throws {
+        let host = BlockedDependencyTaskHostStub()
+        let service = NativeLocalAgentMessageTaskGraphService(host: host)
+        await service.configure(ownerUserID: "user-1")
+
+        let graph = try await service.fetchGraph(
+            messageID: "message-1",
+            lookup: .init(
+                sessionID: "conversation-1",
+                turnID: "turn-1",
+                sourceUserMessageID: "message-1"
+            )
+        )
+
+        XCTAssertEqual(graph.nodes[0].task.status, "succeeded")
+        XCTAssertEqual(graph.nodes[0].task.lastRun?.status, "succeeded")
+        XCTAssertEqual(graph.nodes[0].task.presentationStatus, .resultBlocked)
+        XCTAssertEqual(graph.nodes[1].task.presentationStatus, .dependencyBlocked)
+        XCTAssertEqual(graph.nodes[1].task.prerequisiteTasks.first?.resultStatus, "blocked")
+        XCTAssertEqual(graph.nodes[1].task.prerequisiteTasks.first?.displayStatus, "result_blocked")
+        let maximumConcurrentRunRequests = await host.maximumConcurrentRunRequests()
+        XCTAssertGreaterThanOrEqual(maximumConcurrentRunRequests, 2)
+
+        _ = try await service.fetchGraph(messageID: "message-1", lookup: .init(
+            sessionID: "conversation-1",
+            turnID: "turn-1",
+            sourceUserMessageID: "message-1"
+        ))
+        let totalRunRequests = await host.totalRunRequests()
+        XCTAssertEqual(totalRunRequests, 2,
+                       "Terminal Tasks without a Run must cache the empty lookup across polls")
+    }
+
+    func testTransientRunLookupFailureIsRetriedBeforeCachingAnEmptyResult() async throws {
+        let host = BlockedDependencyTaskHostStub(failFirstMissingRunRequest: true)
+        let service = NativeLocalAgentMessageTaskGraphService(host: host)
+        await service.configure(ownerUserID: "user-1")
+        let lookup = MessageTaskLookup(
+            sessionID: "conversation-1",
+            turnID: "turn-1",
+            sourceUserMessageID: "message-1"
+        )
+
+        _ = try await service.fetchGraph(messageID: "message-1", lookup: lookup)
+        _ = try await service.fetchGraph(messageID: "message-1", lookup: lookup)
+        _ = try await service.fetchGraph(messageID: "message-1", lookup: lookup)
+
+        let totalRunRequests = await host.totalRunRequests()
+        XCTAssertEqual(totalRunRequests, 3,
+                       "A failed lookup must retry once; only a successful empty response is cached")
+    }
+
     func testRetryPersistsAdditionalInstructionInLocalCommand() async throws {
         let host = LocalTaskHostStub()
         let service = NativeLocalAgentMessageTaskGraphService(
@@ -362,6 +414,116 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
             "payload": ["status": status, "error": error],
             "created_at_unix_ms": cursor,
         ]
+    }
+}
+
+private actor BlockedDependencyTaskHostStub: LocalAgentHostClientServicing {
+    private var activeRunRequests = 0
+    private var maximumRunRequests = 0
+    private var runRequests = 0
+    private let failFirstMissingRunRequest: Bool
+    private var didFailMissingRunRequest = false
+
+    init(failFirstMissingRunRequest: Bool = false) {
+        self.failFirstMissingRunRequest = failFirstMissingRunRequest
+    }
+
+    func start(ownerUserID: String) async throws {}
+    func stop() async {}
+
+    func maximumConcurrentRunRequests() -> Int { maximumRunRequests }
+    func totalRunRequests() -> Int { runRequests }
+
+    func request(command: Data) async throws -> Data {
+        let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
+        switch object?["type"] as? String {
+        case "get_message_task_graph":
+            return try json([
+                "type": "message_task_graph",
+                "graph": [
+                    "root_task_ids": ["task-1"],
+                    "nodes": [
+                        node(task(id: "task-1", status: "succeeded"), depth: 0, root: true),
+                        node(task(id: "task-2", status: "blocked"), depth: 1, root: false),
+                    ],
+                    "edges": [[
+                        "source_task_id": "task-1",
+                        "target_task_id": "task-2",
+                        "kind": "prerequisite",
+                    ]],
+                    "source_conversation_id": "conversation-1",
+                    "source_turn_id": "turn-1",
+                    "source_user_message_id": "message-1",
+                ],
+            ])
+        case "get_task_runs":
+            runRequests += 1
+            activeRunRequests += 1
+            maximumRunRequests = max(maximumRunRequests, activeRunRequests)
+            try await Task.sleep(for: .milliseconds(30))
+            activeRunRequests -= 1
+            let taskID = object?["task_id"] as? String ?? ""
+            if taskID == "task-2", failFirstMissingRunRequest, !didFailMissingRunRequest {
+                didFailMissingRunRequest = true
+                throw URLError(.networkConnectionLost)
+            }
+            return try json([
+                "type": "task_runs",
+                "task_id": taskID,
+                "runs": taskID == "task-1" ? [blockedRun()] : [],
+            ])
+        default:
+            throw CocoaError(.featureUnsupported)
+        }
+    }
+
+    private func node(_ task: [String: Any], depth: Int, root: Bool) -> [String: Any] {
+        ["task": task, "depth": depth, "is_root": root, "is_current_message": true]
+    }
+
+    private func task(id: String, status: String) -> [String: Any] {
+        [
+            "graph_id": "graph-1",
+            "owner_user_id": "user-1",
+            "source_entity_type": "conversation_turn",
+            "source_entity_id": "turn-1",
+            "task_id": id,
+            "title": id == "task-1" ? "Create plan" : "Implement plan",
+            "model_config_ref": "model-1",
+            "input": ["objective": "Ship the plan"],
+            "status": status,
+            "active_run_id": NSNull(),
+            "version": 1,
+            "created_at_unix_ms": 1,
+            "updated_at_unix_ms": 2,
+        ]
+    }
+
+    private func blockedRun() -> [String: Any] {
+        [
+            "run_id": "run-task-1",
+            "owner_user_id": "user-1",
+            "owner_entity_type": "task",
+            "owner_entity_id": "task-1",
+            "profile_key": "task_execution",
+            "capability_policy_revision": "policy-1",
+            "input": [:],
+            "status": "succeeded",
+            "version": 1,
+            "terminal_outcome": [
+                "content": "Planning could not be saved.",
+                "task_acceptance": [
+                    "result_status": "blocked",
+                    "reason": "The saved revision did not change.",
+                ],
+            ],
+            "created_at_unix_ms": 1,
+            "updated_at_unix_ms": 2,
+        ]
+    }
+
+    private func json(_ value: Any) throws -> Data {
+        try JSONSerialization.data(withJSONObject: value)
     }
 }
 
