@@ -45,7 +45,10 @@ struct MediaStudioView: View {
             content
         }
         .background(studioBackground)
-        .task(id: appModel.authentication.phase) { viewModel.loadIfNeeded() }
+        .task(id: appModel.authentication.phase) {
+            guard case let .authenticated(session) = appModel.authentication.phase else { return }
+            viewModel.activate(userID: session.user.id)
+        }
         .onChange(of: viewModel.section) { _, section in
             viewModel.loadSelectedSectionIfNeeded()
             if section == .story { viewModel.stories.backToList() }

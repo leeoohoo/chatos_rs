@@ -173,10 +173,11 @@ final class MediaStudioViewModel: ObservableObject {
 
     func activate(userID: String) {
         bindAccount(userID: userID)
-        loadHistoryIfNeeded()
+        // The visible workspace owns lazy loading. Bind from the authenticated session passed
+        // by the view so its first mount cannot race AppModel's separate authentication sink.
+        loadIfNeeded()
         maintainVideoJobsIfNeeded()
         if !isLoadingHistory { recoverVideoJobIfNeeded() }
-        loadSelectedSectionIfNeeded()
     }
 
     private func loadHistoryIfNeeded() {
