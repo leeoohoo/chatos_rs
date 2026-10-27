@@ -22,6 +22,7 @@ import { startPetPresentationPolling } from "../features/pet/application/petPres
 import { useGlobalUtilityPreferencesStore } from "../features/global-utilities/application/globalUtilityPreferencesStore";
 import type { GlobalUtilityPreferencesPort } from "../features/global-utilities/ports/GlobalUtilityPreferencesPort";
 import { usePluginApplicationStore } from "../features/plugin-applications/application/pluginApplicationStore";
+import { selectAuthenticatedWorkspace } from "./workspaceEntry";
 import type { PluginApplicationPort } from "../features/plugin-applications/ports/PluginApplicationPort";
 import { useProjectConversationStore } from "../features/project-conversation/application/projectConversationStore";
 import { useRemoteConnectionStore } from "../features/remote-connection/application/remoteConnectionStore";
@@ -478,13 +479,13 @@ export function AppShell({
       || selection.kind !== "workbench"
       || workspaceOwnerUserId !== session.user.id
     ) return;
-    const firstResource = workspaceSnapshot.projects[0] ?? workspaceSnapshot.contacts[0];
-    if (!firstResource) return;
-    setSelection(
-      workspaceSnapshot.projects[0]
-        ? { kind: "project", id: firstResource.id }
-        : { kind: "contact", id: firstResource.id },
-    );
+    setSelection((current) => selectAuthenticatedWorkspace(
+      current,
+      activeSurface,
+      session.user.id,
+      workspaceOwnerUserId,
+      workspaceSnapshot,
+    ));
   }, [
     activeSurface,
     selection.kind,
