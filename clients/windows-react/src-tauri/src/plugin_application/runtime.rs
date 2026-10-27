@@ -1244,7 +1244,7 @@ async fn write_static_response(
     let bytes = asset.map_or(empty.as_slice(), |asset| asset.bytes.as_slice());
     let content_type = asset.map_or("text/plain; charset=utf-8", |asset| asset.content_type);
     let headers = format!(
-        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'\r\nCross-Origin-Resource-Policy: same-origin\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; navigate-to 'self'; base-uri 'none'\r\nCross-Origin-Resource-Policy: same-origin\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
         bytes.len()
     );
     stream
@@ -1997,6 +1997,10 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("connect-src 'none'"));
+        assert!(entry.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("navigate-to 'self'"));
         assert!(entry.text().await.unwrap().contains("Static Plugin"));
 
         let script = client
