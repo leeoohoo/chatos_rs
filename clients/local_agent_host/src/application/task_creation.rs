@@ -26,8 +26,6 @@ pub(in crate::application) struct RequiredTaskPolicy {
     pub(super) plugin_release_snapshots: Option<Vec<TaskPluginReleaseSnapshot>>,
     #[serde(default)]
     pub(super) allowed_model_config_ids: Option<Vec<String>>,
-    #[serde(skip)]
-    pub(super) explicit_plugin_selection: Option<(String, String)>,
 }
 
 impl RequiredTaskPolicy {
@@ -36,7 +34,6 @@ impl RequiredTaskPolicy {
     }
 
     pub(super) fn apply_single(&self, args: &mut CreateTaskArgs) -> Result<(), String> {
-        self.validate_explicit_plugin_hints(&args.plugin_hints)?;
         extend_unique(&mut args.enabled_builtin_kinds, &self.enabled_builtin_kinds);
         extend_unique(
             &mut args.external_mcp_config_ids,
@@ -52,7 +49,6 @@ impl RequiredTaskPolicy {
 
     pub(super) fn apply_batch(&self, args: &mut CreateTasksArgs) -> Result<(), String> {
         for task in &mut args.tasks {
-            self.validate_explicit_plugin_hints(&task.plugin_hints)?;
             extend_unique(&mut task.enabled_builtin_kinds, &self.enabled_builtin_kinds);
             extend_unique(
                 &mut task.external_mcp_config_ids,
@@ -102,11 +98,10 @@ impl RequiredTaskPolicy {
                     ));
                 }
                 extend_required_plugin_hints(&mut self.plugin_components, &[TaskPluginHint {
-                    plugin_key: plugin_key.clone(),
-                    component_key: component_key.clone(),
+                    plugin_key,
+                    component_key,
                     reason: "selected explicitly in Main Chat".to_string(),
                 }]);
-                self.explicit_plugin_selection = Some((plugin_key, component_key));
                 Ok(())
             }
             Some("requirement_survey") => Err(
@@ -118,29 +113,6 @@ impl RequiredTaskPolicy {
             )),
             None => Err("explicit capability selection is missing kind".to_string()),
         }
-    }
-
-    fn validate_explicit_plugin_hints(&self, hints: &[TaskPluginHint]) -> Result<(), String> {
-        let Some((selected_plugin, selected_component)) = self.explicit_plugin_selection.as_ref()
-        else {
-            return Ok(());
-        };
-        let allowed = self
-            .plugin_components
-            .iter()
-            .map(|hint| (hint.plugin_key.trim(), hint.component_key.trim()))
-            .collect::<HashSet<_>>();
-        if let Some(unexpected) = hints
-            .iter()
-            .map(|hint| (hint.plugin_key.trim(), hint.component_key.trim()))
-            .find(|pair| !allowed.contains(pair))
-        {
-            return Err(format!(
-                "Task Plugin {}/{} is outside the user's explicit composer selection {}/{}",
-                unexpected.0, unexpected.1, selected_plugin, selected_component
-            ));
-        }
-        Ok(())
     }
 }
 

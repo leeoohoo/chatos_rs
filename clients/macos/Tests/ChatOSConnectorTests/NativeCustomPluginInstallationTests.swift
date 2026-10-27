@@ -897,6 +897,12 @@ struct NativeCustomPluginInstallationTests {
         #expect(trust.hooks.map(\.event).sorted() == expectedEvents)
         #expect(trust.hooks.map(\.command) == expectedCommands)
         #expect(trust.permissions == ["process.spawn", "workspace.read"])
+        // Hook-backed behavior plugins are active automatically and must not be presented as an
+        // exclusive task route in the composer capability menu.
+        let selectablePlugins = try await service.installedAgentPlugins(
+            ownerUserID: "owner-ponytail"
+        )
+        #expect(selectablePlugins.isEmpty)
     }
 
     @Test("Codex Hook parser preserves async handlers and rejects invalid flags and path escapes")

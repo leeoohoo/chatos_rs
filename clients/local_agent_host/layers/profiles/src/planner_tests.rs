@@ -869,6 +869,9 @@ async fn main_chat_receives_the_program_owned_composer_capability_contract() {
     assert!(contract.get("delivery_route").is_none());
     assert_eq!(contract["selection"]["plugin_key"], "document-plugin");
     let guidance = contract["guidance"].as_str().unwrap();
+    assert!(guidance.contains("required, not exclusive"));
+    assert!(guidance.contains("complementary Plugins may be added"));
+    assert!(guidance.contains("must not replace the user's selected Plugin"));
     assert!(guidance.contains("Tool selection alone does not require a persisted artifact"));
     assert!(guidance.contains("must be created and verified there"));
 }

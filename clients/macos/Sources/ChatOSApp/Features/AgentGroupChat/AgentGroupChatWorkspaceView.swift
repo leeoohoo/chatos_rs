@@ -23,6 +23,7 @@ struct AgentGroupChatWorkspaceView: View {
     @StateObject private var viewModel: AgentGroupChatWorkspaceViewModel
     @State private var showsCreateTeam = false
     @State private var destination: AgentGroupChatWorkspaceDestination = .agents
+    @State private var roomPendingDeletion: ProjectAgentRoom?
     @State private var teamPage = 0
     @State private var teamPageSize = 10
     @State private var directPage = 0
@@ -94,6 +95,32 @@ struct AgentGroupChatWorkspaceView: View {
             }
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+        .confirmationDialog(
+            model.localized("删除这个 Agent 团队？", english: "Delete this Agent team?"),
+            isPresented: Binding(
+                get: { roomPendingDeletion != nil },
+                set: { if !$0 { roomPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(model.localized("删除团队", english: "Delete Team"), role: .destructive) {
+                guard let room = roomPendingDeletion else { return }
+                Task {
+                    if await viewModel.deleteRoom(room) {
+                        if destination == .room(room.id) { destination = .agents }
+                        roomPendingDeletion = nil
+                    }
+                }
+            }
+            Button(model.localized("取消", english: "Cancel"), role: .cancel) {
+                roomPendingDeletion = nil
+            }
+        } message: {
+            Text(model.localized(
+                "团队会立即从列表移除，尚未开始的工作会取消，正在运行的记录会停止；历史消息和运行记录仍保留在本机以保证数据完整。",
+                english: "The team will disappear immediately. Queued work will be cancelled and active run records stopped; local history is retained for data integrity."
+            ))
         }
     }
 
@@ -188,18 +215,36 @@ struct AgentGroupChatWorkspaceView: View {
                                 .foregroundStyle(.secondary)
                         } else {
                             ForEach(viewModel.rooms.agentPage(index: teamPage, size: teamPageSize)) { room in
-                                Label {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(room.draft.name)
-                                            .appFont(.body.weight(.medium))
-                                        Text(projectName(for: room.projectID))
-                                            .appFont(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
+                                HStack(spacing: 8) {
+                                    Label {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(room.draft.name)
+                                                .appFont(.body.weight(.medium))
+                                            Text(projectName(for: room.projectID))
+                                                .appFont(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                    } icon: {
+                                        Image(systemName: "person.3.fill")
+                                            .foregroundStyle(AppPalette.ai)
                                     }
-                                } icon: {
-                                    Image(systemName: "person.3.fill")
-                                        .foregroundStyle(AppPalette.ai)
+                                    Spacer(minLength: 0)
+                                    Menu {
+                                        Button(
+                                            model.localized("删除团队", english: "Delete Team"),
+                                            systemImage: "trash",
+                                            role: .destructive
+                                        ) {
+                                            roomPendingDeletion = room
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis.circle")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .menuStyle(.borderlessButton)
+                                    .menuIndicator(.hidden)
+                                    .fixedSize()
                                 }
                                 .padding(.vertical, 4)
                                 .tag(AgentGroupChatWorkspaceDestination.room(room.id))

@@ -532,6 +532,29 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         }
     }
 
+    func deleteRoom(_ room: ProjectAgentRoom) async -> Bool {
+        do {
+            let store = try await resolveStore()
+            _ = try await store.archiveRoom(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            rooms = try await store.listRooms(ownerUserID: ownerUserID)
+            if selectedRoomID == room.id { selectedRoomID = nil }
+            errorMessage = nil
+            await service.publishChange(.init(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                kind: .roomUpdated
+            ))
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     private func resolveStore() async throws -> SQLiteAgentGroupChatStore {
         if let openedStore { return openedStore }
         let store = try await service.store()

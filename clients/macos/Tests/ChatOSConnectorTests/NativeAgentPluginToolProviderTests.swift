@@ -5,6 +5,25 @@ import Foundation
 import XCTest
 
 final class NativeAgentPluginToolProviderTests: XCTestCase {
+    func testSharedPluginDisplayNameUsesDistinctComponentQualifiers() {
+        let components = ["solution-authoring-mcp", "solution-executor-mcp"]
+
+        XCTAssertEqual(
+            NativeLocalConnectorService.agentPluginComponentQualifier(
+                components[0],
+                among: components
+            ),
+            "Authoring"
+        )
+        XCTAssertEqual(
+            NativeLocalConnectorService.agentPluginComponentQualifier(
+                components[1],
+                among: components
+            ),
+            "Executor"
+        )
+    }
+
     func testProgressivePluginCatalogAcceptsREAToolCountWithinBound() throws {
         let tools: [NativeJSONValue] = (1...207).map { index in
             .object([

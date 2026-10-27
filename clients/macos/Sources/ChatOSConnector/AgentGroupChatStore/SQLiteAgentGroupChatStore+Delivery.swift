@@ -404,66 +404,80 @@ extension SQLiteAgentGroupChatStore {
         try AgentGroupChatValidation.text(reason, field: "reason", maximumLength: 8_000)
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
         return try transaction {
-            guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
-                throw AgentGroupChatError.notFound
-            }
-            let deliveryIDs = try AgentDeliveryRepository.outstandingDeliveryIDs(
-                database,
+            try stopOutstandingDeliveriesInTransaction(
                 ownerUserID: ownerUserID,
                 roomID: roomID,
-                preparedStatement: recordPreparedStatement
+                reason: reason,
+                nowUnixMs: nowUnixMs
             )
-            guard !deliveryIDs.isEmpty else { return 0 }
-
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-            let runs = try AgentRunRepository.listForOutstandingDeliveries(
-                database,
-                ownerUserID: ownerUserID,
-                roomID: roomID,
-                preparedStatement: recordPreparedStatement
-            )
-            var failedRunUpdates: [AgentRunRepository.FailedRunUpdate] = []
-            for var run in runs {
-                run.checkpoint.status = .failed
-                run.checkpoint.stopReason = reason
-                run.events.append(.init(
-                    kind: "stopped_all",
-                    detail: reason,
-                    modelCalls: run.checkpoint.modelCalls
-                ))
-                run.updatedAtUnixMs = max(nowUnixMs, run.updatedAtUnixMs)
-                try run.validate()
-                let json = String(decoding: try encoder.encode(run), as: UTF8.self)
-                failedRunUpdates.append(.init(
-                    id: run.id,
-                    json: json,
-                    updatedAtUnixMs: run.updatedAtUnixMs
-                ))
-            }
-            let updatedRunCount = try AgentRunRepository.markFailed(
-                database,
-                ownerUserID: ownerUserID,
-                updates: failedRunUpdates,
-                preparedStatement: recordPreparedStatement
-            )
-            guard updatedRunCount == failedRunUpdates.count else {
-                throw AgentGroupChatError.conflict
-            }
-            try execute(
-                """
-                UPDATE project_agent_deliveries
-                SET status = CASE status WHEN 'running' THEN 'failed' ELSE 'cancelled' END,
-                    last_error = ?, completed_at_unix_ms = ?
-                WHERE owner_user_id = ? AND room_id = ? AND status IN ('pending', 'running')
-                """,
-                [.text(reason), .integer(nowUnixMs), .text(ownerUserID), .text(roomID)]
-            )
-            guard sqlite3_changes(database) == Int32(deliveryIDs.count) else {
-                throw AgentGroupChatError.conflict
-            }
-            return deliveryIDs.count
         }
+    }
+
+    func stopOutstandingDeliveriesInTransaction(
+        ownerUserID: String,
+        roomID: String,
+        reason: String,
+        nowUnixMs: Int64
+    ) throws -> Int {
+        guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
+            throw AgentGroupChatError.notFound
+        }
+        let deliveryIDs = try AgentDeliveryRepository.outstandingDeliveryIDs(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            preparedStatement: recordPreparedStatement
+        )
+        guard !deliveryIDs.isEmpty else { return 0 }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let runs = try AgentRunRepository.listForOutstandingDeliveries(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            preparedStatement: recordPreparedStatement
+        )
+        var failedRunUpdates: [AgentRunRepository.FailedRunUpdate] = []
+        for var run in runs {
+            run.checkpoint.status = .failed
+            run.checkpoint.stopReason = reason
+            run.events.append(.init(
+                kind: "stopped_all",
+                detail: reason,
+                modelCalls: run.checkpoint.modelCalls
+            ))
+            run.updatedAtUnixMs = max(nowUnixMs, run.updatedAtUnixMs)
+            try run.validate()
+            let json = String(decoding: try encoder.encode(run), as: UTF8.self)
+            failedRunUpdates.append(.init(
+                id: run.id,
+                json: json,
+                updatedAtUnixMs: run.updatedAtUnixMs
+            ))
+        }
+        let updatedRunCount = try AgentRunRepository.markFailed(
+            database,
+            ownerUserID: ownerUserID,
+            updates: failedRunUpdates,
+            preparedStatement: recordPreparedStatement
+        )
+        guard updatedRunCount == failedRunUpdates.count else {
+            throw AgentGroupChatError.conflict
+        }
+        try execute(
+            """
+            UPDATE project_agent_deliveries
+            SET status = CASE status WHEN 'running' THEN 'failed' ELSE 'cancelled' END,
+                last_error = ?, completed_at_unix_ms = ?
+            WHERE owner_user_id = ? AND room_id = ? AND status IN ('pending', 'running')
+            """,
+            [.text(reason), .integer(nowUnixMs), .text(ownerUserID), .text(roomID)]
+        )
+        guard sqlite3_changes(database) == Int32(deliveryIDs.count) else {
+            throw AgentGroupChatError.conflict
+        }
+        return deliveryIDs.count
     }
 
 }

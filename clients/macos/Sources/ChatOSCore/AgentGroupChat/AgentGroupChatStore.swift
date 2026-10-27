@@ -170,6 +170,11 @@ public protocol AgentGroupChatStore: Sendable {
     func room(ownerUserID: String, roomID: String) async throws -> ProjectAgentRoom?
     func activeRoom(ownerUserID: String, projectID: String) async throws -> ProjectAgentRoom?
     func listRooms(ownerUserID: String, includeArchived: Bool) async throws -> [ProjectAgentRoom]
+    func archiveRoom(
+        ownerUserID: String,
+        roomID: String,
+        nowUnixMs: Int64
+    ) async throws -> ProjectAgentRoom
     func listDirectConversations(
         ownerUserID: String,
         includeArchived: Bool

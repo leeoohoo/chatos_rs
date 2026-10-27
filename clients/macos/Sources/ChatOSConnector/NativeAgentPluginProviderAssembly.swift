@@ -16,28 +16,65 @@ extension NativeLocalConnectorService {
         }
         await repairLegacyPluginIntegrityRecordsIfNeeded()
         var plugins: [NativeInstalledAgentPlugin] = []
-        for record in (state.installedPluginRecords ?? [:]).values {
+        var seenComponents = Set<String>()
+        let records = (state.installedPluginRecords ?? [:]).values.sorted {
+            if $0.installedAt != $1.installedAt { return $0.installedAt > $1.installedAt }
+            return $0.pluginID > $1.pluginID
+        }
+        for record in records {
             guard state.pluginPreferences[record.pluginID] ?? true,
                   await pluginIntegritySnapshots.status(record: record) == .verified,
                   let manifest = try? Self.agentPluginManifest(record: record) else { continue }
-            let mcpComponents: [NativeInstalledAgentPlugin] = manifest.mcpServers.keys.sorted().compactMap { componentKey in
+            let componentKeys = manifest.mcpServers.keys.sorted()
+            let baseDisplayNames = Dictionary(uniqueKeysWithValues: componentKeys.compactMap {
+                componentKey -> (String, String)? in
                 guard let server = manifest.mcpServers[componentKey] else { return nil }
+                return (
+                    componentKey,
+                    server.agent?.displayName
+                        ?? manifest.interface?.displayName
+                        ?? manifest.name
+                )
+            })
+            let displayNameCounts = Dictionary(
+                grouping: baseDisplayNames.values,
+                by: { $0 }
+            ).mapValues(\.count)
+            let mcpComponents: [NativeInstalledAgentPlugin] = componentKeys.compactMap { componentKey in
+                guard let server = manifest.mcpServers[componentKey] else { return nil }
+                let baseDisplayName = baseDisplayNames[componentKey] ?? manifest.name
+                let displayName: String
+                if displayNameCounts[baseDisplayName, default: 0] > 1 {
+                    let qualifier = Self.agentPluginComponentQualifier(
+                        componentKey,
+                        among: componentKeys
+                    )
+                    displayName = "\(baseDisplayName) · \(qualifier)"
+                } else {
+                    displayName = baseDisplayName
+                }
                 return .init(
                     pluginID: record.pluginID,
                     pluginKey: record.pluginKey,
                     componentKey: componentKey,
-                    displayName: server.agent?.displayName
-                        ?? manifest.interface?.displayName
-                        ?? manifest.name,
+                    displayName: displayName,
                     description: server.agent?.description ?? manifest.description
                 )
             }
             if !mcpComponents.isEmpty {
-                plugins.append(contentsOf: mcpComponents)
+                for plugin in mcpComponents {
+                    let selectionID = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
+                        pluginKey: plugin.pluginKey,
+                        componentKey: plugin.componentKey
+                    )
+                    if seenComponents.insert(selectionID).inserted { plugins.append(plugin) }
+                }
                 continue
             }
-            guard !manifest.skills.isEmpty else { continue }
-            plugins.append(.init(
+            // Hook-backed behavior plugins are activated automatically for every eligible run.
+            // Their bundled Skills support that behavior; they are not explicit task routes.
+            guard !manifest.skills.isEmpty, manifest.hooks.isEmpty else { continue }
+            let plugin = NativeInstalledAgentPlugin(
                 pluginID: record.pluginID,
                 pluginKey: record.pluginKey,
                 componentKey: NativeInstalledAgentPlugin.skillsOnlyComponentKey,
@@ -45,7 +82,12 @@ extension NativeLocalConnectorService {
                 description: manifest.description.isEmpty
                     ? "Installed Plugin Skills"
                     : manifest.description
-            ))
+            )
+            let selectionID = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
+                pluginKey: plugin.pluginKey,
+                componentKey: plugin.componentKey
+            )
+            if seenComponents.insert(selectionID).inserted { plugins.append(plugin) }
         }
         return plugins.sorted {
             if $0.displayName != $1.displayName {
@@ -346,6 +388,40 @@ extension NativeLocalConnectorService {
         )
         if case .approve = decision { return true }
         return false
+    }
+
+    static func agentPluginComponentQualifier(
+        _ componentKey: String,
+        among componentKeys: [String]
+    ) -> String {
+        func tokens(_ key: String) -> [String] {
+            var result = key.lowercased()
+                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .map(String.init)
+            while let suffix = result.last,
+                  ["mcp", "server", "plugin"].contains(suffix) {
+                result.removeLast()
+            }
+            return result
+        }
+        let componentTokens = tokens(componentKey)
+        let siblingTokens = componentKeys.map(tokens)
+        var commonPrefixCount = 0
+        while commonPrefixCount < componentTokens.count,
+              siblingTokens.allSatisfy({
+                  $0.count > commonPrefixCount
+                    && $0[commonPrefixCount] == componentTokens[commonPrefixCount]
+              }) {
+            commonPrefixCount += 1
+        }
+        let distinctiveTokens = componentTokens.dropFirst(commonPrefixCount)
+        let labelTokens = distinctiveTokens.isEmpty
+            ? componentTokens[...]
+            : distinctiveTokens
+        let label = labelTokens.map { token in
+            String(token.prefix(1)).uppercased() + String(token.dropFirst())
+        }.joined(separator: " ")
+        return label.isEmpty ? componentKey : label
     }
 
     private static func agentPluginManifest(

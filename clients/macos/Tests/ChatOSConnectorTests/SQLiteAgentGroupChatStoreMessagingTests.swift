@@ -63,6 +63,53 @@ extension SQLiteAgentGroupChatStoreTests {
         XCTAssertEqual(rooms.map(\.ownerUserID), ["alice", "alice"])
     }
 
+    func testArchiveRoomHidesTeamStopsQueuedWorkAndAllowsReplacement() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(store, name: "待删除团队 Agent")
+        let room = try await makeRoom(store, projectID: "removed-project")
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        _ = try await store.setDefaultAgent(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id
+        )
+        let posted = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "稍后执行"),
+            limits: .init()
+        )
+        let delivery = try XCTUnwrap(posted.deliveries.first)
+
+        let archived = try await store.archiveRoom(
+            ownerUserID: "alice",
+            roomID: room.id,
+            nowUnixMs: posted.message.createdAtUnixMs + 1
+        )
+        let activeRooms = try await store.listRooms(ownerUserID: "alice")
+        let allRooms = try await store.listRooms(ownerUserID: "alice", includeArchived: true)
+        let stoppedDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: delivery.id
+        )
+        let activeMembers = try await store.listActiveMembers(ownerUserID: "alice")
+
+        XCTAssertEqual(archived.status, .archived)
+        XCTAssertTrue(activeRooms.isEmpty)
+        XCTAssertEqual(allRooms.first?.id, room.id)
+        XCTAssertEqual(stoppedDelivery?.status, .cancelled)
+        XCTAssertFalse(activeMembers.contains { $0.roomID == room.id })
+        let replacement = try await makeRoom(store, projectID: "removed-project")
+        XCTAssertNotEqual(replacement.id, room.id)
+    }
+
     func testHumanAgentDirectReusesConversationAndRoutesWithoutProjectTeam() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
