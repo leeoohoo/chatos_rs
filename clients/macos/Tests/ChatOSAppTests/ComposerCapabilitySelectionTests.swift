@@ -4,6 +4,22 @@ import Testing
 
 struct ComposerCapabilitySelectionTests {
     @Test
+    func capabilityMenuHasNoReservedHeightWithoutCandidates() {
+        #expect(ComposerCapabilityMenuLayout.height(candidateCount: 0) == 0)
+    }
+
+    @Test
+    func capabilityMenuExpandsToShowEverySmallResultSet() {
+        #expect(ComposerCapabilityMenuLayout.height(candidateCount: 1) == 55)
+        #expect(ComposerCapabilityMenuLayout.height(candidateCount: 3) == 169)
+    }
+
+    @Test
+    func capabilityMenuCapsLargeResultSetsForScrolling() {
+        #expect(ComposerCapabilityMenuLayout.height(candidateCount: 20) == 360)
+    }
+
+    @Test
     func bareSlashProducesEmptyCapabilityQuery() throws {
         let query = try #require(ComposerCapabilitySyntax.trailingQuery(in: "/"))
         #expect(query.value.isEmpty)

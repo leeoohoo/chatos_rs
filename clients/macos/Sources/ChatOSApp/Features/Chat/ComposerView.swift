@@ -333,7 +333,9 @@ struct ComposerView: View {
                             }
                         }
                     }
-                    .frame(maxHeight: 360)
+                    .frame(height: ComposerCapabilityMenuLayout.height(
+                        candidateCount: visibleCapabilityCandidates.count
+                    ))
                     .onChange(of: highlightedCapabilityID) { _, id in
                         guard let id else { return }
                         withAnimation(.easeOut(duration: 0.12)) {
