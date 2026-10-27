@@ -9,7 +9,10 @@ final class StoryStudioViewModel: ObservableObject {
     // ObservableObject requires this publisher through a nonisolated protocol
     // requirement. Store one stable instance explicitly: the synthesized lazy
     // discovery path crashes in optimized builds when mutating this ViewModel's
-    // large set of @Published properties during authentication bootstrap.
+    // large set of @Published properties during authentication bootstrap. An
+    // explicit publisher is not wired to @Published automatically, so every root
+    // state property below forwards from willSet. Keep that forwarding when adding
+    // new root state or SwiftUI will only reflect it after the view is rebuilt.
     nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()
     static let imageGenerationLockNotice = "还有图片版本正在后台生成。已确认的素材仍可继续生成视频；项目结构与模型设置将在图片完成后恢复修改。"
     struct SourceDraft { var source: String; var style: String; var ratio: String }
@@ -84,43 +87,61 @@ final class StoryStudioViewModel: ObservableObject {
     }
 
     @Published var projects: [StoryProject] = [] {
+        willSet { objectWillChange.send() }
         didSet {
             cachedCreationHistoryGroups = nil
             projectFingerprintCache = [:]
         }
     }
-    @Published var selectedProjectID: UUID?
-    @Published var selectedSegmentID: String?
-    @Published var selectedSegments: Set<String> = []
-    @Published var isLoading = false
-    @Published var isLoadingMoreProjects = false
-    @Published var hasMoreProjects = false
-    @Published var isBusy = false
-    @Published var operation = ""
-    @Published var errorMessage: String?
+    @Published var selectedProjectID: UUID? { willSet { objectWillChange.send() } }
+    @Published var selectedSegmentID: String? { willSet { objectWillChange.send() } }
+    @Published var selectedSegments: Set<String> = [] { willSet { objectWillChange.send() } }
+    @Published var isLoading = false { willSet { objectWillChange.send() } }
+    @Published var isLoadingMoreProjects = false { willSet { objectWillChange.send() } }
+    @Published var hasMoreProjects = false { willSet { objectWillChange.send() } }
+    @Published var isBusy = false { willSet { objectWillChange.send() } }
+    @Published var operation = "" { willSet { objectWillChange.send() } }
+    @Published var errorMessage: String? { willSet { objectWillChange.send() } }
     let generationActivity = StoryGenerationActivityState()
     let planningActivity = StoryPlanningActivityState()
-    @Published var activeSegmentID: String?
-    @Published var activeProjectID: UUID?
-    @Published var activeAgentRunID: UUID?
-    @Published var pauseRequested = false
+    @Published var activeSegmentID: String? { willSet { objectWillChange.send() } }
+    @Published var activeProjectID: UUID? { willSet { objectWillChange.send() } }
+    @Published var activeAgentRunID: UUID? { willSet { objectWillChange.send() } }
+    @Published var pauseRequested = false { willSet { objectWillChange.send() } }
     @Published var agentRuns: [StoryPlanningRunSnapshot] = [] {
+        willSet { objectWillChange.send() }
         didSet { agentDraftFingerprintCache = [:] }
     }
-    @Published var isLoadingAgentRuns = false
-    @Published var isLoadingMoreAgentRuns = false
-    @Published var hasMoreAgentRuns = false
-    @Published var mediaBatches: [StoryMediaBatchSnapshot] = []
-    @Published var isLoadingMoreMediaBatches = false
-    @Published var hasMoreMediaBatches = false
-    @Published var optimizationSuggestion: StoryPlanningTools.OptimizationSuggestion?
-    @Published var optimizationTarget: StoryPlanningTools.OptimizationTarget?
-    @Published var activeAssetGenerations: Set<AssetGenerationKey> = []
-    @Published var assetGenerationErrors: [AssetGenerationKey: String] = [:]
-    @Published var activeFrameGenerations: Set<FrameGenerationKey> = []
-    @Published var frameGenerationErrors: [FrameGenerationKey: String] = [:]
-    @Published var activeVideoGenerations: Set<VideoGenerationKey> = []
-    @Published var activeVideoFrameExtractions: Set<VideoGenerationKey> = []
+    @Published var isLoadingAgentRuns = false { willSet { objectWillChange.send() } }
+    @Published var isLoadingMoreAgentRuns = false { willSet { objectWillChange.send() } }
+    @Published var hasMoreAgentRuns = false { willSet { objectWillChange.send() } }
+    @Published var mediaBatches: [StoryMediaBatchSnapshot] = [] { willSet { objectWillChange.send() } }
+    @Published var isLoadingMoreMediaBatches = false { willSet { objectWillChange.send() } }
+    @Published var hasMoreMediaBatches = false { willSet { objectWillChange.send() } }
+    @Published var optimizationSuggestion: StoryPlanningTools.OptimizationSuggestion? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var optimizationTarget: StoryPlanningTools.OptimizationTarget? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var activeAssetGenerations: Set<AssetGenerationKey> = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var assetGenerationErrors: [AssetGenerationKey: String] = [:] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var activeFrameGenerations: Set<FrameGenerationKey> = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var frameGenerationErrors: [FrameGenerationKey: String] = [:] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var activeVideoGenerations: Set<VideoGenerationKey> = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var activeVideoFrameExtractions: Set<VideoGenerationKey> = [] {
+        willSet { objectWillChange.send() }
+    }
     let projectCatalog: StoryProjectCatalogUseCase
     let projectMutation: StoryProjectMutationUseCase
     let storyPlanning: StoryPlanningUseCase?
