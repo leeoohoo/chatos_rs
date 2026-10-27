@@ -4,6 +4,58 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativeConnectorStateStoreTests {
+    @Test("offline Plugin catalog keeps installed Marketplace records visible")
+    func offlinePluginCatalogRetainsMarketplaceInstallations() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let installation = directory
+            .appendingPathComponent("Plugins/marketplace/1.2.3", isDirectory: true)
+        try FileManager.default.createDirectory(at: installation, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data("""
+        {
+          "schemaVersion": 3,
+          "name": "offline-marketplace",
+          "version": "1.2.3",
+          "description": "Installed Marketplace fixture.",
+          "interface": {"displayName": "Offline Marketplace"},
+          "mcpServers": {},
+          "skills": []
+        }
+        """.utf8).write(to: installation.appendingPathComponent("chatos.plugin.json"))
+
+        let stateURL = directory.appendingPathComponent("state.json")
+        let record = try nativePluginTestRecord(
+            installationURL: installation,
+            pluginID: "marketplace-plugin",
+            releaseID: "marketplace-release",
+            version: "1.2.3"
+        )
+        var state = NativeConnectorPersistentState.empty
+        state.installedPluginIDs = [record.pluginID]
+        state.installedPluginRecords = [record.pluginID: record]
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+
+        let plugins = try await service.fetchPlugins(refresh: true)
+
+        let plugin = try #require(plugins.first)
+        #expect(plugins.count == 1)
+        #expect(plugin.pluginID == record.pluginID)
+        #expect(plugin.displayName == "Offline Marketplace")
+        #expect(plugin.description == "Installed Marketplace fixture.")
+        #expect(plugin.installedVersion == "1.2.3")
+        #expect(plugin.installed)
+        #expect(plugin.source == .marketplace)
+        #expect(plugin.installationIssue == nil)
+    }
+
     @Test
     func localApprovalRuntimeLoadsWithoutGatewayPairing() async throws {
         let directory = FileManager.default.temporaryDirectory
