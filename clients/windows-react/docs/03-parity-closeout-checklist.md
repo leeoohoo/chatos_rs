@@ -8,6 +8,15 @@ Windows 产品版本：`3.0.9`
 
 本清单区分“页面已出现”“业务闭环已完成”“平台能力真实可用”和“发布环境已验证”。只有四项同时满足，才算完成；不再把只读占位、失败关闭或测试未运行写成已拉齐。
 
+## 当前复核（2026-10-27）
+
+以下结论以当前分支 `3.0.9.3.1` 的最新代码、测试和最终 NSIS 安装包为准。文档后面的编号条目保留为历史交付记录，其中较早的“部分完成”措辞不应覆盖本节的最新状态。
+
+- Hook 链路当前已完成：最终 NSIS 安装包能够真实启动 AppContainer runner，写入并激活受信 Bundle，触发 `UserPromptSubmit`，回传上下文，按 `continue=false` 阻断 Prompt，并在 Host 重启后恢复 active Bundle。证据：`%TEMP%\\chatos-windows-installed-hook-restart.json`。
+- 登录入口当前已完成：原生安装版首屏进入 owner-scoped 项目工作区，不再默认落到设置页。证据：`%TEMP%\\chatos-windows-workspace-entry-nsis.json` 与本机原生窗口观察记录。
+- 插件应用 Bridge 当前与 macOS 的真实实现一致：两端只实现 `host.context.read`；`artifact.*` 等尚未闭环的能力不会在 Windows 中伪装成可调用能力。
+- 当前仍未完全拉齐的基础差异只有三类：访问控制尚未把目标级出站规则覆盖到任务终端和 Plugin 应用后端；任务终端与 Plugin 应用后端仍使用 `limited` 本机进程边界；任务审查的原生窗口逐态视觉取证尚未完成。这些差异继续保持为不可编辑/不可用状态，不对用户虚报为已支持。
+
 ## A. 本轮已关闭
 
 - [x] 已拉取并合并 `origin/3.0.9.4`（远端头 `fa8a80477`，合并提交 `1a2bede43`）；Local Agent 协议升级到 v49，Windows React 的共享契约、Tauri transport 与打包 sidecar 已同步。
