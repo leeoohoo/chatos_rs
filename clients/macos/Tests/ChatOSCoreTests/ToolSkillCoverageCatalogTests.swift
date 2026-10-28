@@ -80,11 +80,16 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertFalse(taskOrchestration.instructions.contains("single_task_rationale"))
         XCTAssertTrue(taskOrchestration.instructions.contains("do not strengthen"))
         XCTAssertTrue(taskOrchestration.instructions.contains("screenshots, snapshots"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("Plugin preserve the same workspace"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("history-preserving reset"))
         XCTAssertTrue(taskOrchestration.instructions.contains("durable requirements/solution/implementation plans"))
         XCTAssertTrue(taskOrchestration.instructions.contains("Do not answer only in Main Chat"))
         XCTAssertTrue(taskOrchestration.instructions.contains("substitute a project Markdown file"))
         XCTAssertTrue(taskOrchestration.instructions.contains("Do not select `Notepad` merely because"))
         XCTAssertTrue(taskOrchestration.instructions.contains("separate downstream Notepad Task"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("shortest valid critical path"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("`context_refs` are non-blocking"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("Their failure must not prevent code"))
         XCTAssertTrue(taskOrchestration.instructions.contains(
             "explicitly names an installed Plugin or MCP"
         ))
@@ -111,6 +116,8 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(capabilities.content.contains("explicitly asked for that file form"))
         XCTAssertTrue(capabilities.content.contains("Never select it for scratch work"))
         XCTAssertTrue(capabilities.content.contains("Do not give writable Notepad to the Plugin Task"))
+        XCTAssertTrue(capabilities.content.contains("Keep Plugin contracts outcome-based"))
+        XCTAssertTrue(capabilities.content.contains("archive-and-restart"))
         XCTAssertTrue(capabilities.content.contains(
             "supporting capabilities as additive, never as substitutes"
         ))

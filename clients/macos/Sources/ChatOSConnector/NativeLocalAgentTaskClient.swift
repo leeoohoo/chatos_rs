@@ -13,6 +13,7 @@ public struct LocalAgentTaskRecord: Decodable, Sendable, Equatable {
     public let input: LocalAgentJSONValue
     public let status: String
     public let activeRunID: String?
+    public let resultSummary: String?
     public let version: UInt64
     public let createdAtUnixMs: Int64
     public let updatedAtUnixMs: Int64
@@ -28,7 +29,28 @@ public struct LocalAgentTaskRecord: Decodable, Sendable, Equatable {
         case modelConfigRevision = "model_config_revision"
         case input, status
         case activeRunID = "active_run_id"
+        case resultSummary = "result_summary"
         case version
+        case createdAtUnixMs = "created_at_unix_ms"
+        case updatedAtUnixMs = "updated_at_unix_ms"
+    }
+}
+
+public struct LocalAgentMessageTaskGraphRunSummary: Decodable, Sendable, Equatable {
+    public let runID: String
+    public let ownerEntityID: String
+    public let status: String
+    public let terminalOutcome: LocalAgentJSONValue?
+    public let nextAttemptAtUnixMs: Int64?
+    public let createdAtUnixMs: Int64
+    public let updatedAtUnixMs: Int64
+
+    private enum CodingKeys: String, CodingKey {
+        case runID = "run_id"
+        case ownerEntityID = "owner_entity_id"
+        case status
+        case terminalOutcome = "terminal_outcome"
+        case nextAttemptAtUnixMs = "next_attempt_at_unix_ms"
         case createdAtUnixMs = "created_at_unix_ms"
         case updatedAtUnixMs = "updated_at_unix_ms"
     }
@@ -92,14 +114,32 @@ public struct LocalAgentTaskGraphPage: Decodable, Sendable, Equatable {
 
 public struct LocalAgentMessageTaskGraphNode: Decodable, Sendable, Equatable {
     public let task: LocalAgentTaskRecord
+    public let latestRun: LocalAgentMessageTaskGraphRunSummary?
+    /// Distinguishes an authoritative `null` (the Host batch query found no Run) from an older
+    /// fixture/peer that omitted the field and still requires the compatibility lookup path.
+    public let hasEmbeddedLatestRun: Bool
     public let depth: UInt32
     public let isRoot: Bool
     public let isCurrentMessage: Bool
 
     private enum CodingKeys: String, CodingKey {
         case task, depth
+        case latestRun = "latest_run"
         case isRoot = "is_root"
         case isCurrentMessage = "is_current_message"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        task = try container.decode(LocalAgentTaskRecord.self, forKey: .task)
+        hasEmbeddedLatestRun = container.contains(.latestRun)
+        latestRun = try container.decodeIfPresent(
+            LocalAgentMessageTaskGraphRunSummary.self,
+            forKey: .latestRun
+        )
+        depth = try container.decode(UInt32.self, forKey: .depth)
+        isRoot = try container.decode(Bool.self, forKey: .isRoot)
+        isCurrentMessage = try container.decode(Bool.self, forKey: .isCurrentMessage)
     }
 }
 

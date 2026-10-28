@@ -1,0 +1,32 @@
+{
+  "protocol_version": 51,
+  "command_id": "contract-plugin-hook-invocations-1",
+  "ok": true,
+  "result": {
+    "type": "plugin_hook_invocations",
+    "page": {
+      "invocations": [
+        {
+          "invocation_id": "invocation-1",
+          "bundle_id": "bundle-1",
+          "hook_id": "hook-1",
+          "event_type": "SessionStart",
+          "is_async": true,
+          "attempt": 1,
+          "status": "succeeded",
+          "exit_code": 0,
+          "timed_out": false,
+          "duration_ms": 12,
+          "stdout_bytes": 24,
+          "stdout_overflow": false,
+          "stderr_bytes": 0,
+          "stderr_overflow": false,
+          "created_at_unix_ms": 1792454400000,
+          "updated_at_unix_ms": 1792454400012
+        }
+      ],
+      "next_before_updated_at_unix_ms": null,
+      "next_before_invocation_id": null
+    }
+  }
+}

@@ -42,3 +42,16 @@ enum ComposerCapabilitySyntax {
         return result
     }
 }
+
+enum ComposerCapabilityMenuLayout {
+    static let rowHeight: CGFloat = 55
+    static let rowSpacing: CGFloat = 2
+    static let maximumHeight: CGFloat = 360
+
+    static func height(candidateCount: Int) -> CGFloat {
+        guard candidateCount > 0 else { return 0 }
+        let rowsHeight = CGFloat(candidateCount) * rowHeight
+        let spacingHeight = CGFloat(candidateCount - 1) * rowSpacing
+        return min(maximumHeight, rowsHeight + spacingHeight)
+    }
+}

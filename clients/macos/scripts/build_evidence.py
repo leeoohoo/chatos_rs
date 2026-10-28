@@ -236,11 +236,15 @@ def finish(repository, app, captured, commands, symbols):
             "performance_acceptance": "not-run", "distribution_acceptance": "not-run"}
 
 
-def verify(app, manifest):
+def verify(app, manifest, require_symbols=False):
     artifacts = inventory(app)
     if artifacts != manifest["app"]["inventory"] or digest(artifacts) != manifest["app"]["inventory_sha256"]:
         raise ValueError("App contents differ from build manifest (stale/replaced/modified bundle)")
     for path, expected in manifest["symbols"].items():
+        if not Path(path).exists():
+            if require_symbols:
+                raise ValueError(f"Symbol files are unavailable: {path}")
+            continue
         if inventory(path) != expected["inventory"]:
             raise ValueError(f"Symbol files differ from build manifest: {path}")
 
@@ -265,6 +269,7 @@ def main():
     check = subparsers.add_parser("verify")
     check.add_argument("--app", type=Path, required=True)
     check.add_argument("--manifest", type=Path, required=True)
+    check.add_argument("--require-symbols", action="store_true")
     record = subparsers.add_parser("record-command")
     record.add_argument("--output", type=Path, required=True)
     record.add_argument("arguments", nargs=argparse.REMAINDER)
@@ -275,7 +280,7 @@ def main():
         atomic_json(args.output, finish(args.repository, args.app, json.loads(args.capture.read_text()),
                                        json.loads(args.commands.read_text()), args.symbols))
     elif args.command == "verify":
-        verify(args.app, json.loads(args.manifest.read_text()))
+        verify(args.app, json.loads(args.manifest.read_text()), args.require_symbols)
     else:
         arguments = args.arguments
         if arguments[:1] == ["--"]:

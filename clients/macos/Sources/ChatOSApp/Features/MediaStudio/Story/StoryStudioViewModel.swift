@@ -9,7 +9,10 @@ final class StoryStudioViewModel: ObservableObject {
     // ObservableObject requires this publisher through a nonisolated protocol
     // requirement. Store one stable instance explicitly: the synthesized lazy
     // discovery path crashes in optimized builds when mutating this ViewModel's
-    // large set of @Published properties during authentication bootstrap.
+    // large set of @Published properties during authentication bootstrap. An
+    // explicit publisher is not wired to @Published automatically, so every root
+    // state property below forwards from willSet. Keep that forwarding when adding
+    // new root state or SwiftUI will only reflect it after the view is rebuilt.
     nonisolated(unsafe) let objectWillChange = ObservableObjectPublisher()
     static let imageGenerationLockNotice = "还有图片版本正在后台生成。已确认的素材仍可继续生成视频；项目结构与模型设置将在图片完成后恢复修改。"
     struct SourceDraft { var source: String; var style: String; var ratio: String }
@@ -74,37 +77,71 @@ final class StoryStudioViewModel: ObservableObject {
         var projectID: UUID
         var segmentID: String
     }
-    @Published var projects: [StoryProject] = []
-    @Published var selectedProjectID: UUID?
-    @Published var selectedSegmentID: String?
-    @Published var selectedSegments: Set<String> = []
-    @Published var isLoading = false
-    @Published var isLoadingMoreProjects = false
-    @Published var hasMoreProjects = false
-    @Published var isBusy = false
-    @Published var operation = ""
-    @Published var errorMessage: String?
+    private struct ProjectFingerprints {
+        var current: String
+        var legacy: String?
+
+        func matches(_ persisted: String) -> Bool {
+            persisted == current || persisted == legacy
+        }
+    }
+
+    @Published var projects: [StoryProject] = [] {
+        willSet { objectWillChange.send() }
+        didSet {
+            cachedCreationHistoryGroups = nil
+            projectFingerprintCache = [:]
+        }
+    }
+    @Published var selectedProjectID: UUID? { willSet { objectWillChange.send() } }
+    @Published var selectedSegmentID: String? { willSet { objectWillChange.send() } }
+    @Published var selectedSegments: Set<String> = [] { willSet { objectWillChange.send() } }
+    @Published var isLoading = false { willSet { objectWillChange.send() } }
+    @Published var isLoadingMoreProjects = false { willSet { objectWillChange.send() } }
+    @Published var hasMoreProjects = false { willSet { objectWillChange.send() } }
+    @Published var isBusy = false { willSet { objectWillChange.send() } }
+    @Published var operation = "" { willSet { objectWillChange.send() } }
+    @Published var errorMessage: String? { willSet { objectWillChange.send() } }
     let generationActivity = StoryGenerationActivityState()
     let planningActivity = StoryPlanningActivityState()
-    @Published var activeSegmentID: String?
-    @Published var activeProjectID: UUID?
-    @Published var activeAgentRunID: UUID?
-    @Published var pauseRequested = false
-    @Published var agentRuns: [StoryPlanningRunSnapshot] = []
-    @Published var isLoadingAgentRuns = false
-    @Published var isLoadingMoreAgentRuns = false
-    @Published var hasMoreAgentRuns = false
-    @Published var mediaBatches: [StoryMediaBatchSnapshot] = []
-    @Published var isLoadingMoreMediaBatches = false
-    @Published var hasMoreMediaBatches = false
-    @Published var optimizationSuggestion: StoryPlanningTools.OptimizationSuggestion?
-    @Published var optimizationTarget: StoryPlanningTools.OptimizationTarget?
-    @Published var activeAssetGenerations: Set<AssetGenerationKey> = []
-    @Published var assetGenerationErrors: [AssetGenerationKey: String] = [:]
-    @Published var activeFrameGenerations: Set<FrameGenerationKey> = []
-    @Published var frameGenerationErrors: [FrameGenerationKey: String] = [:]
-    @Published var activeVideoGenerations: Set<VideoGenerationKey> = []
-    @Published var activeVideoFrameExtractions: Set<VideoGenerationKey> = []
+    @Published var activeSegmentID: String? { willSet { objectWillChange.send() } }
+    @Published var activeProjectID: UUID? { willSet { objectWillChange.send() } }
+    @Published var activeAgentRunID: UUID? { willSet { objectWillChange.send() } }
+    @Published var pauseRequested = false { willSet { objectWillChange.send() } }
+    @Published var agentRuns: [StoryPlanningRunSnapshot] = [] {
+        willSet { objectWillChange.send() }
+        didSet { agentDraftFingerprintCache = [:] }
+    }
+    @Published var isLoadingAgentRuns = false { willSet { objectWillChange.send() } }
+    @Published var isLoadingMoreAgentRuns = false { willSet { objectWillChange.send() } }
+    @Published var hasMoreAgentRuns = false { willSet { objectWillChange.send() } }
+    @Published var mediaBatches: [StoryMediaBatchSnapshot] = [] { willSet { objectWillChange.send() } }
+    @Published var isLoadingMoreMediaBatches = false { willSet { objectWillChange.send() } }
+    @Published var hasMoreMediaBatches = false { willSet { objectWillChange.send() } }
+    @Published var optimizationSuggestion: StoryPlanningTools.OptimizationSuggestion? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var optimizationTarget: StoryPlanningTools.OptimizationTarget? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var activeAssetGenerations: Set<AssetGenerationKey> = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var assetGenerationErrors: [AssetGenerationKey: String] = [:] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var activeFrameGenerations: Set<FrameGenerationKey> = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var frameGenerationErrors: [FrameGenerationKey: String] = [:] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var activeVideoGenerations: Set<VideoGenerationKey> = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var activeVideoFrameExtractions: Set<VideoGenerationKey> = [] {
+        willSet { objectWillChange.send() }
+    }
     let projectCatalog: StoryProjectCatalogUseCase
     let projectMutation: StoryProjectMutationUseCase
     let storyPlanning: StoryPlanningUseCase?
@@ -149,6 +186,10 @@ final class StoryStudioViewModel: ObservableObject {
     var videoFrameExtractionTasks: [VideoGenerationKey: Task<Void, Never>] = [:]
     var videoBatchTask: Task<Void, Never>?
     var sourceDrafts: [UUID: SourceDraft] = [:]
+    var hasLoadedInitialProjects = false
+    private var cachedCreationHistoryGroups: [CreationHistoryGroup]?
+    private var projectFingerprintCache: [UUID: ProjectFingerprints] = [:]
+    private var agentDraftFingerprintCache: [UUID: String] = [:]
 
     init(
         planner: (any StoryPlanningServicing)?,
@@ -200,7 +241,8 @@ final class StoryStudioViewModel: ObservableObject {
         mediaBatches.filter { $0.projectID == selectedProjectID }
     }
     var creationHistoryGroups: [CreationHistoryGroup] {
-        projects.compactMap { project in
+        if let cachedCreationHistoryGroups { return cachedCreationHistoryGroups }
+        let groups: [CreationHistoryGroup] = projects.compactMap { project -> CreationHistoryGroup? in
             var images: [CreationHistoryImage] = []
             for resource in project.resources {
                 for image in resource.images where isGenerated(image) {
@@ -271,6 +313,8 @@ final class StoryStudioViewModel: ObservableObject {
                          images: images, videos: videos)
         }
         .sorted { $0.updatedAt > $1.updatedAt }
+        cachedCreationHistoryGroups = groups
+        return groups
     }
     func reusableStoryImages(kind: StoryResource.Kind, excluding projectID: UUID) -> [ReusableStoryImage] {
         projects
@@ -350,15 +394,12 @@ final class StoryStudioViewModel: ObservableObject {
     /// be resumed explicitly from the banner.
     func recoverableAgentRun(projectID: UUID) -> StoryPlanningRunSnapshot? {
         guard let canonical = projects.first(where: { $0.id == projectID }),
-              let canonicalDigest = try? StoryProjectFingerprint.current(canonical) else { return nil }
+              let canonicalFingerprints = fingerprints(for: canonical) else { return nil }
         return agentRuns.first { run in
             guard run.projectID == projectID, !run.applied, run.abandonedAt == nil,
-                  (try? StoryProjectFingerprint.matches(
-                    run.baseProjectFingerprint,
-                    project: canonical
-                  )) == true,
-                  let draftDigest = try? StoryProjectFingerprint.current(run.draft) else { return false }
-            return draftDigest != canonicalDigest
+                  canonicalFingerprints.matches(run.baseProjectFingerprint),
+                  let draftDigest = fingerprint(forAgentDraft: run) else { return false }
+            return draftDigest != canonicalFingerprints.current
         }
     }
 
@@ -366,25 +407,48 @@ final class StoryStudioViewModel: ObservableObject {
         // Only show the mutable draft while its in-memory task is actually running. A saved
         // interrupted draft must never replace the normal workbench after a fresh login.
         guard isBusy, activeProjectID == canonical.id, let activeAgentRunID else { return nil }
-        guard let canonicalDigest = try? StoryProjectFingerprint.current(canonical) else { return nil }
+        guard let canonicalFingerprints = fingerprints(for: canonical) else { return nil }
         return agentRuns.first { run in
             guard run.id == activeAgentRunID, run.projectID == canonical.id,
                   !run.applied, run.abandonedAt == nil,
-                  (try? StoryProjectFingerprint.matches(
-                    run.baseProjectFingerprint,
-                    project: canonical
-                  )) == true,
-                  let draftDigest = try? StoryProjectFingerprint.current(run.draft) else { return false }
-            return draftDigest != canonicalDigest
+                  canonicalFingerprints.matches(run.baseProjectFingerprint),
+                  let draftDigest = fingerprint(forAgentDraft: run) else { return false }
+            return draftDigest != canonicalFingerprints.current
         }
     }
 
+    private func fingerprints(for project: StoryProject) -> ProjectFingerprints? {
+        if let cached = projectFingerprintCache[project.id] { return cached }
+        guard let current = try? StoryProjectFingerprint.current(project) else { return nil }
+        let value = ProjectFingerprints(
+            current: current,
+            legacy: try? StoryProjectFingerprint.legacyIncludingCapabilities(project)
+        )
+        projectFingerprintCache[project.id] = value
+        return value
+    }
+
+    private func fingerprint(forAgentDraft run: StoryPlanningRunSnapshot) -> String? {
+        if let cached = agentDraftFingerprintCache[run.id] { return cached }
+        guard let value = try? StoryProjectFingerprint.current(run.draft) else { return nil }
+        agentDraftFingerprintCache[run.id] = value
+        return value
+    }
+
     func activate(userID: String) {
-        guard owner != userID else { return }
+        if owner == userID {
+            guard !hasLoadedInitialProjects, !isLoading, loadTask == nil else { return }
+            beginInitialProjectLoad(userID: userID)
+            return
+        }
         if owner != nil {
             reset()
         }
         owner = userID
+        beginInitialProjectLoad(userID: userID)
+    }
+
+    private func beginInitialProjectLoad(userID: String) {
         let accountSessionID = session
         let request = projectCatalogLoadState.begin(
             ownerUserID: userID,
@@ -392,6 +456,7 @@ final class StoryStudioViewModel: ObservableObject {
             kind: .initial
         )
         let projectCatalog = projectCatalog
+        errorMessage = nil
         isLoading = true
         loadTask = Task { [weak self, projectCatalog] in
             let result: Result<StoryProjectCatalogPage, Error>
@@ -405,15 +470,20 @@ final class StoryStudioViewModel: ObservableObject {
                     request,
                     ownerUserID: self.owner,
                     accountSessionID: self.session
-                  ),
-                  !Task.isCancelled else { return }
-            _ = self.projectCatalogLoadState.finish(request)
+                  ) else { return }
+            defer {
+                _ = self.projectCatalogLoadState.finish(request)
+                self.isLoading = false
+                self.loadTask = nil
+            }
+            guard !Task.isCancelled else { return }
             switch result {
             case .success(let snapshot):
                 let collection = projectCatalog.replacing(with: snapshot)
                 projects = collection.projects
                 projectCursor = collection.nextCursor
                 hasMoreProjects = collection.nextCursor != nil
+                hasLoadedInitialProjects = true
                 enqueueDurableVideoRecoveries(
                     collection.projects,
                     owner: userID,
@@ -421,10 +491,9 @@ final class StoryStudioViewModel: ObservableObject {
                 )
                 if collection.unreadableCount > 0 { errorMessage = "有 \(collection.unreadableCount) 个剧情无法读取，原文件已保留。" }
             case .failure(let error):
+                hasLoadedInitialProjects = false
                 errorMessage = error.localizedDescription
             }
-            isLoading = false
-            loadTask = nil
         }
     }
 
@@ -516,6 +585,7 @@ final class StoryStudioViewModel: ObservableObject {
         isLoadingMoreAgentRuns = false; hasMoreAgentRuns = false; agentRunCursor = nil
         isLoadingMoreMediaBatches = false; hasMoreMediaBatches = false; mediaBatchCursor = nil
         isLoadingMoreProjects = false; hasMoreProjects = false; projectCursor = nil
+        hasLoadedInitialProjects = false
         projects = []; selectedProjectID = nil; selectedSegmentID = nil; selectedSegments = []
         sourceDrafts = [:]; optimizationSuggestion = nil; optimizationTarget = nil
         isBusy = false; isLoading = false; operation = ""; errorMessage = nil; activeSegmentID = nil; activeProjectID = nil; activeAgentRunID = nil; pauseRequested = false
@@ -525,11 +595,14 @@ final class StoryStudioViewModel: ObservableObject {
 
     func open(_ id: UUID) {
         guard !isBusy || activeProjectID == id else { return }
+        guard let openedProject = projects.first(where: { $0.id == id }) else { return }
+        selectedProjectID = id
+        selectedSegmentID = activeSegmentID ?? openedProject.segments.first?.id
+        selectedSegments = []
         storyHistoryLoadState.reset()
         agentRunPageTask?.cancel(); agentRunPageTask = nil
         mediaBatchPageTask?.cancel(); mediaBatchPageTask = nil
         isLoadingMoreAgentRuns = false; isLoadingMoreMediaBatches = false
-        selectedProjectID = id; selectedSegmentID = activeSegmentID ?? project?.segments.first?.id; selectedSegments = []
         errorMessage = nil
         agentRuns = []; mediaBatches = []
         agentRunCursor = nil; mediaBatchCursor = nil
@@ -537,12 +610,14 @@ final class StoryStudioViewModel: ObservableObject {
         loadAgentHistory(id)
     }
     func backToList() {
+        selectedProjectID = nil
+        selectedSegmentID = nil
+        selectedSegments = []
         storyHistoryLoadState.reset()
         historyTask?.cancel(); historyTask = nil
         agentRunPageTask?.cancel(); agentRunPageTask = nil
         mediaBatchPageTask?.cancel(); mediaBatchPageTask = nil
         isLoadingAgentRuns = false; isLoadingMoreAgentRuns = false; isLoadingMoreMediaBatches = false
-        selectedProjectID = nil; selectedSegmentID = nil; selectedSegments = []
         agentRunCursor = nil; mediaBatchCursor = nil
         hasMoreAgentRuns = false; hasMoreMediaBatches = false
         if !isBusy { agentRuns = []; mediaBatches = [] }

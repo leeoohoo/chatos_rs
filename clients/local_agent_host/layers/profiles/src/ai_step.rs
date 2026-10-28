@@ -3,19 +3,20 @@
 
 use async_trait::async_trait;
 use chatos_ai_runtime::{
-    message_item,
+    message_item, prune_items_before_latest_compaction,
     tool_call::{clone_tool_call_arguments, extract_tool_call_id, extract_tool_call_name},
     AiRuntimeResult, AiSingleStepOutcome, ContextualTurnRequest, ContextualTurnRunner,
 };
 use chatos_local_agent_protocol::{
-    completed_task_acceptance_report, validate_task_acceptance_report, LocalAgentRunClaim,
+    task_acceptance_report_for_run, validate_task_acceptance_report, LocalAgentRunClaim,
     LocalAgentStepOutcome, LocalAgentToolCall,
 };
 use chatos_local_agent_runtime::LocalAgentProfile;
 use chatos_mcp_runtime::ToolResult;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -278,6 +279,42 @@ fn reduce_ai_step_outcome_for_claim(
     now_unix_ms: i64,
     tool_safety: &dyn ToolSafetyPolicy,
 ) -> Result<LocalAgentStepOutcome, String> {
+    let outcome = if pending_task_replacement(claim) {
+        match outcome {
+            AiSingleStepOutcome::Final(response) => {
+                return Ok(LocalAgentStepOutcome::Continue {
+                    checkpoint: response_checkpoint(
+                        response,
+                        Some(json!({
+                            "reason": "task_replacement_required",
+                            "input_items": [task_replacement_required_message()]
+                        })),
+                    ),
+                });
+            }
+            outcome => outcome,
+        }
+    } else {
+        outcome
+    };
+    let outcome = if pending_task_followup_review(claim) {
+        match outcome {
+            AiSingleStepOutcome::Final(response) => {
+                return Ok(LocalAgentStepOutcome::Continue {
+                    checkpoint: response_checkpoint(
+                        response,
+                        Some(json!({
+                            "reason": "task_followup_review_required",
+                            "input_items": [task_followup_review_required_message()]
+                        })),
+                    ),
+                });
+            }
+            outcome => outcome,
+        }
+    } else {
+        outcome
+    };
     if claim.run.profile_key == "task_execution"
         && claim.run.owner_entity_type == "task"
         && claim
@@ -287,10 +324,9 @@ fn reduce_ai_step_outcome_for_claim(
             .and_then(Value::as_u64)
             == Some(1)
     {
-        if let (AiSingleStepOutcome::Final(response), Some(report)) = (
-            &outcome,
-            completed_task_acceptance_report(claim.run.continuation_input.as_ref()),
-        ) {
+        if let (AiSingleStepOutcome::Final(response), Some(report)) =
+            (&outcome, task_acceptance_report_for_run(&claim.run))
+        {
             validate_task_acceptance_report(&claim.run.input, report)?;
             // Do not let a second model response rewrite an already-checked deliverable.
             let mut output = response_value(response.clone());
@@ -315,6 +351,7 @@ fn reduce_ai_step_outcome_for_claim(
     if claim.run.profile_key == "task_execution"
         && claim.run.owner_entity_type == "task"
         && !task_outcome_reported(claim.run.continuation_input.as_ref())
+        && task_acceptance_report_for_run(&claim.run).is_none()
     {
         return match outcome {
             AiSingleStepOutcome::Final(response) => Ok(LocalAgentStepOutcome::Continue {
@@ -330,6 +367,46 @@ fn reduce_ai_step_outcome_for_claim(
         };
     }
     reduce_ai_step_outcome(outcome, now_unix_ms, tool_safety)
+}
+
+fn pending_task_replacement(claim: &LocalAgentRunClaim) -> bool {
+    claim.run.profile_key == "main_chat"
+        && claim
+            .run
+            .input
+            .pointer("/task_followup_review/replacement_pending")
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
+fn task_replacement_required_message() -> Value {
+    message_item(
+        "system",
+        Value::String(
+            "[Task Replacement Required]\nThe follow-up review marked one or more outdated Tasks for replacement. Do not finish this turn or revive the old contract. Create the corrected Task or Task graph now and include every held replacement candidate in supersedes_task_ids. Graph creation atomically cancels the held old Tasks, inserts the replacements, and records the replacement chain."
+                .to_string(),
+        ),
+    )
+}
+
+fn pending_task_followup_review(claim: &LocalAgentRunClaim) -> bool {
+    claim.run.profile_key == "main_chat"
+        && claim
+            .run
+            .input
+            .pointer("/task_followup_review/pending")
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
+fn task_followup_review_required_message() -> Value {
+    message_item(
+        "system",
+        Value::String(
+            "[Task Follow-up Review Required]\nThe previous response cannot finish this Main Chat turn because the current task_followup_review is still pending. Do not repeat or defend that response. Call `resolve_task_followup` now with the authoritative current review_message_id and exactly one decision for every pending candidate. Use the user's latest message and current Task facts to choose continue, cancel, or clarify; do not create replacement work until the review succeeds."
+                .to_string(),
+        ),
+    )
 }
 
 fn selected_plugin_task_handoff_required(claim: &LocalAgentRunClaim) -> bool {
@@ -506,9 +583,277 @@ fn decode_arguments(arguments: Value) -> Result<Value, String> {
 
 fn response_checkpoint(response: AiRuntimeResult, continuation: Option<Value>) -> Value {
     json!({
-        "response": response_value(response),
+        "response": checkpoint_response_value(response),
         "continuation": continuation
     })
+}
+
+const MAXIMUM_DURABLE_REQUEST_INPUT_BYTES: usize = 768 * 1_024;
+const MAXIMUM_PERSISTED_INLINE_IMAGE_BYTES: usize = 384 * 1_024;
+const MAXIMUM_OLD_TOOL_OUTPUT_CHARS: usize = 4_000;
+const MAXIMUM_SKILL_OUTPUT_CHARS: usize = 32_000;
+const RECENT_CHECKPOINT_ITEM_COUNT: usize = 32;
+
+#[derive(Default)]
+struct CheckpointCompaction {
+    original_bytes: usize,
+    stored_bytes: usize,
+    omitted_inline_images: usize,
+    shortened_tool_outputs: usize,
+    omitted_history_items: usize,
+    omitted_history_sha256: Option<String>,
+}
+
+impl CheckpointCompaction {
+    fn changed(&self) -> bool {
+        self.omitted_inline_images > 0
+            || self.shortened_tool_outputs > 0
+            || self.omitted_history_items > 0
+    }
+
+    fn value(&self) -> Value {
+        json!({
+            "version": 1,
+            "original_request_input_bytes": self.original_bytes,
+            "stored_request_input_bytes": self.stored_bytes,
+            "omitted_inline_images": self.omitted_inline_images,
+            "shortened_tool_outputs": self.shortened_tool_outputs,
+            "omitted_history_items": self.omitted_history_items,
+            "omitted_history_sha256": self.omitted_history_sha256,
+        })
+    }
+}
+
+fn checkpoint_response_value(response: AiRuntimeResult) -> Value {
+    let mut value = response_value(response);
+    let request_items = value
+        .get_mut("request_input_items")
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take)
+        .unwrap_or_default();
+    let (request_items, compaction) = bounded_checkpoint_input_items(request_items);
+    value["request_input_items"] = Value::Array(request_items);
+    if compaction.changed() {
+        value["checkpoint_compaction"] = compaction.value();
+    }
+    value
+}
+
+fn bounded_checkpoint_input_items(items: Vec<Value>) -> (Vec<Value>, CheckpointCompaction) {
+    let mut items = prune_items_before_latest_compaction(items);
+    let mut compaction = CheckpointCompaction {
+        original_bytes: encoded_bytes(&items),
+        ..CheckpointCompaction::default()
+    };
+    omit_stale_inline_images(&mut items, &mut compaction);
+    if encoded_bytes(&items) > MAXIMUM_DURABLE_REQUEST_INPUT_BYTES {
+        shorten_old_tool_outputs(&mut items, &mut compaction);
+    }
+    if encoded_bytes(&items) > MAXIMUM_DURABLE_REQUEST_INPUT_BYTES {
+        omit_old_tool_exchanges(&mut items, &mut compaction);
+    }
+    compaction.stored_bytes = encoded_bytes(&items);
+    (items, compaction)
+}
+
+fn omit_stale_inline_images(items: &mut [Value], compaction: &mut CheckpointCompaction) {
+    let images = items
+        .iter()
+        .enumerate()
+        .flat_map(|(item_index, item)| {
+            item.get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .filter_map(move |(content_index, content)| {
+                    content
+                        .get("image_url")
+                        .and_then(Value::as_str)
+                        .filter(|url| url.starts_with("data:"))
+                        .map(|url| (item_index, content_index, url.len()))
+                })
+        })
+        .collect::<Vec<_>>();
+    let retained = images
+        .last()
+        .filter(|(_, _, bytes)| *bytes <= MAXIMUM_PERSISTED_INLINE_IMAGE_BYTES)
+        .map(|(item_index, content_index, _)| (*item_index, *content_index));
+    for (item_index, content_index, _) in images {
+        if retained == Some((item_index, content_index)) {
+            continue;
+        }
+        let Some(content) = items[item_index]
+            .get_mut("content")
+            .and_then(Value::as_array_mut)
+            .and_then(|content| content.get_mut(content_index))
+        else {
+            continue;
+        };
+        let Some(url) = content.get("image_url").and_then(Value::as_str) else {
+            continue;
+        };
+        let digest = format!("{:x}", Sha256::digest(url.as_bytes()));
+        let encoded_bytes = url.len();
+        *content = json!({
+            "type": "input_text",
+            "text": format!(
+                "[Durable visual reference omitted to keep this Task responsive. sha256={digest}; encoded_bytes={encoded_bytes}. Re-observe or re-read the source if exact pixels are still required.]"
+            )
+        });
+        compaction.omitted_inline_images += 1;
+    }
+}
+
+fn shorten_old_tool_outputs(items: &mut [Value], compaction: &mut CheckpointCompaction) {
+    let tool_names = items
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
+        .filter_map(|item| {
+            item.get("call_id")
+                .and_then(Value::as_str)
+                .zip(item.get("name").and_then(Value::as_str))
+        })
+        .map(|(call_id, name)| (call_id.to_string(), name.to_string()))
+        .collect::<HashMap<_, _>>();
+    let recent_start = items.len().saturating_sub(RECENT_CHECKPOINT_ITEM_COUNT);
+    for (index, item) in items.iter_mut().enumerate() {
+        if item.get("type").and_then(Value::as_str) != Some("function_call_output") {
+            continue;
+        }
+        let tool_name = item
+            .get("call_id")
+            .and_then(Value::as_str)
+            .and_then(|call_id| tool_names.get(call_id))
+            .map(String::as_str)
+            .unwrap_or("unknown");
+        let is_skill_context = matches!(
+            tool_name,
+            "agent_skill_activate" | "agent_skill_read_resource" | "capability_describe"
+        );
+        let limit = if is_skill_context {
+            MAXIMUM_SKILL_OUTPUT_CHARS
+        } else if index >= recent_start {
+            MAXIMUM_SKILL_OUTPUT_CHARS
+        } else {
+            MAXIMUM_OLD_TOOL_OUTPUT_CHARS
+        };
+        let Some(output) = item.get("output").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(shortened) = shortened_text(output, limit, tool_name) else {
+            continue;
+        };
+        item["output"] = Value::String(shortened);
+        compaction.shortened_tool_outputs += 1;
+    }
+}
+
+fn shortened_text(text: &str, maximum_chars: usize, source: &str) -> Option<String> {
+    let chars = text.chars().collect::<Vec<_>>();
+    if chars.len() <= maximum_chars {
+        return None;
+    }
+    let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
+    let head = maximum_chars.saturating_mul(3) / 4;
+    let tail = maximum_chars.saturating_sub(head);
+    Some(format!(
+        "{}\n\n[Older {source} output shortened in durable context; original_chars={}; sha256={digest}]\n\n{}",
+        chars[..head].iter().collect::<String>(),
+        chars.len(),
+        chars[chars.len() - tail..].iter().collect::<String>()
+    ))
+}
+
+fn omit_old_tool_exchanges(items: &mut Vec<Value>, compaction: &mut CheckpointCompaction) {
+    let recent_start = items.len().saturating_sub(RECENT_CHECKPOINT_ITEM_COUNT);
+    let protected_calls = items
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
+        .filter(|item| {
+            matches!(
+                item.get("name").and_then(Value::as_str),
+                Some("agent_skill_activate" | "agent_skill_read_resource" | "capability_describe")
+            )
+        })
+        .filter_map(|item| item.get("call_id").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect::<HashSet<_>>();
+    let source = std::mem::take(items);
+    let mut candidates = Vec::<(usize, Vec<usize>)>::new();
+    let mut grouped_call_ids = HashSet::new();
+    for (index, item) in source.iter().enumerate().take(recent_start) {
+        match item.get("type").and_then(Value::as_str) {
+            Some("function_call" | "function_call_output") => {
+                let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
+                    continue;
+                };
+                if protected_calls.contains(call_id) || !grouped_call_ids.insert(call_id) {
+                    continue;
+                }
+                let indices = source
+                    .iter()
+                    .enumerate()
+                    .take(recent_start)
+                    .filter_map(|(candidate_index, candidate)| {
+                        (candidate.get("call_id").and_then(Value::as_str) == Some(call_id))
+                            .then_some(candidate_index)
+                    })
+                    .collect::<Vec<_>>();
+                candidates.push((index, indices));
+            }
+            Some("reasoning") => candidates.push((index, vec![index])),
+            _ => {}
+        }
+    }
+    candidates.sort_by_key(|(index, _)| *index);
+    let mut omitted_indices = HashSet::new();
+    let mut retained_bytes = encoded_bytes(&source);
+    for (_, indices) in candidates {
+        if retained_bytes <= MAXIMUM_DURABLE_REQUEST_INPUT_BYTES.saturating_sub(2_048) {
+            break;
+        }
+        retained_bytes = retained_bytes.saturating_sub(
+            indices
+                .iter()
+                .filter(|&&index| !omitted_indices.contains(&index))
+                .map(|&index| encoded_bytes(&source[index]).saturating_add(1))
+                .sum::<usize>(),
+        );
+        omitted_indices.extend(indices);
+    }
+    let mut omitted = Vec::new();
+    let mut retained = Vec::with_capacity(source.len());
+    for (index, item) in source.into_iter().enumerate() {
+        if omitted_indices.contains(&index) {
+            omitted.push(item);
+        } else {
+            retained.push(item);
+        }
+    }
+    if !omitted.is_empty() {
+        let encoded = serde_json::to_vec(&omitted).unwrap_or_default();
+        let digest = format!("{:x}", Sha256::digest(&encoded));
+        compaction.omitted_history_items += omitted.len();
+        compaction.omitted_history_sha256 = Some(digest.clone());
+        let marker = message_item(
+            "system",
+            Value::String(format!(
+                "[Durable Context Compacted] {} older reasoning/tool exchange items were omitted after their effects were applied. sha256={digest}. Current Task contract, active Skill context, recent tool exchanges, and pending call IDs remain authoritative. Re-read current sources or re-observe external state before relying on omitted details.",
+                omitted.len()
+            )),
+        );
+        let insertion = retained
+            .iter()
+            .position(|item| item.get("role").and_then(Value::as_str) == Some("user"))
+            .unwrap_or(0);
+        retained.insert(insertion, marker);
+    }
+    *items = retained;
+}
+
+fn encoded_bytes<T: serde::Serialize + ?Sized>(value: &T) -> usize {
+    serde_json::to_vec(value).map_or(usize::MAX, |encoded| encoded.len())
 }
 
 fn response_value(response: AiRuntimeResult) -> Value {
@@ -546,6 +891,99 @@ mod tests {
             response_output_items: vec![json!({"type": "message"})],
             request_input_items: vec![json!({"role": "user", "content": "hello"})],
         }
+    }
+
+    #[test]
+    fn durable_checkpoint_bounds_historical_images_and_tool_outputs() {
+        let mut result = response(None);
+        let mut items = vec![message_item(
+            "user",
+            Value::String("Implement the requested client optimization".into()),
+        )];
+        items.push(json!({
+            "type": "function_call", "call_id": "skill-1",
+            "name": "agent_skill_activate", "arguments": "{}"
+        }));
+        items.push(json!({
+            "type": "function_call_output", "call_id": "skill-1",
+            "output": String::from("S").repeat(40_000)
+        }));
+        for index in 0..80 {
+            items.push(json!({
+                "type": "function_call", "call_id": format!("call-{index}"),
+                "name": "capability_invoke", "arguments": "{}"
+            }));
+            items.push(json!({
+                "type": "function_call_output", "call_id": format!("call-{index}"),
+                "output": String::from("T").repeat(20_000)
+            }));
+            if index % 16 == 0 {
+                items.push(json!({
+                    "type": "message", "role": "user",
+                    "content": [{
+                        "type": "input_image",
+                        "image_url": format!("data:image/png;base64,{}", String::from("A").repeat(300_000))
+                    }]
+                }));
+            }
+        }
+        result.request_input_items = items;
+        result.response_output_items = vec![json!({
+            "type": "function_call", "call_id": "current-call",
+            "name": "read_file", "arguments": "{}"
+        })];
+
+        let stored = checkpoint_response_value(result);
+        let request_items = stored["request_input_items"]
+            .as_array()
+            .expect("bounded request items");
+        assert!(encoded_bytes(request_items) <= MAXIMUM_DURABLE_REQUEST_INPUT_BYTES);
+        let inline_images = request_items
+            .iter()
+            .flat_map(|item| {
+                item.get("content")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .filter(|content| {
+                content
+                    .get("image_url")
+                    .and_then(Value::as_str)
+                    .is_some_and(|url| url.starts_with("data:"))
+            })
+            .count();
+        assert_eq!(inline_images, 1);
+        assert!(stored["checkpoint_compaction"]["omitted_inline_images"]
+            .as_u64()
+            .is_some_and(|count| count >= 4));
+        assert!(stored["checkpoint_compaction"]["shortened_tool_outputs"]
+            .as_u64()
+            .is_some_and(|count| count > 0));
+        assert!(request_items
+            .iter()
+            .any(|item| item["call_id"] == "skill-1" && item["type"] == "function_call"));
+        assert!(request_items
+            .iter()
+            .any(|item| item["call_id"] == "skill-1" && item["type"] == "function_call_output"));
+        assert_eq!(
+            stored["response_output_items"][0]["call_id"],
+            "current-call"
+        );
+    }
+
+    #[test]
+    fn durable_checkpoint_keeps_latest_provider_compaction_marker() {
+        let marker = json!({
+            "type": "compaction", "id": "cmp-1", "encrypted_content": "opaque"
+        });
+        let (items, _) = bounded_checkpoint_input_items(vec![
+            message_item("user", Value::String(String::from("old").repeat(500_000))),
+            marker.clone(),
+            message_item("user", Value::String("current".into())),
+        ]);
+        assert_eq!(items.first(), Some(&marker));
+        assert_eq!(items.len(), 2);
     }
 
     #[test]
@@ -681,6 +1119,100 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn pending_followup_review_cannot_finish_before_resolution() {
+        let mut claim = task_claim();
+        claim.run.owner_entity_type = "conversation_turn".to_string();
+        claim.run.owner_entity_id = "turn-1".to_string();
+        claim.run.profile_key = "main_chat".to_string();
+        claim.run.input = json!({
+            "message": "Make the running work match this correction",
+            "task_followup_review": {
+                "type": "task_followup_review",
+                "review_message_id": "message-followup",
+                "pending": true,
+                "tasks": [{
+                    "task_id": "task-1",
+                    "review_state": "pending"
+                }]
+            }
+        });
+
+        let outcome = reduce_ai_step_outcome_for_claim(
+            AiSingleStepOutcome::Final(response(None)),
+            &claim,
+            10_000,
+            &ConservativeToolSafetyPolicy,
+        )
+        .expect("reduce pending follow-up final");
+
+        let LocalAgentStepOutcome::Continue { checkpoint } = outcome else {
+            panic!("pending follow-up review must continue until it is resolved")
+        };
+        assert_eq!(
+            checkpoint["continuation"]["reason"],
+            "task_followup_review_required"
+        );
+        let guidance = checkpoint["continuation"]["input_items"][0]["content"]
+            .as_str()
+            .expect("corrective guidance");
+        assert!(guidance.contains("resolve_task_followup"));
+        assert!(guidance.contains("every pending candidate"));
+
+        claim.run.input["task_followup_review"]["pending"] = json!(false);
+        assert!(matches!(
+            reduce_ai_step_outcome_for_claim(
+                AiSingleStepOutcome::Final(response(None)),
+                &claim,
+                10_000,
+                &ConservativeToolSafetyPolicy,
+            )
+            .expect("reduce resolved follow-up final"),
+            LocalAgentStepOutcome::Succeed { .. }
+        ));
+    }
+
+    #[test]
+    fn held_replacement_cannot_finish_before_corrected_graph_creation() {
+        let mut claim = task_claim();
+        claim.run.owner_entity_type = "conversation_turn".to_string();
+        claim.run.owner_entity_id = "turn-1".to_string();
+        claim.run.profile_key = "main_chat".to_string();
+        claim.run.input = json!({
+            "message": "Make the result match the corrected acceptance criteria",
+            "task_followup_review": {
+                "type": "task_followup_review",
+                "review_message_id": "message-followup",
+                "pending": false,
+                "replacement_pending": true,
+                "tasks": [{
+                    "task_id": "task-1",
+                    "review_state": "held",
+                    "decision_action": "replace"
+                }]
+            }
+        });
+
+        let outcome = reduce_ai_step_outcome_for_claim(
+            AiSingleStepOutcome::Final(response(None)),
+            &claim,
+            10_000,
+            &ConservativeToolSafetyPolicy,
+        )
+        .expect("reduce held replacement final");
+        let LocalAgentStepOutcome::Continue { checkpoint } = outcome else {
+            panic!("held replacement must continue until corrected work is created")
+        };
+        assert_eq!(
+            checkpoint["continuation"]["reason"],
+            "task_replacement_required"
+        );
+        let guidance = checkpoint["continuation"]["input_items"][0]["content"]
+            .as_str()
+            .unwrap();
+        assert!(guidance.contains("supersedes_task_ids"));
+    }
+
     fn task_claim() -> LocalAgentRunClaim {
         LocalAgentRunClaim {
             worker_id: "worker".to_string(),
@@ -771,12 +1303,40 @@ mod tests {
         };
         assert_eq!(output["content"], report["final_response"]);
         assert_eq!(output["task_acceptance"]["status"], "succeeded");
+        claim.run.continuation_input = None;
+        claim.run.checkpoint = json!({
+            "response": {
+                "content": report["final_response"],
+                "task_acceptance": report,
+                "request_input_items": [],
+                "response_output_items": []
+            },
+            "continuation": {
+                "reason": "trusted_plugin_hook_stop_block",
+                "input_items": [],
+                "stop_hook_block": {
+                    "count": 1,
+                    "reason_sha256": "a".repeat(64),
+                    "event": "SubagentStop"
+                }
+            }
+        });
+        let LocalAgentStepOutcome::Succeed { output } = reduce_ai_step_outcome_for_claim(
+            AiSingleStepOutcome::Final(response(None)),
+            &claim,
+            10_000,
+            &ConservativeToolSafetyPolicy,
+        )
+        .expect("retained acceptance must survive SubagentStop") else {
+            panic!("retained acceptance should allow final completion")
+        };
+        assert_eq!(output["content"], report["final_response"]);
         // A review can finish normally while finding failed or unverified
         // criteria. Preserve those findings; do not turn them into execution
         // errors or allow the model to replace the accepted final text.
         for verdict in ["failed", "not_verified"] {
-            claim.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
-                ["acceptance_checks"][0]["status"] = json!(verdict);
+            claim.run.checkpoint["response"]["task_acceptance"]["acceptance_checks"][0]["status"] =
+                json!(verdict);
             let LocalAgentStepOutcome::Succeed { output } = reduce_ai_step_outcome_for_claim(
                 AiSingleStepOutcome::Final(response(None)),
                 &claim,
@@ -793,8 +1353,8 @@ mod tests {
             );
         }
         // Malformed reports still fail validation rather than bypassing it.
-        claim.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
-            ["acceptance_checks"][0]["status"] = json!("unknown-verdict");
+        claim.run.checkpoint["response"]["task_acceptance"]["acceptance_checks"][0]["status"] =
+            json!("unknown-verdict");
         let error = reduce_ai_step_outcome_for_claim(
             AiSingleStepOutcome::Final(response(None)),
             &claim,

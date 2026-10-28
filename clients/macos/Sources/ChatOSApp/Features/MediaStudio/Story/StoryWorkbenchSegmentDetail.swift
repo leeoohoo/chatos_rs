@@ -118,7 +118,6 @@ extension StoryWorkbenchView {
                                 key: .init(projectID: project.id, segmentID: segment.id),
                                 isAwaitingJobID: attempt.jobID == nil
                             )
-                            .environmentObject(appModel)
                         } else {
                             if attempt.jobID != nil {
                                 Button(appModel.localized("查询原任务 / 恢复下载", english: "Check Task / Resume Download")) {
@@ -144,7 +143,6 @@ extension StoryWorkbenchView {
                                 key: .init(projectID: project.id, segmentID: segment.id),
                                 isAwaitingJobID: false
                             )
-                            .environmentObject(appModel)
                         } else {
                             Text(appModel.localized(
                                 "视频任务已安全保存，将从本地任务记录恢复，不会重新提交。",
@@ -468,7 +466,7 @@ extension StoryWorkbenchView {
 }
 
 private struct StoryVideoGenerationProgressView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @ObservedObject var activity: StoryGenerationActivityState
     let key: StoryStudioViewModel.VideoGenerationKey
     let isAwaitingJobID: Bool

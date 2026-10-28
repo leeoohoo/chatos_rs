@@ -327,6 +327,45 @@ extension SQLiteAgentGroupChatStore {
         )
     }
 
+    public func archiveRoom(
+        ownerUserID: String,
+        roomID: String,
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentRoom {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            guard let room = try readRoom(ownerUserID: ownerUserID, roomID: roomID),
+                  room.status == .active,
+                  room.conversationKind == .projectTeam else {
+                throw AgentGroupChatError.notFound
+            }
+            let archivedAt = max(nowUnixMs, room.updatedAtUnixMs)
+            _ = try stopOutstandingDeliveriesInTransaction(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                reason: "用户已删除当前 Agent 团队。",
+                nowUnixMs: archivedAt
+            )
+            try execute(
+                """
+                UPDATE project_agent_rooms
+                SET status = 'archived', updated_at_unix_ms = ?
+                WHERE owner_user_id = ? AND id = ? AND status = 'active'
+                  AND conversation_kind = 'project_team'
+                """,
+                [.integer(archivedAt), .text(ownerUserID), .text(roomID)]
+            )
+            guard sqlite3_changes(database) == 1,
+                  let archived = try readRoom(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID
+                  ) else { throw AgentGroupChatError.conflict }
+            return archived
+        }
+    }
+
     public func listDirectConversations(
         ownerUserID: String,
         includeArchived: Bool = false

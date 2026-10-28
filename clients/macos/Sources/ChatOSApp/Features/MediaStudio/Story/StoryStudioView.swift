@@ -2,7 +2,7 @@ import ChatOSCore
 import SwiftUI
 
 struct StoryStudioView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @ObservedObject var viewModel: StoryStudioViewModel
     @ObservedObject var mediaStudio: MediaStudioViewModel
     @State private var showsCreate = false
@@ -31,17 +31,14 @@ struct StoryStudioView: View {
         }
         .sheet(isPresented: $showsCreate) {
             StoryProjectForm(viewModel: viewModel, mediaStudio: mediaStudio, project: nil)
-                .environmentObject(appModel)
         }
         .sheet(isPresented: $showsPrompts) {
             StoryPromptInspectorView()
-                .environmentObject(appModel)
         }
         .sheet(item: $settingsProject) { project in
             StoryProjectForm(viewModel: viewModel, mediaStudio: mediaStudio, project: project)
-                .environmentObject(appModel)
         }
-        .onChange(of: appModel.authentication.phase) { _, _ in
+        .onChange(of: appModel.authenticatedUserID) { _, _ in
             showsCreate = false; showsPrompts = false; settingsProject = nil
         }
     }
@@ -80,7 +77,7 @@ struct StoryStudioView: View {
                     }.buttonStyle(.borderedProminent).tint(.indigo).disabled(!viewModel.canCreate)
                 }
                 .padding(24)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.indigo.opacity(0.13)))
                 .shadow(color: Color.black.opacity(0.035), radius: 14, y: 5)
                 if viewModel.isBusy {
@@ -101,7 +98,7 @@ struct StoryStudioView: View {
                         Button(appModel.localized("创建第一个剧情", english: "Create Your First Story")) { showsCreate = true }
                             .buttonStyle(.borderedProminent).tint(.indigo).disabled(!viewModel.canCreate)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 } else {
                     HStack {
                         Text(appModel.localized("我的剧情", english: "My Stories")).font(.title2.bold())
@@ -112,8 +109,19 @@ struct StoryStudioView: View {
                         VStack(spacing: 18) {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 500), spacing: 18)], spacing: 18) {
                                 ForEach(viewModel.projects) { project in
-                                    Button { viewModel.open(project.id) } label: { projectCard(project) }
-                                        .buttonStyle(.plain).disabled(viewModel.isBusy && viewModel.activeProjectID != project.id)
+                                    Button { viewModel.open(project.id) } label: {
+                                        projectCard(project)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(viewModel.isBusy && viewModel.activeProjectID != project.id)
+                                    .accessibilityElement(children: .ignore)
+                                    .accessibilityLabel(project.title)
+                                    .accessibilityValue(projectAccessibilityValue(project))
+                                    .accessibilityHint(appModel.localized(
+                                        "打开剧情工作台",
+                                        english: "Open the story workspace"
+                                    ))
                                 }
                             }
                             if viewModel.hasMoreProjects {
@@ -159,8 +167,17 @@ struct StoryStudioView: View {
                         Spacer()
                         Text("\(project.completedCount) / \(project.segments.count)").font(.caption.bold().monospacedDigit())
                     }
-                    ProgressView(value: Double(project.completedCount), total: Double(max(1, project.segments.count)))
-                        .tint(projectStatusColor(project))
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.secondary.opacity(0.14))
+                            Capsule()
+                                .fill(projectStatusColor(project))
+                                .frame(width: proxy.size.width * projectProgress(project))
+                        }
+                    }
+                    .frame(height: 5)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 }
             }
             HStack {
@@ -172,10 +189,20 @@ struct StoryStudioView: View {
             }.font(.caption).foregroundStyle(.secondary)
         }
         .padding(20).frame(maxWidth: .infinity, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(projectStatusColor(project).opacity(0.13)))
         .shadow(color: Color.black.opacity(0.035), radius: 12, y: 4)
         .contentShape(Rectangle())
+    }
+
+    private func projectProgress(_ project: StoryProject) -> CGFloat {
+        CGFloat(project.completedCount) / CGFloat(max(1, project.segments.count))
+    }
+
+    private func projectAccessibilityValue(_ project: StoryProject) -> String {
+        let status = projectStatus(project)
+        guard !project.segments.isEmpty else { return status }
+        return "\(status)，\(project.completedCount) / \(project.segments.count)"
     }
 
     private func projectStatus(_ project: StoryProject) -> String {
@@ -194,7 +221,7 @@ struct StoryStudioView: View {
 }
 
 struct StoryProjectForm: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: StoryStudioViewModel
     @ObservedObject var mediaStudio: MediaStudioViewModel

@@ -130,6 +130,7 @@ pub struct SqliteClientStorage {
     pub(crate) pool: SqlitePool,
     pub(crate) artifact_root: std::path::PathBuf,
     pub(crate) artifact_staging_root: std::path::PathBuf,
+    pub(crate) hook_output_root: std::path::PathBuf,
     _temporary_root: Option<std::sync::Arc<tempfile::TempDir>>,
 }
 
@@ -197,11 +198,14 @@ impl SqliteClientStorage {
             .db()?;
         maintenance::create_private_directory(&artifact_root)?;
         maintenance::create_private_directory(&artifact_staging_root)?;
+        let hook_output_root = artifact_root.join(".hook-outputs");
+        maintenance::create_private_directory(&hook_output_root)?;
         maintenance::remove_stale_artifact_staging_files(&artifact_staging_root)?;
         let storage = Self {
             pool,
             artifact_root,
             artifact_staging_root,
+            hook_output_root,
             _temporary_root: temporary_root,
         };
         if let Some((path, _)) = file_context {
@@ -236,6 +240,9 @@ impl SqliteClientStorage {
             None
         };
         storage.migrate().await.db()?;
+        storage
+            .prune_hook_output_blobs(chrono::Utc::now().timestamp_millis())
+            .await?;
         if requires_migration {
             maintenance::verify_integrity(&storage.pool).await?;
             if should_compact {

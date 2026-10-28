@@ -6,14 +6,45 @@ struct NativeCodexHookDefinition: Codable, Sendable, Equatable {
     var event: String
     var matcher: String?
     var command: String
+    var isAsync: Bool
     var timeoutSeconds: Double
     var additionalContextLimit: Int
 
     private enum CodingKeys: String, CodingKey {
         case event, matcher, command
         case id = "hook_id"
+        case isAsync = "is_async"
         case timeoutSeconds = "timeout_seconds"
         case additionalContextLimit = "additional_context_limit"
+    }
+
+    init(
+        id: String,
+        event: String,
+        matcher: String?,
+        command: String,
+        isAsync: Bool,
+        timeoutSeconds: Double,
+        additionalContextLimit: Int
+    ) {
+        self.id = id
+        self.event = event
+        self.matcher = matcher
+        self.command = command
+        self.isAsync = isAsync
+        self.timeoutSeconds = timeoutSeconds
+        self.additionalContextLimit = additionalContextLimit
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        event = try values.decode(String.self, forKey: .event)
+        matcher = try values.decodeIfPresent(String.self, forKey: .matcher)
+        command = try values.decode(String.self, forKey: .command)
+        isAsync = try values.decodeIfPresent(Bool.self, forKey: .isAsync) ?? false
+        timeoutSeconds = try values.decode(Double.self, forKey: .timeoutSeconds)
+        additionalContextLimit = try values.decode(Int.self, forKey: .additionalContextLimit)
     }
 }
 
@@ -60,6 +91,7 @@ struct NativeCodexHookBundle: Sendable, Equatable {
     var normalizedSHA256: String
 
     var events: [String] { Array(Set(hooks.map(\.event))).sorted() }
+    var asyncEvents: [String] { Array(Set(hooks.filter(\.isAsync).map(\.event))).sorted() }
     var commands: [String] { hooks.map(\.command) }
     var requiredRuntimes: [String] {
         var result = Set<String>()
@@ -141,11 +173,6 @@ enum NativeCodexHookBundleParser {
                             "阶段 A 只接受 command Hook；mcp_tool 将在工具 Hook 阶段接入"
                         )
                     }
-                    if handler["async"] as? Bool == true {
-                        throw NativeConnectorError.pluginInstallation(
-                            "当前版本尚未支持 async Codex Hook，不能静默改为同步执行"
-                        )
-                    }
                     guard let rawCommand = handler["command"] as? String else {
                         throw NativeConnectorError.pluginInstallation("Codex Hook command 缺失")
                     }
@@ -157,12 +184,19 @@ enum NativeCodexHookBundleParser {
                     }
                     let timeout = try timeoutSeconds(handler["timeout"])
                     let contextLimit = try additionalContextLimit(handler["additionalContextLimit"])
+                    let isAsync = try boolean(handler["async"], field: "async")
+                    if try boolean(handler["asyncRewake"], field: "asyncRewake") {
+                        throw NativeConnectorError.pluginInstallation(
+                            "当前版本尚未支持 asyncRewake Codex Hook，不能静默改为普通 async"
+                        )
+                    }
                     let id = "\(event)-\(groupIndex)-\(handlerIndex)"
                     definitions.append(.init(
                         id: id,
                         event: event,
                         matcher: matcher,
                         command: command,
+                        isAsync: isAsync,
                         timeoutSeconds: timeout,
                         additionalContextLimit: contextLimit
                     ))
@@ -171,6 +205,7 @@ enum NativeCodexHookBundleParser {
                         "event": event,
                         "matcher": matcher ?? "",
                         "command": command,
+                        "async": isAsync,
                         "timeoutSeconds": timeout,
                         "additionalContextLimit": contextLimit,
                     ])
@@ -232,6 +267,15 @@ enum NativeCodexHookBundleParser {
             throw NativeConnectorError.pluginInstallation("additionalContextLimit 超过安全限制")
         }
         return value
+    }
+
+    private static func boolean(_ raw: Any?, field: String) throws -> Bool {
+        guard let raw else { return false }
+        guard let number = raw as? NSNumber,
+              CFGetTypeID(number) == CFBooleanGetTypeID() else {
+            throw NativeConnectorError.pluginInstallation("Codex Hook \(field) 必须是布尔值")
+        }
+        return number.boolValue
     }
 
     private static func secureSourceURL(

@@ -8,12 +8,13 @@ use super::{
 };
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
-    CreateTaskGraphCommand, LocalAgentRunRecord, LocalTaskGraph, LocalTaskGraphListScope,
-    LocalTaskGraphPage, LocalTaskRecord, LocalTaskStatus,
+    validate_identifier, CreateTaskGraphCommand, LocalAgentRunRecord,
+    LocalMessageTaskGraphRunSummary, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
+    LocalTaskRecord, LocalTaskStatus,
 };
 #[cfg(test)]
 use chatos_local_agent_protocol::{LocalTaskDependency, LocalTaskGraphStatus};
-use sqlx::{sqlite::SqliteRow, Row};
+use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite};
 use std::str::FromStr;
 
 use super::task_result::decode_result_summary;
@@ -80,6 +81,8 @@ impl LocalAgentTaskStore for SqliteClientStorage {
                 return Ok(replay);
             }
             super::task_followup_gate::guard_creation(&mut connection, graph).await?;
+            super::task_followup_gate::cancel_replaced_tasks(&mut connection, graph, now_unix_ms)
+                .await?;
             super::task_replacement_validation::validate_stopped_sources(&mut connection, graph)
                 .await?;
             let mut frozen_graph = graph.clone();
@@ -185,6 +188,86 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         .into_iter()
         .map(super::decode_run)
         .collect()
+    }
+
+    async fn latest_task_runs(
+        &self,
+        owner_user_id: &str,
+        task_ids: &[String],
+    ) -> Result<Vec<LocalMessageTaskGraphRunSummary>, ClientStorageError> {
+        validate_identifier("owner_user_id", owner_user_id)
+            .map_err(ClientStorageError::InvalidState)?;
+        if task_ids.len() > 200 {
+            return Err(ClientStorageError::InvalidState(
+                "latest Task Run query accepts at most 200 Task IDs".to_string(),
+            ));
+        }
+        if task_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        for task_id in task_ids {
+            validate_identifier("task_id", task_id).map_err(ClientStorageError::InvalidState)?;
+        }
+
+        // Rank only narrow identity columns and return a bounded presentation projection. Full
+        // Run input/checkpoint/continuation/Tool batches are operational state for the detail
+        // endpoint; putting them into a 200-node graph snapshot can monopolize IPC and memory.
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "WITH ranked AS (SELECT owner_entity_id, run_id, ROW_NUMBER() OVER (\
+             PARTITION BY owner_entity_id ORDER BY created_at_unix_ms DESC, run_id DESC\
+             ) AS rank FROM local_agent_runs WHERE owner_user_id = ",
+        );
+        query
+            .push_bind(owner_user_id)
+            .push(" AND owner_entity_type = 'task' AND owner_entity_id IN (");
+        let mut ids = query.separated(", ");
+        for task_id in task_ids {
+            ids.push_bind(task_id);
+        }
+        ids.push_unseparated(
+            ")) SELECT run.run_id, run.owner_entity_id, run.status, \
+             run.next_attempt_at_unix_ms, run.created_at_unix_ms, run.updated_at_unix_ms, \
+             CASE WHEN json_valid(run.terminal_outcome_json) THEN substr(coalesce(\
+                 CASE WHEN json_type(run.terminal_outcome_json, '$.result_summary') = 'text' \
+                   THEN json_extract(run.terminal_outcome_json, '$.result_summary') END, \
+                 CASE WHEN json_type(run.terminal_outcome_json, '$.content') = 'text' \
+                   THEN json_extract(run.terminal_outcome_json, '$.content') END, \
+                 CASE WHEN json_type(run.terminal_outcome_json, '$.answer') = 'text' \
+                   THEN json_extract(run.terminal_outcome_json, '$.answer') END, \
+                 CASE WHEN json_type(run.terminal_outcome_json, '$.text') = 'text' \
+                   THEN json_extract(run.terminal_outcome_json, '$.text') END, \
+                 CASE WHEN json_type(run.terminal_outcome_json, '$.output') = 'text' \
+                   THEN json_extract(run.terminal_outcome_json, '$.output') END, \
+                 CASE WHEN json_type(run.terminal_outcome_json, '$') = 'text' \
+                   THEN json_extract(run.terminal_outcome_json, '$') END\
+               ), 1, 4096) END AS outcome_content, \
+             CASE WHEN json_valid(run.terminal_outcome_json) \
+               AND json_type(run.terminal_outcome_json, '$.report') = 'text' \
+               THEN substr(json_extract(run.terminal_outcome_json, '$.report'), 1, 4096) END \
+               AS outcome_report, \
+             CASE WHEN json_valid(run.terminal_outcome_json) \
+               AND json_type(run.terminal_outcome_json, '$.error') = 'text' \
+               THEN substr(json_extract(run.terminal_outcome_json, '$.error'), 1, 4096) END \
+               AS outcome_error, \
+             CASE WHEN json_valid(run.terminal_outcome_json) \
+               AND json_type(run.terminal_outcome_json, '$.reason') = 'text' \
+               THEN substr(json_extract(run.terminal_outcome_json, '$.reason'), 1, 4096) END \
+               AS outcome_reason, \
+             CASE WHEN json_valid(run.terminal_outcome_json) \
+               AND length(json_extract(run.terminal_outcome_json, '$.task_acceptance')) <= 16384 \
+               THEN json_extract(run.terminal_outcome_json, '$.task_acceptance') END AS acceptance_json \
+             FROM ranked candidate JOIN local_agent_runs run ON run.run_id = candidate.run_id \
+             WHERE candidate.rank = 1 ORDER BY run.owner_entity_id",
+        );
+        let mut connection = self.pool.acquire().await.db()?;
+        query
+            .build()
+            .fetch_all(&mut *connection)
+            .await
+            .db()?
+            .into_iter()
+            .map(decode_message_task_graph_run)
+            .collect()
     }
 
     async fn list_tasks_for_conversation(
@@ -454,6 +537,39 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         .await;
         Self::finish_write(&mut connection, result).await
     }
+}
+
+fn decode_message_task_graph_run(
+    row: SqliteRow,
+) -> Result<LocalMessageTaskGraphRunSummary, ClientStorageError> {
+    let status: String = row.try_get("status").db()?;
+    let mut terminal = serde_json::Map::new();
+    for (column, key) in [
+        ("outcome_content", "content"),
+        ("outcome_report", "report"),
+        ("outcome_error", "error"),
+        ("outcome_reason", "reason"),
+    ] {
+        if let Some(value) = row.try_get::<Option<String>, _>(column).db()? {
+            terminal.insert(key.to_string(), serde_json::Value::String(value));
+        }
+    }
+    if let Some(acceptance) = row.try_get::<Option<String>, _>("acceptance_json").db()? {
+        terminal.insert(
+            "task_acceptance".to_string(),
+            serde_json::from_str(&acceptance)?,
+        );
+    }
+    Ok(LocalMessageTaskGraphRunSummary {
+        run_id: row.try_get("run_id").db()?,
+        owner_entity_id: row.try_get("owner_entity_id").db()?,
+        status: chatos_local_agent_protocol::LocalAgentRunStatus::from_str(&status)
+            .map_err(ClientStorageError::InvalidState)?,
+        terminal_outcome: (!terminal.is_empty()).then_some(serde_json::Value::Object(terminal)),
+        next_attempt_at_unix_ms: row.try_get("next_attempt_at_unix_ms").db()?,
+        created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
+        updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
+    })
 }
 
 fn decode_scoped_task(row: SqliteRow) -> Result<LocalTaskRecord, ClientStorageError> {

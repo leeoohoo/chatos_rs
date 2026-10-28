@@ -6,6 +6,20 @@ import Testing
 
 @Suite("Performance policies")
 struct PerformancePolicyTests {
+    @Test("performance trace operations keep a stable acceptance schema")
+    func performanceTraceSchemaIsStable() {
+        #expect(ChatOSPerformanceOperation.allCases.map(\.rawValue) == [
+            "ConversationTimelineBuild",
+            "MarkdownParse",
+            "MarkdownLayout",
+            "TodoPresentationBuild",
+            "PetFrameUpdate",
+            "ActivationRecoveryDispatch",
+            "CodeHighlightScan",
+            "CodeHighlightApply",
+        ])
+    }
+
     @Test("agent workspace coalesces changes into the minimum refresh scope")
     func agentWorkspaceCoalescesChangeRefreshes() {
         var plan = AgentWorkspaceRefreshPlan()

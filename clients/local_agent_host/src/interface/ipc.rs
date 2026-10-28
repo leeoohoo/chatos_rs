@@ -20,7 +20,21 @@ const FRAME_LENGTH_MASK: u32 = !FRAME_CONTINUATION_BIT;
 
 #[async_trait::async_trait]
 pub trait HostRequestHandler: Send + Sync {
+    fn client_connected(&self) {}
+
+    fn client_disconnected(&self) {}
+
     async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope;
+}
+
+struct ClientConnectionGuard<H: HostRequestHandler + ?Sized> {
+    handler: Arc<H>,
+}
+
+impl<H: HostRequestHandler + ?Sized> Drop for ClientConnectionGuard<H> {
+    fn drop(&mut self) {
+        self.handler.client_disconnected();
+    }
 }
 
 #[derive(Debug, Error)]
@@ -73,6 +87,10 @@ where
     W: AsyncWrite + Unpin + Send + 'static,
     H: HostRequestHandler + ?Sized + 'static,
 {
+    handler.client_connected();
+    let _connection = ClientConnectionGuard {
+        handler: Arc::clone(&handler),
+    };
     let (response_tx, mut response_rx) =
         mpsc::channel::<Result<Vec<u8>, HostTransportError>>(MAX_IN_FLIGHT_REQUESTS);
     let mut writer_task = tokio::spawn(async move {
@@ -477,6 +495,7 @@ mod tests {
         HostCommand, HostRequestEnvelope, HostResult, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use chatos_local_agent_runtime::LocalAgentRuntime;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct TestRuntimeHandler(LocalAgentRuntime);
 
@@ -485,6 +504,65 @@ mod tests {
         async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
             self.0.handle(request).await
         }
+    }
+
+    struct ConnectionTrackingHandler {
+        connected: AtomicUsize,
+        disconnected: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl HostRequestHandler for ConnectionTrackingHandler {
+        fn client_connected(&self) {
+            self.connected.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn client_disconnected(&self) {
+            self.disconnected.fetch_add(1, Ordering::SeqCst);
+        }
+
+        async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
+            HostResponseEnvelope::success(
+                request.command_id,
+                HostResult::Health {
+                    service: "test".to_string(),
+                    storage_ready: true,
+                    recovered_claims: 0,
+                    max_frame_bytes: LOCAL_AGENT_MAX_FRAME_BYTES,
+                    max_message_bytes: LOCAL_AGENT_MAX_MESSAGE_BYTES,
+                    scheduler: None,
+                },
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn framed_ipc_reports_the_complete_client_connection_lifecycle() {
+        let handler = Arc::new(ConnectionTrackingHandler {
+            connected: AtomicUsize::new(0),
+            disconnected: AtomicUsize::new(0),
+        });
+        let (mut client, server) = tokio::io::duplex(16 * 1024);
+        let server_task = tokio::spawn(serve_stream(server, Arc::clone(&handler)));
+        let request = HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "health".to_string(),
+            command: HostCommand::Health,
+        };
+        write_frame(&mut client, &serde_json::to_vec(&request).expect("request"))
+            .await
+            .expect("write");
+        read_frame(&mut client)
+            .await
+            .expect("read")
+            .expect("response");
+        assert_eq!(handler.connected.load(Ordering::SeqCst), 1);
+        assert_eq!(handler.disconnected.load(Ordering::SeqCst), 0);
+
+        drop(client);
+        server_task.await.expect("join").expect("server");
+        assert_eq!(handler.connected.load(Ordering::SeqCst), 1);
+        assert_eq!(handler.disconnected.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

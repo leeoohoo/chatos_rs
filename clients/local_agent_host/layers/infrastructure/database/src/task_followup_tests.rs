@@ -224,6 +224,89 @@ async fn same_turn_guidance_holds_model_ready_and_pending_descendants_atomically
 }
 
 #[tokio::test]
+async fn guarded_followup_failure_is_requeued_without_leaving_tasks_frozen() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    fixture(&storage).await;
+    guide(&storage, "followup-recovery").await;
+    let main = claim(&storage, "review-before-omission", 11_000)
+        .await
+        .unwrap();
+    assert_eq!(main.run.profile_key, "main_chat");
+    assert_eq!(main.run.input["task_followup_review"]["pending"], true);
+
+    let failed = storage
+        .apply_transition(
+            &idempotency("omitted-followup-review"),
+            &transition(
+                &main,
+                LocalAgentRunStatus::Succeeded,
+                "omitted-followup-review",
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(failed.status, LocalAgentRunStatus::Failed);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM local_conversation_turns WHERE run_id = ?",
+        )
+        .bind(&main.run.run_id)
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap(),
+        "failed"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM local_conversation_messages WHERE message_id = ?",
+        )
+        .bind(format!("assistant:{}", main.run.run_id))
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap(),
+        1
+    );
+
+    assert_eq!(
+        storage
+            .recover_expired_claims("user-1", 21_000)
+            .await
+            .unwrap(),
+        1
+    );
+    let recovered = storage.get_run(&main.run.run_id).await.unwrap().unwrap();
+    assert_eq!(recovered.status, LocalAgentRunStatus::ContinuationReady);
+    assert!(recovered.terminal_outcome.is_none());
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM local_conversation_turns WHERE run_id = ?",
+        )
+        .bind(&main.run.run_id)
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap(),
+        "running"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM local_conversation_messages WHERE message_id = ?",
+        )
+        .bind(format!("assistant:{}", main.run.run_id))
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap(),
+        0
+    );
+
+    let retried = claim(&storage, "review-after-omission", 22_000)
+        .await
+        .unwrap();
+    assert_eq!(retried.run.run_id, main.run.run_id);
+    assert_eq!(retried.run.input["task_followup_review"]["pending"], true);
+    assert!(claim(&storage, "tasks-remain-held", 23_000).await.is_none());
+}
+
+#[tokio::test]
 async fn new_turn_review_is_exact_conversation_scoped_and_cancels_before_replacement() {
     let storage = SqliteClientStorage::connect_memory().await.unwrap();
     fixture(&storage).await;
@@ -439,6 +522,122 @@ async fn direct_cancellation_reconciles_review_and_remaining_candidates_can_be_r
     assert_eq!(output["tasks"].as_array().unwrap().len(), 1);
     assert_eq!(output["tasks"][0]["task_id"], "spare");
     assert_eq!(output["tasks"][0]["state"], "released");
+}
+
+#[tokio::test]
+async fn replacement_holds_old_work_until_graph_creation_commits_both_changes() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    fixture(&storage).await;
+    guide(&storage, "replace-followup").await;
+    storage
+        .resolve_task_followup(
+            &idempotency("mark-replace"),
+            &review(
+                "run-original",
+                "replace-followup",
+                &[
+                    ("root", TaskFollowupAction::Replace),
+                    ("child", TaskFollowupAction::Replace),
+                    ("spare", TaskFollowupAction::Replace),
+                ],
+            ),
+            11_000,
+        )
+        .await
+        .unwrap();
+
+    let held = storage
+        .get_task_graph("user-1", "graph-original")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        held.tasks
+            .iter()
+            .find(|task| task.task_id == "root")
+            .unwrap()
+            .status,
+        LocalTaskStatus::Running
+    );
+    assert!(held
+        .tasks
+        .iter()
+        .all(|task| task.input["followup_review_state"] == "held"));
+
+    let mut replacement = graph("replacement", "turn-original", &["corrected"]);
+    replacement.tasks[0].input["supersedes_task_ids"] = json!(["root", "child", "spare"]);
+    storage
+        .create_task_graph(&idempotency("create-replacement"), &replacement, 12_000)
+        .await
+        .unwrap();
+
+    let old = storage
+        .get_task_graph("user-1", "graph-original")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(old
+        .tasks
+        .iter()
+        .all(|task| task.status == LocalTaskStatus::Cancelled));
+    assert!(old
+        .tasks
+        .iter()
+        .all(|task| { task.replacement_task_ids.iter().any(|id| id == "corrected") }));
+    let created = storage
+        .get_task_graph("user-1", "replacement")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(created.tasks[0].status, LocalTaskStatus::Ready);
+}
+
+#[tokio::test]
+async fn failed_replacement_insert_rolls_back_old_task_cancellation() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    fixture(&storage).await;
+    guide(&storage, "replace-followup").await;
+    storage
+        .resolve_task_followup(
+            &idempotency("mark-replace"),
+            &review(
+                "run-original",
+                "replace-followup",
+                &[
+                    ("root", TaskFollowupAction::Replace),
+                    ("child", TaskFollowupAction::Replace),
+                    ("spare", TaskFollowupAction::Replace),
+                ],
+            ),
+            11_000,
+        )
+        .await
+        .unwrap();
+
+    let mut invalid = graph("graph-original", "turn-original", &["corrected"]);
+    invalid.tasks[0].input["supersedes_task_ids"] = json!(["root", "child", "spare"]);
+    assert!(storage
+        .create_task_graph(&idempotency("duplicate-replacement"), &invalid, 12_000)
+        .await
+        .is_err());
+
+    let old = storage
+        .get_task_graph("user-1", "graph-original")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        old.tasks
+            .iter()
+            .find(|task| task.task_id == "root")
+            .unwrap()
+            .status,
+        LocalTaskStatus::Running
+    );
+    assert!(old
+        .tasks
+        .iter()
+        .all(|task| task.input["followup_review_state"] == "held"));
 }
 
 #[tokio::test]

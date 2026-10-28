@@ -220,6 +220,21 @@ struct MarkdownRenderCacheTests {
     }
 
     @Test
+    func splitsSequentialInlineOrderedListsWithoutTouchingOrdinaryNumbers() {
+        #expect(MarkdownBlockParser.parse("步骤：1）准备 2) 执行 3）验收") == [
+            .paragraph("步骤："),
+            .list([
+                .init(marker: "1.", text: "准备", depth: 0),
+                .init(marker: "2.", text: "执行", depth: 0),
+                .init(marker: "3.", text: "验收", depth: 0),
+            ]),
+        ])
+        #expect(MarkdownBlockParser.parse("版本 2026.10 与 3.0.9.4 保持不变") == [
+            .paragraph("版本 2026.10 与 3.0.9.4 保持不变"),
+        ])
+    }
+
+    @Test
     func parsesPlainAndAngleWrappedMarkdownImagesAsImageBlocks() {
         let blocks = MarkdownBlockParser.parse("""
         Before

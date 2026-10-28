@@ -38,9 +38,9 @@ enum NativeAgentCapabilityBrokerToolCatalog {
         ),
         .init(
             name: activateSkillToolName,
-            description: "激活 capability_describe 返回的一个精确 skill_ref，并加载核心指令。只可激活当前能力真实工具引用的 Skill。",
+            description: "激活 capability_describe 返回的精确 Skill 并加载核心指令。优先用 skill_refs 一次批量激活当前工具需要的 1—4 个 Skill，避免逐个往返；兼容单个 skill_ref。只可激活当前能力真实工具引用的 Skill。",
             schema: schema(
-                #"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":512}},"required":["skill_ref"],"additionalProperties":false}"#
+                #"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":512,"description":"Legacy single Skill activation. Omit when skill_refs is present."},"skill_refs":{"type":"array","minItems":1,"maxItems":4,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":512},"description":"Preferred: activate all exact required_skill_refs for the chosen tool in one call. Omit skill_ref."}},"additionalProperties":false}"#
             ),
             providerID: ProductToolProviderID.capabilityBroker,
             skillBindingID: ProductToolSkillBindingID.capabilityBroker
@@ -56,7 +56,7 @@ enum NativeAgentCapabilityBrokerToolCatalog {
         ),
         .init(
             name: invokeToolName,
-            description: "调用已经通过 capability_describe 展开的一个本机 Plugin 工具。若工具声明 required_skill_refs，必须先逐个激活；plugin_option 和 tool_option 使用本轮临时选项。",
+            description: "调用已经通过 capability_describe 展开的一个本机 Plugin 工具。若工具声明 required_skill_refs，必须先激活；多个引用优先用 agent_skill_activate.skill_refs 一次批量加载。plugin_option 和 tool_option 使用本轮临时选项。",
             schema: schema(
                 #"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"tool_option":{"type":"string","minLength":1,"maxLength":80},"arguments":{"type":"object"}},"required":["plugin_option","tool_option","arguments"],"additionalProperties":false}"#
             ),
@@ -79,7 +79,9 @@ enum NativeAgentCapabilityBrokerToolCatalog {
             "description": .string(definition.description),
             "parameters": decoded,
         ]
-        if definition.name == describeToolName { tool["strict"] = .bool(false) }
+        if definition.name == describeToolName || definition.name == activateSkillToolName {
+            tool["strict"] = .bool(false)
+        }
         return .object(tool)
     }
 

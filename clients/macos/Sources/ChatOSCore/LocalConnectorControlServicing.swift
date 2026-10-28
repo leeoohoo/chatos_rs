@@ -68,6 +68,12 @@ public protocol LocalConnectorControlServicing:
     ) async throws -> LocalConnectorSandboxSettings
     func fetchPlugins() async throws -> [LocalConnectorPlugin]
     func fetchPlugins(refresh: Bool) async throws -> [LocalConnectorPlugin]
+    func fetchPluginHookHistory(
+        pluginID: String,
+        beforeUpdatedAtUnixMs: Int64?,
+        beforeInvocationID: String?,
+        limit: Int
+    ) async throws -> LocalConnectorPluginHookHistoryPage
     func installPlugin(id: String) async throws
     func inspectCustomMCP(_ draft: LocalConnectorCustomMCPDraft) async throws -> LocalConnectorPluginInspection
     func installCustomMCP(
@@ -97,6 +103,19 @@ public extension LocalConnectorControlServicing {
     func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication] { [] }
     func fetchPlugins(refresh: Bool) async throws -> [LocalConnectorPlugin] {
         try await fetchPlugins()
+    }
+
+    func fetchPluginHookHistory(
+        pluginID: String,
+        beforeUpdatedAtUnixMs: Int64?,
+        beforeInvocationID: String?,
+        limit: Int
+    ) async throws -> LocalConnectorPluginHookHistoryPage {
+        LocalConnectorPluginHookHistoryPage(
+            invocations: [],
+            nextBeforeUpdatedAtUnixMs: nil,
+            nextBeforeInvocationID: nil
+        )
     }
 
     func inspectCustomMCP(_ draft: LocalConnectorCustomMCPDraft) async throws -> LocalConnectorPluginInspection {

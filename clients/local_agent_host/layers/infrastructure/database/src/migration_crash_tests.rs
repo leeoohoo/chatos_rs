@@ -571,7 +571,7 @@ async fn crash_and_recover(point: &str, committed_version: i64, incomplete: bool
     assert_eq!(usage.response_count, 3);
     assert_eq!(usage.response_bytes as usize, expected_response_bytes());
     storage.pool.close().await;
-    assert_source(&fixture.database(), 39).await;
+    assert_source(&fixture.database(), super::migration::SCHEMA_VERSION).await;
     for (path, digest) in &before {
         if path.exists() {
             assert_eq!(
@@ -586,11 +586,11 @@ async fn crash_and_recover(point: &str, committed_version: i64, incomplete: bool
         after.len(),
         match committed_version {
             34 => 1,
-            35..=39 => 2,
+            35..=43 => 2,
             _ => unreachable!(),
         }
     );
-    if committed_version < 39 {
+    if committed_version < super::migration::SCHEMA_VERSION {
         assert!(after
             .iter()
             .all(|path| !path.to_string_lossy().ends_with(".incomplete")));
@@ -685,6 +685,34 @@ crash_case!(
     false
 );
 crash_case!(kill_after_v39_commit, "schema_v39_after_commit", 39, false);
+crash_case!(
+    kill_before_v40_commit,
+    "schema_v40_before_commit",
+    39,
+    false
+);
+crash_case!(kill_after_v40_commit, "schema_v40_after_commit", 40, false);
+crash_case!(
+    kill_before_v41_commit,
+    "schema_v41_before_commit",
+    40,
+    false
+);
+crash_case!(kill_after_v41_commit, "schema_v41_after_commit", 41, false);
+crash_case!(
+    kill_before_v42_commit,
+    "schema_v42_before_commit",
+    41,
+    false
+);
+crash_case!(kill_after_v42_commit, "schema_v42_after_commit", 42, false);
+crash_case!(
+    kill_before_v43_commit,
+    "schema_v43_before_commit",
+    42,
+    false
+);
+crash_case!(kill_after_v43_commit, "schema_v43_after_commit", 43, false);
 
 async fn kill_business_commit_and_reconcile(point: &str) {
     let directory = tempfile::tempdir().unwrap();

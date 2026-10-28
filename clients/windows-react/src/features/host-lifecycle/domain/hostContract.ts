@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const LOCAL_AGENT_PROTOCOL_VERSION = 49 as const;
+export const LOCAL_AGENT_PROTOCOL_VERSION = 50 as const;
 export const LOCAL_AGENT_MAX_FRAME_BYTES = 4 * 1024 * 1024;
 export const LOCAL_AGENT_MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
 

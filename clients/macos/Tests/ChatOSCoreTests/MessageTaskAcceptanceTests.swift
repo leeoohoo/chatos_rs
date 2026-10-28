@@ -42,5 +42,60 @@ final class MessageTaskAcceptanceTests: XCTestCase {
         let report = try XCTUnwrap(MessageTaskAcceptanceReport.decode(json: json))
         XCTAssertEqual(report.resultStatus, "blocked")
         XCTAssertEqual(report.disposition, .blocked)
+
+        let legacyWithoutChecks = try XCTUnwrap(MessageTaskAcceptanceReport.decode(
+            json: #"{"result_status":"blocked","reason":"Waiting for a required credential."}"#
+        ))
+        XCTAssertEqual(legacyWithoutChecks.resultStatus, "blocked")
+        XCTAssertEqual(legacyWithoutChecks.checks, [])
+        XCTAssertEqual(legacyWithoutChecks.disposition, .blocked)
+    }
+
+    func testPresentationSeparatesNormalRunCompletionFromBlockedDelivery() throws {
+        let blocked = try report("blocked", ["not_verified"])
+        var task = MessageTask(id: "task", title: "Research", status: "succeeded")
+        task = task.merging(run: MessageTaskRun(
+            id: "run",
+            taskID: task.id,
+            status: "succeeded",
+            acceptanceReport: blocked
+        ))
+
+        XCTAssertEqual(task.status, "succeeded")
+        XCTAssertEqual(task.lastRun?.status, "succeeded")
+        XCTAssertEqual(task.presentationStatus, .resultBlocked)
+    }
+
+    func testDependentTaskExplainsThatItNeverStarted() {
+        let prerequisite = MessageTaskReference(
+            id: "prerequisite",
+            title: "Prepare plan",
+            status: "succeeded",
+            resultStatus: "blocked",
+            displayStatus: "result_blocked"
+        )
+        let task = MessageTask(
+            id: "dependent",
+            title: "Implement",
+            status: "blocked",
+            prerequisiteTaskIDs: [prerequisite.id],
+            prerequisiteTasks: [prerequisite]
+        )
+
+        XCTAssertTrue(prerequisite.blocksDependentExecution)
+        XCTAssertTrue(task.wasPreventedFromStartingByPrerequisite)
+        XCTAssertEqual(task.dependencyBlockingPrerequisites, [prerequisite])
+        XCTAssertEqual(task.presentationStatus, .dependencyBlocked)
+    }
+
+    func testSuccessfulGateDoesNotBecomeBlockedByAcceptancePresentation() {
+        let review = MessageTaskReference(
+            id: "review",
+            status: "succeeded",
+            resultStatus: "succeeded",
+            displayStatus: "acceptance_failed"
+        )
+        XCTAssertFalse(review.blocksDependentExecution,
+                       "Acceptance findings must not rewrite the explicit dependency gate")
     }
 }

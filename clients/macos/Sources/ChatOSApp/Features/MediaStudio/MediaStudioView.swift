@@ -45,7 +45,12 @@ struct MediaStudioView: View {
             content
         }
         .background(studioBackground)
-        .task(id: appModel.authentication.phase) { viewModel.loadIfNeeded() }
+        .onAppear {
+            activateForCurrentSession()
+        }
+        .task(id: appModel.authentication.phase) {
+            activateForCurrentSession()
+        }
         .onChange(of: viewModel.section) { _, section in
             viewModel.loadSelectedSectionIfNeeded()
             if section == .story { viewModel.stories.backToList() }
@@ -79,6 +84,11 @@ struct MediaStudioView: View {
             showsGeneratedImagePicker = false
             showsGeneratedReferencePicker = false
         }
+    }
+
+    private func activateForCurrentSession() {
+        guard case let .authenticated(session) = appModel.authentication.phase else { return }
+        viewModel.activate(userID: session.user.id)
     }
 
     private var studioBackground: some View {
@@ -154,7 +164,15 @@ struct MediaStudioView: View {
         case .video:
             videoWorkspace
         case .story:
-            StoryStudioView(viewModel: stories, mediaStudio: viewModel)
+            StoryStudioScene(
+                viewModel: stories,
+                mediaStudio: viewModel,
+                context: StoryViewContext(
+                    interfaceLanguage: appModel.interfaceLanguage,
+                    authenticatedUserID: appModel.authenticatedUserID
+                )
+            )
+            .equatable()
         case .history:
             historyWorkspace
         }

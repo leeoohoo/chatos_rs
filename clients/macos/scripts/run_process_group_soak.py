@@ -254,6 +254,17 @@ def validate_output_location(repository, output):
         raise ValueError("Output inside the repository must be ignored")
 
 
+def validate_output_is_not_scanned(output, temporary_roots):
+    output = Path(output).resolve()
+    for temporary_root in temporary_roots:
+        root = Path(temporary_root).resolve()
+        if output == root or output.is_relative_to(root):
+            raise ValueError(
+                "Soak output must be outside every scanned temporary root "
+                "to avoid measuring the collector's own files"
+            )
+
+
 def build_identity(args):
     if args.app is None and args.build_manifest is None:
         return None
@@ -274,6 +285,7 @@ def collect(args):
     validate_formal_acceptance(args)
     output = Path(args.output).resolve()
     validate_output_location(args.repository, output)
+    validate_output_is_not_scanned(output, args.temporary_root)
     output.mkdir(parents=True, exist_ok=False)
     recorded_build = build_identity(args)
     metrics = DarwinProcessMetrics()

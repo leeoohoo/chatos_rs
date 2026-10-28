@@ -14,7 +14,7 @@ struct StoryImagePicker: View {
         case stories, standalone
         var id: Self { self }
     }
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: StoryStudioViewModel
     @ObservedObject var mediaStudio: MediaStudioViewModel
@@ -376,7 +376,7 @@ struct StoryImagePicker: View {
             }
         }
         .sheet(item: $preview) { request in
-            MediaStudioImagePreview(request: request) { mediaStudio.useGeneratedImageForVideo($0) }.environmentObject(appModel)
+            MediaStudioImagePreview(request: request) { mediaStudio.useGeneratedImageForVideo($0) }
         }
         .confirmationDialog(appModel.localized("确认已核对图片任务？", english: "Have You Verified the Image Task?"),
                             isPresented: $confirmsImageRetry, titleVisibility: .visible) {
@@ -584,7 +584,7 @@ struct StoryImagePicker: View {
 }
 
 struct StorySegmentEditor: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     @Environment(\.dismiss) private var dismiss
     let project: StoryProject
     @State private var segment: StorySegment

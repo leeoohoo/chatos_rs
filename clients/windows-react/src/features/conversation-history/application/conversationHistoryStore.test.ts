@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import conversationHistory from "../../../../../contracts/local-agent/v49/fixtures/conversation-history-success.json";
+import conversationHistory from "../../../../../contracts/local-agent/v50/fixtures/conversation-history-success.json";
 import { conversationHistoryResponseSchema } from "../../../contracts/conversationRunContract";
 import type { ConversationHistorySnapshot } from "../domain/conversationHistory";
 import type { ConversationHistoryPort } from "../ports/ConversationHistoryPort";

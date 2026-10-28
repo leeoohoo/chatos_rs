@@ -1,0 +1,45 @@
+{
+  "protocol_version": 50,
+  "command_id": "contract-run-events-latest-1",
+  "ok": true,
+  "result": {
+    "type": "events",
+    "events": [
+      {
+        "cursor": 103,
+        "event_id": "event-103",
+        "run_id": "run-1",
+        "event_type": "tool.completed",
+        "payload": {
+          "tool_call_id": "tool-call-1",
+          "status": "completed",
+          "summary": "Repository inspection completed."
+        },
+        "created_at_unix_ms": 1792454460000
+      },
+      {
+        "cursor": 102,
+        "event_id": "event-102",
+        "run_id": "run-1",
+        "event_type": "tool.started",
+        "payload": {
+          "tool_call_id": "tool-call-1",
+          "status": "running"
+        },
+        "created_at_unix_ms": 1792454450000
+      },
+      {
+        "cursor": 101,
+        "event_id": "event-101",
+        "run_id": "run-1",
+        "event_type": "model.updated",
+        "payload": {
+          "status": "model_running"
+        },
+        "created_at_unix_ms": 1792454440000
+      }
+    ],
+    "next_cursor": 101
+  },
+  "error": null
+}

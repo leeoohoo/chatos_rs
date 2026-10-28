@@ -69,16 +69,30 @@ enum NativeAgentCapabilityDisclosure {
         root["total_available_tools"] = .number(Double(allTools.count))
         root["total_matching_tools"] = .number(Double(filtered.count))
         root["offset"] = .number(Double(offset))
-        root["guidance"] = .string("This is an index, not callable tool schemas. Read only the chosen tool with capability_describe(plugin_option, tool_option). Use query with tool names/keywords to narrow the index, or offset=next_offset for more entries. Activate the exact required_skill_refs before execution.")
+        root["guidance"] = .string("This catalog includes as many complete frozen tool schemas as fit safely. Entries with input_schema, schema_sha256, and skill_gate are ready for capability_invoke after activating their exact required_skill_refs; pass up to four refs together in agent_skill_activate.skill_refs. Brief-only entries must be read with capability_describe(plugin_option, tool_option) before invocation. Use query or next_offset to narrow or continue the catalog.")
         var page: [NativeJSONValue] = []
         for tool in filtered.dropFirst(offset).prefix(limit) {
-            let brief = (tool.jsonObject ?? [:]).filter { key, _ in
+            let object = tool.jsonObject ?? [:]
+            let brief = object.filter { key, _ in
                 ["tool_option", "name", "description", "effect", "invocation_mode", "required_skill_refs"].contains(key)
             }
-            let candidate = page + [.object(brief)]
-            root["tools"] = .array(candidate)
-            root["skills"] = .array(skillsRequired(by: candidate, from: catalogSkills))
+            var complete = object
+            if let schema = complete["input_schema"] {
+                let text = schema.canonicalJSONString
+                complete["schema_sha256"] = .string(NativePluginManifestLoader.sha256(text))
+                complete["schema_total_chars"] = .number(Double(text.unicodeScalars.count))
+            }
+            let completeCandidate = page + [.object(complete)]
+            root["tools"] = .array(completeCandidate)
+            root["skills"] = .array(skillsRequired(by: completeCandidate, from: catalogSkills))
             root["next_offset"] = .number(Double(offset + page.count + 1))
+            if complete["input_schema"] != nil, fits(root) {
+                page.append(.object(complete))
+                continue
+            }
+            let briefCandidate = page + [.object(brief)]
+            root["tools"] = .array(briefCandidate)
+            root["skills"] = .array(skillsRequired(by: briefCandidate, from: catalogSkills))
             guard fits(root) else { break }
             page.append(.object(brief))
         }

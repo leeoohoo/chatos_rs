@@ -1,5 +1,6 @@
 import AppKit
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import Foundation
 
 /// A serial, deterministic queue. Waiting for a video never calls a text model.
@@ -7,6 +8,7 @@ actor StoryMediaBatchSession {
     private var state: StoryMediaBatch
     private let store: StoryProjectStore
     private let media: any MediaGenerationServicing
+    private let mediaWorker: any MediaWorkerImageNormalizing
     private let videoJobStore: MediaStudioVideoJobStore
     private let accountSessionID: UUID
     private let check: @Sendable () async throws -> Void
@@ -22,6 +24,7 @@ actor StoryMediaBatchSession {
     private var persistedProviderJobID: String?
 
     init(batch: StoryMediaBatch, store: StoryProjectStore, media: any MediaGenerationServicing,
+         mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared,
          videoJobStore: MediaStudioVideoJobStore, accountSessionID: UUID,
          check: @escaping @Sendable () async throws -> Void = { try Task.checkCancellation() },
          shouldPause: @escaping @Sendable () async -> Bool = { false },
@@ -31,7 +34,7 @@ actor StoryMediaBatchSession {
              String,
              VideoGenerationProgress
          ) async -> Void = { _, _, _ in }) {
-        self.state = batch; self.store = store; self.media = media
+        self.state = batch; self.store = store; self.media = media; self.mediaWorker = mediaWorker
         self.videoJobStore = videoJobStore; self.accountSessionID = accountSessionID; self.check = check
         self.shouldPause = shouldPause; self.publish = publish
         self.publishVideoProgress = publishVideoProgress
@@ -141,7 +144,8 @@ actor StoryMediaBatchSession {
         guard let image = result.images.first else { throw StoryError.unsafeFile }
         let pngFile = try await MediaStudioImageLoader.normalizedPNGFile(
             for: image,
-            ownerUserID: state.owner
+            ownerUserID: state.owner,
+            mediaWorker: mediaWorker
         )
         let stored = try await store.saveImage(pngFile, mimeType: "image/png", projectID: project.id, owner: state.owner,
                                                sourceResourceID: id, generationAttemptID: job.intentID,

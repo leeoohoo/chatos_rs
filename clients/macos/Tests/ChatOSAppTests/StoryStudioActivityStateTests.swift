@@ -5,6 +5,23 @@ import XCTest
 
 @MainActor
 final class StoryStudioActivityStateTests: XCTestCase {
+    func testRootStatePublishesThroughTheStableObservableObjectPublisher() {
+        let viewModel = StoryStudioViewModel(media: StoryTestService())
+        var publications = 0
+        let subscription = viewModel.objectWillChange.sink { publications += 1 }
+
+        viewModel.isLoading = true
+        viewModel.selectedProjectID = UUID()
+        viewModel.operation = "正在打开剧情"
+
+        XCTAssertEqual(
+            publications,
+            3,
+            "Loading and navigation state must invalidate the visible Story Studio immediately"
+        )
+        withExtendedLifetime(subscription) {}
+    }
+
     func testHighFrequencyActivityDoesNotPublishTheRootViewModel() {
         let viewModel = StoryStudioViewModel(media: StoryTestService())
         let key = StoryStudioViewModel.VideoGenerationKey(

@@ -60,10 +60,16 @@ pub(super) async fn resolve(
             let status: String = sqlx::query_scalar("SELECT status FROM local_tasks WHERE task_id = ?")
                 .bind(&decision.task_id).fetch_one(&mut *connection).await.db()?;
             let state = if status == "cancelled" { "cancelled" }
-                else if decision.action == TaskFollowupAction::Clarify { "held" }
+                else if matches!(decision.action, TaskFollowupAction::Clarify | TaskFollowupAction::Replace) { "held" }
                 else { "released" };
-            sqlx::query("UPDATE local_task_followup_reviews SET state = ?, reason = ?, updated_at_unix_ms = ? WHERE task_id = ?")
-                .bind(state).bind(&decision.reason).bind(now).bind(&decision.task_id)
+            let action = match decision.action {
+                TaskFollowupAction::Continue => "continue",
+                TaskFollowupAction::Cancel => "cancel",
+                TaskFollowupAction::Clarify => "clarify",
+                TaskFollowupAction::Replace => "replace",
+            };
+            sqlx::query("UPDATE local_task_followup_reviews SET state = ?, decision_action = ?, reason = ?, updated_at_unix_ms = ? WHERE task_id = ?")
+                .bind(state).bind(action).bind(&decision.reason).bind(now).bind(&decision.task_id)
                 .execute(&mut *connection).await.db()?;
             sqlx::query("UPDATE local_tasks SET version = version + 1, updated_at_unix_ms = ? WHERE task_id = ?")
                 .bind(now).bind(&decision.task_id).execute(&mut *connection).await.db()?;

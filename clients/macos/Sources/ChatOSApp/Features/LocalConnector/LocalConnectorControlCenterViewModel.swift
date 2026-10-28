@@ -32,6 +32,10 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     @Published private(set) var approvalErrorMessages: [String: String] = [:]
     @Published var pluginOperationIDs: Set<String> = []
     @Published var pluginErrorMessages: [String: String] = [:]
+    @Published var pluginHookHistory: [String: LocalConnectorPluginHookHistoryPage] = [:]
+    @Published var pluginHookHistoryLoadedIDs: Set<String> = []
+    @Published var pluginHookHistoryLoadingIDs: Set<String> = []
+    @Published var pluginHookHistoryErrors: [String: String] = [:]
     @Published var isInspectingCustomPlugin = false
     @Published var isInstallingCustomPlugin = false
     @Published var errorMessage: String?
@@ -59,6 +63,8 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     private var approvalLoadTask: Task<Void, Never>?
     var pluginActionTasks: [String: Task<Void, Never>] = [:]
     var pluginActionRequestIDs: [String: UUID] = [:]
+    var pluginHookHistoryTasks: [String: Task<Void, Never>] = [:]
+    var pluginHookHistoryRequestIDs: [String: UUID] = [:]
     var customPluginTask: Task<Void, Never>?
     var lifecycleGeneration: UInt64 = 0
     private var signedOutSuspensionTask: Task<Void, Never>?
@@ -215,6 +221,9 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         pluginActionTasks.values.forEach { $0.cancel() }
         pluginActionTasks = [:]
         pluginActionRequestIDs = [:]
+        pluginHookHistoryTasks.values.forEach { $0.cancel() }
+        pluginHookHistoryTasks = [:]
+        pluginHookHistoryRequestIDs = [:]
         refreshGeneration += 1
         pluginRefreshGeneration += 1
         browserExtensionPairingTasks.values.forEach { $0.cancel() }
@@ -228,6 +237,10 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         isPerformingAction = false
         pluginOperationIDs = []
         pluginErrorMessages = [:]
+        pluginHookHistory = [:]
+        pluginHookHistoryLoadedIDs = []
+        pluginHookHistoryLoadingIDs = []
+        pluginHookHistoryErrors = [:]
         errorMessage = nil
         notice = nil
         status = nil

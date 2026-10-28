@@ -291,41 +291,57 @@ struct ComposerView: View {
     private var capabilitySuggestions: some View {
         if let query = activeCapabilityQuery {
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(visibleCapabilityCandidates.prefix(8)) { candidate in
-                    Button {
-                        selectCapability(candidate, query: query)
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: candidate.selection.kind == .plugin
-                                ? "shippingbox.fill" : "list.clipboard.fill")
-                                .foregroundStyle(.tint)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(candidate.selection.displayName)
-                                    .appFont(.body.weight(.medium))
-                                    .foregroundStyle(.primary)
-                                Text(candidate.subtitle)
-                                    .appFont(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                            Spacer()
-                            if highlightedCapabilityID == candidate.id {
-                                Text("↩")
-                                    .appFont(.caption)
-                                    .foregroundStyle(.secondary)
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical) {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(visibleCapabilityCandidates) { candidate in
+                                Button {
+                                    selectCapability(candidate, query: query)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: candidate.selection.kind == .plugin
+                                            ? "shippingbox.fill" : "list.clipboard.fill")
+                                            .foregroundStyle(.tint)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(candidate.selection.displayName)
+                                                .appFont(.body.weight(.medium))
+                                                .foregroundStyle(.primary)
+                                            Text(candidate.subtitle)
+                                                .appFont(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                        }
+                                        Spacer()
+                                        if highlightedCapabilityID == candidate.id {
+                                            Text("↩")
+                                                .appFont(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 7)
+                                    .contentShape(Rectangle())
+                                    .background(
+                                        highlightedCapabilityID == candidate.id
+                                            ? Color.accentColor.opacity(0.12)
+                                            : Color.clear,
+                                        in: RoundedRectangle(cornerRadius: 8)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .id(candidate.id)
                             }
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .contentShape(Rectangle())
-                        .background(
-                            highlightedCapabilityID == candidate.id
-                                ? Color.accentColor.opacity(0.12)
-                                : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 8)
-                        )
                     }
-                    .buttonStyle(.plain)
+                    .frame(height: ComposerCapabilityMenuLayout.height(
+                        candidateCount: visibleCapabilityCandidates.count
+                    ))
+                    .onChange(of: highlightedCapabilityID) { _, id in
+                        guard let id else { return }
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo(id, anchor: .center)
+                        }
+                    }
                 }
                 if visibleCapabilityCandidates.isEmpty {
                     Text(model.localized("没有匹配的能力", english: "No matching capability"))
@@ -424,7 +440,7 @@ struct ComposerView: View {
     }
 
     private func selectFirstCapabilitySuggestion() {
-        let visibleIDs = Set(visibleCapabilityCandidates.prefix(8).map(\.id))
+        let visibleIDs = Set(visibleCapabilityCandidates.map(\.id))
         if let highlightedCapabilityID, visibleIDs.contains(highlightedCapabilityID) { return }
         highlightedCapabilityID = visibleCapabilityCandidates.first?.id
     }
@@ -446,7 +462,7 @@ struct ComposerView: View {
 
     private func handleTextCommand(_ command: ComposerTextCommand) -> Bool {
         guard activeCapabilityQuery != nil else { return false }
-        let candidates = Array(visibleCapabilityCandidates.prefix(8))
+        let candidates = visibleCapabilityCandidates
         switch command {
         case .escape:
             suppressesCapabilitySuggestions = true

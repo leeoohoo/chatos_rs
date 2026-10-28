@@ -33,8 +33,8 @@ mod task_write_scope;
 mod tool;
 
 pub use task_acceptance::{
-    completed_task_acceptance_report, validate_task_acceptance_report,
-    validate_task_final_response_limit,
+    completed_task_acceptance_report, task_acceptance_report_for_run,
+    validate_task_acceptance_report, validate_task_final_response_limit,
 };
 
 pub use artifact::{
@@ -63,10 +63,12 @@ pub use conversation::{
     LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
 };
 pub use hook::{
-    ListPluginHookBundleRecordsCommand, ListPluginHookBundlesCommand, LocalPluginHookBundleRecord,
-    LocalPluginHookBundleSpec,
-    LocalPluginHookDefinition, PutPluginHookBundleCommand, SetActivePluginHookBundlesCommand,
-    LOCAL_PLUGIN_HOOK_MAX_BUNDLES, LOCAL_PLUGIN_HOOK_MAX_DEFINITIONS,
+    ListPluginHookBundleRecordsCommand, ListPluginHookBundlesCommand,
+    ListPluginHookInvocationsCommand, LocalPluginHookBundleRecord, LocalPluginHookBundleSpec,
+    LocalPluginHookDefinition, LocalPluginHookInvocationDiagnostic, LocalPluginHookInvocationPage,
+    PutPluginHookBundleCommand, SetActivePluginHookBundlesCommand,
+    LOCAL_PLUGIN_HOOK_HISTORY_MAX_PAGE_SIZE, LOCAL_PLUGIN_HOOK_MAX_BUNDLES,
+    LOCAL_PLUGIN_HOOK_MAX_DEFINITIONS,
 };
 pub use memory::{GetMemorySyncStatusCommand, LocalMemorySyncStatus};
 pub use notepad::{
@@ -118,9 +120,10 @@ pub use task::{
     resolve_local_task_graph_notification_policy, CancelTaskCommand, CreateTaskGraphCommand,
     GetMessageTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand, ListTaskGraphsCommand,
     LocalMessageTaskGraph, LocalMessageTaskGraphEdge, LocalMessageTaskGraphNode,
-    LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphNotificationPolicy,
-    LocalTaskGraphPage, LocalTaskGraphStatus, LocalTaskGraphSummary, LocalTaskRecord,
-    LocalTaskSpec, LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
+    LocalMessageTaskGraphRunSummary, LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope,
+    LocalTaskGraphNotificationPolicy, LocalTaskGraphPage, LocalTaskGraphStatus,
+    LocalTaskGraphSummary, LocalTaskRecord, LocalTaskSpec, LocalTaskStatus, RestartTaskCommand,
+    RetryTaskCommand,
 };
 pub use task_write_scope::{
     local_task_runtime_write_scope, local_task_write_scope, local_task_write_scope_overlap,
@@ -133,7 +136,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 49;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 51;
 /// Maximum bytes in one physical IPC frame. The high bit of the frame prefix is reserved
 /// as the continuation flag, so this limit must stay below `i32::MAX`.
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
@@ -171,6 +174,7 @@ impl HostRequestEnvelope {
 pub enum HostCommand {
     Health,
     SetSchedulerPressure(SetSchedulerPressureCommand),
+    SetSchedulerAdmission(SetSchedulerAdmissionCommand),
     GetMemorySyncStatus(GetMemorySyncStatusCommand),
     PutModelConfigSnapshot(PutModelConfigSnapshotCommand),
     GetModelConfigSnapshot(GetModelConfigSnapshotCommand),
@@ -212,6 +216,7 @@ pub enum HostCommand {
     PutPluginHookBundle(PutPluginHookBundleCommand),
     ListPluginHookBundles(ListPluginHookBundlesCommand),
     ListPluginHookBundleRecords(ListPluginHookBundleRecordsCommand),
+    ListPluginHookInvocations(ListPluginHookInvocationsCommand),
     SetActivePluginHookBundles(SetActivePluginHookBundlesCommand),
     CreateConversation(CreateConversationCommand),
     GetConversation(GetConversationCommand),
@@ -258,7 +263,7 @@ pub enum HostCommand {
 impl HostCommand {
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Health | Self::SetSchedulerPressure(_) => Ok(()),
+            Self::Health | Self::SetSchedulerPressure(_) | Self::SetSchedulerAdmission(_) => Ok(()),
             Self::GetMemorySyncStatus(command) => command.validate(),
             Self::PutModelConfigSnapshot(command) => command.validate(),
             Self::GetModelConfigSnapshot(command) => command.validate(),
@@ -300,6 +305,7 @@ impl HostCommand {
             Self::PutPluginHookBundle(command) => command.validate(),
             Self::ListPluginHookBundles(command) => command.validate(),
             Self::ListPluginHookBundleRecords(command) => command.validate(),
+            Self::ListPluginHookInvocations(command) => command.validate(),
             Self::SetActivePluginHookBundles(command) => command.validate(),
             Self::CreateConversation(command) => command.validate(),
             Self::GetConversation(command) => command.validate(),
@@ -357,6 +363,11 @@ pub enum LocalAgentResourcePressureLevel {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SetSchedulerPressureCommand {
     pub pressure_level: LocalAgentResourcePressureLevel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SetSchedulerAdmissionCommand {
+    pub accepting_new_work: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

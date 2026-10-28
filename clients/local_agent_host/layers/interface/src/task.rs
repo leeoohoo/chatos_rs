@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::task_write_scope::{local_task_write_scope, local_task_write_scope_overlap};
-use crate::{validate_identifier, validate_text, LOCAL_AGENT_MAX_INPUT_BYTES};
+use crate::{validate_identifier, validate_text, LocalAgentRunStatus, LOCAL_AGENT_MAX_INPUT_BYTES};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -705,8 +705,22 @@ pub struct LocalTaskGraphPage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocalMessageTaskGraphRunSummary {
+    pub run_id: String,
+    pub owner_entity_id: String,
+    pub status: LocalAgentRunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_outcome: Option<Value>,
+    pub next_attempt_at_unix_ms: Option<i64>,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocalMessageTaskGraphNode {
     pub task: LocalTaskRecord,
+    #[serde(default)]
+    pub latest_run: Option<LocalMessageTaskGraphRunSummary>,
     pub depth: u32,
     pub is_root: bool,
     pub is_current_message: bool,

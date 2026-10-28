@@ -44,6 +44,22 @@ final class MediaStudioViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.models.map(\.id), ["old-model"])
     }
 
+    func testVisibleActivationBindsAccountAndStartsAllFirstLoads() async throws {
+        let service = DelayedMediaStudioModelService()
+        let viewModel = MediaStudioViewModel(service: service)
+        viewModel.section = .story
+
+        viewModel.activate(userID: "first-visible-media-test")
+
+        XCTAssertTrue(viewModel.isLoadingHistory)
+        XCTAssertTrue(viewModel.isLoadingModels)
+        XCTAssertEqual(viewModel.stories.owner, "first-visible-media-test")
+        XCTAssertTrue(viewModel.stories.isLoading)
+        try await waitUntil { await service.hasDelayedFetch() }
+        await service.resumeDelayedFetch()
+        try await waitUntil { !viewModel.isLoadingModels && !viewModel.isLoadingHistory }
+    }
+
     func testStoryCatalogActivatesOnlyForStoryOrHistorySection() {
         for section in [MediaStudioViewModel.Section.story, .history] {
             let viewModel = MediaStudioViewModel(service: MediaStudioFailureService())

@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { assertSolutionWorkspace, validateDesignBlockExpectations, validateWorkspace, workspaceSummary, workspaceToMarkdown, type DesignBlockExpectation, type DesignContentBlock, type ProjectProfile, type RequirementsDocument, type SolutionDesignDocument, type ExecutionPlan, type SourceMode, type TaskStatus, type ValidationIssue } from './schema.js';
 import { SolutionWorkspaceStore } from './store.js';
 import { readHostRuntimeContext } from './runtime-context.js';
-import { executionPlanInputSchema, normalizeAuthoringPlan } from './execution-plan-input.js';
+import { executionPlanInputSchema, executionTaskInputSchema, normalizeAuthoringPlan } from './execution-plan-input.js';
 
 const store = new SolutionWorkspaceStore();
 const runtimeContext = readHostRuntimeContext();
@@ -59,6 +60,18 @@ const AUTHORING_TOOL_DEFINITIONS = [
     _meta: gate()
   },
   {
+    name: 'solution_archive_workspace_and_create',
+    description: 'Perform Solution Studio\'s legal full reset: archive the complete current workspace as immutable history, then create the project\'s one blank active workspace. Use when the user explicitly asks to delete the whole current plan, discard its direction, or re-plan from scratch. This does not create a parallel active Solution or evade cleanup. Never use it for an incremental revision and never emulate it by deleting protected completed or blocked tasks one by one.',
+    inputSchema: {
+      type: 'object', properties: {
+        workspaceId: { type: 'string' }, expectedRevision: { type: 'integer', minimum: 0 },
+        newTitle: { type: 'string', minLength: 1, maxLength: 240 }, sourceMode: { type: 'string', enum: ['existing-project', 'greenfield'] },
+        reason: { type: 'string', minLength: 1, maxLength: 2000 }, confirmation: { type: 'string', enum: ['archive_and_restart'] }
+      }, required: ['workspaceId', 'expectedRevision', 'newTitle', 'sourceMode', 'reason', 'confirmation'], additionalProperties: false
+    },
+    _meta: gate()
+  },
+  {
     name: 'solution_upsert_requirements',
     description: 'Create or revise the structured requirements for an existing or greenfield project. Preserve verified evidence separately from assumptions and open questions.',
     inputSchema: {
@@ -90,10 +103,25 @@ const AUTHORING_TOOL_DEFINITIONS = [
   },
   {
     name: 'solution_upsert_execution_plan',
-    description: 'Create or revise a dependency-aware execution plan. tasks[].dependsOn is canonical; the service rejects unknown references, self-dependencies, and dependency cycles.',
+    description: 'Create or revise a dependency-aware execution plan before execution history exists, or revise still-planned task definitions. tasks[].dependsOn is canonical. If the current plan already contains in_progress, blocked, done, or cancelled tasks and the change only adds work, do not resubmit the old tasks: use solution_append_execution_tasks with only the new planned tasks.',
     inputSchema: {
       type: 'object', properties: { ...workspaceIdentityProperties, executionPlan: executionPlanInputSchema },
       required: ['title', 'executionPlan'], additionalProperties: false
+    },
+    _meta: gate('solution-execution-plan')
+  },
+  {
+    name: 'solution_append_execution_tasks',
+    description: 'Atomically append new planned tasks to the existing execution plan without resubmitting or rewriting completed task definitions. Use this when a design increment adds work to a plan that already has execution history.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspaceId: { type: 'string' }, expectedRevision: { type: 'integer', minimum: 0 },
+        basedOnDesignRevision: { type: 'integer', minimum: 0 },
+        tasks: { type: 'array', minItems: 1, maxItems: 2_000, items: executionTaskInputSchema }
+      },
+      required: ['workspaceId', 'expectedRevision', 'basedOnDesignRevision', 'tasks'],
+      additionalProperties: false
     },
     _meta: gate('solution-execution-plan')
   },
@@ -247,6 +275,10 @@ function taskDefinition(task: ExecutionPlan['tasks'][number]) {
   return definition;
 }
 
+function executionPlanHasHistory(plan: ExecutionPlan): boolean {
+  return plan.tasks.some(task => task.status !== 'planned') || plan.statusEvents.length > 0;
+}
+
 function protectedAuthoringPlan(current: ExecutionPlan, proposed: ExecutionPlan): ExecutionPlan {
   if (proposed.statusEvents.length !== 0) throw new Error('方案创建器不能提交任务状态事件。');
   const currentById = new Map(current.tasks.map((task) => [task.id, task]));
@@ -255,13 +287,13 @@ function protectedAuthoringPlan(current: ExecutionPlan, proposed: ExecutionPlan)
     const previous = currentById.get(task.id);
     if (!previous && task.status !== 'planned') throw new Error(`新任务 ${task.id} 的状态必须是 planned。`);
     if (previous && previous.status !== 'planned') {
-      if (JSON.stringify(taskDefinition(previous)) !== JSON.stringify(taskDefinition(task))) {
-        throw new Error(`任务 ${task.id} 已进入 ${previous.status}，方案创建器不能修改其定义或依赖。`);
+      if (!isDeepStrictEqual(taskDefinition(previous), taskDefinition(task))) {
+        throw new Error(`任务 ${task.id} 已进入 ${previous.status}，方案创建器不能修改其定义或依赖。若本次只是增加工作，请调用 solution_append_execution_tasks，并且只提交新的 planned 任务，不要重传历史任务。`);
       }
     }
   }
   for (const task of current.tasks) {
-    if (task.status !== 'planned' && !proposedById.has(task.id)) throw new Error(`任务 ${task.id} 已进入 ${task.status}，方案创建器不能删除。`);
+    if (task.status !== 'planned' && !proposedById.has(task.id)) throw new Error(`任务 ${task.id} 已进入 ${task.status}，方案创建器不能删除。若本次只是增加工作，请调用 solution_append_execution_tasks，并且只提交新的 planned 任务，不要重传历史任务。`);
   }
   return {
     ...proposed,
@@ -334,6 +366,19 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const workspace = await resolveWorkspace(input);
       return { workspace, validation: validateWorkspace(workspace) };
     }
+    case 'solution_archive_workspace_and_create': {
+      if (input.confirmation !== 'archive_and_restart') throw new Error('必须明确确认归档当前方案并重新规划。');
+      const result = await store.archiveAndCreate({
+        workspaceId: String(input.workspaceId), expectedRevision: Number(input.expectedRevision),
+        title: String(input.newTitle), sourceMode: effectiveSourceMode(input.sourceMode), reason: String(input.reason)
+      });
+      return {
+        archived: result.archived,
+        workspace: workspaceSummary(result.workspace),
+        validation: validateWorkspace(result.workspace),
+        message: '旧方案已归档为只读历史，新活动方案已创建且不继承旧需求、设计、任务或状态。'
+      };
+    }
     case 'solution_get_workspace_summary': {
       const workspace = await resolveWorkspace(input);
       const validation = validateWorkspace(workspace);
@@ -362,7 +407,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         workspace.requirements = { ...requirements, revision: workspace.requirements.revision + 1, updatedAt: new Date().toISOString() };
         return workspace;
       });
-      return { created: result.created, workspace: workspaceSummary(result.workspace), requirements: result.workspace.requirements, validation: validateWorkspace(result.workspace), completionRequirement: completionRequirement(result.workspace.workspaceId) };
+      return { created: result.created, workspace: workspaceSummary(result.workspace), requirements: result.workspace.requirements, executionPlanHasHistory: executionPlanHasHistory(result.workspace.executionPlan), validation: validateWorkspace(result.workspace), completionRequirement: completionRequirement(result.workspace.workspaceId) };
     }
     case 'solution_upsert_design': {
       const design = input.design as SolutionDesignDocument;
@@ -371,7 +416,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         normalizeDesignLinks(workspace.requirements, workspace.design);
         return workspace;
       });
-      return { created: result.created, workspace: workspaceSummary(result.workspace), design: result.workspace.design, validation: validateWorkspace(result.workspace), completionRequirement: completionRequirement(result.workspace.workspaceId) };
+      return { created: result.created, workspace: workspaceSummary(result.workspace), design: result.workspace.design, executionPlanHasHistory: executionPlanHasHistory(result.workspace.executionPlan), validation: validateWorkspace(result.workspace), completionRequirement: completionRequirement(result.workspace.workspaceId) };
     }
     case 'solution_upsert_design_block': {
       const workspace = await store.read(String(input.workspaceId));
@@ -389,7 +434,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       normalizeDesignLinks(workspace.requirements, workspace.design);
       const saved = await store.replace(workspace, Number(input.expectedRevision));
       const savedBlocks = input.sectionId === null ? saved.design.blocks : saved.design.sections.find((section) => section.id === input.sectionId)?.blocks;
-      return { workspace: workspaceSummary(saved), block: savedBlocks?.find((candidate) => candidate.id === block.id), validation: validateWorkspace(saved), completionRequirement: completionRequirement(saved.workspaceId) };
+      return { workspace: workspaceSummary(saved), block: savedBlocks?.find((candidate) => candidate.id === block.id), executionPlanHasHistory: executionPlanHasHistory(saved.executionPlan), validation: validateWorkspace(saved), completionRequirement: completionRequirement(saved.workspaceId) };
     }
     case 'solution_upsert_execution_plan': {
       const result = await store.upsert(String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
@@ -402,6 +447,34 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       });
       const validation = validateWorkspace(result.workspace);
       return { created: result.created, workspace: workspaceSummary(result.workspace), executionPlan: result.workspace.executionPlan, validation, completionRequirement: completionRequirement(result.workspace.workspaceId) };
+    }
+    case 'solution_append_execution_tasks': {
+      const workspace = await store.read(String(input.workspaceId));
+      const newTasks = structuredClone(input.tasks as ExecutionPlan['tasks']);
+      const currentIds = new Set(workspace.executionPlan.tasks.map((task) => task.id));
+      for (const task of newTasks) {
+        if (currentIds.has(task.id)) throw new Error(`任务 ${task.id} 已存在；增量追加只能提交新任务。`);
+        if (task.status !== 'planned') throw new Error(`新任务 ${task.id} 的状态必须是 planned。`);
+        currentIds.add(task.id);
+      }
+      const executionPlan = normalizeAuthoringPlan({
+        status: workspace.executionPlan.status,
+        basedOnDesignRevision: Number(input.basedOnDesignRevision),
+        objective: workspace.executionPlan.objective,
+        tasks: [...workspace.executionPlan.tasks, ...newTasks]
+      }, workspace.executionPlan);
+      workspace.executionPlan = protectedAuthoringPlan(workspace.executionPlan, executionPlan);
+      const validation = validateWorkspace(workspace);
+      const dependencyIssues = validation.issues.filter((issue) => ['unknown_dependency', 'self_dependency', 'dependency_cycle', 'redundant_dependency'].includes(issue.code));
+      if (dependencyIssues.length > 0) throw new Error(dependencyIssues.map((issue) => issue.message).join(' '));
+      const saved = await store.replace(workspace, Number(input.expectedRevision));
+      return {
+        workspace: workspaceSummary(saved),
+        appendedTaskIds: newTasks.map((task) => task.id),
+        executionPlan: saved.executionPlan,
+        validation: validateWorkspace(saved),
+        completionRequirement: completionRequirement(saved.workspaceId)
+      };
     }
     case 'solution_claim_task':
     case 'solution_resume_task':
@@ -447,12 +520,22 @@ function result(value: Record<string, unknown>, isError = false) {
   if (role === 'authoring' && !isError && value.validation && !value.completionProof) {
     const validation = value.validation as { issues: ValidationIssue[] };
     const codes = new Set(validation.issues.filter(issue => issue.blocking).map(issue => issue.code));
+    const executionPlan = value.executionPlan as ExecutionPlan | undefined;
+    const planHasExecutionHistory = value.executionPlanHasHistory === true
+      || executionPlan?.tasks?.some(task => task.status !== 'planned') === true;
     value.continuation = {
       kind: 'authoring-work-remaining',
       instruction: 'Successful persistence is not final delivery. Validation gaps describe remaining authoring/repair work, not a terminal Task failure. Continue only the stages required by the user; do not expand a requirements-only request into a full plan.',
       suggestedActions: [
         ...(codes.has('design_empty') || codes.has('stale_design') ? [{ skill: 'solution-design', tool: 'solution_upsert_design', when: 'Design or full planning is requested', reason: 'Author or refresh the design against the current requirements revision.' }] : []),
-        ...(codes.has('plan_empty') || codes.has('stale_plan') ? [{ skill: 'solution-execution-plan', tool: 'solution_upsert_execution_plan', when: 'Execution planning is requested; after the design is coherent', reason: 'Author or refresh tasks and dependencies against the current design revision.' }] : []),
+        ...(codes.has('plan_empty') || codes.has('stale_plan')
+          ? planHasExecutionHistory
+            ? [
+              { skill: 'solution-execution-plan', tool: 'solution_append_execution_tasks', when: 'The design increment adds new work to a plan that already has execution history', reason: 'Append only the new planned tasks; never reconstruct or resubmit terminal task definitions.' },
+              { skill: 'solution-execution-plan', tool: 'solution_upsert_execution_plan', when: 'Existing still-planned task definitions themselves must change', reason: 'Preserve every terminal task definition byte-for-byte and revise only still-planned work.' }
+            ]
+            : [{ skill: 'solution-execution-plan', tool: 'solution_upsert_execution_plan', when: 'Execution planning is requested; after the design is coherent', reason: 'Author or refresh tasks and dependencies against the current design revision.' }]
+          : []),
         { skill: 'solution-validation', tool: 'solution_finalize', when: 'All requested content is saved, rendered where required, and its scoped validation gaps are repaired', reason: 'Finalize the actual requested scope at the current workspace revision.' }
       ]
     };
@@ -477,11 +560,24 @@ function result(value: Record<string, unknown>, isError = false) {
   return response;
 }
 
-const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.2' }, { capabilities: { tools: {} } });
+function failureResult(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const value: Record<string, unknown> = { error: message };
+  if (role === 'authoring' && /方案创建器不能(?:修改|删除)/.test(message)) {
+    value.recovery = {
+      kind: 'append_execution_tasks',
+      tool: 'solution_append_execution_tasks',
+      instruction: 'Re-read the current workspace, then submit only the newly added planned tasks with the current workspace revision and latest design revision. Do not retry solution_upsert_execution_plan with reconstructed historical tasks.'
+    };
+  }
+  return result(value, true);
+}
+
+const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.6' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }
-  catch (error) { return result({ error: error instanceof Error ? error.message : String(error) }, true); }
+  catch (error) { return failureResult(error); }
 });
 
 await server.connect(new StdioServerTransport());

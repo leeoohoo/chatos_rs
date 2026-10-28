@@ -1,5 +1,6 @@
 import ChatOSAgentRuntime
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import Foundation
 
 /// macOS adapter for Story first/last-frame generation. Reference media files, filenames,
@@ -7,6 +8,17 @@ import Foundation
 struct StoryFrameImageGenerationAdapter: StoryFrameImageGenerating {
     let store: StoryProjectStore
     let media: any MediaGenerationServicing
+    let mediaWorker: any MediaWorkerImageNormalizing
+
+    init(
+        store: StoryProjectStore,
+        media: any MediaGenerationServicing,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
+    ) {
+        self.store = store
+        self.media = media
+        self.mediaWorker = mediaWorker
+    }
 
     func generateStoryFrameImage(
         ownerUserID: String,
@@ -114,7 +126,8 @@ struct StoryFrameImageGenerationAdapter: StoryFrameImageGenerating {
               let generated = result.images.first else { throw StoryError.invalidPlan }
         let pngFile = try await MediaStudioImageLoader.normalizedPNGFile(
             for: generated,
-            ownerUserID: ownerUserID
+            ownerUserID: ownerUserID,
+            mediaWorker: mediaWorker
         )
         try await continuationCheck()
         let completed = try await store.completeFrameImageGeneration(

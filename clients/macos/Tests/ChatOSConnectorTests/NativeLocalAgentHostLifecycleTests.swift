@@ -195,7 +195,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         await fulfillment(of: [recoveryRequested], timeout: 1)
     }
 
-    func testCredentialRefreshReusesWorkerAndDefersChangedCredentialsWithoutStoppingIt() async throws {
+    func testCredentialRefreshReusesIdenticalWorkerAndAutomaticallyReplacesChangedCredentials() async throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -238,7 +238,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             var credentials = try NativeLocalAgentCredentialEnvironment.restoredModels(modelSnapshots, ownerUserID: "user-1", store: credentialStore)
             credentials["CHATOS_MEMORY_ACCESS_TOKEN"] = "test-memory-value"
             try await lifecycle.refreshCredentials(ownerUserID: "user-1", credentialEnvironment: credentials)
-            let workerPID = await lifecycle.processIdentifier
+            var workerPID = await lifecycle.processIdentifier
             XCTAssertNotNil(workerPID)
             XCTAssertNotEqual(workerPID, bootstrapPID)
             for _ in 0..<3 {
@@ -266,14 +266,19 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             var addedModel = credentials
             addedModel["CHATOS_LOCAL_AGENT_MODEL_NEW"] = "new-test-value"
             for changed in [rotatedModel, rotatedMemory, missingMemory, addedModel] {
-                do {
-                    try await lifecycle.refreshCredentials(ownerUserID: "user-1", credentialEnvironment: changed)
-                    XCTFail("Changed credentials must not replace an active worker")
-                } catch {
-                    XCTAssertTrue(error is NativeLocalAgentCredentialRefreshDeferred)
-                }
-                let stillRunningPID = await lifecycle.processIdentifier
-                XCTAssertEqual(stillRunningPID, workerPID)
+                let previousPID = workerPID
+                try await lifecycle.refreshCredentials(
+                    ownerUserID: "user-1",
+                    credentialEnvironment: changed
+                )
+                workerPID = await lifecycle.processIdentifier
+                XCTAssertNotNil(workerPID)
+                XCTAssertNotEqual(workerPID, previousPID)
+                let observedResources = await lifecycle.resourceSnapshot()
+                let resources = try XCTUnwrap(observedResources)
+                XCTAssertTrue(resources.acceptingNewWork)
+                XCTAssertEqual(resources.activeWorkItems, 0)
+                XCTAssertEqual(resources.activeMemorySyncItems, 0)
             }
             do {
                 try await lifecycle.refreshCredentials(ownerUserID: "user-2", credentialEnvironment: credentials)
@@ -586,11 +591,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             XCTAssertEqual(error, .requestTimedOut)
         }
         await fulfillment(of: [timeoutNotification], timeout: 2)
-        let timeoutResumeResult = kill(stalledProcessIdentifier, SIGCONT)
-        XCTAssertTrue(
-            timeoutResumeResult == 0 || (timeoutResumeResult == -1 && errno == ESRCH),
-            "The timed-out Host must either resume for cleanup or already be reaped"
-        )
+        XCTAssertEqual(kill(stalledProcessIdentifier, 0), -1)
+        XCTAssertEqual(errno, ESRCH, "The exit notification must follow process reaping")
         let isRunningAfterTimeout = await lifecycle.isRunning
         let ownerAfterTimeout = await lifecycle.activeOwnerUserID
         XCTAssertFalse(isRunningAfterTimeout)
@@ -612,11 +614,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         await lifecycle.stop()
         let stopElapsed = stopStartedAt.duration(to: clock.now)
         XCTAssertLessThan(stopElapsed, .milliseconds(250))
-        let stopResumeResult = kill(responsiveProcessIdentifier, SIGCONT)
-        XCTAssertTrue(
-            stopResumeResult == 0 || (stopResumeResult == -1 && errno == ESRCH),
-            "The stopped Host must either resume for cleanup or already be reaped"
-        )
+        XCTAssertEqual(kill(responsiveProcessIdentifier, 0), -1)
+        XCTAssertEqual(errno, ESRCH, "Stopping must reap the Host before returning")
         _ = await stalledRequest.result
         owner = await lifecycle.activeOwnerUserID
         XCTAssertNil(owner)

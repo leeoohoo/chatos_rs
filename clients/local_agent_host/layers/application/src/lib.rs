@@ -263,6 +263,9 @@ impl LocalAgentRuntime {
             HostCommand::SetSchedulerPressure(_) => Err(LocalAgentRuntimeError::InvalidRequest(
                 "scheduler pressure is owned by the Host coordinator".to_string(),
             )),
+            HostCommand::SetSchedulerAdmission(_) => Err(LocalAgentRuntimeError::InvalidRequest(
+                "scheduler admission is owned by the Host coordinator".to_string(),
+            )),
             HostCommand::GetMemorySyncStatus(command) => {
                 let status = self
                     .store
@@ -400,14 +403,13 @@ impl LocalAgentRuntime {
                         == Some(1)
                 {
                     if let LocalAgentStepOutcome::Succeed { output } = &command.outcome {
-                        let report = chatos_local_agent_protocol::completed_task_acceptance_report(
-                            current.continuation_input.as_ref(),
-                        )
-                        .ok_or_else(|| {
-                            LocalAgentRuntimeError::InvalidRequest(
-                                "Task has no accepted structured outcome report".into(),
-                            )
-                        })?;
+                        let report =
+                            chatos_local_agent_protocol::task_acceptance_report_for_run(&current)
+                                .ok_or_else(|| {
+                                LocalAgentRuntimeError::InvalidRequest(
+                                    "Task has no accepted structured outcome report".into(),
+                                )
+                            })?;
                         chatos_local_agent_protocol::validate_task_acceptance_report(
                             &current.input,
                             report,
@@ -643,6 +645,7 @@ impl LocalAgentRuntime {
             | HostCommand::PutPluginHookBundle(_)
             | HostCommand::ListPluginHookBundles(_)
             | HostCommand::ListPluginHookBundleRecords(_)
+            | HostCommand::ListPluginHookInvocations(_)
             | HostCommand::SetActivePluginHookBundles(_)) => {
                 self.handle_plugin_command(&idempotency, command).await
             }

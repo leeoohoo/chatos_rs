@@ -7,7 +7,7 @@ struct StoryWorkbenchView: View {
     enum Section: String, CaseIterable {
         case source, style, portraits, segments, graph
     }
-    @EnvironmentObject var appModel: AppModel
+    @Environment(\.storyViewContext) var appModel
     @ObservedObject var viewModel: StoryStudioViewModel
     @ObservedObject var mediaStudio: MediaStudioViewModel
     let project: StoryProject
@@ -75,32 +75,28 @@ struct StoryWorkbenchView: View {
             StorySegmentEditor(project: project, segment: segment) { edited, relations in
                 viewModel.saveSegment(edited, relations: relations)
             }
-                .environmentObject(appModel)
         }
         .sheet(item: $planningConfirmation) { confirmation in
-            StoryAgentStartView(viewModel: viewModel, confirmation: confirmation).environmentObject(appModel)
+            StoryAgentStartView(viewModel: viewModel, confirmation: confirmation)
         }
         .sheet(isPresented: $showsMediaBatch) {
             StoryMediaBatchStartView(viewModel: viewModel, project: project, models: mediaStudio.models,
-                                     initialKind: mediaBatchKind).environmentObject(appModel)
+                                     initialKind: mediaBatchKind)
         }
         .sheet(item: $videoToRegenerate) { segment in
             StoryVideoRegenerationStartView(
                 viewModel: viewModel, project: project, segmentID: segment.id,
                 models: mediaStudio.models
             )
-            .environmentObject(appModel)
         }
         .sheet(item: $playlistPreview) { group in
-            StoryVideoPlaylistPlayer(group: group).environmentObject(appModel)
+            StoryVideoPlaylistPlayer(group: group)
         }
         .sheet(item: $imageTarget) { target in
             StoryImagePicker(viewModel: viewModel, mediaStudio: mediaStudio, project: project, target: target)
-                .environmentObject(appModel)
         }
         .sheet(item: $preview) { request in
             MediaStudioImagePreview(request: request) { mediaStudio.useGeneratedImageForVideo($0) }
-                .environmentObject(appModel)
         }
         .confirmationDialog(appModel.localized("删除该分段并重新检查全剧衔接？", english: "Remove this segment and re-plan continuity?"), isPresented: Binding(get: { segmentToDelete != nil }, set: { if !$0 { segmentToDelete = nil } }), titleVisibility: .visible) {
             Button(appModel.localized("删除分段", english: "Remove Segment"), role: .destructive) {

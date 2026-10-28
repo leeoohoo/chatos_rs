@@ -18,6 +18,14 @@ struct MarkdownListItem: Equatable, Sendable {
 }
 
 enum MarkdownBlockParser {
+    // Compiling this expression is substantially more expensive than matching a normal prose
+    // line. Large model responses can contain tens of thousands of lines, so constructing the
+    // same immutable regex inside `splitInlineOrderedList` turned an otherwise linear parse into
+    // repeated Foundation setup/allocation work.
+    private static let inlineOrderedListExpression = try? NSRegularExpression(
+        pattern: #"(?<![0-9])([0-9]{1,2})[\)）][ \t]*"#
+    )
+
     static func parse(_ source: String) -> [MarkdownBlock] {
         guard !Task.isCancelled else { return [] }
         let normalized = source
@@ -299,7 +307,12 @@ enum MarkdownBlockParser {
 
     private static func expandedMarkdownLines(_ source: String) -> [String] {
         let rawLines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        // The compatibility expansion only applies to compact model-authored `1) ... 2) ...`
+        // lists. Return the already split storage directly for normal Markdown instead of
+        // allocating a transient one-element Array for every line and copying it into `result`.
+        guard source.contains(")") || source.contains("）") else { return rawLines }
         var result: [String] = []
+        result.reserveCapacity(rawLines.count)
         var isInsideCodeFence = false
 
         for line in rawLines {
@@ -316,8 +329,11 @@ enum MarkdownBlockParser {
     }
 
     private static func splitInlineOrderedList(_ line: String) -> [String] {
-        let pattern = #"(?<![0-9])([0-9]{1,2})[\)）][ \t]*"#
-        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [line] }
+        // Almost every Markdown line is ordinary prose, a table row, or code. Avoid entering
+        // Foundation's regex engine unless the line can contain the supported `1)` / `1）`
+        // markers; this is the hot path for large tables and streaming transcripts.
+        guard line.contains(")") || line.contains("）") else { return [line] }
+        guard let expression = inlineOrderedListExpression else { return [line] }
         let fullRange = NSRange(line.startIndex..<line.endIndex, in: line)
         let matches = expression.matches(in: line, range: fullRange)
         guard matches.count >= 2 else { return [line] }

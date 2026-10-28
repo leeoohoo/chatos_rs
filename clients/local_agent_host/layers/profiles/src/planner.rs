@@ -4,7 +4,7 @@
 use crate::{memory::memory_plan, LocalAiStepPlanner, PreparedLocalAiStep};
 use async_trait::async_trait;
 use chatos_ai_runtime::{message_item, ContextualTurnRunner, ModelRuntimeConfig, RuntimeTurnSpec};
-use chatos_local_agent_protocol::LocalAgentRunClaim;
+use chatos_local_agent_protocol::{task_acceptance_report_for_run, LocalAgentRunClaim};
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -536,7 +536,7 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                         "selection": selection,
                         "required_capability": "selected_plugin",
                         "completion_basis": "task_objective_and_acceptance_criteria",
-                        "guidance": "The user explicitly selected this Plugin in the composer. Create the requested durable Task with this exact Plugin for its requested purpose. The Host independently freezes and enforces this selection on every created Task. Tool selection alone does not require a persisted artifact: browser research may deliver a sourced text report, whereas a document explicitly requested in a Plugin must be created and verified there, not substituted with Notepad or an ordinary file. Express the user's actual deliverable and evidence requirements in the objective and acceptance criteria; do not invent an artifact requirement merely because a Plugin is selected. Do not ask the user for a Plugin key or version, and do not claim completion in Main Chat."
+                        "guidance": "The user explicitly selected this Plugin in the composer. Create the requested durable Task with this exact Plugin for its requested purpose. The selected Plugin is required, not exclusive: complementary Plugins may be added when they perform distinct necessary work, but they must not replace the user's selected Plugin. The Host independently freezes and validates every selected component against the request-scoped catalog. Tool selection alone does not require a persisted artifact: browser research may deliver a sourced text report, whereas a document explicitly requested in a Plugin must be created and verified there, not substituted with Notepad or an ordinary file. Express the user's actual deliverable and evidence requirements in the objective and acceptance criteria; do not invent an artifact requirement merely because a Plugin is selected. Do not ask the user for a Plugin key or version, and do not claim completion in Main Chat."
                     })),
                     Some("requirement_survey") => Some(json!({
                         "type": "user_selected_capability_contract",
@@ -616,7 +616,8 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                     .is_some_and(|items| !items.is_empty())
             });
         let task_outcome_reported = self.profile_key == TASK_EXECUTION_PROFILE_KEY
-            && completed_task_outcome_report(claim.run.continuation_input.as_ref());
+            && (completed_task_outcome_report(claim.run.continuation_input.as_ref())
+                || task_acceptance_report_for_run(&claim.run).is_some());
         if async_handoff_confirmed {
             // Preserve the former server Task Runner boundary exactly: after the
             // explicit handoff succeeds, Main Chat gets one tool-free response

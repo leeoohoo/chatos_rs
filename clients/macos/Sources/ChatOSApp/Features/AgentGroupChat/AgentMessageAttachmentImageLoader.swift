@@ -1,4 +1,5 @@
 import ChatOSConnector
+import ChatOSCodeReadWorkerClient
 import ChatOSCore
 import ChatOSMediaWorkerClient
 import Foundation
@@ -33,7 +34,8 @@ enum AgentMessageAttachmentImageLoader {
         maximumDisplayPixelSize: Int = 2_048,
         temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         availableCapacityOverride: Int64? = nil,
-        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared,
+        codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
     ) async throws -> AppDecodedThumbnail {
         let attachment = payload.attachment
         guard attachment.kind == .image,
@@ -52,7 +54,8 @@ enum AgentMessageAttachmentImageLoader {
                 maximumDisplayPixelSize: maximumDisplayPixelSize,
                 temporaryDirectory: temporaryDirectory,
                 availableCapacityOverride: availableCapacityOverride,
-                mediaWorker: mediaWorker
+                mediaWorker: mediaWorker,
+                codeReadWorker: codeReadWorker
             )
         } catch is CancellationError {
             throw CancellationError()

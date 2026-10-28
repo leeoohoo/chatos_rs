@@ -242,29 +242,15 @@ struct TaskAgentReplyView: View {
     }
 
     private func statusTitle(_ status: String?) -> String {
-        switch status?.lowercased() {
-        case "succeeded", "completed", "success": "已完成"
-        case "execution_failed": "执行失败"
-        case "acceptance_failed": "未通过验收"
-        case "evidence_incomplete": "部分完成，待核验"
-        case "failed": "失败"
-        case "blocked": "阻塞"
-        case "cancelled", "canceled", "stopped": "已取消"
-        case "running", "processing", "in_progress": "执行中"
-        default: status ?? "任务"
-        }
+        MessageTaskStatusPresentation.title(
+            forRawStatus: status,
+            localized: { model.localized($0, english: $1) }
+        )
     }
 
     private func statusColor(_ status: String?) -> Color {
-        switch status?.lowercased() {
-        case "succeeded", "completed", "success": .green
-        case "execution_failed", "acceptance_failed": .red
-        case "evidence_incomplete": .orange
-        case "failed": .red
-        case "blocked": .orange
-        case "cancelled", "canceled", "stopped": .secondary
-        case "running", "processing", "in_progress": AppPalette.ai
-        default: .secondary
-        }
+        MessageTaskStatusPresentation.color(
+            for: MessageTaskPresentationStatus(taskStatus: status)
+        )
     }
 }

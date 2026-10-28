@@ -334,6 +334,12 @@ struct CustomPluginInstallerSheet: View {
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                        if !component.hookAsyncEvents.isEmpty {
+                            Text("Background: " + component.hookAsyncEvents.joined(separator: ", "))
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
                         ForEach(Array(component.hookCommands.enumerated()), id: \.offset) { _, command in
                             Text(command)
                                 .font(.caption2.monospaced())

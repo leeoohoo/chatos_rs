@@ -90,6 +90,16 @@ class ProcessGroupSoakTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "must be ignored"):
                     soak.validate_output_location(repository, output)
 
+    def test_output_must_not_be_inside_scanned_temporary_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "isolated-runtime"
+            with self.assertRaisesRegex(ValueError, "collector's own files"):
+                soak.validate_output_is_not_scanned(root / "soak-output", [root])
+            soak.validate_output_is_not_scanned(
+                Path(directory) / "evidence" / "soak-output",
+                [root],
+            )
+
     def test_acceptance_reports_missing_process_limits_and_growth(self):
         class Arguments:
             minimum_samples = 3

@@ -194,6 +194,19 @@ class RepositoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Symbol files differ"):
             evidence.verify(app, result)
 
+    def test_installed_app_verification_allows_unavailable_build_symbols(self):
+        app = self.make_app()
+        symbols = self.root / "app.dSYM"
+        symbols.mkdir()
+        (symbols / "debug-data").write_text("symbols")
+        result = self.finish(app)
+        result["symbols"] = {str(symbols): {"inventory": evidence.inventory(symbols)}}
+        symbols.rename(self.root / "archived-symbols")
+
+        evidence.verify(app, result)
+        with self.assertRaisesRegex(ValueError, "Symbol files are unavailable"):
+            evidence.verify(app, result, require_symbols=True)
+
 
 class BaselineTests(unittest.TestCase):
     def valid_result(self):

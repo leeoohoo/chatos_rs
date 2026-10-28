@@ -92,15 +92,109 @@ extension NativeLocalConnectorService {
                 _ = try await pairWithCurrentChatOSSession(deviceName: Host.current().localizedName)
                 return try await fetchPluginsWithCurrentPairing(forceRefresh: refresh)
             } catch {
-                let custom = await customInstalledPlugins(forceRefresh: refresh)
-                if !custom.isEmpty { return custom }
+                let installed = await locallyInstalledPlugins(forceRefresh: refresh)
+                if !installed.isEmpty { return installed }
                 throw error
             }
         } catch {
-            let custom = await customInstalledPlugins(forceRefresh: refresh)
-            if !custom.isEmpty { return custom }
+            let installed = await locallyInstalledPlugins(forceRefresh: refresh)
+            if !installed.isEmpty { return installed }
             throw error
         }
+    }
+
+    /// Keep the installed catalog usable while the Marketplace is temporarily unavailable.
+    /// Previously the presence of one Custom MCP made the error fallback return only custom
+    /// records, which made every installed Marketplace Plugin appear to have been deleted.
+    private func locallyInstalledPlugins(
+        forceRefresh: Bool
+    ) async -> [LocalConnectorPlugin] {
+        let marketplace = await locallyInstalledMarketplacePlugins(forceRefresh: forceRefresh)
+        let custom = await customInstalledPlugins(forceRefresh: forceRefresh)
+        return (marketplace + custom).sorted {
+            let comparison = $0.displayName.localizedStandardCompare($1.displayName)
+            return comparison == .orderedSame ? $0.pluginID < $1.pluginID : comparison == .orderedAscending
+        }
+    }
+
+    private func locallyInstalledMarketplacePlugins(
+        forceRefresh: Bool
+    ) async -> [LocalConnectorPlugin] {
+        let records = (state.installedPluginRecords ?? [:]).values
+            .filter { $0.source == nil }
+            .sorted { $0.pluginID < $1.pluginID }
+        var result: [LocalConnectorPlugin] = []
+        result.reserveCapacity(records.count)
+        for record in records {
+            var issue = await pluginInstallationIssue(
+                installed: true,
+                record: record,
+                forceRefresh: forceRefresh
+            )
+            var manifest: NativePluginManifest?
+            if issue == nil {
+                do {
+                    manifest = try installedPluginManifest(record: record)
+                } catch {
+                    issue = .integrityCheckFailed
+                }
+            }
+            let permissions: [LocalConnectorPluginPermission]
+            if let manifest {
+                permissions = (try? await pluginPermissionSnapshots.permissions(
+                    record: record,
+                    manifest: manifest,
+                    forceRefresh: forceRefresh
+                )) ?? []
+            } else {
+                permissions = []
+            }
+            let packageName = manifest?.name
+                ?? record.pluginKey?.split(separator: "@", maxSplits: 1).first.map(String.init)
+            result.append(.init(
+                pluginID: record.pluginID,
+                packageName: packageName,
+                pluginKey: record.pluginKey,
+                displayName: manifest?.interface?.displayName ?? packageName ?? record.pluginID,
+                description: manifest?.description ?? "",
+                category: "Plugin",
+                publisher: "ChatOS",
+                latestVersion: record.version,
+                installedVersion: record.version,
+                installed: true,
+                updateAvailable: false,
+                installAvailable: false,
+                enabled: state.pluginPreferences[record.pluginID] ?? true,
+                hasUI: manifest.map { !$0.ui.isEmpty },
+                permissions: permissions,
+                installationIssue: issue,
+                source: .marketplace
+            ))
+        }
+        return result
+    }
+
+    public func fetchPluginHookHistory(
+        pluginID: String,
+        beforeUpdatedAtUnixMs: Int64?,
+        beforeInvocationID: String?,
+        limit: Int
+    ) async throws -> LocalConnectorPluginHookHistoryPage {
+        guard let ownerUserID = state.user?.id,
+              let host = localAgentHostClient else {
+            throw NativeConnectorError.notPaired
+        }
+        guard (1...100).contains(limit),
+              (beforeUpdatedAtUnixMs == nil) == (beforeInvocationID == nil) else {
+            throw NativeConnectorError.invalidResponse("Hook 运行历史查询参数无效")
+        }
+        return try await NativeLocalAgentHookBundleClient(host: host).listInvocations(
+            ownerUserID: ownerUserID,
+            pluginID: pluginID,
+            beforeUpdatedAtUnixMs: beforeUpdatedAtUnixMs,
+            beforeInvocationID: beforeInvocationID,
+            limit: limit
+        )
     }
 
     private func fetchPluginsWithCurrentPairing(

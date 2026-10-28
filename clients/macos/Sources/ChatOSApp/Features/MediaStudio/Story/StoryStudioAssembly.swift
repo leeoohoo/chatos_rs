@@ -1,5 +1,6 @@
 import ChatOSAgentRuntime
 import ChatOSCore
+import ChatOSMediaWorkerClient
 
 /// macOS composition root for Story Studio. Concrete stores, providers and native
 /// adapters are assembled here and never retained by the presentation ViewModel.
@@ -22,6 +23,7 @@ extension StoryStudioViewModel {
         storyFrameImageGeneration: (any StoryFrameImageGenerating)? = nil,
         storyVideoGeneration: (any StoryVideoGenerating)? = nil,
         storyVideoTailExtraction: (any StoryVideoTailExtracting)? = nil,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared,
         agentSettings: AgentSettingsStore = .init()
     ) {
         // The top-level Media Studio passes its shared store explicitly. Standalone Story
@@ -60,6 +62,7 @@ extension StoryStudioViewModel {
                 executor: storyMediaBatch ?? StoryMediaBatchExecutionAdapter(
                     store: store,
                     media: media,
+                    mediaWorker: mediaWorker,
                     videoJobStore: resolvedVideoJobStore
                 )
             ),
@@ -67,18 +70,23 @@ extension StoryStudioViewModel {
                 resolver: storyMediaAccess ?? StoryMediaAccessAdapter(store: store)
             ),
             storyImageImport: StoryImageImportUseCase(
-                importer: storyImageImport ?? StoryImageImportAdapter(store: store)
+                importer: storyImageImport ?? StoryImageImportAdapter(
+                    store: store,
+                    mediaWorker: mediaWorker
+                )
             ),
             storyAssetImageGeneration: StoryAssetImageGenerationUseCase(
                 generator: storyAssetImageGeneration ?? StoryAssetImageGenerationAdapter(
                     store: store,
-                    media: media
+                    media: media,
+                    mediaWorker: mediaWorker
                 )
             ),
             storyFrameImageGeneration: StoryFrameImageGenerationUseCase(
                 generator: storyFrameImageGeneration ?? StoryFrameImageGenerationAdapter(
                     store: store,
-                    media: media
+                    media: media,
+                    mediaWorker: mediaWorker
                 )
             ),
             storyVideoGeneration: StoryVideoGenerationUseCase(

@@ -64,6 +64,7 @@ mod windows_tests {
             event: "SessionStart".into(),
             matcher: None,
             command: command.into(),
+            is_async: false,
             timeout_ms,
             additional_context_limit: 65_536,
         };
@@ -818,6 +819,7 @@ mod tests {
             event: "SessionStart".to_string(),
             matcher: None,
             command: command.to_string(),
+            is_async: false,
             timeout_ms,
             additional_context_limit: 65_536,
         };
@@ -927,6 +929,7 @@ setTimeout(() => { socket.destroy(); finish('timeout'); }, 1000);
             event: "SessionStart".to_string(),
             matcher: None,
             command: "node \"$PLUGIN_ROOT/security-probe.js\"".to_string(),
+            is_async: false,
             timeout_ms: 5_000,
             additional_context_limit: 65_536,
         };

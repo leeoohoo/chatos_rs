@@ -175,6 +175,165 @@ async fn task_run_query_rejects_invalid_input() {
 }
 
 #[tokio::test]
+async fn latest_task_run_batch_returns_one_run_per_requested_task() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    storage
+        .create_task_graph(
+            &command("create-latest-batch", "graph-latest-batch"),
+            &graph(
+                "graph-latest-batch",
+                &["task-batch-root", "task-batch-child"],
+            ),
+            10_000,
+        )
+        .await
+        .expect("create graph");
+    storage
+        .start_next_task_run("user-1", "run-batch-root", "event-batch-root", 20_000)
+        .await
+        .expect("start Task")
+        .expect("root Run");
+
+    let runs = storage
+        .latest_task_runs(
+            "user-1",
+            &[
+                "task-batch-root".to_string(),
+                "task-batch-child".to_string(),
+            ],
+        )
+        .await
+        .expect("latest Runs");
+
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].run_id, "run-batch-root");
+    assert_eq!(runs[0].owner_entity_id, "task-batch-root");
+    assert!(storage
+        .latest_task_runs("user-1", &[])
+        .await
+        .expect("empty query")
+        .is_empty());
+    let oversized = vec!["task".to_string(); 201];
+    assert!(matches!(
+        storage.latest_task_runs("user-1", &oversized).await,
+        Err(ClientStorageError::InvalidState(_))
+    ));
+}
+
+#[tokio::test]
+async fn latest_task_run_batch_returns_only_bounded_presentation_data() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    storage
+        .create_task_graph(
+            &command("create-bounded-batch", "graph-bounded-batch"),
+            &graph(
+                "graph-bounded-batch",
+                &["task-bounded-root", "task-bounded-child"],
+            ),
+            10_000,
+        )
+        .await
+        .expect("create graph");
+    storage
+        .start_next_task_run("user-1", "run-bounded-root", "event-bounded-root", 20_000)
+        .await
+        .expect("start Task")
+        .expect("root Run");
+    let hidden = "private-checkpoint".repeat(50_000);
+    let visible = "v".repeat(20_000);
+    let outcome = json!({
+        "content": visible,
+        "private_internal_state": hidden,
+        "task_acceptance": {
+            "result_status": "blocked",
+            "reason": "Waiting for an external decision",
+            "acceptance_checks": []
+        }
+    });
+    sqlx::query(
+        "UPDATE local_agent_runs SET checkpoint_json = ?, continuation_input_json = ?, \
+         terminal_outcome_json = ? WHERE run_id = ?",
+    )
+    .bind(json!({"hidden": hidden}).to_string())
+    .bind(json!({"hidden": hidden}).to_string())
+    .bind(outcome.to_string())
+    .bind("run-bounded-root")
+    .execute(&storage.pool)
+    .await
+    .expect("seed large operational state");
+
+    let runs = storage
+        .latest_task_runs("user-1", &["task-bounded-root".to_string()])
+        .await
+        .expect("latest Run presentation");
+    let encoded = serde_json::to_vec(&runs).expect("encode presentation");
+    let text = String::from_utf8(encoded).expect("UTF-8 JSON");
+    assert!(
+        text.len() < 10_000,
+        "graph Run presentation must stay bounded"
+    );
+    assert!(!text.contains("private-checkpoint"));
+    assert_eq!(
+        runs[0]
+            .terminal_outcome
+            .as_ref()
+            .and_then(|value| value.get("content"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::len),
+        Some(4_096)
+    );
+    assert_eq!(
+        runs[0]
+            .terminal_outcome
+            .as_ref()
+            .and_then(|value| value.pointer("/task_acceptance/result_status"))
+            .and_then(serde_json::Value::as_str),
+        Some("blocked")
+    );
+}
+
+#[tokio::test]
+async fn latest_task_run_batch_isolates_a_corrupt_terminal_payload() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    storage
+        .create_task_graph(
+            &command("create-corrupt-batch", "graph-corrupt-batch"),
+            &graph(
+                "graph-corrupt-batch",
+                &["task-corrupt-root", "task-corrupt-child"],
+            ),
+            10_000,
+        )
+        .await
+        .expect("create graph");
+    storage
+        .start_next_task_run("user-1", "run-corrupt-root", "event-corrupt-root", 20_000)
+        .await
+        .expect("start Task")
+        .expect("root Run");
+    sqlx::query("UPDATE local_agent_runs SET terminal_outcome_json = '{not-json' WHERE run_id = ?")
+        .bind("run-corrupt-root")
+        .execute(&storage.pool)
+        .await
+        .expect("seed corrupt legacy payload");
+
+    let runs = storage
+        .latest_task_runs("user-1", &["task-corrupt-root".to_string()])
+        .await
+        .expect("corrupt outcome must not hide the whole Task graph");
+
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].run_id, "run-corrupt-root");
+    assert!(runs[0].terminal_outcome.is_none());
+}
+
+#[tokio::test]
 async fn task_queries_surface_the_latest_terminal_model_output() {
     let storage = SqliteClientStorage::connect_memory()
         .await

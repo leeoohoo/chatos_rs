@@ -9,9 +9,10 @@ use crate::{
     LocalConversationPage, LocalConversationRuntimeSettings, LocalConversationTurnStart,
     LocalConversationTurnUpdate, LocalMemorySyncStatus, LocalMessageTaskGraph,
     LocalModelConfigSnapshot, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
-    LocalPluginHookBundleRecord, LocalPluginInstallationPage, LocalPluginInstallationRecord,
-    LocalRemoteConnection, LocalRequirementSurvey, LocalRequirementSurveyResolution,
-    LocalSkillBundleSnapshot, LocalTaskGraph, LocalTaskGraphPage, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalPluginHookBundleRecord, LocalPluginHookInvocationPage, LocalPluginInstallationPage,
+    LocalPluginInstallationRecord, LocalRemoteConnection, LocalRequirementSurvey,
+    LocalRequirementSurveyResolution, LocalSkillBundleSnapshot, LocalTaskGraph, LocalTaskGraphPage,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -63,6 +64,9 @@ pub enum HostResult {
     SchedulerPressureUpdated {
         pressure_level: crate::LocalAgentResourcePressureLevel,
         effective_maximum_concurrent_work_items: usize,
+    },
+    SchedulerAdmissionUpdated {
+        accepting_new_work: bool,
     },
     MemorySyncStatus {
         status: LocalMemorySyncStatus,
@@ -146,6 +150,9 @@ pub enum HostResult {
     },
     PluginHookBundles {
         bundles: Vec<LocalPluginHookBundleRecord>,
+    },
+    PluginHookInvocations {
+        page: LocalPluginHookInvocationPage,
     },
     ActivePluginHookBundlesUpdated {
         active_bundle_ids: Vec<String>,
@@ -240,6 +247,16 @@ pub struct LocalAgentHostSchedulerSnapshot {
     pub active_work_items: usize,
     pub idle_workers: usize,
     pub queued_ready_work_items: u64,
+    #[serde(default = "scheduler_accepting_new_work_default")]
+    pub accepting_new_work: bool,
+    #[serde(default)]
+    pub active_memory_sync_items: usize,
+    #[serde(default)]
+    pub admission_in_flight_work_items: usize,
+}
+
+fn scheduler_accepting_new_work_default() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

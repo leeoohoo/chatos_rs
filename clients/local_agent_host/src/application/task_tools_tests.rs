@@ -592,7 +592,7 @@ async fn task_creation_automatically_freezes_required_policy_capabilities() {
 }
 
 #[tokio::test]
-async fn composer_selected_plugin_is_mandatory_and_excludes_unselected_optional_plugins() {
+async fn composer_selected_plugin_is_mandatory_and_complementary_plugins_are_additive() {
     let storage = Arc::new(
         SqliteClientStorage::connect_memory()
             .await
@@ -675,18 +675,13 @@ async fn composer_selected_plugin_is_mandatory_and_excludes_unselected_optional_
         "requires_execution": true,
         "enabled_builtin_kinds": []
     });
-    let mut unexpected = base.clone();
-    unexpected["plugin_hints"] = json!([{
+    let mut complementary = base;
+    complementary["plugin_hints"] = json!([{
         "plugin_key": "other-plugin",
         "component_key": "other-mcp",
-        "reason": "model chose another optional Plugin"
+        "reason": "complementary work requires another Plugin"
     }]);
-    let mut call = invocation(unexpected);
-    call.tool_name = CREATE_TASK_TOOL.to_string();
-    let error = preparation_error(executor.execute_tool(&call).await.unwrap());
-    assert!(error.contains("outside the user's explicit composer selection"));
-
-    let mut call = invocation(base);
+    let mut call = invocation(complementary);
     call.tool_name = CREATE_TASK_TOOL.to_string();
     assert!(matches!(
         executor.execute_tool(&call).await.unwrap(),
@@ -700,15 +695,39 @@ async fn composer_selected_plugin_is_mandatory_and_excludes_unselected_optional_
         .unwrap();
     assert_eq!(
         graph.tasks[0].input["tool_options"]["plugin_hints"],
-        json!([{
-            "plugin_key": "document-plugin",
-            "component_key": "document-mcp",
-            "reason": "selected explicitly in Main Chat"
-        }])
+        json!([
+            {
+                "plugin_key": "other-plugin",
+                "component_key": "other-mcp",
+                "reason": "complementary work requires another Plugin"
+            },
+            {
+                "plugin_key": "document-plugin",
+                "component_key": "document-mcp",
+                "reason": "selected explicitly in Main Chat"
+            }
+        ])
     );
     assert_eq!(
-        graph.tasks[0].input["tool_options"]["plugin_release_snapshots"][0]["plugin_key"],
-        "document-plugin"
+        graph.tasks[0].input["tool_options"]["plugin_release_snapshots"],
+        json!([
+            {
+                "plugin_key": "document-plugin",
+                "component_key": "document-mcp",
+                "plugin_id": "document-id",
+                "release_id": "document-release",
+                "version": "1.0.0",
+                "artifact_sha256": "a".repeat(64)
+            },
+            {
+                "plugin_key": "other-plugin",
+                "component_key": "other-mcp",
+                "plugin_id": "other-id",
+                "release_id": "other-release",
+                "version": "1.0.0",
+                "artifact_sha256": "b".repeat(64)
+            }
+        ])
     );
 }
 
@@ -941,6 +960,24 @@ fn task_model_definitions_are_host_owned_and_closed() {
         tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["context_refs"]
             ["uniqueItems"],
         true
+    );
+    assert!(tools[3]["description"]
+        .as_str()
+        .expect("create graph description")
+        .contains("independent Tasks must not wait"));
+    assert!(
+        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["prerequisite_refs"]
+            ["description"]
+            .as_str()
+            .expect("hard prerequisite description")
+            .contains("Hard scheduling gates")
+    );
+    assert!(
+        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["context_refs"]
+            ["description"]
+            .as_str()
+            .expect("context reference description")
+            .contains("never delay scheduling")
     );
     assert_eq!(
         tools[3]["parameters"]["properties"]["notification_policy"]["default"],

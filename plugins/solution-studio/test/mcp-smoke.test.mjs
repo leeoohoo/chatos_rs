@@ -24,8 +24,11 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     await client.connect(transport);
     const listed = await client.listTools();
     const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
-    for (const name of ['solution_get_active_context', 'solution_upsert_requirements', 'solution_upsert_design', 'solution_upsert_design_block', 'solution_upsert_execution_plan', 'solution_validate', 'solution_export', 'solution_finalize']) assert.ok(tools.has(name));
+    for (const name of ['solution_get_active_context', 'solution_get_workspace', 'solution_archive_workspace_and_create', 'solution_upsert_requirements', 'solution_upsert_design', 'solution_upsert_design_block', 'solution_upsert_execution_plan', 'solution_append_execution_tasks', 'solution_validate', 'solution_export', 'solution_finalize']) assert.ok(tools.has(name));
+    assert.match(tools.get('solution_archive_workspace_and_create').description, /does not create a parallel active Solution/);
+    assert.match(tools.get('solution_archive_workspace_and_create').description, /delete the whole current plan/);
     assert.deepEqual(tools.get('solution_upsert_execution_plan')._meta['chatos/skillGate'].allOf, ['solution-studio', 'solution-execution-plan']);
+    assert.deepEqual(tools.get('solution_append_execution_tasks')._meta['chatos/skillGate'].allOf, ['solution-studio', 'solution-execution-plan']);
     const planSchema = tools.get('solution_upsert_execution_plan').inputSchema.properties.executionPlan;
     assert.deepEqual(planSchema.required, ['status', 'basedOnDesignRevision', 'objective', 'tasks']);
     assert.ok(planSchema.properties.tasks.items.required.includes('dependsOn'));
@@ -171,6 +174,25 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     assert.equal(planOnlyFinalized.structuredContent.scope, 'plan');
     assert.equal(planOnlyFinalized.structuredContent.completionProof.revision, revisedPlan.workspace.revision);
     assert.deepEqual(await readdir(projectRoot), []);
+
+    const restarted = await call(client, 'solution_archive_workspace_and_create', {
+      workspaceId: revisedPlan.workspace.workspaceId,
+      expectedRevision: revisedPlan.workspace.revision,
+      newTitle: 'MCP 全新规划',
+      sourceMode: 'existing-project',
+      reason: '用户明确要求放弃旧方向并重新规划',
+      confirmation: 'archive_and_restart'
+    });
+    assert.equal(restarted.archived.workspaceId, revisedPlan.workspace.workspaceId);
+    assert.notEqual(restarted.workspace.workspaceId, revisedPlan.workspace.workspaceId);
+    assert.equal(restarted.workspace.requirementCount, 0);
+    assert.equal(restarted.workspace.designSectionCount, 0);
+    assert.equal(restarted.workspace.taskCount, 0);
+    const newActive = await call(client, 'solution_get_workspace', {});
+    assert.equal(newActive.workspace.workspaceId, restarted.workspace.workspaceId);
+    const archiveStore = new SolutionWorkspaceStore(path.join(root, 'data'), { projectId: 'project-mcp-123', projectName: '示例项目', connectorWorkspaceId: 'workspace-mcp-456', contextScopeId: 'scope-mcp-123' });
+    const archived = await archiveStore.readArchive(restarted.archived.archiveId);
+    assert.equal(archived.workspace.executionPlan.tasks.length, 4);
   } finally {
     await client.close();
     await rm(root, { recursive: true, force: true });
@@ -230,20 +252,64 @@ test('executor exposes only task execution tools and enforces prerequisites and 
         args: [path.join(packageRoot, 'bin/chatos-solution-studio'), 'mcp-authoring'],
         env: { ...process.env, CHATOS_PLUGIN_DATA_DIR: dataRoot }
       }));
-      const businessPlan = { status: 'approved', basedOnDesignRevision: 1, objective: '更新目标', tasks: workspace.executionPlan.tasks };
+      const changedDesign = await call(author, 'solution_upsert_design', {
+        title: workspace.title,
+        sourceMode: 'existing-project',
+        design: { ...withLayout.design, summary: '执行历史存在后的设计增量' }
+      });
+      assert.equal(changedDesign.executionPlanHasHistory, true);
+      assert.equal(
+        changedDesign.continuation.suggestedActions.find(action => action.skill === 'solution-execution-plan').tool,
+        'solution_append_execution_tasks'
+      );
+      const businessPlan = { status: 'approved', basedOnDesignRevision: changedDesign.design.revision, objective: '更新目标', tasks: workspace.executionPlan.tasks };
       const updated = await call(author, 'solution_upsert_execution_plan', { title: workspace.title, executionPlan: businessPlan });
       assert.deepEqual(updated.executionPlan.statusEvents, withLayout.executionPlan.statusEvents);
       assert.deepEqual(updated.executionPlan.tasks.map(task => task.status), ['done', 'in_progress']);
       assert.deepEqual(updated.executionPlan.positions, withLayout.executionPlan.positions);
       assert.deepEqual(updated.executionPlan.viewport, withLayout.executionPlan.viewport);
+      const reorderedTasks = businessPlan.tasks.map(task => Object.fromEntries(Object.entries(task).reverse()));
+      const reordered = await call(author, 'solution_upsert_execution_plan', {
+        title: workspace.title,
+        executionPlan: { ...businessPlan, tasks: reorderedTasks }
+      });
+      assert.deepEqual(reordered.executionPlan.tasks.map(task => task.status), ['done', 'in_progress']);
+
+      const appendedTask = task('T-003', ['T-001']);
+      const appended = await call(author, 'solution_append_execution_tasks', {
+        workspaceId: saved.workspaceId,
+        expectedRevision: reordered.workspace.revision,
+        basedOnDesignRevision: changedDesign.design.revision,
+        tasks: [appendedTask]
+      });
+      assert.deepEqual(appended.appendedTaskIds, ['T-003']);
+      assert.deepEqual(appended.executionPlan.tasks.map(task => task.status), ['done', 'in_progress', 'planned']);
+      assert.deepEqual(appended.executionPlan.statusEvents, withLayout.executionPlan.statusEvents);
+      assert.deepEqual(appended.executionPlan.positions, withLayout.executionPlan.positions);
+      assert.deepEqual(appended.executionPlan.viewport, withLayout.executionPlan.viewport);
+      const duplicate = await author.callTool({
+        name: 'solution_append_execution_tasks',
+        arguments: {
+          workspaceId: saved.workspaceId,
+          expectedRevision: appended.workspace.revision,
+          basedOnDesignRevision: changedDesign.design.revision,
+          tasks: [task('T-001', [])]
+        }
+      });
+      assert.equal(duplicate.isError, true);
+      assert.match(duplicate.structuredContent.error, /已存在/);
       for (const tasks of [[], businessPlan.tasks.map(task => ({ ...task, title: '篡改定义' }))]) {
         const rejected = await author.callTool({ name: 'solution_upsert_execution_plan', arguments: { title: workspace.title, executionPlan: { ...businessPlan, tasks } } });
         assert.equal(rejected.isError, true);
         assert.match(rejected.structuredContent.error, /不能删除|不能修改/);
+        assert.equal(rejected.structuredContent.recovery.kind, 'append_execution_tasks');
+        assert.equal(rejected.structuredContent.recovery.tool, 'solution_append_execution_tasks');
+        assert.match(rejected.structuredContent.recovery.instruction, /Do not retry solution_upsert_execution_plan/);
       }
       const afterAuthoring = await store.read(saved.workspaceId);
-      assert.equal(afterAuthoring.revision, updated.workspace.revision);
+      assert.equal(afterAuthoring.revision, appended.workspace.revision);
       assert.deepEqual(afterAuthoring.executionPlan.statusEvents, withLayout.executionPlan.statusEvents);
+      assert.equal(afterAuthoring.executionPlan.tasks.length, 3);
     } finally {
       await author.close();
     }

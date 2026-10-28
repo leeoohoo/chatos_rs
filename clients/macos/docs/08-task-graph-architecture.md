@@ -131,7 +131,9 @@ ZStack
 
 ## 加载与分页
 
-- 任务图接口只返回绘图需要的轻量节点，不在图加载阶段逐节点补齐模型配置、Run、过程日志和前置任务详情。
+- 任务图接口只返回绘图需要的轻量节点和每个节点最近一次 Run 的有界展示摘要，不在图加载阶段补齐模型配置、过程日志或 Run 事件。IPC v51 由 Host 在同一快照中用一次窄列窗口查询选出每个 Task 的最新 Run；最终投影只包含状态、时间、重试时间、最多 4,096 字符的终态展示字段及最多 16 KiB 的验收数据，不读取或传输 input、checkpoint、continuation、Tool batch、claim 或完整终态载荷。客户端对省略该字段的旧夹具保留最多 8 路并发兼容查询和终态空结果缓存，但正式 Host 路径不得再产生逐节点 IPC/SQLite N+1；完整 Run 仅在用户打开单项详情时读取。
+- Task 生命周期状态和 `result_status` 必须分别保留：`succeeded + result_status=blocked` 显示“执行结束 · 交付阻塞”，不能显示绿色“已完成”；因此未启动的后续节点显示“前置任务交付阻塞 · 未启动”。
+- Host 汇总、聊天回调、任务图、Inspector 和桌面宠物共用同一组稳定展示状态：`completed`、`execution_failed`、`result_blocked`、`dependency_blocked`、`evidence_incomplete`、`acceptance_failed` 等；未知状态不得由已知状态映射遗漏产生。
 - 选择节点后再请求任务详情；只有切换到“运行详情”时才请求 Run。
 - Run 事件首屏加载 40 条，后续每页 50 条，通过 `event_limit` 与 `event_offset` 增量加载。
 - SwiftUI 的过程和事件时间线使用惰性容器，禁止一次性创建全部诊断事件视图。

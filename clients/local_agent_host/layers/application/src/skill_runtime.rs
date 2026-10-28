@@ -9,6 +9,32 @@ use chatos_local_agent_protocol::{
 };
 use std::collections::BTreeSet;
 
+fn complete_disclosed_tool(tool: &serde_json::Value) -> bool {
+    let valid_digest = tool
+        .get("schema_sha256")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| {
+            value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        });
+    valid_digest
+        && tool
+            .get("invocation_mode")
+            .and_then(serde_json::Value::as_str)
+            == Some("capability_invoke")
+        && (tool.get("input_schema").is_some()
+            || (tool
+                .get("schema_delivery")
+                .and_then(serde_json::Value::as_str)
+                == Some("paged")
+                && tool
+                    .get("schema_chunk")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some()
+                && tool
+                    .get("next_schema_offset")
+                    .is_some_and(serde_json::Value::is_null)))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalToolSkillGateDenial {
     pub error: String,
@@ -67,15 +93,14 @@ impl LocalAgentRuntime {
         run_id: &str,
         skill_ref: &str,
     ) -> Result<bool, LocalAgentRuntimeError> {
+        let Some(run) = self.store.get_run(run_id).await? else {
+            return Ok(false);
+        };
         Ok(self
-            .store
-            .has_successful_tool_invocation_argument(
-                run_id,
-                LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME,
-                "skill_ref",
-                skill_ref,
-            )
-            .await?)
+            .activated_skill_refs_for_run(&run.owner_user_id, run_id)
+            .await?
+            .iter()
+            .any(|activated| activated == skill_ref))
     }
 
     #[doc(hidden)]
@@ -84,15 +109,34 @@ impl LocalAgentRuntime {
         owner_user_id: &str,
         run_id: &str,
     ) -> Result<Vec<String>, LocalAgentRuntimeError> {
-        let mut skill_refs = self
+        let invocations = self
             .store
-            .successful_tool_invocation_argument_values(
+            .successful_tool_invocations_for_run(
                 owner_user_id,
                 run_id,
                 LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME,
-                "skill_ref",
             )
             .await?;
+        let mut skill_refs = invocations
+            .into_iter()
+            .flat_map(|invocation| {
+                let single = invocation
+                    .arguments
+                    .get("skill_ref")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .into_iter();
+                let batch = invocation
+                    .arguments
+                    .get("skill_refs")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string);
+                single.chain(batch).collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
         skill_refs.sort();
         skill_refs.dedup();
         Ok(skill_refs)
@@ -120,22 +164,16 @@ impl LocalAgentRuntime {
             else {
                 continue;
             };
-            let Some(tool_option) = invocation
-                .arguments
-                .get("tool_option")
-                .and_then(serde_json::Value::as_str)
-            else {
-                continue;
-            };
             let Some(result) = invocation.result.as_ref() else {
                 continue;
             };
             let descriptor = result.get("content").unwrap_or(result);
+            let view = descriptor.get("view").and_then(serde_json::Value::as_str);
             if descriptor
                 .get("disclosure_version")
                 .and_then(serde_json::Value::as_u64)
                 != Some(2)
-                || descriptor.get("view").and_then(serde_json::Value::as_str) != Some("tool")
+                || !matches!(view, Some("tool" | "catalog"))
                 || descriptor
                     .get("plugin_option")
                     .and_then(serde_json::Value::as_str)
@@ -150,56 +188,51 @@ impl LocalAgentRuntime {
             else {
                 continue;
             };
-            let Some(tool) = descriptor
+            let Some(tools) = descriptor
                 .get("tools")
                 .and_then(serde_json::Value::as_array)
-                .and_then(|tools| {
-                    let matches = tools
-                        .iter()
-                        .filter(|tool| {
-                            tool.get("tool_option").and_then(serde_json::Value::as_str)
-                                == Some(tool_option)
-                        })
-                        .collect::<Vec<_>>();
-                    (matches.len() == 1).then_some(matches[0])
-                })
             else {
                 continue;
             };
-            let Some(schema_sha256) = tool
-                .get("schema_sha256")
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| {
-                    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-                })
-            else {
-                continue;
-            };
-            if tool
-                .get("invocation_mode")
-                .and_then(serde_json::Value::as_str)
-                != Some("capability_invoke")
-                || !(tool.get("input_schema").is_some()
-                    || (tool
-                        .get("schema_delivery")
+            let requested_tool_option = (view == Some("tool"))
+                .then(|| {
+                    invocation
+                        .arguments
+                        .get("tool_option")
                         .and_then(serde_json::Value::as_str)
-                        == Some("paged")
-                        && tool
-                            .get("schema_chunk")
-                            .and_then(serde_json::Value::as_str)
-                            .is_some()
-                        && tool
-                            .get("next_schema_offset")
-                            .is_some_and(serde_json::Value::is_null)))
-            {
+                })
+                .flatten();
+            if view == Some("tool") && requested_tool_option.is_none() {
                 continue;
             }
-            disclosures.insert(chatos_local_agent_protocol::LocalRunCapabilityDisclosure {
-                plugin_option: plugin_option.to_string(),
-                tool_option: tool_option.to_string(),
-                provider_id: provider_id.to_string(),
-                schema_sha256: schema_sha256.to_ascii_lowercase(),
-            });
+            for tool in tools {
+                let Some(tool_option) = tool.get("tool_option").and_then(serde_json::Value::as_str)
+                else {
+                    continue;
+                };
+                if requested_tool_option.is_some_and(|requested| requested != tool_option)
+                    || tools
+                        .iter()
+                        .filter(|candidate| {
+                            candidate
+                                .get("tool_option")
+                                .and_then(serde_json::Value::as_str)
+                                == Some(tool_option)
+                        })
+                        .count()
+                        != 1
+                    || !complete_disclosed_tool(tool)
+                {
+                    continue;
+                }
+                let schema_sha256 = tool["schema_sha256"].as_str().expect("validated digest");
+                disclosures.insert(chatos_local_agent_protocol::LocalRunCapabilityDisclosure {
+                    plugin_option: plugin_option.to_string(),
+                    tool_option: tool_option.to_string(),
+                    provider_id: provider_id.to_string(),
+                    schema_sha256: schema_sha256.to_ascii_lowercase(),
+                });
+            }
         }
         Ok(disclosures.into_iter().collect())
     }
@@ -266,23 +299,29 @@ impl LocalAgentRuntime {
                 ]
                 .into_iter()
                 .collect::<BTreeSet<_>>();
+                let activated = self
+                    .activated_skill_refs_for_run(&run.owner_user_id, run_id)
+                    .await?
+                    .into_iter()
+                    .collect::<BTreeSet<_>>();
                 let mut missing = Vec::new();
                 for skill_ref in required {
-                    if !self.skill_is_activated(run_id, skill_ref).await? {
+                    if !activated.contains(skill_ref) {
                         missing.push(skill_ref.to_string());
                     }
                 }
                 if missing.is_empty() {
                     Ok(Ok(()))
                 } else {
+                    let batch = missing.iter().take(4).cloned().collect::<Vec<_>>();
                     Ok(Err(LocalToolSkillGateDenial {
                         error: "skill_activation_required".into(),
                         tool_name: tool_name.to_string(),
                         binding_id: binding.binding_id.clone(),
                         next_action: Some(serde_json::json!({
                             "tool_name": LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME,
-                            "arguments": {"skill_ref": missing[0]},
-                            "then": "Activate remaining required_skill_refs, then retry the original invocation."
+                            "arguments": {"skill_refs": batch},
+                            "then": "Activate any remaining required_skill_refs in batches of at most four, then retry the original invocation."
                         })),
                         required_skill_refs: missing,
                         bundle_revision: bundle.bundle_revision,
@@ -302,10 +341,15 @@ impl LocalAgentRuntime {
             let next_action = if error == "skill_activation_required"
                 && !required_skill_refs.is_empty()
             {
+                let batch = required_skill_refs
+                    .iter()
+                    .take(4)
+                    .cloned()
+                    .collect::<Vec<_>>();
                 Some(serde_json::json!({
                     "tool_name": LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME,
-                    "arguments": {"skill_ref": required_skill_refs[0]},
-                    "then": "Activate remaining required_skill_refs, then retry the original invocation."
+                    "arguments": {"skill_refs": batch},
+                    "then": "Activate any remaining required_skill_refs in batches of at most four, then retry the original invocation."
                 }))
             } else {
                 arguments.get("plugin_option").and_then(serde_json::Value::as_str)
@@ -313,7 +357,7 @@ impl LocalAgentRuntime {
                     .map(|(plugin, tool)| serde_json::json!({
                         "tool_name": "capability_describe",
                         "arguments": {"plugin_option": plugin, "tool_option": tool},
-                        "then": "Read this tool's full schema and Skill gate, activate required Skills, then retry with valid arguments. Catalog listing alone is insufficient."
+                        "then": "Read this tool's full schema and Skill gate (a complete catalog entry is sufficient), activate required Skills, then retry with valid arguments."
                     }))
             };
             Ok(Err(LocalToolSkillGateDenial {
@@ -359,7 +403,10 @@ impl LocalAgentRuntime {
             .get("disclosure_version")
             .and_then(serde_json::Value::as_u64)
             != Some(2)
-            || descriptor.get("view").and_then(serde_json::Value::as_str) != Some("tool")
+            || !matches!(
+                descriptor.get("view").and_then(serde_json::Value::as_str),
+                Some("tool" | "catalog")
+            )
             || descriptor
                 .get("binding_schema_version")
                 .and_then(serde_json::Value::as_u64)
@@ -394,6 +441,7 @@ impl LocalAgentRuntime {
                 .get("invocation_mode")
                 .and_then(serde_json::Value::as_str)
                 != Some("capability_invoke")
+            || !complete_disclosed_tool(matched[0])
         {
             return denial("skill_binding_invalid", vec![]);
         }
@@ -438,8 +486,13 @@ impl LocalAgentRuntime {
             return denial("skill_binding_invalid", vec![]);
         }
         let mut missing = vec![];
+        let activated = self
+            .activated_skill_refs_for_run(&run.owner_user_id, &run.run_id)
+            .await?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
         for skill_ref in required {
-            if !self.skill_is_activated(&run.run_id, &skill_ref).await? {
+            if !activated.contains(&skill_ref) {
                 missing.push(skill_ref);
             }
         }
@@ -683,6 +736,41 @@ mod tests {
                     .into(),
             }]
         );
+        let mut catalog_description = description.clone();
+        catalog_description["view"] = json!("catalog");
+        catalog_description["tools"][0]["tool_option"] = json!("tool_2");
+        catalog_description["tools"][0]["schema_sha256"] =
+            json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        fact(
+            &runtime,
+            "capability_describe",
+            json!({"plugin_option":"plugin_1"}),
+            json!({"content":catalog_description,"is_error":false}),
+        )
+        .await;
+        let batched = runtime
+            .capability_disclosures_for_run("user-1", "run-1")
+            .await
+            .unwrap();
+        assert_eq!(batched.len(), 2);
+        assert_eq!(
+            batched
+                .iter()
+                .map(|item| item.tool_option.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tool_1", "tool_2"]
+        );
+        assert_ne!(
+            check(
+                &runtime,
+                json!({"plugin_option":"plugin_1", "tool_option":"tool_2", "arguments":{"format":"pdf"}})
+            )
+            .await
+            .unwrap_err()
+            .error,
+            "skill_binding_required",
+            "a complete catalog entry must be a durable authorization fact"
+        );
         assert_eq!(
             check(&runtime, invoke.clone())
                 .await
@@ -700,7 +788,7 @@ mod tests {
         let denied = check(&runtime, invoke.clone()).await.unwrap_err();
         assert_eq!(
             denied.next_action.unwrap()["arguments"],
-            json!({"skill_ref":pdf})
+            json!({"skill_refs":[pdf]})
         );
         fact(
             &runtime,
@@ -749,6 +837,26 @@ mod tests {
         );
         assert_eq!(check(&restarted, json!({"plugin_option":"plugin_1","tool_option":"tool_1","arguments":{"format":"word"}}))
             .await.unwrap_err().required_skill_refs, vec![word]);
+        fact(
+            &restarted,
+            "agent_skill_activate",
+            json!({"skill_refs":[word,router]}),
+            json!({"is_error":false,"content":{"skills":[]}}),
+        )
+        .await;
+        assert_eq!(
+            restarted
+                .activated_skill_refs_for_run("user-1", "run-1")
+                .await
+                .unwrap(),
+            vec![pdf.to_string(), router.to_string(), word.to_string()]
+        );
+        assert!(check(
+            &restarted,
+            json!({"plugin_option":"plugin_1","tool_option":"tool_1","arguments":{"format":"word"}})
+        )
+        .await
+        .is_ok());
         for arguments in [json!({"format":"unknown"}), json!({}), json!({"format":1})] {
             assert_eq!(
                 check(

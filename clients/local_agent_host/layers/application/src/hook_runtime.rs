@@ -3,8 +3,9 @@
 
 use crate::{LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_local_agent_ports::{
-    LocalHookEventRecord, LocalHookEventSpec, LocalHookInvocationCompletion,
-    LocalHookInvocationRecord, LocalHookInvocationSpec,
+    LocalAsyncHookContextRecord, LocalHookEventRecord, LocalHookEventSpec,
+    LocalHookInvocationCompletion, LocalHookInvocationRecord, LocalHookInvocationSpec,
+    LocalHookOutputBlobRecord,
 };
 use chatos_local_agent_protocol::LocalPluginHookBundleRecord;
 
@@ -37,11 +38,35 @@ impl LocalAgentRuntime {
     }
 
     #[doc(hidden)]
+    pub async fn list_pending_hook_events_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalHookEventRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .list_pending_hook_events(owner_user_id, limit)
+            .await?)
+    }
+
+    #[doc(hidden)]
     pub async fn active_plugin_hook_bundles_for_host_worker(
         &self,
         owner_user_id: &str,
     ) -> Result<Vec<LocalPluginHookBundleRecord>, LocalAgentRuntimeError> {
         Ok(self.store.list_plugin_hook_bundles(owner_user_id).await?)
+    }
+
+    #[doc(hidden)]
+    pub async fn plugin_hook_bundles_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        bundle_ids: &[String],
+    ) -> Result<Vec<LocalPluginHookBundleRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .get_plugin_hook_bundles(owner_user_id, bundle_ids)
+            .await?)
     }
 
     #[doc(hidden)]
@@ -73,6 +98,39 @@ impl LocalAgentRuntime {
         Ok(self
             .store
             .complete_hook_invocation(invocation_id, expected_attempt, completion, self.now()?)
+            .await?)
+    }
+
+    #[doc(hidden)]
+    pub async fn list_hook_output_blobs_for_host_worker(
+        &self,
+        invocation_id: &str,
+    ) -> Result<Vec<LocalHookOutputBlobRecord>, LocalAgentRuntimeError> {
+        Ok(self.store.list_hook_output_blobs(invocation_id).await?)
+    }
+
+    #[doc(hidden)]
+    pub async fn claim_async_hook_contexts_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        session_id: &str,
+        delivery_key: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalAsyncHookContextRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .claim_async_hook_contexts(owner_user_id, session_id, delivery_key, limit, self.now()?)
+            .await?)
+    }
+
+    #[doc(hidden)]
+    pub async fn abandon_running_async_hook_invocations_for_host_worker(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<u64, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .abandon_running_async_hook_invocations(owner_user_id, self.now()?)
             .await?)
     }
 

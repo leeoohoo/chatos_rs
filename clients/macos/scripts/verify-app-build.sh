@@ -5,6 +5,7 @@ APP_PATH=${1:-}
 EXPECTED_CONFIGURATION=${2:-}
 EXPECTED_GIT_COMMIT=${3:-}
 RUN_LAUNCH_SMOKE=${4:-0}
+REQUIRE_SYMBOLS=${5:-0}
 SCRIPT_DIR=${0:A:h}
 if [[ "$(uname -m)" != "arm64" ]]; then
   echo "ChatOS macOS verification requires a native arm64 shell; Intel is unsupported." >&2
@@ -13,6 +14,10 @@ fi
 
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   echo "Usage: verify-app-build.sh APP_PATH [debug|release] [GIT_COMMIT]" >&2
+  exit 2
+fi
+if [[ "$REQUIRE_SYMBOLS" != "0" && "$REQUIRE_SYMBOLS" != "1" ]]; then
+  echo "REQUIRE_SYMBOLS must be 0 or 1" >&2
   exit 2
 fi
 
@@ -109,8 +114,13 @@ codesign --verify --deep --strict "$APP_PATH"
 
 # A signed binary alone does not establish which source/toolchain produced it.
 # This also catches a stale manifest or replacement resource/helper after packaging.
+EVIDENCE_VERIFY_ARGUMENTS=()
+if [[ "$REQUIRE_SYMBOLS" == "1" ]]; then
+  EVIDENCE_VERIFY_ARGUMENTS+=(--require-symbols)
+fi
 /usr/bin/arch -arm64 /usr/bin/python3 -B "$SCRIPT_DIR/build_evidence.py" verify \
-  --app "$APP_PATH" --manifest "$APP_PATH.build-manifest.json"
+  --app "$APP_PATH" --manifest "$APP_PATH.build-manifest.json" \
+  "${EVIDENCE_VERIFY_ARGUMENTS[@]}"
 
 if [[ "$RUN_LAUNCH_SMOKE" == "1" ]]; then
   SMOKE_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/chatos-app-smoke.XXXXXXXX")

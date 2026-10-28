@@ -83,12 +83,12 @@ fn preserves_published_manifest_hashes() {
     let fixtures = [
         (
             include_str!("../../../../plugins/computer-use/chatos.plugin.json"),
-            "9c7d39cc56f0280c5b35b6262e9d2e699372ab4cdadf00248ca451141c8ef615",
+            "013706822a83d0df4e3854a5386dc9884dac94c6decd596b535b63dcd8dfb74e",
             false,
         ),
         (
             include_str!("../../../../plugins/document/chatos.plugin.json"),
-            "e52fa994a58a0c3f655d6b6723a9f76ef04247543464a710b5800a8982dbb209",
+            "fcd2e4610025c0453b502f017f3f7d243ed30df587632e87a46742c516b3a236",
             true,
         ),
     ];

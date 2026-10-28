@@ -1055,7 +1055,7 @@ macOS 已将以下两个 minimal policy 作为统一 Skill 资源直接发布；
 - 每个复杂请求的平均 Task 数。
 - graph 完成、部分失败、阻塞、取消比例。
 - 因写路径冲突被拒绝或串行化的次数。
-- followup 导致 continue/cancel/clarify 的比例。
+- followup 导致 continue/cancel/clarify/replace 的比例，以及 replace 从冻结到替代图提交的成功率。
 - graph callback 数量和用户主动打开任务详情的比例。
 
 指标用于发现过度拆分或仍然偏向单 Task，不能用于绕过用户权限或收集任务正文。

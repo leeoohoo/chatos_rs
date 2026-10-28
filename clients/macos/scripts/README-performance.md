@@ -35,7 +35,63 @@ macOS 仅支持 arm64，不提供 Intel 或 universal 构建。统一入口使�
 
 夹具为 20 Agent、10 房间、500 消息、500 Run、100 Todo 和一份 128 KiB 附件。记录的是夹具规则/源码哈希：UUID/时间戳仍有变化，所以 `dataset_byte_sha256` 明确为 null，不伪称固定数据库文件。不能在一次运行期间修改源码，也不要并行运行使用同一 Swift scratch path 的打包/测试。
 
-此基准没有测量 App 切页、首个可交互帧、主线程 hang、physical footprint、Host IPC 或媒体链路；小样本分位数不是发布 SLO 证明。应在固定机器、数据集、供电、热状态、缓存和负载下比较，不把不同运行环境直接合并。正式导航脚本、signpost/trace、真实组合负载与干净提交的基线/候选对照仍待完成。
+此基准没有测量 App 切页、首个可交互帧、主线程 hang、physical footprint、Host IPC 或媒体链路；小样本分位数不是发布 SLO 证明。应在固定机器、数据集、供电、热状态、缓存和负载下比较，不把不同运行环境直接合并。正式导航脚本、真实组合负载与干净提交的基线/候选对照仍待完成。
+
+基线与候选都完成后，用回归门禁比较：
+
+```sh
+zsh clients/macos/scripts/compare-performance-baselines.sh \
+  --baseline /绝对路径/baseline/run.json \
+  --candidate /绝对路径/candidate/run.json \
+  --output /绝对路径/comparison.json
+```
+
+比较器要求两份结果都完整、源码采集期间未变化，并且夹具规则、夹具源码、硬件、macOS、架构和供电来源一致。它检查全部存储指标的 P50/P95/P99；默认允许最多 15% 相对波动或 0.25 ms 绝对噪声（取较大者），超限返回非零状态并在 JSON 中列出失败项。阈值可显式覆盖，但不能用更宽阈值把不同机器或夹具强行合并。该门禁仍只代表存储工程基准，不会把它误标成完整 App 性能验收。
+
+## 固定 App CPU 组合场景
+
+```sh
+zsh clients/macos/scripts/run-app-performance-scenario.sh
+```
+
+该入口使用 Release XCTest 和纯内存合成数据，并行执行 1,000-turn 时间线构建、真实 AppKit/SwiftUI 千行时间线的首次布局与滚动、100 项任务板 presentation、超过 1 MB 的 Markdown 后台解析以及超过 600,000 UTF-16 字符的代码预览回退。它验证千行时间线始终只构造可见行，同时测量 MainActor 最大调度间隙；默认执行三轮并把原始样本、环境、测试二进制身份、P50/P95/P99 与宽松安全上限写入 `.build/performance/app-scenario-release-*/run.json`。
+
+此场景不会登录、打开活动账户数据库或控制当前 App，适合成为每次 Release 性能回归的快速 CPU/UI 虚拟化门禁。它不能替代真实账户窗口导航、滚动帧率、WindowServer、内存或进程组 soak；这些仍需在隔离 Release 实例上验收。
+
+## App 性能 Signpost
+
+Release 与 Debug 客户端都在 `com.chatos.native / Performance` 下发布以下稳定 interval，可在 Instruments 的 Time Profiler、SwiftUI 或 Logging 录制中对齐交互和主线程热点：
+
+- `ConversationTimelineBuild`：消息/任务版本变化后的时间线快照构建。
+- `MarkdownParse`、`MarkdownLayout`：Markdown 缓存未命中的后台解析与 AppKit 测量。
+- `TodoPresentationBuild`：任务板轻量 Run presentation 构建。
+- `PetFrameUpdate`：单个 CALayer 精灵帧提交。
+- `ActivationRecoveryDispatch`：应用重新激活时幂等恢复任务的同步调度成本。
+- `CodeHighlightScan`、`CodeHighlightApply`：后台语法扫描和主线程最小样式提交。
+
+在不停止当前客户端的情况下，可附加 60 秒 Time Profiler 检查主线程热点、Hangs 和 SwiftUI invalidation：
+
+```sh
+xcrun xctrace record \
+  --template 'Time Profiler' \
+  --attach ChatOSSwift \
+  --time-limit 60s \
+  --output /tmp/ChatOS-performance.trace
+```
+
+后附加适合检查 Hangs 和调用栈，但不能把自定义 interval 缺失解释为业务路径没有执行：`OSLog` 可能已在 Instruments 附加前初始化，后附加不保证启用 `Performance` 类别。需要 Signpost 证据时，应让 Logging 模板从验收进程启动前开始录制；隔离启动示例：
+
+```sh
+xcrun xctrace record \
+  --template 'Logging' \
+  --time-limit 60s \
+  --output /tmp/ChatOS-signposts.trace \
+  --env CFFIXED_USER_HOME=/绝对路径/isolated-home \
+  --env CHATOS_BUILD_SMOKE_TEST=1 \
+  --launch -- /绝对路径/ChatOS.app/Contents/MacOS/ChatOSSwift
+```
+
+录制期间按固定验证矩阵执行对应操作；结束后在 `com.chatos.native / Performance` 下检查上述 interval。真实账户导航的 Signpost 录制必须从目标客户端启动前开始，因此需要明确的重启验收窗口；隔离 smoke 只能验证启动、激活和空闲路径，不能替代真实账户窗口。Signpost 只提供精确边界，不会自动生成输入、判断 P95/P99 是否达标，也不替代固定机器上的基线/候选对照。
 
 ## 进程组资源曲线与 8 小时 soak
 
@@ -63,12 +119,16 @@ zsh clients/macos/scripts/run-process-group-soak.sh \
 
 原始样本写入 `samples.jsonl`，每项保留 PID/start-time 身份、进程树、physical footprint、resident size、累计 CPU、累计磁盘读写、FD 和内核线程；`run.json` 保存聚合 p50/p95/p99、首尾/峰值、增减步数和验收失败原因。显式临时目录使用 `lstat` 有界扫描，绝不跟随 symlink。正式验收模式同时校验 App 与构建 manifest 的完整清单，只接受 `clean-release-build`；并拒绝少于 8 小时、间隔大于 5 秒、少于 5,000 样本或没有明确资源上限/进程/临时目录的运行，短诊断不能生成 `passed`。
 
+采集输出目录必须位于所有 `--temporary-root` 之外；否则采集器自己持续写入的 `samples.jsonl` 会被误计为客户端临时文件增长，入口会在开始采集前直接拒绝这种自干扰配置。
+
 采集器不生成负载，也不能从内核线程数推断 Swift Task 或 Notification observer 数；200 次导航、账户循环、内部 Task/observer 计数与主线程 hang 仍须由后续 App 内验收驱动器提供。Plugin 是动态名称，正式命令应额外加入该验收插件的真实 executable 名称。
 
 ## 工具回归
 
 ```sh
 /usr/bin/arch -arm64 /usr/bin/python3 -B -m unittest discover -s clients/macos/scripts/tests -v
+zsh -n clients/macos/scripts/compare-performance-baselines.sh
+zsh -n clients/macos/scripts/run-app-performance-scenario.sh
 zsh -n clients/macos/scripts/package-app.sh
 zsh -n clients/macos/scripts/verify-app-build.sh
 zsh -n clients/macos/scripts/run-process-group-soak.sh

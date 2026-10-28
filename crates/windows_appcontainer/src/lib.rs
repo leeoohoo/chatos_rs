@@ -73,10 +73,16 @@ mod app_data_transaction {
     ) -> io::Result<()> {
         fs::create_dir_all(directory)?;
         if destination.parent() != Some(directory) || destination.exists() {
-            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "destination is not new"));
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "destination is not new",
+            ));
         }
         let temporary = directory.join(format!("{temporary_prefix}{}.tmp", uuid::Uuid::new_v4()));
-        let mut file = OpenOptions::new().create_new(true).write(true).open(&temporary)?;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
         file.write_all(bytes)?;
         file.flush()?;
         file.sync_all()?;
@@ -92,7 +98,10 @@ mod app_data_transaction {
 #[cfg(windows)]
 mod terminal_runtime {
     pub mod process {
-        use std::{io, os::windows::io::{AsRawHandle, FromRawHandle, RawHandle}};
+        use std::{
+            io,
+            os::windows::io::{AsRawHandle, FromRawHandle, RawHandle},
+        };
         use windows_sys::Win32::System::JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
             SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
@@ -107,7 +116,8 @@ mod terminal_runtime {
                 if job.is_null() {
                     return Err(io::Error::last_os_error());
                 }
-                let owned = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(job as RawHandle) };
+                let owned =
+                    unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(job as RawHandle) };
                 let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
                 limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
                 let configured = unsafe {

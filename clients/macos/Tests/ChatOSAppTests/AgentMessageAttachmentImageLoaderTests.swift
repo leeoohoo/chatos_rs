@@ -17,7 +17,8 @@ final class AgentMessageAttachmentImageLoaderTests: XCTestCase {
             maximumDisplayPixelSize: 64,
             temporaryDirectory: fixture.root,
             availableCapacityOverride: Int64.max,
-            mediaWorker: TestMediaWorkerImageNormalizer()
+            mediaWorker: TestMediaWorkerImageNormalizer(),
+            codeReadWorker: AppCoreCodeReadWorker()
         )
 
         XCTAssertEqual(decoded.image.width, 64)
@@ -72,7 +73,8 @@ final class AgentMessageAttachmentImageLoaderTests: XCTestCase {
             maximumDisplayPixelSize: 64,
             temporaryDirectory: fixture.root,
             availableCapacityOverride: Int64.max,
-            mediaWorker: TestMediaWorkerImageNormalizer()
+            mediaWorker: TestMediaWorkerImageNormalizer(),
+            codeReadWorker: AppCoreCodeReadWorker()
         )
         let first = AgentMessageAttachmentThumbnail(
             attachment: firstPayload.attachment,
@@ -115,7 +117,8 @@ final class AgentMessageAttachmentImageLoaderTests: XCTestCase {
         do {
             _ = try await AgentMessageAttachmentImageLoader.load(
                 payload,
-                ownerUserID: "test-user"
+                ownerUserID: "test-user",
+                codeReadWorker: AppCoreCodeReadWorker()
             )
             XCTFail("Invalid image attachment was accepted")
         } catch AgentAttachmentPresentationError.invalidSize {

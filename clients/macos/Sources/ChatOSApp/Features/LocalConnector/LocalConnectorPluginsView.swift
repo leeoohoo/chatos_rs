@@ -9,6 +9,7 @@ struct LocalConnectorPluginsView: View {
     @State private var browserExtensionInstalled = false
     @State private var browserExtensionStatusTask: Task<Void, Never>?
     @State private var showsCustomInstaller = false
+    @State private var expandedHookHistoryPluginIDs: Set<String> = []
 
     var body: some View {
         SettingsGroupedPage {
@@ -193,6 +194,7 @@ struct LocalConnectorPluginsView: View {
                 }
                 if plugin.installed, !plugin.requiresReinstall {
                     permissionSection(plugin, isOperating: isOperating)
+                    hookHistorySection(plugin)
                 }
                 if plugin.installed,
                    !plugin.requiresReinstall,
@@ -240,6 +242,169 @@ struct LocalConnectorPluginsView: View {
                 }
                 .disabled(isOperating)
             }
+        }
+    }
+
+    private func hookHistorySection(_ plugin: LocalConnectorPlugin) -> some View {
+        let isExpanded = expandedHookHistoryPluginIDs.contains(plugin.id)
+        let isLoading = viewModel.pluginHookHistoryLoadingIDs.contains(plugin.id)
+        let page = viewModel.pluginHookHistory[plugin.id]
+        return VStack(alignment: .leading, spacing: 10) {
+            Divider()
+            DisclosureGroup(isExpanded: Binding(
+                get: { expandedHookHistoryPluginIDs.contains(plugin.id) },
+                set: { expanded in
+                    if expanded {
+                        expandedHookHistoryPluginIDs.insert(plugin.id)
+                        if !viewModel.pluginHookHistoryLoadedIDs.contains(plugin.id) {
+                            viewModel.loadPluginHookHistory(id: plugin.id, reset: true)
+                        }
+                    } else {
+                        expandedHookHistoryPluginIDs.remove(plugin.id)
+                    }
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if isLoading, page == nil {
+                        ProgressView(model.localized(
+                            "正在读取 Hook 运行记录…",
+                            english: "Loading Hook activity…"
+                        ))
+                        .controlSize(.small)
+                    } else if let error = viewModel.pluginHookHistoryErrors[plugin.id] {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .appFont(.caption)
+                            .foregroundStyle(.orange)
+                    } else if page?.invocations.isEmpty == true {
+                        Text(model.localized(
+                            "暂时没有 Hook 运行记录。",
+                            english: "No Hook activity yet."
+                        ))
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    if let page {
+                        ForEach(page.invocations) { invocation in
+                            hookInvocationRow(invocation)
+                        }
+                        if page.nextBeforeInvocationID != nil {
+                            Button(model.localized("加载更早记录", english: "Load Earlier")) {
+                                viewModel.loadPluginHookHistory(id: plugin.id)
+                            }
+                            .disabled(isLoading)
+                        }
+                    }
+                }
+                .padding(.top, 8)
+            } label: {
+                HStack {
+                    Label(
+                        model.localized("Hook 运行诊断", english: "Hook Diagnostics"),
+                        systemImage: "waveform.path.ecg"
+                    )
+                    .appFont(.subheadline.weight(.semibold))
+                    Spacer()
+                    if isExpanded {
+                        Button {
+                            viewModel.loadPluginHookHistory(id: plugin.id, reset: true)
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(isLoading)
+                        .help(model.localized("刷新 Hook 运行记录", english: "Refresh Hook activity"))
+                    }
+                }
+            }
+        }
+    }
+
+    private func hookInvocationRow(
+        _ invocation: LocalConnectorPluginHookInvocation
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: hookStatusSymbol(invocation))
+                .foregroundStyle(hookStatusColor(invocation))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(invocation.eventType)
+                        .appFont(.caption.weight(.semibold))
+                    Text(invocation.isAsync
+                         ? model.localized("异步", english: "Async")
+                         : model.localized("同步", english: "Sync"))
+                        .appFont(.caption2.weight(.medium))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.quaternary, in: Capsule())
+                    Text(invocation.hookID)
+                        .appFont(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Text(hookDiagnosticSummary(invocation))
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                Text(Date(timeIntervalSince1970: Double(invocation.updatedAtUnixMs) / 1_000),
+                     format: .dateTime.year().month().day().hour().minute().second())
+                    .appFont(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(8)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func hookDiagnosticSummary(
+        _ invocation: LocalConnectorPluginHookInvocation
+    ) -> String {
+        let outputSum = invocation.stdoutBytes.addingReportingOverflow(invocation.stderrBytes)
+        let outputBytes = outputSum.overflow ? UInt64.max : outputSum.partialValue
+        var parts = [model.localized(
+            "耗时 \(invocation.durationMs) ms",
+            english: "\(invocation.durationMs) ms"
+        )]
+        if invocation.timedOut {
+            parts.append(model.localized("已超时", english: "Timed out"))
+        } else if let exitCode = invocation.exitCode {
+            parts.append(model.localized("退出码 \(exitCode)", english: "Exit \(exitCode)"))
+        }
+        if invocation.attempt > 1 {
+            parts.append(model.localized(
+                "第 \(invocation.attempt) 次尝试",
+                english: "Attempt \(invocation.attempt)"
+            ))
+        }
+        if invocation.stdoutOverflow || invocation.stderrOverflow {
+            parts.append(model.localized("输出已截断", english: "Output truncated"))
+        }
+        if outputBytes > 0 {
+            parts.append(ByteCountFormatter.string(
+                fromByteCount: Int64(clamping: outputBytes),
+                countStyle: .file
+            ))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func hookStatusSymbol(_ invocation: LocalConnectorPluginHookInvocation) -> String {
+        if invocation.timedOut { return "clock.badge.exclamationmark.fill" }
+        switch invocation.status {
+        case "succeeded": return "checkmark.circle.fill"
+        case "running": return "arrow.triangle.2.circlepath"
+        case "blocked": return "hand.raised.circle.fill"
+        default: return "xmark.circle.fill"
+        }
+    }
+
+    private func hookStatusColor(_ invocation: LocalConnectorPluginHookInvocation) -> Color {
+        if invocation.timedOut { return .orange }
+        switch invocation.status {
+        case "succeeded": return .green
+        case "running": return .blue
+        case "blocked": return .orange
+        default: return .red
         }
     }
 

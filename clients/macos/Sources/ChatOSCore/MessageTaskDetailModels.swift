@@ -4,11 +4,24 @@ public struct MessageTaskReference: Identifiable, Sendable, Equatable {
     public let id: String
     public var title: String?
     public var status: String?
+    /// Internal delivery/dependency gate reported by the prerequisite worker.
+    /// This is intentionally separate from the prerequisite Task lifecycle status.
+    public var resultStatus: String?
+    /// Stable presentation status after combining lifecycle and result status.
+    public var displayStatus: String?
 
-    public init(id: String, title: String? = nil, status: String? = nil) {
+    public init(
+        id: String,
+        title: String? = nil,
+        status: String? = nil,
+        resultStatus: String? = nil,
+        displayStatus: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.status = status
+        self.resultStatus = resultStatus
+        self.displayStatus = displayStatus
     }
 }
 

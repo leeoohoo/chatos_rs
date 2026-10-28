@@ -64,7 +64,7 @@ extension StoryWorkbenchView {
                 .disabled(editingLocked)
         }
         .padding(.horizontal, 24).padding(.vertical, 14)
-        .background(.ultraThinMaterial)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     var sectionBar: some View {

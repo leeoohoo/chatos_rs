@@ -2,7 +2,7 @@ import ChatOSCore
 import SwiftUI
 
 struct StoryRelationGraphView: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     let project: StoryProject
     let selectedSegmentID: String?
     let openAsset: (String) -> Void
@@ -555,7 +555,7 @@ private extension GraphNode.Kind {
         }
     }
 
-    @MainActor func title(_ model: AppModel) -> String {
+    func title(_ model: StoryViewContext) -> String {
         switch self {
         case .segment: model.localized("分段", english: "Segment")
         case .character: model.localized("人物", english: "Character")

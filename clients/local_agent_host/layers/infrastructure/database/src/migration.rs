@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    hook_event_store::SCHEMA_V39,
+    hook_event_store::{SCHEMA_V39, SCHEMA_V40, SCHEMA_V41, SCHEMA_V42, SCHEMA_V43},
     plugin_hook_store::SCHEMA_V38,
     receipt_cache::SCHEMA_V36,
     receipt_result::{FINISH_SCHEMA_V37, SCHEMA_V37},
@@ -11,13 +11,13 @@ use super::{
         SCHEMA_V16, SCHEMA_V17, SCHEMA_V18, SCHEMA_V19, SCHEMA_V2, SCHEMA_V20, SCHEMA_V21,
         SCHEMA_V22, SCHEMA_V23, SCHEMA_V24, SCHEMA_V25, SCHEMA_V26, SCHEMA_V27, SCHEMA_V28,
         SCHEMA_V29, SCHEMA_V3, SCHEMA_V30, SCHEMA_V31, SCHEMA_V32, SCHEMA_V33, SCHEMA_V34,
-        SCHEMA_V35, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9,
+        SCHEMA_V35, SCHEMA_V4, SCHEMA_V44, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9,
     },
     ClientStorageError, SqliteClientStorage, SqliteResultExt,
 };
 use sqlx::SqliteConnection;
 
-pub(super) const SCHEMA_VERSION: i64 = 39;
+pub(super) const SCHEMA_VERSION: i64 = 44;
 
 pub(super) const fn requires_compaction(previous_version: i64) -> bool {
     previous_version < 33
@@ -106,6 +106,11 @@ impl SqliteClientStorage {
             (37, SCHEMA_V37),
             (38, SCHEMA_V38),
             (39, SCHEMA_V39),
+            (40, SCHEMA_V40),
+            (41, SCHEMA_V41),
+            (42, SCHEMA_V42),
+            (43, SCHEMA_V43),
+            (44, SCHEMA_V44),
         ] {
             if version < next_version {
                 Self::begin_immediate(&mut connection).await.db()?;

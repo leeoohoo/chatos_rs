@@ -76,7 +76,9 @@ const EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT: &str = "上一轮响应没有返回�
 const EMPTY_FINAL_RESPONSE_ERROR: &str = "模型未返回可展示的最终结果";
 #[cfg(feature = "local-agent-loop")]
 const MAX_CONSECUTIVE_FAILED_TOOL_BATCHES: usize = 8;
-const ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS: usize = 200_000;
+// Durable local runs can execute for many tool iterations. Compact before old
+// screenshots and discovery results dominate every later model request.
+const ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS: usize = 64_000;
 
 impl AiRuntime {
     pub fn builder() -> crate::builder::AiRuntimeBuilder {

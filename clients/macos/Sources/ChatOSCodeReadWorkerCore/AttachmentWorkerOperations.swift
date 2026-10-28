@@ -280,12 +280,25 @@ struct AttachmentWorkerOperations {
         guard Darwin.fsync(temporary) == 0 else {
             throw CodeReadWorkerCoreError.attachmentWorkspaceUnavailable
         }
-        let linkResult = temporaryName.withCString { temporaryPointer in
+        // Install without creating a second hard link. With linkat(2), the winning
+        // importer used to leave both the temporary name and `source.*` attached to
+        // the same inode until its defer ran. A concurrent idempotent importer could
+        // open `source.*` during that window; unlinking the winner's temporary name
+        // then changed ctime while the loser was hashing and made an unchanged file
+        // look like a workspace conflict. RENAME_EXCL keeps no post-install alias, so
+        // the published inode is stable as soon as another process can observe it.
+        let installResult = temporaryName.withCString { temporaryPointer in
             name.withCString { namePointer in
-                Darwin.linkat(directory, temporaryPointer, directory, namePointer, 0)
+                Darwin.renameatx_np(
+                    directory,
+                    temporaryPointer,
+                    directory,
+                    namePointer,
+                    UInt32(RENAME_EXCL)
+                )
             }
         }
-        if linkResult != 0, errno != EEXIST {
+        if installResult != 0, errno != EEXIST {
             throw CodeReadWorkerCoreError.attachmentWorkspaceUnavailable
         }
         let installed = name.withCString {

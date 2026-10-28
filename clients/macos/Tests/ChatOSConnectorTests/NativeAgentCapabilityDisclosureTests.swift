@@ -42,6 +42,18 @@ final class NativeAgentCapabilityDisclosureTests: XCTestCase {
             arguments: #"{"skill_ref":"plugin-skill:plugin_1:router"}"#,
             schema: activate.schema
         )
+        try AgentSchemaValidator.validate(
+            arguments: #"{"skill_refs":["plugin-skill:plugin_1:router","plugin-skill:plugin_1:writer"]}"#,
+            schema: activate.schema
+        )
+        XCTAssertThrowsError(try AgentSchemaValidator.validate(
+            arguments: #"{"skill_refs":[]}"#,
+            schema: activate.schema
+        ))
+        XCTAssertThrowsError(try AgentSchemaValidator.validate(
+            arguments: #"{"skill_refs":["a","b","c","d","e"]}"#,
+            schema: activate.schema
+        ))
         XCTAssertThrowsError(try AgentSchemaValidator.validate(
             arguments: #"{"plugin_option":"plugin_1","skill_name":"router"}"#,
             schema: activate.schema
@@ -89,23 +101,29 @@ final class NativeAgentCapabilityDisclosureTests: XCTestCase {
         return try XCTUnwrap(result.jsonObject)
     }
 
-    func testLargeCatalogIsPagedWithoutSchemasAndHasStableTokensAcrossSearch() throws {
+    func testLargeCatalogBatchesFrozenSchemasWithinBudgetAndKeepsStableTokens() throws {
         let source = descriptor()
         var offset = 0
         var tokens: [String] = []
+        var completeSchemaCount = 0
         repeat {
             let page = try checked(NativeAgentCapabilityDisclosure.response(source, offset: offset))
             XCTAssertEqual(page["view"], .string("catalog"))
             let tools = try XCTUnwrap(page["tools"]?.jsonArray)
             XCTAssertLessThanOrEqual(tools.count, 8)
             for tool in tools {
-                XCTAssertNil(tool.jsonObject?["input_schema"])
-                XCTAssertNil(tool.jsonObject?["skill_gate"])
+                if tool.jsonObject?["input_schema"] != nil {
+                    completeSchemaCount += 1
+                    XCTAssertNotNil(tool.jsonObject?["schema_sha256"])
+                    XCTAssertNotNil(tool.jsonObject?["schema_total_chars"])
+                    XCTAssertNotNil(tool.jsonObject?["skill_gate"])
+                }
                 tokens.append(try XCTUnwrap(tool.jsonObject?["tool_option"]?.jsonString))
             }
             if case let .number(next)? = page["next_offset"] { offset = Int(next) } else { break }
         } while true
         XCTAssertEqual(tokens, (1...39).map { "tool_\($0)" })
+        XCTAssertGreaterThan(completeSchemaCount, 0)
         let search = try checked(NativeAgentCapabilityDisclosure.response(source, query: "browser_session_open"))
         XCTAssertEqual(search["tools"]?.jsonArray?.count, 1)
         XCTAssertEqual(search["tools"]?.jsonArray?.first?.jsonObject?["tool_option"], .string("tool_27"))
@@ -222,6 +240,12 @@ func readCapabilityTestDefinitions(_ provider: any AgentToolProvider, pluginOpti
     } while true
     var tools: [NativeJSONValue] = []
     for entry in indices {
+        if entry.jsonObject?["input_schema"] != nil,
+           entry.jsonObject?["schema_sha256"] != nil,
+           entry.jsonObject?["skill_gate"] != nil {
+            tools.append(entry)
+            continue
+        }
         let token = try XCTUnwrap(entry.jsonObject?["tool_option"]?.jsonString)
         let response = try await provider.execute(.init(id: "detail-\(token)", name: "capability_describe",
             arguments: NativeJSONValue.object(["plugin_option": .string(pluginOption), "tool_option": .string(token)]).canonicalJSONString))

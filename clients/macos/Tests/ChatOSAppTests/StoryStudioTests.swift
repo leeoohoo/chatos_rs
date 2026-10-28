@@ -53,6 +53,45 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertNil(vm.selectedProjectID, "Entering the tab should start at the list")
     }
 
+    func testSameAccountActivationRetriesAfterInitialCatalogFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryStudioRetryTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        let project = makeProject()
+        let catalog = RetryingStoryProjectCatalog(project: project)
+        let service = StoryTestService()
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            projectCatalog: catalog
+        )
+
+        vm.activate(userID: "alice")
+        for _ in 0..<100 where vm.isLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(vm.projects.isEmpty)
+        XCTAssertNotNil(vm.errorMessage)
+
+        vm.activate(userID: "alice")
+        for _ in 0..<100 where vm.isLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        XCTAssertEqual(vm.projects.map(\.id), [project.id])
+        XCTAssertNil(vm.errorMessage)
+        let calls = await catalog.callCount()
+        XCTAssertEqual(calls, 2)
+    }
+
     func testLateProjectCatalogPageCannotReplaceTheCurrentAccount() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "StoryStudioCatalogTests-\(UUID().uuidString)",
@@ -1201,7 +1240,12 @@ final class StoryStudioTests: XCTestCase {
         let store = StoryProjectStore(root: root)
         addTeardownBlock { if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) } }
         let service = StoryTestService()
-        let vm = StoryStudioViewModel(media: service, planner: service, store: store)
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            mediaWorker: TestMediaWorkerImageNormalizer()
+        )
         vm.activate(userID: "alice"); try await idle(vm)
         return (vm, store, service)
     }
@@ -1296,6 +1340,29 @@ private actor DeferredStoryProjectCatalog: StoryProjectCatalogLoading {
             returning: .init(projects: projects)
         )
     }
+}
+
+private actor RetryingStoryProjectCatalog: StoryProjectCatalogLoading {
+    enum TestError: Error { case firstAttempt }
+
+    private let project: StoryProject
+    private var calls = 0
+
+    init(project: StoryProject) {
+        self.project = project
+    }
+
+    func loadStoryProjects(
+        ownerUserID: String,
+        after cursor: StoryProjectCatalogCursor?,
+        limit: Int
+    ) async throws -> StoryProjectCatalogPage {
+        calls += 1
+        if calls == 1 { throw TestError.firstAttempt }
+        return .init(projects: [project])
+    }
+
+    func callCount() -> Int { calls }
 }
 
 private actor DeferredStoryProjectMutationPersistence: StoryProjectMutationPersisting {

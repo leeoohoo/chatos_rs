@@ -277,7 +277,8 @@ extension LocalAgentConversationMessageRecord {
 
     private static func callbackStatus(_ status: String?, event: String? = nil) -> String? {
         switch status?.lowercased() {
-        case "execution_failed", "acceptance_failed", "evidence_incomplete": return status?.lowercased()
+        case "execution_failed", "acceptance_failed", "evidence_incomplete",
+             "result_blocked", "dependency_blocked": return status?.lowercased()
         case "completed", "succeeded", "success", "done": return "completed"
         case "failed", "error": return "failed"
         case "blocked": return "blocked"

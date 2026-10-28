@@ -1,0 +1,12 @@
+{
+  "protocol_version": 50,
+  "command_id": "contract-plugin-hook-invocations-1",
+  "command": {
+    "type": "list_plugin_hook_invocations",
+    "owner_user_id": "user-1",
+    "plugin_id": "plugin-1",
+    "before_updated_at_unix_ms": null,
+    "before_invocation_id": null,
+    "limit": 20
+  }
+}

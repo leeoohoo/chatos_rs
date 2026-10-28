@@ -6,8 +6,8 @@ use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_ports::{IdempotentCommand, LocalAgentRunStore};
 use chatos_local_agent_protocol::{
     ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CommitToolCommand,
-    CreateRunCommand, CreateTaskGraphCommand, GetTaskGraphCommand, LocalAgentToolCall,
-    LocalTaskSpec, LocalTaskStatus, LOCAL_AGENT_PROTOCOL_VERSION,
+    CreateRunCommand, CreateTaskGraphCommand, GetTaskGraphCommand, LocalAgentRunClaim,
+    LocalAgentToolCall, LocalTaskSpec, LocalTaskStatus, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::Value;
 
@@ -354,7 +354,7 @@ async fn a_normally_completed_run_owns_success_independently_of_internal_result(
         else {
             panic!("final claim")
         };
-        let finish = |content: Value| {
+        let finish = |claim: &LocalAgentRunClaim, content: Value| {
             HostCommand::CommitStep(CommitStepCommand {
                 owner_user_id: "user-1".into(),
                 run_id: claim.run.run_id.clone(),
@@ -366,11 +366,67 @@ async fn a_normally_completed_run_owns_success_independently_of_internal_result(
             })
         };
         assert!(runtime
-            .try_handle(envelope("rewrite", finish(json!("Unchecked rewrite"))))
+            .try_handle(envelope(
+                "rewrite",
+                finish(&claim, json!("Unchecked rewrite"))
+            ))
             .await
             .is_err());
+        let claim = if result_status == "blocked" {
+            runtime
+                .try_handle(envelope(
+                    "subagent-stop-continue",
+                    HostCommand::CommitStep(CommitStepCommand {
+                        owner_user_id: "user-1".into(),
+                        run_id: claim.run.run_id.clone(),
+                        claim_token: claim.claim_token,
+                        expected_version: claim.run.version,
+                        outcome: LocalAgentStepOutcome::Continue {
+                            checkpoint: json!({
+                                "response": {
+                                    "content": report["final_response"],
+                                    "task_acceptance": report,
+                                    "request_input_items": [],
+                                    "response_output_items": []
+                                },
+                                "continuation": {
+                                    "reason": "trusted_plugin_hook_stop_block",
+                                    "input_items": [],
+                                    "stop_hook_block": {
+                                        "count": 1,
+                                        "reason_sha256": "a".repeat(64),
+                                        "event": "SubagentStop"
+                                    }
+                                }
+                            }),
+                        },
+                    }),
+                ))
+                .await
+                .unwrap();
+            let HostResult::Claim { claim: Some(claim) } = runtime
+                .try_handle(envelope(
+                    "post-subagent-stop-claim",
+                    HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                        owner_user_id: "user-1".into(),
+                        worker_id: "worker".into(),
+                        lease_duration_ms: 10000,
+                    }),
+                ))
+                .await
+                .unwrap()
+            else {
+                panic!("post SubagentStop claim")
+            };
+            claim
+        } else {
+            claim
+        };
         runtime
-            .try_handle(envelope("finish", finish(report["final_response"].clone())))
+            .try_handle(envelope(
+                "finish",
+                finish(&claim, report["final_response"].clone()),
+            ))
             .await
             .unwrap();
         let HostResult::TaskGraph { graph } = runtime

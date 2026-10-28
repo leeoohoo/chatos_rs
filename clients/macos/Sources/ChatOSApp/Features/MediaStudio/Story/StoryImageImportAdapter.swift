@@ -1,9 +1,19 @@
 import ChatOSCore
+import ChatOSMediaWorkerClient
 import Foundation
 
 struct StoryImageImportAdapter: StoryImageImporting {
     let store: StoryProjectStore
+    let mediaWorker: any MediaWorkerImageNormalizing
     private let confirmations = StoryMediaConfirmationUseCase()
+
+    init(
+        store: StoryProjectStore,
+        mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared
+    ) {
+        self.store = store
+        self.mediaWorker = mediaWorker
+    }
 
     func importGeneratedStoryImage(
         command: StoryImageImportCommand,
@@ -11,7 +21,8 @@ struct StoryImageImportAdapter: StoryImageImporting {
     ) async throws -> StoryProject {
         let pngFile = try await MediaStudioImageLoader.normalizedPNGFile(
             for: asset,
-            ownerUserID: command.ownerUserID
+            ownerUserID: command.ownerUserID,
+            mediaWorker: mediaWorker
         )
         return try await persistNormalizedImage(pngFile, command: command)
     }
@@ -30,7 +41,8 @@ struct StoryImageImportAdapter: StoryImageImporting {
                     mimeType: "image/png",
                     url: fileURL
                 ),
-                ownerUserID: command.ownerUserID
+                ownerUserID: command.ownerUserID,
+                mediaWorker: mediaWorker
             )
         }
         return try await persistNormalizedImage(pngFile, command: command)

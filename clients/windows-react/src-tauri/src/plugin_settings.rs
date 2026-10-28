@@ -2609,6 +2609,7 @@ mod tests {
                 event: "SessionStart".into(),
                 matcher: None,
                 command: "node hook.js".into(),
+                is_async: false,
                 timeout_ms: 5_000,
                 additional_context_limit: 65_536,
             }],

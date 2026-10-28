@@ -44,6 +44,10 @@ struct SkillActivationResponse: Encodable {
     let resources: [String]
 }
 
+struct SkillActivationBatchResponse: Encodable {
+    let skills: [SkillActivationResponse]
+}
+
 struct SkillResourceResponse: Encodable {
     let skillRef: String
     let relativePath: String

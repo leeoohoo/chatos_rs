@@ -29,6 +29,7 @@ impl CommandReceiptPolicy {
         match command {
             HostCommand::Health
             | HostCommand::SetSchedulerPressure(_)
+            | HostCommand::SetSchedulerAdmission(_)
             | HostCommand::GetMemorySyncStatus(_)
             | HostCommand::GetModelConfigSnapshot(_)
             | HostCommand::ListLatestModelConfigSnapshots(_)
@@ -51,6 +52,7 @@ impl CommandReceiptPolicy {
             | HostCommand::ListPluginInstallations(_)
             | HostCommand::ListPluginHookBundles(_)
             | HostCommand::ListPluginHookBundleRecords(_)
+            | HostCommand::ListPluginHookInvocations(_)
             | HostCommand::GetConversation(_)
             | HostCommand::GetConversationContext(_)
             | HostCommand::GetConversationAttachment(_)

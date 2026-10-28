@@ -119,7 +119,7 @@ final class ConversationAttachmentImageLoaderTests: XCTestCase {
     }
 }
 
-private struct AppCoreCodeReadWorker: CodeReadWorkerExecuting {
+struct AppCoreCodeReadWorker: CodeReadWorkerExecuting {
     func execute(
         operation: String,
         arguments: [String: CodeReadWorkerJSONValue],

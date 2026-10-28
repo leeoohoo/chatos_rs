@@ -3,6 +3,62 @@ import Foundation
 
 @MainActor
 extension LocalConnectorControlCenterViewModel {
+    func loadPluginHookHistory(id: String, reset: Bool = false) {
+        if !reset, pluginHookHistoryLoadingIDs.contains(id) { return }
+        if reset {
+            pluginHookHistoryTasks[id]?.cancel()
+        }
+        let existing = reset ? nil : pluginHookHistory[id]
+        if !reset,
+           pluginHookHistoryLoadedIDs.contains(id),
+           existing?.nextBeforeInvocationID == nil {
+            return
+        }
+        let requestID = UUID()
+        let lifecycle = lifecycleGeneration
+        pluginHookHistoryRequestIDs[id] = requestID
+        pluginHookHistoryLoadingIDs.insert(id)
+        pluginHookHistoryErrors[id] = nil
+        let service = service
+        pluginHookHistoryTasks[id] = Task { [weak self] in
+            do {
+                let page = try await service.fetchPluginHookHistory(
+                    pluginID: id,
+                    beforeUpdatedAtUnixMs: existing?.nextBeforeUpdatedAtUnixMs,
+                    beforeInvocationID: existing?.nextBeforeInvocationID,
+                    limit: 20
+                )
+                try Task.checkCancellation()
+                guard let self,
+                      lifecycle == lifecycleGeneration,
+                      pluginHookHistoryRequestIDs[id] == requestID else { return }
+                let invocations = reset
+                    ? page.invocations
+                    : (existing?.invocations ?? []) + page.invocations
+                pluginHookHistory[id] = .init(
+                    invocations: invocations,
+                    nextBeforeUpdatedAtUnixMs: page.nextBeforeUpdatedAtUnixMs,
+                    nextBeforeInvocationID: page.nextBeforeInvocationID
+                )
+                pluginHookHistoryLoadedIDs.insert(id)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      lifecycle == lifecycleGeneration,
+                      pluginHookHistoryRequestIDs[id] == requestID else { return }
+                pluginHookHistoryErrors[id] = error.localizedDescription
+            }
+            guard let self,
+                  lifecycle == lifecycleGeneration,
+                  pluginHookHistoryRequestIDs[id] == requestID else { return }
+            pluginHookHistoryLoadingIDs.remove(id)
+            pluginHookHistoryTasks[id] = nil
+            pluginHookHistoryRequestIDs[id] = nil
+        }
+    }
+
     func loadPlugins(forceRefresh: Bool = false) {
         selectedTabLoadGeneration += 1
         selectedTabLoadTask?.cancel()

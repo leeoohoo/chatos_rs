@@ -52,6 +52,7 @@ extension StoryStudioTests {
             batch: frameBatch,
             store: store,
             media: service,
+            mediaWorker: TestMediaWorkerImageNormalizer(),
             videoJobStore: videoJobStore,
             accountSessionID: UUID()
         ).run()
@@ -73,6 +74,7 @@ extension StoryStudioTests {
             batch: lastFrameBatch,
             store: store,
             media: service,
+            mediaWorker: TestMediaWorkerImageNormalizer(),
             videoJobStore: videoJobStore,
             accountSessionID: UUID()
         ).run()

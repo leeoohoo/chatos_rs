@@ -6,10 +6,10 @@ use std::sync::{
     Arc,
 };
 
-/// Process-local count of Host workers that already own a durable model or tool claim.
+/// Process-local activity count whose meaning is chosen by the owning coordinator field.
 ///
-/// The counter is shared by the model and tool schedulers. A guard is created only after a
-/// claim succeeds and is released on every completion, cancellation, lost-lease, and error path.
+/// Separate instances track claimed model/tool work, scheduler attempts that passed admission,
+/// and Memory sync. RAII keeps every error and cancellation path balanced.
 #[derive(Clone, Default)]
 pub(crate) struct HostWorkActivity {
     active: Arc<AtomicUsize>,

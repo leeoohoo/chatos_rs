@@ -133,18 +133,38 @@ impl LocalTaskToolExecutor {
             .pointer("/task_followup_review/tasks")
             .and_then(Value::as_array)
         {
-            for task in tasks
+            if tasks
                 .iter()
-                .filter(|task| task["review_state"] == "cancelled")
+                .any(|task| task["review_state"] == "held" && task["decision_action"] == "clarify")
             {
+                return Err(
+                    "clarified task_followup_review must be resolved before creating work".into(),
+                );
+            }
+            for task in tasks.iter().filter(|task| {
+                task["review_state"] == "cancelled"
+                    || (task["review_state"] == "held" && task["decision_action"] == "replace")
+            }) {
                 if !supersedes_task_ids
                     .iter()
                     .any(|id| Some(id.as_str()) == task["task_id"].as_str())
                 {
-                    return Err("replacement must declare cancelled supersedes_task_ids".into());
+                    return Err(
+                        "replacement must declare every cancelled or held supersedes_task_id"
+                            .into(),
+                    );
                 }
             }
         }
+        let replacing = parent
+            .input
+            .pointer("/task_followup_review/tasks")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|task| task["review_state"] == "held" && task["decision_action"] == "replace")
+            .filter_map(|task| task["task_id"].as_str())
+            .collect::<HashSet<_>>();
         if !supersedes_task_ids.is_empty() {
             if supersedes_task_ids.len() > 50 {
                 return Err("supersedes_task_ids must contain at most 50 ids".to_string());
@@ -165,9 +185,10 @@ impl LocalTaskToolExecutor {
                     LocalTaskStatus::Cancelled
                         | LocalTaskStatus::Failed
                         | LocalTaskStatus::Succeeded
-                ) {
+                ) && !replacing.contains(task_id.as_str())
+                {
                     return Err(format!(
-                        "superseded task must be cancelled before replacement: {task_id}"
+                        "superseded task must be cancelled or held for replacement: {task_id}"
                     ));
                 }
             }

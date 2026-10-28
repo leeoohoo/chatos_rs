@@ -3026,6 +3026,7 @@ fn parse_codex_hook_bundle(raw: &str) -> Result<ParsedCodexHookBundle, String> {
                     event: event.clone(),
                     matcher: matcher.clone(),
                     command: command.clone(),
+                    is_async: false,
                     timeout_ms,
                     additional_context_limit,
                 });
@@ -3913,6 +3914,7 @@ mod tests {
                 event: "SessionStart".into(),
                 matcher: Some("startup|resume".into()),
                 command: "node secret-command.js".into(),
+                is_async: false,
                 timeout_ms: 5_000,
                 additional_context_limit: 65_536,
             }

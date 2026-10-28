@@ -322,11 +322,29 @@ actor NativePluginRuntimeStore {
     }
 
     func invocationActivity(runID: String) -> MessageTaskRunActivity? {
-        sessions.values
-            .flatMap { $0.invocationActivities.values }
-            .filter { $0.runID == runID }
-            .max(by: { $0.lastProgressAt < $1.lastProgressAt })?
-            .messageTaskActivity
+        invocationActivities(runIDs: [runID])[runID]
+    }
+
+    /// Projects all requested Runs in one actor hop and one pass over the live sessions.
+    /// Task graphs can contain hundreds of active nodes; asking once per node made refresh
+    /// O(nodes × live invocations) and serialized every lookup on this actor.
+    func invocationActivities(
+        runIDs: Set<String>
+    ) -> [String: MessageTaskRunActivity] {
+        guard !runIDs.isEmpty else { return [:] }
+        var latestByRunID: [String: InvocationActivity] = [:]
+        latestByRunID.reserveCapacity(runIDs.count)
+        for session in sessions.values {
+            for activity in session.invocationActivities.values
+            where runIDs.contains(activity.runID) {
+                if let existing = latestByRunID[activity.runID],
+                   existing.lastProgressAt >= activity.lastProgressAt {
+                    continue
+                }
+                latestByRunID[activity.runID] = activity
+            }
+        }
+        return latestByRunID.mapValues(\.messageTaskActivity)
     }
 
     private func recordProgress(

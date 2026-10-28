@@ -6,7 +6,7 @@ struct StorySurfaceModifier: ViewModifier {
     let tint: Color?
     func body(content: Content) -> some View {
         content
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(
@@ -27,7 +27,7 @@ extension View {
 }
 
 struct StoryThumbnail: View {
-    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.storyViewContext) private var appModel
     let asset: GeneratedMediaAsset?
     @State private var image: NSImage?
     var body: some View {
