@@ -2663,6 +2663,16 @@ Agent Worker 父进程读端从不可取消的 `getline` 改为独立 descriptor
 
 ### 12.119—12.120 剩余完整交付路径
 
+#### 12.119c-1 组合负载短门禁与 FD 根因关闭（2026-10-28）
+
+本批先关闭 8 小时 soak 前发现的确定性资源泄漏，再把三类独立执行路径接入同一个隔离 Release 验收实例。首轮 Agent + Media 组合负载在 20 秒内完成 Agent 123 次、Media 106 次且业务失败为 0，但 App FD 从 77 增到 149；拆分为连续 40 次进程回归后确认 Agent 每次 Run 恰好遗留一个 stderr 读取 descriptor，Media 连续 40 次保持稳定。`AgentWorkerProcessController` 现在在移除 readability handler 后显式关闭底层 `FileHandle`，同一 Agent 回归从净增 40 降到基线容差内；Plugin Application 的 stdout/stderr 读取端也统一在启动失败、正常停止和进程退出路径显式关闭。
+
+隔离负载现在同时执行：一 Run 一 `ChatOSAgentWorker`，父进程以 750 ms 可配置模型等待模拟真实 provider 延迟；`ChatOSMediaWorker` 对确定性的 2048×2048 BMP 做真实解码与 PNG 归一化；Plugin 通过正式安装完整性校验、Seatbelt、进程组登记、loopback 健康检查和停止协议启动本地 HTTP Runtime。三条路径分别记录 completion/failure，Plugin 在 App 终止路径另有同步进程组清理，不读取真实账户、已安装 Plugin 或活动数据库。
+
+提交 `918eb7f1a` 对应的 clean arm64 Release 短门禁运行 30 秒、0.2 秒采样，共 151 个进程组样本；必需进程实际观测数为 App 151、Host 151、Agent Worker 127、Media Worker 46、Plugin node 151。负载完成 Agent 44 次、Media 134 次、Plugin 324 次，三类失败均为 0；FD 由 92 降至 90，范围 82...97，无单调增长；进程组 physical footprint 从 161,551,784 降至 117,364,112 bytes，峰值 179,476,408 bytes；临时文件数起止均为 29。临时字节净增 1,130,642 bytes，检查确认来自首次启动的 SQLite 与 URL cache WAL 建立，不是 Worker 输出残留，必须由长时 checkpoint 后曲线继续判定。原始证据位于 ignored 的 `clients/macos/.build/performance/soak-output-combined-parent.skTFZl/result/run.json`。
+
+边界：本批完成正常组合负载短门禁，尚未完成可控 Agent/Media 取消与 Plugin 强杀恢复矩阵，也未运行 8 小时正式 `--evaluate-acceptance`；因此 12.119c 仍未关闭，不能进入 12.120 正式分发。
+
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
