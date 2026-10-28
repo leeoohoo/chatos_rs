@@ -2671,7 +2671,9 @@ Agent Worker 父进程读端从不可取消的 `getline` 改为独立 descriptor
 
 提交 `918eb7f1a` 对应的 clean arm64 Release 短门禁运行 30 秒、0.2 秒采样，共 151 个进程组样本；必需进程实际观测数为 App 151、Host 151、Agent Worker 127、Media Worker 46、Plugin node 151。负载完成 Agent 44 次、Media 134 次、Plugin 324 次，三类失败均为 0；FD 由 92 降至 90，范围 82...97，无单调增长；进程组 physical footprint 从 161,551,784 降至 117,364,112 bytes，峰值 179,476,408 bytes；临时文件数起止均为 29。临时字节净增 1,130,642 bytes，检查确认来自首次启动的 SQLite 与 URL cache WAL 建立，不是 Worker 输出残留，必须由长时 checkpoint 后曲线继续判定。原始证据位于 ignored 的 `clients/macos/.build/performance/soak-output-combined-parent.skTFZl/result/run.json`。
 
-边界：本批完成正常组合负载短门禁，尚未完成可控 Agent/Media 取消与 Plugin 强杀恢复矩阵，也未运行 8 小时正式 `--evaluate-acceptance`；因此 12.119c 仍未关闭，不能进入 12.120 正式分发。
+提交 `35bcf9aac` 又补齐 Plugin 健康失败后的同 Runtime 清理和重启，并在 clean arm64 Release 上轮流 `SIGKILL` Agent Worker 6 次、Media Worker 5 次、Plugin node 6 次。故障后仍完成 Agent 37、Media 130、Plugin 278 次；预期的当前任务基础设施失败分别为 6、5、6，Plugin 恢复 6/6、恢复失败 0。同期 151 个样本中五类必需进程均达到观测门槛；FD 82→86、范围 67...91 且非单调增长，进程组 footprint 净下降 36,633,688 bytes，临时文件数 29→29。原始证据位于 ignored 的 `clients/macos/.build/performance/soak-output-fault-parent.V4Vg3w/result/run.json`。
+
+边界：本批完成正常组合负载和进程强杀恢复短门禁，但尚未运行 8 小时正式 `--evaluate-acceptance`；因此 12.119c 仍未关闭，不能进入 12.120 正式分发。
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
