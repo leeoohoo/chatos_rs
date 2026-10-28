@@ -87,6 +87,9 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(taskOrchestration.instructions.contains("substitute a project Markdown file"))
         XCTAssertTrue(taskOrchestration.instructions.contains("Do not select `Notepad` merely because"))
         XCTAssertTrue(taskOrchestration.instructions.contains("separate downstream Notepad Task"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("shortest valid critical path"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("`context_refs` are non-blocking"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("Their failure must not prevent code"))
         XCTAssertTrue(taskOrchestration.instructions.contains(
             "explicitly names an installed Plugin or MCP"
         ))

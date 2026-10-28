@@ -103,7 +103,7 @@ const AUTHORING_TOOL_DEFINITIONS = [
   },
   {
     name: 'solution_upsert_execution_plan',
-    description: 'Create or revise a dependency-aware execution plan. tasks[].dependsOn is canonical; the service rejects unknown references, self-dependencies, and dependency cycles.',
+    description: 'Create or revise a dependency-aware execution plan before execution history exists, or revise still-planned task definitions. tasks[].dependsOn is canonical. If the current plan already contains in_progress, blocked, done, or cancelled tasks and the change only adds work, do not resubmit the old tasks: use solution_append_execution_tasks with only the new planned tasks.',
     inputSchema: {
       type: 'object', properties: { ...workspaceIdentityProperties, executionPlan: executionPlanInputSchema },
       required: ['title', 'executionPlan'], additionalProperties: false
@@ -275,6 +275,10 @@ function taskDefinition(task: ExecutionPlan['tasks'][number]) {
   return definition;
 }
 
+function executionPlanHasHistory(plan: ExecutionPlan): boolean {
+  return plan.tasks.some(task => task.status !== 'planned') || plan.statusEvents.length > 0;
+}
+
 function protectedAuthoringPlan(current: ExecutionPlan, proposed: ExecutionPlan): ExecutionPlan {
   if (proposed.statusEvents.length !== 0) throw new Error('方案创建器不能提交任务状态事件。');
   const currentById = new Map(current.tasks.map((task) => [task.id, task]));
@@ -284,12 +288,12 @@ function protectedAuthoringPlan(current: ExecutionPlan, proposed: ExecutionPlan)
     if (!previous && task.status !== 'planned') throw new Error(`新任务 ${task.id} 的状态必须是 planned。`);
     if (previous && previous.status !== 'planned') {
       if (!isDeepStrictEqual(taskDefinition(previous), taskDefinition(task))) {
-        throw new Error(`任务 ${task.id} 已进入 ${previous.status}，方案创建器不能修改其定义或依赖。`);
+        throw new Error(`任务 ${task.id} 已进入 ${previous.status}，方案创建器不能修改其定义或依赖。若本次只是增加工作，请调用 solution_append_execution_tasks，并且只提交新的 planned 任务，不要重传历史任务。`);
       }
     }
   }
   for (const task of current.tasks) {
-    if (task.status !== 'planned' && !proposedById.has(task.id)) throw new Error(`任务 ${task.id} 已进入 ${task.status}，方案创建器不能删除。`);
+    if (task.status !== 'planned' && !proposedById.has(task.id)) throw new Error(`任务 ${task.id} 已进入 ${task.status}，方案创建器不能删除。若本次只是增加工作，请调用 solution_append_execution_tasks，并且只提交新的 planned 任务，不要重传历史任务。`);
   }
   return {
     ...proposed,
@@ -403,7 +407,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         workspace.requirements = { ...requirements, revision: workspace.requirements.revision + 1, updatedAt: new Date().toISOString() };
         return workspace;
       });
-      return { created: result.created, workspace: workspaceSummary(result.workspace), requirements: result.workspace.requirements, validation: validateWorkspace(result.workspace), completionRequirement: completionRequirement(result.workspace.workspaceId) };
+      return { created: result.created, workspace: workspaceSummary(result.workspace), requirements: result.workspace.requirements, executionPlanHasHistory: executionPlanHasHistory(result.workspace.executionPlan), validation: validateWorkspace(result.workspace), completionRequirement: completionRequirement(result.workspace.workspaceId) };
     }
     case 'solution_upsert_design': {
       const design = input.design as SolutionDesignDocument;
@@ -412,7 +416,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         normalizeDesignLinks(workspace.requirements, workspace.design);
         return workspace;
       });
-      return { created: result.created, workspace: workspaceSummary(result.workspace), design: result.workspace.design, validation: validateWorkspace(result.workspace), completionRequirement: completionRequirement(result.workspace.workspaceId) };
+      return { created: result.created, workspace: workspaceSummary(result.workspace), design: result.workspace.design, executionPlanHasHistory: executionPlanHasHistory(result.workspace.executionPlan), validation: validateWorkspace(result.workspace), completionRequirement: completionRequirement(result.workspace.workspaceId) };
     }
     case 'solution_upsert_design_block': {
       const workspace = await store.read(String(input.workspaceId));
@@ -430,7 +434,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       normalizeDesignLinks(workspace.requirements, workspace.design);
       const saved = await store.replace(workspace, Number(input.expectedRevision));
       const savedBlocks = input.sectionId === null ? saved.design.blocks : saved.design.sections.find((section) => section.id === input.sectionId)?.blocks;
-      return { workspace: workspaceSummary(saved), block: savedBlocks?.find((candidate) => candidate.id === block.id), validation: validateWorkspace(saved), completionRequirement: completionRequirement(saved.workspaceId) };
+      return { workspace: workspaceSummary(saved), block: savedBlocks?.find((candidate) => candidate.id === block.id), executionPlanHasHistory: executionPlanHasHistory(saved.executionPlan), validation: validateWorkspace(saved), completionRequirement: completionRequirement(saved.workspaceId) };
     }
     case 'solution_upsert_execution_plan': {
       const result = await store.upsert(String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
@@ -516,12 +520,22 @@ function result(value: Record<string, unknown>, isError = false) {
   if (role === 'authoring' && !isError && value.validation && !value.completionProof) {
     const validation = value.validation as { issues: ValidationIssue[] };
     const codes = new Set(validation.issues.filter(issue => issue.blocking).map(issue => issue.code));
+    const executionPlan = value.executionPlan as ExecutionPlan | undefined;
+    const planHasExecutionHistory = value.executionPlanHasHistory === true
+      || executionPlan?.tasks?.some(task => task.status !== 'planned') === true;
     value.continuation = {
       kind: 'authoring-work-remaining',
       instruction: 'Successful persistence is not final delivery. Validation gaps describe remaining authoring/repair work, not a terminal Task failure. Continue only the stages required by the user; do not expand a requirements-only request into a full plan.',
       suggestedActions: [
         ...(codes.has('design_empty') || codes.has('stale_design') ? [{ skill: 'solution-design', tool: 'solution_upsert_design', when: 'Design or full planning is requested', reason: 'Author or refresh the design against the current requirements revision.' }] : []),
-        ...(codes.has('plan_empty') || codes.has('stale_plan') ? [{ skill: 'solution-execution-plan', tool: 'solution_upsert_execution_plan', when: 'Execution planning is requested; after the design is coherent', reason: 'Author or refresh tasks and dependencies against the current design revision.' }] : []),
+        ...(codes.has('plan_empty') || codes.has('stale_plan')
+          ? planHasExecutionHistory
+            ? [
+              { skill: 'solution-execution-plan', tool: 'solution_append_execution_tasks', when: 'The design increment adds new work to a plan that already has execution history', reason: 'Append only the new planned tasks; never reconstruct or resubmit terminal task definitions.' },
+              { skill: 'solution-execution-plan', tool: 'solution_upsert_execution_plan', when: 'Existing still-planned task definitions themselves must change', reason: 'Preserve every terminal task definition byte-for-byte and revise only still-planned work.' }
+            ]
+            : [{ skill: 'solution-execution-plan', tool: 'solution_upsert_execution_plan', when: 'Execution planning is requested; after the design is coherent', reason: 'Author or refresh tasks and dependencies against the current design revision.' }]
+          : []),
         { skill: 'solution-validation', tool: 'solution_finalize', when: 'All requested content is saved, rendered where required, and its scoped validation gaps are repaired', reason: 'Finalize the actual requested scope at the current workspace revision.' }
       ]
     };
@@ -546,11 +560,24 @@ function result(value: Record<string, unknown>, isError = false) {
   return response;
 }
 
-const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.5' }, { capabilities: { tools: {} } });
+function failureResult(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const value: Record<string, unknown> = { error: message };
+  if (role === 'authoring' && /方案创建器不能(?:修改|删除)/.test(message)) {
+    value.recovery = {
+      kind: 'append_execution_tasks',
+      tool: 'solution_append_execution_tasks',
+      instruction: 'Re-read the current workspace, then submit only the newly added planned tasks with the current workspace revision and latest design revision. Do not retry solution_upsert_execution_plan with reconstructed historical tasks.'
+    };
+  }
+  return result(value, true);
+}
+
+const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.6' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }
-  catch (error) { return result({ error: error instanceof Error ? error.message : String(error) }, true); }
+  catch (error) { return failureResult(error); }
 });
 
 await server.connect(new StdioServerTransport());

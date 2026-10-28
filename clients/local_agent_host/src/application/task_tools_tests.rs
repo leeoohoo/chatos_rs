@@ -961,6 +961,20 @@ fn task_model_definitions_are_host_owned_and_closed() {
             ["uniqueItems"],
         true
     );
+    assert!(tools[3]["description"]
+        .as_str()
+        .expect("create graph description")
+        .contains("independent Tasks must not wait"));
+    assert!(tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]
+        ["prerequisite_refs"]["description"]
+        .as_str()
+        .expect("hard prerequisite description")
+        .contains("Hard scheduling gates"));
+    assert!(tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]
+        ["context_refs"]["description"]
+        .as_str()
+        .expect("context reference description")
+        .contains("never delay scheduling"));
     assert_eq!(
         tools[3]["parameters"]["properties"]["notification_policy"]["default"],
         "progress_summary"

@@ -252,7 +252,17 @@ test('executor exposes only task execution tools and enforces prerequisites and 
         args: [path.join(packageRoot, 'bin/chatos-solution-studio'), 'mcp-authoring'],
         env: { ...process.env, CHATOS_PLUGIN_DATA_DIR: dataRoot }
       }));
-      const businessPlan = { status: 'approved', basedOnDesignRevision: 1, objective: '更新目标', tasks: workspace.executionPlan.tasks };
+      const changedDesign = await call(author, 'solution_upsert_design', {
+        title: workspace.title,
+        sourceMode: 'existing-project',
+        design: { ...withLayout.design, summary: '执行历史存在后的设计增量' }
+      });
+      assert.equal(changedDesign.executionPlanHasHistory, true);
+      assert.equal(
+        changedDesign.continuation.suggestedActions.find(action => action.skill === 'solution-execution-plan').tool,
+        'solution_append_execution_tasks'
+      );
+      const businessPlan = { status: 'approved', basedOnDesignRevision: changedDesign.design.revision, objective: '更新目标', tasks: workspace.executionPlan.tasks };
       const updated = await call(author, 'solution_upsert_execution_plan', { title: workspace.title, executionPlan: businessPlan });
       assert.deepEqual(updated.executionPlan.statusEvents, withLayout.executionPlan.statusEvents);
       assert.deepEqual(updated.executionPlan.tasks.map(task => task.status), ['done', 'in_progress']);
@@ -269,7 +279,7 @@ test('executor exposes only task execution tools and enforces prerequisites and 
       const appended = await call(author, 'solution_append_execution_tasks', {
         workspaceId: saved.workspaceId,
         expectedRevision: reordered.workspace.revision,
-        basedOnDesignRevision: 1,
+        basedOnDesignRevision: changedDesign.design.revision,
         tasks: [appendedTask]
       });
       assert.deepEqual(appended.appendedTaskIds, ['T-003']);
@@ -282,7 +292,7 @@ test('executor exposes only task execution tools and enforces prerequisites and 
         arguments: {
           workspaceId: saved.workspaceId,
           expectedRevision: appended.workspace.revision,
-          basedOnDesignRevision: 1,
+          basedOnDesignRevision: changedDesign.design.revision,
           tasks: [task('T-001', [])]
         }
       });
@@ -292,6 +302,9 @@ test('executor exposes only task execution tools and enforces prerequisites and 
         const rejected = await author.callTool({ name: 'solution_upsert_execution_plan', arguments: { title: workspace.title, executionPlan: { ...businessPlan, tasks } } });
         assert.equal(rejected.isError, true);
         assert.match(rejected.structuredContent.error, /不能删除|不能修改/);
+        assert.equal(rejected.structuredContent.recovery.kind, 'append_execution_tasks');
+        assert.equal(rejected.structuredContent.recovery.tool, 'solution_append_execution_tasks');
+        assert.match(rejected.structuredContent.recovery.instruction, /Do not retry solution_upsert_execution_plan/);
       }
       const afterAuthoring = await store.read(saved.workspaceId);
       assert.equal(afterAuthoring.revision, appended.workspace.revision);

@@ -139,7 +139,7 @@ pub fn task_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": CREATE_TASKS_TOOL,
-            "description": "Create a durable local multi-Task graph for a compound outcome. Use distinct deliverables, specialist needs, safe parallel work, real prerequisite stages, or independent verification as decomposition boundaries. Each Task uses a unique client_ref and prerequisite_refs may only reference Tasks in this call.",
+            "description": "Create a durable local multi-Task graph for a compound outcome. Start every Task that can safely run now; independent Tasks must not wait for planning, reporting, persistence, or review work. Use prerequisite_refs only for a true hard gate whose concrete output is required before the dependent can begin. Use context_refs for useful related results that must never delay scheduling. Split auxiliary Solution/Notepad persistence, status writeback, archival, and summary work away from the core critical path. Each Task uses a unique client_ref and references may only name Tasks in this call.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -316,13 +316,14 @@ fn create_task_item_schema() -> Value {
             "prerequisite_refs": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
-                "uniqueItems": true
+                "uniqueItems": true,
+                "description": "Hard scheduling gates. Every referenced Task must finish execution and report result_status=succeeded before this Task may start. Never use for optional planning persistence, status writeback, archival, summaries, or independent review; use context_refs for those relationships."
             },
             "context_refs": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
                 "uniqueItems": true,
-                "description": "Non-blocking context relationships to other client_ref values. They are preserved for explanation and graph display but never delay scheduling."
+                "description": "Non-blocking context relationships to other client_ref values. They are preserved for explanation and graph display but never delay scheduling. Use this for auxiliary plan persistence, status writeback, archival, summaries, independent review, or any related work whose failure must not stop the core deliverable."
             },
             "prerequisite_task_ids": prerequisite_task_ids_schema(),
             "schedule": task_schedule_schema()
