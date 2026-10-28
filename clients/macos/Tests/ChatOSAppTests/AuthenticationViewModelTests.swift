@@ -54,6 +54,53 @@ struct AuthenticationViewModelTests {
         #expect(BuildSmokeAuthenticationConfiguration.resolve(environment: environment) == nil)
     }
 
+    @Test("performance load requires an external ledger and bounded cadence")
+    func performanceLoadConfigurationIsIsolated() {
+        let authentication = BuildSmokeAuthenticationConfiguration(
+            ownerUserID: "performance-acceptance-release",
+            homeDirectory: "/private/tmp/chatos-performance-home"
+        )
+        var environment: [String: String] = [
+            "CHATOS_PERFORMANCE_ACCEPTANCE_LOAD": "1",
+            "CHATOS_PERFORMANCE_ACCEPTANCE_LEDGER_PATH":
+                "/private/tmp/chatos-performance-output/ledger.json",
+            "CHATOS_PERFORMANCE_ACCEPTANCE_INTERVAL_MS": "250",
+        ]
+        #expect(PerformanceAcceptanceLoadConfiguration.resolve(
+            environment: environment,
+            authentication: authentication
+        ) == .init(
+            ownerUserID: authentication.ownerUserID,
+            runtimeRoot: URL(fileURLWithPath: authentication.homeDirectory, isDirectory: true)
+                .standardizedFileURL
+                .appendingPathComponent("Library/Caches", isDirectory: true)
+                .appendingPathComponent("ChatOSPerformanceAcceptance", isDirectory: true),
+            ledgerURL: URL(fileURLWithPath:
+                "/private/tmp/chatos-performance-output/ledger.json"
+            ),
+            intervalMilliseconds: 250
+        ))
+
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_LEDGER_PATH"] =
+            "/private/tmp/chatos-performance-home/ledger.json"
+        #expect(PerformanceAcceptanceLoadConfiguration.resolve(
+            environment: environment,
+            authentication: authentication
+        ) == nil)
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_LEDGER_PATH"] =
+            "/private/tmp/chatos-performance-output/ledger.json"
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_INTERVAL_MS"] = "99"
+        #expect(PerformanceAcceptanceLoadConfiguration.resolve(
+            environment: environment,
+            authentication: authentication
+        ) == nil)
+        environment.removeValue(forKey: "CHATOS_PERFORMANCE_ACCEPTANCE_LOAD")
+        #expect(PerformanceAcceptanceLoadConfiguration.resolve(
+            environment: environment,
+            authentication: authentication
+        ) == nil)
+    }
+
     @Test("session restore retries after a transient startup failure")
     func retriesFailedSessionRestore() async {
         let service = AuthenticationRestoreTestService()

@@ -70,6 +70,8 @@ private actor BuildSmokeAuthenticationService: AuthenticationServicing {
 final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
     let model: AppModel
 
+    private let performanceAcceptanceConfiguration: BuildSmokeAuthenticationConfiguration?
+    private var performanceAcceptanceLoadDriver: PerformanceAcceptanceLoadDriver?
     private var mainWindowController: NSWindowController?
     private var settingsWindowController: NSWindowController?
     private var mainWindowPresentationGeneration = 0
@@ -91,6 +93,7 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
            acceptanceConfiguration == nil {
             fatalError("Performance acceptance mode requires an isolated smoke configuration")
         }
+        performanceAcceptanceConfiguration = acceptanceConfiguration
         let model = AppModel(authenticationService: acceptanceConfiguration.map {
             BuildSmokeAuthenticationService(configuration: $0)
         })
@@ -113,6 +116,16 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        if let performanceAcceptanceConfiguration,
+           let loadConfiguration = PerformanceAcceptanceLoadConfiguration.resolve(
+               environment: ProcessInfo.processInfo.environment,
+               authentication: performanceAcceptanceConfiguration
+           ) {
+            performanceAcceptanceLoadDriver = PerformanceAcceptanceLoadDriver(
+                configuration: loadConfiguration
+            )
+        }
+
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
         model.startPetOverlayIfNeeded()
@@ -132,6 +145,8 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        performanceAcceptanceLoadDriver?.stop()
+        performanceAcceptanceLoadDriver = nil
         model.prepareForApplicationTermination()
     }
 
