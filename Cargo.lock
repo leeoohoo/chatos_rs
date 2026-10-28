@@ -389,6 +389,7 @@ dependencies = [
  "chatos_local_agent_runtime",
  "chatos_mcp_runtime",
  "chrono",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "tokio",
