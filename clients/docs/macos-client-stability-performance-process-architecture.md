@@ -2651,13 +2651,23 @@ Agent Worker 父进程读端从不可取消的 `getline` 改为独立 descriptor
 
 工具回归 32 项通过，另以独立 `/bin/sleep` 根进程和隔离临时目录完成 6 个真实样本的短诊断，manifest 状态为 `completed` 且明确保持 `performance_acceptance: not-evaluated`。它不控制或终止目标，本次没有对正在运行的 ChatOS 采样。边界：内核线程不能冒充 Swift Task/Notification observer；采集器只观察外部编排的组合负载，不生成 200 次导航、20 次账户循环、Agent/Media/Plugin 作业或主线程 hang trace。上述驱动器和正式 8 小时运行仍属于 12.119 后续子阶段。
 
+### 12.119b 第五十三完整里程碑：Release UI 与账户生命周期 SLO（2026-10-28）
+
+新增可重复的 Release App 场景，每轮使用独立临时 Home 和合成认证服务，不读取真实凭据、活动账户数据库或当前运行实例。场景在隔离 AppKit 窗口挂载真实 ChatOS 主视图，先预热应用、AI 创作、Agent、需求调研和终端模块，再执行 200 次跨模块切换及 20 次登录/退出生命周期。门禁要求暖切页 p95 小于 100 ms、任一次切页小于 250 ms、MainActor 最大调度间隙小于 250 ms；每次退出还验证 Agent Workspace 缓存立即清空且不会跨账号复用。
+
+首轮真实测量暴露 Agent 页面反复构造 ViewModel、重复加载模型目录及原生 `List` 首次挂载开销：暖切页 p95 212.7 ms、最慢 322.2 ms、MainActor 最大间隙 964.7 ms，Agent 目的地 p95 250.3 ms。修复后，Agent Workspace 在同一账号生命周期内复用，退出即释放；被动进入只加载一次模型目录，显式打开编辑器仍重新验证；左侧导航改为带选中/按钮辅助功能语义的惰性栈，初次数据加载有明确状态；终端 shell 启动延后到当前 SwiftUI 更新事务之后。
+
+最终提交 `4d0bf1cbe` 对应的三轮原生 arm64 Release 结果全部通过，且证据标记 `source_unchanged=true`：暖切页 p95 分别为 87.287、77.795、79.390 ms，单次最大分别为 92.859、93.103、83.457 ms，MainActor 最大间隙分别为 143.745、128.044、123.060 ms；账户循环 p95 最高 79.904 ms、单次最高 133.839 ms。场景脚本回归 4 项、Agent 错误展示 6 项、模型目录 11 项和终端 4 项同步通过。原始证据位于 ignored 的 `clients/macos/.build/performance/app-scenario-release-23mzyys6/run.json`，不纳入源码提交。
+
+边界：该场景证明合成数据下真实主视图层级的 CPU/UI 生命周期门禁，不替代签名 App 的真实账号、WindowServer 帧节奏、进程组 physical footprint、真实 Agent/Media/Plugin 组合负载或 8 小时资源曲线。当前 `.build/ChatOS.app` 仍是早于本提交的旧产物，正在运行的 `/Applications/ChatOS.app` 是日常账户实例；两者都不能被拿来冒充 12.119c 正式 soak。本阶段没有停止、替换、打包、安装或重启当前客户端。
+
 ### 12.119—12.120 剩余完整交付路径
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
 | --- | --- | --- |
-| 12.119 Release 组合 SLO 与 8 小时 soak | 固定硬件运行 UI + Agent + Host + Media + Plugin 组合负载，完成 200 次切页、20 次账户循环、崩溃/取消风暴和 8 小时 soak | 暖切页 p95 < 100 ms、无 >250 ms 主线程 hang；进程组 footprint/CPU/磁盘写入有基线；Task/FD/observer/临时文件不单调增长 |
+| 12.119c Release 组合负载与 8 小时 soak | 从当前干净提交构建独立 Release 验收实例，运行 Agent + Host + Media + Plugin 组合负载、崩溃/取消风暴和 8 小时 soak；已完成的 200 次切页与 20 次账户循环不重复计为未完成 | 进程组 footprint/CPU/磁盘写入有基线；Task/FD/observer/临时文件不单调增长；必需进程达到最少观测样本，实例与 clean Release manifest 完整绑定 |
 | 12.120 正式分发关闭 | 完成 Developer ID、hardened runtime、嵌套 Helper 从内到外签名、notarization、stapling 和最终兼容矩阵 | 安装包在干净机器验证通过；包内 Git SHA、架构、签名、协议/Schema 和回滚说明一致；不再以 ad-hoc 本地包冒充正式外部分发 |
 
 ## 十三、验证矩阵
