@@ -17,9 +17,23 @@ CHATOS_BUILD_CONFIGURATION=release CHATOS_VERIFY_LAUNCH_SMOKE=0 \
 - `.build/build-evidence.*/inputs.json`、`commands.json`：构建前输入及实际命令记录。tracked 文件、非 ignored 的 untracked 文件、缺失文件、可执行位、symlink 目标和 Git index 都参与校验。构建期间输入发生变化，拒绝发布证据。
 - 同一 evidence 目录下的 Release App、Host、ps dSYM：逐个校验 UUID/架构是否与成品对应，并记录文件哈希。Release Rust 使用 `CARGO_PROFILE_RELEASE_DEBUG=1` 保留行表。
 
-成品签名后才计算哈希，manifest 放在 bundle 外，避免自引用或破坏签名。`verify-app-build.sh` 同时检查签名和成品/符号清单；替换资源、Helper 或符号文件会失败。请保留对应 evidence 目录；当前符号清单记录本机构建路径，跨机器归档/迁移尚需单独处理。DMG 分发、公证、签名信任与符号归档发布不是本工具的完成项。
+成品签名后才计算哈希，manifest 放在 bundle 外，避免自引用或破坏签名。`verify-app-build.sh` 同时检查签名和成品/符号清单；替换资源、Helper 或符号文件会失败。请保留对应 evidence 目录；当前符号清单记录本机构建路径，跨机器归档/迁移尚需单独处理。单独运行本节命令仍只是 App 构建证据，不代表 DMG 已签名、公证或通过外部分发验收。
 
 这些是本地关联证据，不是受签名保护的供应链证明，也不承诺 bit-for-bit 重建。ignored 输入、外部编译配置与工具链没有完整归档；包含源码 symlink 的构建保守分类为诊断构建。`clean-release-build` 只表示干净源码及记录的 Release 构建命令，不表示性能、签名公证或分发验收通过。
+
+## 正式分发 DMG
+
+正式外部分发必须使用有效且受信任的 Developer ID Application 身份，以及已经通过 `xcrun notarytool store-credentials` 保存到钥匙串的公证 profile：
+
+```sh
+CHATOS_CODESIGN_IDENTITY='Developer ID Application: NAME (TEAMID)' \
+CHATOS_NOTARYTOOL_PROFILE='ChatOSNotary' \
+  zsh clients/macos/scripts/package-release-dmg.sh
+```
+
+该入口在构建前校验证书类型、撤销/信任状态和公证凭据，不接受 Apple Development、Apple Distribution、ad-hoc 或缺少 profile 的配置。Release App 主程序、Host、三个 Worker、`rg` 和 `ps` 都必须是 arm64-only，并逐个通过 Developer ID、hardened runtime 和严格签名检查；出现未登记的 Mach-O 文件会直接失败，防止新增 Helper 漏签。
+
+流水线先公证并 staple App，再用 `ditto` 复制到独立 DMG staging；公证 ZIP 不会进入安装盘。DMG 在临时目录完成签名、公证、staple 与 Gatekeeper 检查后才移动到 `BundleArtifacts`。输出包括 DMG、SHA-256，以及 App/DMG 两份 notary JSON。任何一步失败都不得把临时 DMG 当成正式产物；最终发布仍须在干净机器完成安装、首次启动和兼容矩阵验收。
 
 ## 固定存储工程基准
 

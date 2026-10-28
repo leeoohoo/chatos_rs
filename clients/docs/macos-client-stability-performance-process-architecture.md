@@ -720,7 +720,7 @@ P0 依赖：A 是所有验收前提；B、C、D、E 可按模块推进，但 P2 
 - 统一 Host/Worker/Plugin/Companion 的 PID、start-time、心跳、退避、退出原因和日志；
 - 增加诊断页，显示每个进程的版本、RSS、CPU、队列和最后错误；
 - Release CI 验证 Helper 版本、协议版本、签名和资源完整性；
-- 对外分发时补齐 Developer ID、hardened runtime、嵌套 Helper 从内到外签名、公证及 stapling 验证；当前 DMG 脚本明确声明未公证，不能把现状当成发布门禁已满足。App 生命周期 Helper 与 XPC Service 的 bundle 布局按 ADR 分别校验；
+- 对外分发入口必须强制 Developer ID、hardened runtime、嵌套 Helper 从内到外签名、公证及 stapling 验证；`package-release-dmg.sh` 已具备 fail-closed 流水线，但只有实际使用有效证书、公证凭据并完成干净机器安装矩阵后才能关闭发布门禁。App 生命周期 Helper 与 XPC Service 的 bundle 布局按 ADR 分别校验；
 - 灰度启用 Media Worker，保留单版本回滚开关；
 - 明确当前/前一版本兼容矩阵与 Schema 回滚路径；不兼容允许明确拒绝，不承诺旧版本可读取已升级数据库。
 
@@ -2674,6 +2674,14 @@ Agent Worker 父进程读端从不可取消的 `getline` 改为独立 descriptor
 提交 `35bcf9aac` 又补齐 Plugin 健康失败后的同 Runtime 清理和重启，并在 clean arm64 Release 上轮流 `SIGKILL` Agent Worker 6 次、Media Worker 5 次、Plugin node 6 次。故障后仍完成 Agent 37、Media 130、Plugin 278 次；预期的当前任务基础设施失败分别为 6、5、6，Plugin 恢复 6/6、恢复失败 0。同期 151 个样本中五类必需进程均达到观测门槛；FD 82→86、范围 67...91 且非单调增长，进程组 footprint 净下降 36,633,688 bytes，临时文件数 29→29。原始证据位于 ignored 的 `clients/macos/.build/performance/soak-output-fault-parent.V4Vg3w/result/run.json`。
 
 边界：本批完成正常组合负载和进程强杀恢复短门禁，但尚未运行 8 小时正式 `--evaluate-acceptance`；因此 12.119c 仍未关闭，不能进入 12.120 正式分发。
+
+#### 12.120 前置：正式签名与公证流水线（2026-10-28）
+
+正式 DMG 入口已改为 fail-closed：构建前要求 `Developer ID Application` 身份和 Keychain notary profile，并显式拒绝 `security find-identity` 仍会列出的撤销/不受信任证书。Release 内层可执行文件统一启用 hardened runtime 与可信时间戳；主程序、Host、三个 Worker、`rg` 和 `ps` 逐个验证 arm64-only、签名权威及 runtime flag，包内出现未登记 Mach-O 时直接失败，避免新增 Helper 漏签。
+
+App ZIP 在独立临时目录提交公证，Accepted 后 staple、validate 并通过 Gatekeeper；复制到 DMG staging 后再次验证票据和深层签名。DMG 同样在临时路径完成 Developer ID 签名、公证、staple 和 Gatekeeper 验证，全部通过后才移动到正式输出目录并生成 SHA-256；公证 ZIP 不再误入 DMG，失败的临时 DMG 也不会冒充正式产物。App 与 DMG 的 notary JSON 分开保留。
+
+当前钥匙串中的 `Developer ID Application: LEI LI (AHVN42RQS3)` 被系统标记为 `CSSMERR_TP_CERT_REVOKED`，且 `ChatOSNotary` profile 不存在；流水线回归已证明会在构建前拒绝该状态。因此本节只完成可审查的分发代码路径，不宣称 12.120 已完成。必须先更新有效 Developer ID 证书、创建 notary profile，并在 12.119c 正式 8 小时门禁通过后实际运行公证、stapling 与干净机器安装矩阵。
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 

@@ -50,6 +50,41 @@ cleanup() {
 trap cleanup EXIT
 
 APP_PATH=$("$SCRIPT_DIR/package-release-app.sh" | tail -n 1)
+SIGNED_EXECUTABLES=(
+  "$APP_PATH/Contents/MacOS/ChatOSSwift"
+  "$APP_PATH/Contents/MacOS/chatos_local_agent_host"
+  "$APP_PATH/Contents/MacOS/ChatOSMediaWorker"
+  "$APP_PATH/Contents/MacOS/ChatOSCodeReadWorker"
+  "$APP_PATH/Contents/MacOS/ChatOSAgentWorker"
+  "$APP_PATH/Contents/Resources/Tools/darwin-arm64/rg"
+  "$APP_PATH/Contents/Resources/Tools/darwin-arm64/ps"
+)
+while IFS= read -r -d '' bundled_file; do
+  if [[ $(file -b "$bundled_file") == *Mach-O* ]] && (( ${SIGNED_EXECUTABLES[(Ie)$bundled_file]} == 0 )); then
+    echo "Release App contains an unmanaged Mach-O file; add it to the explicit inner-signing manifest: $bundled_file" >&2
+    exit 1
+  fi
+done < <(find "$APP_PATH/Contents" -type f -print0)
+for executable in "${SIGNED_EXECUTABLES[@]}"; do
+  if [[ ! -f "$executable" ]]; then
+    echo "Release App is missing a required signed executable: $executable" >&2
+    exit 1
+  fi
+  if [[ $(lipo -archs "$executable") != "arm64" ]]; then
+    echo "Release executable is not arm64-only: $executable" >&2
+    exit 1
+  fi
+  codesign --verify --strict --verbose=2 "$executable"
+  EXECUTABLE_SIGNATURE=$(codesign -d --verbose=4 "$executable" 2>&1)
+  if [[ "$EXECUTABLE_SIGNATURE" != *"flags="*"runtime"* ]]; then
+    echo "Release executable is missing the hardened-runtime flag: $executable" >&2
+    exit 1
+  fi
+  if [[ "$EXECUTABLE_SIGNATURE" != *"Authority=$SIGNING_IDENTITY"* ]]; then
+    echo "Release executable is not signed by the requested Developer ID identity: $executable" >&2
+    exit 1
+  fi
+done
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 if ! codesign -d --verbose=4 "$APP_PATH" 2>&1 | grep -q 'flags=.*runtime'; then
   echo "Release App is missing the hardened-runtime code-signing flag." >&2
@@ -76,6 +111,8 @@ spctl --assess --type execute --verbose=4 "$APP_PATH"
 
 mkdir -p "$DMG_STAGING_DIR"
 ditto "$APP_PATH" "$DMG_STAGING_DIR/ChatOS.app"
+xcrun stapler validate "$DMG_STAGING_DIR/ChatOS.app"
+codesign --verify --deep --strict --verbose=2 "$DMG_STAGING_DIR/ChatOS.app"
 ln -s /Applications "$DMG_STAGING_DIR/Applications"
 cat > "$DMG_STAGING_DIR/安装说明.txt" <<'EOF'
 安装：把 ChatOS.app 拖入 Applications，然后从 Applications 打开。
