@@ -6,6 +6,37 @@ import XCTest
 @testable import ChatOSConnector
 
 final class AgentWorkerProcessClientTests: XCTestCase {
+    func testSequentialRunsReleaseParentFileDescriptors() async throws {
+        let executable = try workerExecutable()
+        let client = AgentWorkerProcessClient(
+            executableURL: executable,
+            shutdownGraceSeconds: 5
+        )
+        _ = try await Self.runIsolatedWorker(
+            client: client,
+            scope: "agent-worker-fd-warmup",
+            model: AgentWorkerTestModel()
+        )
+        try await Task.sleep(for: .milliseconds(250))
+        let baseline = Self.openFileDescriptorCount()
+
+        for index in 0..<40 {
+            let result = try await Self.runIsolatedWorker(
+                client: client,
+                scope: "agent-worker-fd-regression-\(index)",
+                model: AgentWorkerTestModel()
+            )
+            XCTAssertEqual(result.status, .completed)
+        }
+        try await Task.sleep(for: .milliseconds(500))
+
+        XCTAssertLessThanOrEqual(
+            Self.openFileDescriptorCount(),
+            baseline + 3,
+            "sequential Agent Workers must release all parent-owned pipe descriptors"
+        )
+    }
+
     func testBuiltWorkerRunsAgentLoopAndPersistsThroughParentCallbacks() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_AGENT_WORKER_PATH"],
               !path.isEmpty else {
@@ -704,6 +735,15 @@ final class AgentWorkerProcessClientTests: XCTestCase {
         policy.requestTimeoutSeconds = 10
         policy.runTimeoutSeconds = 30
         return policy
+    }
+
+    private static func openFileDescriptorCount() -> Int {
+        (0..<4_096).reduce(into: 0) { count, descriptor in
+            errno = 0
+            if fcntl(Int32(descriptor), F_GETFD) >= 0 || errno != EBADF {
+                count += 1
+            }
+        }
     }
 }
 
