@@ -175,6 +175,8 @@
 "根目录" = "Root";
 "检查内容" = "Inspection Details";
 "模型输出" = "Model Output";
+"正在加载 Agent" = "Loading Agents";
+"正在加载 Agent…" = "Loading Agents…";
 "正在加载 Plan…" = "Loading Plan…";
 "正在加载…" = "Loading…";
 "正在加载任务…" = "Loading Task…";
