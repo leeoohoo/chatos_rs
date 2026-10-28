@@ -30,8 +30,8 @@ actor NativePluginApplicationRuntime {
         )
     }
 
-    nonisolated func terminateAllSynchronously() {
-        processRegistry.terminateAllSynchronously()
+    nonisolated func terminateAllSynchronously(graceMilliseconds: Int = 2_000) {
+        processRegistry.terminateAllSynchronously(graceMilliseconds: graceMilliseconds)
     }
 
     func launch(

@@ -13,6 +13,7 @@ public actor NativePluginPerformanceAcceptanceProbe {
     private let rootURL: URL
     private nonisolated let runtime: NativePluginApplicationRuntime
     private var launch: LocalConnectorPluginApplicationLaunch?
+    private var ownerUserID: String?
 
     public init(rootURL: URL) {
         self.rootURL = rootURL.standardizedFileURL
@@ -27,6 +28,7 @@ public actor NativePluginPerformanceAcceptanceProbe {
 
     public func start(ownerUserID: String) async throws {
         if launch != nil { return }
+        self.ownerUserID = ownerUserID
         let installation = rootURL.appendingPathComponent("installation", isDirectory: true)
         let binDirectory = installation.appendingPathComponent("bin", isDirectory: true)
         let uiDirectory = installation.appendingPathComponent("ui", isDirectory: true)
@@ -157,7 +159,20 @@ public actor NativePluginPerformanceAcceptanceProbe {
         await runtime.stopAll()
     }
 
+    public func recover() async throws {
+        guard let ownerUserID else {
+            throw NativePluginPerformanceAcceptanceProbeError.invalidFixture
+        }
+        launch = nil
+        await runtime.stopAll()
+        try await start(ownerUserID: ownerUserID)
+    }
+
     public nonisolated func terminateAllSynchronously() {
         runtime.terminateAllSynchronously()
+    }
+
+    public nonisolated func forceTerminateForAcceptance() {
+        runtime.terminateAllSynchronously(graceMilliseconds: 0)
     }
 }

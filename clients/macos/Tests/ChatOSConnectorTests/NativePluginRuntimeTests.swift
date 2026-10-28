@@ -15,6 +15,9 @@ struct NativePluginRuntimeTests {
 
         try await probe.start(ownerUserID: "performance-acceptance-plugin-test")
         try await probe.exercise()
+        probe.forceTerminateForAcceptance()
+        try await probe.recover()
+        try await probe.exercise()
         await probe.stop()
     }
 

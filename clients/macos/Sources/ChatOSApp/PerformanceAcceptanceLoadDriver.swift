@@ -242,6 +242,14 @@ final class PerformanceAcceptanceLoadDriver {
                 break
             } catch {
                 try? await ledger.recordFailure(kind: .plugin, error: error)
+                do {
+                    try await plugin.recover()
+                    try await ledger.recordSuccess(kind: .pluginRecovery)
+                } catch is CancellationError {
+                    break
+                } catch {
+                    try? await ledger.recordFailure(kind: .pluginRecovery, error: error)
+                }
             }
             guard await sleep(configuration.intervalMilliseconds) else { break }
         }
@@ -319,6 +327,7 @@ private enum PerformanceAcceptanceWorkKind: String, Codable, Sendable {
     case agent
     case media
     case plugin
+    case pluginRecovery = "plugin-recovery"
 }
 
 private enum PerformanceAcceptanceLoadError: Error {
@@ -341,6 +350,8 @@ private actor PerformanceAcceptanceLedger {
         var mediaFailures = 0
         var pluginCompletions = 0
         var pluginFailures = 0
+        var pluginRecoveries = 0
+        var pluginRecoveryFailures = 0
         var recentFailures: [String] = []
     }
 
@@ -361,6 +372,7 @@ private actor PerformanceAcceptanceLedger {
         case .agent: snapshot.agentCompletions += 1
         case .media: snapshot.mediaCompletions += 1
         case .plugin: snapshot.pluginCompletions += 1
+        case .pluginRecovery: snapshot.pluginRecoveries += 1
         }
         try persist()
     }
@@ -370,6 +382,7 @@ private actor PerformanceAcceptanceLedger {
         case .agent: snapshot.agentFailures += 1
         case .media: snapshot.mediaFailures += 1
         case .plugin: snapshot.pluginFailures += 1
+        case .pluginRecovery: snapshot.pluginRecoveryFailures += 1
         }
         snapshot.recentFailures.append("\(kind.rawValue): \(String(describing: error))")
         if snapshot.recentFailures.count > 20 {
