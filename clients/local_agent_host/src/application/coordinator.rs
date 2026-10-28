@@ -19,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use tokio::sync::{watch, Notify};
+use tokio::sync::{watch, Notify, RwLock};
 
 use super::hook_coordinator::LocalHookPromptDecision;
 use super::work_activity::HostWorkActivity;
@@ -55,10 +55,14 @@ pub struct LocalAgentHostCoordinator {
     memory_wakeup: Arc<Notify>,
     activity: watch::Sender<u64>,
     work_activity: HostWorkActivity,
+    admission_activity: HostWorkActivity,
+    memory_work_activity: HostWorkActivity,
     reserved_ipc_tools: Vec<String>,
     maximum_concurrent_work_items: usize,
     effective_maximum_concurrent_work_items: watch::Sender<usize>,
     pressure_level: watch::Sender<LocalAgentResourcePressureLevel>,
+    accepting_new_work: watch::Sender<bool>,
+    admission_barrier: Arc<RwLock<()>>,
 }
 
 impl LocalAgentHostCoordinator {
@@ -89,6 +93,7 @@ impl LocalAgentHostCoordinator {
         let (effective_maximum_concurrent_work_items, _) =
             watch::channel(maximum_concurrent_work_items);
         let (pressure_level, _) = watch::channel(LocalAgentResourcePressureLevel::Normal);
+        let (accepting_new_work, _) = watch::channel(true);
         let work_activity = HostWorkActivity::default();
         Ok(Self {
             runtime,
@@ -103,10 +108,14 @@ impl LocalAgentHostCoordinator {
             memory_wakeup: Arc::new(Notify::new()),
             activity,
             work_activity,
+            admission_activity: HostWorkActivity::default(),
+            memory_work_activity: HostWorkActivity::default(),
             reserved_ipc_tools: Vec::new(),
             maximum_concurrent_work_items,
             effective_maximum_concurrent_work_items,
             pressure_level,
+            accepting_new_work,
+            admission_barrier: Arc::new(RwLock::new(())),
         })
     }
 
@@ -260,6 +269,7 @@ impl LocalAgentHostCoordinator {
         mut shutdown: watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
         let mut effective_limit = self.effective_maximum_concurrent_work_items.subscribe();
+        let mut accepting_new_work = self.accepting_new_work.subscribe();
         let mut failure_backoff = Duration::from_millis(100);
         // Split the initial preference across workers, then rotate it after every committed
         // item. Model steps and Tool calls share one machine budget, but neither lane may own
@@ -270,6 +280,20 @@ impl LocalAgentHostCoordinator {
         loop {
             if *shutdown.borrow() {
                 return Ok(());
+            }
+            while !*accepting_new_work.borrow() {
+                tokio::select! {
+                    changed = accepting_new_work.changed() => {
+                        if changed.is_err() {
+                            return Ok(());
+                        }
+                    }
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            return Ok(());
+                        }
+                    }
+                }
             }
             while worker_index >= *effective_limit.borrow() {
                 tokio::select! {
@@ -373,11 +397,16 @@ impl LocalAgentHostCoordinator {
     }
 
     fn worker_can_claim(&self, worker_index: usize, shutdown: &watch::Receiver<bool>) -> bool {
-        !*shutdown.borrow() && worker_index < *self.effective_maximum_concurrent_work_items.borrow()
+        !*shutdown.borrow()
+            && *self.accepting_new_work.borrow()
+            && worker_index < *self.effective_maximum_concurrent_work_items.borrow()
     }
 
     async fn run_model_once(&self) -> Result<bool, LocalAgentCoordinatorError> {
         let Some(scheduler) = self.model_scheduler.as_ref() else {
+            return Ok(false);
+        };
+        let Some(_activity) = self.begin_admitted_work(&self.admission_activity).await else {
             return Ok(false);
         };
         let committed = matches!(scheduler.run_once().await?, SchedulerTick::Committed(_));
@@ -391,11 +420,31 @@ impl LocalAgentHostCoordinator {
         let Some(scheduler) = self.tool_scheduler.as_ref() else {
             return Ok(false);
         };
+        let Some(_activity) = self.begin_admitted_work(&self.admission_activity).await else {
+            return Ok(false);
+        };
         let committed = matches!(scheduler.run_once().await?, ToolSchedulerTick::Committed(_));
         if committed {
             self.signal_activity();
         }
         Ok(committed)
+    }
+
+    async fn begin_admitted_work(
+        &self,
+        activity: &HostWorkActivity,
+    ) -> Option<super::work_activity::HostWorkActivityGuard> {
+        // Admission changes take the write side of this barrier. Once a close command has
+        // returned, every worker that passed the gate has already published its activity guard,
+        // and every other worker observes the closed gate. This removes the health-snapshot race
+        // where a worker could claim immediately after the client observed an idle Host.
+        let barrier = self.admission_barrier.read().await;
+        if !*self.accepting_new_work.borrow() {
+            return None;
+        }
+        let guard = activity.begin();
+        drop(barrier);
+        Some(guard)
     }
 
     #[cfg(test)]
@@ -442,12 +491,34 @@ impl LocalAgentHostCoordinator {
         let Some(worker) = self.memory_sync_worker.as_ref() else {
             return Ok(());
         };
+        let mut accepting_new_work = self.accepting_new_work.subscribe();
         let mut failure_backoff = Duration::from_millis(100);
         loop {
             if *shutdown.borrow() {
                 return Ok(());
             }
-            match worker.run_once().await {
+            while !*accepting_new_work.borrow() {
+                tokio::select! {
+                    changed = accepting_new_work.changed() => {
+                        if changed.is_err() {
+                            return Ok(());
+                        }
+                    }
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            let tick = {
+                let Some(_activity) = self.begin_admitted_work(&self.memory_work_activity).await
+                else {
+                    continue;
+                };
+                worker.run_once().await
+            };
+            match tick {
                 Ok(MemorySyncTick::Synced { .. }) => {
                     self.signal_activity();
                     failure_backoff = Duration::from_millis(100);
@@ -638,6 +709,8 @@ impl LocalAgentHostCoordinator {
             }
         };
         let active_work_items = self.work_activity.active_count();
+        let admission_in_flight_work_items = self.admission_activity.active_count();
+        let active_memory_sync_items = self.memory_work_activity.active_count();
         let scheduler = LocalAgentHostSchedulerSnapshot {
             maximum_concurrent_work_items: self.maximum_concurrent_work_items,
             effective_maximum_concurrent_work_items: *self
@@ -649,6 +722,9 @@ impl LocalAgentHostCoordinator {
                 .maximum_concurrent_work_items
                 .saturating_sub(active_work_items),
             queued_ready_work_items,
+            accepting_new_work: *self.accepting_new_work.borrow(),
+            active_memory_sync_items,
+            admission_in_flight_work_items,
         };
         if let Some(HostResult::Health {
             scheduler: result_scheduler,
@@ -676,6 +752,23 @@ impl LocalAgentHostCoordinator {
                 pressure_level,
                 effective_maximum_concurrent_work_items,
             },
+        )
+    }
+
+    async fn update_scheduler_admission(
+        &self,
+        request: HostRequestEnvelope,
+        accepting_new_work: bool,
+    ) -> HostResponseEnvelope {
+        let barrier = self.admission_barrier.write().await;
+        self.accepting_new_work.send_replace(accepting_new_work);
+        drop(barrier);
+        if accepting_new_work {
+            self.wake();
+        }
+        HostResponseEnvelope::success(
+            request.command_id,
+            HostResult::SchedulerAdmissionUpdated { accepting_new_work },
         )
     }
 }
@@ -720,6 +813,11 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
         }
         if let HostCommand::SetSchedulerPressure(command) = request.command.clone() {
             return self.update_scheduler_pressure(request, command.pressure_level);
+        }
+        if let HostCommand::SetSchedulerAdmission(command) = request.command.clone() {
+            return self
+                .update_scheduler_admission(request, command.accepting_new_work)
+                .await;
         }
         if request
             .command
@@ -861,6 +959,7 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::ResolveRequirementSurvey(_) => true,
         HostCommand::Health
         | HostCommand::SetSchedulerPressure(_)
+        | HostCommand::SetSchedulerAdmission(_)
         | HostCommand::GetMemorySyncStatus(_)
         | HostCommand::PutModelConfigSnapshot(_)
         | HostCommand::GetModelConfigSnapshot(_)

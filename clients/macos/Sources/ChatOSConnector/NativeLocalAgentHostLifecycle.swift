@@ -45,6 +45,31 @@ public struct NativeLocalAgentHostResourceSnapshot: Sendable, Equatable {
     public let activeWorkItems: Int
     public let idleWorkers: Int
     public let queuedReadyWorkItems: Int
+    public let acceptingNewWork: Bool
+    public let activeMemorySyncItems: Int
+    public let admissionInFlightWorkItems: Int
+
+    public init(
+        maximumConcurrentWorkItems: Int,
+        effectiveMaximumConcurrentWorkItems: Int,
+        pressureLevel: NativeLocalAgentHostPressureLevel,
+        activeWorkItems: Int,
+        idleWorkers: Int,
+        queuedReadyWorkItems: Int,
+        acceptingNewWork: Bool = true,
+        activeMemorySyncItems: Int = 0,
+        admissionInFlightWorkItems: Int = 0
+    ) {
+        self.maximumConcurrentWorkItems = maximumConcurrentWorkItems
+        self.effectiveMaximumConcurrentWorkItems = effectiveMaximumConcurrentWorkItems
+        self.pressureLevel = pressureLevel
+        self.activeWorkItems = activeWorkItems
+        self.idleWorkers = idleWorkers
+        self.queuedReadyWorkItems = queuedReadyWorkItems
+        self.acceptingNewWork = acceptingNewWork
+        self.activeMemorySyncItems = activeMemorySyncItems
+        self.admissionInFlightWorkItems = admissionInFlightWorkItems
+    }
 }
 
 public enum NativeLocalAgentConcurrencyPolicy {
@@ -198,6 +223,12 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         let task: Task<ManagedLocalAgentHostProcess?, Error>
     }
 
+    private struct CredentialRefreshRequest: Sendable {
+        let ownerUserID: String
+        let credentialEnvironment: [String: String]
+        let credentialFingerprint: Data
+    }
+
     private let configuration: NativeLocalAgentHostConfiguration
     private var managedProcess: ManagedLocalAgentHostProcess?
     private var transition: HostTransition?
@@ -208,6 +239,9 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     private var pendingRecoveryLevel: NativeLocalAgentHostPressureLevel?
     private var pressureRecoveryTask: Task<Void, Never>?
     private var pressureRecoveryGeneration: UInt64 = 0
+    private var pendingCredentialRefresh: CredentialRefreshRequest?
+    private var credentialRefreshTask: Task<Void, Error>?
+    private var credentialRefreshOwnerUserID: String?
     private let pressureRecoveryDelay: Duration
     public private(set) var activeOwnerUserID: String?
 
@@ -336,22 +370,49 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         )
     }
 
-    /// A catalog refresh must not terminate durable work restored at startup. Identical
-    /// credentials reuse the worker. Changed credentials take effect on the next normal
-    /// startup, rather than guessing whether a concurrently claiming worker is idle.
+    /// Applies credential changes without exposing Host lifecycle management to the user.
+    ///
+    /// The running Host first closes scheduler admission. Work that already passed the gate is
+    /// allowed to finish, while newly queued durable work remains in SQLite for the replacement
+    /// Host. Repeated refreshes are coalesced to the latest credential set.
     public func refreshCredentials(
         ownerUserID: String,
         credentialEnvironment: [String: String]
     ) async throws {
         try Self.validate(ownerUserID: ownerUserID)
         try Self.validate(credentialEnvironment: credentialEnvironment)
+        let requestedFingerprint = Self.fingerprint(credentialEnvironment)
+        if let credentialRefreshTask {
+            guard credentialRefreshOwnerUserID == ownerUserID else {
+                throw NativeLocalAgentHostError.ownerMismatch
+            }
+            pendingCredentialRefresh = .init(
+                ownerUserID: ownerUserID,
+                credentialEnvironment: credentialEnvironment,
+                credentialFingerprint: requestedFingerprint
+            )
+            try await credentialRefreshTask.value
+            return
+        }
         if managedProcess?.process.isRunning == true, workersEnabled {
             guard activeOwnerUserID == ownerUserID else {
                 throw NativeLocalAgentHostError.ownerMismatch
             }
-            guard credentialFingerprint == Self.fingerprint(credentialEnvironment) else {
-                throw NativeLocalAgentCredentialRefreshDeferred()
+            if credentialFingerprint == requestedFingerprint {
+                return
             }
+            pendingCredentialRefresh = .init(
+                ownerUserID: ownerUserID,
+                credentialEnvironment: credentialEnvironment,
+                credentialFingerprint: requestedFingerprint
+            )
+            credentialRefreshOwnerUserID = ownerUserID
+            credentialRefreshTask = Task { [weak self] in
+                guard let self else { return }
+                try await self.applyPendingCredentialRefreshes()
+            }
+            guard let credentialRefreshTask else { return }
+            try await credentialRefreshTask.value
             return
         }
         try await launch(
@@ -359,6 +420,99 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
             credentialEnvironment: credentialEnvironment,
             workersEnabled: true
         )
+    }
+
+    private func applyPendingCredentialRefreshes() async throws {
+        do {
+            while pendingCredentialRefresh != nil {
+                try Task.checkCancellation()
+                guard let process = managedProcess,
+                      process.process.isRunning,
+                      workersEnabled else {
+                    guard let request = takePendingCredentialRefresh() else { break }
+                    try await launch(
+                        ownerUserID: request.ownerUserID,
+                        credentialEnvironment: request.credentialEnvironment,
+                        workersEnabled: true
+                    )
+                    continue
+                }
+                guard let pendingCredentialRefresh,
+                      activeOwnerUserID == pendingCredentialRefresh.ownerUserID else {
+                    throw NativeLocalAgentHostError.ownerMismatch
+                }
+
+                try await process.setSchedulerAdmission(
+                    acceptingNewWork: false,
+                    timeoutMilliseconds: 5_000
+                )
+                do {
+                    try await replaceDrainedHost(process)
+                } catch {
+                    if managedProcess?.identity == process.identity,
+                       process.process.isRunning {
+                        try? await process.setSchedulerAdmission(
+                            acceptingNewWork: true,
+                            timeoutMilliseconds: 5_000
+                        )
+                    }
+                    throw error
+                }
+            }
+            credentialRefreshTask = nil
+            credentialRefreshOwnerUserID = nil
+        } catch {
+            credentialRefreshTask = nil
+            credentialRefreshOwnerUserID = nil
+            throw error
+        }
+    }
+
+    private func replaceDrainedHost(_ process: ManagedLocalAgentHostProcess) async throws {
+        while managedProcess?.identity == process.identity, process.process.isRunning {
+            try Task.checkCancellation()
+            guard let pending = pendingCredentialRefresh else {
+                try await process.setSchedulerAdmission(
+                    acceptingNewWork: true,
+                    timeoutMilliseconds: 5_000
+                )
+                return
+            }
+            guard activeOwnerUserID == pending.ownerUserID else {
+                throw NativeLocalAgentHostError.ownerMismatch
+            }
+            if credentialFingerprint == pending.credentialFingerprint {
+                self.pendingCredentialRefresh = nil
+                try await process.setSchedulerAdmission(
+                    acceptingNewWork: true,
+                    timeoutMilliseconds: 5_000
+                )
+                return
+            }
+            let snapshot = try await process.resourceSnapshot(timeoutMilliseconds: 5_000)
+            guard !snapshot.acceptingNewWork else {
+                throw NativeLocalAgentHostError.invalidResponse
+            }
+            if snapshot.activeWorkItems == 0,
+               snapshot.activeMemorySyncItems == 0,
+               snapshot.admissionInFlightWorkItems == 0 {
+                // Take the latest request only after the old Host is provably idle. Admission is
+                // still closed, so no worker can race this check and acquire a new durable claim.
+                guard let latest = takePendingCredentialRefresh() else { continue }
+                try await launch(
+                    ownerUserID: latest.ownerUserID,
+                    credentialEnvironment: latest.credentialEnvironment,
+                    workersEnabled: true
+                )
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func takePendingCredentialRefresh() -> CredentialRefreshRequest? {
+        defer { pendingCredentialRefresh = nil }
+        return pendingCredentialRefresh
     }
 
     private static func fingerprint(_ environment: [String: String]) -> Data {
@@ -726,16 +880,6 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
                 throw NativeLocalAgentHostError.invalidCredentialEnvironment
             }
         }
-    }
-}
-
-public struct NativeLocalAgentCredentialRefreshDeferred:
-    LocalizedError,
-    LocalAgentControlPlaneBootstrapNonRetryableError,
-    Sendable
-{
-    public var errorDescription: String? {
-        NSLocalizedString("连接凭据已更新。为避免中断当前执行，请在任务完成后重新打开应用以应用新配置。", comment: "Deferred model credential refresh")
     }
 }
 

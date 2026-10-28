@@ -29,6 +29,7 @@ impl CommandReceiptPolicy {
         match command {
             HostCommand::Health
             | HostCommand::SetSchedulerPressure(_)
+            | HostCommand::SetSchedulerAdmission(_)
             | HostCommand::GetMemorySyncStatus(_)
             | HostCommand::GetModelConfigSnapshot(_)
             | HostCommand::ListLatestModelConfigSnapshots(_)

@@ -10,9 +10,9 @@ use chatos_ai_runtime::{MemoryRecordWriter, SaveRecordInput};
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
     ClaimNextRunCommand, CommitStepCommand, CreateRunCommand, CreateTaskGraphCommand, HostCommand,
-    HostRequestEnvelope, HostResult, LocalAgentResourcePressureLevel, LocalAgentRunClaim,
-    LocalAgentStepOutcome, LocalTaskSpec, SetSchedulerPressureCommand,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    HostRequestEnvelope, HostResult, LocalAgentHostSchedulerSnapshot,
+    LocalAgentResourcePressureLevel, LocalAgentRunClaim, LocalAgentStepOutcome, LocalTaskSpec,
+    SetSchedulerAdmissionCommand, SetSchedulerPressureCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry, LocalAgentRuntime};
 use serde_json::json;
@@ -588,6 +588,155 @@ async fn pressure_gate_applies_before_the_next_claim_without_cancelling_active_w
         .await
         .expect("restored worker started before timeout")
         .expect("fourth Run start");
+
+    shutdown_sender.send(true).expect("shutdown");
+    release.notify_waiters();
+    coordinator.wake();
+    coordinator_task
+        .await
+        .expect("coordinator task")
+        .expect("coordinator shutdown");
+}
+
+#[tokio::test]
+async fn admission_close_drains_active_work_and_prevents_the_next_durable_claim() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = Arc::new(LocalAgentRuntime::new(storage));
+    runtime.initialize("user-1").await.expect("initialize");
+    for index in 0..2 {
+        runtime
+            .try_handle(envelope(
+                &format!("create-admission-run-{index}"),
+                HostCommand::CreateRun(CreateRunCommand {
+                    run_id: format!("admission-run-{index}"),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation".to_string(),
+                    owner_entity_id: format!("admission-conversation-{index}"),
+                    profile_key: "blocking".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"message": index}),
+                    max_iterations: 4,
+                }),
+            ))
+            .await
+            .expect("create admission Run");
+    }
+    let (started_sender, mut started_receiver) = mpsc::unbounded_channel();
+    let release = Arc::new(Notify::new());
+    let mut profiles = LocalAgentProfileRegistry::new();
+    profiles
+        .register(
+            "blocking",
+            BlockingProfile {
+                started: started_sender,
+                release: Arc::clone(&release),
+            },
+        )
+        .expect("profile");
+    let scheduler = LocalAgentScheduler::new(
+        Arc::clone(&runtime),
+        profiles,
+        "user-1",
+        "local-admission-worker",
+    )
+    .expect("scheduler");
+    let coordinator = Arc::new(
+        LocalAgentHostCoordinator::new(Arc::clone(&runtime), "user-1", Some(scheduler), None)
+            .expect("coordinator")
+            .with_maximum_concurrent_work_items(1)
+            .expect("concurrency"),
+    );
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let coordinator_task = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move { coordinator.run_until_shutdown(shutdown_receiver).await }
+    });
+    coordinator.wake();
+    tokio::time::timeout(std::time::Duration::from_secs(1), started_receiver.recv())
+        .await
+        .expect("first worker started before timeout")
+        .expect("first worker start");
+
+    let closed = coordinator
+        .handle_request(envelope(
+            "close-scheduler-admission",
+            HostCommand::SetSchedulerAdmission(SetSchedulerAdmissionCommand {
+                accepting_new_work: false,
+            }),
+        ))
+        .await;
+    assert!(matches!(
+        closed.result,
+        Some(HostResult::SchedulerAdmissionUpdated {
+            accepting_new_work: false,
+        })
+    ));
+    let health = coordinator
+        .handle_request(envelope("health-admission-closed", HostCommand::Health))
+        .await;
+    let Some(HostResult::Health {
+        scheduler: Some(snapshot),
+        ..
+    }) = health.result
+    else {
+        panic!("expected scheduler health snapshot: {health:?}")
+    };
+    assert!(!snapshot.accepting_new_work);
+    assert_eq!(snapshot.active_work_items, 1);
+
+    release.notify_waiters();
+    for _ in 0..100 {
+        let health = coordinator
+            .handle_request(envelope("health-admission-draining", HostCommand::Health))
+            .await;
+        if matches!(
+            health.result,
+            Some(HostResult::Health {
+                scheduler: Some(LocalAgentHostSchedulerSnapshot {
+                    active_work_items: 0,
+                    ..
+                }),
+                ..
+            })
+        ) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            started_receiver.recv()
+        )
+        .await
+        .is_err(),
+        "closed admission must leave the next durable Run unclaimed"
+    );
+
+    let reopened = coordinator
+        .handle_request(envelope(
+            "open-scheduler-admission",
+            HostCommand::SetSchedulerAdmission(SetSchedulerAdmissionCommand {
+                accepting_new_work: true,
+            }),
+        ))
+        .await;
+    assert!(matches!(
+        reopened.result,
+        Some(HostResult::SchedulerAdmissionUpdated {
+            accepting_new_work: true,
+        })
+    ));
+    tokio::time::timeout(std::time::Duration::from_secs(1), started_receiver.recv())
+        .await
+        .expect("second worker started after reopening")
+        .expect("second worker start");
 
     shutdown_sender.send(true).expect("shutdown");
     release.notify_waiters();

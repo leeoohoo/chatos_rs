@@ -173,6 +173,7 @@ impl HostRequestEnvelope {
 pub enum HostCommand {
     Health,
     SetSchedulerPressure(SetSchedulerPressureCommand),
+    SetSchedulerAdmission(SetSchedulerAdmissionCommand),
     GetMemorySyncStatus(GetMemorySyncStatusCommand),
     PutModelConfigSnapshot(PutModelConfigSnapshotCommand),
     GetModelConfigSnapshot(GetModelConfigSnapshotCommand),
@@ -260,7 +261,7 @@ pub enum HostCommand {
 impl HostCommand {
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Health | Self::SetSchedulerPressure(_) => Ok(()),
+            Self::Health | Self::SetSchedulerPressure(_) | Self::SetSchedulerAdmission(_) => Ok(()),
             Self::GetMemorySyncStatus(command) => command.validate(),
             Self::PutModelConfigSnapshot(command) => command.validate(),
             Self::GetModelConfigSnapshot(command) => command.validate(),
@@ -359,6 +360,11 @@ pub enum LocalAgentResourcePressureLevel {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SetSchedulerPressureCommand {
     pub pressure_level: LocalAgentResourcePressureLevel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SetSchedulerAdmissionCommand {
+    pub accepting_new_work: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

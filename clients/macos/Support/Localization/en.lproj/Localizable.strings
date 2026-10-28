@@ -745,7 +745,6 @@
 "任务组件缺失，请重新安装应用。" = "The Task component is missing. Please reinstall the app.";
 "任务执行意外中断，无法确认当前步骤的结果。请先检查执行记录，再决定是否重试，避免重复操作。" = "Execution was interrupted and the result of the current step could not be confirmed. Review the execution record before retrying to avoid repeating an operation.";
 "请先处理对应的前置任务；其交付条件满足后，后续任务才应重新执行。" = "Complete the prerequisite task first. Retry this task after the prerequisite delivery conditions are met.";
-"连接凭据已更新。为避免中断当前执行，请在任务完成后重新打开应用以应用新配置。" = "Connection credentials have changed. To avoid interrupting current work, reopen the app after your Tasks finish to apply the new configuration.";
 "验收依据来自执行者报告；不等同于浏览器或工具运行状态。" = "Acceptance evidence comes from the executor report; it does not represent browser or tool execution status.";
 "恢复执行" = "Recover Execution";
 "停止任务" = "Stop Task";

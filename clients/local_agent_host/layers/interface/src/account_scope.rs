@@ -9,7 +9,7 @@ impl HostCommand {
     /// process launch before dispatching into the application runtime.
     pub fn owner_user_id(&self) -> Option<&str> {
         match self {
-            Self::Health | Self::SetSchedulerPressure(_) => None,
+            Self::Health | Self::SetSchedulerPressure(_) | Self::SetSchedulerAdmission(_) => None,
             Self::GetMemorySyncStatus(command) => Some(&command.tenant_id),
             Self::PutModelConfigSnapshot(command) => Some(&command.snapshot.owner_user_id),
             Self::GetModelConfigSnapshot(command) => Some(&command.owner_user_id),
@@ -108,6 +108,13 @@ mod tests {
         assert_eq!(
             HostCommand::SetSchedulerPressure(crate::SetSchedulerPressureCommand {
                 pressure_level: crate::LocalAgentResourcePressureLevel::Critical,
+            })
+            .owner_user_id(),
+            None
+        );
+        assert_eq!(
+            HostCommand::SetSchedulerAdmission(crate::SetSchedulerAdmissionCommand {
+                accepting_new_work: false,
             })
             .owner_user_id(),
             None

@@ -585,6 +585,11 @@ fn read_only_ipc_does_not_wake_scheduler_or_signal_activity() {
                     chatos_local_agent_protocol::LocalAgentResourcePressureLevel::Elevated,
             },
         ),
+        HostCommand::SetSchedulerAdmission(
+            chatos_local_agent_protocol::SetSchedulerAdmissionCommand {
+                accepting_new_work: false,
+            },
+        ),
         HostCommand::GetEventCursor(GetEventCursorCommand {
             owner_user_id: "user-1".to_string(),
         }),

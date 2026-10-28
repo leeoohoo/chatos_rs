@@ -334,7 +334,10 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             pressureLevel: scheduler.pressureLevel,
             activeWorkItems: scheduler.activeWorkItems,
             idleWorkers: scheduler.idleWorkers,
-            queuedReadyWorkItems: scheduler.queuedReadyWorkItems
+            queuedReadyWorkItems: scheduler.queuedReadyWorkItems,
+            acceptingNewWork: scheduler.acceptingNewWork,
+            activeMemorySyncItems: scheduler.activeMemorySyncItems,
+            admissionInFlightWorkItems: scheduler.admissionInFlightWorkItems
         )
     }
 
@@ -366,6 +369,36 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
               response.result?.pressureLevel == pressureLevel,
               let effective = response.result?.effectiveMaximumConcurrentWorkItems,
               NativeLocalAgentConcurrencyPolicy.validated(effective) != nil else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+    }
+
+    func setSchedulerAdmission(
+        acceptingNewWork: Bool,
+        timeoutMilliseconds: Int
+    ) async throws {
+        let commandID = "native-admission-\(UUID().uuidString.lowercased())"
+        let request = NativeLocalAgentSchedulerAdmissionRequest(
+            protocolVersion: NativeLocalAgentHostProtocol.version,
+            commandId: commandID,
+            command: .init(
+                type: "set_scheduler_admission",
+                acceptingNewWork: acceptingNewWork
+            )
+        )
+        let payload = try await roundTripAsync(
+            try JSONEncoder.localAgent.encode(request),
+            timeoutMilliseconds: timeoutMilliseconds
+        )
+        let response = try JSONDecoder.localAgent.decode(
+            NativeLocalAgentSchedulerAdmissionResponse.self,
+            from: payload
+        )
+        guard response.protocolVersion == NativeLocalAgentHostProtocol.version,
+              response.commandId == commandID,
+              response.ok,
+              response.result?.type == "scheduler_admission_updated",
+              response.result?.acceptingNewWork == acceptingNewWork else {
             throw NativeLocalAgentHostError.invalidResponse
         }
     }
@@ -863,6 +896,52 @@ struct NativeLocalAgentHealthScheduler: Codable, Equatable {
     let activeWorkItems: Int
     let idleWorkers: Int
     let queuedReadyWorkItems: Int
+    let acceptingNewWork: Bool
+    let activeMemorySyncItems: Int
+    let admissionInFlightWorkItems: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case maximumConcurrentWorkItems
+        case effectiveMaximumConcurrentWorkItems
+        case pressureLevel
+        case activeWorkItems
+        case idleWorkers
+        case queuedReadyWorkItems
+        case acceptingNewWork
+        case activeMemorySyncItems
+        case admissionInFlightWorkItems
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        maximumConcurrentWorkItems = try container.decode(
+            Int.self,
+            forKey: .maximumConcurrentWorkItems
+        )
+        effectiveMaximumConcurrentWorkItems = try container.decode(
+            Int.self,
+            forKey: .effectiveMaximumConcurrentWorkItems
+        )
+        pressureLevel = try container.decode(
+            NativeLocalAgentHostPressureLevel.self,
+            forKey: .pressureLevel
+        )
+        activeWorkItems = try container.decode(Int.self, forKey: .activeWorkItems)
+        idleWorkers = try container.decode(Int.self, forKey: .idleWorkers)
+        queuedReadyWorkItems = try container.decode(Int.self, forKey: .queuedReadyWorkItems)
+        acceptingNewWork = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .acceptingNewWork
+        ) ?? true
+        activeMemorySyncItems = try container.decodeIfPresent(
+            Int.self,
+            forKey: .activeMemorySyncItems
+        ) ?? 0
+        admissionInFlightWorkItems = try container.decodeIfPresent(
+            Int.self,
+            forKey: .admissionInFlightWorkItems
+        ) ?? 0
+    }
 
     var isValid: Bool {
         NativeLocalAgentConcurrencyPolicy.validated(maximumConcurrentWorkItems) != nil
@@ -872,6 +951,8 @@ struct NativeLocalAgentHealthScheduler: Codable, Equatable {
             && (0...maximumConcurrentWorkItems).contains(activeWorkItems)
             && (0...maximumConcurrentWorkItems).contains(idleWorkers)
             && queuedReadyWorkItems >= 0
+            && (0...1).contains(activeMemorySyncItems)
+            && (0...maximumConcurrentWorkItems).contains(admissionInFlightWorkItems)
             && activeWorkItems + idleWorkers == maximumConcurrentWorkItems
     }
 }
@@ -898,6 +979,29 @@ private struct NativeLocalAgentSchedulerPressureResult: Codable {
     let type: String
     let pressureLevel: NativeLocalAgentHostPressureLevel
     let effectiveMaximumConcurrentWorkItems: Int
+}
+
+private struct NativeLocalAgentSchedulerAdmissionRequest: Codable {
+    let protocolVersion: Int
+    let commandId: String
+    let command: NativeLocalAgentSchedulerAdmissionCommand
+}
+
+private struct NativeLocalAgentSchedulerAdmissionCommand: Codable {
+    let type: String
+    let acceptingNewWork: Bool
+}
+
+private struct NativeLocalAgentSchedulerAdmissionResponse: Codable {
+    let protocolVersion: Int
+    let commandId: String
+    let ok: Bool
+    let result: NativeLocalAgentSchedulerAdmissionResult?
+}
+
+private struct NativeLocalAgentSchedulerAdmissionResult: Codable {
+    let type: String
+    let acceptingNewWork: Bool
 }
 
 struct NativeLocalAgentHealthError: Codable, Equatable {
