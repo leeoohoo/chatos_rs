@@ -2,13 +2,21 @@ import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
-import { assertIdentifier, assertSolutionWorkspace, createSolutionWorkspace, workspaceSummary, type ChatosProjectBinding, type SolutionWorkspace, type SolutionWorkspaceSummary, type SourceMode } from './schema.js';
+import { assertIdentifier, assertSolutionWorkspace, createSolutionWorkspace, workspaceSummary, type ArchivedSolutionWorkspaceSummary, type ChatosProjectBinding, type SolutionWorkspace, type SolutionWorkspaceSummary, type SourceMode } from './schema.js';
 import { projectBindingFromContext } from './runtime-context.js';
 
 export class RevisionConflictError extends Error {
   constructor(public readonly actualRevision: number) {
     super(`Solution workspace revision conflict. Current revision is ${actualRevision}.`);
   }
+}
+
+interface ArchivedWorkspaceRecord {
+  schemaVersion: 1;
+  archiveId: string;
+  archivedAt: string;
+  reason: string;
+  workspace: SolutionWorkspace;
 }
 
 export function resolveDataDirectory(): string {
@@ -25,6 +33,7 @@ export class SolutionWorkspaceStore {
 
   async initialize(): Promise<void> {
     await fs.mkdir(this.rootDirectory, { recursive: true });
+    await fs.mkdir(this.archivesDirectory(), { recursive: true });
     if (this.initialized) return;
     this.initialized = true;
     const entries = await fs.readdir(this.rootDirectory, { withFileTypes: true });
@@ -120,9 +129,84 @@ export class SolutionWorkspaceStore {
     await this.withLock(async () => { await fs.unlink(this.workspacePath(workspaceId)); });
   }
 
+  async listArchives(): Promise<ArchivedSolutionWorkspaceSummary[]> {
+    await this.initialize();
+    const entries = await fs.readdir(this.archivesDirectory(), { withFileTypes: true });
+    const records: ArchivedWorkspaceRecord[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.archive.json')) continue;
+      try { records.push(await this.readArchiveRecord(entry.name.slice(0, -'.archive.json'.length))); }
+      catch (error) { process.stderr.write(`Ignored invalid Solution Studio archive ${entry.name}: ${error instanceof Error ? error.message : String(error)}\n`); }
+    }
+    return records
+      .sort((left, right) => right.archivedAt.localeCompare(left.archivedAt))
+      .map((record) => ({ ...workspaceSummary(record.workspace), archiveId: record.archiveId, archivedAt: record.archivedAt, archiveReason: record.reason }));
+  }
+
+  async readArchive(archiveId: string): Promise<ArchivedWorkspaceRecord> {
+    await this.initialize();
+    return this.readArchiveRecord(archiveId);
+  }
+
+  async archiveAndCreate(input: { workspaceId: string; expectedRevision: number; title: string; sourceMode: SourceMode; reason: string }): Promise<{ archived: ArchivedSolutionWorkspaceSummary; workspace: SolutionWorkspace }> {
+    assertIdentifier(input.workspaceId, 'workspaceId');
+    const title = input.title.trim().slice(0, 240);
+    const reason = input.reason.trim().slice(0, 2_000);
+    if (!title) throw new Error('新方案名称不能为空。');
+    if (!reason) throw new Error('归档原因不能为空。');
+    return this.withLock(async () => {
+      const current = await this.read(input.workspaceId);
+      if (current.revision !== input.expectedRevision) throw new RevisionConflictError(current.revision);
+      const active = await this.getCurrent();
+      if (!active || active.workspaceId !== current.workspaceId) throw new Error('只能归档当前活动方案。');
+
+      const archivedAt = new Date().toISOString();
+      const archiveId = `archive-${randomUUID()}`;
+      const record: ArchivedWorkspaceRecord = { schemaVersion: 1, archiveId, archivedAt, reason, workspace: structuredClone(current) };
+      const next = createSolutionWorkspace(title, input.sourceMode, this.hostProject);
+      next.revision = 1;
+      next.createdAt = archivedAt;
+      next.updatedAt = archivedAt;
+
+      let archiveWritten = false;
+      let nextWritten = false;
+      try {
+        await this.atomicJsonWrite(this.archivePath(archiveId), record, false);
+        archiveWritten = true;
+        await this.atomicWrite(this.workspacePath(next.workspaceId), next, false);
+        nextWritten = true;
+        await fs.unlink(this.workspacePath(current.workspaceId));
+      } catch (error) {
+        if (nextWritten) await fs.unlink(this.workspacePath(next.workspaceId)).catch(() => undefined);
+        if (archiveWritten) await fs.unlink(this.archivePath(archiveId)).catch(() => undefined);
+        throw error;
+      }
+      return {
+        archived: { ...workspaceSummary(current), archiveId, archivedAt, archiveReason: reason },
+        workspace: next
+      };
+    });
+  }
+
   private workspacePath(workspaceId: string): string {
     assertIdentifier(workspaceId, 'workspaceId');
     return path.join(this.rootDirectory, `${workspaceId}.solution.json`);
+  }
+
+  private archivesDirectory(): string { return path.join(this.rootDirectory, 'archives'); }
+
+  private archivePath(archiveId: string): string {
+    assertIdentifier(archiveId, 'archiveId');
+    return path.join(this.archivesDirectory(), `${archiveId}.archive.json`);
+  }
+
+  private async readArchiveRecord(archiveId: string): Promise<ArchivedWorkspaceRecord> {
+    assertIdentifier(archiveId, 'archiveId');
+    const value = JSON.parse(await fs.readFile(this.archivePath(archiveId), 'utf8')) as Partial<ArchivedWorkspaceRecord>;
+    if (value.schemaVersion !== 1 || value.archiveId !== archiveId || typeof value.archivedAt !== 'string' || typeof value.reason !== 'string') throw new Error('Archive metadata is invalid.');
+    assertSolutionWorkspace(value.workspace);
+    this.assertHostProjectMatches(value.workspace.hostProject);
+    return value as ArchivedWorkspaceRecord;
   }
 
   private assertHostProjectMatches(binding: ChatosProjectBinding | undefined): void {
@@ -154,13 +238,17 @@ export class SolutionWorkspaceStore {
   }
 
   private async atomicWrite(destination: string, workspace: SolutionWorkspace, overwrite: boolean): Promise<void> {
+    await this.atomicJsonWrite(destination, workspace, overwrite);
+  }
+
+  private async atomicJsonWrite(destination: string, value: unknown, overwrite: boolean): Promise<void> {
     await this.initialize();
     if (!overwrite) {
-      try { await fs.access(destination); throw new Error(`Workspace already exists: ${workspace.workspaceId}`); }
+      try { await fs.access(destination); throw new Error(`File already exists: ${destination}`); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
     const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
-    await fs.writeFile(temporary, `${JSON.stringify(workspace, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     await fs.rename(temporary, destination);
   }
 }

@@ -187,6 +187,12 @@ export interface SolutionWorkspaceSummary {
   updatedAt: string;
 }
 
+export interface ArchivedSolutionWorkspaceSummary extends SolutionWorkspaceSummary {
+  archiveId: string;
+  archivedAt: string;
+  archiveReason: string;
+}
+
 export interface ValidationIssue {
   code: string;
   message: string;

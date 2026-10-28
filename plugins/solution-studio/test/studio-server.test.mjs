@@ -108,6 +108,27 @@ test('studio serves the Apple-style workbench and persists workspaces', async ()
     const deletedRunningResponse = await saveWorkspace(base, deletedRunningTask, running.revision);
     assert.equal(deletedRunningResponse.status, 400);
     assert.match((await deletedRunningResponse.json()).error, /不能删除/);
+
+    const restartedResponse = await fetch(`${base}/api/workspaces/${running.workspaceId}/archive-and-create`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: running.revision, title: '全新规划', sourceMode: 'existing-project', reason: '用户要求重新规划' })
+    });
+    assert.equal(restartedResponse.status, 201);
+    const restarted = await restartedResponse.json();
+    assert.notEqual(restarted.workspace.workspaceId, running.workspaceId);
+    assert.deepEqual(restarted.workspace.executionPlan.tasks, []);
+    assert.equal(restarted.archived.taskCount, 1);
+    const archives = await fetch(`${base}/api/archives`).then((response) => response.json());
+    assert.equal(archives.items.length, 1);
+    assert.equal(archives.items[0].archiveReason, '用户要求重新规划');
+    const archivedRecord = await fetch(`${base}/api/archives/${archives.items[0].archiveId}`).then((response) => response.json());
+    assert.equal(archivedRecord.workspace.executionPlan.tasks[0].status, 'in_progress');
+    const archivedMarkdown = await fetch(`${base}/api/archives/${archives.items[0].archiveId}/markdown`).then((response) => response.text());
+    assert.match(archivedMarkdown, /^# 插件能力升级/);
+    if (process.platform !== 'darwin') {
+      const unsupportedCopy = await fetch(`${base}/api/archives/${archives.items[0].archiveId}/markdown/copy-file`, { method: 'POST' });
+      assert.equal(unsupportedCopy.status, 400);
+    }
   } finally {
     if (child.exitCode === null) {
       child.kill('SIGTERM');

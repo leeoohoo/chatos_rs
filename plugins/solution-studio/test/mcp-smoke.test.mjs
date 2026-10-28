@@ -24,7 +24,7 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     await client.connect(transport);
     const listed = await client.listTools();
     const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
-    for (const name of ['solution_get_active_context', 'solution_upsert_requirements', 'solution_upsert_design', 'solution_upsert_design_block', 'solution_upsert_execution_plan', 'solution_append_execution_tasks', 'solution_validate', 'solution_export', 'solution_finalize']) assert.ok(tools.has(name));
+    for (const name of ['solution_get_active_context', 'solution_get_workspace', 'solution_archive_workspace_and_create', 'solution_upsert_requirements', 'solution_upsert_design', 'solution_upsert_design_block', 'solution_upsert_execution_plan', 'solution_append_execution_tasks', 'solution_validate', 'solution_export', 'solution_finalize']) assert.ok(tools.has(name));
     assert.deepEqual(tools.get('solution_upsert_execution_plan')._meta['chatos/skillGate'].allOf, ['solution-studio', 'solution-execution-plan']);
     assert.deepEqual(tools.get('solution_append_execution_tasks')._meta['chatos/skillGate'].allOf, ['solution-studio', 'solution-execution-plan']);
     const planSchema = tools.get('solution_upsert_execution_plan').inputSchema.properties.executionPlan;
@@ -172,6 +172,25 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     assert.equal(planOnlyFinalized.structuredContent.scope, 'plan');
     assert.equal(planOnlyFinalized.structuredContent.completionProof.revision, revisedPlan.workspace.revision);
     assert.deepEqual(await readdir(projectRoot), []);
+
+    const restarted = await call(client, 'solution_archive_workspace_and_create', {
+      workspaceId: revisedPlan.workspace.workspaceId,
+      expectedRevision: revisedPlan.workspace.revision,
+      newTitle: 'MCP 全新规划',
+      sourceMode: 'existing-project',
+      reason: '用户明确要求放弃旧方向并重新规划',
+      confirmation: 'archive_and_restart'
+    });
+    assert.equal(restarted.archived.workspaceId, revisedPlan.workspace.workspaceId);
+    assert.notEqual(restarted.workspace.workspaceId, revisedPlan.workspace.workspaceId);
+    assert.equal(restarted.workspace.requirementCount, 0);
+    assert.equal(restarted.workspace.designSectionCount, 0);
+    assert.equal(restarted.workspace.taskCount, 0);
+    const newActive = await call(client, 'solution_get_workspace', {});
+    assert.equal(newActive.workspace.workspaceId, restarted.workspace.workspaceId);
+    const archiveStore = new SolutionWorkspaceStore(path.join(root, 'data'), { projectId: 'project-mcp-123', projectName: '示例项目', connectorWorkspaceId: 'workspace-mcp-456', contextScopeId: 'scope-mcp-123' });
+    const archived = await archiveStore.readArchive(restarted.archived.archiveId);
+    assert.equal(archived.workspace.executionPlan.tasks.length, 4);
   } finally {
     await client.close();
     await rm(root, { recursive: true, force: true });

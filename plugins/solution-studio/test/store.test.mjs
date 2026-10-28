@@ -60,6 +60,43 @@ test('one project keeps exactly one plan', async () => {
   }
 });
 
+test('archive and restart preserves immutable history and creates a blank active plan', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'solution-studio-archive-'));
+  const store = new SolutionWorkspaceStore(root, { projectId: 'project-archive', projectName: '归档项目' });
+  try {
+    const created = await store.create('旧方案', 'existing-project');
+    const edited = structuredClone(created);
+    edited.requirements.summary = '必须保留的旧需求';
+    edited.executionPlan.tasks = [{ id: 'T-001', moduleId: 'MOD-BUSINESS', title: '旧任务', description: '', type: 'task', phase: '执行', dependsOn: [], status: 'done', requirementIds: [], designSectionIds: [], deliverables: [], acceptanceCriteria: ['已验收'], sourceReferences: [] }];
+    edited.executionPlan.statusEvents = [{ id: 'EV-001', taskId: 'T-001', from: 'in_progress', to: 'done', occurredAt: new Date().toISOString(), runtimeSessionId: 'test', summary: '完成', evidence: ['proof'] }];
+    const saved = await store.replace(edited, created.revision);
+
+    const result = await store.archiveAndCreate({ workspaceId: saved.workspaceId, expectedRevision: saved.revision, title: '全新方案', sourceMode: 'existing-project', reason: '用户明确要求重新规划' });
+    assert.notEqual(result.workspace.workspaceId, saved.workspaceId);
+    assert.equal(result.workspace.revision, 1);
+    assert.equal(result.workspace.title, '全新方案');
+    assert.deepEqual(result.workspace.requirements.items, []);
+    assert.deepEqual(result.workspace.design.sections, []);
+    assert.deepEqual(result.workspace.executionPlan.tasks, []);
+    assert.deepEqual(result.workspace.executionPlan.statusEvents, []);
+    await assert.rejects(() => store.read(saved.workspaceId), /ENOENT/);
+
+    const archives = await store.listArchives();
+    assert.equal(archives.length, 1);
+    assert.equal(archives[0].archiveReason, '用户明确要求重新规划');
+    assert.equal(archives[0].completedTaskCount, 1);
+    const archived = await store.readArchive(archives[0].archiveId);
+    assert.equal(archived.workspace.requirements.summary, '必须保留的旧需求');
+    assert.equal(archived.workspace.executionPlan.statusEvents[0].summary, '完成');
+    assert.equal((await store.getCurrent()).workspaceId, result.workspace.workspaceId);
+
+    await assert.rejects(() => store.archiveAndCreate({ workspaceId: result.workspace.workspaceId, expectedRevision: 999, title: '冲突方案', sourceMode: 'existing-project', reason: '冲突' }), (error) => error instanceof RevisionConflictError);
+    assert.equal((await store.listArchives()).length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('store stamps the host project binding and rejects cross-project reads', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'solution-studio-binding-'));
   const firstProject = { projectId: 'project-a', projectName: '项目 A', connectorWorkspaceId: 'workspace-a', contextScopeId: 'scope-a' };

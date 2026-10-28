@@ -60,6 +60,18 @@ const AUTHORING_TOOL_DEFINITIONS = [
     _meta: gate()
   },
   {
+    name: 'solution_archive_workspace_and_create',
+    description: 'Archive the complete current workspace as immutable history and create a blank active workspace for a full re-plan. Use only when the user explicitly asks to discard the current planning direction and start over; never use this for an incremental revision.',
+    inputSchema: {
+      type: 'object', properties: {
+        workspaceId: { type: 'string' }, expectedRevision: { type: 'integer', minimum: 0 },
+        newTitle: { type: 'string', minLength: 1, maxLength: 240 }, sourceMode: { type: 'string', enum: ['existing-project', 'greenfield'] },
+        reason: { type: 'string', minLength: 1, maxLength: 2000 }, confirmation: { type: 'string', enum: ['archive_and_restart'] }
+      }, required: ['workspaceId', 'expectedRevision', 'newTitle', 'sourceMode', 'reason', 'confirmation'], additionalProperties: false
+    },
+    _meta: gate()
+  },
+  {
     name: 'solution_upsert_requirements',
     description: 'Create or revise the structured requirements for an existing or greenfield project. Preserve verified evidence separately from assumptions and open questions.',
     inputSchema: {
@@ -350,6 +362,19 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const workspace = await resolveWorkspace(input);
       return { workspace, validation: validateWorkspace(workspace) };
     }
+    case 'solution_archive_workspace_and_create': {
+      if (input.confirmation !== 'archive_and_restart') throw new Error('必须明确确认归档当前方案并重新规划。');
+      const result = await store.archiveAndCreate({
+        workspaceId: String(input.workspaceId), expectedRevision: Number(input.expectedRevision),
+        title: String(input.newTitle), sourceMode: effectiveSourceMode(input.sourceMode), reason: String(input.reason)
+      });
+      return {
+        archived: result.archived,
+        workspace: workspaceSummary(result.workspace),
+        validation: validateWorkspace(result.workspace),
+        message: '旧方案已归档为只读历史，新活动方案已创建且不继承旧需求、设计、任务或状态。'
+      };
+    }
     case 'solution_get_workspace_summary': {
       const workspace = await resolveWorkspace(input);
       const validation = validateWorkspace(workspace);
@@ -521,7 +546,7 @@ function result(value: Record<string, unknown>, isError = false) {
   return response;
 }
 
-const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.3' }, { capabilities: { tools: {} } });
+const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.4' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }

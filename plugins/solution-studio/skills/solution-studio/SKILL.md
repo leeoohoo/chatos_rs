@@ -13,7 +13,7 @@ This Skill belongs to the independently selectable “方案创建器” compone
 
 ## Route the work
 
-1. Call `solution_get_active_context`. If `workspace` exists, update that project plan; otherwise create it through the first upsert. Never create a second plan for the same ChatOS project.
+1. Call `solution_get_active_context`. If `workspace` exists, update that project plan; otherwise create it through the first upsert. When the user explicitly asks to discard the entire current direction and plan again from scratch, call `solution_archive_workspace_and_create` with the current workspace ID and revision before authoring the replacement. This preserves the old workspace as read-only history and creates one blank active workspace. Do not use archive-and-restart for an incremental revision.
 2. Use `solution-discovery` to establish the project profile, functional modules, and requirements. For an existing project, inspect relevant code and documentation before drafting; for a greenfield effort, separate user-stated facts from assumptions and open questions.
 3. Use `solution-design` only after the requirement set is coherent enough to design against. Write the project-wide technical baseline and architecture first, then complete the detailed design module by module.
 4. Use `solution-execution-plan` to derive module-owned tasks and the complete cross-module `dependsOn` DAG from the approved direction. Remove redundant transitive edges before saving. Append new planned work incrementally when the existing plan already has execution history; do not reconstruct completed task definitions.
@@ -31,7 +31,7 @@ Read [references/workspace-schema.md](references/workspace-schema.md) before wri
 
 ## Invariants
 
-- One ChatOS project has exactly one project profile, one total requirements document, one overall design, and one execution plan. Every planning request updates that plan; no caller-controlled key can create a parallel workspace.
+- One ChatOS project has exactly one active project profile, total requirements document, overall design, and execution plan. Archived workspaces are immutable history and do not participate in active validation or execution. Ordinary planning requests update the active plan; only an explicit user request to start over authorizes `solution_archive_workspace_and_create`.
 - The workspace schema version is exactly `2`. Do not translate, repair, or preserve legacy workspace shapes; invalid old data is discarded by the service.
 - Treat `scope.projectId`, `scope.projectName`, `scope.connectorWorkspaceId`, and `scope.projectRoot` as host-supplied context. Never ask the user to enter them, invent them, or add them to upsert arguments. The service binds newly created workspaces to the active ChatOS project.
 - Do not confuse the Solution Studio `workspaceId` with `scope.connectorWorkspaceId`: the former identifies the project's single planning document; the latter identifies the ChatOS connector workspace carrying the project root.

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { DesignContentBlock, DesignContentType, DesignSection, ExecutionTask, PlanNodePosition, RequirementItem, RequirementModuleKind, RequirementPriority, SolutionWorkspace, SolutionWorkspaceSummary, TaskStatus, WorkspaceValidation } from '../../src/schema';
+import type { ArchivedSolutionWorkspaceSummary, DesignContentBlock, DesignContentType, DesignSection, ExecutionTask, PlanNodePosition, RequirementItem, RequirementModuleKind, RequirementPriority, SolutionWorkspace, SolutionWorkspaceSummary, TaskStatus, WorkspaceValidation } from '../../src/schema';
 import { createRepository, type RuntimeContext, type SolutionRepository } from './repository';
 import { PlanGraph } from './PlanGraph';
 import { readyTaskIds, requirementPlanView } from '../../src/plan-view';
@@ -28,6 +28,7 @@ export function SolutionStudioApp() {
   const [repository, setRepository] = useState<SolutionRepository>();
   const [context, setContext] = useState<RuntimeContext>();
   const [items, setItems] = useState<SolutionWorkspaceSummary[]>([]);
+  const [archives, setArchives] = useState<ArchivedSolutionWorkspaceSummary[]>([]);
   const [workspace, setWorkspace] = useState<SolutionWorkspace>();
   const [persistedRevision, setPersistedRevision] = useState(0);
   const [area, setArea] = useState<Area>('overview');
@@ -42,8 +43,11 @@ export function SolutionStudioApp() {
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [openingWorkspaceId, setOpeningWorkspaceId] = useState<string>();
-  const [markdownPreview, setMarkdownPreview] = useState<{ title: string; content: string }>();
+  const [markdownPreview, setMarkdownPreview] = useState<{ title: string; content: string; archiveId?: string }>();
   const [loadingMarkdown, setLoadingMarkdown] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showRestart, setShowRestart] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [uiScale, setUiScale] = useState<UiScale>(() => {
     const saved = window.localStorage.getItem('solution-studio-ui-scale');
     return saved === 'compact' || saved === 'large' ? saved : 'comfortable';
@@ -58,6 +62,7 @@ export function SolutionStudioApp() {
       setContext(runtime);
       setNewTitle(runtime.projectName ? `${runtime.projectName} 方案` : '新项目方案');
       setItems(workspaces);
+      setArchives(await repo.listArchives());
     })().catch((error) => notify(error instanceof Error ? error.message : String(error)));
   }, []);
 
@@ -75,7 +80,10 @@ export function SolutionStudioApp() {
   useEffect(() => {
     if (!repository || repository.mode !== 'server') return;
     const events = new EventSource('/api/events');
-    events.addEventListener('workspaces-changed', () => void repository.list().then(setItems));
+    events.addEventListener('workspaces-changed', () => {
+      void repository.list().then(setItems);
+      void repository.listArchives().then(setArchives);
+    });
     return () => events.close();
   }, [repository]);
 
@@ -148,6 +156,32 @@ export function SolutionStudioApp() {
       setMarkdownPreview({ title: workspace.title, content: await repository.markdown(workspace.workspaceId) });
     } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
     finally { setLoadingMarkdown(false); }
+  }
+
+  async function restartPlanning(input: { title: string; reason: string }) {
+    if (!workspace || !repository || restarting || dirtyParts.size > 0) return;
+    setRestarting(true);
+    try {
+      const result = await repository.archiveAndCreate({
+        workspaceId: workspace.workspaceId,
+        expectedRevision: persistedRevision,
+        title: input.title,
+        sourceMode: workspace.sourceMode,
+        reason: input.reason
+      });
+      setItems(await repository.list());
+      setArchives(await repository.listArchives());
+      await openWorkspace(repository, result.workspace.workspaceId);
+      setShowRestart(false);
+      notify('旧方案已归档，已开始全新规划');
+    } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+    finally { setRestarting(false); }
+  }
+
+  async function previewArchive(item: ArchivedSolutionWorkspaceSummary) {
+    if (!repository) return;
+    try { setMarkdownPreview({ title: `${item.title} · 历史方案`, content: await repository.archiveMarkdown(item.archiveId), archiveId: item.archiveId }); }
+    catch (error) { notify(error instanceof Error ? error.message : String(error)); }
   }
 
   if (!repository || !context) return <div className="launch-screen"><LogoMark/><span className="spinner"/><strong>正在准备 Solution Studio…</strong></div>;
@@ -293,6 +327,8 @@ export function SolutionStudioApp() {
           {([['compact', '小'], ['comfortable', '中'], ['large', '大']] as const).map(([value, label]) => <button key={value} className={uiScale === value ? 'active' : ''} aria-pressed={uiScale === value} onClick={() => setUiScale(value)}>{label}</button>)}
         </div>
         <span className={`service-badge ${repository.mode}`}><i/>{repository.mode === 'server' ? '本地服务' : '浏览器存储'}</span>
+        <button className="button secondary" onClick={() => setShowHistory(true)}>历史方案{archives.length > 0 ? ` ${archives.length}` : ''}</button>
+        <button className="button secondary restart-button" disabled={dirtyParts.size > 0 || saving} title={dirtyParts.size > 0 ? '请先保存当前修改' : '归档当前方案并从空白方案重新开始'} onClick={() => setShowRestart(true)}>重新规划</button>
         <button className="button secondary" disabled={loadingMarkdown} onClick={() => void openMarkdownPreview()}>{loadingMarkdown ? '正在生成…' : 'Markdown'}</button>
         <button className="button primary" disabled={dirtyParts.size === 0 || saving} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button>
       </div>
@@ -337,11 +373,43 @@ export function SolutionStudioApp() {
         onCreateTask={addTask}
       />
     )}
+    {showRestart && <RestartPlanningModal workspace={workspace} restarting={restarting} onClose={() => setShowRestart(false)} onConfirm={(input) => void restartPlanning(input)}/>}
+    {showHistory && <HistoryModal items={archives} onClose={() => setShowHistory(false)} onPreview={(item) => void previewArchive(item)}/>}
     {markdownPreview && <MarkdownPreview title={markdownPreview.title} content={markdownPreview.content} onClose={() => setMarkdownPreview(undefined)} onNotify={notify} onCopyFile={async () => {
-      const result = await repository.copyMarkdownFile(workspace.workspaceId);
+      const result = markdownPreview.archiveId
+        ? await repository.copyArchiveMarkdownFile(markdownPreview.archiveId)
+        : await repository.copyMarkdownFile(workspace.workspaceId);
       notify(`已复制文件 ${result.fileName}`);
     }}/>}
     {toast && <div className="toast">{toast}</div>}
+  </div>;
+}
+
+function RestartPlanningModal({ workspace, restarting, onClose, onConfirm }: { workspace: SolutionWorkspace; restarting: boolean; onClose: () => void; onConfirm: (input: { title: string; reason: string }) => void }) {
+  const [title, setTitle] = useState(`${workspace.title} · 重新规划`);
+  const [reason, setReason] = useState('用户要求放弃当前规划方向并从头重新规划');
+  const [confirmed, setConfirmed] = useState(false);
+  return <div className="create-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !restarting) onClose(); }}>
+    <section className="create-modal restart-modal" role="dialog" aria-modal="true" aria-label="重新规划">
+      <header><div><span>ARCHIVE & RESTART</span><h2>归档当前方案，重新规划</h2><p>当前需求、设计、任务、状态和证据会完整保存为只读历史；新方案不会继承任何旧任务或依赖。</p></div><button disabled={restarting} aria-label="关闭" onClick={onClose}>×</button></header>
+      <div className="modal-fields">
+        <div className="archive-summary"><strong>{workspace.title}</strong><span>{workspace.requirements.items.length} 项需求 · {workspace.design.sections.length} 个设计章节 · {workspace.executionPlan.tasks.length} 个任务</span></div>
+        <label><span>新方案名称</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+        <label><span>归档原因</span><textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+        <label className="restart-confirm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)}/><span>我确认从空白方案重新开始；旧方案保留在“历史方案”中，不再参与新方案校验和执行。</span></label>
+      </div>
+      <footer className="modal-actions"><button disabled={restarting} onClick={onClose}>取消</button><button className="danger-button" disabled={!confirmed || !title.trim() || !reason.trim() || restarting} onClick={() => onConfirm({ title: title.trim(), reason: reason.trim() })}>{restarting ? '正在归档…' : '归档并重新规划'}</button></footer>
+    </section>
+  </div>;
+}
+
+function HistoryModal({ items, onClose, onPreview }: { items: ArchivedSolutionWorkspaceSummary[]; onClose: () => void; onPreview: (item: ArchivedSolutionWorkspaceSummary) => void }) {
+  return <div className="create-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="create-modal history-modal" role="dialog" aria-modal="true" aria-label="历史方案">
+      <header><div><span>READ-ONLY HISTORY</span><h2>历史方案</h2><p>归档方案保持原始版本和执行记录，只读查看，不会阻塞当前规划。</p></div><button aria-label="关闭" onClick={onClose}>×</button></header>
+      <div className="history-list">{items.map((item) => <article key={item.archiveId}><div><strong>{item.title}</strong><span>{new Date(item.archivedAt).toLocaleString()} · v{item.revision}</span><p>{item.archiveReason}</p><small>{item.requirementCount} 项需求 · {item.designSectionCount} 个设计章节 · {item.taskCount} 个任务 · {item.completedTaskCount} 个已完成</small></div><button onClick={() => onPreview(item)}>只读查看</button></article>)}{items.length === 0 && <div className="history-empty"><strong>还没有历史方案</strong><p>使用“重新规划”后，当前方案会完整保存在这里。</p></div>}</div>
+      <footer className="modal-actions"><button onClick={onClose}>关闭</button></footer>
+    </section>
   </div>;
 }
 

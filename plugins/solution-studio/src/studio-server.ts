@@ -56,6 +56,51 @@ app.post('/api/workspaces', async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
+app.post('/api/workspaces/:workspaceId/archive-and-create', async (request, response, next) => {
+  try {
+    const expectedRevision = request.body?.expectedRevision;
+    if (!Number.isSafeInteger(expectedRevision)) throw new Error('expectedRevision is required.');
+    const title = typeof request.body?.title === 'string' ? request.body.title : '';
+    const reason = typeof request.body?.reason === 'string' ? request.body.reason : '';
+    const mode: SourceMode = request.body?.sourceMode === 'greenfield' ? 'greenfield' : 'existing-project';
+    const result = await store.archiveAndCreate({ workspaceId: request.params.workspaceId, expectedRevision, title, sourceMode: mode, reason });
+    publishChange();
+    response.status(201).json(result);
+  } catch (error) { next(error); }
+});
+
+app.get('/api/archives', async (_request, response, next) => {
+  try { response.setHeader('Cache-Control', 'no-store'); response.json({ items: await store.listArchives() }); }
+  catch (error) { next(error); }
+});
+
+app.get('/api/archives/:archiveId', async (request, response, next) => {
+  try { response.setHeader('Cache-Control', 'no-store'); response.json(await store.readArchive(request.params.archiveId)); }
+  catch (error) { next(error); }
+});
+
+app.get('/api/archives/:archiveId/markdown', async (request, response, next) => {
+  try {
+    const record = await store.readArchive(request.params.archiveId);
+    response.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeMarkdownName(record.workspace.title))}"`);
+    response.type('text/markdown; charset=utf-8').send(workspaceToMarkdown(record.workspace));
+  } catch (error) { next(error); }
+});
+
+app.post('/api/archives/:archiveId/markdown/copy-file', async (request, response, next) => {
+  try {
+    if (process.platform !== 'darwin') throw new Error('当前系统暂不支持把文件直接复制到剪贴板。');
+    const record = await store.readArchive(request.params.archiveId);
+    const directory = path.resolve(process.env.CHATOS_PLUGIN_ARTIFACT_DIR ?? path.join(os.tmpdir(), 'solution-studio-exports'));
+    await fs.mkdir(directory, { recursive: true });
+    const fileName = safeMarkdownName(`${record.workspace.title}-历史方案`);
+    const filePath = path.join(directory, fileName);
+    await fs.writeFile(filePath, workspaceToMarkdown(record.workspace), { encoding: 'utf8', mode: 0o600 });
+    await execFileAsync('/usr/bin/osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv) as alias)', '-e', 'end run', filePath]);
+    response.json({ copied: true, fileName });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/workspaces/:workspaceId', async (request, response, next) => {
   try { response.setHeader('Cache-Control', 'no-store'); response.json(await store.read(request.params.workspaceId)); }
   catch (error) { next(error); }

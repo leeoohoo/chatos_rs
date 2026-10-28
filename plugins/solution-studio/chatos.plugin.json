@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-solution-studio",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Create traceable requirements, solution designs, and dependency-aware execution plans.",
   "author": { "name": "Chatos" },
   "license": "Apache-2.0",
@@ -52,7 +52,7 @@
     "longDescription": "An Apple-inspired project planning workbench for evidence-backed requirements, traceable solution designs, dependency graphs, and acceptance criteria.",
     "developerName": "Chatos",
     "category": "Productivity",
-    "capabilities": ["Existing-project and greenfield discovery", "Structured requirements with evidence and acceptance criteria", "Traceable solution design documents", "Dependency-aware execution plan DAGs", "Computed ready-to-execute task sets", "Markdown and structured JSON export"],
+    "capabilities": ["Existing-project and greenfield discovery", "Structured requirements with evidence and acceptance criteria", "Traceable solution design documents", "Dependency-aware execution plan DAGs", "Read-only plan history with archive-and-restart", "Computed ready-to-execute task sets", "Markdown and structured JSON export"],
     "defaultPrompt": [
       "Analyze this project and create requirements, a solution design, and an execution plan.",
       "Turn this product idea into a traceable design and dependency roadmap.",
