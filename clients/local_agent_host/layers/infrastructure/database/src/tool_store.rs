@@ -270,9 +270,16 @@ impl LocalAgentToolStore for SqliteClientStorage {
                AND COALESCE(json_extract(i.result_json, '$.isError'), 0) = 0 \
                AND json_extract(i.arguments_json, ?) = ? \
                AND (? IS NULL OR ( \
-                 COALESCE(json_extract(i.result_json, '$.content.view'), json_extract(i.result_json, '$.view')) = 'tool' \
+                 COALESCE(json_extract(i.result_json, '$.content.view'), json_extract(i.result_json, '$.view')) IN ('tool', 'catalog') \
                  AND EXISTS (SELECT 1 FROM json_each(COALESCE(json_extract(i.result_json, '$.content.tools'), json_extract(i.result_json, '$.tools'))) t \
-                             WHERE json_extract(t.value, '$.tool_option') = ?) \
+                             WHERE json_extract(t.value, '$.tool_option') = ? \
+                               AND json_type(t.value, '$.schema_sha256') = 'text' \
+                               AND (json_type(t.value, '$.input_schema') IS NOT NULL OR ( \
+                                 json_extract(t.value, '$.schema_delivery') = 'paged' \
+                                 AND json_type(t.value, '$.schema_chunk') = 'text' \
+                                 AND json_type(t.value, '$.next_schema_offset') = 'null' \
+                               )) \
+                             GROUP BY json_extract(t.value, '$.tool_option') HAVING COUNT(*) = 1) \
                )) \
              ORDER BY i.updated_at_unix_ms DESC, i.created_at_unix_ms DESC, i.invocation_id DESC LIMIT 1",
         ).bind(run_id).bind(owner_user_id).bind(tool_name)

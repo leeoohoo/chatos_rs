@@ -262,9 +262,8 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 schemaOffset: arguments.schemaOffset
             )
             recordDisclosedSkills(from: result, for: option)
-            if capabilitySchemaIsComplete(in: result), let token = arguments.toolOption {
-                describedToolsByOption[option.token, default: []].insert(token)
-            }
+            describedToolsByOption[option.token, default: []]
+                .formUnion(completeCapabilityToolOptions(in: result))
             let rendered = try outcome(result)
             return .init(rendered.content, isError: result.jsonObject?["view"]?.jsonString == "error")
 
@@ -396,17 +395,25 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         }
     }
 
-    private func capabilitySchemaIsComplete(in result: NativeJSONValue) -> Bool {
-        guard result.jsonObject?["view"]?.jsonString == "tool",
-              let tools = result.jsonObject?["tools"]?.jsonArray,
-              tools.count == 1,
-              let tool = tools.first?.jsonObject else {
-            return false
+    private func completeCapabilityToolOptions(in result: NativeJSONValue) -> Set<String> {
+        guard ["tool", "catalog"].contains(result.jsonObject?["view"]?.jsonString),
+              let tools = result.jsonObject?["tools"]?.jsonArray else {
+            return []
         }
-        if tool["input_schema"] != nil { return true }
-        return tool["schema_delivery"]?.jsonString == "paged"
-            && tool["schema_chunk"]?.jsonString != nil
-            && tool["next_schema_offset"] == .null
+        return Set(tools.compactMap { value in
+            guard let tool = value.jsonObject,
+                  let token = tool["tool_option"]?.jsonString,
+                  let digest = tool["schema_sha256"]?.jsonString,
+                  digest.count == 64,
+                  digest.allSatisfy({ $0.isHexDigit }) else {
+                return nil
+            }
+            if tool["input_schema"] != nil { return token }
+            return tool["schema_delivery"]?.jsonString == "paged"
+                    && tool["schema_chunk"]?.jsonString != nil
+                    && tool["next_schema_offset"] == .null
+                ? token : nil
+        })
     }
 
     private func restoreCapabilityDisclosures(

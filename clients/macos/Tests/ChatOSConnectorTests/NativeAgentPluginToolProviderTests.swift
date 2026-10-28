@@ -663,7 +663,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         let description = try await broker.execute(.init(
             id: "describe-1",
             name: "capability_describe",
-            arguments: #"{"plugin_option":"plugin_1","tool_option":"tool_1"}"#
+            arguments: #"{"plugin_option":"plugin_1"}"#
         ))
         XCTAssertTrue(description.content.contains("tool_1"))
         XCTAssertTrue(description.content.contains("local_echo"))
@@ -676,6 +676,9 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ).jsonObject
         let pluginTools = try XCTUnwrap(pluginDescription?["tools"]?.jsonArray)
         let echoTool = try XCTUnwrap(pluginTools.first?.jsonObject)
+        XCTAssertEqual(pluginDescription?["view"], .string("catalog"))
+        XCTAssertNotNil(echoTool["input_schema"], "A bounded catalog should freeze small schemas in one call")
+        XCTAssertNotNil(echoTool["schema_sha256"])
         XCTAssertEqual(pluginDescription?["provider_id"], .string("plugin:plugin-1:test-mcp"))
         XCTAssertEqual(pluginDescription?["binding_schema_version"], .number(1))
         let gate = try XCTUnwrap(echoTool["skill_gate"]?.jsonObject)
