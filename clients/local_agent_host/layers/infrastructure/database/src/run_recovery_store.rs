@@ -20,6 +20,102 @@ pub(super) async fn recover_expired_claims(
     owner_user_id: &str,
     now_unix_ms: i64,
 ) -> Result<u64, ClientStorageError> {
+    // Hosts that failed a Main Chat turn after the model omitted
+    // resolve_task_followup left every affected Task permanently gated. This
+    // failure is replay-safe: no follow-up decision or Task mutation occurred.
+    // Reopen only Runs proven to have failed through that exact guard, and
+    // remove the guard-generated assistant error before retrying the same Turn.
+    let stranded_followup_rows = sqlx::query(
+        "SELECT run.run_id, run.version, turn.turn_id, turn.conversation_id \
+         FROM local_agent_runs run \
+         JOIN local_conversation_turns turn ON turn.run_id = run.run_id \
+         WHERE run.owner_user_id = ? AND run.owner_entity_type = 'conversation_turn' \
+           AND run.profile_key = 'main_chat' AND run.status = 'failed' \
+           AND turn.status = 'failed' AND run.iteration < run.max_iterations \
+           AND EXISTS (SELECT 1 FROM local_agent_events event \
+             WHERE event.run_id = run.run_id \
+               AND event.event_type = 'task_followup_review_required' \
+               AND (json_extract(event.payload_json, '$.attempted_status') = 'succeeded' \
+                 OR (json_extract(event.payload_json, '$.attempted_status') IS NULL \
+                   AND run.iteration = 1))) \
+           AND EXISTS (SELECT 1 FROM local_task_followup_reviews review \
+             WHERE review.main_chat_run_id = run.run_id AND review.state = 'pending') \
+         ORDER BY run.run_id",
+    )
+    .bind(owner_user_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    for row in &stranded_followup_rows {
+        let run_id: String = row.try_get("run_id").db()?;
+        let version: i64 = row.try_get("version").db()?;
+        let turn_id: String = row.try_get("turn_id").db()?;
+        let conversation_id: String = row.try_get("conversation_id").db()?;
+        sqlx::query(
+            "DELETE FROM local_conversation_messages \
+             WHERE message_id = ? AND conversation_id = ? AND turn_id = ? \
+               AND role = 'assistant' \
+               AND json_extract(metadata_json, '$.terminal_status') = 'failed'",
+        )
+        .bind(format!("assistant:{run_id}"))
+        .bind(&conversation_id)
+        .bind(&turn_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        sqlx::query(
+            "UPDATE local_conversation_turns SET status = 'running', updated_at_unix_ms = ? \
+             WHERE turn_id = ? AND run_id = ? AND status = 'failed'",
+        )
+        .bind(now_unix_ms)
+        .bind(&turn_id)
+        .bind(&run_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        let updated = sqlx::query(
+            "UPDATE local_agent_runs SET status = 'continuation_ready', \
+             version = version + 1, terminal_outcome_json = NULL, \
+             claim_token = NULL, claim_until_unix_ms = NULL, \
+             next_attempt_at_unix_ms = NULL, pending_tool_batch_json = NULL, \
+             updated_at_unix_ms = ? \
+             WHERE run_id = ? AND owner_user_id = ? AND version = ? AND status = 'failed'",
+        )
+        .bind(now_unix_ms)
+        .bind(&run_id)
+        .bind(owner_user_id)
+        .bind(version)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        if updated.rows_affected() != 1 {
+            return Err(ClientStorageError::Conflict(format!(
+                "follow-up review Run changed during recovery: {run_id}"
+            )));
+        }
+        sqlx::query(
+            "UPDATE local_conversations SET version = version + 1, updated_at_unix_ms = ? \
+             WHERE conversation_id = ?",
+        )
+        .bind(now_unix_ms)
+        .bind(&conversation_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        SqliteClientStorage::insert_event(
+            connection,
+            &format!("followup-review-requeued:{run_id}:{}", version + 1),
+            &run_id,
+            "task_followup_review_requeued",
+            &serde_json::json!({
+                "reason": "the previous Main Chat response omitted the required follow-up review"
+            }),
+            now_unix_ms,
+        )
+        .await
+        .db()?;
+    }
+
     // A model claim is only a lease around response generation. Model output cannot
     // execute tools until commit_step has durably persisted the calls, so losing this
     // lease is safe to replay and should not require user review after an app restart.
@@ -281,7 +377,8 @@ pub(super) async fn recover_expired_claims(
         conversation_lifecycle::reconcile_conversation_after_run(connection, &run, now_unix_ms)
             .await?;
     }
-    Ok((replayable_rows.len()
+    Ok((stranded_followup_rows.len()
+        + replayable_rows.len()
         + rows.len()
         + stranded_task_runs.len()
         + stranded_conversation_runs.len()

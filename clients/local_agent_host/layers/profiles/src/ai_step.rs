@@ -278,6 +278,24 @@ fn reduce_ai_step_outcome_for_claim(
     now_unix_ms: i64,
     tool_safety: &dyn ToolSafetyPolicy,
 ) -> Result<LocalAgentStepOutcome, String> {
+    let outcome = if pending_task_followup_review(claim) {
+        match outcome {
+            AiSingleStepOutcome::Final(response) => {
+                return Ok(LocalAgentStepOutcome::Continue {
+                    checkpoint: response_checkpoint(
+                        response,
+                        Some(json!({
+                            "reason": "task_followup_review_required",
+                            "input_items": [task_followup_review_required_message()]
+                        })),
+                    ),
+                });
+            }
+            outcome => outcome,
+        }
+    } else {
+        outcome
+    };
     if claim.run.profile_key == "task_execution"
         && claim.run.owner_entity_type == "task"
         && claim
@@ -330,6 +348,26 @@ fn reduce_ai_step_outcome_for_claim(
         };
     }
     reduce_ai_step_outcome(outcome, now_unix_ms, tool_safety)
+}
+
+fn pending_task_followup_review(claim: &LocalAgentRunClaim) -> bool {
+    claim.run.profile_key == "main_chat"
+        && claim
+            .run
+            .input
+            .pointer("/task_followup_review/pending")
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
+fn task_followup_review_required_message() -> Value {
+    message_item(
+        "system",
+        Value::String(
+            "[Task Follow-up Review Required]\nThe previous response cannot finish this Main Chat turn because the current task_followup_review is still pending. Do not repeat or defend that response. Call `resolve_task_followup` now with the authoritative current review_message_id and exactly one decision for every pending candidate. Use the user's latest message and current Task facts to choose continue, cancel, or clarify; do not create replacement work until the review succeeds."
+                .to_string(),
+        ),
+    )
 }
 
 fn selected_plugin_task_handoff_required(claim: &LocalAgentRunClaim) -> bool {
@@ -677,6 +715,59 @@ mod tests {
                 &ConservativeToolSafetyPolicy,
             )
             .expect("reduce handed-off Plugin final"),
+            LocalAgentStepOutcome::Succeed { .. }
+        ));
+    }
+
+    #[test]
+    fn pending_followup_review_cannot_finish_before_resolution() {
+        let mut claim = task_claim();
+        claim.run.owner_entity_type = "conversation_turn".to_string();
+        claim.run.owner_entity_id = "turn-1".to_string();
+        claim.run.profile_key = "main_chat".to_string();
+        claim.run.input = json!({
+            "message": "Make the running work match this correction",
+            "task_followup_review": {
+                "type": "task_followup_review",
+                "review_message_id": "message-followup",
+                "pending": true,
+                "tasks": [{
+                    "task_id": "task-1",
+                    "review_state": "pending"
+                }]
+            }
+        });
+
+        let outcome = reduce_ai_step_outcome_for_claim(
+            AiSingleStepOutcome::Final(response(None)),
+            &claim,
+            10_000,
+            &ConservativeToolSafetyPolicy,
+        )
+        .expect("reduce pending follow-up final");
+
+        let LocalAgentStepOutcome::Continue { checkpoint } = outcome else {
+            panic!("pending follow-up review must continue until it is resolved")
+        };
+        assert_eq!(
+            checkpoint["continuation"]["reason"],
+            "task_followup_review_required"
+        );
+        let guidance = checkpoint["continuation"]["input_items"][0]["content"]
+            .as_str()
+            .expect("corrective guidance");
+        assert!(guidance.contains("resolve_task_followup"));
+        assert!(guidance.contains("every pending candidate"));
+
+        claim.run.input["task_followup_review"]["pending"] = json!(false);
+        assert!(matches!(
+            reduce_ai_step_outcome_for_claim(
+                AiSingleStepOutcome::Final(response(None)),
+                &claim,
+                10_000,
+                &ConservativeToolSafetyPolicy,
+            )
+            .expect("reduce resolved follow-up final"),
             LocalAgentStepOutcome::Succeed { .. }
         ));
     }

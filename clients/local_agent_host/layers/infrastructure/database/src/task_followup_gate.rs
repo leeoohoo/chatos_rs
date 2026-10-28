@@ -156,7 +156,10 @@ pub(super) async fn guard_final(
             "追加消息尚未完成关联任务审查。原任务的后续调度已暂缓，已发出的操作可能仍在完成；请确认继续、修改或停止。"
         }));
         effective.event_type = "task_followup_review_required".into();
-        effective.event_payload = json!({"pending_review_count": count});
+        effective.event_payload = json!({
+            "pending_review_count": count,
+            "attempted_status": transition.next_status.as_str(),
+        });
     }
     Ok(effective)
 }

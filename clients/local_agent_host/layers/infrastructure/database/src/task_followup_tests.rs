@@ -224,6 +224,89 @@ async fn same_turn_guidance_holds_model_ready_and_pending_descendants_atomically
 }
 
 #[tokio::test]
+async fn guarded_followup_failure_is_requeued_without_leaving_tasks_frozen() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    fixture(&storage).await;
+    guide(&storage, "followup-recovery").await;
+    let main = claim(&storage, "review-before-omission", 11_000)
+        .await
+        .unwrap();
+    assert_eq!(main.run.profile_key, "main_chat");
+    assert_eq!(main.run.input["task_followup_review"]["pending"], true);
+
+    let failed = storage
+        .apply_transition(
+            &idempotency("omitted-followup-review"),
+            &transition(
+                &main,
+                LocalAgentRunStatus::Succeeded,
+                "omitted-followup-review",
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(failed.status, LocalAgentRunStatus::Failed);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM local_conversation_turns WHERE run_id = ?",
+        )
+        .bind(&main.run.run_id)
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap(),
+        "failed"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM local_conversation_messages WHERE message_id = ?",
+        )
+        .bind(format!("assistant:{}", main.run.run_id))
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap(),
+        1
+    );
+
+    assert_eq!(
+        storage
+            .recover_expired_claims("user-1", 21_000)
+            .await
+            .unwrap(),
+        1
+    );
+    let recovered = storage.get_run(&main.run.run_id).await.unwrap().unwrap();
+    assert_eq!(recovered.status, LocalAgentRunStatus::ContinuationReady);
+    assert!(recovered.terminal_outcome.is_none());
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM local_conversation_turns WHERE run_id = ?",
+        )
+        .bind(&main.run.run_id)
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap(),
+        "running"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM local_conversation_messages WHERE message_id = ?",
+        )
+        .bind(format!("assistant:{}", main.run.run_id))
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap(),
+        0
+    );
+
+    let retried = claim(&storage, "review-after-omission", 22_000)
+        .await
+        .unwrap();
+    assert_eq!(retried.run.run_id, main.run.run_id);
+    assert_eq!(retried.run.input["task_followup_review"]["pending"], true);
+    assert!(claim(&storage, "tasks-remain-held", 23_000).await.is_none());
+}
+
+#[tokio::test]
 async fn new_turn_review_is_exact_conversation_scoped_and_cancels_before_replacement() {
     let storage = SqliteClientStorage::connect_memory().await.unwrap();
     fixture(&storage).await;
