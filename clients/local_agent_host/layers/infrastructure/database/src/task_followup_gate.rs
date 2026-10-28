@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::{ClientStorageError, RunTransition, SqliteResultExt};
+use super::{task_commands, ClientStorageError, IdempotentCommand, RunTransition, SqliteResultExt};
 use chatos_local_agent_protocol::{
     CreateTaskGraphCommand, LocalAgentRunRecord, LocalAgentRunStatus,
 };
@@ -62,6 +62,7 @@ pub(super) async fn begin_review(
              review_message_id, state, updated_at_unix_ms) VALUES(?,?,?,?,'pending',?) \
              ON CONFLICT(task_id) DO UPDATE SET main_chat_run_id = excluded.main_chat_run_id, \
              review_message_id = excluded.review_message_id, state = 'pending', reason = NULL, \
+             decision_action = NULL, \
              updated_at_unix_ms = excluded.updated_at_unix_ms",
         )
         .bind(&task_id)
@@ -105,32 +106,41 @@ pub(super) async fn attach_context(
         return Ok(());
     }
     let rows = sqlx::query(
-        "SELECT f.review_message_id, f.state, f.reason, t.task_id, t.title, t.input_json, t.status \
+        "SELECT f.review_message_id, f.state, f.reason, f.decision_action, \
+                t.task_id, t.title, t.input_json, t.status \
          FROM local_task_followup_reviews f JOIN local_tasks t ON t.task_id = f.task_id \
          WHERE f.main_chat_run_id = ? ORDER BY t.task_id",
-    ).bind(&run.run_id).fetch_all(&mut *connection).await.db()?;
+    )
+    .bind(&run.run_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
     if rows.is_empty() {
         return Ok(());
     }
     let mut tasks = Vec::new();
     let mut pending = false;
+    let mut replacement_pending = false;
     let mut review_message_id = String::new();
     for row in rows {
         let state: String = row.try_get("state").db()?;
+        let decision_action: Option<String> = row.try_get("decision_action").db()?;
         pending |= state == "pending";
+        replacement_pending |= state == "held" && decision_action.as_deref() == Some("replace");
         review_message_id = row.try_get("review_message_id").db()?;
         let input: Value = serde_json::from_str(&row.try_get::<String, _>("input_json").db()?)?;
         tasks.push(json!({
             "task_id": row.try_get::<String, _>("task_id").db()?,
             "title": row.try_get::<String, _>("title").db()?,
             "status": row.try_get::<String, _>("status").db()?,
-            "review_state": state, "reason": row.try_get::<Option<String>, _>("reason").db()?,
+            "review_state": state, "decision_action": decision_action,
+            "reason": row.try_get::<Option<String>, _>("reason").db()?,
             "objective": input.get("objective"), "description": input.get("description"),
         }));
     }
     run.input["task_followup_review"] = json!({
         "type": "task_followup_review", "review_message_id": review_message_id,
-        "pending": pending, "tasks": tasks,
+        "pending": pending, "replacement_pending": replacement_pending, "tasks": tasks,
     });
     Ok(())
 }
@@ -147,8 +157,13 @@ pub(super) async fn guard_final(
         return Ok(effective);
     }
     let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM local_task_followup_reviews WHERE main_chat_run_id = ? AND state = 'pending'",
-    ).bind(&transition.run_id).fetch_one(&mut *connection).await.db()?;
+        "SELECT count(*) FROM local_task_followup_reviews WHERE main_chat_run_id = ? \
+         AND (state = 'pending' OR (state = 'held' AND decision_action = 'replace'))",
+    )
+    .bind(&transition.run_id)
+    .fetch_one(&mut *connection)
+    .await
+    .db()?;
     if count > 0 {
         // Fail closed, with a real assistant error bubble rather than a false success.
         effective.next_status = LocalAgentRunStatus::Failed;
@@ -157,7 +172,7 @@ pub(super) async fn guard_final(
         }));
         effective.event_type = "task_followup_review_required".into();
         effective.event_payload = json!({
-            "pending_review_count": count,
+            "pending_review_or_replacement_count": count,
             "attempted_status": transition.next_status.as_str(),
         });
     }
@@ -185,11 +200,26 @@ pub(super) async fn guard_creation(
             "task_followup_review_required before creating work".into(),
         ));
     }
+    let clarified: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM local_task_followup_reviews f \
+         JOIN local_conversation_turns source ON source.conversation_id = f.conversation_id \
+         WHERE source.turn_id = ? AND f.state = 'held' AND f.decision_action = 'clarify'",
+    )
+    .bind(&graph.source_entity_id)
+    .fetch_one(&mut *connection)
+    .await
+    .db()?;
+    if clarified > 0 {
+        return Err(ClientStorageError::Conflict(
+            "clarified task_followup_review must be resolved before creating work".into(),
+        ));
+    }
     // A declared cancellation must not be bypassed by an ordinary create_task.
     let cancelled: Vec<String> = sqlx::query_scalar(
         "SELECT f.task_id FROM local_task_followup_reviews f \
          JOIN local_conversation_turns source ON source.run_id = f.main_chat_run_id \
-         WHERE source.turn_id = ? AND f.state = 'cancelled'",
+         WHERE source.turn_id = ? AND (f.state = 'cancelled' \
+           OR (f.state = 'held' AND f.decision_action = 'replace'))",
     )
     .bind(&graph.source_entity_id)
     .fetch_all(&mut *connection)
@@ -206,6 +236,63 @@ pub(super) async fn guard_creation(
                 "replacement must declare supersedes_task_ids: {id}"
             )));
         }
+    }
+    Ok(())
+}
+
+/// Cancel every Task explicitly marked for replacement inside the same write
+/// transaction that will insert and link the replacement graph. Any later
+/// validation or insert failure rolls the cancellations back as well.
+pub(super) async fn cancel_replaced_tasks(
+    connection: &mut SqliteConnection,
+    graph: &CreateTaskGraphCommand,
+    now: i64,
+) -> Result<(), ClientStorageError> {
+    if graph.source_entity_type != "conversation_turn" {
+        return Ok(());
+    }
+    let rows = sqlx::query(
+        "SELECT f.task_id, f.reason FROM local_task_followup_reviews f \
+         JOIN local_conversation_turns source ON source.conversation_id = f.conversation_id \
+         WHERE source.turn_id = ? AND f.state = 'held' AND f.decision_action = 'replace' \
+         ORDER BY f.task_id",
+    )
+    .bind(&graph.source_entity_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    for row in rows {
+        let task_id: String = row.try_get("task_id").db()?;
+        let reason = row
+            .try_get::<Option<String>, _>("reason")
+            .db()?
+            .unwrap_or_else(|| "replaced by the user's latest request".to_string());
+        let command = IdempotentCommand {
+            command_id: format!("replace:{}:{task_id}", graph.graph_id),
+            request_fingerprint: graph.graph_id.clone(),
+            persist_receipt: false,
+        };
+        task_commands::cancel_task(
+            connection,
+            &command,
+            &graph.owner_user_id,
+            &task_id,
+            None,
+            &reason,
+            &[],
+            &format!("followup-replace:{}:{task_id}", graph.graph_id),
+            now,
+        )
+        .await?;
+        sqlx::query(
+            "UPDATE local_task_followup_reviews SET state = 'cancelled', \
+             updated_at_unix_ms = ? WHERE task_id = ? AND decision_action = 'replace'",
+        )
+        .bind(now)
+        .bind(&task_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
     }
     Ok(())
 }

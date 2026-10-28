@@ -97,7 +97,7 @@ pub(super) async fn resolve(
 pub(super) fn definition() -> Value {
     json!({
         "type": "function", "name": "resolve_task_followup",
-        "description": "Use ONLY when the current Run context contains task_followup_review with pending=true. The context marked context_authority=current_run supersedes every historical review in retained conversation or checkpoint data. Copy its review_message_id and decide every pending candidate exactly once; never invent a token or reuse historical task ids. For status questions without a pending review, use list_tasks/get_task instead. continue releases unchanged work; cancel atomically stops conflicting work and its dependents; clarify keeps execution held pending user confirmation. Old review tokens and omitted or foreign tasks are rejected with the current token and candidate ids so the call can be corrected.",
+        "description": "Use ONLY when the current Run context contains task_followup_review with pending=true. The context marked context_authority=current_run supersedes every historical review in retained conversation or checkpoint data. Copy its review_message_id and decide every pending candidate exactly once; never invent a token or reuse historical task ids. For status questions without a pending review, use list_tasks/get_task instead. continue releases unchanged work; cancel stops work without replacement; clarify holds work for user confirmation; replace holds old work until create_task/create_tasks_with_prerequisites atomically cancels it and creates a graph declaring its id in supersedes_task_ids. Choose replace whenever the user's latest request changes objective, deliverables, acceptance criteria, or decomposition; never continue an outdated contract merely because a later Task might cover the difference. Old review tokens and omitted or foreign tasks are rejected with the current token and candidate ids so the call can be corrected.",
         "parameters": {
             "type": "object", "additionalProperties": false,
             "properties": {
@@ -106,7 +106,7 @@ pub(super) fn definition() -> Value {
                     "items": {"type": "object", "additionalProperties": false,
                         "properties": {
                             "task_id": {"type": "string", "minLength": 1},
-                            "action": {"type": "string", "enum": ["continue", "cancel", "clarify"]},
+                            "action": {"type": "string", "enum": ["continue", "cancel", "clarify", "replace"]},
                             "reason": {"type": "string", "minLength": 1, "maxLength": 1000}
                         }, "required": ["task_id", "action", "reason"]
                     }

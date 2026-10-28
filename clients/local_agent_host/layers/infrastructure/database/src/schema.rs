@@ -785,3 +785,10 @@ pub(super) const SCHEMA_V35: &[&str] = &[
          ) VALUES(NEW.command_id, NEW.request_fingerprint, NEW.created_at_unix_ms); \
        END",
 ];
+
+/// Records the user's intended follow-up action separately from the gate state.
+/// A replacement stays held until its replacement graph is durably created.
+pub(super) const SCHEMA_V44: &[&str] = &[
+    "ALTER TABLE local_task_followup_reviews ADD COLUMN decision_action TEXT \
+       CHECK(decision_action IS NULL OR decision_action IN ('continue','cancel','clarify','replace'))",
+];

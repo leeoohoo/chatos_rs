@@ -525,6 +525,122 @@ async fn direct_cancellation_reconciles_review_and_remaining_candidates_can_be_r
 }
 
 #[tokio::test]
+async fn replacement_holds_old_work_until_graph_creation_commits_both_changes() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    fixture(&storage).await;
+    guide(&storage, "replace-followup").await;
+    storage
+        .resolve_task_followup(
+            &idempotency("mark-replace"),
+            &review(
+                "run-original",
+                "replace-followup",
+                &[
+                    ("root", TaskFollowupAction::Replace),
+                    ("child", TaskFollowupAction::Replace),
+                    ("spare", TaskFollowupAction::Replace),
+                ],
+            ),
+            11_000,
+        )
+        .await
+        .unwrap();
+
+    let held = storage
+        .get_task_graph("user-1", "graph-original")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        held.tasks
+            .iter()
+            .find(|task| task.task_id == "root")
+            .unwrap()
+            .status,
+        LocalTaskStatus::Running
+    );
+    assert!(held
+        .tasks
+        .iter()
+        .all(|task| task.input["followup_review_state"] == "held"));
+
+    let mut replacement = graph("replacement", "turn-original", &["corrected"]);
+    replacement.tasks[0].input["supersedes_task_ids"] = json!(["root", "child", "spare"]);
+    storage
+        .create_task_graph(&idempotency("create-replacement"), &replacement, 12_000)
+        .await
+        .unwrap();
+
+    let old = storage
+        .get_task_graph("user-1", "graph-original")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(old
+        .tasks
+        .iter()
+        .all(|task| task.status == LocalTaskStatus::Cancelled));
+    assert!(old
+        .tasks
+        .iter()
+        .all(|task| { task.replacement_task_ids.iter().any(|id| id == "corrected") }));
+    let created = storage
+        .get_task_graph("user-1", "replacement")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(created.tasks[0].status, LocalTaskStatus::Ready);
+}
+
+#[tokio::test]
+async fn failed_replacement_insert_rolls_back_old_task_cancellation() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    fixture(&storage).await;
+    guide(&storage, "replace-followup").await;
+    storage
+        .resolve_task_followup(
+            &idempotency("mark-replace"),
+            &review(
+                "run-original",
+                "replace-followup",
+                &[
+                    ("root", TaskFollowupAction::Replace),
+                    ("child", TaskFollowupAction::Replace),
+                    ("spare", TaskFollowupAction::Replace),
+                ],
+            ),
+            11_000,
+        )
+        .await
+        .unwrap();
+
+    let mut invalid = graph("graph-original", "turn-original", &["corrected"]);
+    invalid.tasks[0].input["supersedes_task_ids"] = json!(["root", "child", "spare"]);
+    assert!(storage
+        .create_task_graph(&idempotency("duplicate-replacement"), &invalid, 12_000)
+        .await
+        .is_err());
+
+    let old = storage
+        .get_task_graph("user-1", "graph-original")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        old.tasks
+            .iter()
+            .find(|task| task.task_id == "root")
+            .unwrap()
+            .status,
+        LocalTaskStatus::Running
+    );
+    assert!(old
+        .tasks
+        .iter()
+        .all(|task| task.input["followup_review_state"] == "held"));
+}
+
+#[tokio::test]
 async fn omitted_review_is_visible_failure_and_clarification_holds_until_next_message() {
     let storage = SqliteClientStorage::connect_memory().await.unwrap();
     fixture(&storage).await;

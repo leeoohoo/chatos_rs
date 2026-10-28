@@ -278,6 +278,24 @@ fn reduce_ai_step_outcome_for_claim(
     now_unix_ms: i64,
     tool_safety: &dyn ToolSafetyPolicy,
 ) -> Result<LocalAgentStepOutcome, String> {
+    let outcome = if pending_task_replacement(claim) {
+        match outcome {
+            AiSingleStepOutcome::Final(response) => {
+                return Ok(LocalAgentStepOutcome::Continue {
+                    checkpoint: response_checkpoint(
+                        response,
+                        Some(json!({
+                            "reason": "task_replacement_required",
+                            "input_items": [task_replacement_required_message()]
+                        })),
+                    ),
+                });
+            }
+            outcome => outcome,
+        }
+    } else {
+        outcome
+    };
     let outcome = if pending_task_followup_review(claim) {
         match outcome {
             AiSingleStepOutcome::Final(response) => {
@@ -348,6 +366,26 @@ fn reduce_ai_step_outcome_for_claim(
         };
     }
     reduce_ai_step_outcome(outcome, now_unix_ms, tool_safety)
+}
+
+fn pending_task_replacement(claim: &LocalAgentRunClaim) -> bool {
+    claim.run.profile_key == "main_chat"
+        && claim
+            .run
+            .input
+            .pointer("/task_followup_review/replacement_pending")
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
+fn task_replacement_required_message() -> Value {
+    message_item(
+        "system",
+        Value::String(
+            "[Task Replacement Required]\nThe follow-up review marked one or more outdated Tasks for replacement. Do not finish this turn or revive the old contract. Create the corrected Task or Task graph now and include every held replacement candidate in supersedes_task_ids. Graph creation atomically cancels the held old Tasks, inserts the replacements, and records the replacement chain."
+                .to_string(),
+        ),
+    )
 }
 
 fn pending_task_followup_review(claim: &LocalAgentRunClaim) -> bool {
@@ -770,6 +808,47 @@ mod tests {
             .expect("reduce resolved follow-up final"),
             LocalAgentStepOutcome::Succeed { .. }
         ));
+    }
+
+    #[test]
+    fn held_replacement_cannot_finish_before_corrected_graph_creation() {
+        let mut claim = task_claim();
+        claim.run.owner_entity_type = "conversation_turn".to_string();
+        claim.run.owner_entity_id = "turn-1".to_string();
+        claim.run.profile_key = "main_chat".to_string();
+        claim.run.input = json!({
+            "message": "Make the result match the corrected acceptance criteria",
+            "task_followup_review": {
+                "type": "task_followup_review",
+                "review_message_id": "message-followup",
+                "pending": false,
+                "replacement_pending": true,
+                "tasks": [{
+                    "task_id": "task-1",
+                    "review_state": "held",
+                    "decision_action": "replace"
+                }]
+            }
+        });
+
+        let outcome = reduce_ai_step_outcome_for_claim(
+            AiSingleStepOutcome::Final(response(None)),
+            &claim,
+            10_000,
+            &ConservativeToolSafetyPolicy,
+        )
+        .expect("reduce held replacement final");
+        let LocalAgentStepOutcome::Continue { checkpoint } = outcome else {
+            panic!("held replacement must continue until corrected work is created")
+        };
+        assert_eq!(
+            checkpoint["continuation"]["reason"],
+            "task_replacement_required"
+        );
+        let guidance = checkpoint["continuation"]["input_items"][0]["content"]
+            .as_str()
+            .unwrap();
+        assert!(guidance.contains("supersedes_task_ids"));
     }
 
     fn task_claim() -> LocalAgentRunClaim {

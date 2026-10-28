@@ -652,6 +652,8 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
     .expect("legacy Hook invocation");
     let mut connection = storage.pool.acquire().await.expect("connection");
     for statement in [
+        "ALTER TABLE local_task_followup_reviews DROP COLUMN decision_action",
+        "DELETE FROM client_schema_migrations WHERE version = 44",
         "DROP INDEX local_hook_invocations_plugin_history",
         "ALTER TABLE local_hook_invocations DROP COLUMN plugin_id",
         "ALTER TABLE local_hook_invocations DROP COLUMN owner_user_id",
@@ -677,7 +679,7 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
         .fetch_one(&migrated.pool)
         .await
         .expect("schema version");
-    assert_eq!(version, 43);
+    assert_eq!(version, super::migration::SCHEMA_VERSION);
     let legacy_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM local_hook_events WHERE event_id = ?")
             .bind("legacy-hook-event")
@@ -725,6 +727,8 @@ pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
 
 pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
     for statement in [
+        "ALTER TABLE local_task_followup_reviews DROP COLUMN decision_action",
+        "DELETE FROM client_schema_migrations WHERE version = 44",
         "DELETE FROM client_schema_migrations WHERE version = 43",
         "DELETE FROM client_schema_migrations WHERE version = 42",
         "DELETE FROM client_schema_migrations WHERE version = 41",

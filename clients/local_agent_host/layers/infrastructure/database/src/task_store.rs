@@ -81,6 +81,8 @@ impl LocalAgentTaskStore for SqliteClientStorage {
                 return Ok(replay);
             }
             super::task_followup_gate::guard_creation(&mut connection, graph).await?;
+            super::task_followup_gate::cancel_replaced_tasks(&mut connection, graph, now_unix_ms)
+                .await?;
             super::task_replacement_validation::validate_stopped_sources(&mut connection, graph)
                 .await?;
             let mut frozen_graph = graph.clone();

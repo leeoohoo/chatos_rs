@@ -28,6 +28,7 @@ pub enum TaskFollowupAction {
     Continue,
     Cancel,
     Clarify,
+    Replace,
 }
 
 impl ResolveTaskFollowupCommand {
