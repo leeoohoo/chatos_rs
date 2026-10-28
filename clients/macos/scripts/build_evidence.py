@@ -371,6 +371,68 @@ def distribution_evidence(app, build_manifest_path, dmg, app_notary, dmg_notary,
     }
 
 
+def verify_distribution_evidence(app, dmg, manifest, expected_team_id, expected_bundle_identifier):
+    app, dmg = Path(app).resolve(), Path(dmg).resolve()
+    if manifest.get("distribution_stage") != "signed-notarized-stapled":
+        raise ValueError("Distribution manifest is not at the signed/notarized/stapled stage")
+    if manifest.get("clean_machine_install_acceptance") not in {"not-run", "passed"}:
+        raise ValueError("Distribution manifest has an invalid clean-machine acceptance state")
+    if manifest.get("dmg", {}).get("filename") != dmg.name:
+        raise ValueError("DMG filename differs from distribution manifest")
+    if manifest["dmg"].get("bytes") != dmg.stat().st_size or \
+            manifest["dmg"].get("sha256") != file_hash(dmg):
+        raise ValueError("DMG bytes differ from distribution manifest")
+    if manifest.get("app", {}).get("filename") != app.name:
+        raise ValueError("App filename differs from distribution manifest")
+    if manifest["app"].get("inventory_sha256") != digest(inventory(app)):
+        raise ValueError("App contents differ from final distribution inventory")
+
+    with (app / "Contents/Info.plist").open("rb") as stream:
+        info = plistlib.load(stream)
+    expected_info = {
+        "CFBundleIdentifier": expected_bundle_identifier,
+        "CFBundleShortVersionString": manifest["app"].get("version"),
+        "CFBundleVersion": manifest["app"].get("build"),
+        "ChatOSBuildConfiguration": "release",
+        "ChatOSBuildGitCommit": manifest.get("source", {}).get("git_commit"),
+    }
+    for key, expected in expected_info.items():
+        if not expected or info.get(key) != expected:
+            raise ValueError(f"App metadata differs from distribution manifest: {key}")
+
+    app_signature, dmg_signature = signature_summary(app), signature_summary(dmg)
+    for name, actual, recorded in (
+            ("App", app_signature, manifest["app"].get("signature")),
+            ("DMG", dmg_signature, manifest["dmg"].get("signature"))):
+        if actual != recorded:
+            raise ValueError(f"{name} signature differs from distribution manifest")
+        if actual.get("team_identifier") != expected_team_id:
+            raise ValueError(f"{name} is not signed by the expected Team ID")
+        authorities = actual.get("authorities") or []
+        if not authorities or not authorities[0].startswith("Developer ID Application:"):
+            raise ValueError(f"{name} has no Developer ID Application authority")
+    if not app_signature["hardened_runtime"]:
+        raise ValueError("Distributed App is missing hardened runtime")
+
+    notarization = manifest.get("notarization", {})
+    for name in ("app", "dmg"):
+        record = notarization.get(name, {})
+        if record.get("status") != "Accepted" or not record.get("submission_id"):
+            raise ValueError(f"Distribution manifest has invalid {name} notarization evidence")
+    contracts = manifest.get("contracts", {})
+    for name in ("host_protocol", "storage_schema"):
+        contract = contracts.get(name, {})
+        if not isinstance(contract.get("value"), int) or not contract.get("source_sha256"):
+            raise ValueError(f"Distribution manifest has invalid contract: {name}")
+    if manifest.get("rollback", {}).get("automatic_schema_downgrade_supported") is not False:
+        raise ValueError("Distribution manifest has an unsafe rollback policy")
+    return {"version": manifest["app"]["version"], "build": manifest["app"]["build"],
+            "git_commit": manifest["source"]["git_commit"],
+            "team_identifier": expected_team_id,
+            "host_protocol": contracts["host_protocol"]["value"],
+            "storage_schema": contracts["storage_schema"]["value"]}
+
+
 def main():
     if sys.platform != "darwin" or os.uname().machine != "arm64":
         raise ValueError("Use /usr/bin/arch -arm64 /usr/bin/python3; macOS arm64 only")
@@ -403,6 +465,12 @@ def main():
     distribute.add_argument("--dmg-notary", type=Path, required=True)
     distribute.add_argument("--signing-identity", required=True)
     distribute.add_argument("--output", type=Path, required=True)
+    verify_distribute = subparsers.add_parser("verify-distribution")
+    verify_distribute.add_argument("--app", type=Path, required=True)
+    verify_distribute.add_argument("--dmg", type=Path, required=True)
+    verify_distribute.add_argument("--manifest", type=Path, required=True)
+    verify_distribute.add_argument("--expected-team-id", required=True)
+    verify_distribute.add_argument("--expected-bundle-identifier", required=True)
     args = parser.parse_args()
     if args.command == "capture":
         atomic_json(args.output, capture(args.repository, args.configuration, args.swift_build_system))
@@ -415,6 +483,11 @@ def main():
         atomic_json(args.output, distribution_evidence(
             args.app, args.build_manifest, args.dmg, args.app_notary, args.dmg_notary,
             args.signing_identity))
+    elif args.command == "verify-distribution":
+        result = verify_distribution_evidence(
+            args.app, args.dmg, json.loads(args.manifest.read_text()), args.expected_team_id,
+            args.expected_bundle_identifier)
+        print(json.dumps(result, sort_keys=True))
     else:
         arguments = args.arguments
         if arguments[:1] == ["--"]:

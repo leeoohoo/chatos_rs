@@ -7,6 +7,7 @@ INFO_PLIST="$PROJECT_DIR/Support/ChatOSSwift-Info.plist"
 ARCH=$(uname -m)
 SIGNING_IDENTITY=${CHATOS_CODESIGN_IDENTITY:-}
 NOTARY_PROFILE=${CHATOS_NOTARYTOOL_PROFILE:-}
+EXPECTED_TEAM_ID=AHVN42RQS3
 
 if [[ "$ARCH" != "arm64" ]]; then
   echo "The bundled ripgrep tool requires native arm64 Apple Silicon; refusing to label an $ARCH build as distributable." >&2
@@ -14,6 +15,10 @@ if [[ "$ARCH" != "arm64" ]]; then
 fi
 if [[ "$SIGNING_IDENTITY" != "Developer ID Application:"* ]]; then
   echo "CHATOS_CODESIGN_IDENTITY must name a valid Developer ID Application identity." >&2
+  exit 2
+fi
+if [[ "$SIGNING_IDENTITY" != *"($EXPECTED_TEAM_ID)" ]]; then
+  echo "CHATOS_CODESIGN_IDENTITY must belong to the official ChatOS Team ID: $EXPECTED_TEAM_ID" >&2
   exit 2
 fi
 if [[ -z "$NOTARY_PROFILE" ]]; then

@@ -245,6 +245,18 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(result["notarization"]["dmg"]["submission_id"], "dmg-submission")
         self.assertFalse(result["rollback"]["automatic_schema_downgrade_supported"])
 
+        with patch.object(evidence, "signature", side_effect=signed):
+            verified = evidence.verify_distribution_evidence(
+                app, dmg, result, "ABCDEFGHIJ", "com.chatos.swift-client")
+        self.assertEqual(verified["git_commit"], manifest["source"]["git_commit"])
+        self.assertEqual(verified["storage_schema"], 44)
+
+        dmg.write_bytes(b"tampered dmg")
+        with self.assertRaisesRegex(ValueError, "DMG bytes differ"):
+            evidence.verify_distribution_evidence(
+                app, dmg, result, "ABCDEFGHIJ", "com.chatos.swift-client")
+        dmg.write_bytes(b"signed dmg")
+
         dmg_notary.write_text(json.dumps({"id": "rejected", "status": "Invalid"}))
         with patch.object(evidence, "signature", side_effect=signed), \
              self.assertRaisesRegex(ValueError, "not Accepted"):
@@ -325,7 +337,8 @@ class BaselineTests(unittest.TestCase):
             uname.chmod(0o755)
             environment = dict(os.environ, PATH=directory + ":/usr/bin:/bin")
             for script in ("package-app.sh", "verify-app-build.sh", "run-performance-baseline.sh",
-                           "run-process-group-soak.sh", "package-release-dmg.sh"):
+                           "run-process-group-soak.sh", "package-release-dmg.sh",
+                           "verify-release-dmg.sh"):
                 with self.subTest(script=script):
                     result = subprocess.run(["/bin/zsh", str(scripts / script)],
                                             env=environment, capture_output=True, timeout=10)
@@ -341,6 +354,14 @@ class BaselineTests(unittest.TestCase):
                                 env=environment, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 2)
         self.assertIn(b"CHATOS_CODESIGN_IDENTITY", result.stderr)
+
+        environment["CHATOS_CODESIGN_IDENTITY"] = \
+            "Developer ID Application: Wrong Team (ZZZZZZZZZZ)"
+        environment["CHATOS_NOTARYTOOL_PROFILE"] = "unused"
+        result = subprocess.run(["/bin/zsh", str(scripts / "package-release-dmg.sh")],
+                                env=environment, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b"AHVN42RQS3", result.stderr)
 
     def test_percentiles_use_all_raw_samples(self):
         rounds = [self.valid_result(), self.valid_result(), self.valid_result()]

@@ -78,6 +78,20 @@ class MacOSReleasePackagingPolicyTests(unittest.TestCase):
         self.assertLess(dmg.index('mv -f "$CHECKSUM_WORK_PATH" "$CHECKSUM_PATH"'),
                         dmg.index('mv -f "$DISTRIBUTION_MANIFEST_WORK" "$DISTRIBUTION_MANIFEST"'))
 
+    def test_release_verifier_checks_trust_mount_copy_and_isolated_launch(self) -> None:
+        package = self.read(MACOS_SCRIPTS / "package-release-dmg.sh")
+        verify = self.read(MACOS_SCRIPTS / "verify-release-dmg.sh")
+
+        self.assertIn("EXPECTED_TEAM_ID=AHVN42RQS3", package)
+        self.assertIn("EXPECTED_TEAM_ID=AHVN42RQS3", verify)
+        self.assertIn("xcrun stapler validate", verify)
+        self.assertIn("spctl --assess --type open", verify)
+        self.assertIn("hdiutil attach -readonly -nobrowse", verify)
+        self.assertIn('ditto "$MOUNTED_APP" "$INSTALLED_APP"', verify)
+        self.assertIn("verify-distribution", verify)
+        self.assertIn("CHATOS_BUILD_SMOKE_TEST=1", verify)
+        self.assertNotIn("/Applications/ChatOS.app", verify)
+
     def test_project_creation_explains_directory_semantics(self) -> None:
         sheet = self.read(
             REPOSITORY_ROOT
