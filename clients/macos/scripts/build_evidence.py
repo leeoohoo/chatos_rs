@@ -249,6 +249,128 @@ def verify(app, manifest, require_symbols=False):
             raise ValueError(f"Symbol files differ from build manifest: {path}")
 
 
+def signature_summary(path):
+    description = signature(path)
+    values = {}
+    authorities = []
+    for line in description.splitlines():
+        if line.startswith("Authority="):
+            authorities.append(line.removeprefix("Authority="))
+        elif line.startswith("CodeDirectory "):
+            values["CodeDirectory"] = line.removeprefix("CodeDirectory ")
+        elif "=" in line:
+            key, value = line.split("=", 1)
+            if key in {"Identifier", "TeamIdentifier", "Timestamp", "Format", "CodeDirectory"}:
+                values[key] = value
+    return {
+        "identifier": values.get("Identifier"),
+        "team_identifier": values.get("TeamIdentifier"),
+        "timestamp": values.get("Timestamp"),
+        "format": values.get("Format"),
+        "code_directory": values.get("CodeDirectory"),
+        "authorities": authorities,
+        "hardened_runtime": bool(re.search(r"^CodeDirectory .*flags=.*\bruntime\b", description,
+                                            flags=re.MULTILINE)),
+    }
+
+
+def notarization_record(path):
+    path = Path(path)
+    payload = json.loads(path.read_text())
+    if payload.get("status") != "Accepted":
+        raise ValueError(f"Notarization evidence is not Accepted: {path}")
+    submission_id = payload.get("id")
+    if not isinstance(submission_id, str) or not submission_id.strip():
+        raise ValueError(f"Notarization evidence has no submission id: {path}")
+    return {"status": "Accepted", "submission_id": submission_id,
+            "evidence_file": path.name, "evidence_sha256": file_hash(path)}
+
+
+def distribution_evidence(app, build_manifest_path, dmg, app_notary, dmg_notary, signing_identity):
+    app = Path(app).resolve()
+    build_manifest_path = Path(build_manifest_path).resolve()
+    dmg = Path(dmg).resolve()
+    build_manifest = json.loads(build_manifest_path.read_text())
+    if build_manifest.get("classification") != "clean-release-build":
+        raise ValueError("Distribution requires a clean-release-build manifest")
+    if build_manifest.get("source_unchanged") is not True:
+        raise ValueError("Distribution build source was not proven unchanged")
+    if build_manifest.get("profiles") != {"swift": "release", "rust": "release"}:
+        raise ValueError("Distribution build profiles are not both release")
+    if build_manifest.get("symbolication_status") != "uuid-matched":
+        raise ValueError("Distribution requires UUID-matched symbols")
+
+    with (app / "Contents/Info.plist").open("rb") as stream:
+        info = plistlib.load(stream)
+    source_commit = build_manifest["source"]["git_commit"]
+    if info.get("ChatOSBuildConfiguration") != "release":
+        raise ValueError("Stapled App is not a Release build")
+    if not info.get("CFBundleIdentifier"):
+        raise ValueError("Stapled App has no bundle identifier")
+    if info.get("ChatOSBuildGitCommit") != source_commit:
+        raise ValueError("Stapled App Git commit differs from build evidence")
+    if (build_manifest["app"].get("version"), build_manifest["app"].get("build")) != (
+            info.get("CFBundleShortVersionString"), info.get("CFBundleVersion")):
+        raise ValueError("Stapled App version differs from build evidence")
+
+    contracts = build_manifest.get("contracts_from_source")
+    if not isinstance(contracts, dict) or set(contracts) != {"host_protocol", "storage_schema"}:
+        raise ValueError("Build evidence is missing protocol/schema contracts")
+    for name, contract in contracts.items():
+        if not isinstance(contract.get("value"), int) or not contract.get("source_sha256"):
+            raise ValueError(f"Malformed build contract: {name}")
+
+    app_signature = signature_summary(app)
+    dmg_signature = signature_summary(dmg)
+    if signing_identity not in app_signature["authorities"]:
+        raise ValueError("Stapled App signature identity differs from requested Developer ID")
+    if signing_identity not in dmg_signature["authorities"]:
+        raise ValueError("Stapled DMG signature identity differs from requested Developer ID")
+    if not app_signature["hardened_runtime"]:
+        raise ValueError("Stapled App is missing hardened runtime")
+    if not app_signature["team_identifier"] or not dmg_signature["team_identifier"]:
+        raise ValueError("Distribution signatures are missing TeamIdentifier")
+    if app_signature["team_identifier"] != dmg_signature["team_identifier"]:
+        raise ValueError("App and DMG signatures use different TeamIdentifier values")
+    if not app_signature["timestamp"] or not dmg_signature["timestamp"]:
+        raise ValueError("Distribution signatures are missing trusted timestamps")
+
+    return {
+        "format_version": 1,
+        "created_utc": utc_now(),
+        "distribution_stage": "signed-notarized-stapled",
+        "clean_machine_install_acceptance": "not-run",
+        "source": {"git_commit": source_commit},
+        "app": {
+            "filename": app.name,
+            "bundle_identifier": info.get("CFBundleIdentifier"),
+            "version": info["CFBundleShortVersionString"],
+            "build": info["CFBundleVersion"],
+            "configuration": info["ChatOSBuildConfiguration"],
+            "architecture": "arm64",
+            "inventory_sha256": digest(inventory(app)),
+            "signature": app_signature,
+        },
+        "dmg": {"filename": dmg.name, "bytes": dmg.stat().st_size,
+                "sha256": file_hash(dmg), "signature": dmg_signature},
+        "build_evidence": {
+            "filename": build_manifest_path.name,
+            "sha256": file_hash(build_manifest_path),
+            "classification": build_manifest["classification"],
+            "symbolication_status": build_manifest["symbolication_status"],
+        },
+        "contracts": contracts,
+        "notarization": {"app": notarization_record(app_notary),
+                         "dmg": notarization_record(dmg_notary)},
+        "rollback": {
+            "complete_previous_app_required": True,
+            "automatic_schema_downgrade_supported": False,
+            "policy": ("Rollback uses a complete previous App only after verifying its maximum "
+                       "supported storage schema; never clear schema markers, receipts, or user data."),
+        },
+    }
+
+
 def main():
     if sys.platform != "darwin" or os.uname().machine != "arm64":
         raise ValueError("Use /usr/bin/arch -arm64 /usr/bin/python3; macOS arm64 only")
@@ -273,6 +395,14 @@ def main():
     record = subparsers.add_parser("record-command")
     record.add_argument("--output", type=Path, required=True)
     record.add_argument("arguments", nargs=argparse.REMAINDER)
+    distribute = subparsers.add_parser("distribution")
+    distribute.add_argument("--app", type=Path, required=True)
+    distribute.add_argument("--build-manifest", type=Path, required=True)
+    distribute.add_argument("--dmg", type=Path, required=True)
+    distribute.add_argument("--app-notary", type=Path, required=True)
+    distribute.add_argument("--dmg-notary", type=Path, required=True)
+    distribute.add_argument("--signing-identity", required=True)
+    distribute.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "capture":
         atomic_json(args.output, capture(args.repository, args.configuration, args.swift_build_system))
@@ -281,6 +411,10 @@ def main():
                                        json.loads(args.commands.read_text()), args.symbols))
     elif args.command == "verify":
         verify(args.app, json.loads(args.manifest.read_text()), args.require_symbols)
+    elif args.command == "distribution":
+        atomic_json(args.output, distribution_evidence(
+            args.app, args.build_manifest, args.dmg, args.app_notary, args.dmg_notary,
+            args.signing_identity))
     else:
         arguments = args.arguments
         if arguments[:1] == ["--"]:

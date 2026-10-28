@@ -2679,7 +2679,7 @@ Agent Worker 父进程读端从不可取消的 `getline` 改为独立 descriptor
 
 正式 DMG 入口已改为 fail-closed：构建前要求 `Developer ID Application` 身份和 Keychain notary profile，并显式拒绝 `security find-identity` 仍会列出的撤销/不受信任证书。Release 内层可执行文件统一启用 hardened runtime 与可信时间戳；主程序、Host、三个 Worker、`rg` 和 `ps` 逐个验证 arm64-only、签名权威及 runtime flag，包内出现未登记 Mach-O 时直接失败，避免新增 Helper 漏签。
 
-App ZIP 在独立临时目录提交公证，Accepted 后 staple、validate 并通过 Gatekeeper；复制到 DMG staging 后再次验证票据和深层签名。DMG 同样在临时路径完成 Developer ID 签名、公证、staple 和 Gatekeeper 验证，全部通过后才移动到正式输出目录并生成 SHA-256；公证 ZIP 不再误入 DMG，失败的临时 DMG 也不会冒充正式产物。App 与 DMG 的 notary JSON 分开保留。
+App ZIP 在独立临时目录提交公证，Accepted 后 staple、validate 并通过 Gatekeeper；复制到 DMG staging 后再次验证票据和深层签名。DMG 同样在临时路径完成 Developer ID 签名、公证、staple 和 Gatekeeper 验证。最终 `.distribution.json` 重新记录 stapled App/DMG 的哈希、签名、Team ID、可信时间戳、公证 submission ID、Git SHA、协议/Schema 和回滚边界，并显式保留 `clean_machine_install_acceptance: not-run`；分发清单生成后才把 DMG 与 Accepted notary JSON 移到正式输出目录并生成 SHA-256。失败 notary JSON 只保留在独立 `rejected/` 诊断目录，不与同版本旧正式产物混用。公证 ZIP 不再误入 DMG，失败的临时 DMG 也不会冒充正式产物。
 
 当前钥匙串中的 `Developer ID Application: LEI LI (AHVN42RQS3)` 被系统标记为 `CSSMERR_TP_CERT_REVOKED`，且 `ChatOSNotary` profile 不存在；流水线回归已证明会在构建前拒绝该状态。因此本节只完成可审查的分发代码路径，不宣称 12.120 已完成。必须先更新有效 Developer ID 证书、创建 notary profile，并在 12.119c 正式 8 小时门禁通过后实际运行公证、stapling 与干净机器安装矩阵。
 

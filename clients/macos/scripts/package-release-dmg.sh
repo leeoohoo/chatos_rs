@@ -9,7 +9,7 @@ SIGNING_IDENTITY=${CHATOS_CODESIGN_IDENTITY:-}
 NOTARY_PROFILE=${CHATOS_NOTARYTOOL_PROFILE:-}
 
 if [[ "$ARCH" != "arm64" ]]; then
-  echo "The bundled ripgrep tool currently supports Apple Silicon only; refusing to label an $ARCH build as distributable." >&2
+  echo "The bundled ripgrep tool requires native arm64 Apple Silicon; refusing to label an $ARCH build as distributable." >&2
   exit 2
 fi
 if [[ "$SIGNING_IDENTITY" != "Developer ID Application:"* ]]; then
@@ -37,19 +37,42 @@ OUTPUT_DIR="$PROJECT_DIR/BundleArtifacts"
 DMG_FILENAME="ChatOS-$VERSION-macOS-$ARCH.dmg"
 DMG_PATH="$OUTPUT_DIR/$DMG_FILENAME"
 CHECKSUM_PATH="$DMG_PATH.sha256"
-APP_NOTARY_RESULT="$OUTPUT_DIR/ChatOS-$VERSION-macOS-$ARCH.app-notary.json"
-DMG_NOTARY_RESULT="$OUTPUT_DIR/ChatOS-$VERSION-macOS-$ARCH.dmg-notary.json"
+APP_NOTARY_ARTIFACT="$OUTPUT_DIR/ChatOS-$VERSION-macOS-$ARCH.app-notary.json"
+DMG_NOTARY_ARTIFACT="$OUTPUT_DIR/ChatOS-$VERSION-macOS-$ARCH.dmg-notary.json"
+DISTRIBUTION_MANIFEST="$OUTPUT_DIR/ChatOS-$VERSION-macOS-$ARCH.distribution.json"
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/chatos-macos-release.XXXXXX")
 DMG_STAGING_DIR="$WORK_DIR/dmg"
 APP_ARCHIVE="$WORK_DIR/ChatOS.zip"
 DMG_WORK_PATH="$WORK_DIR/$DMG_FILENAME"
+CHECKSUM_WORK_PATH="$WORK_DIR/$DMG_FILENAME.sha256"
+APP_NOTARY_RESULT="$WORK_DIR/${APP_NOTARY_ARTIFACT:t}"
+DMG_NOTARY_RESULT="$WORK_DIR/${DMG_NOTARY_ARTIFACT:t}"
+DISTRIBUTION_MANIFEST_WORK="$WORK_DIR/${DISTRIBUTION_MANIFEST:t}"
 
 cleanup() {
-  rm -rf -- "$WORK_DIR"
+  local exit_status=$?
+  if (( exit_status != 0 )); then
+    local rejected_dir="$OUTPUT_DIR/rejected"
+    local failure_stamp
+    failure_stamp=$(date -u '+%Y%m%dT%H%M%SZ')-$$
+    for result in "$APP_NOTARY_RESULT" "$DMG_NOTARY_RESULT"; do
+      if [[ -s "$result" ]]; then
+        mkdir -p "$rejected_dir" || true
+        cp "$result" "$rejected_dir/${result:t:r}-$failure_stamp.json" || true
+      fi
+    done
+  fi
+  rm -rf -- "$WORK_DIR" || true
+  return "$exit_status"
 }
 trap cleanup EXIT
 
 APP_PATH=$("$SCRIPT_DIR/package-release-app.sh" | tail -n 1)
+BUILD_MANIFEST="$APP_PATH.build-manifest.json"
+/usr/bin/arch -arm64 /usr/bin/python3 -B "$SCRIPT_DIR/build_evidence.py" verify \
+  --app "$APP_PATH" \
+  --manifest "$BUILD_MANIFEST" \
+  --require-symbols
 SIGNED_EXECUTABLES=(
   "$APP_PATH/Contents/MacOS/ChatOSSwift"
   "$APP_PATH/Contents/MacOS/chatos_local_agent_host"
@@ -139,13 +162,29 @@ fi
 xcrun stapler staple "$DMG_WORK_PATH"
 xcrun stapler validate "$DMG_WORK_PATH"
 spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG_WORK_PATH"
-mv -f "$DMG_WORK_PATH" "$DMG_PATH"
+/usr/bin/arch -arm64 /usr/bin/python3 -B "$SCRIPT_DIR/build_evidence.py" distribution \
+  --app "$APP_PATH" \
+  --build-manifest "$BUILD_MANIFEST" \
+  --dmg "$DMG_WORK_PATH" \
+  --app-notary "$APP_NOTARY_RESULT" \
+  --dmg-notary "$DMG_NOTARY_RESULT" \
+  --signing-identity "$SIGNING_IDENTITY" \
+  --output "$DISTRIBUTION_MANIFEST_WORK"
 (
-  cd "$OUTPUT_DIR"
+  cd "$WORK_DIR"
   shasum -a 256 "$DMG_FILENAME" > "$DMG_FILENAME.sha256"
 )
+mv -f "$DMG_WORK_PATH" "$DMG_PATH"
+mv -f "$CHECKSUM_WORK_PATH" "$CHECKSUM_PATH"
+mv -f "$APP_NOTARY_RESULT" "$APP_NOTARY_ARTIFACT"
+mv -f "$DMG_NOTARY_RESULT" "$DMG_NOTARY_ARTIFACT"
+# The manifest is the publication marker and moves last. If the process is
+# interrupted during earlier moves, the previous manifest cannot validate the
+# partial artifact set as a new release.
+mv -f "$DISTRIBUTION_MANIFEST_WORK" "$DISTRIBUTION_MANIFEST"
 
 print -r -- "$DMG_PATH"
 print -r -- "$CHECKSUM_PATH"
-print -r -- "$APP_NOTARY_RESULT"
-print -r -- "$DMG_NOTARY_RESULT"
+print -r -- "$APP_NOTARY_ARTIFACT"
+print -r -- "$DMG_NOTARY_ARTIFACT"
+print -r -- "$DISTRIBUTION_MANIFEST"

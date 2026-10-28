@@ -33,7 +33,7 @@ CHATOS_NOTARYTOOL_PROFILE='ChatOSNotary' \
 
 该入口在构建前校验证书类型、撤销/信任状态和公证凭据，不接受 Apple Development、Apple Distribution、ad-hoc 或缺少 profile 的配置。Release App 主程序、Host、三个 Worker、`rg` 和 `ps` 都必须是 arm64-only，并逐个通过 Developer ID、hardened runtime 和严格签名检查；出现未登记的 Mach-O 文件会直接失败，防止新增 Helper 漏签。
 
-流水线先公证并 staple App，再用 `ditto` 复制到独立 DMG staging；公证 ZIP 不会进入安装盘。DMG 在临时目录完成签名、公证、staple 与 Gatekeeper 检查后才移动到 `BundleArtifacts`。输出包括 DMG、SHA-256，以及 App/DMG 两份 notary JSON。任何一步失败都不得把临时 DMG 当成正式产物；最终发布仍须在干净机器完成安装、首次启动和兼容矩阵验收。
+流水线先公证并 staple App，再用 `ditto` 复制到独立 DMG staging；公证 ZIP 不会进入安装盘。DMG 在临时目录完成签名、公证、staple、Gatekeeper 检查和最终分发清单生成后，才与两份 Accepted notary JSON 一起移动到 `BundleArtifacts`。输出包括 DMG、SHA-256、App/DMG 两份 notary JSON，以及 `.distribution.json`；失败提交的 JSON 只保留在独立 `BundleArtifacts/rejected/` 诊断目录，不能与正式产物混用。最终清单重新记录 stapled App/DMG 的哈希与签名、公证 submission ID、Git SHA、协议/Schema 和回滚边界，同时明确把干净机器安装标为 `not-run`，不能用签名成功冒充安装兼容性通过。任何一步失败都不得把临时 DMG 当成正式产物；最终发布仍须在干净机器完成安装、首次启动和兼容矩阵验收。
 
 ## 固定存储工程基准
 
@@ -144,6 +144,7 @@ zsh clients/macos/scripts/run-process-group-soak.sh \
 zsh -n clients/macos/scripts/compare-performance-baselines.sh
 zsh -n clients/macos/scripts/run-app-performance-scenario.sh
 zsh -n clients/macos/scripts/package-app.sh
+zsh -n clients/macos/scripts/package-release-dmg.sh
 zsh -n clients/macos/scripts/verify-app-build.sh
 zsh -n clients/macos/scripts/run-process-group-soak.sh
 ```

@@ -207,6 +207,50 @@ class RepositoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Symbol files are unavailable"):
             evidence.verify(app, result, require_symbols=True)
 
+    def test_distribution_evidence_links_final_artifacts_without_claiming_install_acceptance(self):
+        app = self.make_app()
+        with (app / "Contents/Info.plist").open("rb") as stream:
+            info = plistlib.load(stream)
+        info["CFBundleIdentifier"] = "com.chatos.swift-client"
+        with (app / "Contents/Info.plist").open("wb") as stream:
+            plistlib.dump(info, stream)
+        manifest = self.finish(app)
+        manifest["contracts_from_source"] = {
+            "host_protocol": {"value": 51, "source_sha256": "a" * 64},
+            "storage_schema": {"value": 44, "source_sha256": "b" * 64},
+        }
+        manifest["symbolication_status"] = "uuid-matched"
+        manifest_path = self.root / "ChatOS.app.build-manifest.json"
+        manifest_path.write_text(json.dumps(manifest))
+        dmg = self.root / "ChatOS.dmg"
+        dmg.write_bytes(b"signed dmg")
+        app_notary = self.root / "app-notary.json"
+        dmg_notary = self.root / "dmg-notary.json"
+        app_notary.write_text(json.dumps({"id": "app-submission", "status": "Accepted"}))
+        dmg_notary.write_text(json.dumps({"id": "dmg-submission", "status": "Accepted"}))
+        identity = "Developer ID Application: Example (ABCDEFGHIJ)"
+
+        def signed(path):
+            runtime = " runtime" if Path(path).suffix == ".app" else ""
+            return (f"Identifier=fixture\nFormat=fixture\nCodeDirectory v=20500 flags=0x10000{runtime}\n"
+                    f"Authority={identity}\nTeamIdentifier=ABCDEFGHIJ\nTimestamp=now")
+
+        with patch.object(evidence, "signature", side_effect=signed):
+            result = evidence.distribution_evidence(
+                app, manifest_path, dmg, app_notary, dmg_notary, identity)
+        self.assertEqual(result["distribution_stage"], "signed-notarized-stapled")
+        self.assertEqual(result["clean_machine_install_acceptance"], "not-run")
+        self.assertEqual(result["source"]["git_commit"], manifest["source"]["git_commit"])
+        self.assertEqual(result["contracts"]["host_protocol"]["value"], 51)
+        self.assertEqual(result["notarization"]["dmg"]["submission_id"], "dmg-submission")
+        self.assertFalse(result["rollback"]["automatic_schema_downgrade_supported"])
+
+        dmg_notary.write_text(json.dumps({"id": "rejected", "status": "Invalid"}))
+        with patch.object(evidence, "signature", side_effect=signed), \
+             self.assertRaisesRegex(ValueError, "not Accepted"):
+            evidence.distribution_evidence(
+                app, manifest_path, dmg, app_notary, dmg_notary, identity)
+
 
 class BaselineTests(unittest.TestCase):
     def valid_result(self):
@@ -281,12 +325,22 @@ class BaselineTests(unittest.TestCase):
             uname.chmod(0o755)
             environment = dict(os.environ, PATH=directory + ":/usr/bin:/bin")
             for script in ("package-app.sh", "verify-app-build.sh", "run-performance-baseline.sh",
-                           "run-process-group-soak.sh"):
+                           "run-process-group-soak.sh", "package-release-dmg.sh"):
                 with self.subTest(script=script):
                     result = subprocess.run(["/bin/zsh", str(scripts / script)],
                                             env=environment, capture_output=True, timeout=10)
                     self.assertEqual(result.returncode, 2)
                     self.assertIn(b"arm64", result.stderr)
+
+    def test_distribution_entry_rejects_missing_developer_id_before_building(self):
+        scripts = Path(__file__).resolve().parents[1]
+        environment = dict(os.environ)
+        environment.pop("CHATOS_CODESIGN_IDENTITY", None)
+        environment.pop("CHATOS_NOTARYTOOL_PROFILE", None)
+        result = subprocess.run(["/bin/zsh", str(scripts / "package-release-dmg.sh")],
+                                env=environment, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b"CHATOS_CODESIGN_IDENTITY", result.stderr)
 
     def test_percentiles_use_all_raw_samples(self):
         rounds = [self.valid_result(), self.valid_result(), self.valid_result()]

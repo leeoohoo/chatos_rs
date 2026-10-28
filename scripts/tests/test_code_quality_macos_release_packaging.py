@@ -72,9 +72,11 @@ class MacOSReleasePackagingPolicyTests(unittest.TestCase):
         dmg = self.read(MACOS_SCRIPTS / "package-release-dmg.sh")
 
         self.assertIn('DMG_FILENAME="ChatOS-$VERSION-macOS-$ARCH.dmg"', dmg)
-        self.assertIn('cd "$OUTPUT_DIR"', dmg)
+        self.assertIn('cd "$WORK_DIR"', dmg)
         self.assertIn('shasum -a 256 "$DMG_FILENAME"', dmg)
         self.assertNotIn('shasum -a 256 "$DMG_PATH"', dmg)
+        self.assertLess(dmg.index('mv -f "$CHECKSUM_WORK_PATH" "$CHECKSUM_PATH"'),
+                        dmg.index('mv -f "$DISTRIBUTION_MANIFEST_WORK" "$DISTRIBUTION_MANIFEST"'))
 
     def test_project_creation_explains_directory_semantics(self) -> None:
         sheet = self.read(
