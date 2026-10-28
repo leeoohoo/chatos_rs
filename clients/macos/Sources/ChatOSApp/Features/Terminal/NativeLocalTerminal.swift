@@ -217,8 +217,10 @@ struct NativeLocalTerminalSurface: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NativeByteStreamTerminalView {
         let view = terminal.terminalView
-        terminal.startIfNeeded()
-        DispatchQueue.main.async { terminal.focus() }
+        DispatchQueue.main.async {
+            terminal.startIfNeeded()
+            terminal.focus()
+        }
         return view
     }
 

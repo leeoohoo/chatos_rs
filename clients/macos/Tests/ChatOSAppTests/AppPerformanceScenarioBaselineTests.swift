@@ -29,6 +29,12 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         let megabyteMarkdownBlockCount: Int
         let largeCodeFallbackMilliseconds: Double
         let largeCodeSpanCount: Int
+        let navigationTransitions: Int
+        let accountCycles: Int
+        let navigationWarmP95Milliseconds: Double
+        let navigationMaximumMilliseconds: Double
+        let accountCycleP95Milliseconds: Double
+        let accountCycleMaximumMilliseconds: Double
         let mainActorMaximumGapMilliseconds: Double
         let mainActorMaximumGapPhase: String
         let concurrentWallMilliseconds: Double
@@ -118,6 +124,8 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         let (markdownBlockCount, markdownMilliseconds) = await markdownTask.value
         let (codeSpanCount, codeMilliseconds) = await codeTask.value
         let wallMilliseconds = Self.milliseconds(since: wallStart)
+        probe.phase = "navigation_account_lifecycle"
+        let lifecycle = try await measureNavigationAndAccountLifecycle()
         probeTask.cancel()
         await probeTask.value
 
@@ -143,7 +151,11 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         XCTAssertLessThan(todoMilliseconds, 100)
         XCTAssertLessThan(codeMilliseconds, 100)
         XCTAssertLessThan(markdownMilliseconds, 2_000)
-        XCTAssertLessThan(probe.maximumGapMilliseconds, 100)
+        XCTAssertEqual(lifecycle.navigationTransitions, 200)
+        XCTAssertEqual(lifecycle.accountCycles, 20)
+        XCTAssertLessThan(lifecycle.navigationP95Milliseconds, 100)
+        XCTAssertLessThan(lifecycle.navigationMaximumMilliseconds, 250)
+        XCTAssertLessThan(probe.maximumGapMilliseconds, 250)
         XCTAssertLessThan(wallMilliseconds, 2_500)
 
         let measurements = Measurements(
@@ -164,6 +176,12 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
             megabyteMarkdownBlockCount: markdownBlockCount,
             largeCodeFallbackMilliseconds: codeMilliseconds,
             largeCodeSpanCount: codeSpanCount,
+            navigationTransitions: lifecycle.navigationTransitions,
+            accountCycles: lifecycle.accountCycles,
+            navigationWarmP95Milliseconds: lifecycle.navigationP95Milliseconds,
+            navigationMaximumMilliseconds: lifecycle.navigationMaximumMilliseconds,
+            accountCycleP95Milliseconds: lifecycle.accountCycleP95Milliseconds,
+            accountCycleMaximumMilliseconds: lifecycle.accountCycleMaximumMilliseconds,
             mainActorMaximumGapMilliseconds: probe.maximumGapMilliseconds,
             mainActorMaximumGapPhase: probe.maximumGapPhase,
             concurrentWallMilliseconds: wallMilliseconds
@@ -174,6 +192,166 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
         let payload = String(decoding: encoded, as: UTF8.self)
         print("CHATOS_APP_SCENARIO_BASELINE \(payload)")
 #endif
+    }
+
+    private func measureNavigationAndAccountLifecycle() async throws -> (
+        navigationTransitions: Int,
+        accountCycles: Int,
+        navigationP95Milliseconds: Double,
+        navigationMaximumMilliseconds: Double,
+        accountCycleP95Milliseconds: Double,
+        accountCycleMaximumMilliseconds: Double
+    ) {
+        let service = AppScenarioAuthenticationService()
+        let model = AppModel(authenticationService: service)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 800),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: ChatOSMainSceneView(model: model))
+        defer {
+            model.prepareForApplicationTermination()
+            window.close()
+        }
+
+        try await waitUntil("initial signed-out state") {
+            model.authentication.phase == .signedOut
+        }
+        let selections: [SidebarSelection] = [
+            .applications,
+            .mediaStudio,
+            .agentGroupChat,
+            .requirementSurveys,
+            .terminal("terminal-local"),
+        ]
+        var navigationSamples: [Double] = []
+        var navigationSamplesByDestination: [String: [Double]] = [:]
+        var accountCycleSamples: [Double] = []
+        var loginSamples: [Double] = []
+        var logoutSynchronousSamples: [Double] = []
+        var agentWorkspaceIdentities = Set<ObjectIdentifier>()
+        var retainedAgentWorkspaces: [AgentGroupChatWorkspaceViewModel] = []
+
+        for cycle in 0..<20 {
+            model.authentication.username = "performance-\(cycle % 2)@example.test"
+            model.authentication.password = "isolated-performance-password"
+            let loginStart = DispatchTime.now().uptimeNanoseconds
+            model.authentication.login()
+            try await waitUntil("account login \(cycle + 1)") {
+                guard case let .authenticated(session) = model.authentication.phase else {
+                    return false
+                }
+                return model.authenticatedUserID == session.user.id
+            }
+            let loginMilliseconds = Self.milliseconds(since: loginStart)
+            loginSamples.append(loginMilliseconds)
+            let ownerUserID = try XCTUnwrap(model.authenticatedUserID)
+            let agentWorkspace = model.agentWorkspaceViewModel(ownerUserID: ownerUserID)
+            XCTAssertTrue(
+                agentWorkspace === model.agentWorkspaceViewModel(ownerUserID: ownerUserID),
+                "The active account must reuse one Agent workspace model"
+            )
+            XCTAssertTrue(
+                agentWorkspaceIdentities.insert(ObjectIdentifier(agentWorkspace)).inserted,
+                "A signed-out account must not retain its prior Agent workspace model"
+            )
+            retainedAgentWorkspaces.append(agentWorkspace)
+
+            if cycle == 0 {
+                for selection in selections {
+                    model.selection = selection
+                    for _ in 0..<3 { try await settle(window) }
+                    if selection == .agentGroupChat,
+                       let ownerUserID = model.authenticatedUserID {
+                        let agentWorkspace = model.agentWorkspaceViewModel(
+                            ownerUserID: ownerUserID
+                        )
+                        try await waitUntil("Agent workspace warmup") {
+                            agentWorkspace.hasLoadedInitialSnapshot
+                        }
+                    }
+                }
+                for offset in 0..<200 {
+                    let started = DispatchTime.now().uptimeNanoseconds
+                    let selection = selections[offset % selections.count]
+                    model.selection = selection
+                    try await settle(window)
+                    let elapsed = Self.milliseconds(since: started)
+                    navigationSamples.append(elapsed)
+                    navigationSamplesByDestination[Self.navigationName(selection), default: []]
+                        .append(elapsed)
+                }
+            }
+
+            let logoutStart = DispatchTime.now().uptimeNanoseconds
+            model.authentication.logout()
+            logoutSynchronousSamples.append(Self.milliseconds(since: logoutStart))
+            try await waitUntil("account logout \(cycle + 1)") {
+                model.authentication.phase == .signedOut && model.authenticatedUserID == nil
+            }
+            XCTAssertTrue(model.agentWorkspaceViewModels.isEmpty)
+            let logoutMilliseconds = Self.milliseconds(since: logoutStart)
+            accountCycleSamples.append(loginMilliseconds + logoutMilliseconds)
+        }
+        try await waitUntil("authentication service logout completion") {
+            await service.operationCounts() == (restore: 1, login: 20, logout: 20)
+        }
+
+        let destinationP95 = navigationSamplesByDestination.mapValues {
+            Self.nearestRank($0, percentile: 0.95)
+        }
+        let diagnostics: [String: Any] = [
+            "navigation_p95_by_destination_ms": destinationP95,
+            "login_p95_ms": Self.nearestRank(loginSamples, percentile: 0.95),
+            "login_max_ms": loginSamples.max() ?? .infinity,
+            "logout_synchronous_p95_ms": Self.nearestRank(
+                logoutSynchronousSamples,
+                percentile: 0.95
+            ),
+            "logout_synchronous_max_ms": logoutSynchronousSamples.max() ?? .infinity,
+        ]
+        let diagnosticsData = try JSONSerialization.data(
+            withJSONObject: diagnostics,
+            options: [.sortedKeys]
+        )
+        print(
+            "CHATOS_APP_LIFECYCLE_DIAGNOSTICS "
+                + String(decoding: diagnosticsData, as: UTF8.self)
+        )
+
+        return (
+            navigationTransitions: navigationSamples.count,
+            accountCycles: accountCycleSamples.count,
+            navigationP95Milliseconds: Self.nearestRank(navigationSamples, percentile: 0.95),
+            navigationMaximumMilliseconds: navigationSamples.max() ?? .infinity,
+            accountCycleP95Milliseconds: Self.nearestRank(accountCycleSamples, percentile: 0.95),
+            accountCycleMaximumMilliseconds: accountCycleSamples.max() ?? .infinity
+        )
+    }
+
+    private func settle(_ window: NSWindow) async throws {
+        window.contentView?.layoutSubtreeIfNeeded()
+        await Task.yield()
+        try await Task.sleep(for: .milliseconds(1))
+        window.contentView?.layoutSubtreeIfNeeded()
+    }
+
+    private func waitUntil(
+        _ operation: String,
+        timeout: Duration = .seconds(5),
+        predicate: @escaping @MainActor () async -> Bool
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if await predicate() { return }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        XCTFail("Timed out waiting for \(operation)")
+        throw AppScenarioError.timeout(operation)
     }
 
     private func makeTurns(count: Int) -> [ConversationTurn] {
@@ -284,6 +462,76 @@ final class AppPerformanceScenarioBaselineTests: XCTestCase {
 
     nonisolated private static func milliseconds(since start: UInt64) -> Double {
         Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+    }
+
+    nonisolated private static func nearestRank(
+        _ values: [Double],
+        percentile: Double
+    ) -> Double {
+        let sorted = values.sorted()
+        guard !sorted.isEmpty else { return .infinity }
+        let index = max(0, Int(ceil(Double(sorted.count) * percentile)) - 1)
+        return sorted[index]
+    }
+
+    nonisolated private static func navigationName(_ selection: SidebarSelection) -> String {
+        switch selection {
+        case .applications: "applications"
+        case .mediaStudio: "media_studio"
+        case .agentGroupChat: "agent"
+        case .requirementSurveys: "requirement_surveys"
+        case .terminal: "terminal"
+        default: "other"
+        }
+    }
+}
+
+private enum AppScenarioError: Error {
+    case timeout(String)
+}
+
+private actor AppScenarioAuthenticationService: AuthenticationServicing {
+    private var restoreCount = 0
+    private var loginCount = 0
+    private var logoutCount = 0
+
+    func restoreSession() async throws -> AuthSession? {
+        restoreCount += 1
+        return nil
+    }
+
+    func login(username: String, password: String) async throws -> AuthSession {
+        loginCount += 1
+        return AuthSession(user: .init(
+            id: "performance-user-\(username)",
+            username: username,
+            displayName: "Performance User",
+            role: "user"
+        ))
+    }
+
+    func sendRegistrationCode(
+        email: String,
+        inviteCode: String
+    ) async throws -> RegistrationCodeDelivery {
+        .init(expiresInSeconds: 600, resendAfterSeconds: 60)
+    }
+
+    func register(
+        email: String,
+        password: String,
+        inviteCode: String,
+        verificationCode: String
+    ) async throws -> AuthSession {
+        try await login(username: email, password: password)
+    }
+
+    func logout() async {
+        logoutCount += 1
+    }
+
+    func operationCounts() -> (restore: Int, login: Int, logout: Int) {
+        (restoreCount, loginCount, logoutCount)
     }
 }
 

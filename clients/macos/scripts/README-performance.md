@@ -54,9 +54,9 @@ zsh clients/macos/scripts/compare-performance-baselines.sh \
 zsh clients/macos/scripts/run-app-performance-scenario.sh
 ```
 
-该入口使用 Release XCTest 和纯内存合成数据，并行执行 1,000-turn 时间线构建、真实 AppKit/SwiftUI 千行时间线的首次布局与滚动、100 项任务板 presentation、超过 1 MB 的 Markdown 后台解析以及超过 600,000 UTF-16 字符的代码预览回退。它验证千行时间线始终只构造可见行，同时测量 MainActor 最大调度间隙；默认执行三轮并把原始样本、环境、测试二进制身份、P50/P95/P99 与宽松安全上限写入 `.build/performance/app-scenario-release-*/run.json`。
+该入口使用 Release XCTest、临时 Home 和合成数据，并行执行 1,000-turn 时间线构建、真实 AppKit/SwiftUI 千行时间线的首次布局与滚动、100 项任务板 presentation、超过 1 MB 的 Markdown 后台解析以及超过 600,000 UTF-16 字符的代码预览回退。随后在隔离窗口挂载真实 ChatOS 主视图层级，以合成认证服务完成 20 次登录/退出，并在预热后完成 200 次应用、AI 创作、Agent、需求调研和终端模块切换。门禁要求切页 p95 小于 100 ms、任一次小于 250 ms，同时测量 MainActor 最大调度间隙；默认执行三轮并把原始样本、环境、测试二进制身份、P50/P95/P99 与安全上限写入 `.build/performance/app-scenario-release-*/run.json`。
 
-此场景不会登录、打开活动账户数据库或控制当前 App，适合成为每次 Release 性能回归的快速 CPU/UI 虚拟化门禁。它不能替代真实账户窗口导航、滚动帧率、WindowServer、内存或进程组 soak；这些仍需在隔离 Release 实例上验收。
+此场景不会使用真实账号、打开活动账户数据库或控制当前 App；每轮独立创建并销毁临时 Home，适合成为每次 Release 性能回归的快速 CPU/UI 生命周期门禁。它不能替代签名 App 的真实凭据/服务端账户切换、滚动帧率、WindowServer、内存或进程组 soak；这些仍需在隔离 Release 实例上验收。
 
 ## App 性能 Signpost
 
@@ -121,7 +121,7 @@ zsh clients/macos/scripts/run-process-group-soak.sh \
 
 采集输出目录必须位于所有 `--temporary-root` 之外；否则采集器自己持续写入的 `samples.jsonl` 会被误计为客户端临时文件增长，入口会在开始采集前直接拒绝这种自干扰配置。
 
-采集器不生成负载，也不能从内核线程数推断 Swift Task 或 Notification observer 数；200 次导航、账户循环、内部 Task/observer 计数与主线程 hang 仍须由后续 App 内验收驱动器提供。Plugin 是动态名称，正式命令应额外加入该验收插件的真实 executable 名称。
+采集器不生成负载，也不能从内核线程数推断 Swift Task 或 Notification observer 数；合成 Release 场景已经提供 200 次导航、20 次账户生命周期和主线程间隙门禁，但签名 App 的真实账号/WindowServer 导航及内部 Task/observer 长稳计数仍须在隔离验收实例完成。Plugin 是动态名称，正式命令应额外加入该验收插件的真实 executable 名称。
 
 ## 工具回归
 

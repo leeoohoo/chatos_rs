@@ -20,7 +20,7 @@ private enum AgentGroupChatWorkspaceDestination: Hashable {
 
 struct AgentGroupChatWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
-    @StateObject private var viewModel: AgentGroupChatWorkspaceViewModel
+    @ObservedObject private var viewModel: AgentGroupChatWorkspaceViewModel
     @State private var showsCreateTeam = false
     @State private var destination: AgentGroupChatWorkspaceDestination = .agents
     @State private var roomPendingDeletion: ProjectAgentRoom?
@@ -40,21 +40,15 @@ struct AgentGroupChatWorkspaceView: View {
         service: NativeAgentGroupChatService,
         scheduler: LocalAgentGroupChatScheduler,
         builderService: LocalAgentBuilderService,
-        skillLibrary: LocalAgentSkillLibrary
+        skillLibrary: LocalAgentSkillLibrary,
+        viewModel: AgentGroupChatWorkspaceViewModel
     ) {
         self.ownerUserID = ownerUserID
         self.service = service
         self.scheduler = scheduler
         self.builderService = builderService
         self.skillLibrary = skillLibrary
-        _viewModel = StateObject(
-            wrappedValue: AgentGroupChatWorkspaceViewModel(
-                ownerUserID: ownerUserID,
-                service: service,
-                scheduler: scheduler,
-                builderService: builderService
-            )
-        )
+        _viewModel = ObservedObject(wrappedValue: viewModel)
     }
 
     var body: some View {
@@ -171,83 +165,84 @@ struct AgentGroupChatWorkspaceView: View {
 
             Divider()
 
-            if viewModel.isLoading, viewModel.rooms.isEmpty, viewModel.agents.isEmpty {
-                ProgressView()
+            if !viewModel.hasLoadedInitialSnapshot {
+                ProgressView("正在加载 Agent…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(selection: $destination) {
-                    Section {
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Agent 管理")
-                                    .font(.body.weight(.medium))
-                                Text("\(viewModel.agents.count) 个已创建 Agent")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 3) {
+                        navigationRow(.agents) {
+                            Label {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Agent 管理")
+                                        .font(.body.weight(.medium))
+                                    Text("\(viewModel.agents.count) 个已创建 Agent")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } icon: {
+                                Image(systemName: "person.crop.rectangle.stack")
+                                    .foregroundStyle(AppPalette.ai)
                             }
-                        } icon: {
-                            Image(systemName: "person.crop.rectangle.stack")
-                                .foregroundStyle(AppPalette.ai)
                         }
-                        .padding(.vertical, 4)
-                        .tag(AgentGroupChatWorkspaceDestination.agents)
 
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Agent 文档")
-                                    .font(.body.weight(.medium))
-                                Text("跨设备发现与预览")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                        navigationRow(.artifacts) {
+                            Label {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Agent 文档")
+                                        .font(.body.weight(.medium))
+                                    Text("跨设备发现与预览")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } icon: {
+                                Image(systemName: "icloud.and.arrow.down")
+                                    .foregroundStyle(AppPalette.ai)
                             }
-                        } icon: {
-                            Image(systemName: "icloud.and.arrow.down")
-                                .foregroundStyle(AppPalette.ai)
                         }
-                        .padding(.vertical, 4)
-                        .tag(AgentGroupChatWorkspaceDestination.artifacts)
-                    }
 
-                    Section("团队") {
+                        sidebarSectionTitle("团队")
                         if viewModel.rooms.isEmpty {
                             Text("还没有项目团队")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
                         } else {
                             ForEach(viewModel.rooms.agentPage(index: teamPage, size: teamPageSize)) { room in
-                                HStack(spacing: 8) {
-                                    Label {
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(room.draft.name)
-                                                .appFont(.body.weight(.medium))
-                                            Text(projectName(for: room.projectID))
-                                                .appFont(.caption)
+                                navigationRow(.room(room.id)) {
+                                    HStack(spacing: 8) {
+                                        Label {
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                Text(room.draft.name)
+                                                    .appFont(.body.weight(.medium))
+                                                Text(projectName(for: room.projectID))
+                                                    .appFont(.caption)
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(1)
+                                            }
+                                        } icon: {
+                                            Image(systemName: "person.3.fill")
+                                                .foregroundStyle(AppPalette.ai)
+                                        }
+                                        Spacer(minLength: 0)
+                                        Menu {
+                                            Button(
+                                                model.localized("删除团队", english: "Delete Team"),
+                                                systemImage: "trash",
+                                                role: .destructive
+                                            ) {
+                                                roomPendingDeletion = room
+                                            }
+                                        } label: {
+                                            Image(systemName: "ellipsis.circle")
                                                 .foregroundStyle(.secondary)
-                                                .lineLimit(1)
                                         }
-                                    } icon: {
-                                        Image(systemName: "person.3.fill")
-                                            .foregroundStyle(AppPalette.ai)
+                                        .menuStyle(.borderlessButton)
+                                        .menuIndicator(.hidden)
+                                        .fixedSize()
                                     }
-                                    Spacer(minLength: 0)
-                                    Menu {
-                                        Button(
-                                            model.localized("删除团队", english: "Delete Team"),
-                                            systemImage: "trash",
-                                            role: .destructive
-                                        ) {
-                                            roomPendingDeletion = room
-                                        }
-                                    } label: {
-                                        Image(systemName: "ellipsis.circle")
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .menuStyle(.borderlessButton)
-                                    .menuIndicator(.hidden)
-                                    .fixedSize()
                                 }
-                                .padding(.vertical, 4)
-                                .tag(AgentGroupChatWorkspaceDestination.room(room.id))
                             }
                             AgentListPaginationBar(
                                 totalCount: viewModel.rooms.count,
@@ -255,16 +250,16 @@ struct AgentGroupChatWorkspaceView: View {
                                 pageSize: $teamPageSize,
                                 compact: true
                             )
-                            .listRowSeparator(.hidden)
+                            .padding(.horizontal, 4)
                         }
-                    }
 
-
-                    Section("私聊") {
+                        sidebarSectionTitle("私聊")
                         if viewModel.directConversations.isEmpty {
                             Text("还没有私聊")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
                         } else {
                             ForEach(
                                 viewModel.directConversations.agentPage(
@@ -272,45 +267,44 @@ struct AgentGroupChatWorkspaceView: View {
                                     size: directPageSize
                                 )
                             ) { conversation in
-                                HStack(spacing: 12) {
-                                    if conversation.conversationKind == .humanAgentDirect,
-                                       let agentID = conversation.defaultAgentID,
-                                       let agent = viewModel.agents.first(where: { $0.id == agentID }) {
-                                        AgentAvatarView(
-                                            name: agent.draft.name,
-                                            data: agent.draft.avatarData,
-                                            size: AgentAvatarMetrics.navigation,
-                                            cornerRadius: 15
-                                        )
-                                    } else {
-                                        Image(systemName: "person.2.wave.2")
-                                            .foregroundStyle(AppPalette.ai)
-                                            .frame(
-                                                width: AgentAvatarMetrics.navigation,
-                                                height: AgentAvatarMetrics.navigation
+                                navigationRow(.direct(conversation.id)) {
+                                    HStack(spacing: 12) {
+                                        if conversation.conversationKind == .humanAgentDirect,
+                                           let agentID = conversation.defaultAgentID,
+                                           let agent = viewModel.agents.first(where: { $0.id == agentID }) {
+                                            AgentAvatarView(
+                                                name: agent.draft.name,
+                                                data: agent.draft.avatarData,
+                                                size: AgentAvatarMetrics.navigation,
+                                                cornerRadius: 15
                                             )
-                                            .background(
-                                                AppPalette.aiSoft,
-                                                in: RoundedRectangle(cornerRadius: 15)
-                                            )
-                                    }
+                                        } else {
+                                            Image(systemName: "person.2.wave.2")
+                                                .foregroundStyle(AppPalette.ai)
+                                                .frame(
+                                                    width: AgentAvatarMetrics.navigation,
+                                                    height: AgentAvatarMetrics.navigation
+                                                )
+                                                .background(
+                                                    AppPalette.aiSoft,
+                                                    in: RoundedRectangle(cornerRadius: 15)
+                                                )
+                                        }
 
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(conversation.draft.name)
-                                            .font(.body.weight(.medium))
-                                            .lineLimit(1)
-                                        Text(conversation.conversationKind == .humanAgentDirect
-                                             ? "Agent 私聊" : "Agent 之间")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(conversation.draft.name)
+                                                .font(.body.weight(.medium))
+                                                .lineLimit(1)
+                                            Text(conversation.conversationKind == .humanAgentDirect
+                                                 ? "Agent 私聊" : "Agent 之间")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                        Spacer(minLength: 0)
                                     }
-                                    Spacer(minLength: 0)
+                                    .frame(minHeight: AgentAvatarMetrics.navigation + 8)
                                 }
-                                .frame(minHeight: AgentAvatarMetrics.navigation + 8)
-                                .contentShape(Rectangle())
-                                .padding(.vertical, 4)
-                                .tag(AgentGroupChatWorkspaceDestination.direct(conversation.id))
                             }
                             AgentListPaginationBar(
                                 totalCount: viewModel.directConversations.count,
@@ -318,12 +312,11 @@ struct AgentGroupChatWorkspaceView: View {
                                 pageSize: $directPageSize,
                                 compact: true
                             )
-                            .listRowSeparator(.hidden)
+                            .padding(.horizontal, 4)
                         }
                     }
+                    .padding(8)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
                 .background(AppPalette.surfaceSubtle)
             }
         }
@@ -331,9 +324,44 @@ struct AgentGroupChatWorkspaceView: View {
         .background(AppPalette.surfaceSubtle)
     }
 
+    private func sidebarSectionTitle(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.top, 12)
+            .padding(.bottom, 3)
+    }
+
+    private func navigationRow<Content: View>(
+        _ target: AgentGroupChatWorkspaceDestination,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                destination == target ? Color.accentColor.opacity(0.12) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .contentShape(Rectangle())
+            .onTapGesture { destination = target }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAddTraits(destination == target ? .isSelected : [])
+            .accessibilityAction { destination = target }
+    }
+
     @ViewBuilder
     private var detail: some View {
-        if destination == .agents {
+        if !viewModel.hasLoadedInitialSnapshot {
+            ContentUnavailableView {
+                Label("正在加载 Agent", systemImage: "person.3.sequence.fill")
+            } description: {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        } else if destination == .agents {
             AgentManagementView(
                 viewModel: viewModel,
                 ownerUserID: ownerUserID,
@@ -379,5 +407,22 @@ struct AgentGroupChatWorkspaceView: View {
     private func projectName(for projectID: String) -> String {
         model.projects.first(where: { $0.id == projectID })?.title
             ?? model.localized("项目已移除", english: "Project Removed")
+    }
+}
+
+@MainActor
+extension AppModel {
+    func agentWorkspaceViewModel(ownerUserID: String) -> AgentGroupChatWorkspaceViewModel {
+        if let existing = agentWorkspaceViewModels[ownerUserID] {
+            return existing
+        }
+        let created = AgentGroupChatWorkspaceViewModel(
+            ownerUserID: ownerUserID,
+            service: agentGroupChatService,
+            scheduler: agentGroupChatScheduler,
+            builderService: agentGroupChatBuilderService
+        )
+        agentWorkspaceViewModels[ownerUserID] = created
+        return created
     }
 }
