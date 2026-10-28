@@ -61,7 +61,7 @@ const AUTHORING_TOOL_DEFINITIONS = [
   },
   {
     name: 'solution_archive_workspace_and_create',
-    description: 'Archive the complete current workspace as immutable history and create a blank active workspace for a full re-plan. Use only when the user explicitly asks to discard the current planning direction and start over; never use this for an incremental revision.',
+    description: 'Perform Solution Studio\'s legal full reset: archive the complete current workspace as immutable history, then create the project\'s one blank active workspace. Use when the user explicitly asks to delete the whole current plan, discard its direction, or re-plan from scratch. This does not create a parallel active Solution or evade cleanup. Never use it for an incremental revision and never emulate it by deleting protected completed or blocked tasks one by one.',
     inputSchema: {
       type: 'object', properties: {
         workspaceId: { type: 'string' }, expectedRevision: { type: 'integer', minimum: 0 },
@@ -546,7 +546,7 @@ function result(value: Record<string, unknown>, isError = false) {
   return response;
 }
 
-const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.4' }, { capabilities: { tools: {} } });
+const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.5' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }

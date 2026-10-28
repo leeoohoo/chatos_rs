@@ -25,6 +25,8 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     const listed = await client.listTools();
     const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
     for (const name of ['solution_get_active_context', 'solution_get_workspace', 'solution_archive_workspace_and_create', 'solution_upsert_requirements', 'solution_upsert_design', 'solution_upsert_design_block', 'solution_upsert_execution_plan', 'solution_append_execution_tasks', 'solution_validate', 'solution_export', 'solution_finalize']) assert.ok(tools.has(name));
+    assert.match(tools.get('solution_archive_workspace_and_create').description, /does not create a parallel active Solution/);
+    assert.match(tools.get('solution_archive_workspace_and_create').description, /delete the whole current plan/);
     assert.deepEqual(tools.get('solution_upsert_execution_plan')._meta['chatos/skillGate'].allOf, ['solution-studio', 'solution-execution-plan']);
     assert.deepEqual(tools.get('solution_append_execution_tasks')._meta['chatos/skillGate'].allOf, ['solution-studio', 'solution-execution-plan']);
     const planSchema = tools.get('solution_upsert_execution_plan').inputSchema.properties.executionPlan;
