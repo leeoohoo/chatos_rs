@@ -118,9 +118,9 @@ actor NativePluginApplicationRuntime {
         }
 
         let output = Pipe()
-        let error = Pipe()
+        let standardError = Pipe()
         NativeProcessPipeReader.install(on: output.fileHandleForReading)
-        NativeProcessPipeReader.install(on: error.fileHandleForReading)
+        NativeProcessPipeReader.install(on: standardError.fileHandleForReading)
         var overrides = resolvedContext.environment
         overrides.merge(
             NativePluginApplicationHostContract.environment(
@@ -166,16 +166,15 @@ actor NativePluginApplicationRuntime {
                     installationURL.path,
                     nullInput,
                     output.fileHandleForWriting.fileDescriptor,
-                    error.fileHandleForWriting.fileDescriptor,
+                    standardError.fileHandleForWriting.fileDescriptor,
                     &processID
                 )
             }
         }
         output.fileHandleForWriting.closeFile()
-        error.fileHandleForWriting.closeFile()
+        standardError.fileHandleForWriting.closeFile()
         guard spawnResult == 0, processID > 0 else {
-            output.fileHandleForReading.readabilityHandler = nil
-            error.fileHandleForReading.readabilityHandler = nil
+            Self.closeReadPipes(output: output, error: standardError)
             throw NativeConnectorError.pluginInstallation(
                 "Plugin 应用后端启动失败：\(String(cString: strerror(spawnResult)))"
             )
@@ -187,6 +186,7 @@ actor NativePluginApplicationRuntime {
             _ = chatos_signal_process_group(launchedProcessID, SIGKILL)
             var exitCode: Int32 = 0
             _ = chatos_reap_process(launchedProcessID, &exitCode)
+            Self.closeReadPipes(output: output, error: standardError)
             throw NativeConnectorError.pluginInstallation(
                 "Plugin 应用后端启动失败：无法登记进程所有权"
             )
@@ -206,7 +206,7 @@ actor NativePluginApplicationRuntime {
             releaseID: record.releaseID,
             artifactSHA256: record.artifactSHA256,
             standardOutput: output,
-            standardError: error,
+            standardError: standardError,
             exitSource: exitSource
         )
         exitSource.resume()
@@ -247,8 +247,10 @@ actor NativePluginApplicationRuntime {
     private func stop(key: String) async {
         guard let instance = running.removeValue(forKey: key) else { return }
         instance.exitSource.cancel()
-        instance.standardOutput.fileHandleForReading.readabilityHandler = nil
-        instance.standardError.fileHandleForReading.readabilityHandler = nil
+        Self.closeReadPipes(
+            output: instance.standardOutput,
+            error: instance.standardError
+        )
         let exitSignal = NativeProcessExitSignal.reap(processID: instance.processID)
         _ = chatos_signal_process_group(instance.processID, SIGTERM)
         let exitCode = await exitSignal.waitAsync(timeout: 2)
@@ -289,8 +291,10 @@ actor NativePluginApplicationRuntime {
         guard let instance = running[key], instance.processID == processID else { return }
         running.removeValue(forKey: key)
         instance.exitSource.cancel()
-        instance.standardOutput.fileHandleForReading.readabilityHandler = nil
-        instance.standardError.fileHandleForReading.readabilityHandler = nil
+        Self.closeReadPipes(
+            output: instance.standardOutput,
+            error: instance.standardError
+        )
         var exitCode: Int32 = 0
         _ = chatos_reap_process(processID, &exitCode)
         processRegistry.unregister(pid: processID)
@@ -298,6 +302,13 @@ actor NativePluginApplicationRuntime {
 
     private static func isProcessRunning(_ processID: pid_t) -> Bool {
         kill(processID, 0) == 0 || errno == EPERM
+    }
+
+    private static func closeReadPipes(output: Pipe, error: Pipe) {
+        output.fileHandleForReading.readabilityHandler = nil
+        error.fileHandleForReading.readabilityHandler = nil
+        try? output.fileHandleForReading.close()
+        try? error.fileHandleForReading.close()
     }
 
     private static func withCStringArray<Result>(

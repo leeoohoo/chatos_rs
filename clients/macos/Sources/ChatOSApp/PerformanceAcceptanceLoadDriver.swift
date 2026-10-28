@@ -8,6 +8,7 @@ struct PerformanceAcceptanceLoadConfiguration: Equatable, Sendable {
     let runtimeRoot: URL
     let ledgerURL: URL
     let intervalMilliseconds: Int
+    let agentModelDelayMilliseconds: Int
 
     static func resolve(
         environment: [String: String],
@@ -28,36 +29,53 @@ struct PerformanceAcceptanceLoadConfiguration: Equatable, Sendable {
         }
         let interval = environment["CHATOS_PERFORMANCE_ACCEPTANCE_INTERVAL_MS"]
             .flatMap(Int.init) ?? 1_000
-        guard (100...60_000).contains(interval) else { return nil }
+        let agentModelDelay = environment["CHATOS_PERFORMANCE_ACCEPTANCE_AGENT_MODEL_DELAY_MS"]
+            .flatMap(Int.init) ?? 750
+        guard (100...60_000).contains(interval),
+              (0...10_000).contains(agentModelDelay) else { return nil }
         return .init(
             ownerUserID: authentication.ownerUserID,
             runtimeRoot: homeURL
                 .appendingPathComponent("Library/Caches", isDirectory: true)
                 .appendingPathComponent("ChatOSPerformanceAcceptance", isDirectory: true),
             ledgerURL: ledgerURL,
-            intervalMilliseconds: interval
+            intervalMilliseconds: interval,
+            agentModelDelayMilliseconds: agentModelDelay
         )
     }
 }
 
 final class PerformanceAcceptanceLoadDriver {
+    private let plugin: NativePluginPerformanceAcceptanceProbe
     private let task: Task<Void, Never>
 
     init(configuration: PerformanceAcceptanceLoadConfiguration) {
+        let plugin = NativePluginPerformanceAcceptanceProbe(
+            rootURL: configuration.runtimeRoot.appendingPathComponent(
+                "PluginApplication",
+                isDirectory: true
+            )
+        )
+        self.plugin = plugin
         task = Task.detached(priority: .utility) {
-            await Self.run(configuration: configuration)
+            await Self.run(configuration: configuration, plugin: plugin)
         }
     }
 
     deinit {
+        plugin.terminateAllSynchronously()
         task.cancel()
     }
 
     func stop() {
+        plugin.terminateAllSynchronously()
         task.cancel()
     }
 
-    private static func run(configuration: PerformanceAcceptanceLoadConfiguration) async {
+    private static func run(
+        configuration: PerformanceAcceptanceLoadConfiguration,
+        plugin: NativePluginPerformanceAcceptanceProbe
+    ) async {
         let ledger = PerformanceAcceptanceLedger(url: configuration.ledgerURL)
         do {
             try FileManager.default.createDirectory(
@@ -70,11 +88,24 @@ final class PerformanceAcceptanceLoadDriver {
             return
         }
 
+        do {
+            try await plugin.start(ownerUserID: configuration.ownerUserID)
+        } catch {
+            try? await ledger.recordFailure(kind: .plugin, error: error)
+        }
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await runAgentLoop(configuration: configuration, ledger: ledger) }
             group.addTask { await runMediaLoop(configuration: configuration, ledger: ledger) }
+            group.addTask {
+                await runPluginLoop(
+                    configuration: configuration,
+                    ledger: ledger,
+                    plugin: plugin
+                )
+            }
             await group.waitForAll()
         }
+        await plugin.stop()
         try? await ledger.stop()
     }
 
@@ -101,7 +132,9 @@ final class PerformanceAcceptanceLoadDriver {
                     checkpoint: checkpoint,
                     scope: scope,
                     policy: policy,
-                    model: PerformanceAcceptanceModel(),
+                    model: PerformanceAcceptanceModel(
+                        delayMilliseconds: configuration.agentModelDelayMilliseconds
+                    ),
                     tools: [.init(
                         name: "finish",
                         description: "Complete the isolated acceptance probe",
@@ -139,15 +172,11 @@ final class PerformanceAcceptanceLoadDriver {
         ledger: PerformanceAcceptanceLedger
     ) async {
         let sourceURL = configuration.runtimeRoot.appendingPathComponent(
-            "media-source.png",
+            "media-source.bmp",
             isDirectory: false
         )
         do {
-            guard let source = Data(base64Encoded:
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-            ) else {
-                throw PerformanceAcceptanceLoadError.invalidMediaFixture
-            }
+            let source = try makeBitmapFixture(pixelSize: 2_048)
             try source.write(to: sourceURL, options: [.atomic])
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o600],
@@ -178,14 +207,14 @@ final class PerformanceAcceptanceLoadDriver {
                     sourceIdentity: nil,
                     destinationURL: destinationURL,
                     ownerUserID: configuration.ownerUserID,
-                    maximumSourceBytes: 1 * 1_024 * 1_024,
+                    maximumSourceBytes: 20 * 1_024 * 1_024,
                     maximumSourcePixelCount: 4 * 1_024 * 1_024,
-                    maximumOutputPixelSize: 512,
-                    maximumOutputBytes: 1 * 1_024 * 1_024
+                    maximumOutputPixelSize: 2_048,
+                    maximumOutputBytes: 20 * 1_024 * 1_024
                 )
                 guard result.path == destinationURL.path,
-                      result.pixelWidth == 1,
-                      result.pixelHeight == 1 else {
+                      result.pixelWidth == 2_048,
+                      result.pixelHeight == 2_048 else {
                     throw PerformanceAcceptanceLoadError.invalidMediaResult
                 }
                 try await ledger.recordSuccess(kind: .media)
@@ -200,6 +229,62 @@ final class PerformanceAcceptanceLoadDriver {
         }
     }
 
+    private static func runPluginLoop(
+        configuration: PerformanceAcceptanceLoadConfiguration,
+        ledger: PerformanceAcceptanceLedger,
+        plugin: NativePluginPerformanceAcceptanceProbe
+    ) async {
+        while !Task.isCancelled {
+            do {
+                try await plugin.exercise()
+                try await ledger.recordSuccess(kind: .plugin)
+            } catch is CancellationError {
+                break
+            } catch {
+                try? await ledger.recordFailure(kind: .plugin, error: error)
+            }
+            guard await sleep(configuration.intervalMilliseconds) else { break }
+        }
+    }
+
+    private static func makeBitmapFixture(pixelSize: Int) throws -> Data {
+        guard pixelSize > 0 else {
+            throw PerformanceAcceptanceLoadError.invalidMediaFixture
+        }
+        let bytesPerRow = pixelSize * 4
+        let pixelBytes = bytesPerRow * pixelSize
+        let fileBytes = 54 + pixelBytes
+        var data = Data(capacity: fileBytes)
+        func appendUInt16(_ value: UInt16) {
+            var littleEndian = value.littleEndian
+            withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+        }
+        func appendUInt32(_ value: UInt32) {
+            var littleEndian = value.littleEndian
+            withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+        }
+        data.append(contentsOf: [0x42, 0x4D])
+        appendUInt32(UInt32(fileBytes))
+        appendUInt32(0)
+        appendUInt32(54)
+        appendUInt32(40)
+        appendUInt32(UInt32(pixelSize))
+        appendUInt32(UInt32(pixelSize))
+        appendUInt16(1)
+        appendUInt16(32)
+        appendUInt32(0)
+        appendUInt32(UInt32(pixelBytes))
+        appendUInt32(2_835)
+        appendUInt32(2_835)
+        appendUInt32(0)
+        appendUInt32(0)
+        data.append(Data(repeating: 0x7F, count: pixelBytes))
+        guard data.count == fileBytes else {
+            throw PerformanceAcceptanceLoadError.invalidMediaFixture
+        }
+        return data
+    }
+
     private static func sleep(_ milliseconds: Int) async -> Bool {
         do {
             try await Task.sleep(for: .milliseconds(milliseconds))
@@ -211,6 +296,8 @@ final class PerformanceAcceptanceLoadDriver {
 }
 
 private struct PerformanceAcceptanceModel: AgentModelClient {
+    let delayMilliseconds: Int
+
     func complete(
         messages: [AgentMessage],
         tools: [AgentToolDefinition],
@@ -218,6 +305,9 @@ private struct PerformanceAcceptanceModel: AgentModelClient {
     ) async throws -> AgentMessage {
         guard tools.contains(where: { $0.name == "finish" }) else {
             throw PerformanceAcceptanceLoadError.unexpectedTool
+        }
+        if delayMilliseconds > 0 {
+            try await Task.sleep(for: .milliseconds(delayMilliseconds))
         }
         return .init(role: .assistant, toolCalls: [
             .init(id: "finish-call", name: "finish", arguments: "{}"),
@@ -228,6 +318,7 @@ private struct PerformanceAcceptanceModel: AgentModelClient {
 private enum PerformanceAcceptanceWorkKind: String, Codable, Sendable {
     case agent
     case media
+    case plugin
 }
 
 private enum PerformanceAcceptanceLoadError: Error {
@@ -248,6 +339,8 @@ private actor PerformanceAcceptanceLedger {
         var mediaCompletions = 0
         var agentFailures = 0
         var mediaFailures = 0
+        var pluginCompletions = 0
+        var pluginFailures = 0
         var recentFailures: [String] = []
     }
 
@@ -267,6 +360,7 @@ private actor PerformanceAcceptanceLedger {
         switch kind {
         case .agent: snapshot.agentCompletions += 1
         case .media: snapshot.mediaCompletions += 1
+        case .plugin: snapshot.pluginCompletions += 1
         }
         try persist()
     }
@@ -275,6 +369,7 @@ private actor PerformanceAcceptanceLedger {
         switch kind {
         case .agent: snapshot.agentFailures += 1
         case .media: snapshot.mediaFailures += 1
+        case .plugin: snapshot.pluginFailures += 1
         }
         snapshot.recentFailures.append("\(kind.rawValue): \(String(describing: error))")
         if snapshot.recentFailures.count > 20 {

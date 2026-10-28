@@ -6,6 +6,18 @@ import Testing
 
 @Suite("Native Plugin Runtime")
 struct NativePluginRuntimeTests {
+    @Test("isolated performance Plugin probe launches, serves requests and stops")
+    func performanceAcceptanceProbeExercisesRealRuntime() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ChatOSPluginAcceptanceProbe-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let probe = NativePluginPerformanceAcceptanceProbe(rootURL: root)
+
+        try await probe.start(ownerUserID: "performance-acceptance-plugin-test")
+        try await probe.exercise()
+        await probe.stop()
+    }
+
     @Test("canonical JSON numbers never trap on untrusted large finite values")
     func canonicalJSONLargeNumberIsSafe() {
         let encoded = NativeJSONValue.number(1e300).canonicalJSONString

@@ -78,7 +78,8 @@ struct AuthenticationViewModelTests {
             ledgerURL: URL(fileURLWithPath:
                 "/private/tmp/chatos-performance-output/ledger.json"
             ),
-            intervalMilliseconds: 250
+            intervalMilliseconds: 250,
+            agentModelDelayMilliseconds: 750
         ))
 
         environment["CHATOS_PERFORMANCE_ACCEPTANCE_LEDGER_PATH"] =
@@ -94,6 +95,13 @@ struct AuthenticationViewModelTests {
             environment: environment,
             authentication: authentication
         ) == nil)
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_INTERVAL_MS"] = "250"
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_AGENT_MODEL_DELAY_MS"] = "10001"
+        #expect(PerformanceAcceptanceLoadConfiguration.resolve(
+            environment: environment,
+            authentication: authentication
+        ) == nil)
+        environment.removeValue(forKey: "CHATOS_PERFORMANCE_ACCEPTANCE_AGENT_MODEL_DELAY_MS")
         environment.removeValue(forKey: "CHATOS_PERFORMANCE_ACCEPTANCE_LOAD")
         #expect(PerformanceAcceptanceLoadConfiguration.resolve(
             environment: environment,
