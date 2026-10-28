@@ -585,19 +585,26 @@ fn normalize_compatible_mcp_package(package_root: &Path) -> Result<(), String> {
             let document = document
                 .as_object()
                 .ok_or_else(|| install_error("MCP 配置必须是 JSON 对象"))?;
-            Some(
-                ["mcpServers", "servers", "mcp"]
-                    .iter()
-                    .find_map(|key| document.get(*key))
-                    .and_then(Value::as_object)
-                    .filter(|servers| !servers.is_empty() && servers.len() <= 64)
-                    .ok_or_else(|| {
-                        install_error(&format!(
-                            "{} 缺少有效 MCP Server 对象",
-                            configuration_name.as_deref().unwrap_or("Plugin 清单")
-                        ))
-                    })?,
-            )
+            match ["mcpServers", "servers", "mcp"]
+                .iter()
+                .find_map(|key| document.get(*key))
+                .and_then(Value::as_object)
+            {
+                Some(servers) if !servers.is_empty() && servers.len() <= 64 => Some(servers),
+                None
+                    if configuration_name.as_deref() == Some("opencode.json")
+                        && document.len() == 1
+                        && document.get("$schema").and_then(Value::as_str).is_some() =>
+                {
+                    None
+                }
+                _ => {
+                    return Err(install_error(&format!(
+                        "{} 缺少有效 MCP Server 对象",
+                        configuration_name.as_deref().unwrap_or("Plugin 清单")
+                    )))
+                }
+            }
         }
         None => None,
     };

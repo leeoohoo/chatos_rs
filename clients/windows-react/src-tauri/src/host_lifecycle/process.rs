@@ -210,7 +210,7 @@ mod tests {
         .await
         .expect("spawn prepared Host");
 
-        health_check(&mut host).await.expect("v50 health handshake");
+        health_check(&mut host).await.expect("v51 health handshake");
         let result = request(
             &mut host,
             HostCommand::ListConversations(ListConversationsCommand {
