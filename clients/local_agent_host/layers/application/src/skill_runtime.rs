@@ -93,15 +93,14 @@ impl LocalAgentRuntime {
         run_id: &str,
         skill_ref: &str,
     ) -> Result<bool, LocalAgentRuntimeError> {
+        let Some(run) = self.store.get_run(run_id).await? else {
+            return Ok(false);
+        };
         Ok(self
-            .store
-            .has_successful_tool_invocation_argument(
-                run_id,
-                LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME,
-                "skill_ref",
-                skill_ref,
-            )
-            .await?)
+            .activated_skill_refs_for_run(&run.owner_user_id, run_id)
+            .await?
+            .iter()
+            .any(|activated| activated == skill_ref))
     }
 
     #[doc(hidden)]
@@ -110,15 +109,34 @@ impl LocalAgentRuntime {
         owner_user_id: &str,
         run_id: &str,
     ) -> Result<Vec<String>, LocalAgentRuntimeError> {
-        let mut skill_refs = self
+        let invocations = self
             .store
-            .successful_tool_invocation_argument_values(
+            .successful_tool_invocations_for_run(
                 owner_user_id,
                 run_id,
                 LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME,
-                "skill_ref",
             )
             .await?;
+        let mut skill_refs = invocations
+            .into_iter()
+            .flat_map(|invocation| {
+                let single = invocation
+                    .arguments
+                    .get("skill_ref")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .into_iter();
+                let batch = invocation
+                    .arguments
+                    .get("skill_refs")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string);
+                single.chain(batch).collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
         skill_refs.sort();
         skill_refs.dedup();
         Ok(skill_refs)
@@ -281,23 +299,29 @@ impl LocalAgentRuntime {
                 ]
                 .into_iter()
                 .collect::<BTreeSet<_>>();
+                let activated = self
+                    .activated_skill_refs_for_run(&run.owner_user_id, run_id)
+                    .await?
+                    .into_iter()
+                    .collect::<BTreeSet<_>>();
                 let mut missing = Vec::new();
                 for skill_ref in required {
-                    if !self.skill_is_activated(run_id, skill_ref).await? {
+                    if !activated.contains(skill_ref) {
                         missing.push(skill_ref.to_string());
                     }
                 }
                 if missing.is_empty() {
                     Ok(Ok(()))
                 } else {
+                    let batch = missing.iter().take(4).cloned().collect::<Vec<_>>();
                     Ok(Err(LocalToolSkillGateDenial {
                         error: "skill_activation_required".into(),
                         tool_name: tool_name.to_string(),
                         binding_id: binding.binding_id.clone(),
                         next_action: Some(serde_json::json!({
                             "tool_name": LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME,
-                            "arguments": {"skill_ref": missing[0]},
-                            "then": "Activate remaining required_skill_refs, then retry the original invocation."
+                            "arguments": {"skill_refs": batch},
+                            "then": "Activate any remaining required_skill_refs in batches of at most four, then retry the original invocation."
                         })),
                         required_skill_refs: missing,
                         bundle_revision: bundle.bundle_revision,
@@ -317,10 +341,15 @@ impl LocalAgentRuntime {
             let next_action = if error == "skill_activation_required"
                 && !required_skill_refs.is_empty()
             {
+                let batch = required_skill_refs
+                    .iter()
+                    .take(4)
+                    .cloned()
+                    .collect::<Vec<_>>();
                 Some(serde_json::json!({
                     "tool_name": LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME,
-                    "arguments": {"skill_ref": required_skill_refs[0]},
-                    "then": "Activate remaining required_skill_refs, then retry the original invocation."
+                    "arguments": {"skill_refs": batch},
+                    "then": "Activate any remaining required_skill_refs in batches of at most four, then retry the original invocation."
                 }))
             } else {
                 arguments.get("plugin_option").and_then(serde_json::Value::as_str)
@@ -457,8 +486,13 @@ impl LocalAgentRuntime {
             return denial("skill_binding_invalid", vec![]);
         }
         let mut missing = vec![];
+        let activated = self
+            .activated_skill_refs_for_run(&run.owner_user_id, &run.run_id)
+            .await?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
         for skill_ref in required {
-            if !self.skill_is_activated(&run.run_id, &skill_ref).await? {
+            if !activated.contains(&skill_ref) {
                 missing.push(skill_ref);
             }
         }
@@ -754,7 +788,7 @@ mod tests {
         let denied = check(&runtime, invoke.clone()).await.unwrap_err();
         assert_eq!(
             denied.next_action.unwrap()["arguments"],
-            json!({"skill_ref":pdf})
+            json!({"skill_refs":[pdf]})
         );
         fact(
             &runtime,
@@ -803,6 +837,26 @@ mod tests {
         );
         assert_eq!(check(&restarted, json!({"plugin_option":"plugin_1","tool_option":"tool_1","arguments":{"format":"word"}}))
             .await.unwrap_err().required_skill_refs, vec![word]);
+        fact(
+            &restarted,
+            "agent_skill_activate",
+            json!({"skill_refs":[word,router]}),
+            json!({"is_error":false,"content":{"skills":[]}}),
+        )
+        .await;
+        assert_eq!(
+            restarted
+                .activated_skill_refs_for_run("user-1", "run-1")
+                .await
+                .unwrap(),
+            vec![pdf.to_string(), router.to_string(), word.to_string()]
+        );
+        assert!(check(
+            &restarted,
+            json!({"plugin_option":"plugin_1","tool_option":"tool_1","arguments":{"format":"word"}})
+        )
+        .await
+        .is_ok());
         for arguments in [json!({"format":"unknown"}), json!({}), json!({"format":1})] {
             assert_eq!(
                 check(

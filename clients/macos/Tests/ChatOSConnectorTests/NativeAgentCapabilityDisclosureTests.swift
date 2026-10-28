@@ -42,6 +42,18 @@ final class NativeAgentCapabilityDisclosureTests: XCTestCase {
             arguments: #"{"skill_ref":"plugin-skill:plugin_1:router"}"#,
             schema: activate.schema
         )
+        try AgentSchemaValidator.validate(
+            arguments: #"{"skill_refs":["plugin-skill:plugin_1:router","plugin-skill:plugin_1:writer"]}"#,
+            schema: activate.schema
+        )
+        XCTAssertThrowsError(try AgentSchemaValidator.validate(
+            arguments: #"{"skill_refs":[]}"#,
+            schema: activate.schema
+        ))
+        XCTAssertThrowsError(try AgentSchemaValidator.validate(
+            arguments: #"{"skill_refs":["a","b","c","d","e"]}"#,
+            schema: activate.schema
+        ))
         XCTAssertThrowsError(try AgentSchemaValidator.validate(
             arguments: #"{"plugin_option":"plugin_1","skill_name":"router"}"#,
             schema: activate.schema

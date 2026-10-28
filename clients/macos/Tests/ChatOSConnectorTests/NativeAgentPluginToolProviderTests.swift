@@ -849,15 +849,45 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertTrue(gated.isError)
         XCTAssertTrue(gated.content.contains("chatos-terminal"))
 
-        for skillName in ["chatos-terminal", "chatos-terminal-process-observation"] {
-            let activated = try await broker.execute(.init(
-                id: "activate-\(skillName)",
-                name: "agent_skill_activate",
-                arguments: #"{"skill_ref":"product-skill:\#(skillName)"}"#
-            ))
-            XCTAssertFalse(activated.isError)
-            XCTAssertTrue(activated.content.contains(skillName))
-        }
+        let ambiguousActivation = try await broker.execute(.init(
+            id: "activate-terminal-ambiguous",
+            name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"product-skill:chatos-terminal","skill_refs":["product-skill:chatos-terminal-process-observation"]}"#
+        ))
+        XCTAssertTrue(ambiguousActivation.isError)
+        XCTAssertTrue(ambiguousActivation.content.contains("必须且只能提供一个"))
+
+        let duplicateActivation = try await broker.execute(.init(
+            id: "activate-terminal-duplicate",
+            name: "agent_skill_activate",
+            arguments: #"{"skill_refs":["product-skill:chatos-terminal","product-skill:chatos-terminal"]}"#
+        ))
+        XCTAssertTrue(duplicateActivation.isError)
+        XCTAssertTrue(duplicateActivation.content.contains("不能重复"))
+
+        let stillGated = try await broker.execute(.init(
+            id: "invoke-still-gated",
+            name: "capability_invoke",
+            arguments: """
+            {"plugin_option":"builtin_1","tool_option":"\(processListOption)","arguments":{}}
+            """
+        ))
+        XCTAssertTrue(stillGated.isError)
+        XCTAssertTrue(stillGated.content.contains("chatos-terminal"))
+
+        let activatedTerminalSkills = try await broker.execute(.init(
+            id: "activate-terminal-skills",
+            name: "agent_skill_activate",
+            arguments: #"{"skill_refs":["product-skill:chatos-terminal","product-skill:chatos-terminal-process-observation"]}"#
+        ))
+        XCTAssertFalse(activatedTerminalSkills.isError)
+        let activatedTerminalObject = try JSONDecoder().decode(
+            NativeJSONValue.self,
+            from: Data(activatedTerminalSkills.content.utf8)
+        ).jsonObject
+        XCTAssertEqual(activatedTerminalObject?["skills"]?.jsonArray?.count, 2)
+        XCTAssertTrue(activatedTerminalSkills.content.contains("chatos-terminal"))
+        XCTAssertTrue(activatedTerminalSkills.content.contains("chatos-terminal-process-observation"))
 
         let reference = try await broker.execute(.init(
             id: "read-terminal-reference",

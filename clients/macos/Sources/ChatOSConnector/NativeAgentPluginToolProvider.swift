@@ -42,7 +42,16 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     }
 
     private struct SkillActivationArguments: Decodable {
-        let skillRef: String
+        let skillRef: String?
+        let skillRefs: [String]?
+
+        var requestedSkillRefs: [String]? {
+            switch (skillRef, skillRefs) {
+            case let (.some(value), nil): [value]
+            case let (nil, .some(values)) where (1...4).contains(values.count): values
+            default: nil
+            }
+        }
     }
 
     private struct SkillResourceArguments: Decodable {
@@ -269,33 +278,52 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
 
         case Self.activateSkillToolName:
             let arguments = try decode(SkillActivationArguments.self, from: call.arguments)
-            let selection = try resolveSkillSelection(skillRef: arguments.skillRef)
-            let option = selection.option
-            let registry = try await registry(for: option)
-            try restoreCapabilityDisclosures(for: option, registry: registry)
-            var available: Set<String> = []
-            if case .builtIn = option.kind {
-                available.formUnion(availableRuntimeProductSkillNames)
+            guard let requested = arguments.requestedSkillRefs else {
+                return .failure("skill_ref 与 skill_refs 必须且只能提供一个；批量激活最多 4 个 Skill。")
             }
-            for definition in registry.definitions {
-                available.formUnion(try catalogSkillNames(for: definition))
+            let selections = try requested.map { try resolveSkillSelection(skillRef: $0) }
+            guard Set(selections.map(\.skillRef)).count == selections.count else {
+                return .failure("批量 Skill 引用不能重复。")
             }
-            guard available.contains(selection.skillName) else {
-                return .failure("这个 Skill 不属于当前能力或当前可信执行计划。")
+            // Validate the entire batch before mutating any in-memory activation session.
+            for selection in selections {
+                let option = selection.option
+                let registry = try await registry(for: option)
+                try restoreCapabilityDisclosures(for: option, registry: registry)
+                var available: Set<String> = []
+                if case .builtIn = option.kind {
+                    available.formUnion(availableRuntimeProductSkillNames)
+                }
+                for definition in registry.definitions {
+                    available.formUnion(try catalogSkillNames(for: definition))
+                }
+                guard available.contains(selection.skillName) else {
+                    return .failure("这个 Skill 不属于当前能力或当前可信执行计划。")
+                }
+                if case .plugin = option.kind,
+                   activatedSkillNamesByOption[option.token]?.contains(selection.skillName) != true,
+                   disclosedSkillNamesByOption[option.token]?.contains(selection.skillName) != true {
+                    return .failure(
+                        "请先用 capability_describe 查看当前工具，并只激活返回的精确 skill_ref。"
+                    )
+                }
             }
-            if case .plugin = option.kind,
-               activatedSkillNamesByOption[option.token]?.contains(selection.skillName) != true,
-               disclosedSkillNamesByOption[option.token]?.contains(selection.skillName) != true {
-                return .failure(
-                    "请先用 capability_describe 查看当前工具，并只激活返回的精确 skill_ref。"
+            var activated: [SkillActivationResponse] = []
+            for selection in selections {
+                let document = try await activateSkill(
+                    named: selection.skillName,
+                    for: selection.option
                 )
+                activated.append(.init(
+                    skillRef: selection.skillRef,
+                    instructions: document.instructions,
+                    resources: document.resourcePaths
+                ))
             }
-            let document = try await activateSkill(named: selection.skillName, for: option)
-            return try outcome(SkillActivationResponse(
-                skillRef: selection.skillRef,
-                instructions: document.instructions,
-                resources: document.resourcePaths
-            ))
+            if arguments.skillRef != nil {
+                return try outcome(activated[0])
+            }
+            return try outcome(SkillActivationBatchResponse(skills: activated))
 
         case Self.readSkillResourceToolName:
             let arguments = try decode(SkillResourceArguments.self, from: call.arguments)
@@ -356,7 +384,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                     skillReference(named: $0, for: option)
                 }
                 return .failure(
-                    "调用此工具前必须先激活 Skill：\(missingRefs.joined(separator: ", "))。"
+                    "调用此工具前必须先激活 Skill：\(missingRefs.joined(separator: ", "))。请优先用 agent_skill_activate 的 skill_refs 一次批量激活这些精确引用。"
                 )
             }
             let result = try await registry.execute(.init(

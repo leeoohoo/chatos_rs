@@ -69,7 +69,7 @@ enum NativeAgentCapabilityDisclosure {
         root["total_available_tools"] = .number(Double(allTools.count))
         root["total_matching_tools"] = .number(Double(filtered.count))
         root["offset"] = .number(Double(offset))
-        root["guidance"] = .string("This catalog includes as many complete frozen tool schemas as fit safely. Entries with input_schema, schema_sha256, and skill_gate are ready for capability_invoke after activating their exact required_skill_refs. Brief-only entries must be read with capability_describe(plugin_option, tool_option) before invocation. Use query or next_offset to narrow or continue the catalog.")
+        root["guidance"] = .string("This catalog includes as many complete frozen tool schemas as fit safely. Entries with input_schema, schema_sha256, and skill_gate are ready for capability_invoke after activating their exact required_skill_refs; pass up to four refs together in agent_skill_activate.skill_refs. Brief-only entries must be read with capability_describe(plugin_option, tool_option) before invocation. Use query or next_offset to narrow or continue the catalog.")
         var page: [NativeJSONValue] = []
         for tool in filtered.dropFirst(offset).prefix(limit) {
             let object = tool.jsonObject ?? [:]
