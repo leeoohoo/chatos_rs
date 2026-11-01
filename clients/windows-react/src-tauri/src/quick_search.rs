@@ -18,6 +18,7 @@ use crate::{
     general_settings::GeneralSettingsStore,
     global_utilities::{dispatch_action, GlobalUtilityAction, GlobalUtilityPreferencesStore},
     host_lifecycle::validate_owner,
+    machine_resource_governor::{MachineResourceGovernor, MachineResourceKind, MachineResourcePriority},
 };
 
 const WINDOW_LABEL: &str = "quick-search";
@@ -396,6 +397,7 @@ pub(crate) async fn query_quick_search(
     authentication: State<'_, AuthenticationManager>,
     general_settings: State<'_, GeneralSettingsStore>,
     manager: State<'_, QuickSearchManager>,
+    resources: State<'_, MachineResourceGovernor>,
 ) -> Result<QuickSearchSnapshot, String> {
     validate_query(&input.query)?;
     let presentation_id = parse_id(&input.presentation_id)?;
@@ -410,6 +412,13 @@ pub(crate) async fn query_quick_search(
     let search_owner_user_id = owner_user_id.clone();
     let query = input.query;
     let include_files = input.include_files;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await
+        .map_err(|_| search_error())?;
     let build = tauri::async_runtime::spawn_blocking(move || {
         build_results(
             &data_directory,
