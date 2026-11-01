@@ -13,6 +13,7 @@
     "build:app": "./scripts/build-macos-app.sh",
     "build:windows": "node ./scripts/build-windows-worker.mjs",
     "smoke:windows": "node ./scripts/smoke-windows-worker.mjs",
+    "smoke:windows:screen": "node ./scripts/smoke-windows-worker.mjs --screen",
     "pack:chatos": "npm run audit:skill-gates && node ./scripts/build-chatos-package.mjs"
   },
   "files": [
