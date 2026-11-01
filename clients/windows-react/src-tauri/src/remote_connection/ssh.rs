@@ -1,4 +1,7 @@
 use super::models::{PresentedRemoteConnectionTestResult, RemoteCredentialBundle};
+use crate::machine_resource_governor::{
+    MachineResourceGovernor, MachineResourceKind, MachineResourcePermit, MachineResourcePriority,
+};
 use crate::terminal_runtime::process::ProcessTermination;
 use chatos_local_agent_protocol::{
     LocalRemoteAuthenticationType, LocalRemoteConnectionSpec, LocalRemoteHostKeyPolicy,
@@ -88,6 +91,7 @@ pub(super) struct NativeOpenSshTester {
     runtime_root: PathBuf,
     timeout: Duration,
     sessions: Arc<Mutex<HashMap<String, Arc<ActiveSshSession>>>>,
+    resource_governor: Option<MachineResourceGovernor>,
 }
 
 impl NativeOpenSshTester {
@@ -98,6 +102,21 @@ impl NativeOpenSshTester {
                 .join("runtime"),
             timeout: DEFAULT_TEST_TIMEOUT,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            resource_governor: None,
+        }
+    }
+
+    pub(super) fn with_resource_governor(
+        app_data_directory: PathBuf,
+        resource_governor: MachineResourceGovernor,
+    ) -> Self {
+        Self {
+            runtime_root: app_data_directory
+                .join("remote-connections")
+                .join("runtime"),
+            timeout: DEFAULT_TEST_TIMEOUT,
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            resource_governor: Some(resource_governor),
         }
     }
 
@@ -107,6 +126,7 @@ impl NativeOpenSshTester {
             runtime_root,
             timeout,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            resource_governor: None,
         }
     }
 
@@ -251,6 +271,17 @@ impl NativeOpenSshTester {
             (session, Some(prompt_count))
         } else {
             self.discard(&key).await;
+            let resource_permit = match &self.resource_governor {
+                Some(governor) => Some(
+                    governor
+                        .acquire(
+                            MachineResourceKind::CodeReadWorker,
+                            MachineResourcePriority::Interactive,
+                        )
+                        .await?,
+                ),
+                None => None,
+            };
             let session = self
                 .start_session(
                     key.clone(),
@@ -260,6 +291,7 @@ impl NativeOpenSshTester {
                     process_lifetime,
                     input,
                     output,
+                    resource_permit,
                 )
                 .await?;
             (session, None)
@@ -288,6 +320,7 @@ impl NativeOpenSshTester {
         process_timeout: Duration,
         input: SshProcessInput,
         output: SshProcessOutput,
+        resource_permit: Option<MachineResourcePermit>,
     ) -> Result<Arc<ActiveSshSession>, String> {
         let prepared = Arc::new(PreparedSshSession::create(&self.runtime_root, &connection)?);
         let executable = ssh_executable()?;
@@ -347,6 +380,7 @@ impl NativeOpenSshTester {
             cancel,
             completion: Mutex::new(None),
             changed: Notify::new(),
+            _resource_permit: resource_permit,
         });
         {
             let mut sessions = self.sessions.lock().await;
@@ -513,6 +547,7 @@ struct ActiveSshSession {
     cancel: watch::Sender<bool>,
     completion: Mutex<Option<Result<ProcessOutcome, String>>>,
     changed: Notify,
+    _resource_permit: Option<MachineResourcePermit>,
 }
 
 impl ActiveSshSession {
@@ -1852,6 +1887,7 @@ mod tests {
             cancel,
             completion: Mutex::new(None),
             changed: Notify::new(),
+            _resource_permit: None,
         });
         tester
             .sessions
@@ -1891,6 +1927,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retained_session_keeps_resource_permit_until_drop() {
+        let directory = tempfile::tempdir().unwrap();
+        let tester = NativeOpenSshTester::with_timeout(
+            directory.path().join("runtime"),
+            Duration::from_secs(1),
+        );
+        let governor = MachineResourceGovernor::default();
+        let permit = governor
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await
+            .unwrap();
+        let snapshot = serde_json::to_value(governor.snapshot()).unwrap();
+        assert_eq!(snapshot["usedResourceUnits"], 1);
+
+        let connection = password_material();
+        let prepared =
+            Arc::new(PreparedSshSession::create(&tester.runtime_root, &connection).unwrap());
+        let (cancel, _cancellation) = watch::channel(false);
+        let session = Arc::new(ActiveSshSession {
+            operation_fingerprint: "resource-permit".into(),
+            connection,
+            prepared,
+            cancel,
+            completion: Mutex::new(None),
+            changed: Notify::new(),
+            _resource_permit: Some(permit),
+        });
+        let snapshot = serde_json::to_value(governor.snapshot()).unwrap();
+        assert_eq!(snapshot["usedResourceUnits"], 1);
+        drop(session);
+        tokio::task::yield_now().await;
+        let snapshot = serde_json::to_value(governor.snapshot()).unwrap();
+        assert_eq!(snapshot["usedResourceUnits"], 0);
+    }
+
+    #[tokio::test]
     async fn submitted_mfa_code_never_starts_a_replacement_session() {
         let directory = tempfile::tempdir().unwrap();
         let tester = NativeOpenSshTester::with_timeout(
@@ -1926,6 +2001,7 @@ mod tests {
             cancel,
             completion: Mutex::new(None),
             changed: Notify::new(),
+            _resource_permit: None,
         });
         tester
             .sessions
@@ -1974,6 +2050,7 @@ mod tests {
             cancel,
             completion: Mutex::new(None),
             changed: Notify::new(),
+            _resource_permit: None,
         });
 
         tester.schedule_expiration("completed".into(), session.clone());
@@ -2001,6 +2078,7 @@ mod tests {
             cancel,
             completion: Mutex::new(Some(Err("cancelled".into()))),
             changed: Notify::new(),
+            _resource_permit: None,
         });
         tester
             .sessions

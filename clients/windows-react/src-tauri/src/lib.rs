@@ -301,7 +301,10 @@ pub fn run() {
             app.manage(journal);
             app.manage(ApprovalSettingsStore::new(data_dir.clone()));
             app.manage(ProjectRunPreferencesStore::new(data_dir.clone()));
-            app.manage(RemoteConnectionManager::new(data_dir.clone()));
+            app.manage(RemoteConnectionManager::new(
+                data_dir.clone(),
+                app.state::<MachineResourceGovernor>().inner().clone(),
+            ));
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
             app.manage(GeneralSettingsStore::new(data_dir.clone()));
             app.manage(GlobalUtilityPreferencesStore::new(data_dir.clone()));
