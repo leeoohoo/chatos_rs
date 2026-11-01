@@ -46,7 +46,8 @@ use windows_sys::Win32::{
         BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
         FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
         FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES,
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, READ_CONTROL,
+        WRITE_DAC,
     },
     System::Pipes::CreatePipe,
     System::Threading::{
@@ -1493,6 +1494,7 @@ struct DirectoryLease {
     journal_path: PathBuf,
     active_workspaces: Arc<Mutex<HashSet<PathBuf>>>,
     entries: Vec<LiveLeaseEntry>,
+    parent_entries: Vec<LiveLeaseEntry>,
     sid_sddl: String,
     restored: bool,
 }
@@ -1528,6 +1530,8 @@ struct DirectoryLeaseJournal {
     sid_sddl: String,
     #[serde(default)]
     entries: Vec<DirectoryLeaseJournalEntry>,
+    #[serde(default)]
+    parent_entries: Vec<DirectoryLeaseParentJournalEntry>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -1536,6 +1540,17 @@ struct DirectoryLeaseJournalEntry {
     relative_path_utf16: Vec<u16>,
     original_dacl_sddl: String,
     is_directory: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    volume_serial_number: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    file_index: Option<u64>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct DirectoryLeaseParentJournalEntry {
+    path_utf16: Vec<u16>,
+    original_dacl_sddl: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     volume_serial_number: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1561,6 +1576,13 @@ impl DirectoryLease {
             Self::recover(journal_path)?;
         }
         let tree = lease_tree_handles(path)?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| "The workspace ACL tree has no parent directory.".to_owned())?;
+        let parent = open_acl_handle(parent)?;
+        if !parent.is_directory {
+            return Err("The workspace ACL tree parent is not a directory.".to_owned());
+        }
         let mut entries = Vec::with_capacity(tree.len());
         for entry in &tree {
             let relative = entry
@@ -1575,6 +1597,13 @@ impl DirectoryLease {
                 file_index: Some(entry.identity.file_index),
             });
         }
+        let parent_entries = vec![DirectoryLeaseParentJournalEntry {
+            path_utf16: parent.path.as_os_str().encode_wide().collect(),
+            original_dacl_sddl: read_dacl_sddl_handle(&parent.file)?,
+            volume_serial_number: Some(parent.identity.volume_serial_number),
+            file_index: Some(parent.identity.file_index),
+        }];
+        let parent_original_dacl_sddl = parent_entries[0].original_dacl_sddl.clone();
         let sid_sddl = sid_to_sddl(sid)?;
         let journal = DirectoryLeaseJournal {
             version: 3,
@@ -1583,6 +1612,7 @@ impl DirectoryLease {
             original_dacl_sddl: String::new(),
             sid_sddl: sid_sddl.clone(),
             entries,
+            parent_entries,
         };
         write_lease_journal(journal_path, &journal)?;
 
@@ -1609,6 +1639,24 @@ impl DirectoryLease {
                 ));
             }
         }
+        if let Err(failure) = grant_sid_traverse_access_handle(&parent.file, sid) {
+            let restore_result = tree.iter().zip(journal.entries.iter()).try_for_each(
+                |(tree_entry, journal_entry)| {
+                    restore_dacl_from_sddl_handle(
+                        &tree_entry.file,
+                        &journal_entry.original_dacl_sddl,
+                    )
+                },
+            );
+            if restore_result.is_ok() {
+                let _ = std::fs::remove_file(journal_path);
+                return Err(failure);
+            }
+            return Err(format!(
+                "{failure} Restoring the partial workspace ACL lease also failed: {}",
+                restore_result.unwrap_err()
+            ));
+        }
         let live_entries = tree
             .into_iter()
             .zip(journal.entries)
@@ -1618,11 +1666,17 @@ impl DirectoryLease {
                 file: tree_entry.file,
             })
             .collect();
+        let live_parent_entries = vec![LiveLeaseEntry {
+            original_dacl_sddl: parent_original_dacl_sddl,
+            identity: parent.identity,
+            file: parent.file,
+        }];
         Ok(Self {
             workspace: path.to_owned(),
             journal_path: journal_path.to_owned(),
             active_workspaces,
             entries: live_entries,
+            parent_entries: live_parent_entries,
             sid_sddl,
             restored: false,
         })
@@ -1648,12 +1702,15 @@ impl DirectoryLease {
         for entry in &self.entries {
             restore_dacl_from_sddl_handle(&entry.file, &entry.original_dacl_sddl)?;
         }
+        let sid = LocalSid::from_sddl(&self.sid_sddl)?;
+        for entry in &self.parent_entries {
+            revoke_sid_access_handle(&entry.file, sid.0, true)?;
+        }
         let original_identities = self
             .entries
             .iter()
             .map(|entry| entry.identity)
             .collect::<HashSet<_>>();
-        let sid = LocalSid::from_sddl(&self.sid_sddl)?;
         let root = self
             .entries
             .first()
@@ -1758,13 +1815,58 @@ fn restore_tree_lease(journal: &DirectoryLeaseJournal) -> Result<(), String> {
     if !workspace.is_absolute() {
         return Err("The workspace ACL tree journal root is invalid.".to_owned());
     }
+    if journal.version != 3 && !journal.parent_entries.is_empty() {
+        return Err("The workspace ACL parent journal is unsupported for this version.".to_owned());
+    }
+    let sid = LocalSid::from_sddl(&journal.sid_sddl)?;
+    let restore_parent_entries = || -> Result<(), String> {
+        let expected_parent = workspace
+            .parent()
+            .ok_or_else(|| "The workspace ACL tree has no parent directory.".to_owned())?;
+        for entry in &journal.parent_entries {
+            if entry.path_utf16.is_empty()
+                || entry.path_utf16.contains(&0)
+                || entry.original_dacl_sddl.is_empty()
+            {
+                return Err("The workspace ACL parent journal entry is invalid.".to_owned());
+            }
+            if journal.version == 3
+                && (entry.volume_serial_number.is_none() || entry.file_index.is_none())
+            {
+                return Err("The workspace ACL parent journal identity is invalid.".to_owned());
+            }
+            let path = PathBuf::from(OsString::from_wide(&entry.path_utf16));
+            if !path.is_absolute()
+                || std::fs::canonicalize(&path).ok().as_deref()
+                    != std::fs::canonicalize(expected_parent).ok().as_deref()
+            {
+                return Err("The workspace ACL parent journal path is invalid.".to_owned());
+            }
+            let current = open_acl_handle(&path)?;
+            if !current.is_directory
+                || (journal.version == 3
+                    && current.identity
+                        != (FileIdentity {
+                            volume_serial_number: entry.volume_serial_number.unwrap(),
+                            file_index: entry.file_index.unwrap(),
+                        }))
+            {
+                return Err("The workspace ACL parent changed identity.".to_owned());
+            }
+            revoke_sid_access_handle(&current.file, sid.0, true)?;
+        }
+        Ok(())
+    };
     match std::fs::symlink_metadata(&workspace) {
         Ok(metadata) => {
             if !metadata.is_dir() || is_reparse_point(&metadata) {
                 return Err("The workspace ACL tree journal root is invalid.".to_owned());
             }
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            restore_parent_entries()?;
+            return Ok(());
+        }
         Err(error) => {
             return Err(format!(
                 "Inspecting the workspace ACL recovery root failed: {error}"
@@ -1773,7 +1875,7 @@ fn restore_tree_lease(journal: &DirectoryLeaseJournal) -> Result<(), String> {
     }
     let workspace = std::fs::canonicalize(&workspace)
         .map_err(|error| format!("Resolving the workspace ACL recovery root failed: {error}"))?;
-    let sid = LocalSid::from_sddl(&journal.sid_sddl)?;
+    restore_parent_entries()?;
     let mut original_paths = HashSet::with_capacity(journal.entries.len());
     let mut restored_entries = Vec::with_capacity(journal.entries.len());
     for entry in &journal.entries {
@@ -2120,6 +2222,10 @@ fn grant_sid_access_handle(
     change_sid_access_handle(file, sid, Some(access), is_directory, GRANT_ACCESS)
 }
 
+fn grant_sid_traverse_access_handle(file: &File, sid: PSID) -> Result<(), String> {
+    change_sid_access_handle_with_permissions(file, sid, FILE_TRAVERSE, 0, GRANT_ACCESS)
+}
+
 fn revoke_sid_access_handle(file: &File, sid: PSID, is_directory: bool) -> Result<(), String> {
     change_sid_access_handle(file, sid, None, is_directory, REVOKE_ACCESS)
 }
@@ -2129,6 +2235,28 @@ fn change_sid_access_handle(
     sid: PSID,
     access: Option<WorkspaceAccess>,
     is_directory: bool,
+    mode: i32,
+) -> Result<(), String> {
+    let permissions = match access {
+        Some(WorkspaceAccess::ReadOnly) => FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+        Some(WorkspaceAccess::ReadWrite) => {
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | FILE_DELETE_CHILD
+        }
+        None => 0,
+    };
+    let inheritance = if is_directory {
+        SUB_CONTAINERS_AND_OBJECTS_INHERIT
+    } else {
+        0
+    };
+    change_sid_access_handle_with_permissions(file, sid, permissions, inheritance, mode)
+}
+
+fn change_sid_access_handle_with_permissions(
+    file: &File,
+    sid: PSID,
+    permissions: u32,
+    inheritance: u32,
     mode: i32,
 ) -> Result<(), String> {
     let mut original_dacl = null_mut();
@@ -2151,19 +2279,9 @@ fn change_sid_access_handle(
         ));
     }
     let mut entry: EXPLICIT_ACCESS_W = unsafe { zeroed() };
-    entry.grfAccessPermissions = match access {
-        Some(WorkspaceAccess::ReadOnly) => FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
-        Some(WorkspaceAccess::ReadWrite) => {
-            FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | FILE_DELETE_CHILD
-        }
-        None => 0,
-    };
+    entry.grfAccessPermissions = permissions;
     entry.grfAccessMode = mode;
-    entry.grfInheritance = if is_directory {
-        SUB_CONTAINERS_AND_OBJECTS_INHERIT
-    } else {
-        0
-    };
+    entry.grfInheritance = inheritance;
     entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
     entry.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
     entry.Trustee.ptstrName = sid.cast();
@@ -2966,6 +3084,27 @@ mod tests {
     }
 
     #[test]
+    fn workspace_parent_traversal_is_journaled_and_restored() {
+        let app_data = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let parent = workspace.path().parent().unwrap().to_path_buf();
+        let original_parent_dacl = read_dacl_sddl(&parent).unwrap();
+        let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
+        let profile = AppContainerProfile::create("ChatOS.AppContainer.Probe").unwrap();
+        let lease = manager
+            .grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly)
+            .unwrap();
+        assert_ne!(read_dacl_sddl(&parent).unwrap(), original_parent_dacl);
+        let journal_path = lease.journal_path.clone();
+        lease.abandon_for_recovery();
+        assert!(journal_path.exists());
+        drop(manager);
+        let recovered = WorkspaceLeaseManager::open(app_data.path()).unwrap();
+        assert_eq!(recovered.journal_count(), 0);
+        assert_eq!(read_dacl_sddl(&parent).unwrap(), original_parent_dacl);
+    }
+
+    #[test]
     fn legacy_root_journal_is_recovered_without_leaving_inherited_access() {
         let app_data = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
@@ -2992,6 +3131,7 @@ mod tests {
                 original_dacl_sddl,
                 sid_sddl: String::new(),
                 entries: Vec::new(),
+                parent_entries: Vec::new(),
             },
         )
         .unwrap();
