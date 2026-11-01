@@ -12,9 +12,10 @@ use std::ffi::OsString;
 use std::process::Stdio;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 #[cfg(not(windows))]
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -28,6 +29,7 @@ use crate::terminal_runtime::process::ProcessTermination;
 #[cfg(windows)]
 use crate::windows_appcontainer::{SandboxedChild, WorkspaceAccess, WorkspaceLeaseManager};
 use crate::{
+    app_owned_export::try_remove_stale_owned_file,
     host_lifecycle::HostManager,
     plugin_application::{
         PluginApplicationManager, ResolvedAgentPluginExecution, TrustedAgentPluginOption,
@@ -55,6 +57,8 @@ const MAXIMUM_MCP_TOOL_PAGES: usize = 100;
 const MAXIMUM_MCP_TOOLS: usize = 512;
 const MAXIMUM_TOOL_SCHEMA_BYTES: usize = 256 * 1_024;
 const MAXIMUM_JOURNAL_BYTES: u64 = 8 * 1_024 * 1_024;
+const STALE_JOURNAL_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_JOURNAL_TEMPORARY_ENTRIES: usize = 2_000;
 const MAXIMUM_PLUGIN_SKILLS: usize = 128;
 const MAXIMUM_SKILL_INSTRUCTIONS_BYTES: u64 = 256 * 1_024;
 const MAXIMUM_SKILL_RESOURCE_BYTES: u64 = 1_024 * 1_024;
@@ -2138,7 +2142,61 @@ async fn ensure_private_journal_root(root: &Path) -> Result<(), String> {
             .await
             .map_err(|_| journal_error())?;
     }
+    let cleanup_root = root.to_owned();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let cutoff = SystemTime::now()
+            .checked_sub(STALE_JOURNAL_TEMPORARY_AGE)
+            .unwrap_or(UNIX_EPOCH);
+        cleanup_stale_journal_temporaries_before(
+            &cleanup_root,
+            cutoff,
+            MAXIMUM_JOURNAL_TEMPORARY_ENTRIES,
+        )
+    })
+    .await;
     Ok(())
+}
+
+fn cleanup_stale_journal_temporaries_before(
+    root: &Path,
+    cutoff: SystemTime,
+    maximum_entries: usize,
+) -> usize {
+    if maximum_entries == 0 {
+        return 0;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return 0;
+    };
+    let mut removed = 0usize;
+    for (visited, entry) in entries.enumerate() {
+        if visited >= maximum_entries {
+            break;
+        }
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if canonical_journal_temporary_name(&name)
+            && try_remove_stale_owned_file(&entry.path(), cutoff)
+        {
+            removed = removed.saturating_add(1);
+        }
+    }
+    removed
+}
+
+fn canonical_journal_temporary_name(name: &str) -> bool {
+    name.strip_prefix('.')
+        .and_then(|value| value.strip_suffix(".tmp"))
+        .and_then(|value| {
+            uuid::Uuid::parse_str(value)
+                .ok()
+                .filter(|uuid| uuid.to_string() == value)
+        })
+        .is_some()
 }
 
 fn journal_stage_path(base: &Path, stage: &str) -> PathBuf {
@@ -2536,6 +2594,53 @@ mod tests {
                 & 0o777;
             assert_eq!(result_mode, 0o600);
         }
+    }
+
+    #[test]
+    fn journal_cleanup_removes_only_stale_canonical_temporaries_within_bound() {
+        let directory = tempfile::tempdir().unwrap();
+        let token = "00000000-0000-0000-0000-000000000000";
+        let canonical = directory.path().join(format!(".{token}.tmp"));
+        let malformed = directory.path().join(".not-a-uuid.tmp");
+        std::fs::write(&canonical, b"stale").unwrap();
+        std::fs::write(&malformed, b"keep").unwrap();
+
+        assert_eq!(
+            cleanup_stale_journal_temporaries_before(directory.path(), UNIX_EPOCH, 10),
+            0
+        );
+        assert!(canonical.exists());
+        assert!(malformed.exists());
+
+        assert_eq!(
+            cleanup_stale_journal_temporaries_before(
+                directory.path(),
+                SystemTime::now() + Duration::from_secs(1),
+                10,
+            ),
+            1
+        );
+        assert!(!canonical.exists());
+        assert!(malformed.exists());
+
+        let bounded = (1..=3)
+            .map(|index| {
+                let path = directory.path().join(format!(
+                    ".00000000-0000-0000-0000-00000000000{index}.tmp"
+                ));
+                std::fs::write(&path, b"stale").unwrap();
+                path
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cleanup_stale_journal_temporaries_before(
+                directory.path(),
+                SystemTime::now() + Duration::from_secs(1),
+                2,
+            ),
+            2
+        );
+        assert_eq!(bounded.iter().filter(|path| path.exists()).count(), 1);
     }
 
     #[tokio::test]
