@@ -1131,7 +1131,7 @@ impl McpSession {
                     (installation_root, WorkspaceAccess::ReadOnly),
                     (context.execution_root.clone(), WorkspaceAccess::ReadWrite),
                 ],
-                "disabled",
+                resolved.network_policy,
                 &environment,
             )?;
             let stdin = child.take_stdin().ok_or_else(plugin_runtime_error)?;
@@ -1940,6 +1940,7 @@ fn resolved_runtime_fingerprint(resolved: &ResolvedAgentPluginExecution) -> Resu
         working_directory.as_bytes(),
         arguments.as_bytes(),
         environment.as_bytes(),
+        resolved.network_policy.as_bytes(),
         allowed_tools.as_bytes(),
     ] {
         update(&mut hasher, value);
@@ -2675,6 +2676,7 @@ mod tests {
             args: Vec::new(),
             working_directory: Some(installation),
             environment: BTreeMap::new(),
+            network_policy: "disabled",
             allowed_tools: None,
             skill_snapshot: snapshot,
         };
@@ -2821,6 +2823,7 @@ fn main() {
             args: Vec::new(),
             working_directory: Some(installation.clone()),
             environment: BTreeMap::new(),
+            network_policy: "disabled",
             allowed_tools: Some(vec!["echo_document".into()]),
             skill_snapshot,
         };

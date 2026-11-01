@@ -372,7 +372,42 @@ async fn skill_only_plugin_is_selectable_and_resolves_without_an_executable() {
     assert!(resolved.executable.is_none());
     assert!(resolved.args.is_empty());
     assert!(resolved.environment.is_empty());
+    assert_eq!(resolved.network_policy, "disabled");
     assert_eq!(resolved.skill_snapshot.len(), 1);
+}
+
+#[tokio::test]
+async fn agent_plugin_network_permission_selects_the_sandbox_policy() {
+    let fixture = CatalogFixture::new();
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["permissions"] = json!([
+        {
+            "permission": "process.spawn",
+            "required": true,
+            "components": ["server-1"]
+        },
+        {
+            "permission": "network.client",
+            "required": true,
+            "components": ["server-1"]
+        }
+    ]);
+    fixture.write_manifest(manifest);
+    let mut record = fixture.record();
+    record.spec.args = vec!["mcp".into()];
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+    let options = manager
+        .list_agent_plugins(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+    assert_eq!(options.len(), 1);
+
+    let client = ScriptedMetadataClient::new(vec![Ok(record_result(record))]);
+    let resolved = manager
+        .resolve_agent_plugin(&client, "owner-1", &options[0])
+        .await
+        .unwrap();
+    assert_eq!(resolved.network_policy, "controlled");
 }
 
 #[tokio::test]

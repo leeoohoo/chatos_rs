@@ -185,6 +185,16 @@ impl PluginApplicationManager {
             Some(server) => self.resolve_environment(owner_user_id, &record, &server.env)?,
             None => BTreeMap::new(),
         };
+        let network_policy = if manifest.permissions.iter().any(|permission| {
+            permission.permission == "network.client"
+                && permission.required
+                && (permission.components.is_empty()
+                    || permission.components.contains(&expected.component_key))
+        }) {
+            "controlled"
+        } else {
+            "disabled"
+        };
         Ok(ResolvedAgentPluginExecution {
             identity: projected,
             installation_root,
@@ -192,6 +202,7 @@ impl PluginApplicationManager {
             args: record.spec.args,
             working_directory,
             environment,
+            network_policy,
             allowed_tools: record.spec.allowed_tools,
             skill_snapshot,
         })
@@ -529,6 +540,7 @@ pub(crate) struct ResolvedAgentPluginExecution {
     pub(crate) args: Vec<String>,
     pub(crate) working_directory: Option<PathBuf>,
     pub(crate) environment: BTreeMap<String, String>,
+    pub(crate) network_policy: &'static str,
     pub(crate) allowed_tools: Option<Vec<String>>,
     pub(crate) skill_snapshot: AgentPluginSkillSnapshot,
 }
