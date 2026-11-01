@@ -43,7 +43,7 @@ function Send-HostRequest {
         [Parameter(Mandatory = $true)][int]$Sequence
     )
     $request = [ordered]@{
-        protocol_version = 49
+        protocol_version = 51
         command_id = "installed-hook-smoke-$Sequence"
         command = $Command
     }
