@@ -30,6 +30,19 @@ function hostPort(): HostLifecyclePort {
   return {
     snapshot: vi.fn(async () => ready),
     diagnostics: vi.fn(async () => ({ capacity: 64, entries: [] })),
+    resourceSnapshot: vi.fn(async () => ({
+      poolId: "windows-machine-resource-units",
+      configuredResourceUnits: 2,
+      availableResourceUnits: 2,
+      maximumBackgroundResourceUnits: 2,
+      usedResourceUnits: 0,
+      queuedCount: 0,
+      pressureLevel: "normal" as const,
+      domains: [
+        { domain: "mediaWorker" as const, configuredLimit: 2, activeCount: 0, queuedCount: 0 },
+        { domain: "codeReadWorker" as const, configuredLimit: 2, activeCount: 0, queuedCount: 0 },
+      ],
+    })),
     start: vi.fn(async () => ready),
     stop: vi.fn(async () => ({ ...ready, phase: "stopped" as const, ready: false })),
   };

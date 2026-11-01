@@ -1,4 +1,5 @@
 use chatos_local_agent_protocol::LocalAgentResourcePressureLevel;
+use serde::Serialize;
 use std::{
     collections::HashMap,
     sync::{
@@ -7,6 +8,7 @@ use std::{
     },
 };
 use tokio::sync::oneshot;
+use tauri::State;
 
 const MINIMUM_FILE_WORKERS: usize = 3;
 const MAXIMUM_FILE_WORKERS: usize = 10;
@@ -25,6 +27,28 @@ pub(crate) enum MachineResourceKind {
 pub(crate) enum MachineResourcePriority {
     Background,
     Interactive,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MachineResourceDomainSnapshot {
+    domain: &'static str,
+    configured_limit: usize,
+    active_count: usize,
+    queued_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MachineResourceSnapshot {
+    pool_id: &'static str,
+    configured_resource_units: usize,
+    available_resource_units: usize,
+    maximum_background_resource_units: usize,
+    used_resource_units: usize,
+    queued_count: usize,
+    pressure_level: LocalAgentResourcePressureLevel,
+    domains: Vec<MachineResourceDomainSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -329,21 +353,47 @@ impl MachineResourceGovernor {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    #[cfg(test)]
-    fn snapshot(&self) -> GovernorSnapshot {
+    pub(crate) fn snapshot(&self) -> MachineResourceSnapshot {
         let state = self.lock_state();
-        GovernorSnapshot {
-            active: state.active.values().copied().collect(),
-            queued: state
+        let active_count = |kind| self.active_count(&state, kind);
+        let queued_count = |kind| {
+            state
                 .waiters
                 .iter()
-                .map(|waiter| (waiter.kind, waiter.priority))
-                .collect(),
+                .filter(|waiter| waiter.kind == kind)
+                .count()
+        };
+        MachineResourceSnapshot {
+            pool_id: "windows-machine-resource-units",
+            configured_resource_units: self.inner.budget.available_units,
+            available_resource_units: state.effective_units,
+            maximum_background_resource_units: state.maximum_background_units,
+            used_resource_units: state.active.len(),
+            queued_count: state.waiters.len(),
             pressure_level: state.pressure_level,
-            effective_units: state.effective_units,
-            maximum_background_units: state.maximum_background_units,
+            domains: vec![
+                MachineResourceDomainSnapshot {
+                    domain: "mediaWorker",
+                    configured_limit: self.inner.budget.maximum_media_workers,
+                    active_count: active_count(MachineResourceKind::MediaWorker),
+                    queued_count: queued_count(MachineResourceKind::MediaWorker),
+                },
+                MachineResourceDomainSnapshot {
+                    domain: "codeReadWorker",
+                    configured_limit: self.inner.budget.maximum_code_read_workers,
+                    active_count: active_count(MachineResourceKind::CodeReadWorker),
+                    queued_count: queued_count(MachineResourceKind::CodeReadWorker),
+                },
+            ],
         }
     }
+}
+
+#[tauri::command]
+pub(crate) fn machine_resource_snapshot(
+    resources: State<'_, MachineResourceGovernor>,
+) -> MachineResourceSnapshot {
+    resources.snapshot()
 }
 
 pub(crate) struct MachineResourcePermit {
@@ -385,16 +435,6 @@ fn capacity(baseline: usize, pressure: LocalAgentResourcePressureLevel) -> (usiz
         _ => effective.saturating_sub(minimum),
     };
     (effective, background)
-}
-
-#[cfg(test)]
-#[derive(Debug)]
-struct GovernorSnapshot {
-    active: Vec<(MachineResourceKind, MachineResourcePriority)>,
-    queued: Vec<(MachineResourceKind, MachineResourcePriority)>,
-    pressure_level: LocalAgentResourcePressureLevel,
-    effective_units: usize,
-    maximum_background_units: usize,
 }
 
 #[cfg(test)]
@@ -452,7 +492,7 @@ mod tests {
                 .unwrap()
         });
         tokio::task::yield_now().await;
-        assert_eq!(governor.snapshot().queued.len(), 1);
+        assert_eq!(governor.snapshot().queued_count, 1);
         let code = governor
             .acquire(
                 MachineResourceKind::CodeReadWorker,
@@ -460,7 +500,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(governor.snapshot().active.len(), 3);
+        assert_eq!(governor.snapshot().used_resource_units, 3);
         drop(first);
         drop(second);
         drop(code);
@@ -476,8 +516,8 @@ mod tests {
             snapshot.pressure_level,
             LocalAgentResourcePressureLevel::Critical
         );
-        assert_eq!(snapshot.effective_units, 2);
-        assert_eq!(snapshot.maximum_background_units, 0);
+        assert_eq!(snapshot.available_resource_units, 2);
+        assert_eq!(snapshot.maximum_background_resource_units, 0);
 
         let waiting_governor = governor.clone();
         let background = tokio::spawn(async move {
@@ -489,7 +529,7 @@ mod tests {
                 .await
         });
         tokio::task::yield_now().await;
-        assert_eq!(governor.snapshot().queued.len(), 1);
+        assert_eq!(governor.snapshot().queued_count, 1);
         let interactive = governor
             .acquire(
                 MachineResourceKind::MediaWorker,
@@ -501,7 +541,7 @@ mod tests {
         background.abort();
         let _ = background.await;
         tokio::task::yield_now().await;
-        assert!(governor.snapshot().queued.is_empty());
+        assert_eq!(governor.snapshot().queued_count, 0);
     }
 
     #[tokio::test]
@@ -537,7 +577,7 @@ mod tests {
         waiting.abort();
         let _ = waiting.await;
         tokio::task::yield_now().await;
-        assert!(governor.snapshot().queued.is_empty());
+        assert_eq!(governor.snapshot().queued_count, 0);
         drop(first);
     }
 }

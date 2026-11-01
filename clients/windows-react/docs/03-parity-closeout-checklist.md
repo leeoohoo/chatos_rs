@@ -27,6 +27,7 @@ Windows 产品版本：`3.0.9`
 
 - [x] 已拉取并合并 `origin/3.0.9.4`（远端头 `fa8a80477`，合并提交 `1a2bede43`）；Local Agent 协议升级到 v49，Windows React 的共享契约、Tauri transport 与打包 sidecar 已同步。
 - [x] Windows 机器资源压力已接入 Host durable-claim 准入：原生层每 5 秒读取 `GlobalMemoryStatusEx`、供电、电池与系统节能状态，映射 `normal/elevated/serious/critical`；升级立即生效，恢复需持续稳定 30 秒。当前等级在 Host 未运行时保留，新 worker Host 完成 v51 握手后必须先应用压力；压力 IPC 异常按 Host transport 故障回收，不让未知调度状态继续领取任务。真实 sidecar 已验证 `serious` 把有效 worker 降到配置并发的一半，`critical` 仍保留一个交互 worker。
+- [x] Windows App 现在通过 `machine_resource_snapshot` 暴露共享资源池诊断：配置/有效容量、后台上限、已用/排队数量、压力级别，以及 Media/Code Read 两个分域的配置上限和活动/排队数量；快照只读、字段有界并由 React schema 复验。
 - [x] Windows App 共享资源准入基础已完成：CPU/物理内存/Host 保留共同计算预算，Media 与 Code Read 共享 permit、各 kind 保留容量、交互优先但每 4 次强制给后台公平机会、队列有界且取消安全；同一稳定系统压力会同步缩减 App 与 Host。用户附件、Artifact 导出、Media/Story 导入和项目文件任务已在磁盘/worker 工作前取得 permit，附件阻塞 I/O 不再占用 async executor；已被 Host durable claim 领取的 tool work 不重复排队。
 - [x] Agent Artifact 与记事本 Markdown 导出已使用公共 app-owned 原子事务：同目录独占临时文件完整写入并刷盘后再替换目标，失败自动清理；仅回收当前导出目录内、严格 canonical 命名、超过 24 小时且非 reparse/多硬链接的 ChatOS 残留。Windows 不会按 `.tmp` 后缀扫描或删除任意用户文件。
 - [x] 附件 vault、Media Studio 图片/视频历史与 Story Studio 确定性 manifest 已接入所有权明确的启动后台清理：共享资源 governor 的 `CodeReadWorker` 后台 permit，只处理超过 24 小时的 canonical 临时文件；目录层级/目录项有界，账号 hash、记录 UUID、文件名、普通文件、reparse 与多硬链接均失败关闭，不碰已提交记录、媒体素材或任意后缀相同文件。
@@ -111,7 +112,7 @@ Windows 产品版本：`3.0.9`
 
 ### P2：平台/发布质量
 
-- [ ] Windows App 的统一容量治理已完成基础共享 permit 和第一批安全接入，但仍需逐项审计剩余的 process-spawn/重型 in-process 入口，并补齐机器资源诊断 snapshot。Host v49 与 App pool 已响应同一系统压力；已经领取 durable claim 的附件/终端 tool work 必须继续排除在外层等待之外。
+- [ ] Windows App 的统一容量治理已完成基础共享 permit、机器资源诊断 snapshot 和第一批安全接入，但仍需逐项审计剩余的 process-spawn/重型 in-process 入口。Host v49 与 App pool 已响应同一系统压力；已经领取 durable claim 的附件/终端 tool work 必须继续排除在外层等待之外。
 - [ ] `3.0.9.4` 的文件 worker 隔离和临时文件生命周期仍需 Windows 继续拉齐：公共原子导出与安全的 24 小时残留回收已覆盖 Agent Artifact、记事本 Markdown和项目文件保存；附件 vault、Media History、Story manifest/尾帧临时媒体、固定 AppData 元数据、Connector state/审批历史、Project Creation journal、Agent Skill overrides、AppContainer workspace/profile journal 与隔离自检目录、Plugin 安装完整性事务、Agent Plugin per-run journal、Plugin source/install staging 树，以及 `.backups` 的 Host-authoritative 崩溃恢复已完成，远程下载已有独立原子提交。运行路径中的无归属 `NamedTempFile` 与匿名 `tempdir` 已清零；其余用户目录及 App-owned 直接写入点仍需按实际提交语义逐项审计，禁止用全盘后缀清理冒充统一治理。
 - [ ] Windows 安装包代码签名、发布证书、签名校验和 SmartScreen 信誉验证。仓库可生成安装包，但本机未配置正式签名身份。
 - [ ] Windows Installer 无法由 Restart Manager 正常关闭的强制文件锁及需重启场景仍需在一次性 Windows VM 中补验；客户端正常运行造成的文件占用、事务中途故障回滚均已关闭。本机已有其他软件留下的待重启文件操作，不能为了测试篡改系统队列。历史 `0.1.0` 安装包自身允许降级，已发布二进制无法由新版本追溯修改。

@@ -35,6 +35,26 @@ export const hostDiagnosticsSnapshotSchema = z.object({
 export type HostDiagnosticEntry = z.infer<typeof hostDiagnosticEntrySchema>;
 export type HostDiagnosticsSnapshot = z.infer<typeof hostDiagnosticsSnapshotSchema>;
 
+export const machineResourceDomainSnapshotSchema = z.object({
+  domain: z.enum(["mediaWorker", "codeReadWorker"]),
+  configuredLimit: z.number().int().nonnegative(),
+  activeCount: z.number().int().nonnegative(),
+  queuedCount: z.number().int().nonnegative(),
+});
+
+export const machineResourceSnapshotSchema = z.object({
+  poolId: z.string().min(1),
+  configuredResourceUnits: z.number().int().nonnegative(),
+  availableResourceUnits: z.number().int().nonnegative(),
+  maximumBackgroundResourceUnits: z.number().int().nonnegative(),
+  usedResourceUnits: z.number().int().nonnegative(),
+  queuedCount: z.number().int().nonnegative(),
+  pressureLevel: z.enum(["normal", "elevated", "serious", "critical"]),
+  domains: z.array(machineResourceDomainSnapshotSchema),
+});
+
+export type MachineResourceSnapshot = z.infer<typeof machineResourceSnapshotSchema>;
+
 export const hostPhaseLabels: Record<HostLifecycleSnapshot["phase"], string> = {
   stopped: "本地服务未启动",
   launching: "正在启动本地服务",

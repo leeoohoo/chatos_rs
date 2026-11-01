@@ -18,6 +18,19 @@ function port(
   return {
     snapshot: () => snapshot,
     diagnostics: async () => ({ capacity: 64, entries: [] }),
+    resourceSnapshot: async () => ({
+      poolId: "windows-machine-resource-units",
+      configuredResourceUnits: 2,
+      availableResourceUnits: 2,
+      maximumBackgroundResourceUnits: 2,
+      usedResourceUnits: 0,
+      queuedCount: 0,
+      pressureLevel: "normal",
+      domains: [
+        { domain: "mediaWorker", configuredLimit: 2, activeCount: 0, queuedCount: 0 },
+        { domain: "codeReadWorker", configuredLimit: 2, activeCount: 0, queuedCount: 0 },
+      ],
+    }),
     start: async () => { throw new Error("unused"); },
     stop: async () => { throw new Error("unused"); },
     ...overrides,

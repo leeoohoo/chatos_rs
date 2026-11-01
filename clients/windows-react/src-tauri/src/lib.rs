@@ -131,7 +131,7 @@ use local_terminal::{
     poll_local_terminal, resize_local_terminal, send_local_terminal_input, start_local_terminal,
     LocalTerminalRegistry,
 };
-use machine_resource_governor::MachineResourceGovernor;
+use machine_resource_governor::{machine_resource_snapshot, MachineResourceGovernor};
 use media_studio::{
     cancel_media_studio_video_generation, discard_media_studio_presentation,
     discard_media_studio_reference_images, discard_media_studio_video_reference_audio,
@@ -695,6 +695,7 @@ pub fn run() {
             host_lifecycle_snapshot,
             start_local_agent_host,
             stop_local_agent_host,
+            machine_resource_snapshot,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build ChatOS Windows client");
