@@ -630,6 +630,7 @@ private final class AgentWorkerProcessController: @unchecked Sendable {
 
     deinit {
         errorReadHandle.readabilityHandler = nil
+        try? errorReadHandle.close()
         terminateIfRunning()
     }
 

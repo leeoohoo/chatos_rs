@@ -6,6 +6,109 @@ import Testing
 @Suite("Authentication registration")
 @MainActor
 struct AuthenticationViewModelTests {
+    @Test("performance authentication requires every isolated smoke gate")
+    func performanceAuthenticationRequiresEveryGate() {
+        let valid: [String: String] = [
+            "CHATOS_BUILD_SMOKE_TEST": "1",
+            "CHATOS_PERFORMANCE_ACCEPTANCE_MODE": "1",
+            "CHATOS_PERFORMANCE_ACCEPTANCE_OWNER_USER_ID": "performance-acceptance-release",
+            "CFFIXED_USER_HOME": "/private/tmp/chatos-performance-acceptance",
+        ]
+
+        #expect(BuildSmokeAuthenticationConfiguration.resolve(environment: [:]) == nil)
+        #expect(BuildSmokeAuthenticationConfiguration.resolve(
+            environment: valid.filter { $0.key != "CHATOS_BUILD_SMOKE_TEST" }
+        ) == nil)
+        #expect(BuildSmokeAuthenticationConfiguration.resolve(
+            environment: valid.filter { $0.key != "CHATOS_PERFORMANCE_ACCEPTANCE_MODE" }
+        ) == nil)
+        #expect(BuildSmokeAuthenticationConfiguration.resolve(
+            environment: valid.filter { $0.key != "CFFIXED_USER_HOME" }
+        ) == nil)
+    }
+
+    @Test("performance authentication accepts only bounded dedicated owners")
+    func performanceAuthenticationValidatesOwnerAndHome() {
+        var environment: [String: String] = [
+            "CHATOS_BUILD_SMOKE_TEST": "1",
+            "CHATOS_PERFORMANCE_ACCEPTANCE_MODE": "1",
+            "CHATOS_PERFORMANCE_ACCEPTANCE_OWNER_USER_ID": "performance-acceptance-release.4",
+            "CFFIXED_USER_HOME": "/private/tmp/chatos-performance-acceptance",
+        ]
+
+        #expect(BuildSmokeAuthenticationConfiguration.resolve(environment: environment) == .init(
+            ownerUserID: "performance-acceptance-release.4",
+            homeDirectory: "/private/tmp/chatos-performance-acceptance"
+        ))
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_OWNER_USER_ID"] = "real-user"
+        #expect(BuildSmokeAuthenticationConfiguration.resolve(environment: environment) == nil)
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_OWNER_USER_ID"] =
+            "performance-acceptance-bad/owner"
+        #expect(BuildSmokeAuthenticationConfiguration.resolve(environment: environment) == nil)
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_OWNER_USER_ID"] =
+            String(repeating: "performance-acceptance-", count: 8)
+        #expect(BuildSmokeAuthenticationConfiguration.resolve(environment: environment) == nil)
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_OWNER_USER_ID"] =
+            "performance-acceptance-release"
+        environment["CFFIXED_USER_HOME"] = "/"
+        #expect(BuildSmokeAuthenticationConfiguration.resolve(environment: environment) == nil)
+    }
+
+    @Test("performance load requires an external ledger and bounded cadence")
+    func performanceLoadConfigurationIsIsolated() {
+        let authentication = BuildSmokeAuthenticationConfiguration(
+            ownerUserID: "performance-acceptance-release",
+            homeDirectory: "/private/tmp/chatos-performance-home"
+        )
+        var environment: [String: String] = [
+            "CHATOS_PERFORMANCE_ACCEPTANCE_LOAD": "1",
+            "CHATOS_PERFORMANCE_ACCEPTANCE_LEDGER_PATH":
+                "/private/tmp/chatos-performance-output/ledger.json",
+            "CHATOS_PERFORMANCE_ACCEPTANCE_INTERVAL_MS": "250",
+        ]
+        #expect(PerformanceAcceptanceLoadConfiguration.resolve(
+            environment: environment,
+            authentication: authentication
+        ) == .init(
+            ownerUserID: authentication.ownerUserID,
+            runtimeRoot: URL(fileURLWithPath: authentication.homeDirectory, isDirectory: true)
+                .standardizedFileURL
+                .appendingPathComponent("Library/Caches", isDirectory: true)
+                .appendingPathComponent("ChatOSPerformanceAcceptance", isDirectory: true),
+            ledgerURL: URL(fileURLWithPath:
+                "/private/tmp/chatos-performance-output/ledger.json"
+            ),
+            intervalMilliseconds: 250,
+            agentModelDelayMilliseconds: 750
+        ))
+
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_LEDGER_PATH"] =
+            "/private/tmp/chatos-performance-home/ledger.json"
+        #expect(PerformanceAcceptanceLoadConfiguration.resolve(
+            environment: environment,
+            authentication: authentication
+        ) == nil)
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_LEDGER_PATH"] =
+            "/private/tmp/chatos-performance-output/ledger.json"
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_INTERVAL_MS"] = "99"
+        #expect(PerformanceAcceptanceLoadConfiguration.resolve(
+            environment: environment,
+            authentication: authentication
+        ) == nil)
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_INTERVAL_MS"] = "250"
+        environment["CHATOS_PERFORMANCE_ACCEPTANCE_AGENT_MODEL_DELAY_MS"] = "10001"
+        #expect(PerformanceAcceptanceLoadConfiguration.resolve(
+            environment: environment,
+            authentication: authentication
+        ) == nil)
+        environment.removeValue(forKey: "CHATOS_PERFORMANCE_ACCEPTANCE_AGENT_MODEL_DELAY_MS")
+        environment.removeValue(forKey: "CHATOS_PERFORMANCE_ACCEPTANCE_LOAD")
+        #expect(PerformanceAcceptanceLoadConfiguration.resolve(
+            environment: environment,
+            authentication: authentication
+        ) == nil)
+    }
+
     @Test("session restore retries after a transient startup failure")
     func retriesFailedSessionRestore() async {
         let service = AuthenticationRestoreTestService()

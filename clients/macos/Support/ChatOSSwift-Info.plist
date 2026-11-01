@@ -302,9 +302,9 @@
         </dict>
     </dict>
     <key>CFBundleShortVersionString</key>
-    <string>3.0.8</string>
+    <string>3.0.9</string>
     <key>CFBundleVersion</key>
-    <string>308</string>
+    <string>30904</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>

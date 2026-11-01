@@ -3,10 +3,75 @@ import ChatOSCore
 import Foundation
 import SwiftUI
 
+struct BuildSmokeAuthenticationConfiguration: Equatable, Sendable {
+    static let ownerPrefix = "performance-acceptance-"
+
+    let ownerUserID: String
+    let homeDirectory: String
+
+    static func resolve(environment: [String: String]) -> Self? {
+        guard environment["CHATOS_BUILD_SMOKE_TEST"] == "1",
+              environment["CHATOS_PERFORMANCE_ACCEPTANCE_MODE"] == "1",
+              let rawOwnerUserID = environment["CHATOS_PERFORMANCE_ACCEPTANCE_OWNER_USER_ID"],
+              let rawHomeDirectory = environment["CFFIXED_USER_HOME"] else {
+            return nil
+        }
+        let ownerUserID = rawOwnerUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let homeDirectory = rawHomeDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ownerUserID.hasPrefix(ownerPrefix),
+              ownerUserID.utf8.count <= 128,
+              homeDirectory.hasPrefix("/"),
+              homeDirectory != "/",
+              ownerUserID.unicodeScalars.allSatisfy({
+                  CharacterSet.alphanumerics.contains($0) || "-._".unicodeScalars.contains($0)
+              }) else {
+            return nil
+        }
+        return .init(ownerUserID: ownerUserID, homeDirectory: homeDirectory)
+    }
+}
+
+private actor BuildSmokeAuthenticationService: AuthenticationServicing {
+    private let session: AuthSession
+
+    init(configuration: BuildSmokeAuthenticationConfiguration) {
+        session = AuthSession(user: .init(
+            id: configuration.ownerUserID,
+            username: "performance-acceptance@example.test",
+            displayName: "Performance Acceptance",
+            role: "user"
+        ))
+    }
+
+    func restoreSession() async throws -> AuthSession? { session }
+
+    func login(username: String, password: String) async throws -> AuthSession { session }
+
+    func sendRegistrationCode(
+        email: String,
+        inviteCode: String
+    ) async throws -> RegistrationCodeDelivery {
+        .init(expiresInSeconds: 600, resendAfterSeconds: 60)
+    }
+
+    func register(
+        email: String,
+        password: String,
+        inviteCode: String,
+        verificationCode: String
+    ) async throws -> AuthSession {
+        session
+    }
+
+    func logout() async {}
+}
+
 @MainActor
 final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
     let model: AppModel
 
+    private let performanceAcceptanceConfiguration: BuildSmokeAuthenticationConfiguration?
+    private var performanceAcceptanceLoadDriver: PerformanceAcceptanceLoadDriver?
     private var mainWindowController: NSWindowController?
     private var settingsWindowController: NSWindowController?
     private var mainWindowPresentationGeneration = 0
@@ -20,7 +85,18 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         ProcessInfo.processInfo.disableAutomaticTermination(
             "ChatOS background services remain active without a main window"
         )
-        let model = AppModel()
+        let environment = ProcessInfo.processInfo.environment
+        let acceptanceConfiguration = BuildSmokeAuthenticationConfiguration.resolve(
+            environment: environment
+        )
+        if environment["CHATOS_PERFORMANCE_ACCEPTANCE_MODE"] == "1",
+           acceptanceConfiguration == nil {
+            fatalError("Performance acceptance mode requires an isolated smoke configuration")
+        }
+        performanceAcceptanceConfiguration = acceptanceConfiguration
+        let model = AppModel(authenticationService: acceptanceConfiguration.map {
+            BuildSmokeAuthenticationService(configuration: $0)
+        })
         self.model = model
         super.init()
         model.mainWindowPresentationHandler = { [weak self] in
@@ -38,6 +114,16 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 fatalError("Packaged ChatOS resource validation failed: \(error.localizedDescription)")
             }
+        }
+
+        if let performanceAcceptanceConfiguration,
+           let loadConfiguration = PerformanceAcceptanceLoadConfiguration.resolve(
+               environment: ProcessInfo.processInfo.environment,
+               authentication: performanceAcceptanceConfiguration
+           ) {
+            performanceAcceptanceLoadDriver = PerformanceAcceptanceLoadDriver(
+                configuration: loadConfiguration
+            )
         }
 
         NSApp.servicesProvider = self
@@ -59,6 +145,8 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        performanceAcceptanceLoadDriver?.stop()
+        performanceAcceptanceLoadDriver = nil
         model.prepareForApplicationTermination()
     }
 

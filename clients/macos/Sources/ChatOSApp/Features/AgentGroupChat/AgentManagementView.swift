@@ -130,7 +130,7 @@ struct AgentManagementView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .task { _ = await viewModel.refreshModelCatalog(reportErrors: false) }
+        .task { await viewModel.loadModelCatalogIfNeeded() }
         .sheet(item: $editorTarget) { target in
             AgentProfileEditorSheet(
                 viewModel: viewModel,

@@ -57,6 +57,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var isCreating = false
     @Published private(set) var isSavingAgent = false
+    @Published private(set) var hasLoadedInitialSnapshot = false
     @Published var errorMessage: String?
 
     private let ownerUserID: String
@@ -91,10 +92,12 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
 
     deinit {
         changeObservationTask?.cancel()
+        modelLoadTask?.cancel()
     }
 
     func activate() async {
         startChangeObservation()
+        guard !hasLoadedInitialSnapshot else { return }
         await load()
     }
 
@@ -158,6 +161,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             self.rooms = rooms
             self.directConversations = directConversations
             self.agents = agents
+            hasLoadedInitialSnapshot = true
             if let selectedAgentID,
                !agents.contains(where: { $0.id == selectedAgentID }) {
                 self.selectedAgentID = nil
@@ -180,6 +184,11 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
 
     func prepareAgentEditor() async -> Bool {
         await refreshModelCatalog(reportErrors: true)
+    }
+
+    func loadModelCatalogIfNeeded() async {
+        guard modelCatalogStatus == .notLoaded else { return }
+        _ = await refreshModelCatalog(reportErrors: false)
     }
 
     func refreshModelCatalog(reportErrors: Bool) async -> Bool {

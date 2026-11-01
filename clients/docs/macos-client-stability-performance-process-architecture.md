@@ -720,7 +720,7 @@ P0 依赖：A 是所有验收前提；B、C、D、E 可按模块推进，但 P2 
 - 统一 Host/Worker/Plugin/Companion 的 PID、start-time、心跳、退避、退出原因和日志；
 - 增加诊断页，显示每个进程的版本、RSS、CPU、队列和最后错误；
 - Release CI 验证 Helper 版本、协议版本、签名和资源完整性；
-- 对外分发时补齐 Developer ID、hardened runtime、嵌套 Helper 从内到外签名、公证及 stapling 验证；当前 DMG 脚本明确声明未公证，不能把现状当成发布门禁已满足。App 生命周期 Helper 与 XPC Service 的 bundle 布局按 ADR 分别校验；
+- 对外分发入口必须强制 Developer ID、hardened runtime、嵌套 Helper 从内到外签名、公证及 stapling 验证；`package-release-dmg.sh` 已具备 fail-closed 流水线，但只有实际使用有效证书、公证凭据并完成干净机器安装矩阵后才能关闭发布门禁。App 生命周期 Helper 与 XPC Service 的 bundle 布局按 ADR 分别校验；
 - 灰度启用 Media Worker，保留单版本回滚开关；
 - 明确当前/前一版本兼容矩阵与 Schema 回滚路径；不兼容允许明确拒绝，不承诺旧版本可读取已升级数据库。
 
@@ -2651,13 +2651,45 @@ Agent Worker 父进程读端从不可取消的 `getline` 改为独立 descriptor
 
 工具回归 32 项通过，另以独立 `/bin/sleep` 根进程和隔离临时目录完成 6 个真实样本的短诊断，manifest 状态为 `completed` 且明确保持 `performance_acceptance: not-evaluated`。它不控制或终止目标，本次没有对正在运行的 ChatOS 采样。边界：内核线程不能冒充 Swift Task/Notification observer；采集器只观察外部编排的组合负载，不生成 200 次导航、20 次账户循环、Agent/Media/Plugin 作业或主线程 hang trace。上述驱动器和正式 8 小时运行仍属于 12.119 后续子阶段。
 
+### 12.119b 第五十三完整里程碑：Release UI 与账户生命周期 SLO（2026-10-28）
+
+新增可重复的 Release App 场景，每轮使用独立临时 Home 和合成认证服务，不读取真实凭据、活动账户数据库或当前运行实例。场景在隔离 AppKit 窗口挂载真实 ChatOS 主视图，先预热应用、AI 创作、Agent、需求调研和终端模块，再执行 200 次跨模块切换及 20 次登录/退出生命周期。门禁要求暖切页 p95 小于 100 ms、任一次切页小于 250 ms、MainActor 最大调度间隙小于 250 ms；每次退出还验证 Agent Workspace 缓存立即清空且不会跨账号复用。
+
+首轮真实测量暴露 Agent 页面反复构造 ViewModel、重复加载模型目录及原生 `List` 首次挂载开销：暖切页 p95 212.7 ms、最慢 322.2 ms、MainActor 最大间隙 964.7 ms，Agent 目的地 p95 250.3 ms。修复后，Agent Workspace 在同一账号生命周期内复用，退出即释放；被动进入只加载一次模型目录，显式打开编辑器仍重新验证；左侧导航改为带选中/按钮辅助功能语义的惰性栈，初次数据加载有明确状态；终端 shell 启动延后到当前 SwiftUI 更新事务之后。
+
+最终提交 `4d0bf1cbe` 对应的三轮原生 arm64 Release 结果全部通过，且证据标记 `source_unchanged=true`：暖切页 p95 分别为 87.287、77.795、79.390 ms，单次最大分别为 92.859、93.103、83.457 ms，MainActor 最大间隙分别为 143.745、128.044、123.060 ms；账户循环 p95 最高 79.904 ms、单次最高 133.839 ms。场景脚本回归 4 项、Agent 错误展示 6 项、模型目录 11 项和终端 4 项同步通过。原始证据位于 ignored 的 `clients/macos/.build/performance/app-scenario-release-23mzyys6/run.json`，不纳入源码提交。
+
+边界：该场景证明合成数据下真实主视图层级的 CPU/UI 生命周期门禁，不替代签名 App 的真实账号、WindowServer 帧节奏、进程组 physical footprint、真实 Agent/Media/Plugin 组合负载或 8 小时资源曲线。当前 `.build/ChatOS.app` 仍是早于本提交的旧产物，正在运行的 `/Applications/ChatOS.app` 是日常账户实例；两者都不能被拿来冒充 12.119c 正式 soak。本阶段没有停止、替换、打包、安装或重启当前客户端。
+
 ### 12.119—12.120 剩余完整交付路径
+
+#### 12.119c-1 组合负载短门禁与 FD 根因关闭（2026-10-28）
+
+本批先关闭 8 小时 soak 前发现的确定性资源泄漏，再把三类独立执行路径接入同一个隔离 Release 验收实例。首轮 Agent + Media 组合负载在 20 秒内完成 Agent 123 次、Media 106 次且业务失败为 0，但 App FD 从 77 增到 149；拆分为连续 40 次进程回归后确认 Agent 每次 Run 恰好遗留一个 stderr 读取 descriptor，Media 连续 40 次保持稳定。`AgentWorkerProcessController` 现在在移除 readability handler 后显式关闭底层 `FileHandle`，同一 Agent 回归从净增 40 降到基线容差内；Plugin Application 的 stdout/stderr 读取端也统一在启动失败、正常停止和进程退出路径显式关闭。
+
+隔离负载现在同时执行：一 Run 一 `ChatOSAgentWorker`，父进程以 750 ms 可配置模型等待模拟真实 provider 延迟；`ChatOSMediaWorker` 对确定性的 2048×2048 BMP 做真实解码与 PNG 归一化；Plugin 通过正式安装完整性校验、Seatbelt、进程组登记、loopback 健康检查和停止协议启动本地 HTTP Runtime。三条路径分别记录 completion/failure，Plugin 在 App 终止路径另有同步进程组清理，不读取真实账户、已安装 Plugin 或活动数据库。
+
+提交 `918eb7f1a` 对应的 clean arm64 Release 短门禁运行 30 秒、0.2 秒采样，共 151 个进程组样本；必需进程实际观测数为 App 151、Host 151、Agent Worker 127、Media Worker 46、Plugin node 151。负载完成 Agent 44 次、Media 134 次、Plugin 324 次，三类失败均为 0；FD 由 92 降至 90，范围 82...97，无单调增长；进程组 physical footprint 从 161,551,784 降至 117,364,112 bytes，峰值 179,476,408 bytes；临时文件数起止均为 29。临时字节净增 1,130,642 bytes，检查确认来自首次启动的 SQLite 与 URL cache WAL 建立，不是 Worker 输出残留，必须由长时 checkpoint 后曲线继续判定。原始证据位于 ignored 的 `clients/macos/.build/performance/soak-output-combined-parent.skTFZl/result/run.json`。
+
+提交 `35bcf9aac` 又补齐 Plugin 健康失败后的同 Runtime 清理和重启，并在 clean arm64 Release 上轮流 `SIGKILL` Agent Worker 6 次、Media Worker 5 次、Plugin node 6 次。故障后仍完成 Agent 37、Media 130、Plugin 278 次；预期的当前任务基础设施失败分别为 6、5、6，Plugin 恢复 6/6、恢复失败 0。同期 151 个样本中五类必需进程均达到观测门槛；FD 82→86、范围 67...91 且非单调增长，进程组 footprint 净下降 36,633,688 bytes，临时文件数 29→29。原始证据位于 ignored 的 `clients/macos/.build/performance/soak-output-fault-parent.V4Vg3w/result/run.json`。
+
+边界：本批完成正常组合负载和进程强杀恢复短门禁，但尚未运行 8 小时正式 `--evaluate-acceptance`；因此 12.119c 仍未关闭，不能进入 12.120 正式分发。
+
+#### 12.120 前置：正式签名与公证流水线（2026-10-28）
+
+正式 DMG 入口已改为 fail-closed：构建前要求属于官方 Team ID `AHVN42RQS3` 的 `Developer ID Application` 身份和 Keychain notary profile，并显式拒绝其他团队及 `security find-identity` 仍会列出的撤销/不受信任证书。Release 内层可执行文件统一启用 hardened runtime 与可信时间戳；主程序、Host、三个 Worker、`rg` 和 `ps` 逐个验证 arm64-only、签名权威及 runtime flag，包内出现未登记 Mach-O 时直接失败，避免新增 Helper 漏签。
+
+App ZIP 在独立临时目录提交公证，Accepted 后 staple、validate 并通过 Gatekeeper；复制到 DMG staging 后再次验证票据和深层签名。DMG 同样在临时路径完成 Developer ID 签名、公证、staple 和 Gatekeeper 验证。最终 `.distribution.json` 重新记录 stapled App/DMG 的哈希、签名、Team ID、可信时间戳、公证 submission ID、Git SHA、协议/Schema 和回滚边界，并显式保留 `clean_machine_install_acceptance: not-run`；分发清单生成后才把 DMG 与 Accepted notary JSON 移到正式输出目录并生成 SHA-256。失败 notary JSON 只保留在独立 `rejected/` 诊断目录，不与同版本旧正式产物混用。公证 ZIP 不再误入 DMG，失败的临时 DMG 也不会冒充正式产物。
+
+新增异机 `verify-release-dmg.sh` 预验收入口，固定官方 Team ID/bundle ID，挂载只读 DMG 后验证 Developer ID、stapled ticket、Gatekeeper、最终 inventory、Git SHA、协议/Schema 与回滚策略，再复制到隔离 `Applications` 和临时 Home 执行 Host、Worker 权限负向测试及 App 启动 smoke。该入口不写系统 `/Applications`，不能替代最终干净机器的 LaunchServices、TCC 和真实首次启动人工矩阵。
+
+当前钥匙串中的 `Developer ID Application: LEI LI (AHVN42RQS3)` 被系统标记为 `CSSMERR_TP_CERT_REVOKED`，且 `ChatOSNotary` profile 不存在；流水线回归已证明会在构建前拒绝该状态。因此本节只完成可审查的分发代码路径，不宣称 12.120 已完成。必须先更新有效 Developer ID 证书、创建 notary profile，并在 12.119c 正式 8 小时门禁通过后实际运行公证、stapling 与干净机器安装矩阵。
 
 后续不再按零散文件修改推进，固定按以下里程碑逐个完成、测试、提交和推送；任何阶段未达到验收条件不得并入下一阶段：
 
 | 里程碑 | 明确目标 | 完成条件 |
 | --- | --- | --- |
-| 12.119 Release 组合 SLO 与 8 小时 soak | 固定硬件运行 UI + Agent + Host + Media + Plugin 组合负载，完成 200 次切页、20 次账户循环、崩溃/取消风暴和 8 小时 soak | 暖切页 p95 < 100 ms、无 >250 ms 主线程 hang；进程组 footprint/CPU/磁盘写入有基线；Task/FD/observer/临时文件不单调增长 |
+| 12.119c Release 组合负载与 8 小时 soak | 从当前干净提交构建独立 Release 验收实例，运行 Agent + Host + Media + Plugin 组合负载、崩溃/取消风暴和 8 小时 soak；已完成的 200 次切页与 20 次账户循环不重复计为未完成 | 进程组 footprint/CPU/磁盘写入有基线；Task/FD/observer/临时文件不单调增长；必需进程达到最少观测样本，实例与 clean Release manifest 完整绑定 |
 | 12.120 正式分发关闭 | 完成 Developer ID、hardened runtime、嵌套 Helper 从内到外签名、notarization、stapling 和最终兼容矩阵 | 安装包在干净机器验证通过；包内 Git SHA、架构、签名、协议/Schema 和回滚说明一致；不再以 ad-hoc 本地包冒充正式外部分发 |
 
 ## 十三、验证矩阵

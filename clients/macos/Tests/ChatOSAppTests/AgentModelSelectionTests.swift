@@ -102,6 +102,23 @@ final class AgentModelSelectionTests: XCTestCase {
         XCTAssertEqual(fixture.viewModel.modelCatalogStatus, .ready)
     }
 
+    func testPassiveCatalogLoadRunsOnceWhileExplicitEditorRefreshStillRevalidates() async throws {
+        let resources = LocalAgentBuilderResources(models: [Self.current], plugins: [])
+        let probe = ModelSelectionCatalogProbe(results: [.success(resources), .success(resources)])
+        let fixture = makeFixture(probe: probe)
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+
+        await fixture.viewModel.loadModelCatalogIfNeeded()
+        await fixture.viewModel.loadModelCatalogIfNeeded()
+        let passiveCount = await probe.count
+        XCTAssertEqual(passiveCount, 1, "Page re-entry must not repeat the catalog request")
+
+        let editorPrepared = await fixture.viewModel.prepareAgentEditor()
+        XCTAssertTrue(editorPrepared)
+        let editorCount = await probe.count
+        XCTAssertEqual(editorCount, 2, "Opening the editor must still revalidate the catalog")
+    }
+
     func testOpeningEditorKeepsConfirmedCardStatusesAndDoesNotPublishUnchangedCatalog() async throws {
         let resources = LocalAgentBuilderResources(models: [Self.current], plugins: [])
         let probe = ModelSelectionCatalogProbe(results: [.success(resources), .success(resources)],

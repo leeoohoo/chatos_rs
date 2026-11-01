@@ -18,6 +18,7 @@ class AppPerformanceScenarioTests(unittest.TestCase):
             "nativeTimelineInitialConstructedRows": 8,
             "nativeTimelineScrolledConstructedRows": 16,
             "megabyteMarkdownBlockCount": 16_001, "largeCodeSpanCount": 0,
+            "navigationTransitions": 200, "accountCycles": 20,
             **{key: value for key in scenario.TIMINGS},
         }
 
@@ -40,6 +41,7 @@ class AppPerformanceScenarioTests(unittest.TestCase):
             self.read([self.valid_result(), self.valid_result()])
         for key, value in (("buildConfiguration", "debug"), ("fixtureTurns", 1),
                            ("largeCodeSpanCount", 1), ("markdownBytes", 1),
+                           ("navigationTransitions", 199), ("accountCycles", 19),
                            ("nativeTimelineScrolledConstructedRows", 100)):
             with self.subTest(key=key):
                 result = self.valid_result()

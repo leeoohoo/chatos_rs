@@ -256,13 +256,22 @@ chmod 755 "$MACOS_DIR/ChatOSCodeReadWorker"
 chmod 755 "$MACOS_DIR/ChatOSAgentWorker"
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
-  codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$TOOLS_DIR/rg"
-  codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$TOOLS_DIR/ps"
-  codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/chatos_local_agent_host"
-  codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/ChatOSMediaWorker"
-  codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/ChatOSCodeReadWorker"
-  codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/ChatOSAgentWorker"
-  codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$APP_DIR"
+  CODESIGN_ARGUMENTS=(--force --sign "$SIGNING_IDENTITY")
+  if [[ "$BUILD_CONFIGURATION" == "release" ]]; then
+    # Developer ID distribution requires both hardened runtime and Apple's
+    # trusted timestamp. A timestamp-free signature cannot pass notarization
+    # and must never be emitted by the Release path.
+    CODESIGN_ARGUMENTS+=(--options runtime --timestamp)
+  else
+    CODESIGN_ARGUMENTS+=(--timestamp=none)
+  fi
+  codesign "${CODESIGN_ARGUMENTS[@]}" "$TOOLS_DIR/rg"
+  codesign "${CODESIGN_ARGUMENTS[@]}" "$TOOLS_DIR/ps"
+  codesign "${CODESIGN_ARGUMENTS[@]}" "$MACOS_DIR/chatos_local_agent_host"
+  codesign "${CODESIGN_ARGUMENTS[@]}" "$MACOS_DIR/ChatOSMediaWorker"
+  codesign "${CODESIGN_ARGUMENTS[@]}" "$MACOS_DIR/ChatOSCodeReadWorker"
+  codesign "${CODESIGN_ARGUMENTS[@]}" "$MACOS_DIR/ChatOSAgentWorker"
+  codesign "${CODESIGN_ARGUMENTS[@]}" "$APP_DIR"
 else
   # Keep a stable designated requirement across local debug rebuilds. A plain
   # ad-hoc signature falls back to its changing cdhash and makes Keychain treat

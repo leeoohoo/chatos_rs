@@ -18,11 +18,14 @@ MARKER = "CHATOS_APP_SCENARIO_BASELINE "
 TEST = "AppPerformanceScenarioBaselineTests.testFixedCompositeScenario"
 FIXTURE = {"turns": 1_000, "todos": 100, "native_timeline_rows": 1_000,
            "minimum_markdown_bytes": 1_000_000, "minimum_code_utf16": 600_000,
-           "timeline_items": 2_000}
+           "timeline_items": 2_000, "navigation_transitions": 200,
+           "account_cycles": 20}
 TIMINGS = (
     "timeline1000BuildMilliseconds", "nativeTimelineInitialLayoutMilliseconds",
     "nativeTimelineScrollLayoutMilliseconds", "todo100ProjectionMilliseconds",
     "megabyteMarkdownParseMilliseconds", "largeCodeFallbackMilliseconds",
+    "navigationWarmP95Milliseconds", "navigationMaximumMilliseconds",
+    "accountCycleP95Milliseconds", "accountCycleMaximumMilliseconds",
     "mainActorMaximumGapMilliseconds", "concurrentWallMilliseconds",
 )
 CEILINGS = {
@@ -32,7 +35,11 @@ CEILINGS = {
     "todo100ProjectionMilliseconds": 100,
     "megabyteMarkdownParseMilliseconds": 2_000,
     "largeCodeFallbackMilliseconds": 100,
-    "mainActorMaximumGapMilliseconds": 100,
+    "navigationWarmP95Milliseconds": 100,
+    "navigationMaximumMilliseconds": 250,
+    "accountCycleP95Milliseconds": 2_000,
+    "accountCycleMaximumMilliseconds": 5_000,
+    "mainActorMaximumGapMilliseconds": 250,
     "concurrentWallMilliseconds": 2_500,
 }
 
@@ -51,6 +58,7 @@ def measurements(log):
         "codeUTF16Count", "timelineItemCount", "nativeTimelineRows",
         "nativeTimelineInitialConstructedRows", "nativeTimelineScrolledConstructedRows",
         "megabyteMarkdownBlockCount", "largeCodeSpanCount", *TIMINGS,
+        "navigationTransitions", "accountCycles",
     }
     if not isinstance(result, dict) or not required.issubset(result):
         raise ValueError("Malformed/incomplete App scenario record")
@@ -59,6 +67,8 @@ def measurements(log):
     expected = {"fixtureTurns": FIXTURE["turns"], "fixtureTodos": FIXTURE["todos"],
                 "timelineItemCount": FIXTURE["timeline_items"],
                 "nativeTimelineRows": FIXTURE["native_timeline_rows"],
+                "navigationTransitions": FIXTURE["navigation_transitions"],
+                "accountCycles": FIXTURE["account_cycles"],
                 "largeCodeSpanCount": 0}
     for key, value in expected.items():
         if result[key] != value or type(result[key]) is not int:
@@ -128,15 +138,20 @@ def run_scenario(repository, output, rounds, timeout):
         "started_utc": started["started_utc"],
         "inputs_manifest_sha256": file_hash(output / "inputs.json"),
         "source_input_sha256": started["source"]["input_sha256"], "command": command,
-        "environment_overrides": {"CHATOS_RUN_APP_SCENARIO_BASELINE": "1"},
+        "environment_overrides": {
+            "CHATOS_RUN_APP_SCENARIO_BASELINE": "1",
+            "CHATOS_BUILD_SMOKE_TEST": "1",
+            "CFFIXED_USER_HOME": "<per-round-temporary-directory>",
+        },
         "fixture_recipe": FIXTURE, "fixture_recipe_sha256": digest(FIXTURE),
         "fixture_source_sha256": file_hash(
             package / "Tests/ChatOSAppTests/AppPerformanceScenarioBaselineTests.swift"
         ),
         "ceilings_milliseconds": CEILINGS,
         "limitations": [
-            "Synthetic in-memory CPU scenario; no account or production database access.",
-            "Mounts a synthetic AppKit timeline window; no account navigation or production data.",
+            "Synthetic data and authentication; no real account or production database access.",
+            "Mounts the real main view hierarchy in an isolated Release XCTest window.",
+            "Runs 200 warmed module transitions and 20 login/logout lifecycle cycles.",
             "Does not measure frame pacing, WindowServer, or process footprint.",
             "Background Markdown wall time is descriptive; MainActor gap is the responsiveness gate.",
         ],
@@ -152,10 +167,16 @@ def run_scenario(repository, output, rounds, timeout):
             run_records.append(record)
             monotonic_start = time.monotonic()
             try:
-                with log.open("wb") as stream:
-                    record["exit_code"] = execute(
-                        command, repository, environment_values, stream, timeout
+                with tempfile.TemporaryDirectory(prefix="chatos-app-scenario-home-") as home:
+                    round_environment = dict(
+                        environment_values,
+                        CHATOS_BUILD_SMOKE_TEST="1",
+                        CFFIXED_USER_HOME=home,
                     )
+                    with log.open("wb") as stream:
+                        record["exit_code"] = execute(
+                            command, repository, round_environment, stream, timeout
+                        )
             finally:
                 record.update({"finished_utc": utc_now(),
                                "command_wall_seconds": time.monotonic() - monotonic_start,

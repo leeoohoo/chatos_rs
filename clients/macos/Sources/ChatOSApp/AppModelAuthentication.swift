@@ -23,6 +23,7 @@ extension AppModel {
             workspaceAccountGeneration += 1
             cancelAccountScopedBackgroundTasks()
             if authenticatedUserID != session.user.id {
+                agentWorkspaceViewModels.removeAll()
                 workspaceConversations = []
                 workspaceContacts = []
                 workspaceProjects = []
@@ -92,6 +93,7 @@ extension AppModel {
             pluginApplications = []
             isPluginApplicationsLoading = false
             pluginApplicationsError = nil
+            agentWorkspaceViewModels.removeAll()
             deactivateAllConversations()
             projectConversation = nil
             contactConversation = nil

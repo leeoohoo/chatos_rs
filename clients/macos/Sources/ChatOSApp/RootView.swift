@@ -83,7 +83,8 @@ struct RootView: View {
                         service: model.agentGroupChatService,
                         scheduler: model.agentGroupChatScheduler,
                         builderService: model.agentGroupChatBuilderService,
-                        skillLibrary: model.agentSkillLibrary
+                        skillLibrary: model.agentSkillLibrary,
+                        viewModel: model.agentWorkspaceViewModel(ownerUserID: ownerUserID)
                     )
                     .id(ownerUserID)
                 } else {

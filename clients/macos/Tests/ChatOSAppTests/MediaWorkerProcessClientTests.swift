@@ -9,6 +9,53 @@ import XCTest
 @testable import ChatOSApp
 
 final class MediaWorkerProcessClientTests: XCTestCase {
+    func testSequentialNormalizationsReleaseParentFileDescriptors() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
+              !path.isEmpty else {
+            throw XCTSkip("Set CHATOS_TEST_MEDIA_WORKER_PATH to run media FD regression.")
+        }
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.png")
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 32,
+            pixelsHigh: 16,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: source)
+        let client = MediaWorkerProcessClient(
+            executableURL: URL(fileURLWithPath: path),
+            timeout: 10
+        )
+
+        try await normalizeForFileDescriptorRegression(
+            client: client,
+            source: source,
+            destination: root.appendingPathComponent("warmup.png")
+        )
+        let baseline = Self.openFileDescriptorCount()
+        for index in 0..<40 {
+            try await normalizeForFileDescriptorRegression(
+                client: client,
+                source: source,
+                destination: root.appendingPathComponent("output-\(index).png")
+            )
+        }
+
+        XCTAssertLessThanOrEqual(
+            Self.openFileDescriptorCount(),
+            baseline + 3,
+            "sequential Media Workers must release all parent-owned pipe descriptors"
+        )
+    }
+
     @MainActor
     func testBuiltWorkerExtractsLastVideoFrameOutOfProcess() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_MEDIA_WORKER_PATH"],
@@ -658,6 +705,38 @@ final class MediaWorkerProcessClientTests: XCTestCase {
         )
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
+    }
+
+    private func normalizeForFileDescriptorRegression(
+        client: MediaWorkerProcessClient,
+        source: URL,
+        destination: URL
+    ) async throws {
+        XCTAssertTrue(FileManager.default.createFile(
+            atPath: destination.path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600]
+        ))
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let result = try await client.normalizePNG(
+            sourceURL: source,
+            destinationURL: destination,
+            ownerUserID: "process-client-fd-regression",
+            maximumSourceBytes: 1 * 1_024 * 1_024,
+            maximumSourcePixelCount: 1 * 1_024 * 1_024,
+            maximumOutputPixelSize: 512,
+            maximumOutputBytes: 1 * 1_024 * 1_024
+        )
+        XCTAssertEqual(result.path, destination.path)
+    }
+
+    private static func openFileDescriptorCount() -> Int {
+        (0..<4_096).reduce(into: 0) { count, descriptor in
+            errno = 0
+            if fcntl(Int32(descriptor), F_GETFD) >= 0 || errno != EBADF {
+                count += 1
+            }
+        }
     }
 
     @MainActor

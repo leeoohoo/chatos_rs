@@ -148,6 +148,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let userLanguagePreferencesService: LocalUserLanguagePreferencesService
     var conversationCache: [String: ConversationSessionViewModel] = [:]
     var conversationCacheRecency = ConversationCacheRecency(capacity: 8)
+    var agentWorkspaceViewModels: [String: AgentGroupChatWorkspaceViewModel] = [:]
     var projectConversationPreparationTasks: [String: Task<Void, Never>] = [:]
     var workspaceLoadState = WorkspaceLoadState()
     var workspaceLoadTask: Task<Void, Never>?
@@ -199,7 +200,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var mainWindowPresentationHandler: (() -> Void)?
     var settingsWindowPresentationHandler: (() -> Void)?
 
-    init() {
+    init(authenticationService injectedAuthenticationService: (any AuthenticationServicing)? = nil) {
         let credentialStore = KeychainCredentialStore()
         let apiClient = ChatOSAPIClient(
             configuration: .init(baseURL: RuntimeConfiguration.apiBaseURL),
@@ -209,10 +210,11 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         let localAgentHost = localAgentHostConfiguration.map {
             NativeLocalAgentHostLifecycle(configuration: $0)
         }
-        let authenticationService = ChatOSAuthenticationService(
-            client: apiClient,
-            credentialStore: credentialStore
-        )
+        let authenticationService: any AuthenticationServicing = injectedAuthenticationService
+            ?? ChatOSAuthenticationService(
+                client: apiClient,
+                credentialStore: credentialStore
+            )
         let historyStore = ConversationHistoryStore()
         let connectorTicketProvider = ChatOSLocalConnectorPairingTicketProvider(client: apiClient)
         let remoteConnectionMetadataService = NativeLocalAgentRemoteConnectionMetadataService(

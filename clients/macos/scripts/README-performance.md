@@ -17,9 +17,33 @@ CHATOS_BUILD_CONFIGURATION=release CHATOS_VERIFY_LAUNCH_SMOKE=0 \
 - `.build/build-evidence.*/inputs.json`、`commands.json`：构建前输入及实际命令记录。tracked 文件、非 ignored 的 untracked 文件、缺失文件、可执行位、symlink 目标和 Git index 都参与校验。构建期间输入发生变化，拒绝发布证据。
 - 同一 evidence 目录下的 Release App、Host、ps dSYM：逐个校验 UUID/架构是否与成品对应，并记录文件哈希。Release Rust 使用 `CARGO_PROFILE_RELEASE_DEBUG=1` 保留行表。
 
-成品签名后才计算哈希，manifest 放在 bundle 外，避免自引用或破坏签名。`verify-app-build.sh` 同时检查签名和成品/符号清单；替换资源、Helper 或符号文件会失败。请保留对应 evidence 目录；当前符号清单记录本机构建路径，跨机器归档/迁移尚需单独处理。DMG 分发、公证、签名信任与符号归档发布不是本工具的完成项。
+成品签名后才计算哈希，manifest 放在 bundle 外，避免自引用或破坏签名。`verify-app-build.sh` 同时检查签名和成品/符号清单；替换资源、Helper 或符号文件会失败。请保留对应 evidence 目录；当前符号清单记录本机构建路径，跨机器归档/迁移尚需单独处理。单独运行本节命令仍只是 App 构建证据，不代表 DMG 已签名、公证或通过外部分发验收。
 
 这些是本地关联证据，不是受签名保护的供应链证明，也不承诺 bit-for-bit 重建。ignored 输入、外部编译配置与工具链没有完整归档；包含源码 symlink 的构建保守分类为诊断构建。`clean-release-build` 只表示干净源码及记录的 Release 构建命令，不表示性能、签名公证或分发验收通过。
+
+## 正式分发 DMG
+
+正式外部分发必须使用有效且受信任的 Developer ID Application 身份，以及已经通过 `xcrun notarytool store-credentials` 保存到钥匙串的公证 profile：
+
+```sh
+CHATOS_CODESIGN_IDENTITY='Developer ID Application: NAME (TEAMID)' \
+CHATOS_NOTARYTOOL_PROFILE='ChatOSNotary' \
+  zsh clients/macos/scripts/package-release-dmg.sh
+```
+
+该入口在构建前校验证书类型、官方 ChatOS Team ID、撤销/信任状态和公证凭据，不接受其他团队、Apple Development、Apple Distribution、ad-hoc 或缺少 profile 的配置。Release App 主程序、Host、三个 Worker、`rg` 和 `ps` 都必须是 arm64-only，并逐个通过 Developer ID、hardened runtime 和严格签名检查；出现未登记的 Mach-O 文件会直接失败，防止新增 Helper 漏签。
+
+流水线先公证并 staple App，再用 `ditto` 复制到独立 DMG staging；公证 ZIP 不会进入安装盘。DMG 在临时目录完成签名、公证、staple、Gatekeeper 检查和最终分发清单生成后，才与两份 Accepted notary JSON 一起移动到 `BundleArtifacts`。输出包括 DMG、SHA-256、App/DMG 两份 notary JSON，以及 `.distribution.json`；失败提交的 JSON 只保留在独立 `BundleArtifacts/rejected/` 诊断目录，不能与正式产物混用。最终清单重新记录 stapled App/DMG 的哈希与签名、公证 submission ID、Git SHA、协议/Schema 和回滚边界，同时明确把干净机器安装标为 `not-run`，不能用签名成功冒充安装兼容性通过。任何一步失败都不得把临时 DMG 当成正式产物；最终发布仍须在干净机器完成安装、首次启动和兼容矩阵验收。
+
+把 DMG 和对应 `.distribution.json` 复制到另一台原生 arm64 Mac 后，可先执行不覆盖 `/Applications/ChatOS.app` 的隔离预验收：
+
+```sh
+zsh clients/macos/scripts/verify-release-dmg.sh \
+  /绝对路径/ChatOS-版本-macOS-arm64.dmg \
+  /绝对路径/ChatOS-版本-macOS-arm64.distribution.json
+```
+
+该入口固定官方 Team ID 与 bundle ID，验证 DMG/App 的 Developer ID、stapled ticket、Gatekeeper、最终哈希、Git SHA、协议/Schema 和回滚策略；随后只复制到临时 `Applications` 目录，并以隔离 Home 运行 Host、Worker 权限负向测试和 App 启动 smoke。它不会停止或替换当前客户端，也不写活动账户。由于没有真正写入系统 `/Applications`、触发首次用户 LaunchServices/TCC 流程，它是异机预验收而非最终干净机器人工安装结论。
 
 ## 固定存储工程基准
 
@@ -54,9 +78,9 @@ zsh clients/macos/scripts/compare-performance-baselines.sh \
 zsh clients/macos/scripts/run-app-performance-scenario.sh
 ```
 
-该入口使用 Release XCTest 和纯内存合成数据，并行执行 1,000-turn 时间线构建、真实 AppKit/SwiftUI 千行时间线的首次布局与滚动、100 项任务板 presentation、超过 1 MB 的 Markdown 后台解析以及超过 600,000 UTF-16 字符的代码预览回退。它验证千行时间线始终只构造可见行，同时测量 MainActor 最大调度间隙；默认执行三轮并把原始样本、环境、测试二进制身份、P50/P95/P99 与宽松安全上限写入 `.build/performance/app-scenario-release-*/run.json`。
+该入口使用 Release XCTest、临时 Home 和合成数据，并行执行 1,000-turn 时间线构建、真实 AppKit/SwiftUI 千行时间线的首次布局与滚动、100 项任务板 presentation、超过 1 MB 的 Markdown 后台解析以及超过 600,000 UTF-16 字符的代码预览回退。随后在隔离窗口挂载真实 ChatOS 主视图层级，以合成认证服务完成 20 次登录/退出，并在预热后完成 200 次应用、AI 创作、Agent、需求调研和终端模块切换。门禁要求切页 p95 小于 100 ms、任一次小于 250 ms，同时测量 MainActor 最大调度间隙；默认执行三轮并把原始样本、环境、测试二进制身份、P50/P95/P99 与安全上限写入 `.build/performance/app-scenario-release-*/run.json`。
 
-此场景不会登录、打开活动账户数据库或控制当前 App，适合成为每次 Release 性能回归的快速 CPU/UI 虚拟化门禁。它不能替代真实账户窗口导航、滚动帧率、WindowServer、内存或进程组 soak；这些仍需在隔离 Release 实例上验收。
+此场景不会使用真实账号、打开活动账户数据库或控制当前 App；每轮独立创建并销毁临时 Home，适合成为每次 Release 性能回归的快速 CPU/UI 生命周期门禁。它不能替代签名 App 的真实凭据/服务端账户切换、滚动帧率、WindowServer、内存或进程组 soak；这些仍需在隔离 Release 实例上验收。
 
 ## App 性能 Signpost
 
@@ -121,7 +145,7 @@ zsh clients/macos/scripts/run-process-group-soak.sh \
 
 采集输出目录必须位于所有 `--temporary-root` 之外；否则采集器自己持续写入的 `samples.jsonl` 会被误计为客户端临时文件增长，入口会在开始采集前直接拒绝这种自干扰配置。
 
-采集器不生成负载，也不能从内核线程数推断 Swift Task 或 Notification observer 数；200 次导航、账户循环、内部 Task/observer 计数与主线程 hang 仍须由后续 App 内验收驱动器提供。Plugin 是动态名称，正式命令应额外加入该验收插件的真实 executable 名称。
+采集器不生成负载，也不能从内核线程数推断 Swift Task 或 Notification observer 数；合成 Release 场景已经提供 200 次导航、20 次账户生命周期和主线程间隙门禁，但签名 App 的真实账号/WindowServer 导航及内部 Task/observer 长稳计数仍须在隔离验收实例完成。Plugin 是动态名称，正式命令应额外加入该验收插件的真实 executable 名称。
 
 ## 工具回归
 
@@ -130,6 +154,8 @@ zsh clients/macos/scripts/run-process-group-soak.sh \
 zsh -n clients/macos/scripts/compare-performance-baselines.sh
 zsh -n clients/macos/scripts/run-app-performance-scenario.sh
 zsh -n clients/macos/scripts/package-app.sh
+zsh -n clients/macos/scripts/package-release-dmg.sh
+zsh -n clients/macos/scripts/verify-release-dmg.sh
 zsh -n clients/macos/scripts/verify-app-build.sh
 zsh -n clients/macos/scripts/run-process-group-soak.sh
 ```
