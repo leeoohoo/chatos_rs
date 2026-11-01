@@ -2,7 +2,7 @@ use super::{TerminalRuntimeError, TerminalScope};
 use serde_json::json;
 use std::{
     collections::VecDeque,
-    io,
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -15,6 +15,9 @@ use tokio::{
     time::{sleep, timeout, Duration},
 };
 use uuid::Uuid;
+
+#[cfg(windows)]
+use crate::windows_appcontainer::SandboxedChild;
 
 const MAXIMUM_LOGS: usize = 4_000;
 const RETAINED_LOG_TARGET: usize = 3_500;
@@ -37,7 +40,7 @@ pub(super) struct ManagedProcess {
 struct ProcessState {
     status: ProcessStatus,
     exit_code: Option<i32>,
-    stdin: Option<ChildStdin>,
+    stdin: Option<ManagedStdin>,
     started_at_unix_ms: i64,
     last_active_at_unix_ms: i64,
     logs: VecDeque<TerminalLog>,
@@ -81,7 +84,12 @@ pub(super) async fn spawn_process(
     command: String,
     cwd: PathBuf,
     sequence: u64,
+    #[cfg(windows)] sandbox: Option<Arc<crate::windows_appcontainer::WorkspaceLeaseManager>>,
 ) -> Result<Arc<ManagedProcess>, TerminalRuntimeError> {
+    #[cfg(windows)]
+    if let Some(sandbox) = sandbox {
+        return spawn_sandboxed_process(scope, command, cwd, sequence, sandbox).await;
+    }
     let mut shell = shell_command(&command, &cwd);
     let mut child = shell.spawn().map_err(|_| {
         TerminalRuntimeError::pre_effect("The terminal command could not be started.")
@@ -90,7 +98,7 @@ pub(super) async fn spawn_process(
         let _ = child.start_kill();
         TerminalRuntimeError::uncertain("The terminal process could not be isolated.")
     })?;
-    let stdin = child.stdin.take();
+    let stdin = child.stdin.take().map(ManagedStdin::Tokio);
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let now = now_unix_ms();
@@ -126,6 +134,171 @@ pub(super) async fn spawn_process(
     }
     tokio::spawn(wait_for_child(process.clone(), child));
     Ok(process)
+}
+
+#[cfg(windows)]
+async fn spawn_sandboxed_process(
+    scope: &TerminalScope,
+    command: String,
+    cwd: PathBuf,
+    sequence: u64,
+    sandbox: Arc<crate::windows_appcontainer::WorkspaceLeaseManager>,
+) -> Result<Arc<ManagedProcess>, TerminalRuntimeError> {
+    use crate::windows_appcontainer::{restricted_runtime_environment, WorkspaceAccess};
+    use std::sync::Mutex as StdMutex;
+
+    let system_root = std::env::var_os("SystemRoot").ok_or_else(|| {
+        TerminalRuntimeError::pre_effect("The Windows runtime environment is unavailable.")
+    })?;
+    let executable = PathBuf::from(system_root)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    if !executable.is_file() {
+        return Err(TerminalRuntimeError::pre_effect(
+            "The Windows PowerShell runtime is unavailable.",
+        ));
+    }
+    let arguments = vec![
+        "-NoLogo".to_owned(),
+        "-NoProfile".to_owned(),
+        "-Command".to_owned(),
+        command.clone(),
+    ];
+    let mut child = sandbox
+        .spawn_workspace_command(
+            &cwd,
+            &executable,
+            &arguments,
+            WorkspaceAccess::ReadWrite,
+            "disabled",
+            &restricted_runtime_environment(),
+        )
+        .map_err(|error| {
+            TerminalRuntimeError::pre_effect(format!(
+                "The sandboxed terminal command could not be started: {error}"
+            ))
+        })?;
+    let stdin = child
+        .take_stdin()
+        .map(|file| ManagedStdin::Sandbox(Arc::new(StdMutex::new(file))));
+    let stdout = match child.take_stdout().map(blocking_reader) {
+        Some(stdout) => stdout,
+        None => {
+            let _ = child.restore();
+            return Err(TerminalRuntimeError::uncertain(
+                "The sandboxed terminal output is unavailable.",
+            ));
+        }
+    };
+    let stderr = match child.take_stderr().map(blocking_reader) {
+        Some(stderr) => stderr,
+        None => {
+            let _ = child.restore();
+            return Err(TerminalRuntimeError::uncertain(
+                "The sandboxed terminal error output is unavailable.",
+            ));
+        }
+    };
+    let child = Arc::new(StdMutex::new(Some(child)));
+    let termination = ProcessTermination::attach_sandboxed(child.clone());
+    let now = now_unix_ms();
+    let process = Arc::new(ManagedProcess {
+        id: Uuid::new_v4().to_string(),
+        sequence,
+        command: command.clone(),
+        cwd,
+        scope: scope.clone(),
+        termination,
+        state: Mutex::new(ProcessState {
+            status: ProcessStatus::Running,
+            exit_code: None,
+            stdin,
+            started_at_unix_ms: now,
+            last_active_at_unix_ms: now,
+            logs: VecDeque::new(),
+            next_log_offset: 0,
+            retained_log_bytes: 0,
+            logs_truncated: false,
+            output_truncated: false,
+        }),
+        changed: Notify::new(),
+    });
+    process
+        .append("command", format!("{command}\n").into_bytes())
+        .await;
+    tokio::spawn(read_pipe(process.clone(), "stdout", stdout));
+    tokio::spawn(read_pipe(process.clone(), "stderr", stderr));
+    tokio::spawn(wait_for_sandboxed_child(process.clone(), child));
+    Ok(process)
+}
+
+#[cfg(windows)]
+fn blocking_reader(file: std::fs::File) -> BlockingReader {
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    tokio::task::spawn_blocking(move || {
+        let mut file = file;
+        let mut buffer = vec![0_u8; 8 * 1_024];
+        loop {
+            match file.read(&mut buffer) {
+                Ok(0) => return,
+                Ok(count) => {
+                    if sender.send(Ok(buffer[..count].to_vec())).is_err() {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(Err(error));
+                    return;
+                }
+            }
+        }
+    });
+    BlockingReader {
+        receiver,
+        pending: None,
+    }
+}
+
+#[cfg(windows)]
+struct BlockingReader {
+    receiver: tokio::sync::mpsc::UnboundedReceiver<io::Result<Vec<u8>>>,
+    pending: Option<(Vec<u8>, usize)>,
+}
+
+#[cfg(windows)]
+impl AsyncRead for BlockingReader {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        destination: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        loop {
+            if let Some((bytes, offset)) = self.pending.as_mut() {
+                let remaining = &bytes[*offset..];
+                if remaining.is_empty() {
+                    self.pending = None;
+                    continue;
+                }
+                let count = remaining.len().min(destination.remaining());
+                destination.put_slice(&remaining[..count]);
+                *offset += count;
+                if *offset >= bytes.len() {
+                    self.pending = None;
+                }
+                return std::task::Poll::Ready(Ok(()));
+            }
+            match std::pin::Pin::new(&mut self.receiver).poll_recv(cx) {
+                std::task::Poll::Ready(Some(Ok(bytes))) => self.pending = Some((bytes, 0)),
+                std::task::Poll::Ready(Some(Err(error))) => {
+                    return std::task::Poll::Ready(Err(error));
+                }
+                std::task::Poll::Ready(None) => return std::task::Poll::Ready(Ok(())),
+                std::task::Poll::Pending => return std::task::Poll::Pending,
+            }
+        }
+    }
 }
 
 impl ManagedProcess {
@@ -333,6 +506,68 @@ async fn wait_for_child(process: Arc<ManagedProcess>, mut child: Child) {
     let _ = process.termination.terminate(true);
 }
 
+#[cfg(windows)]
+async fn wait_for_sandboxed_child(
+    process: Arc<ManagedProcess>,
+    child: Arc<std::sync::Mutex<Option<SandboxedChild>>>,
+) {
+    let exit_code = tokio::task::spawn_blocking(move || loop {
+        let finished = child
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(SandboxedChild::try_wait));
+        match finished {
+            Some(Ok(Some(code))) => {
+                let restored = child
+                    .lock()
+                    .ok()
+                    .and_then(|mut guard| guard.take())
+                    .map(SandboxedChild::restore)
+                    .transpose();
+                return match restored {
+                    Ok(Some(())) | Ok(None) => Some(code),
+                    Err(_) => None,
+                };
+            }
+            Some(Ok(None)) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Some(Err(_)) | None => return None,
+        }
+    })
+    .await
+    .ok()
+    .flatten();
+    process.finish(exit_code).await;
+    sleep(Duration::from_secs(1)).await;
+    let _ = process.termination.terminate(true);
+}
+
+enum ManagedStdin {
+    Tokio(ChildStdin),
+    #[cfg(windows)]
+    Sandbox(Arc<std::sync::Mutex<std::fs::File>>),
+}
+
+impl ManagedStdin {
+    async fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        match self {
+            Self::Tokio(stdin) => stdin.write_all(bytes).await,
+            #[cfg(windows)]
+            Self::Sandbox(file) => {
+                let file = file.clone();
+                let bytes = bytes.to_vec();
+                tokio::task::spawn_blocking(move || {
+                    let mut file = file
+                        .lock()
+                        .map_err(|_| io::Error::other("sandboxed stdin lock poisoned"))?;
+                    file.write_all(&bytes)
+                })
+                .await
+                .map_err(|_| io::Error::other("sandboxed stdin worker stopped"))?
+            }
+        }
+    }
+}
+
 fn shell_command(command: &str, cwd: &Path) -> Command {
     #[cfg(windows)]
     let mut shell = {
@@ -368,11 +603,20 @@ pub(super) fn now_unix_ms() -> i64 {
 pub(crate) enum ProcessTermination {
     #[cfg(windows)]
     WindowsJob(std::os::windows::io::OwnedHandle),
+    #[cfg(windows)]
+    AppContainer(std::sync::Arc<std::sync::Mutex<Option<SandboxedChild>>>),
     #[cfg(not(windows))]
     UnixProcessGroup(i32),
 }
 
 impl ProcessTermination {
+    #[cfg(windows)]
+    pub(crate) fn attach_sandboxed(
+        child: std::sync::Arc<std::sync::Mutex<Option<SandboxedChild>>>,
+    ) -> Self {
+        Self::AppContainer(child)
+    }
+
     pub(crate) fn attach(child: &Child) -> io::Result<Self> {
         #[cfg(windows)]
         {
@@ -429,8 +673,19 @@ impl ProcessTermination {
             use std::os::windows::io::AsRawHandle;
             use windows_sys::Win32::System::JobObjects::TerminateJobObject;
             let _ = force;
-            let Self::WindowsJob(job) = self;
-            let result = unsafe { TerminateJobObject(job.as_raw_handle() as _, 1) };
+            let result = match self {
+                Self::WindowsJob(job) => unsafe { TerminateJobObject(job.as_raw_handle() as _, 1) },
+                Self::AppContainer(child) => child
+                    .lock()
+                    .map_err(|_| io::Error::other("sandboxed process lock poisoned"))?
+                    .as_ref()
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::NotFound, "sandboxed process exited")
+                    })
+                    .and_then(|child| child.terminate().map_err(io::Error::other))
+                    .map(|_| 1)
+                    .unwrap_or(0),
+            };
             if result == 0 {
                 Err(io::Error::last_os_error())
             } else {

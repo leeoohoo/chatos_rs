@@ -35,7 +35,8 @@ use windows_sys::Win32::{
         },
         CreateWellKnownSid, FreeSid, GetSecurityDescriptorDacl, GetTokenInformation,
         Isolation::{CreateAppContainerProfile, DeleteAppContainerProfile},
-        SetFileSecurityW, TokenCapabilities, WinCapabilityInternetClientSid,
+        SetFileSecurityW, TokenCapabilities, WinCapabilityInternetClientServerSid,
+        WinCapabilityInternetClientSid, WinCapabilityPrivateNetworkClientServerSid,
         DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
         SECURITY_CAPABILITIES, SECURITY_MAX_SID_SIZE, SID_AND_ATTRIBUTES,
         SUB_CONTAINERS_AND_OBJECTS_INHERIT, TOKEN_GROUPS, TOKEN_QUERY,
@@ -100,6 +101,7 @@ pub enum WorkspaceAccess {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NetworkAccess {
     Disabled,
+    Loopback,
     Controlled,
 }
 
@@ -107,6 +109,7 @@ impl NetworkAccess {
     fn from_policy(value: &str) -> Result<Self, String> {
         match value {
             "disabled" => Ok(Self::Disabled),
+            "loopback" => Ok(Self::Loopback),
             "controlled" => Ok(Self::Controlled),
             _ => Err("The AppContainer network access policy is unsupported.".to_owned()),
         }
@@ -114,7 +117,7 @@ impl NetworkAccess {
 }
 
 struct CapabilitySet {
-    _sid_storage: Vec<u8>,
+    _sid_storage: Vec<Box<[u8]>>,
     attributes: Vec<SID_AND_ATTRIBUTES>,
 }
 
@@ -125,27 +128,45 @@ impl CapabilitySet {
                 _sid_storage: Vec::new(),
                 attributes: Vec::new(),
             }),
-            NetworkAccess::Controlled => {
-                let mut sid_storage = vec![0u8; SECURITY_MAX_SID_SIZE as usize];
-                let mut sid_size = sid_storage.len() as u32;
-                let created = unsafe {
-                    CreateWellKnownSid(
+            NetworkAccess::Loopback | NetworkAccess::Controlled => {
+                let capability_types = match access {
+                    NetworkAccess::Loopback => vec![
+                        WinCapabilityPrivateNetworkClientServerSid,
+                        WinCapabilityInternetClientServerSid,
+                    ],
+                    NetworkAccess::Controlled => vec![
                         WinCapabilityInternetClientSid,
-                        null_mut(),
-                        sid_storage.as_mut_ptr().cast(),
-                        &mut sid_size,
-                    )
+                        WinCapabilityPrivateNetworkClientServerSid,
+                    ],
+                    NetworkAccess::Disabled => unreachable!(),
                 };
-                if created == 0 {
-                    return Err(last_error(
-                        "Creating the Windows internetClient capability SID failed",
-                    ));
+                let mut sid_storage = Vec::with_capacity(capability_types.len());
+                for capability_type in capability_types {
+                    let mut storage = vec![0u8; SECURITY_MAX_SID_SIZE as usize];
+                    let mut sid_size = storage.len() as u32;
+                    let created = unsafe {
+                        CreateWellKnownSid(
+                            capability_type,
+                            null_mut(),
+                            storage.as_mut_ptr().cast(),
+                            &mut sid_size,
+                        )
+                    };
+                    if created == 0 {
+                        return Err(last_error(
+                            "Creating the Windows network capability SID failed",
+                        ));
+                    }
+                    storage.truncate(sid_size as usize);
+                    sid_storage.push(storage.into_boxed_slice());
                 }
-                sid_storage.truncate(sid_size as usize);
-                let attributes = vec![SID_AND_ATTRIBUTES {
-                    Sid: sid_storage.as_mut_ptr().cast(),
-                    Attributes: 0x4,
-                }];
+                let attributes = sid_storage
+                    .iter_mut()
+                    .map(|storage| SID_AND_ATTRIBUTES {
+                        Sid: storage.as_mut_ptr().cast(),
+                        Attributes: 0x4,
+                    })
+                    .collect();
                 Ok(Self {
                     _sid_storage: sid_storage,
                     attributes,
@@ -162,8 +183,8 @@ impl CapabilitySet {
         }
     }
 
-    fn expected_sid(&self) -> Option<PSID> {
-        self.attributes.first().map(|entry| entry.Sid)
+    fn expected_sids(&self) -> Vec<PSID> {
+        self.attributes.iter().map(|entry| entry.Sid).collect()
     }
 }
 
@@ -221,6 +242,29 @@ impl SandboxedChild {
         self.termination.terminate(true).map_err(|error| {
             format!("Terminating the interactive AppContainer process failed: {error}")
         })
+    }
+
+    pub(crate) fn try_wait(&self) -> Result<Option<i32>, String> {
+        let result = unsafe { WaitForSingleObject(self.process.process, 0) };
+        if result == WAIT_TIMEOUT {
+            return Ok(None);
+        }
+        if result != WAIT_OBJECT_0 {
+            return Err(last_error(
+                "Waiting for the interactive AppContainer process failed",
+            ));
+        }
+        let mut exit_code = 0;
+        if unsafe { GetExitCodeProcess(self.process.process, &mut exit_code) } == 0 {
+            return Err(last_error(
+                "Reading the interactive AppContainer process exit code failed",
+            ));
+        }
+        Ok(Some(i32::try_from(exit_code).unwrap_or(-1)))
+    }
+
+    pub(crate) fn restore(mut self) -> Result<(), String> {
+        restore_directory_leases(std::mem::take(&mut self.leases))
     }
 
     pub fn wait(mut self, timeout: Duration) -> Result<i32, String> {
@@ -1043,7 +1087,7 @@ impl AppContainerProfile {
         }
         let process = ProcessHandles::new(process);
         let capability_policy_verified =
-            match process_capabilities_match(process.process, capability_set.expected_sid()) {
+            match process_capabilities_match(process.process, &capability_set.expected_sids()) {
                 Ok(true) => true,
                 Ok(false) => {
                     terminate_suspended_process(&process);
@@ -1160,7 +1204,7 @@ impl AppContainerProfile {
             ));
         }
         let process = ProcessHandles::new(process);
-        match process_capabilities_match(process.process, capability_set.expected_sid()) {
+        match process_capabilities_match(process.process, &capability_set.expected_sids()) {
             Ok(true) => {}
             Ok(false) => {
                 terminate_suspended_process(&process);
@@ -1322,7 +1366,7 @@ impl AppContainerProfile {
             ));
         }
         let process = ProcessHandles::new(process);
-        match process_capabilities_match(process.process, capability_set.expected_sid()) {
+        match process_capabilities_match(process.process, &capability_set.expected_sids()) {
             Ok(true) => {}
             Ok(false) => {
                 terminate_suspended_process(&process);
@@ -1384,7 +1428,7 @@ fn terminate_suspended_process(process: &ProcessHandles) {
     }
 }
 
-fn process_capabilities_match(process: HANDLE, expected: Option<PSID>) -> Result<bool, String> {
+fn process_capabilities_match(process: HANDLE, expected: &[PSID]) -> Result<bool, String> {
     let mut token = null_mut();
     if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
         return Err(last_error("Opening the AppContainer process token failed"));
@@ -1415,7 +1459,7 @@ fn process_capabilities_match(process: HANDLE, expected: Option<PSID>) -> Result
     let groups = unsafe { &*storage.as_ptr().cast::<TOKEN_GROUPS>() };
     let count = groups.GroupCount as usize;
     if count == 0 {
-        return Ok(expected.is_none());
+        return Ok(expected.is_empty());
     }
     let groups_offset = std::mem::offset_of!(TOKEN_GROUPS, Groups);
     let required_bytes = groups_offset
@@ -1434,13 +1478,14 @@ fn process_capabilities_match(process: HANDLE, expected: Option<PSID>) -> Result
             count,
         )
     };
-    Ok(match expected {
-        None => entries.is_empty(),
-        Some(expected) => {
-            entries.len() == 1
-                && unsafe { windows_sys::Win32::Security::EqualSid(entries[0].Sid, expected) } != 0
-        }
-    })
+    if entries.len() != expected.len() {
+        return Ok(false);
+    }
+    Ok(expected.iter().all(|expected_sid| {
+        entries.iter().any(|entry| unsafe {
+            windows_sys::Win32::Security::EqualSid(entry.Sid, *expected_sid) != 0
+        })
+    }))
 }
 
 struct DirectoryLease {
@@ -2848,6 +2893,10 @@ mod tests {
         assert_eq!(
             NetworkAccess::from_policy("controlled").unwrap(),
             NetworkAccess::Controlled
+        );
+        assert_eq!(
+            NetworkAccess::from_policy("loopback").unwrap(),
+            NetworkAccess::Loopback
         );
         assert!(NetworkAccess::from_policy("host").is_err());
     }

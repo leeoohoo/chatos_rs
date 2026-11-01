@@ -188,3 +188,39 @@ async fn reset_terminates_background_processes() {
     sleep(Duration::from_millis(50)).await;
     assert!(store.poll(&scope, &terminal_id, None, 20).await.is_err());
 }
+
+#[cfg(windows)]
+#[tokio::test]
+async fn appcontainer_terminal_uses_workspace_lease_and_interactive_stdio() {
+    let app_data = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let fixture = workspace.path().join("lease.txt");
+    std::fs::write(&fixture, "lease-readable").unwrap();
+    let store = TerminalProcessStore::default();
+    store.ensure_sandbox(app_data.path()).await.unwrap();
+    let scope = scope(workspace.path(), "sandbox-run");
+    let fixture = fixture.to_string_lossy().replace('\'', "''");
+    let result = store
+        .execute(
+            &scope,
+            ExecuteRequest {
+                command: format!("$value = [Console]::In.ReadLine(); Write-Output ('reply:' + $value); Write-Output ('file:' + (Get-Content -LiteralPath '{}' -Raw))", fixture),
+                cwd: scope.project_root.clone(),
+                background: true,
+                timeout_ms: Some(10_000),
+            },
+        )
+        .await
+        .unwrap();
+    let terminal_id = result["terminal_id"].as_str().unwrap();
+    store
+        .write(&scope, terminal_id, "sandbox-input", true)
+        .await
+        .unwrap();
+    let waited = store.wait(&scope, terminal_id, 10_000).await.unwrap();
+    assert_eq!(waited["completed"], true);
+    let output = waited["output"].as_str().unwrap();
+    assert!(output.contains("reply:sandbox-input"));
+    assert!(output.contains("file:lease-readable"), "{output}");
+    store.reset().await;
+}

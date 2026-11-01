@@ -159,6 +159,16 @@ async fn execute_checked(
             .map_err(ExecutionError::pre_effect)?;
             let background = optional_bool(arguments, "background")?.unwrap_or(false);
             let timeout_ms = command_timeout(arguments)?;
+            #[cfg(windows)]
+            {
+                let app_data_directory = app.path().app_data_dir().map_err(|_| {
+                    ExecutionError::pre_effect("The Windows sandbox data directory is unavailable.")
+                })?;
+                processes
+                    .ensure_sandbox(&app_data_directory)
+                    .await
+                    .map_err(ExecutionError::pre_effect)?;
+            }
             processes
                 .execute(
                     &scope,

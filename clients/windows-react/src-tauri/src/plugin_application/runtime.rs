@@ -2,6 +2,8 @@ use super::{
     plugin_catalog_error, plugin_unavailable, valid_health_path, validate_text,
     PresentedPluginApplication, ResolvedPluginApplication,
 };
+#[cfg(windows)]
+use crate::windows_appcontainer::{WorkspaceAccess, WorkspaceLeaseManager};
 use crate::{
     platform_execution_context::resolve_project_root, terminal_runtime::process::ProcessTermination,
 };
@@ -97,6 +99,8 @@ pub(super) struct PluginApplicationRuntime {
     epoch: Arc<AtomicU64>,
     state: Arc<Mutex<RuntimeState>>,
     health_client: Client,
+    #[cfg(all(windows, not(test)))]
+    sandbox: Arc<Mutex<Option<Arc<WorkspaceLeaseManager>>>>,
 }
 
 #[derive(Default)]
@@ -215,9 +219,13 @@ struct PreparedRuntimeProcess {
     arguments: Vec<OsString>,
     environment: BTreeMap<String, String>,
     installation_root: PathBuf,
+    data_directory: PathBuf,
+    cache_directory: PathBuf,
     base_url: String,
     health_path: String,
     launch_timeout_ms: u64,
+    #[cfg(windows)]
+    network_policy: &'static str,
 }
 
 #[derive(Deserialize)]
@@ -249,11 +257,26 @@ impl PluginApplicationRuntime {
                 .no_proxy()
                 .build()
                 .expect("static loopback health client configuration"),
+            #[cfg(all(windows, not(test)))]
+            sandbox: Arc::new(Mutex::new(None)),
         }
     }
 
     pub(super) fn epoch(&self) -> u64 {
         self.epoch.load(Ordering::SeqCst)
+    }
+
+    #[cfg(all(windows, not(test)))]
+    async fn ensure_sandbox(&self) -> Result<Arc<WorkspaceLeaseManager>, String> {
+        if let Some(manager) = self.sandbox.lock().await.clone() {
+            return Ok(manager);
+        }
+        let manager = Arc::new(WorkspaceLeaseManager::open(&self.root)?);
+        let mut sandbox = self.sandbox.lock().await;
+        if sandbox.is_none() {
+            *sandbox = Some(manager.clone());
+        }
+        Ok(sandbox.clone().unwrap_or(manager))
     }
 
     pub(super) async fn launch(
@@ -316,14 +339,24 @@ impl PluginApplicationRuntime {
             self.release_reservation(&key).await;
             return Err(stale_launch_error());
         }
-        let (process, launch_timeout) =
-            match spawn_application_runtime(&resolved, &runtime_context).await {
-                Ok(result) => result,
-                Err(error) => {
-                    self.release_reservation(&key).await;
-                    return Err(error);
-                }
-            };
+        #[cfg(all(windows, not(test)))]
+        let sandbox = Some(self.ensure_sandbox().await?);
+        #[cfg(all(windows, test))]
+        let sandbox = None;
+        let (process, launch_timeout) = match spawn_application_runtime(
+            &resolved,
+            &runtime_context,
+            #[cfg(windows)]
+            sandbox,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                self.release_reservation(&key).await;
+                return Err(error);
+            }
+        };
         self.install_reserved_process(key.clone(), process.clone())
             .await;
         if let Err(error) = self.wait_until_healthy(&process, launch_timeout).await {
@@ -1015,6 +1048,7 @@ fn resolve_runtime_context(
 async fn spawn_application_runtime(
     resolved: &ResolvedPluginApplication,
     context: &ResolvedRuntimeContext,
+    #[cfg(windows)] sandbox: Option<Arc<WorkspaceLeaseManager>>,
 ) -> Result<(Arc<RunningPluginApplication>, u64), String> {
     if resolved.contribution.runtime.is_none() {
         return spawn_static_runtime(resolved)
@@ -1023,7 +1057,13 @@ async fn spawn_application_runtime(
     }
     let prepared = prepare_runtime_process(resolved, context)?;
     let launch_timeout = prepared.launch_timeout_ms;
-    let process = spawn_runtime_process(resolved, prepared).await?;
+    let process = spawn_runtime_process(
+        resolved,
+        prepared,
+        #[cfg(windows)]
+        sandbox,
+    )
+    .await?;
     Ok((process, launch_timeout))
 }
 
@@ -1283,6 +1323,11 @@ fn prepare_runtime_process(
     }
     let mut environment = safe_process_environment();
     environment.extend(context.environment.clone());
+    let sandbox_label = if cfg!(windows) {
+        "windows-appcontainer"
+    } else {
+        "windows-job-lifecycle"
+    };
     environment.extend([
         (
             "CHATOS_PLUGIN_ROOT".into(),
@@ -1321,30 +1366,52 @@ fn prepare_runtime_process(
         ("CHATOS_PLUGIN_FILE_WATCH_MODE".into(), "polling".into()),
         (
             "CHATOS_PLUGIN_SANDBOX".into(),
-            "windows-job-lifecycle".into(),
+            sandbox_label.into(),
         ),
     ]);
     let arguments = prefix_arguments
         .into_iter()
         .chain(runtime.args.iter().map(OsString::from))
         .collect();
+    #[cfg(windows)]
+    let network_policy = if resolved.manifest.permissions.iter().any(|permission| {
+        permission.permission == "network.client"
+            && permission.required
+            && (permission.components.is_empty()
+                || permission
+                    .components
+                    .contains(&resolved.contribution.component_key))
+    }) {
+        "controlled"
+    } else {
+        "loopback"
+    };
     Ok(PreparedRuntimeProcess {
         executable,
         arguments,
         environment,
         installation_root: resolved.installation_root.clone(),
+        data_directory: context.data_directory.clone(),
+        cache_directory: context.cache_directory.clone(),
         base_url,
         health_path,
         launch_timeout_ms: runtime
             .launch_timeout_ms
             .unwrap_or(DEFAULT_LAUNCH_TIMEOUT_MS),
+        #[cfg(windows)]
+        network_policy,
     })
 }
 
 async fn spawn_runtime_process(
     resolved: &ResolvedPluginApplication,
     prepared: PreparedRuntimeProcess,
+    #[cfg(windows)] sandbox: Option<Arc<WorkspaceLeaseManager>>,
 ) -> Result<Arc<RunningPluginApplication>, String> {
+    #[cfg(windows)]
+    if let Some(sandbox) = sandbox {
+        return spawn_sandboxed_runtime(resolved, prepared, sandbox).await;
+    }
     let mut command = Command::new(&prepared.executable);
     command
         .args(&prepared.arguments)
@@ -1392,6 +1459,122 @@ async fn spawn_runtime_process(
         stderr_task,
     ));
     Ok(process)
+}
+
+#[cfg(windows)]
+async fn spawn_sandboxed_runtime(
+    resolved: &ResolvedPluginApplication,
+    prepared: PreparedRuntimeProcess,
+    sandbox: Arc<WorkspaceLeaseManager>,
+) -> Result<Arc<RunningPluginApplication>, String> {
+    use std::sync::Mutex as StdMutex;
+
+    let arguments = prepared
+        .arguments
+        .iter()
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let environment = prepared
+        .environment
+        .iter()
+        .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+        .collect::<Vec<_>>();
+    let mut child = sandbox
+        .spawn_workspace_command_with_leases(
+            &prepared.installation_root,
+            &prepared.executable,
+            &arguments,
+            &[
+                (
+                    prepared.installation_root.clone(),
+                    WorkspaceAccess::ReadOnly,
+                ),
+                (prepared.data_directory.clone(), WorkspaceAccess::ReadWrite),
+                (prepared.cache_directory.clone(), WorkspaceAccess::ReadWrite),
+            ],
+            prepared.network_policy,
+            &environment,
+        )
+        .map_err(|error| format!("Plugin 应用后端受限进程启动失败：{error}"))?;
+    let stdout = match child.take_stdout().map(spawn_blocking_drain) {
+        Some(stdout) => stdout,
+        None => {
+            let _ = child.restore();
+            return Err("Plugin 应用后端 stdout 不可用。".to_owned());
+        }
+    };
+    let stderr = match child.take_stderr().map(spawn_blocking_drain) {
+        Some(stderr) => stderr,
+        None => {
+            let _ = child.restore();
+            return Err("Plugin 应用后端 stderr 不可用。".to_owned());
+        }
+    };
+    let child = Arc::new(StdMutex::new(Some(child)));
+    let termination = ProcessTermination::attach_sandboxed(child.clone());
+    let process = Arc::new(RunningPluginApplication {
+        release_id: resolved.record.spec.release_id.clone(),
+        release_digest: resolved.record.spec.release_digest.clone(),
+        version: resolved.manifest.version.clone(),
+        base_url: prepared.base_url,
+        health_path: prepared.health_path,
+        termination: RuntimeTermination::Process(termination),
+        alive: AtomicBool::new(true),
+        finished: Notify::new(),
+    });
+    tokio::spawn(wait_for_sandboxed_process(
+        process.clone(),
+        child,
+        stdout,
+        stderr,
+    ));
+    Ok(process)
+}
+
+#[cfg(windows)]
+fn spawn_blocking_drain(mut file: std::fs::File) -> tokio::task::JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        let mut buffer = [0_u8; 8 * 1_024];
+        loop {
+            match file.read(&mut buffer) {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+        }
+    })
+}
+
+#[cfg(windows)]
+async fn wait_for_sandboxed_process(
+    process: Arc<RunningPluginApplication>,
+    child: Arc<std::sync::Mutex<Option<crate::windows_appcontainer::SandboxedChild>>>,
+    stdout: tokio::task::JoinHandle<()>,
+    stderr: tokio::task::JoinHandle<()>,
+) {
+    let _ = tokio::task::spawn_blocking(move || loop {
+        let finished = child.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .map(crate::windows_appcontainer::SandboxedChild::try_wait)
+        });
+        match finished {
+            Some(Ok(Some(_))) => {
+                let _ = child
+                    .lock()
+                    .ok()
+                    .and_then(|mut guard| guard.take())
+                    .map(crate::windows_appcontainer::SandboxedChild::restore);
+                return;
+            }
+            Some(Ok(None)) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Some(Err(_)) | None => return,
+        }
+    })
+    .await;
+    process.alive.store(false, Ordering::SeqCst);
+    process.finished.notify_waiters();
+    let _ = timeout(Duration::from_secs(1), stdout).await;
+    let _ = timeout(Duration::from_secs(1), stderr).await;
 }
 
 async fn drain_pipe(mut pipe: impl AsyncRead + Unpin) {
@@ -2203,7 +2386,11 @@ mod tests {
         assert!(!prepared.environment.contains_key("API_TOKEN"));
         assert_eq!(
             prepared.environment["CHATOS_PLUGIN_SANDBOX"],
-            "windows-job-lifecycle"
+            if cfg!(windows) {
+                "windows-appcontainer"
+            } else {
+                "windows-job-lifecycle"
+            }
         );
         assert_eq!(prepared.environment["CHATOS_PLUGIN_APP_HOST"], "127.0.0.1");
     }

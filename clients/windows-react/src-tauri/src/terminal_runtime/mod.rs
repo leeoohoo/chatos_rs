@@ -22,6 +22,8 @@ const MAXIMUM_RETAINED_EXITED_LOG_BYTES: usize = 32 * 1_024 * 1_024;
 #[derive(Clone)]
 pub(crate) struct TerminalProcessStore {
     state: Arc<Mutex<StoreState>>,
+    #[cfg(windows)]
+    sandbox: Arc<Mutex<Option<Arc<crate::windows_appcontainer::WorkspaceLeaseManager>>>>,
 }
 
 #[derive(Default)]
@@ -70,6 +72,8 @@ impl Default for TerminalProcessStore {
     fn default() -> Self {
         Self {
             state: Arc::new(Mutex::new(StoreState::default())),
+            #[cfg(windows)]
+            sandbox: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -86,7 +90,17 @@ impl TerminalProcessStore {
             state.next_sequence = state.next_sequence.saturating_add(1);
             sequence
         };
-        let process = spawn_process(scope, request.command, request.cwd, sequence).await?;
+        #[cfg(windows)]
+        let sandbox = self.sandbox.lock().await.clone();
+        let process = spawn_process(
+            scope,
+            request.command,
+            request.cwd,
+            sequence,
+            #[cfg(windows)]
+            sandbox,
+        )
+        .await?;
         let id = process.id().to_owned();
         {
             let mut state = self.state.lock().await;
@@ -110,6 +124,19 @@ impl TerminalProcessStore {
         let result = projection::foreground_result(&process, timed_out, timeout).await;
         cancellation_guard.disarm();
         Ok(result)
+    }
+
+    #[cfg(windows)]
+    pub(crate) async fn ensure_sandbox(&self, app_data_directory: &Path) -> Result<(), String> {
+        if self.sandbox.lock().await.is_some() {
+            return Ok(());
+        }
+        let manager = crate::windows_appcontainer::WorkspaceLeaseManager::open(app_data_directory)?;
+        let mut sandbox = self.sandbox.lock().await;
+        if sandbox.is_none() {
+            *sandbox = Some(Arc::new(manager));
+        }
+        Ok(())
     }
 
     pub(crate) async fn poll(

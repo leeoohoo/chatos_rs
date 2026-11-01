@@ -330,7 +330,7 @@ macOS 插件应用切片（2026-10-21）：
 - runtime context 保持 macOS 的 user/plugin/project/workspace/device scope 和 SHA-256 存储隔离；项目绝对根只在原生子进程环境中按 manifest required/optional 字段提供，返回 React 的 context 只有 project ID/name。进程环境使用 allowlist 且不解析安装记录中的 Secret references；
 - 每个账号最多 8 个 runtime，服务只监听原生分配的 `127.0.0.1` 随机端口，健康检查禁止 redirect/proxy 并受 700 ms 单次请求与 100–120,000 ms 总超时约束；stdout/stderr 固定缓冲持续 drain。Windows Job Object 与 Unix process group 在启动失败、账号恢复/登录/注册/登出、Host 停止/失联/替换、应用退出和 reset 时回收进程树；
 - launch identity 绑定 owner、presentation、generation、plugin/component 与 context scope；discard tombstone 和 runtime epoch 会拒绝在账号/Host/页面 teardown 后才完成的旧请求。健康 runtime 仅在 release ID/digest/version 全部一致时复用；
-- Windows 当前真实隔离能力为受限环境加 Job Object 生命周期，不宣称具备 macOS Seatbelt 的文件/网络沙箱；该差异沿用第 31 页 `limited` 访问控制事实，环境显式标记 `windows-job-lifecycle`；
+- Windows 动态 Plugin runtime 的生产启动路径已使用独立 AppContainer profile：安装目录只读、项目数据与缓存目录读写，并按 manifest 的 `network.client` 选择 `loopback`/`controlled` capability；健康检查仍受 Windows loopback exemption/proxy 限制，测试路径暂保留 Host runtime，不能宣称已达到 macOS Seatbelt 的完整文件/网络语义。任务终端已使用同一租约/进程回收基础设施；普通用户工作目录父级遍历限制与目标级出站规则仍待平台收口。
 - 21 项 Plugin 原生测试覆盖 catalog、context/generation、路径/permission、存储隔离、Secret 环境、真实 loopback 健康子进程、复用、失败清理和 reset 回收；Windows Rust 全量 205 项通过、2 项真实 sidecar 环境测试忽略；
 - Windows 原生 bridge 只准入 macOS 当前真实实现的 `host.context.read`；manifest 即使声明 `artifact.*` 也不会提前成为可调用能力。请求上限 256 KiB，并同时绑定 owner、presentation、generation、session、64 位随机 nonce、精确 `http://127.0.0.1:<port>` origin 与当前存活 runtime；discard/reset 后旧 bridge 立即失效，返回 context 仍只有 project ID/name；
 - Plugin 定向 22 项及 Windows Rust 全量 206 项通过、2 项真实 sidecar 环境测试忽略，Clippy 通过。第 05 页原生准入完成，可以建立 React Domain/Port/Store/UI；React iframe 必须继续验证 `event.source` 和 exact origin、使用 sandbox，并仅把原生返回的 admitted capabilities 写入 ready 消息。
@@ -351,7 +351,7 @@ macOS 本机 Terminal 切片（2026-10-21）：
 - 本机与远程终端共用无进程能力的 `NativeByteStreamTerminalView` renderer，输入与 resize 只转发给 typed Port，OSC title/目录、搜索、链接白名单和剪贴板仍由展示层负责；
 - Connector 事件缓冲最多 256 个 chunk。消费者追不上时不静默丢失控制序列，而是发布显式 failure、终止进程组并结束 stream，防止高速输出重新形成无界内存；
 - 定向验收为 Core 2 项、Connector 本机 PTY 3 项、App 4 项通过；既有 Native Terminal Executor 6 项同时通过。完整 macOS 回归仍作为提交门禁；
-- Windows 第 19 页已建立独立 owner + presentation + generation 绑定的 ConPTY typed session；现有 task terminal worker 与远程终端仅提供进程回收技术参考，没有复用其 Host durable tool invocation 或 SSH 权限；
+- Windows 第 19 页已建立独立 owner + presentation + generation 绑定的 ConPTY typed session；任务终端 tool worker 的执行路径现使用独立 AppContainer profile、项目目录读写租约、默认禁网、交互式 stdio、超时与进程树回收。普通用户临时目录的父级遍历/CWD 显示仍受 Windows ACL 平台限制；
 - React 只提交 owner、opaque presentation/session identity、输入字节、viewport 和 poll cursor，不提交 executable、arguments、environment 或 cwd。Windows 原生层从系统目录解析 Windows PowerShell，选择当前用户目录并构造不含应用 Secret 的 allowlist 环境；
 - 原生层限制每 owner 最多 4 个会话、64 KiB 单次输入、1–1000 viewport、512 event/2 MiB retained output、128 event/256 KiB 单次 poll 与 30 秒 long-poll；Windows Job Object 在 close/reset/drop 时回收进程树；
 - React `LocalTerminalPort`、Tauri Adapter、Zustand workspace Store 与 Apple 主题 UI 保持 macOS 的多标签、关闭最后标签立即补建、10,000 行 scrollback、搜索、清屏、中断、OSC title/cwd；每标签冻结 owner/workspace generation/presentation/session/tab generation，关闭、离页、账号或 Host 变化后的迟到 start/poll 不得写回；

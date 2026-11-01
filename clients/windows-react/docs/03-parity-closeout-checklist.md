@@ -1,6 +1,6 @@
 # Windows React 与 macOS 功能拉齐关闭清单
 
-更新时间：2026-10-27
+更新时间：2026-11-02
 
 分支：`3.0.9.3.1`
 
@@ -8,7 +8,7 @@ Windows 产品版本：`3.0.9`
 
 本清单区分“页面已出现”“业务闭环已完成”“平台能力真实可用”和“发布环境已验证”。只有四项同时满足，才算完成；不再把只读占位、失败关闭或测试未运行写成已拉齐。
 
-## 当前复核（2026-10-27）
+## 当前复核（2026-11-02）
 
 以下结论以当前分支 `3.0.9.3.1` 的最新代码、测试和最终 NSIS 安装包为准。文档后面的编号条目保留为历史交付记录，其中较早的“部分完成”措辞不应覆盖本节的最新状态。
 
@@ -17,8 +17,10 @@ Windows 产品版本：`3.0.9`
 - 安装包原生启动 smoke 已增加硬门禁：每次启动都必须观察到安装目录中的 `chatos-windows-react.exe` 自己创建的非零窗口句柄，且窗口标题必须精确为 `ChatOS`，不能只靠进程退出码把浏览器、空进程或错误壳层误判为客户端。最新报告 `%TEMP%\\chatos-windows-native-title-smoke.json` 通过（安装版启动 `3,172 ms`、窗口标题 `ChatOS`、卸载成功、隔离用户数据已清理）。这仍不替代 31 张 macOS 截图的逐页视觉走查。
 - 插件应用 Bridge 当前与 macOS 的真实实现一致：两端只实现 `host.context.read`；`artifact.*` 等尚未闭环的能力不会在 Windows 中伪装成可调用能力。
 - 静态 Plugin 页面当前补齐 `navigate-to 'self'` CSP，页面不能自行导航到外部地址；`local_http` 后端仍保持现有 loopback/origin 门禁，未把尚未解决的 AppContainer loopback 代理问题伪装成完成。
-- Computer Use Windows worker 的本机协议门禁已补齐：`npm run smoke:windows` 现在同时验证 `--doctor`、真实 stdio `initialize`、`tools/list` 和只读 `tools/call(check_permissions)`，严格确认 `visual-computer-use` 身份、11 个工具契约及权限快照字段；跨平台 `.tgz`、Marketplace 签名发布和截图/输入实测仍未完成。
-- 当前仍未完全拉齐的基础差异只有三类：访问控制尚未把目标级出站规则覆盖到任务终端和 Plugin 应用后端；任务终端与 Plugin 应用后端仍使用 `limited` 本机进程边界；任务审查的原生窗口逐态视觉取证尚未完成。这些差异继续保持为不可编辑/不可用状态，不对用户虚报为已支持。
+- 任务终端已接入独立 AppContainer profile、项目目录读写租约、默认禁网、交互式 stdin/stdout/stderr、超时与进程树回收；绝对路径读写和租约恢复已有真实 Windows 测试。普通用户临时目录的父级遍历权限无法稳定授予，因此当前目录显示和父级路径访问仍保留平台限制。
+- Plugin 应用后端的生产启动路径已接入独立 AppContainer：安装目录只读、数据与缓存目录读写，并按 manifest 的 `network.client` 选择 `loopback`/`controlled` capability；Windows loopback exemption/proxy 尚未闭环，健康检查仍可能超时，测试构建继续使用 Host runtime 以保留既有健康检查覆盖。
+- Computer Use Windows worker 的本机协议门禁已补齐：`npm run smoke:windows` 现在同时验证 `--doctor`、真实 stdio `initialize`、`tools/list` 和只读 `tools/call(check_permissions)`，严格确认 `visual-computer-use` 身份、11 个工具契约及权限快照字段；仓库自带 worker 已完成真实 Notepad 截图、鼠标移动、按键和关闭链路，跨平台 `.tgz` 与 Marketplace 签名发布仍未完成。
+- 当前仍未完全拉齐的基础差异有四类：目标级出站规则尚未覆盖全部执行链；任务终端工作目录的父级遍历限制仍未关闭；Plugin 应用后端的 Windows loopback 健康代理/exemption 尚未闭环；任务审查的原生窗口逐态视觉取证尚未完成。这些差异继续保持为不可编辑/不可用状态，不对用户虚报为已支持。
 
 ## A. 本轮已关闭
 
@@ -54,7 +56,7 @@ Windows 产品版本：`3.0.9`
 - [x] Windows MSI 事务中途故障回滚闭环已实测：仓库内受审计 WiX 模板把 `RemoveExistingProducts` 固定在 `InstallExecute` 之后（执行序号 `6501`）；在复制新文件后注入 Type 19 故障，两轮均返回 `1603`，并完整恢复旧 ProductCode、旧 EXE 哈希和 AppData 哨兵。随后正常升级和卸载成功，旧版、故障版与当前版 ProductCode 均为未安装状态，主 EXE 组件无残留 client。
 - [x] Windows MSI 在旧客户端保持原生窗口运行时的覆盖升级闭环已实测：两轮均由 Windows Installer 正常关闭 `0.1.0` 进程，升级返回 `0`，`3.0.9` 原生启动和最终卸载成功，AppData 哨兵保留；测试逐轮对比系统 `PendingFileRenameOperations`，确认未新增待重启文件操作。
 - [x] Windows NSIS 原生启动 smoke 已与真实用户数据隔离：每次运行使用独立的新 AppData/LocalAppData，完成后断言测试数据已清理，不再读取或污染当前登录账号的数据。当前安装包完成两轮、每轮 5 次隔离冷启动；第二轮安装 `1,970 ms`、启动中位数 `9,040 ms`、P95 `17,882 ms`、卸载 `619 ms`，全部在 20 秒门限内正常退出。
-- [x] Windows AppContainer 基础启动器与真实隔离探测已落地：使用临时 profile、`PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 和 `CREATE_SUSPENDED` 启动系统进程，先校验子进程 token 再恢复执行，策略不匹配时在用户代码运行前终止。`disabled` 档位实测 token 不含 capability、无法读取宿主临时文件且无法连接宿主 loopback；`controlled` 档位只生成并注入 Windows `internetClient` capability SID，随后从子进程 token 反查确认策略精确生效，`host` 明确拒绝映射到 AppContainer。租约 manager 会以不跟随 reparse point 的 Windows 句柄遍历非空目录树，逐项保存原 DACL、卷号和文件 ID，再以 v3 journal 原子落盘后通过同一对象句柄授权。正常释放通过保留句柄恢复原对象，因此支持租约内重命名；启动恢复会在写 ACL 前验证对象身份，同路径替换会失败关闭。运行期新增项的 AppContainer SID 会撤销，v1/v2 journal 继续兼容恢复，目录树数量与 journal 大小有界。可复用运行时启动器现已补齐显式工作目录、最小环境块、仅三个 stdio 句柄继承、有界 stdout/stderr 捕获、超时与 Job Object 进程树回收；真实 Git 仓库已在读写租约中完成 `git add`。每次运行使用独立 AppContainer SID/profile，profile journal 在创建前落盘，正常退出删除，模拟崩溃后启动恢复也已实测，避免并行执行链共享 SID 或遗留 profile。长驻运行时现可安全移交 stdin/stdout/stderr、保持 profile 与多 workspace 租约，并在等待超时或句柄释放时回收整棵进程树；重叠租约会在启动前失败关闭。固定名称 Probe profile 重新持有全生命周期互斥锁，避免并行自检互相删除，UUID Runtime profile 仍可并行。Agent Plugin MCP 已迁移到独立 AppContainer，安装目录只读、项目目录读写、网络禁用，真实 initialize/tools/list/tools/call 与 ACL 恢复均已通过；尚未迁移的任务终端和 Plugin 应用后端继续保持 `limited`，界面开关不提前开放。
+- [x] Windows AppContainer 基础启动器与真实隔离探测已落地：使用临时 profile、`PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 和 `CREATE_SUSPENDED` 启动系统进程，先校验子进程 token 再恢复执行，策略不匹配时在用户代码运行前终止。`disabled` 档位实测 token 不含 capability、无法读取宿主临时文件且无法连接宿主 loopback；`loopback`/`controlled` 档位生成并注入对应 Windows capability SID，随后从子进程 token 反查确认策略精确生效，`host` 明确拒绝映射到 AppContainer。租约 manager 会以不跟随 reparse point 的 Windows 句柄遍历非空目录树，逐项保存原 DACL、卷号和文件 ID，再以 v3 journal 原子落盘后通过同一对象句柄授权。正常释放通过保留句柄恢复原对象，因此支持租约内重命名；启动恢复会在写 ACL 前验证对象身份，同路径替换会失败关闭。运行期新增项的 AppContainer SID 会撤销，v1/v2 journal 继续兼容恢复，目录树数量与 journal 大小有界。可复用运行时启动器现已补齐显式工作目录、最小环境块、仅三个 stdio 句柄继承、有界 stdout/stderr 捕获、超时与 Job Object 进程树回收；真实 Git 仓库已在读写租约中完成 `git add`。每次运行使用独立 AppContainer SID/profile，profile journal 在创建前落盘，正常退出删除，模拟崩溃后启动恢复也已实测，避免并行执行链共享 SID 或遗留 profile。长驻运行时现可安全移交 stdin/stdout/stderr、保持 profile 与多 workspace 租约，并在等待超时或句柄释放时回收整棵进程树；重叠租约会在启动前失败关闭。Agent Plugin MCP 已迁移到独立 AppContainer，任务终端也已迁移；Plugin 应用后端已接入生产受限启动路径，但 loopback 健康代理/exemption 尚未完成，不能把全部链路标成已完成。
 
 ## B. 本次交付前必须关闭
 
@@ -104,7 +106,7 @@ Windows 产品版本：`3.0.9`
 - [x] Codex/Ponytail Hook 的 Windows 端完整闭环。最终 NSIS 安装包已真实启动 AppContainer runner，写入并激活受信 Bundle，触发 `UserPromptSubmit`，回传上下文，按 `continue=false` 阻断 Prompt，并在 Host 重启后恢复 active Bundle；报告为 `%TEMP%\\chatos-windows-installed-hook-restart.json`。原生窗口逐态视觉走查仍单独保留为未完成项。
 - [ ] `3.0.9.4` 新增的任务审查优先级展示仍需原生窗口逐态核对。Windows 原生任务图 DTO 现同时保留 Host 原始状态和 `reviewing_followup` / `waiting_confirmation` 展示状态；Task Graph、Run Inspector、对话 Timeline 状态胶囊与宠物活动摘要均让新门禁覆盖旧 Run 活动并保持轮询，`needs_review` 的恢复操作继续保留。各入口的原生视觉优先级仍需取证，当前不声称完全一致。
 - [ ] Computer Use / 屏幕采集的受信发布闭环。Windows Worker 源码、x64/arm64 构建和 smoke 已通过，但当前用户 Plugin 目录为空；还需产出跨平台 `.tgz`、进入签名 Marketplace Release，并从 Windows 客户端完成安装、启用、`doctor`、屏幕采集和输入实测。
-- [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、disabled/controlled capability token、句柄绑定的非空目录逐项 DACL 快照、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 拒绝，带最小环境、一次性输出捕获、长驻交互 stdio、多 workspace 租约、超时与 Job Object 回收的可复用启动器，以及独立 profile SID/journal 崩溃恢复已经通过；Agent Plugin MCP 已迁移并以安装目录只读、项目目录读写、禁网策略实测。仍需实现目标级出站规则，并迁移任务终端和 Plugin 应用后端后才能开放第 31 页开关。迁移完成前继续只发布账号/项目边界、审批策略和现有 Job Object 进程树回收。
+- [ ] 访问控制的文件与网络隔离。AppContainer 文件/网络拒绝、`disabled`/`loopback`/`controlled` capability token、句柄绑定的非空目录逐项 DACL 快照、运行期新增项 SID 清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 拒绝，带最小环境、一次性输出捕获、长驻交互 stdio、多 workspace 租约、超时与 Job Object 回收的可复用启动器，以及独立 profile SID/journal 崩溃恢复已经通过；Agent Plugin MCP 与任务终端已迁移到独立 AppContainer，Plugin 应用后端已接入生产受限启动路径。仍需实现目标级出站规则，关闭普通用户工作目录父级遍历限制，并完成 Plugin loopback 健康代理/exemption 后才能开放第 31 页开关。迁移完成前继续只发布账号/项目边界、审批策略和现有 Job Object 进程树回收。
 
 ### P2：平台/发布质量
 
@@ -129,5 +131,5 @@ Windows 产品版本：`3.0.9`
 2. [已完成] Plugin 安装助手专用 capability、受限平台工具与原生 ChatOS Plugin 本地目录 inspect/install 闭环。
 3. [已完成] Git、固定版本 npm 来源、普通 npm MCP、常见 stdio MCP JSON、portable Agent、Codex、Claude、独立 Skill、skills-only、设置页本机目录 typed 导入与 Windows Credential Manager Secret resolver 均已完成。
 4. [外部依赖] 完成 Computer Use `.tgz`、Marketplace 签名发布/客户端安装闭环，以及 Windows 安装包正式代码签名。
-5. [进行中] Windows AppContainer 启动、文件/网络拒绝、disabled/controlled 网络 capability、句柄绑定的非空目录逐项 ACL 租约、v1/v2/v3 journal 恢复和可复用受限进程启动器已完成；下一步实现目标级出站规则并逐条迁移任务、Plugin 与 Agent 业务调用，全部执行链迁移后再开放第 31 页开关。审批策略和审批人已经接入真实执行门禁。
+5. [进行中] Windows AppContainer 启动、文件/网络拒绝、disabled/loopback/controlled 网络 capability、句柄绑定的非空目录逐项 ACL 租约、v1/v2/v3 journal 恢复和可复用受限进程启动器已完成；任务终端已迁移，Plugin 应用后端已接入生产受限启动路径。下一步实现目标级出站规则、解决普通用户工作目录父级遍历与 Plugin loopback 健康代理/exemption，再开放第 31 页开关。审批策略和审批人已经接入真实执行门禁。
 6. [待验证] 工具恢复后完成 31 页原生逐页视觉、缩放和无障碍验收；升级、失败前置保护、事务中途故障回滚、客户端运行中升级及安装包冷启动基线已完成，后续在一次性 VM 补强制锁/需重启场景并继续 Host ready、首屏与长稳性能基线。
