@@ -27,7 +27,7 @@ Windows 产品版本：`3.0.9`
 
 - [x] 已拉取并合并 `origin/3.0.9.4`（远端头 `fa8a80477`，合并提交 `1a2bede43`）；Local Agent 协议升级到 v49，Windows React 的共享契约、Tauri transport 与打包 sidecar 已同步。
 - [x] Windows 机器资源压力已接入 Host durable-claim 准入：原生层每 5 秒读取 `GlobalMemoryStatusEx`、供电、电池与系统节能状态，映射 `normal/elevated/serious/critical`；升级立即生效，恢复需持续稳定 30 秒。当前等级在 Host 未运行时保留，新 worker Host 完成 v51 握手后必须先应用压力；压力 IPC 异常按 Host transport 故障回收，不让未知调度状态继续领取任务。真实 sidecar 已验证 `serious` 把有效 worker 降到配置并发的一半，`critical` 仍保留一个交互 worker。
-- [x] Windows App 现在通过 `machine_resource_snapshot` 暴露共享资源池诊断：配置/有效容量、后台上限、已用/排队数量、压力级别，以及 Media/Code Read 两个分域的配置上限和活动/排队数量；快照只读、字段有界并由 React schema 复验。
+- [x] Windows App 现在通过 `machine_resource_snapshot` 暴露共享资源池和 Host scheduler 诊断：App 的配置/有效容量、后台上限、已用/排队数量、压力级别、Media/Code Read 分域活动数，以及 Host 的有效并发、活动/空闲/排队、内存同步和 admission 状态；快照只读、字段有界并由 React schema 复验。
 - [x] Windows App 共享资源准入基础已完成：CPU/物理内存/Host 保留共同计算预算，Media 与 Code Read 共享 permit、各 kind 保留容量、交互优先但每 4 次强制给后台公平机会、队列有界且取消安全；同一稳定系统压力会同步缩减 App 与 Host。用户附件、Artifact 导出、Media/Story 导入和项目文件任务已在磁盘/worker 工作前取得 permit，附件阻塞 I/O 不再占用 async executor；已被 Host durable claim 领取的 tool work 不重复排队。
 - [x] 快速搜索的文件/应用索引构建现在在进入 `spawn_blocking` 前取得 `CodeReadWorker + Interactive` permit；容量不足时受控失败，不再绕过共享资源池启动重型本地扫描。
 - [x] 项目 Git 的查询、差异、暂存、提交、分支、远端和同步命令现在共享同一个 `CodeReadWorker + Interactive` permit，permit 覆盖完整 Git 子进程及刷新流程，避免并发 Git 操作绕过容量治理。

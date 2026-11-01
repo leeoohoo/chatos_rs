@@ -42,6 +42,7 @@ function hostPort(): HostLifecyclePort {
         { domain: "mediaWorker" as const, configuredLimit: 2, activeCount: 0, queuedCount: 0 },
         { domain: "codeReadWorker" as const, configuredLimit: 2, activeCount: 0, queuedCount: 0 },
       ],
+      host: null,
     })),
     start: vi.fn(async () => ready),
     stop: vi.fn(async () => ({ ...ready, phase: "stopped" as const, ready: false })),

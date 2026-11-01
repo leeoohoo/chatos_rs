@@ -1,5 +1,6 @@
 use chatos_local_agent_protocol::{
     HostCommand, HostRequestEnvelope, HostResponseEnvelope, HostResult,
+    LocalAgentHostSchedulerSnapshot,
     LOCAL_AGENT_MAX_FRAME_BYTES, LOCAL_AGENT_MAX_MESSAGE_BYTES, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use std::time::Duration;
@@ -46,6 +47,7 @@ pub(crate) struct ManagedHost {
     pub(super) input: ChildStdin,
     output: ChildStdout,
     pub(super) owner_user_id: String,
+    pub(super) scheduler: Option<LocalAgentHostSchedulerSnapshot>,
     request_namespace: Uuid,
     request_sequence: u64,
 }
@@ -62,6 +64,7 @@ impl ManagedHost {
             input,
             output,
             owner_user_id,
+            scheduler: None,
             request_namespace: Uuid::new_v4(),
             request_sequence: 0,
         }
@@ -89,6 +92,7 @@ pub(super) async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
             && scheduler.active_work_items + scheduler.idle_workers
                 == scheduler.maximum_concurrent_work_items =>
         {
+            host.scheduler = Some(scheduler);
             Ok(())
         }
         _ => Err("Host health response does not match protocol v51.".to_string()),

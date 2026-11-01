@@ -16,7 +16,7 @@ use crate::{
 };
 use chatos_local_agent_protocol::{
     HostCommand, HostResult, LocalAgentResourcePressureLevel, SetSchedulerPressureCommand,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalAgentHostSchedulerSnapshot, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
 use process::spawn;
@@ -223,6 +223,14 @@ impl HostManager {
             self.approval_sessions.reset();
         }
         running
+    }
+
+    pub(crate) async fn scheduler_snapshot(&self) -> Option<LocalAgentHostSchedulerSnapshot> {
+        self.process
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|host| host.scheduler.clone())
     }
 }
 
@@ -540,6 +548,11 @@ async fn apply_scheduler_pressure(
         } if applied == pressure_level
             && (1..=16).contains(&effective_maximum_concurrent_work_items) =>
         {
+            if let Some(scheduler) = host.scheduler.as_mut() {
+                scheduler.pressure_level = applied;
+                scheduler.effective_maximum_concurrent_work_items =
+                    effective_maximum_concurrent_work_items;
+            }
             Ok(())
         }
         _ => Err("Local Agent Host scheduler pressure response is invalid.".to_string()),

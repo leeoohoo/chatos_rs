@@ -51,6 +51,17 @@ export const machineResourceSnapshotSchema = z.object({
   queuedCount: z.number().int().nonnegative(),
   pressureLevel: z.enum(["normal", "elevated", "serious", "critical"]),
   domains: z.array(machineResourceDomainSnapshotSchema),
+  host: z.object({
+    maximumConcurrentWorkItems: z.number().int().positive(),
+    effectiveMaximumConcurrentWorkItems: z.number().int().positive(),
+    pressureLevel: z.enum(["normal", "elevated", "serious", "critical"]),
+    activeWorkItems: z.number().int().nonnegative(),
+    idleWorkers: z.number().int().nonnegative(),
+    queuedReadyWorkItems: z.number().int().nonnegative(),
+    acceptingNewWork: z.boolean(),
+    activeMemorySyncItems: z.number().int().nonnegative(),
+    admissionInFlightWorkItems: z.number().int().nonnegative(),
+  }).nullable(),
 });
 
 export type MachineResourceSnapshot = z.infer<typeof machineResourceSnapshotSchema>;

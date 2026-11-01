@@ -10,6 +10,8 @@ use std::{
 use tokio::sync::oneshot;
 use tauri::State;
 
+use crate::host_lifecycle::HostManager;
+
 const MINIMUM_FILE_WORKERS: usize = 3;
 const MAXIMUM_FILE_WORKERS: usize = 10;
 const MAXIMUM_QUEUED_WORK: usize = 256;
@@ -49,6 +51,21 @@ pub(crate) struct MachineResourceSnapshot {
     queued_count: usize,
     pressure_level: LocalAgentResourcePressureLevel,
     domains: Vec<MachineResourceDomainSnapshot>,
+    host: Option<MachineResourceHostSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MachineResourceHostSnapshot {
+    maximum_concurrent_work_items: usize,
+    effective_maximum_concurrent_work_items: usize,
+    pressure_level: LocalAgentResourcePressureLevel,
+    active_work_items: usize,
+    idle_workers: usize,
+    queued_ready_work_items: u64,
+    accepting_new_work: bool,
+    active_memory_sync_items: usize,
+    admission_in_flight_work_items: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -385,15 +402,31 @@ impl MachineResourceGovernor {
                     queued_count: queued_count(MachineResourceKind::CodeReadWorker),
                 },
             ],
+            host: None,
         }
     }
 }
 
 #[tauri::command]
-pub(crate) fn machine_resource_snapshot(
+pub(crate) async fn machine_resource_snapshot(
     resources: State<'_, MachineResourceGovernor>,
-) -> MachineResourceSnapshot {
-    resources.snapshot()
+    host: State<'_, HostManager>,
+) -> Result<MachineResourceSnapshot, String> {
+    let mut snapshot = resources.snapshot();
+    snapshot.host = host.scheduler_snapshot().await.map(|host| {
+        MachineResourceHostSnapshot {
+            maximum_concurrent_work_items: host.maximum_concurrent_work_items,
+            effective_maximum_concurrent_work_items: host.effective_maximum_concurrent_work_items,
+            pressure_level: host.pressure_level,
+            active_work_items: host.active_work_items,
+            idle_workers: host.idle_workers,
+            queued_ready_work_items: host.queued_ready_work_items,
+            accepting_new_work: host.accepting_new_work,
+            active_memory_sync_items: host.active_memory_sync_items,
+            admission_in_flight_work_items: host.admission_in_flight_work_items,
+        }
+    });
+    Ok(snapshot)
 }
 
 pub(crate) struct MachineResourcePermit {

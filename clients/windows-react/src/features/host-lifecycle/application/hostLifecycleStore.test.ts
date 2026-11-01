@@ -30,6 +30,7 @@ function port(
         { domain: "mediaWorker", configuredLimit: 2, activeCount: 0, queuedCount: 0 },
         { domain: "codeReadWorker", configuredLimit: 2, activeCount: 0, queuedCount: 0 },
       ],
+      host: null,
     }),
     start: async () => { throw new Error("unused"); },
     stop: async () => { throw new Error("unused"); },
