@@ -84,7 +84,7 @@ fn snapshot_from_state(state: &Map<String, Value>) -> Result<AccessControlSnapsh
                 && probe.nonempty_workspace_tree_verified
                 && probe.network_capability_policy_verified
                 && probe.runtime_launcher_verified =>
-            "Windows AppContainer 文件/网络拒绝、句柄绑定的非空目录 ACL 租约、运行中新建项清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 失败关闭、受限句柄继承/环境/交互 stdio 启动器及 disabled/controlled 网络 capability token 自检已通过；Agent Plugin MCP 已迁移到安装目录只读、项目目录读写且禁网的独立 AppContainer，目标级出站规则与其余任务/Plugin 执行链仍未关闭，因此当前仍只发布账号上下文和 Job Object 进程树边界。",
+            "Windows AppContainer 文件/网络拒绝、句柄绑定的非空目录 ACL 租约、运行中新建项清理、v1/v2/v3 journal 恢复、对象身份校验、reparse point 失败关闭、受限句柄继承/环境/交互 stdio 启动器及 disabled/controlled 网络 capability token 自检已通过；Agent Plugin MCP 与任务终端已迁移到独立 AppContainer，Plugin 应用后端也已接入生产受限启动路径。目标级出站规则、普通用户工作目录父级遍历限制和 Plugin loopback 健康代理仍未关闭，因此当前仍只发布账号上下文和 Job Object 进程树边界。",
         Ok(_) =>
             "Windows AppContainer 自检未证明文件隔离；当前只发布账号上下文和 Job Object 进程树边界。",
         Err(_) =>
