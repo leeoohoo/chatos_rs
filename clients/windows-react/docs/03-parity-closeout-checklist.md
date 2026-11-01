@@ -31,6 +31,7 @@ Windows 产品版本：`3.0.9`
 - [x] Windows App 共享资源准入基础已完成：CPU/物理内存/Host 保留共同计算预算，Media 与 Code Read 共享 permit、各 kind 保留容量、交互优先但每 4 次强制给后台公平机会、队列有界且取消安全；同一稳定系统压力会同步缩减 App 与 Host。用户附件、Artifact 导出、Media/Story 导入和项目文件任务已在磁盘/worker 工作前取得 permit，附件阻塞 I/O 不再占用 async executor；已被 Host durable claim 领取的 tool work 不重复排队。
 - [x] 快速搜索的文件/应用索引构建现在在进入 `spawn_blocking` 前取得 `CodeReadWorker + Interactive` permit；容量不足时受控失败，不再绕过共享资源池启动重型本地扫描。
 - [x] 项目 Git 的查询、差异、暂存、提交、分支、远端和同步命令现在共享同一个 `CodeReadWorker + Interactive` permit，permit 覆盖完整 Git 子进程及刷新流程，避免并发 Git 操作绕过容量治理。
+- [x] 远程文件的 OpenSSH 会话现在共享 `CodeReadWorker + Interactive` permit；permit 随 SSH 会话持有到完成、取消或超时，二次验证提示不会提前释放容量，避免长时间传输绕过本机资源池。
 - [x] Agent Artifact 与记事本 Markdown 导出已使用公共 app-owned 原子事务：同目录独占临时文件完整写入并刷盘后再替换目标，失败自动清理；仅回收当前导出目录内、严格 canonical 命名、超过 24 小时且非 reparse/多硬链接的 ChatOS 残留。Windows 不会按 `.tmp` 后缀扫描或删除任意用户文件。
 - [x] 附件 vault、Media Studio 图片/视频历史与 Story Studio 确定性 manifest 已接入所有权明确的启动后台清理：共享资源 governor 的 `CodeReadWorker` 后台 permit，只处理超过 24 小时的 canonical 临时文件；目录层级/目录项有界，账号 hash、记录 UUID、文件名、普通文件、reparse 与多硬链接均失败关闭，不碰已提交记录、媒体素材或任意后缀相同文件。
 - [x] 固定 AppData 元数据目录的事务临时文件已接入同一后台清理链：General Settings、Global Utilities、Quick Search、Pet 偏好/收藏、Project Run、Remote Connection credential index、Clipboard payload 与 Tool Approval journal 共 6 个固定 scope、9 种受审计前缀；每 scope 最多 2,000 项，只删除超过 24 小时的 canonical 小写 UUID 临时文件。
