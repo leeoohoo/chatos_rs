@@ -254,6 +254,7 @@ const PROJECT_WRITE_TOOL_NAMES: [&str; 4] = [
 ];
 const MAXIMUM_READ_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAXIMUM_SEARCH_ENTRIES: usize = 100_000;
+const MAXIMUM_SEARCH_CHILDREN_PER_DIRECTORY: usize = 10_000;
 const IGNORED_DIRECTORIES: [&str; 13] = [
     ".git",
     ".build",
@@ -380,6 +381,7 @@ fn list_directory(root: &Path, arguments: &Map<String, Value>) -> Result<Value, 
     let mut entries = fs::read_dir(&path)
         .map_err(|_| ExecutionError::pre_effect("The project directory is unavailable."))?
         .filter_map(Result::ok)
+        .take(maximum.saturating_add(1))
         .collect::<Vec<_>>();
     entries.sort_by_key(|entry| entry.file_name());
     let truncated = entries.len() > maximum;
@@ -447,7 +449,12 @@ fn search_text(
                 .map_err(|_| ExecutionError::pre_effect("A project directory is unavailable."))?
                 .filter_map(Result::ok)
                 .map(|entry| entry.path())
+                .take(MAXIMUM_SEARCH_CHILDREN_PER_DIRECTORY.saturating_add(1))
                 .collect::<Vec<_>>();
+            if children.len() > MAXIMUM_SEARCH_CHILDREN_PER_DIRECTORY {
+                children.truncate(MAXIMUM_SEARCH_CHILDREN_PER_DIRECTORY);
+                truncated = true;
+            }
             children.sort();
             children.reverse();
             pending.extend(children);
