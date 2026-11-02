@@ -279,7 +279,12 @@ fn native_store_is_owner_scoped_atomic_and_round_trips_schema_v2() {
 fn stale_story_cleanup_only_removes_canonical_uncommitted_manifests() {
     let app_data = tempdir().unwrap();
     let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
-    let saved = project();
+    let mut saved = project();
+    let referenced_asset = format!("image-{}.png", Uuid::new_v4().simple());
+    saved.props[0]
+        .media
+        .images
+        .push(StoryImage::test_image(&referenced_asset));
     store.save("alice", &saved).unwrap();
     let project_directory = projects_directory(app_data.path(), "alice").join(&saved.id);
     let runs_directory = project_directory.join("runs");
@@ -297,6 +302,8 @@ fn stale_story_cleanup_only_removes_canonical_uncommitted_manifests() {
     let unrelated = project_directory.join("notes.json.tmp");
     let invalid_batch = project_directory.join("media-batch-not-a-uuid.json.tmp");
     let invalid_run = runs_directory.join("not-a-uuid.json.tmp");
+    let orphan_asset = project_directory.join(format!("image-{}.png", Uuid::new_v4().simple()));
+    let referenced_asset = project_directory.join(&referenced_asset);
     for path in [
         &project_temporary,
         &batch_temporary,
@@ -304,6 +311,8 @@ fn stale_story_cleanup_only_removes_canonical_uncommitted_manifests() {
         &unrelated,
         &invalid_batch,
         &invalid_run,
+        &orphan_asset,
+        &referenced_asset,
     ] {
         fs::write(path, b"value").unwrap();
     }
@@ -316,11 +325,13 @@ fn stale_story_cleanup_only_removes_canonical_uncommitted_manifests() {
         store.cleanup_stale_temporaries_before(
             std::time::SystemTime::now() + std::time::Duration::from_secs(1),
         ),
-        3
+        4
     );
     assert!(!project_temporary.exists());
     assert!(!batch_temporary.exists());
     assert!(!run_temporary.exists());
+    assert!(!orphan_asset.exists());
+    assert!(referenced_asset.exists());
     assert!(project_directory.join("project.json").exists());
     assert!(unrelated.exists());
     assert!(invalid_batch.exists());

@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 #[cfg(unix)]
 use std::fs::File;
 use std::{
+    collections::HashSet,
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -1044,7 +1045,7 @@ fn cleanup_story_projects(
         if canonical_project_id(&project_id).is_err() || !safe_cleanup_directory(&project) {
             continue;
         }
-        cleanup_story_project(&project, cutoff, state);
+        cleanup_story_project(&project, &project_id, cutoff, state);
         if state.visited >= MAXIMUM_STORY_CLEANUP_ENTRIES {
             return;
         }
@@ -1053,9 +1054,13 @@ fn cleanup_story_projects(
 
 fn cleanup_story_project(
     project: &Path,
+    project_id: &str,
     cutoff: SystemTime,
     state: &mut StoryTemporaryCleanupState,
 ) {
+    let referenced_media = load_project_manifest(project, project_id)
+        .ok()
+        .map(|project| project_media_filenames(&project));
     let Ok(entries) = fs::read_dir(project) else {
         return;
     };
@@ -1073,11 +1078,50 @@ fn cleanup_story_project(
             && try_remove_stale_owned_file(&path, cutoff)
         {
             state.removed = state.removed.saturating_add(1);
+        } else if referenced_media
+            .as_ref()
+            .is_some_and(|media| canonical_story_media_name(&name) && !media.contains(&name))
+            && try_remove_stale_owned_file(&path, cutoff)
+        {
+            state.removed = state.removed.saturating_add(1);
         }
         if state.visited >= MAXIMUM_STORY_CLEANUP_ENTRIES {
             return;
         }
     }
+}
+
+fn project_media_filenames(project: &StoryProject) -> HashSet<String> {
+    let mut filenames = HashSet::new();
+    for image in project
+        .characters
+        .iter()
+        .flat_map(|value| &value.media.images)
+        .chain(project.scenes.iter().flat_map(|value| &value.media.images))
+        .chain(project.props.iter().flat_map(|value| &value.media.images))
+        .chain(
+            project
+                .segments
+                .iter()
+                .flat_map(|value| value.first_frames.images.iter()),
+        )
+        .chain(
+            project
+                .segments
+                .iter()
+                .flat_map(|value| value.last_frames.images.iter()),
+        )
+    {
+        filenames.insert(image.filename.clone());
+    }
+    for video in project
+        .segments
+        .iter()
+        .flat_map(|segment| segment.video.iter().chain(segment.archived_videos.iter()))
+    {
+        filenames.insert(video.filename.clone());
+    }
+    filenames
 }
 
 fn cleanup_story_runs(runs: &Path, cutoff: SystemTime, state: &mut StoryTemporaryCleanupState) {
@@ -1127,6 +1171,26 @@ fn canonical_story_project_temporary_name(name: &str) -> bool {
 fn canonical_story_run_temporary_name(name: &str) -> bool {
     name.strip_suffix(".json.tmp")
         .is_some_and(|value| canonical_project_id(value).is_ok())
+}
+
+fn canonical_story_media_name(name: &str) -> bool {
+    let (prefix, suffix) = if name.starts_with("image-") && name.ends_with(".png") {
+        ("image-", ".png")
+    } else if name.starts_with("video-") && name.ends_with(".mp4") {
+        ("video-", ".mp4")
+    } else {
+        return false;
+    };
+    let Some(token) = name
+        .strip_prefix(prefix)
+        .and_then(|value| value.strip_suffix(suffix))
+    else {
+        return false;
+    };
+    token.len() == 32
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn safe_cleanup_directory(path: &Path) -> bool {
