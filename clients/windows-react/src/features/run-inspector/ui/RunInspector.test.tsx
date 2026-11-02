@@ -1,9 +1,9 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useRunInspectorStore } from "../application/runInspectorStore";
 import type { RunInspectorGraph } from "../domain/runInspector";
 import type { RunInspectorPort } from "../ports/RunInspectorPort";
-import { RunInspectorLauncher } from "./RunInspector";
+import { RunInspectorLauncher, RunInspectorSheet } from "./RunInspector";
 
 const lookup = {
   ownerUserId: "owner-1",
@@ -52,6 +52,29 @@ describe("Run Inspector launcher", () => {
     expect(screen.getByRole("button", { name: /任务 · 等待确认.*运行详情/ })).toHaveClass(
       "run-inspector-launcher--attention",
     );
+  });
+
+  it("traps focus in the sheet and restores the trigger focus on Escape", async () => {
+    const trigger = document.createElement("button");
+    document.body.append(trigger);
+    trigger.focus();
+    const inspectorPort = port();
+    await act(async () => {
+      await useRunInspectorStore.getState().probe(inspectorPort, lookup);
+      await useRunInspectorStore.getState().open(inspectorPort, lookup);
+    });
+    render(<RunInspectorSheet port={inspectorPort} />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "关闭" })).toHaveFocus());
+    const dialog = screen.getByRole("dialog", { name: "任务工作区" });
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>("button:not([disabled])"));
+    focusable.at(-1)?.focus();
+    fireEvent.keyDown(window, { key: "Tab" });
+    expect(focusable[0]).toHaveFocus();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "任务工作区" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    trigger.remove();
   });
 });
 

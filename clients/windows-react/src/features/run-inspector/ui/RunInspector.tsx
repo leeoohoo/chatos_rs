@@ -76,6 +76,8 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
   const cancel = useRunInspectorStore((state) => state.cancel);
   const restart = useRunInspectorStore((state) => state.restart);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const pollingKey = phase.kind === "open" && graphHasActiveTasks(phase.graph)
     ? `${phase.lookup.userMessageId}:${phase.selectedTaskId}`
     : null;
@@ -90,14 +92,37 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
 
   useEffect(() => {
     if (phase.kind !== "open") return;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      close();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex=\"-1\"])",
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     closeButtonRef.current?.focus();
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      previousFocusRef.current?.focus();
+      previousFocusRef.current = null;
+    };
   }, [close, phase.kind]);
 
   if (phase.kind !== "open") return null;
@@ -109,6 +134,7 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
         aria-modal="true"
         className="run-inspector"
         onMouseDown={(event) => event.stopPropagation()}
+        ref={dialogRef}
         role="dialog"
       >
         <header className="run-inspector__header">
