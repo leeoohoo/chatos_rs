@@ -10,6 +10,7 @@ use std::{
 const INTEGRITY_SCHEMA_VERSION: u32 = 1;
 const INTEGRITY_DIRECTORY: &str = ".integrity";
 const MAXIMUM_FILES: usize = 20_000;
+const MAXIMUM_TREE_ENTRIES: usize = MAXIMUM_FILES * 2;
 const MAXIMUM_TOTAL_BYTES: u64 = 512 * 1_024 * 1_024;
 const MAXIMUM_RECORD_BYTES: u64 = 16 * 1_024 * 1_024;
 const COMPONENT_REVISION_PREFIX: &str = "integrity-v1-";
@@ -225,13 +226,14 @@ fn snapshot_tree(root: &Path) -> Result<BTreeMap<String, String>, String> {
     let mut directories = vec![root.to_path_buf()];
     let mut files = BTreeMap::new();
     let mut total_bytes = 0_u64;
+    let mut visited_entries = 0usize;
     while let Some(directory) = directories.pop() {
-        let mut entries = fs::read_dir(&directory)
-            .map_err(|_| integrity_error())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| integrity_error())?;
-        entries.sort_by_key(fs::DirEntry::file_name);
-        for entry in entries {
+        for entry in fs::read_dir(&directory).map_err(|_| integrity_error())? {
+            visited_entries = visited_entries.saturating_add(1);
+            if visited_entries > MAXIMUM_TREE_ENTRIES {
+                return Err(integrity_error());
+            }
+            let entry = entry.map_err(|_| integrity_error())?;
             let path = entry.path();
             let metadata = fs::symlink_metadata(&path).map_err(|_| integrity_error())?;
             if is_symlink_or_reparse(&metadata) {
