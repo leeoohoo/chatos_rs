@@ -283,6 +283,9 @@ pub fn run() {
         .manage(LocalTerminalRegistry::new(
             machine_resource_governor.clone(),
         ))
+        .manage(ProjectRunManager::new_with_resources(
+            machine_resource_governor.clone(),
+        ))
         .manage(machine_resource_governor)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
@@ -290,7 +293,6 @@ pub fn run() {
         .manage(ApprovalReviewer::default())
         .manage(ConversationRuntimeSettingsManager::default())
         .manage(ProjectCreationManager::default())
-        .manage(ProjectRunManager::default())
         .setup(|app| {
             let data_dir = app
                 .path()

@@ -324,6 +324,7 @@ async fn runtime_projects_typed_process_output_and_owner_scoped_state() {
 
     let mut state = manager.start(&owner, target).await.unwrap();
     assert_eq!(state.instances.len(), 1);
+    assert_eq!(manager.used_resource_units(), 1);
     assert!(manager.snapshot(&other).await.unwrap().instances.is_empty());
     assert!(manager.stop(&other, &state.instances[0].id).await.is_err());
 
@@ -343,6 +344,7 @@ async fn runtime_projects_typed_process_output_and_owner_scoped_state() {
     assert_eq!(state.instances[0].exit_code, Some(0));
     assert!(state.instances[0].log.starts_with("$ typed test\n"));
     assert!(state.instances[0].log.contains("进程已退出"));
+    assert_eq!(manager.used_resource_units(), 0);
     let timed_out = manager
         .poll_changes(&owner, state.revision, 10)
         .await

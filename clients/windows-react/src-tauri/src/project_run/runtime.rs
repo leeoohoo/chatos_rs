@@ -1,6 +1,9 @@
 use super::models::{
     ProjectRunChangeSnapshot, ProjectRunInstance, ProjectRunState, ResolvedProjectRunTarget,
 };
+use crate::machine_resource_governor::{
+    MachineResourceGovernor, MachineResourceKind, MachineResourcePermit, MachineResourcePriority,
+};
 use crate::terminal_runtime::process::ProcessTermination;
 use std::{
     collections::HashMap,
@@ -48,9 +51,30 @@ impl ProjectRunScope {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct ProjectRunManager {
     store: Arc<Mutex<ProjectRunStore>>,
+    resources: MachineResourceGovernor,
+}
+
+impl Default for ProjectRunManager {
+    fn default() -> Self {
+        Self::new_with_resources(MachineResourceGovernor::default())
+    }
+}
+
+impl ProjectRunManager {
+    pub(crate) fn new_with_resources(resources: MachineResourceGovernor) -> Self {
+        Self {
+            store: Arc::new(Mutex::new(ProjectRunStore::default())),
+            resources,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn used_resource_units(&self) -> usize {
+        self.resources.used_resource_units()
+    }
 }
 
 #[derive(Default)]
@@ -109,6 +133,7 @@ struct ManagedProjectRun {
     state: Mutex<ManagedProjectRunState>,
     changed: Arc<ProjectChangeSignal>,
     finished: Notify,
+    resource_permit: Mutex<Option<MachineResourcePermit>>,
 }
 
 struct ManagedProjectRunState {
@@ -142,7 +167,14 @@ impl ProjectRunManager {
             let changed = store.changes.entry(scope.key()).or_default().clone();
             (sequence, changed)
         };
-        let process = spawn_project_run(scope, target, sequence, changed.clone()).await?;
+        let permit = self
+            .resources
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await?;
+        let process = spawn_project_run(scope, target, sequence, changed.clone(), permit).await?;
         {
             let mut store = self.store.lock().await;
             store.instances.insert(process.id.clone(), process.clone());
@@ -465,6 +497,7 @@ impl ManagedProjectRun {
             ManagedStatus::Failed
         };
         drop(state);
+        self.resource_permit.lock().await.take();
         self.changed.bump();
         self.finished.notify_waiters();
     }
@@ -526,6 +559,7 @@ async fn spawn_project_run(
     mut target: ResolvedProjectRunTarget,
     sequence: u64,
     changed: Arc<ProjectChangeSignal>,
+    resource_permit: MachineResourcePermit,
 ) -> Result<Arc<ManagedProjectRun>, String> {
     let mut redactions = target
         .environment
@@ -585,6 +619,7 @@ async fn spawn_project_run(
         }),
         changed,
         finished: Notify::new(),
+        resource_permit: Mutex::new(Some(resource_permit)),
     });
     let stdout_task = stdout.map(|stdout| tokio::spawn(read_pipe(process.clone(), stdout)));
     let stderr_task = stderr.map(|stderr| tokio::spawn(read_pipe(process.clone(), stderr)));
