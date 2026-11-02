@@ -7,6 +7,7 @@ use std::{
 use uuid::Uuid;
 
 const STALE_EXPORT_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_EXPORT_ENTRIES: usize = 2_000;
 
 pub(crate) fn export_bytes(
     destination: &Path,
@@ -115,7 +116,7 @@ fn cleanup_stale_exports(parent: &Path, prefix: &str) {
     let Ok(entries) = fs::read_dir(parent) else {
         return;
     };
-    for entry in entries.flatten() {
+    for entry in entries.take(MAXIMUM_EXPORT_ENTRIES).flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if canonical_temporary_name(&name, prefix) {

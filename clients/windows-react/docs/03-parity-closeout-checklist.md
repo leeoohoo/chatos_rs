@@ -40,7 +40,7 @@ Windows 产品版本：`3.0.9`
 - [x] 项目运行 runtime 的用户目标进程现在共享 `CodeReadWorker + Interactive` permit；permit 覆盖启动、输出读取和运行生命周期，并在自然退出、停止、项目释放、账号切换、应用 reset 与启动失败时释放。
 - [x] Plugin 安装器的 Git/npm/MCP 预检与安装子进程现在共享 `CodeReadWorker + Interactive` permit；普通 Registry 元数据查询不占用容量，设置页安装与 Agent 安装助手均覆盖 npm/Git 子进程及超时回收。
 - [x] 剩余 process-spawn/重型 in-process 入口审计已完成：本机终端、项目运行、Plugin 应用、Agent Plugin MCP、Computer Use、Plugin 安装器、项目 Git 与 OpenSSH 均进入共享 permit；Host 进程继续使用自己的 Host scheduler durable claim，已领取 durable claim 的附件/终端 tool work 不重复进入 App pool，Explorer/系统 onboarding 只保留用户明确触发的外部短进程。
-- [x] Agent Artifact 与记事本 Markdown 导出已使用公共 app-owned 原子事务：同目录独占临时文件完整写入并刷盘后再替换目标，失败自动清理；仅回收当前导出目录内、严格 canonical 命名、超过 24 小时且非 reparse/多硬链接的 ChatOS 残留。Windows 不会按 `.tmp` 后缀扫描或删除任意用户文件。
+- [x] Agent Artifact 与记事本 Markdown 导出已使用公共 app-owned 原子事务：同目录独占临时文件完整写入并刷盘后再替换目标，失败自动清理；仅回收当前导出目录内最多 2,000 项、严格 canonical 命名、超过 24 小时且非 reparse/多硬链接的 ChatOS 残留。Windows 不会按 `.tmp` 后缀扫描或删除任意用户文件。
 - [x] 附件 vault、Media Studio 图片/视频历史与 Story Studio 确定性 manifest 已接入所有权明确的启动后台清理：共享资源 governor 的 `CodeReadWorker` 后台 permit，只处理超过 24 小时的 canonical 临时文件；目录层级/目录项有界，账号 hash、记录 UUID、文件名、普通文件、reparse 与多硬链接均失败关闭，不碰已提交记录、媒体素材或任意后缀相同文件。
 - [x] 固定 AppData 元数据目录的事务临时文件已接入同一后台清理链：General Settings、Global Utilities、Quick Search、Pet 偏好/收藏、Project Run、Remote Connection credential index、Clipboard payload 与 Tool Approval journal 共 6 个固定 scope、9 种受审计前缀；每 scope 最多 2,000 项，只删除超过 24 小时的 canonical 小写 UUID 临时文件。
 - [x] Agent Plugin per-run invocation journal 与 Plugin 安装完整性事务已接入同一后台清理链：只进入 `NativeConnector/PluginRuntime/InvocationJournal` 和 `NativeConnector/Plugins/.integrity` 两个固定目录，分别只接受 `.<小写 UUID>.tmp` 与 `.<64 位小写 SHA-256>-<小写 UUID>.tmp`；继续拒绝未满 24 小时、symlink/reparse、多硬链接、非 canonical 名称和超出 2,000 项上限的对象。
