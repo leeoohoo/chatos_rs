@@ -96,6 +96,7 @@ Windows 产品版本：`3.0.9`
 - [x] Media Studio 图片/视频历史清理已覆盖崩溃中断的记录目录：账号 hash 和记录 UUID 通过固定层级校验后，缺失 `record.json` 且整棵树超过 24 小时、无 reparse/多硬链接的目录才回收；已有 manifest 的记录只清理 canonical `record.json.tmp`，未知名称和近期写入保留。
 - [x] Story Studio 项目媒体清理已覆盖生成资产孤儿：加载并验证 `project.json` 后，只回收未被当前项目引用的 `image-<小写 32 位 hex>.png` / `video-<小写 32 位 hex>.mp4` 旧普通文件；用户资源名、异常 manifest、reparse、硬链接和近期写入均保留。
 - [x] 远程下载目标目录已接入按需残留清理：每次新下载前只在用户刚确认的目标目录内，扫描最多 2,000 项 canonical `.chatos-download-<24 位小写 hex>.tmp`，仅回收超过 24 小时的普通单硬链接文件；其他后缀、未知名称、近期文件和 reparse 对象保留。
+- [x] 终端项目文件批量编辑已接入崩溃残留清理：每次提交前只在本次编辑涉及的父目录内，扫描最多 2,000 项 canonical `.chatos-edit-<小写 UUID>` / `.chatos-backup-<小写 UUID>`，仅回收超过 24 小时的普通单硬链接文件；未知名称、近期文件、硬链接和 reparse 对象保留。
 - [x] 固定 AppData 临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-appdata-temp-cleanup-final-nsis.json`：全新目录安装 `2,281 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,214 ms`、卸载 `667 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin 事务临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-temp-cleanup-final-nsis.json`：全新目录安装 `2,181 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,187 ms`、卸载 `638 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin staging 崩溃残留清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-staging-cleanup-final-nsis.json`：全新目录安装 `2,187 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,173 ms`、卸载 `647 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。

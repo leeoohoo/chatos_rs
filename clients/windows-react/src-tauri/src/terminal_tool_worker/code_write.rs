@@ -2,17 +2,20 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
+    ffi::OsStr,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 
 const MAXIMUM_WRITE_BYTES: usize = 2 * 1_024 * 1_024;
 const MAXIMUM_OPERATIONS_PER_BATCH: usize = 200;
 const EDIT_SESSION_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+const STALE_EDIT_ARTIFACT_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_EDIT_ARTIFACTS_PER_DIRECTORY: usize = 2_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct EditScope {
@@ -652,6 +655,19 @@ struct PreparedChange {
 
 fn apply_transaction(states: &[FileState], root: &Path) -> Result<(), CodeWriteError> {
     validate_current_baselines(states, root)?;
+    let cutoff = SystemTime::now()
+        .checked_sub(STALE_EDIT_ARTIFACT_AGE)
+        .unwrap_or(UNIX_EPOCH);
+    let mut artifact_directories = HashSet::new();
+    for state in states {
+        let target = resolve_path(root, &state.path)?;
+        if let Some(parent) = target.parent() {
+            artifact_directories.insert(parent.to_owned());
+        }
+    }
+    for directory in artifact_directories {
+        cleanup_stale_edit_artifacts(&directory, cutoff);
+    }
     let mut created_directories = Vec::new();
     let mut prepared = Vec::with_capacity(states.len());
     for state in states {
@@ -923,6 +939,125 @@ fn line_byte_range(
 fn unique_sibling(target: &Path, label: &str) -> PathBuf {
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
     parent.join(format!(".{label}-{}", Uuid::new_v4()))
+}
+
+fn cleanup_stale_edit_artifacts(directory: &Path, cutoff: SystemTime) -> usize {
+    let Ok(metadata) = fs::symlink_metadata(directory) else {
+        return 0;
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        return 0;
+    }
+    let Ok(entries) = fs::read_dir(directory) else {
+        return 0;
+    };
+    let mut removed = 0usize;
+    for entry in entries.take(MAXIMUM_EDIT_ARTIFACTS_PER_DIRECTORY) {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if !canonical_edit_artifact_name(&entry.file_name()) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || is_reparse_point(&metadata)
+            || !metadata.modified().is_ok_and(|modified| modified <= cutoff)
+            || !single_link_regular_file(&path, &metadata)
+        {
+            continue;
+        }
+        if fs::remove_file(path).is_ok() {
+            removed = removed.saturating_add(1);
+        }
+    }
+    removed
+}
+
+fn canonical_edit_artifact_name(name: &OsStr) -> bool {
+    let Some(value) = name.to_str() else {
+        return false;
+    };
+    [".chatos-edit-", ".chatos-backup-"]
+        .into_iter()
+        .any(|prefix| {
+            value
+                .strip_prefix(prefix)
+                .and_then(|suffix| Uuid::parse_str(suffix).ok())
+                .is_some_and(|uuid| uuid.to_string() == value[prefix.len()..])
+        })
+}
+
+#[cfg(windows)]
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn single_link_regular_file(path: &Path, _: &fs::Metadata) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        Storage::FileSystem::{
+            CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        },
+    };
+
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const OPEN_EXISTING: u32 = 3;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+    let wide = path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            0,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return false;
+    }
+    let mut information = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+    let valid = unsafe { GetFileInformationByHandle(handle, &mut information) } != 0;
+    let safe = valid
+        && information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)
+            == 0
+        && information.nNumberOfLinks == 1;
+    let _ = unsafe { CloseHandle(handle) };
+    safe
+}
+
+#[cfg(unix)]
+fn single_link_regular_file(_: &Path, metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    metadata.nlink() == 1
+}
+
+#[cfg(not(any(windows, unix)))]
+fn single_link_regular_file(_: &Path, _: &fs::Metadata) -> bool {
+    false
 }
 
 fn session_result(session: &EditSession, reused: bool) -> Value {
@@ -1210,6 +1345,62 @@ mod tests {
                 &owned,
             )
             .is_err());
+    }
+
+    #[test]
+    fn stale_edit_artifact_cleanup_is_bounded_to_canonical_single_link_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let edit = root.join(format!(".chatos-edit-{}", Uuid::new_v4()));
+        let backup = root.join(format!(".chatos-backup-{}", Uuid::new_v4()));
+        let malformed = root.join(".chatos-edit-not-a-uuid");
+        let unrelated = root.join("notes.tmp");
+        fs::write(&edit, b"edit").unwrap();
+        fs::write(&backup, b"backup").unwrap();
+        fs::write(&malformed, b"keep").unwrap();
+        fs::write(&unrelated, b"keep").unwrap();
+
+        assert_eq!(
+            cleanup_stale_edit_artifacts(root, UNIX_EPOCH),
+            0,
+            "recent artifacts must remain untouched"
+        );
+        assert_eq!(
+            cleanup_stale_edit_artifacts(
+                root,
+                SystemTime::now()
+                    .checked_add(Duration::from_secs(1))
+                    .unwrap()
+            ),
+            2
+        );
+        assert!(!edit.exists());
+        assert!(!backup.exists());
+        assert!(malformed.exists());
+        assert!(unrelated.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_edit_artifact_cleanup_keeps_hard_linked_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let canonical = root.join(format!(".chatos-edit-{}", Uuid::new_v4()));
+        let linked = root.join("linked.txt");
+        fs::write(&canonical, b"linked").unwrap();
+        fs::hard_link(&canonical, &linked).unwrap();
+
+        assert_eq!(
+            cleanup_stale_edit_artifacts(
+                root,
+                SystemTime::now()
+                    .checked_add(Duration::from_secs(1))
+                    .unwrap()
+            ),
+            0
+        );
+        assert!(canonical.exists());
+        assert!(linked.exists());
     }
 
     #[cfg(unix)]
