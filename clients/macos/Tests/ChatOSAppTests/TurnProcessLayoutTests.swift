@@ -6,6 +6,37 @@ import XCTest
 
 @MainActor
 final class TurnProcessLayoutTests: XCTestCase {
+    func testGraphScrollCaptureStaysInsideCompactCanvas() async throws {
+        let content = VStack(spacing: 0) {
+            MessageTaskGraphCanvas(
+                graph: MessageTaskGraphSnapshot(rootTaskIDs: [], nodes: [], edges: []),
+                selectedTaskID: nil, onSelect: { _, _ in }, onStop: { _ in }
+            )
+                .frame(height: 200)
+            Text("任务检查器").frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        let hosting = NSHostingController(rootView: content)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 848, height: 450),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = hosting
+        window.setContentSize(NSSize(width: 848, height: 450))
+        defer { window.close() }
+        try await settle(hosting.view)
+
+        func capture(in view: NSView) -> MessageTaskGraphScrollZoomCapture.ScrollCaptureView? {
+            if let result = view as? MessageTaskGraphScrollZoomCapture.ScrollCaptureView { return result }
+            return view.subviews.lazy.compactMap { capture(in: $0) }.first
+        }
+        let scrollCapture = try XCTUnwrap(capture(in: hosting.view))
+        XCTAssertEqual(scrollCapture.bounds.width, 848, accuracy: 1)
+        XCTAssertEqual(scrollCapture.bounds.height, 200, accuracy: 1)
+        let frame = scrollCapture.convert(scrollCapture.bounds, to: hosting.view)
+        XCTAssertEqual(frame.minX, 0, accuracy: 1)
+        XCTAssertEqual(frame.maxX, 848, accuracy: 1)
+        XCTAssertLessThanOrEqual(frame.height, 200)
+    }
+
     func testLongProcessFitsChatViewportAndResizesWithoutOpeningAnotherWindow() async throws {
         let turn = ConversationTurn(
             id: "layout-turn", sessionID: "layout-session", sequence: 1, revision: 1,

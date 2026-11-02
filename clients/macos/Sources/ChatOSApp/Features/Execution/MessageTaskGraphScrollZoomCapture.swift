@@ -88,10 +88,13 @@ struct MessageTaskGraphScrollZoomCapture: NSViewRepresentable {
         }
 
         func syncGeometry() {
-            guard let window else { return }
+            guard let window, !isHiddenOrHasHiddenAncestor else {
+                coordinator?.updateGeometry(windowNumber: -1, frameInWindow: .zero)
+                return
+            }
             coordinator?.updateGeometry(
                 windowNumber: window.windowNumber,
-                frameInWindow: convert(bounds, to: nil)
+                frameInWindow: convert(visibleRect, to: nil)
             )
         }
     }

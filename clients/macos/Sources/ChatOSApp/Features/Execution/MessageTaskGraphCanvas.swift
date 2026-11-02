@@ -48,6 +48,7 @@ struct MessageTaskGraphCanvas: View {
                     y: panOffset.height + dragTranslation.height
                 )
             }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             .contentShape(Rectangle())
             .clipped()
             .background(Color(nsColor: .textBackgroundColor))
