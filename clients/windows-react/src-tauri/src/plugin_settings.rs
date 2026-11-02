@@ -16,6 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     future::Future,
+    io::Read,
     path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
@@ -2314,7 +2315,17 @@ fn load_installed_manifest(
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAXIMUM_MANIFEST_BYTES {
         return Err(plugin_catalog_error());
     }
-    let raw = fs::read_to_string(manifest_path).map_err(|_| plugin_catalog_error())?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize + 1);
+    fs::File::open(&manifest_path)
+        .and_then(|file| {
+            file.take(MAXIMUM_MANIFEST_BYTES + 1)
+                .read_to_end(&mut bytes)
+        })
+        .map_err(|_| plugin_catalog_error())?;
+    if bytes.len() as u64 > MAXIMUM_MANIFEST_BYTES {
+        return Err(plugin_catalog_error());
+    }
+    let raw = String::from_utf8(bytes).map_err(|_| plugin_catalog_error())?;
     parse_plugin_manifest(&raw).map_err(|_| plugin_catalog_error())
 }
 
