@@ -1,3 +1,6 @@
+use crate::machine_resource_governor::{
+    MachineResourceGovernor, MachineResourceKind, MachineResourcePermit, MachineResourcePriority,
+};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::Serialize;
 use std::{
@@ -55,12 +58,34 @@ struct LocalTerminalRegistryState {
     sessions: HashMap<String, Arc<ManagedLocalTerminal>>,
 }
 
-#[derive(Default)]
 pub(crate) struct LocalTerminalRegistry {
     state: Mutex<LocalTerminalRegistryState>,
+    resources: MachineResourceGovernor,
+}
+
+impl Default for LocalTerminalRegistry {
+    fn default() -> Self {
+        Self::new(MachineResourceGovernor::default())
+    }
 }
 
 impl LocalTerminalRegistry {
+    pub(crate) fn new(resources: MachineResourceGovernor) -> Self {
+        Self {
+            state: Mutex::new(LocalTerminalRegistryState::default()),
+            resources,
+        }
+    }
+
+    async fn acquire_resource(&self) -> Result<MachineResourcePermit, String> {
+        self.resources
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await
+    }
+
     async fn begin_start(
         &self,
         owner_user_id: &str,
@@ -444,6 +469,7 @@ pub async fn start_local_terminal(
         .begin_start(&owner_user_id, &presentation_id)
         .await?;
     let result = async {
+        let resource_permit = registry.acquire_resource().await?;
         let launch = tauri::async_runtime::spawn_blocking(LocalTerminalLaunch::system)
             .await
             .map_err(|_| terminal_launch_error())??;
@@ -458,7 +484,13 @@ pub async fn start_local_terminal(
             generation: token.generation,
         };
         let session = tauri::async_runtime::spawn_blocking(move || {
-            ManagedLocalTerminal::spawn(identity, launch, columns, rows)
+            ManagedLocalTerminal::spawn_with_permit(
+                identity,
+                launch,
+                columns,
+                rows,
+                Some(resource_permit),
+            )
         })
         .await
         .map_err(|_| terminal_launch_error())??;

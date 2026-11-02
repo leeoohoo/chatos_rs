@@ -613,4 +613,36 @@ mod tests {
         assert_eq!(governor.snapshot().queued_count, 0);
         drop(first);
     }
+
+    #[tokio::test]
+    async fn released_permits_admit_waiting_work() {
+        let governor = governor(1, 1);
+        let first = governor
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await
+            .unwrap();
+        assert_eq!(governor.snapshot().used_resource_units, 1);
+
+        let waiting_governor = governor.clone();
+        let waiting = tokio::spawn(async move {
+            waiting_governor
+                .acquire(
+                    MachineResourceKind::CodeReadWorker,
+                    MachineResourcePriority::Interactive,
+                )
+                .await
+                .unwrap()
+        });
+        tokio::task::yield_now().await;
+        assert_eq!(governor.snapshot().queued_count, 1);
+
+        drop(first);
+        let second = waiting.await.unwrap();
+        assert_eq!(governor.snapshot().used_resource_units, 1);
+        drop(second);
+        assert_eq!(governor.snapshot().used_resource_units, 0);
+    }
 }

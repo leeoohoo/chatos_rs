@@ -280,12 +280,14 @@ pub fn run() {
         .manage(wechat_companion_manager)
         .manage(pet_asset_store)
         .manage(clipboard_history_manager)
+        .manage(LocalTerminalRegistry::new(
+            machine_resource_governor.clone(),
+        ))
         .manage(machine_resource_governor)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
         .manage(ApprovalReviewer::default())
-        .manage(LocalTerminalRegistry::default())
         .manage(ConversationRuntimeSettingsManager::default())
         .manage(ProjectCreationManager::default())
         .manage(ProjectRunManager::default())

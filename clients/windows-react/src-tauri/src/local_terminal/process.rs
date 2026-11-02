@@ -3,6 +3,7 @@ use super::{
     LocalTerminalLaunch, MAXIMUM_INPUT_BYTES, MAXIMUM_OUTPUT_EVENTS, MAXIMUM_POLL_BYTES,
     MAXIMUM_POLL_EVENTS, MAXIMUM_POLL_TIMEOUT_MS, MAXIMUM_RETAINED_OUTPUT_BYTES, OUTPUT_READ_BYTES,
 };
+use crate::machine_resource_governor::MachineResourcePermit;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::{
     collections::VecDeque,
@@ -25,6 +26,7 @@ pub(super) struct ManagedLocalTerminal {
     state: StandardMutex<LocalTerminalSessionState>,
     changed: Notify,
     closed: AtomicBool,
+    resource_permit: StandardMutex<Option<MachineResourcePermit>>,
     _launch: LocalTerminalLaunch,
 }
 
@@ -66,11 +68,22 @@ pub(super) struct LocalTerminalPollSnapshot {
 }
 
 impl ManagedLocalTerminal {
+    #[allow(dead_code)]
     pub(super) fn spawn(
         identity: LocalTerminalIdentity,
         launch: LocalTerminalLaunch,
         columns: u16,
         rows: u16,
+    ) -> Result<Arc<Self>, String> {
+        Self::spawn_with_permit(identity, launch, columns, rows, None)
+    }
+
+    pub(super) fn spawn_with_permit(
+        identity: LocalTerminalIdentity,
+        launch: LocalTerminalLaunch,
+        columns: u16,
+        rows: u16,
+        resource_permit: Option<MachineResourcePermit>,
     ) -> Result<Arc<Self>, String> {
         let pty = native_pty_system()
             .openpty(PtySize {
@@ -124,6 +137,7 @@ impl ManagedLocalTerminal {
             }),
             changed: Notify::new(),
             closed: AtomicBool::new(false),
+            resource_permit: StandardMutex::new(resource_permit),
             _launch: launch,
         });
         let (reader_done_tx, reader_done_rx) = std::sync::mpsc::channel();
@@ -216,9 +230,12 @@ impl ManagedLocalTerminal {
 
     fn finish(&self, exit_code: Option<i32>) {
         let Ok(mut state) = self.state.lock() else {
+            self.release_resource();
             return;
         };
         if !state.running {
+            drop(state);
+            self.release_resource();
             return;
         }
         state.running = false;
@@ -236,6 +253,7 @@ impl ManagedLocalTerminal {
             master.take();
         }
         drop(state);
+        self.release_resource();
         self.changed.notify_waiters();
     }
 
@@ -252,7 +270,14 @@ impl ManagedLocalTerminal {
         if let Ok(mut writer) = self.writer.lock() {
             writer.take();
         }
+        self.release_resource();
         self.changed.notify_waiters();
+    }
+
+    fn release_resource(&self) {
+        if let Ok(mut permit) = self.resource_permit.lock() {
+            permit.take();
+        }
     }
 
     fn is_running(&self) -> bool {

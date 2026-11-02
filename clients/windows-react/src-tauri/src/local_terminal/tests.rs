@@ -107,7 +107,16 @@ async fn native_pty_streams_output_and_exit_as_ordered_events() {
         initial_working_directory: directory.path().to_string_lossy().into_owned(),
         shell_name: "sh".into(),
     };
-    let session = ManagedLocalTerminal::spawn(
+    let resources = MachineResourceGovernor::default();
+    let permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await
+        .unwrap();
+    assert_eq!(resources.snapshot().used_resource_units, 1);
+    let session = ManagedLocalTerminal::spawn_with_permit(
         LocalTerminalIdentity {
             session_id: "local-terminal-test".into(),
             owner_user_id: "owner-1".into(),
@@ -118,6 +127,7 @@ async fn native_pty_streams_output_and_exit_as_ordered_events() {
         launch,
         80,
         24,
+        Some(permit),
     )
     .unwrap();
     session
@@ -141,5 +151,6 @@ async fn native_pty_streams_output_and_exit_as_ordered_events() {
 
     assert!(String::from_utf8_lossy(&output).contains("__CHATOS_LOCAL_PTY__"));
     assert_eq!(exit_code, Some(7));
+    assert_eq!(resources.snapshot().used_resource_units, 0);
     session.close();
 }
