@@ -455,6 +455,11 @@ fn search_text(
                 children.truncate(MAXIMUM_SEARCH_CHILDREN_PER_DIRECTORY);
                 truncated = true;
             }
+            let remaining = MAXIMUM_SEARCH_ENTRIES.saturating_sub(visited + pending.len());
+            if children.len() > remaining {
+                children.truncate(remaining);
+                truncated = true;
+            }
             children.sort();
             children.reverse();
             pending.extend(children);
