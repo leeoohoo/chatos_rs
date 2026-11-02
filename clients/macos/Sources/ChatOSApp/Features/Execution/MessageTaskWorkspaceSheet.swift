@@ -220,14 +220,21 @@ struct MessageTaskWorkspaceSheet: View {
                             MessageTaskInspectorView(viewModel: viewModel)
                         }
                     } else {
-                        VSplitView {
+                        // NSSplitView can position an oversized inspector outside the
+                        // chat viewport while measuring its intrinsic content size.
+                        // Keep the compact layout entirely within SwiftUI's proposal.
+                        VStack(spacing: 0) {
                             graphCanvas(graph)
-                                .frame(width: viewport.size.width)
-                                .frame(minHeight: 80)
-                            MessageTaskInspectorView(viewModel: viewModel, fillsAvailableWidth: true)
-                                .frame(width: viewport.size.width)
-                                .frame(minHeight: 80)
+                                .frame(width: viewport.size.width, height: viewport.size.height * 0.45)
+                                .clipped()
+                            Divider()
+                            GeometryReader { inspectorViewport in
+                                MessageTaskInspectorView(viewModel: viewModel, fillsAvailableWidth: true)
+                                    .frame(width: inspectorViewport.size.width, height: inspectorViewport.size.height)
+                                    .clipped()
+                            }
                         }
+                        .frame(width: viewport.size.width, height: viewport.size.height)
                     }
                 }
             } else {
