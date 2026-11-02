@@ -262,6 +262,9 @@ fn stale_owned_temporary_tree(root: &Path, cutoff: SystemTime, maximum_entries: 
             return false;
         };
         for entry in entries {
+            if visited.saturating_add(pending.len()) >= maximum_entries {
+                return false;
+            }
             let Ok(entry) = entry else {
                 return false;
             };
