@@ -13,6 +13,24 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         case failed
     }
 
+    private struct TaskPluginDescriptor: Sendable {
+        let id: String
+        let key: String
+        let componentKey: String?
+        let displayName: String
+    }
+
+    private struct TaskToolCall: Sendable {
+        let callID: String
+        let name: String
+        let displayName: String
+        let route: String
+        let pluginID: String?
+        let pluginName: String?
+        let status: String
+        let occurredAtUnixMs: Int64
+    }
+
     private static let taskProcessRecordTool = "task_run_process_record_process"
     private static let eventPageLimit: UInt32 = 500
     private static let maximumProcessEventPages = 10
@@ -692,7 +710,18 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
                 )
             }
             mapped = mapped.merging(run: mappedRun)
-            mapped.processLog = try? await processLog(ownerUserID: owner, runID: run.runID)
+            let completedToolEvents = (try? await events(
+                ownerUserID: owner,
+                runID: run.runID,
+                eventType: "tool_batch_completed"
+            )) ?? []
+            mapped.processLog = Self.processLog(from: completedToolEvents)
+            mapped.taskToolStateJSON = try? await taskToolUsageJSON(
+                ownerUserID: owner,
+                runID: run.runID,
+                taskInput: task.input,
+                completedEvents: completedToolEvents
+            )
         }
         return mapped
     }
@@ -867,25 +896,6 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         return string("selected_thinking_level", in: settings)
     }
 
-    private func processLog(ownerUserID: String, runID: String) async throws -> String? {
-        var events: [LocalAgentEventRecord] = []
-        var cursor: Int64 = 0
-        for _ in 0..<Self.maximumProcessEventPages {
-            let page = try await client.events(
-                ownerUserID: ownerUserID,
-                runID: runID,
-                afterCursor: cursor,
-                limit: Self.eventPageLimit,
-                eventType: "tool_batch_completed"
-            )
-            events.append(contentsOf: page.events)
-            guard page.events.count == Int(Self.eventPageLimit),
-                  page.nextCursor > cursor else { break }
-            cursor = page.nextCursor
-        }
-        return Self.processLog(from: events)
-    }
-
     static func processLog(from events: [LocalAgentEventRecord]) -> String? {
         let formatter = ISO8601DateFormatter()
         var log: String?
@@ -924,6 +934,217 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             }
         }
         return log
+    }
+
+    private func taskToolUsageJSON(
+        ownerUserID: String,
+        runID: String,
+        taskInput: LocalAgentJSONValue,
+        completedEvents: [LocalAgentEventRecord]
+    ) async throws -> String? {
+        async let requestedEvents = events(
+            ownerUserID: ownerUserID,
+            runID: runID,
+            eventType: "tool_batch_requested"
+        )
+        async let disclosureRequest = try? toolClient.capabilityDisclosures(
+            ownerUserID: ownerUserID,
+            runID: runID
+        )
+        let (requested, disclosures) = try await (
+            requestedEvents,
+            disclosureRequest
+        )
+
+        let configuredPlugins = Self.configuredPlugins(in: taskInput)
+        let pluginsByID = configuredPlugins.reduce(into: [String: TaskPluginDescriptor]()) {
+            $0[$1.id] = $1
+        }
+        let pluginsByKey = configuredPlugins.reduce(into: [String: TaskPluginDescriptor]()) {
+            $0[$1.key] = $1
+        }
+        let completionByCallID = Self.toolCompletionStatuses(from: completedEvents)
+        var calls: [TaskToolCall] = []
+        for event in requested.sorted(by: { $0.cursor < $1.cursor }) {
+            guard case let .object(payload)? = event.payload,
+                  case let .array(toolCalls)? = payload["tool_calls"] ?? payload["calls"] else {
+                continue
+            }
+            for rawCall in toolCalls {
+                guard case let .object(call) = rawCall,
+                      case let .string(callID)? = call["call_id"],
+                      case let .string(toolName)? = call["tool_name"] else { continue }
+                let arguments: [String: LocalAgentJSONValue]
+                if case let .object(value)? = call["arguments"] { arguments = value } else { arguments = [:] }
+                var pluginID: String?
+                var pluginName: String?
+                var displayName = Self.humanizedToolName(toolName)
+                if toolName == "capability_invoke",
+                   case let .string(pluginOption)? = arguments["plugin_option"],
+                   case let .string(toolOption)? = arguments["tool_option"],
+                   let disclosure = disclosures?.first(where: {
+                       $0.pluginOption == pluginOption && $0.toolOption == toolOption
+                   }) {
+                    let resolvedID = disclosure.providerID.hasPrefix("plugin:")
+                        ? String(disclosure.providerID.dropFirst("plugin:".count))
+                        : disclosure.providerID
+                    pluginID = resolvedID
+                    pluginName = pluginsByID[resolvedID]?.displayName
+                        ?? pluginsByKey[resolvedID]?.displayName
+                        ?? resolvedID
+                    displayName = Self.humanizedToolName(disclosure.toolName ?? toolOption)
+                }
+                let completion = completionByCallID[callID]
+                calls.append(TaskToolCall(
+                    callID: callID,
+                    name: toolName,
+                    displayName: displayName,
+                    route: completion?.route ?? "platform",
+                    pluginID: pluginID,
+                    pluginName: pluginName,
+                    status: completion?.status ?? "running",
+                    occurredAtUnixMs: event.createdAtUnixMs
+                ))
+            }
+        }
+
+        guard !configuredPlugins.isEmpty || !calls.isEmpty else { return nil }
+        var pluginCallCounts: [String: Int] = [:]
+        for call in calls {
+            if let pluginID = call.pluginID { pluginCallCounts[pluginID, default: 0] += 1 }
+        }
+        let pluginValues = configuredPlugins.map { plugin in
+            LocalAgentJSONValue.object([
+                "id": .string(plugin.id),
+                "key": .string(plugin.key),
+                "component_key": plugin.componentKey.map(LocalAgentJSONValue.string) ?? .null,
+                "display_name": .string(plugin.displayName),
+                "call_count": .number(Double(pluginCallCounts[plugin.id, default: 0])),
+                "status": .string(pluginCallCounts[plugin.id, default: 0] > 0 ? "used" : "available"),
+            ])
+        }
+        let toolValues = Dictionary(grouping: calls, by: {
+            "\($0.pluginID ?? "builtin"):\($0.displayName):\($0.status)"
+        }).values.compactMap { grouped -> LocalAgentJSONValue? in
+            guard let latest = grouped.max(by: { $0.occurredAtUnixMs < $1.occurredAtUnixMs }) else {
+                return nil
+            }
+            return .object([
+                "name": .string(latest.name),
+                "display_name": .string(latest.displayName),
+                "route": .string(latest.route),
+                "plugin_id": latest.pluginID.map(LocalAgentJSONValue.string) ?? .null,
+                "plugin_name": latest.pluginName.map(LocalAgentJSONValue.string) ?? .null,
+                "status": .string(latest.status),
+                "call_count": .number(Double(grouped.count)),
+                "latest_at_unix_ms": .number(Double(latest.occurredAtUnixMs)),
+            ])
+        }.sorted { lhs, rhs in
+            Self.number("latest_at_unix_ms", in: lhs) > Self.number("latest_at_unix_ms", in: rhs)
+        }
+        return Self.json(.object([
+            "version": .number(1),
+            "plugins": .array(pluginValues),
+            "tools": .array(toolValues),
+        ]))
+    }
+
+    private func events(
+        ownerUserID: String,
+        runID: String,
+        eventType: String
+    ) async throws -> [LocalAgentEventRecord] {
+        var result: [LocalAgentEventRecord] = []
+        var cursor: Int64 = 0
+        for _ in 0..<Self.maximumProcessEventPages {
+            let page = try await client.events(
+                ownerUserID: ownerUserID,
+                runID: runID,
+                afterCursor: cursor,
+                limit: Self.eventPageLimit,
+                eventType: eventType
+            )
+            result.append(contentsOf: page.events)
+            guard page.events.count == Int(Self.eventPageLimit), page.nextCursor > cursor else { break }
+            cursor = page.nextCursor
+        }
+        return result
+    }
+
+    private static func configuredPlugins(in taskInput: LocalAgentJSONValue) -> [TaskPluginDescriptor] {
+        guard case let .object(root) = taskInput else { return [] }
+        let toolOptions: [String: LocalAgentJSONValue]
+        if case let .object(value)? = root["tool_options"] { toolOptions = value } else { toolOptions = [:] }
+        var releasesByKey: [String: (id: String, component: String?)] = [:]
+        if case let .array(snapshots)? = toolOptions["release_snapshots"] ?? root["release_snapshots"] {
+            for snapshot in snapshots {
+                guard case let .object(value) = snapshot,
+                      case let .string(key)? = value["plugin_key"] else { continue }
+                let id = Self.stringValue(value["plugin_id"]) ?? key
+                releasesByKey[key] = (id, Self.stringValue(value["component_key"]))
+            }
+        }
+        guard case let .array(hints)? = toolOptions["plugin_hints"] else { return [] }
+        var seen = Set<String>()
+        return hints.compactMap { hint in
+            guard case let .object(value) = hint,
+                  let key = Self.stringValue(value["plugin_key"]),
+                  seen.insert(key).inserted else { return nil }
+            let release = releasesByKey[key]
+            let component = Self.stringValue(value["component_key"]) ?? release?.component
+            return TaskPluginDescriptor(
+                id: release?.id ?? key,
+                key: key,
+                componentKey: component,
+                displayName: Self.humanizedPluginName(key)
+            )
+        }
+    }
+
+    private static func toolCompletionStatuses(
+        from events: [LocalAgentEventRecord]
+    ) -> [String: (status: String, route: String)] {
+        var result: [String: (status: String, route: String)] = [:]
+        for event in events.sorted(by: { $0.cursor < $1.cursor }) {
+            guard case let .object(payload)? = event.payload,
+                  case let .array(invocations)? = payload["invocations"] else { continue }
+            for invocation in invocations {
+                guard case let .object(value) = invocation,
+                      let callID = stringValue(value["call_id"]) else { continue }
+                result[callID] = (
+                    stringValue(value["status"]) ?? "completed",
+                    stringValue(value["execution_route"]) ?? "platform"
+                )
+            }
+        }
+        return result
+    }
+
+    private static func humanizedToolName(_ value: String) -> String {
+        value.replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+
+    private static func humanizedPluginName(_ value: String) -> String {
+        value.replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+
+    private static func stringValue(_ value: LocalAgentJSONValue?) -> String? {
+        guard case let .string(result)? = value else { return nil }
+        return result
+    }
+
+    private static func number(_ key: String, in value: LocalAgentJSONValue) -> Double {
+        guard case let .object(object) = value,
+              case let .number(result)? = object[key] else { return 0 }
+        return result
     }
 
     static func needsReviewError(from events: [LocalAgentEventRecord]) -> String? {

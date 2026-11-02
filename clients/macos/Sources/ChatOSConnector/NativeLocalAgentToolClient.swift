@@ -49,12 +49,28 @@ public struct LocalAgentToolInvocationRecord: Decodable, Sendable, Equatable {
 struct LocalRunCapabilityDisclosure: Decodable, Sendable, Hashable {
     let pluginOption: String
     let toolOption: String
+    let toolName: String?
     let providerID: String
     let schemaSHA256: String
+
+    init(
+        pluginOption: String,
+        toolOption: String,
+        toolName: String? = nil,
+        providerID: String,
+        schemaSHA256: String
+    ) {
+        self.pluginOption = pluginOption
+        self.toolOption = toolOption
+        self.toolName = toolName
+        self.providerID = providerID
+        self.schemaSHA256 = schemaSHA256
+    }
 
     private enum CodingKeys: String, CodingKey {
         case pluginOption = "plugin_option"
         case toolOption = "tool_option"
+        case toolName = "tool_name"
         case providerID = "provider_id"
         case schemaSHA256 = "schema_sha256"
     }

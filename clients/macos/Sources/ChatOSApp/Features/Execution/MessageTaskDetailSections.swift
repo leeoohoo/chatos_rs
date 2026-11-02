@@ -1,4 +1,5 @@
 import ChatOSCore
+import Foundation
 import SwiftUI
 
 struct MessageTaskDetailSections: View {
@@ -56,19 +57,11 @@ struct MessageTaskDetailSections: View {
                 TaskDetailMarkdownText(text: error, allowsTextSelection: allowsTextSelection)
             }
         }
-        modelOutputSection
-
-        if let summary = distinctResultSummary {
-            TaskDetailDisclosureSection(title: "执行结果摘要") {
-                TaskDetailMarkdownText(
-                    text: summary,
-                    allowsTextSelection: allowsTextSelection
-                )
-            }
-            .id("result-summary-\(task.id)")
-        }
-
-        TaskDetailDisclosureSection(title: "任务内容", defaultExpanded: true) {
+        TaskDetailDisclosureSection(
+            title: "任务内容",
+            systemImage: "scope",
+            defaultExpanded: true
+        ) {
             VStack(alignment: .leading, spacing: 14) {
                 TaskDetailNamedText(
                     label: "目标",
@@ -81,6 +74,22 @@ struct MessageTaskDetailSections: View {
                     allowsTextSelection: allowsTextSelection
                 )
             }
+        }
+
+        if let usage = TaskCapabilityUsageSummary.decode(task.taskToolStateJSON) {
+            TaskCapabilityUsageView(usage: usage)
+        }
+
+        modelOutputSection
+
+        if let summary = distinctResultSummary {
+            TaskDetailDisclosureSection(title: "执行结果摘要", systemImage: "text.badge.checkmark") {
+                TaskDetailMarkdownText(
+                    text: summary,
+                    allowsTextSelection: allowsTextSelection
+                )
+            }
+            .id("result-summary-\(task.id)")
         }
 
         if let plan = MessageTaskRequirementPlan.decode(inputPayloadJSON: task.inputPayloadJSON) {
@@ -99,8 +108,12 @@ struct MessageTaskDetailSections: View {
             }
         }
 
-        TaskDetailDisclosureSection(title: "更多任务信息") {
-            VStack(alignment: .leading, spacing: 20) {
+        TaskDetailDisclosureSection(title: "技术与诊断信息", systemImage: "wrench.and.screwdriver") {
+            VStack(alignment: .leading, spacing: 14) {
+                Label("这些信息用于排查问题，日常查看无需展开。", systemImage: "info.circle")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+
                 TaskDetailSubsection(title: "基本信息") {
                     basicInformation
                 }
@@ -110,7 +123,7 @@ struct MessageTaskDetailSections: View {
                 }
 
                 if let mcpConfig = task.mcpConfigJSON {
-                    TaskDetailSubsection(title: "MCP / 工作区 / 服务器") {
+                    TaskDetailDisclosureSection(title: "MCP / 工作区 / 服务器", systemImage: "server.rack") {
                         TaskDetailCodeBlock(
                             text: mcpConfig,
                             allowsTextSelection: allowsTextSelection
@@ -119,7 +132,7 @@ struct MessageTaskDetailSections: View {
                 }
 
                 if let toolState = task.taskToolStateJSON {
-                    TaskDetailSubsection(title: "过程产物") {
+                    TaskDetailDisclosureSection(title: "调用摘要原始数据", systemImage: "shippingbox") {
                         TaskDetailCodeBlock(
                             text: toolState,
                             allowsTextSelection: allowsTextSelection
@@ -132,7 +145,7 @@ struct MessageTaskDetailSections: View {
                 }
 
                 if let schedule = task.scheduleJSON {
-                    TaskDetailSubsection(title: "调度配置") {
+                    TaskDetailDisclosureSection(title: "调度配置", systemImage: "calendar.badge.clock") {
                         TaskDetailCodeBlock(
                             text: schedule,
                             allowsTextSelection: allowsTextSelection
@@ -141,7 +154,7 @@ struct MessageTaskDetailSections: View {
                 }
 
                 if let input = task.inputPayloadJSON {
-                    TaskDetailSubsection(title: "原始输入") {
+                    TaskDetailDisclosureSection(title: "原始输入", systemImage: "curlybraces.square") {
                         TaskDetailCodeBlock(
                             text: input,
                             allowsTextSelection: allowsTextSelection
@@ -154,9 +167,19 @@ struct MessageTaskDetailSections: View {
 
     private var modelOutputSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("模型输出", systemImage: "sparkles")
-                .appFont(.headline)
-                .foregroundStyle(AppPalette.ai)
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .appFont(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AppPalette.ai)
+                    .frame(width: 28, height: 28)
+                    .background(AppPalette.aiSoft, in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("交付输出").appFont(.subheadline.weight(.semibold))
+                    Text(isActiveTask ? "任务完成后将在这里呈现最终结果" : "本次任务返回的主要内容")
+                        .appFont(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             if let output = modelOutput {
                 TaskDetailMarkdownText(
@@ -189,7 +212,14 @@ struct MessageTaskDetailSections: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(AppPalette.ai.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        .background(
+            LinearGradient(
+                colors: [AppPalette.ai.opacity(0.075), AppPalette.surface],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
         .overlay {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(AppPalette.ai.opacity(0.18), lineWidth: 1)
@@ -197,33 +227,43 @@ struct MessageTaskDetailSections: View {
     }
 
     private var basicInformation: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            LabeledContent("任务 ID", value: task.id)
-            LabeledContent(
-                "状态",
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 132), spacing: 10)],
+            alignment: .leading,
+            spacing: 10
+        ) {
+            TaskDetailFact(
+                label: "状态",
                 value: MessageTaskStatusPresentation.title(
                     for: task,
                     localized: { model.localized($0, english: $1) }
-                )
+                ),
+                systemImage: "circle.fill"
             )
-            LabeledContent("创建人", value: creatorDisplayName)
-            LabeledContent("模型", value: modelDisplayName)
-            LabeledContent("思考等级", value: thinkingLevelDisplayName)
+            TaskDetailFact(label: "执行模型", value: modelDisplayName, systemImage: "cpu")
+            TaskDetailFact(label: "思考等级", value: thinkingLevelDisplayName, systemImage: "brain")
+            TaskDetailFact(label: "创建人", value: creatorDisplayName, systemImage: "person")
             if let priority = task.priority {
-                LabeledContent("优先级", value: "P\(priority)")
+                TaskDetailFact(label: "优先级", value: "P\(priority)", systemImage: "flag")
             }
-            LabeledContent("最近运行", value: lastRunDisplayName)
             if !task.tags.isEmpty {
-                LabeledContent("标签", value: task.tags.joined(separator: "、"))
+                TaskDetailFact(label: "标签", value: task.tags.joined(separator: "、"), systemImage: "tag")
             }
             if let createdAt = task.createdAt {
-                LabeledContent("创建时间", value: createdAt.formatted(date: .abbreviated, time: .standard))
+                TaskDetailFact(
+                    label: "创建时间",
+                    value: createdAt.formatted(date: .abbreviated, time: .shortened),
+                    systemImage: "calendar"
+                )
             }
             if let updatedAt = task.updatedAt {
-                LabeledContent("更新时间", value: updatedAt.formatted(date: .abbreviated, time: .standard))
+                TaskDetailFact(
+                    label: "最近更新",
+                    value: updatedAt.formatted(date: .abbreviated, time: .shortened),
+                    systemImage: "clock.arrow.circlepath"
+                )
             }
         }
-        .appFont(.callout)
         .appTextSelection(allowsTextSelection)
     }
 
@@ -261,6 +301,7 @@ struct MessageTaskDetailSections: View {
 
     private var sourceInformation: some View {
         VStack(alignment: .leading, spacing: 8) {
+            LabeledContent("任务 ID", value: task.id)
             LabeledContent("会话 ID", value: task.sourceSessionID ?? "-")
             LabeledContent("轮次 ID", value: task.sourceTurnID ?? "-")
             LabeledContent("源消息 ID", value: task.sourceUserMessageID ?? "-")
@@ -275,8 +316,9 @@ struct MessageTaskDetailSections: View {
             if !task.dependencyContextRefs.isEmpty {
                 LabeledContent("依赖上下文", value: task.dependencyContextRefs.joined(separator: "、"))
             }
+            LabeledContent("最近运行", value: lastRunDisplayName)
         }
-        .appFont(.callout)
+        .appFont(.caption.monospaced())
         .appTextSelection(allowsTextSelection)
     }
 
@@ -441,27 +483,47 @@ private struct TaskDetailCodeBlock: View {
     let allowsTextSelection: Bool
 
     var body: some View {
-        Text(text)
-            .appFont(.caption.monospaced())
-            .lineSpacing(2)
-            .appTextSelection(allowsTextSelection)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        ScrollView([.horizontal, .vertical]) {
+            Text(formattedText)
+                .appFont(.caption.monospaced())
+                .lineSpacing(3)
+                .appTextSelection(allowsTextSelection)
+                .fixedSize(horizontal: true, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+        }
+        .frame(minHeight: 90, maxHeight: 240)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
+        .overlay { RoundedRectangle(cornerRadius: 9).stroke(AppPalette.border.opacity(0.65)) }
+    }
+
+    private var formattedText: String {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              JSONSerialization.isValidJSONObject(object),
+              let pretty = try? JSONSerialization.data(
+                  withJSONObject: object,
+                  options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+              ),
+              let result = String(data: pretty, encoding: .utf8) else { return text }
+        return result
     }
 }
 
 private struct TaskDetailDisclosureSection<Content: View>: View {
     let title: String
+    let systemImage: String?
     @State private var isExpanded: Bool
     private let content: Content
 
     init(
         title: String,
+        systemImage: String? = nil,
         defaultExpanded: Bool = false,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
+        self.systemImage = systemImage
         _isExpanded = State(initialValue: defaultExpanded)
         self.content = content()
     }
@@ -471,10 +533,18 @@ private struct TaskDetailDisclosureSection<Content: View>: View {
             content
                 .padding(.top, 10)
         } label: {
-            Text(title).appFont(.subheadline.weight(.semibold))
+            HStack(spacing: 8) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .foregroundStyle(AppPalette.ai)
+                        .frame(width: 18)
+                }
+                Text(title).appFont(.subheadline.weight(.semibold))
+            }
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.24), in: RoundedRectangle(cornerRadius: 10))
+        .padding(13)
+        .background(AppPalette.surfaceSubtle.opacity(0.48), in: RoundedRectangle(cornerRadius: 11))
+        .overlay { RoundedRectangle(cornerRadius: 11).stroke(AppPalette.border.opacity(0.55)) }
     }
 }
 
@@ -495,6 +565,224 @@ private struct TaskDetailSubsection<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct TaskDetailFact: View {
+    let label: String
+    let value: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: systemImage)
+                .appFont(.caption.weight(.semibold))
+                .foregroundStyle(AppPalette.ai)
+                .frame(width: 17, height: 17)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label)
+                    .appFont(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .appFont(.caption.weight(.medium))
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 42, alignment: .topLeading)
+        .padding(10)
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 9))
+        .overlay { RoundedRectangle(cornerRadius: 9).stroke(AppPalette.border.opacity(0.45)) }
+    }
+}
+
+struct TaskCapabilityUsageSummary: Decodable {
+    struct Plugin: Decodable, Identifiable {
+        let id: String
+        let key: String
+        let componentKey: String?
+        let displayName: String
+        let callCount: Int
+        let status: String
+
+        private enum CodingKeys: String, CodingKey {
+            case id, key, status
+            case componentKey = "component_key"
+            case displayName = "display_name"
+            case callCount = "call_count"
+        }
+    }
+
+    struct Tool: Decodable, Identifiable {
+        var id: String { "\(pluginID ?? "builtin"):\(name):\(status)" }
+        let name: String
+        let displayName: String
+        let route: String
+        let pluginID: String?
+        let pluginName: String?
+        let status: String
+        let callCount: Int
+        let latestAtUnixMs: Double
+
+        private enum CodingKeys: String, CodingKey {
+            case name, route, status
+            case displayName = "display_name"
+            case pluginID = "plugin_id"
+            case pluginName = "plugin_name"
+            case callCount = "call_count"
+            case latestAtUnixMs = "latest_at_unix_ms"
+        }
+    }
+
+    let plugins: [Plugin]
+    let tools: [Tool]
+
+    static func decode(_ json: String?) -> Self? {
+        guard let json,
+              let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(Self.self, from: data)
+    }
+}
+
+struct TaskCapabilityUsageView: View {
+    let usage: TaskCapabilityUsageSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "puzzlepiece.extension.fill")
+                    .appFont(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(AppPalette.ai, in: RoundedRectangle(cornerRadius: 9))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("插件与工具").appFont(.subheadline.weight(.semibold))
+                    Text("本任务启用的插件与实际工具调用")
+                        .appFont(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                StatusCapsule(title: "\(usage.tools.reduce(0) { $0 + $1.callCount }) 次调用", color: AppPalette.ai)
+            }
+
+            if !usage.plugins.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("插件").appFont(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 180), spacing: 8)],
+                        alignment: .leading,
+                        spacing: 8
+                    ) {
+                        ForEach(usage.plugins) { plugin in
+                            pluginCard(plugin)
+                        }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("工具调用").appFont(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                if usage.tools.isEmpty {
+                    Label("尚未产生工具调用", systemImage: "hourglass")
+                        .appFont(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 6)
+                } else {
+                    ForEach(usage.tools) { tool in
+                        toolRow(tool)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+        .overlay { RoundedRectangle(cornerRadius: 12).stroke(AppPalette.ai.opacity(0.22)) }
+    }
+
+    private func pluginCard(_ plugin: TaskCapabilityUsageSummary.Plugin) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: plugin.callCount > 0 ? "puzzlepiece.extension.fill" : "puzzlepiece.extension")
+                .foregroundStyle(plugin.callCount > 0 ? AppPalette.ai : Color.secondary)
+                .frame(width: 26, height: 26)
+                .background(
+                    (plugin.callCount > 0 ? AppPalette.ai : Color.secondary).opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 7)
+                )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(plugin.displayName).appFont(.caption.weight(.semibold)).lineLimit(1)
+                Text(plugin.callCount > 0 ? "已调用 \(plugin.callCount) 次" : "已启用 · 尚未调用")
+                    .appFont(.caption2)
+                    .foregroundStyle(plugin.callCount > 0 ? AppPalette.ai : Color.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(9)
+        .background(AppPalette.surfaceSubtle.opacity(0.6), in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private func toolRow(_ tool: TaskCapabilityUsageSummary.Tool) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: toolIcon(tool.status))
+                .appFont(.caption.weight(.semibold))
+                .foregroundStyle(toolColor(tool.status))
+                .frame(width: 26, height: 26)
+                .background(toolColor(tool.status).opacity(0.10), in: Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(tool.displayName).appFont(.callout.weight(.medium)).lineLimit(1)
+                    if tool.callCount > 1 {
+                        Text("×\(tool.callCount)").appFont(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                }
+                Text(tool.pluginName.map { "插件 · \($0)" } ?? routeTitle(tool.route))
+                    .appFont(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Text(toolStatus(tool.status))
+                .appFont(.caption2.weight(.semibold))
+                .foregroundStyle(toolColor(tool.status))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(toolColor(tool.status).opacity(0.09), in: Capsule())
+        }
+        .padding(.vertical, 5)
+    }
+
+    private func toolStatus(_ status: String) -> String {
+        switch status.lowercased() {
+        case "succeeded", "completed": "成功"
+        case "failed": "失败"
+        case "needs_review": "待确认"
+        case "cancelled", "canceled": "已取消"
+        default: "进行中"
+        }
+    }
+
+    private func routeTitle(_ route: String) -> String {
+        switch route.lowercased() {
+        case "external_mcp", "mcp": "外部 MCP 工具"
+        case "plugin", "capability": "插件能力"
+        case "project": "项目工具"
+        default: "系统内置工具"
+        }
+    }
+
+    private func toolIcon(_ status: String) -> String {
+        switch status.lowercased() {
+        case "succeeded", "completed": "checkmark"
+        case "failed", "cancelled", "canceled": "exclamationmark"
+        case "needs_review": "questionmark"
+        default: "arrow.triangle.2.circlepath"
+        }
+    }
+
+    private func toolColor(_ status: String) -> Color {
+        switch status.lowercased() {
+        case "succeeded", "completed": .green
+        case "failed", "cancelled", "canceled": .red
+        case "needs_review": .orange
+        default: AppPalette.ai
+        }
     }
 }
 

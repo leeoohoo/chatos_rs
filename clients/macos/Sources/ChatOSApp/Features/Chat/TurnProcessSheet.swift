@@ -23,13 +23,34 @@ struct TurnProcessSheet: View {
 
     private var workspace: some View {
         VStack(spacing: 0) {
-            HStack {
-                Button("返回聊天", systemImage: "chevron.left", action: onClose)
-                Text("任务过程").appFont(.headline)
+            HStack(spacing: 12) {
+                Button(action: onClose) {
+                    Image(systemName: "chevron.left")
+                        .frame(width: 30, height: 30)
+                        .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                Image(systemName: "waveform.path.ecg")
+                    .appFont(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(AppPalette.ai, in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("任务过程").appFont(.headline)
+                    Text("按发生顺序查看任务、推理与工具节点")
+                        .appFont(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                Button("关闭", action: onClose)
+                if !viewModel.nodes.isEmpty {
+                    StatusCapsule(title: "\(viewModel.nodes.count) 个节点", color: AppPalette.ai)
+                }
+                Button("关闭", systemImage: "xmark", action: onClose)
+                    .labelStyle(.iconOnly)
             }
-            .padding(16)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .background(AppPalette.surface)
             Divider()
             Group {
                 if viewModel.isLoading && viewModel.nodes.isEmpty {
@@ -55,7 +76,7 @@ struct TurnProcessSheet: View {
             .workspaceFill()
         }
         .workspaceFill()
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(AppPalette.canvas)
     }
 
     private var processTimeline: some View {
@@ -70,20 +91,39 @@ struct TurnProcessSheet: View {
                 }
             }
             .padding(24)
+            .frame(maxWidth: 920)
+            .frame(maxWidth: .infinity)
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(AppPalette.canvas)
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(viewModel.turn.userMessage.text)
-                .appFont(.headline)
+                .appFont(.title3.weight(.semibold))
                 .lineLimit(3)
-            Text("\(viewModel.nodes.count) 个真实过程节点")
-                .appFont(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                processMetric("全部", value: viewModel.nodes.count, icon: "list.bullet")
+                processMetric("工具", value: viewModel.nodes.filter { $0.kind == .tool }.count, icon: "wrench.and.screwdriver")
+                processMetric("任务", value: viewModel.nodes.filter { $0.kind == .task }.count, icon: "checklist")
+                processMetric("推理", value: viewModel.nodes.filter { $0.kind == .reasoning }.count, icon: "brain")
+            }
         }
+        .padding(18)
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 14))
+        .overlay { RoundedRectangle(cornerRadius: 14).stroke(AppPalette.border.opacity(0.6)) }
         .padding(.bottom, 22)
+    }
+
+    private func processMetric(_ title: String, value: Int, icon: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).foregroundStyle(AppPalette.ai)
+            Text("\(value)").appFont(.caption.weight(.semibold))
+            Text(title).appFont(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(AppPalette.surfaceSubtle, in: Capsule())
     }
 }
 
@@ -108,7 +148,12 @@ private struct ProcessNodeRow: View {
 
             VStack(alignment: .leading, spacing: 7) {
                 HStack {
-                    Text(node.title).appFont(.subheadline.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(node.title).appFont(.subheadline.weight(.semibold))
+                        Text(kindTitle)
+                            .appFont(.caption2.weight(.medium))
+                            .foregroundStyle(color)
+                    }
                     Spacer()
                     if let timestamp = node.timestamp {
                         Text(timestamp, style: .time)
@@ -117,14 +162,12 @@ private struct ProcessNodeRow: View {
                     }
                 }
                 if let detail = node.detail {
-                    Text(detail)
-                        .appFont(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .lineLimit(6)
+                    TurnProcessExpandableDetail(text: detail)
                 }
             }
-            .padding(.top, 5)
+            .padding(12)
+            .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 11))
+            .overlay { RoundedRectangle(cornerRadius: 11).stroke(AppPalette.border.opacity(0.55)) }
             .padding(.bottom, showsConnector ? 16 : 0)
         }
     }
@@ -144,6 +187,38 @@ private struct ProcessNodeRow: View {
         case .failed, .cancelled: .red
         case .queued: .secondary
         case .streaming: AppPalette.ai
+        }
+    }
+
+    private var kindTitle: String {
+        switch node.kind {
+        case .task: "任务节点"
+        case .tool: "工具调用"
+        case .reasoning: "分析与决策"
+        case .update: "进度更新"
+        }
+    }
+}
+
+private struct TurnProcessExpandableDetail: View {
+    let text: String
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(text)
+                .appFont(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(expanded ? nil : 5)
+            if text.count > 260 || text.split(separator: "\n", omittingEmptySubsequences: false).count > 5 {
+                Button(expanded ? "收起" : "展开详情") {
+                    withAnimation(.easeInOut(duration: 0.16)) { expanded.toggle() }
+                }
+                .buttonStyle(.plain)
+                .appFont(.caption.weight(.medium))
+                .foregroundStyle(AppPalette.ai)
+            }
         }
     }
 }

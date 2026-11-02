@@ -125,14 +125,17 @@ struct TaskProcessTimelineView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text(item.detail)
-                    .appFont(.callout)
-                    .foregroundStyle(.primary.opacity(0.78))
-                    .appTextSelection(allowsTextSelection)
+                ExpandableProcessDetail(
+                    text: item.detail,
+                    allowsTextSelection: allowsTextSelection
+                )
                 Text(LocalizedStringKey(statusTitle(item.status)))
                     .appFont(.caption2.weight(.medium))
                     .foregroundStyle(statusColor(item.status))
             }
+            .padding(11)
+            .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 10))
+            .overlay { RoundedRectangle(cornerRadius: 10).stroke(AppPalette.border.opacity(0.5)) }
             .padding(.bottom, isLast ? 0 : 14)
         }
     }
@@ -168,5 +171,33 @@ struct TaskProcessTimelineView: View {
         case "failed", "error", "cancelled", "canceled": .red
         default: .secondary
         }
+    }
+}
+
+private struct ExpandableProcessDetail: View {
+    let text: String
+    let allowsTextSelection: Bool
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(text)
+                .appFont(.callout)
+                .foregroundStyle(.primary.opacity(0.78))
+                .lineLimit(isExpanded ? nil : 4)
+                .appTextSelection(allowsTextSelection)
+            if shouldCollapse {
+                Button(isExpanded ? "收起" : "展开完整记录") {
+                    withAnimation(.easeInOut(duration: 0.16)) { isExpanded.toggle() }
+                }
+                .buttonStyle(.plain)
+                .appFont(.caption.weight(.medium))
+                .foregroundStyle(AppPalette.ai)
+            }
+        }
+    }
+
+    private var shouldCollapse: Bool {
+        text.count > 220 || text.split(separator: "\n", omittingEmptySubsequences: false).count > 4
     }
 }

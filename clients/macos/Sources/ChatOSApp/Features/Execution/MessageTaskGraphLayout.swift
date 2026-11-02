@@ -2,7 +2,7 @@ import ChatOSCore
 import CoreGraphics
 
 struct MessageTaskGraphLayout {
-    static let nodeSize = CGSize(width: 232, height: 142)
+    static let nodeSize = CGSize(width: 252, height: 158)
     var positions: [String: CGPoint]
     var contentSize: CGSize
 

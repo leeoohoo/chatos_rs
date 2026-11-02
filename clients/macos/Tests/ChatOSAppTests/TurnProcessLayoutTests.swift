@@ -6,6 +6,19 @@ import XCTest
 
 @MainActor
 final class TurnProcessLayoutTests: XCTestCase {
+    func testCapabilityUsageSummarySeparatesEnabledPluginsFromActualCalls() throws {
+        let json = #"{"plugins":[{"id":"plugin-document","key":"document","component_key":"document-mcp","display_name":"Document","call_count":1,"status":"used"}],"tools":[{"name":"capability_invoke","display_name":"Document Create","route":"platform","plugin_id":"plugin-document","plugin_name":"Document","status":"succeeded","call_count":2,"latest_at_unix_ms":1000}]}"#
+        let summary = try XCTUnwrap(TaskCapabilityUsageSummary.decode(json))
+
+        XCTAssertEqual(summary.plugins.count, 1)
+        XCTAssertEqual(summary.plugins[0].displayName, "Document")
+        XCTAssertEqual(summary.plugins[0].callCount, 1)
+        XCTAssertEqual(summary.tools.count, 1)
+        XCTAssertEqual(summary.tools[0].displayName, "Document Create")
+        XCTAssertEqual(summary.tools[0].callCount, 2)
+        XCTAssertEqual(summary.tools[0].status, "succeeded")
+    }
+
     func testGraphScrollCaptureStaysInsideCompactCanvas() async throws {
         let content = VStack(spacing: 0) {
             MessageTaskGraphCanvas(
