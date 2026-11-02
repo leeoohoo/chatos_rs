@@ -25,6 +25,7 @@ use tauri::{AppHandle, Manager, State};
 const LEGACY_PROJECT_TYPE: &str = "software_development";
 const JOURNAL_SCHEMA_VERSION: u32 = 1;
 const MAXIMUM_JOURNALS: usize = 64;
+const MAXIMUM_JOURNAL_DIRECTORY_ENTRIES: usize = MAXIMUM_JOURNALS * 2;
 const MAXIMUM_JOURNAL_BYTES: u64 = 1_024 * 1_024;
 const MAXIMUM_PENDING_SELECTIONS: usize = 32;
 const SELECTION_LIFETIME: Duration = Duration::from_secs(15 * 60);
@@ -684,16 +685,25 @@ fn persist_journal(
 }
 
 fn load_journals(directory: &Path) -> Result<Vec<(PathBuf, CreationJournal)>, String> {
-    let mut paths = fs::read_dir(directory)
+    let mut paths = Vec::with_capacity(MAXIMUM_JOURNALS);
+    for (visited, entry) in fs::read_dir(directory)
         .map_err(|_| creation_error())?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
-        .collect::<Vec<_>>();
-    paths.sort();
-    if paths.len() > MAXIMUM_JOURNALS {
-        return Err("项目创建恢复记录过多。".into());
+        .enumerate()
+    {
+        if visited >= MAXIMUM_JOURNAL_DIRECTORY_ENTRIES {
+            return Err("项目创建恢复记录过多。".into());
+        }
+        let entry = entry.map_err(|_| creation_error())?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        if paths.len() >= MAXIMUM_JOURNALS {
+            return Err("项目创建恢复记录过多。".into());
+        }
+        paths.push(path);
     }
+    paths.sort();
     paths
         .into_iter()
         .map(|path| {
@@ -1216,6 +1226,15 @@ mod tests {
         )
         .unwrap()
         .is_empty());
+    }
+
+    #[test]
+    fn journal_loading_rejects_too_many_entries_before_parsing_contents() {
+        let directory = tempfile::tempdir().unwrap();
+        for index in 0..=MAXIMUM_JOURNALS {
+            fs::write(directory.path().join(format!("{index}.json")), b"{}").unwrap();
+        }
+        assert!(load_journals(directory.path()).is_err());
     }
 
     #[test]

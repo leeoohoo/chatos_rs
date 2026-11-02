@@ -98,6 +98,7 @@ Windows 产品版本：`3.0.9`
 - [x] 远程下载目标目录已接入按需残留清理：每次新下载前只在用户刚确认的目标目录内，扫描最多 2,000 项 canonical `.chatos-download-<24 位小写 hex>.tmp`，仅回收超过 24 小时的普通单硬链接文件；其他后缀、未知名称、近期文件和 reparse 对象保留。
 - [x] 终端项目文件批量编辑已接入崩溃残留清理：每次提交前只在本次编辑涉及的父目录内，扫描最多 2,000 项 canonical `.chatos-edit-<小写 UUID>` / `.chatos-backup-<小写 UUID>`，仅回收超过 24 小时的普通单硬链接文件；未知名称、近期文件、硬链接和 reparse 对象保留。
 - [x] App-owned 残留清理在 Unix 兼容构建上也拒绝多硬链接文件：共享 `try_remove_stale_owned_file` 在执行删除前验证 `nlink == 1`，避免回收仍被其他目录引用的文件。
+- [x] 项目创建恢复 journal 加载改为有界枚举：最多检查 128 个目录项、接受最多 64 个 JSON journal，超过上限立即失败，不再先把整个目录收集到内存。
 - [x] 固定 AppData 临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-appdata-temp-cleanup-final-nsis.json`：全新目录安装 `2,281 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,214 ms`、卸载 `667 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin 事务临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-temp-cleanup-final-nsis.json`：全新目录安装 `2,181 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,187 ms`、卸载 `638 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin staging 崩溃残留清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-staging-cleanup-final-nsis.json`：全新目录安装 `2,187 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,173 ms`、卸载 `647 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
