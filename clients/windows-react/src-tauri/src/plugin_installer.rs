@@ -1968,17 +1968,22 @@ fn validate_npm_lock(path: &Path) -> Result<(), String> {
 }
 
 fn sanitize_npm_tree(root: &Path) -> Result<(), String> {
+    let mut visited = 0usize;
     let shim_directory = root.join("node_modules").join(".bin");
     if shim_directory.exists() {
-        remove_tree_without_following_links(&shim_directory)?;
+        remove_tree_without_following_links(&shim_directory, &mut visited)?;
     }
-    sanitize_npm_directory(root)
+    sanitize_npm_directory(root, &mut visited)
 }
 
-fn sanitize_npm_directory(directory: &Path) -> Result<(), String> {
+fn sanitize_npm_directory(directory: &Path, visited: &mut usize) -> Result<(), String> {
     for entry in fs::read_dir(directory).map_err(|_| install_error("无法检查 npm 安装目录"))?
     {
         let entry = entry.map_err(|_| install_error("无法检查 npm 安装目录"))?;
+        *visited = visited.saturating_add(1);
+        if *visited > MAXIMUM_ARCHIVE_ENTRIES {
+            return Err(install_error("npm 安装目录条目超过限制"));
+        }
         let path = entry.path();
         let metadata =
             fs::symlink_metadata(&path).map_err(|_| install_error("无法检查 npm 安装文件"))?;
@@ -1989,7 +1994,7 @@ fn sanitize_npm_directory(directory: &Path) -> Result<(), String> {
                 fs::remove_file(&path).map_err(|_| install_error("无法移除 npm 链接文件"))?;
             }
         } else if metadata.is_dir() {
-            sanitize_npm_directory(&path)?;
+            sanitize_npm_directory(&path, visited)?;
         } else if !metadata.is_file() {
             return Err(install_error("npm 安装包含特殊文件"));
         }
@@ -1997,7 +2002,11 @@ fn sanitize_npm_directory(directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn remove_tree_without_following_links(path: &Path) -> Result<(), String> {
+fn remove_tree_without_following_links(path: &Path, visited: &mut usize) -> Result<(), String> {
+    *visited = visited.saturating_add(1);
+    if *visited > MAXIMUM_ARCHIVE_ENTRIES {
+        return Err(install_error("npm shim 目录条目超过限制"));
+    }
     let metadata = fs::symlink_metadata(path).map_err(|_| install_error("无法清理 npm shim"))?;
     if is_symlink_or_reparse(&metadata) {
         return if metadata.is_dir() {
@@ -2012,6 +2021,7 @@ fn remove_tree_without_following_links(path: &Path) -> Result<(), String> {
                 &entry
                     .map_err(|_| install_error("无法清理 npm shim"))?
                     .path(),
+                visited,
             )?;
         }
         fs::remove_dir(path).map_err(|_| install_error("无法清理 npm shim"))
