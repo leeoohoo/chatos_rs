@@ -15,6 +15,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -978,6 +979,18 @@ impl AgentConversationStore {
             .ok_or_else(store_error)?
             .join("com.chatos.windows");
         Self::new(app_data_directory)
+    }
+
+    pub(crate) async fn cleanup_stale_attachment_files(&self) -> usize {
+        let database = self.database.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let cutoff = SystemTime::now()
+                .checked_sub(Duration::from_secs(24 * 60 * 60))
+                .unwrap_or(UNIX_EPOCH);
+            documents::cleanup_stale_attachment_files(&database, cutoff)
+        })
+        .await
+        .unwrap_or_default()
     }
 
     fn open_human_agent_direct(

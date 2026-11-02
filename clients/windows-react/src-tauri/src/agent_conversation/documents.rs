@@ -1,8 +1,13 @@
 use super::team_todo::todo_planning_reference;
 use super::*;
+use crate::app_owned_export::try_remove_stale_owned_file;
 use crate::conversation_attachments::VerifiedAttachmentPayload;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::{
+    collections::HashSet,
+    time::SystemTime,
+};
 
 pub(super) const MAXIMUM_DOCUMENTS_PER_MESSAGE: usize = 5;
 const MAXIMUM_DOCUMENTS_PER_RUN: i64 = 20;
@@ -11,6 +16,7 @@ const MAXIMUM_DOCUMENT_BYTES_PER_RUN: i64 = 8 * 1_024 * 1_024;
 const MAXIMUM_ATTACHMENT_READ_CHARACTERS: usize = 12_000;
 const MAXIMUM_MESSAGE_ATTACHMENTS: usize = 20;
 const MAXIMUM_MESSAGE_ATTACHMENT_BYTES: usize = 20 * 1_024 * 1_024;
+const MAXIMUM_ATTACHMENT_CLEANUP_ENTRIES: usize = 20_000;
 
 #[derive(Clone)]
 pub(super) struct AgentDocumentDraft {
@@ -736,6 +742,186 @@ fn attachment_path(
     Ok(path)
 }
 
+pub(super) fn cleanup_stale_attachment_files(database: &Path, cutoff: SystemTime) -> usize {
+    if reject_link_or_non_file(database).is_err() {
+        return 0;
+    }
+    let Some(parent) = database.parent() else {
+        return 0;
+    };
+    let root = parent.join("AgentMessageAttachments");
+    let Ok(metadata) = fs::symlink_metadata(&root) else {
+        return 0;
+    };
+    if !is_safe_attachment_directory(&metadata) {
+        return 0;
+    }
+    let Ok(root) = fs::canonicalize(root) else {
+        return 0;
+    };
+    let Ok(connection) = super::open_database(database, true) else {
+        return 0;
+    };
+    let referenced = match referenced_attachment_paths(&connection, &root) {
+        Ok(paths) => paths,
+        Err(_) => return 0,
+    };
+    let mut budget = MAXIMUM_ATTACHMENT_CLEANUP_ENTRIES;
+    cleanup_attachment_scope(
+        &root,
+        "messages",
+        "attachment_",
+        &referenced,
+        cutoff,
+        &mut budget,
+    ) + cleanup_attachment_scope(
+        &root,
+        "drafts",
+        "document-draft_",
+        &referenced,
+        cutoff,
+        &mut budget,
+    )
+}
+
+fn referenced_attachment_paths(
+    connection: &Connection,
+    root: &Path,
+) -> Result<HashSet<PathBuf>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT relative_path FROM project_agent_message_attachments \
+             UNION ALL \
+             SELECT relative_path FROM windows_agent_document_drafts",
+        )
+        .map_err(|_| document_store_error())?;
+    let mut referenced = HashSet::new();
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|_| document_store_error())?;
+    for row in rows {
+        let relative_path = row.map_err(|_| document_store_error())?;
+        let path = canonical_attachment_relative_path(root, &relative_path)
+            .ok_or_else(document_store_error)?;
+        referenced.insert(path);
+    }
+    Ok(referenced)
+}
+
+fn canonical_attachment_relative_path(root: &Path, relative_path: &str) -> Option<PathBuf> {
+    let mut components = Path::new(relative_path).components();
+    let scope = components.next()?.as_os_str().to_str()?;
+    if scope != "messages" && scope != "drafts" {
+        return None;
+    }
+    let bucket = components.next()?.as_os_str().to_str()?;
+    let leaf = components.next()?.as_os_str().to_str()?;
+    if components.next().is_some()
+        || bucket.is_empty()
+        || !canonical_attachment_name(
+            leaf,
+            if scope == "messages" {
+                "attachment_"
+            } else {
+                "document-draft_"
+            },
+        )
+    {
+        return None;
+    }
+    Some(root.join(scope).join(bucket).join(leaf))
+}
+
+fn cleanup_attachment_scope(
+    root: &Path,
+    scope_name: &str,
+    leaf_prefix: &str,
+    referenced: &HashSet<PathBuf>,
+    cutoff: SystemTime,
+    budget: &mut usize,
+) -> usize {
+    if *budget == 0 {
+        return 0;
+    }
+    let scope = root.join(scope_name);
+    let Ok(scope_metadata) = fs::symlink_metadata(&scope) else {
+        return 0;
+    };
+    if !is_safe_attachment_directory(&scope_metadata) {
+        return 0;
+    }
+    let Ok(buckets) = fs::read_dir(scope) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for bucket in buckets {
+        if *budget == 0 {
+            break;
+        }
+        *budget -= 1;
+        let Ok(bucket) = bucket else {
+            continue;
+        };
+        let bucket_path = bucket.path();
+        let Ok(bucket_metadata) = fs::symlink_metadata(&bucket_path) else {
+            continue;
+        };
+        if !is_safe_attachment_directory(&bucket_metadata) {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&bucket_path) else {
+            continue;
+        };
+        for entry in entries {
+            if *budget == 0 {
+                break;
+            }
+            *budget -= 1;
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let path = entry.path();
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if !canonical_attachment_name(&name, leaf_prefix) || referenced.contains(&path) {
+                continue;
+            }
+            if try_remove_stale_owned_file(&path, cutoff) {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
+fn canonical_attachment_name(name: &str, prefix: &str) -> bool {
+    let Some(value) = name.strip_prefix(prefix).filter(|value| value.len() == 32) else {
+        return false;
+    };
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn is_safe_attachment_directory(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_dir()
+        && !metadata.file_type().is_symlink()
+        && !is_windows_reparse_point(metadata)
+}
+
+#[cfg(windows)]
+fn is_windows_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_windows_reparse_point(_: &fs::Metadata) -> bool {
+    false
+}
+
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
     if let Ok(metadata) = fs::symlink_metadata(path) {
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -839,4 +1025,91 @@ fn document_error() -> String {
 
 fn document_store_error() -> String {
     "The Agent document store is unavailable.".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use std::time::Duration;
+
+    #[test]
+    fn stale_cleanup_removes_only_unreferenced_canonical_files() {
+        let directory = tempdir().unwrap();
+        let database = directory.path().join("AgentGroupChat.sqlite3");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE project_agent_message_attachments (relative_path TEXT NOT NULL);\
+                 CREATE TABLE windows_agent_document_drafts (relative_path TEXT NOT NULL);",
+            )
+            .unwrap();
+        let root = directory.path().join("AgentMessageAttachments");
+        let messages = root.join("messages").join("message_1");
+        let drafts = root.join("drafts").join("run_1");
+        fs::create_dir_all(&messages).unwrap();
+        fs::create_dir_all(&drafts).unwrap();
+        let referenced = messages.join("attachment_00000000000000000000000000000001");
+        let orphan = messages.join("attachment_00000000000000000000000000000002");
+        let malformed = messages.join("attachment_NOT-A-UUID");
+        let draft = drafts.join("document-draft_00000000000000000000000000000003");
+        let unrelated = drafts.join("notes.tmp");
+        for path in [&referenced, &orphan, &malformed, &draft, &unrelated] {
+            fs::write(path, b"value").unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO project_agent_message_attachments(relative_path) VALUES (?1)",
+                ["messages/message_1/attachment_00000000000000000000000000000001"],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO windows_agent_document_drafts(relative_path) VALUES (?1)",
+                ["drafts/run_1/document-draft_00000000000000000000000000000003"],
+            )
+            .unwrap();
+        drop(connection);
+
+        let removed =
+            cleanup_stale_attachment_files(&database, SystemTime::now() + Duration::from_secs(1));
+        assert_eq!(removed, 1);
+        assert!(referenced.exists());
+        assert!(!orphan.exists());
+        assert!(malformed.exists());
+        assert!(draft.exists());
+        assert!(unrelated.exists());
+    }
+
+    #[test]
+    fn stale_cleanup_fails_closed_on_malformed_database_reference() {
+        let directory = tempdir().unwrap();
+        let database = directory.path().join("AgentGroupChat.sqlite3");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE project_agent_message_attachments (relative_path TEXT NOT NULL);\
+                 CREATE TABLE windows_agent_document_drafts (relative_path TEXT NOT NULL);",
+            )
+            .unwrap();
+        let root = directory
+            .path()
+            .join("AgentMessageAttachments/messages/message_1");
+        fs::create_dir_all(&root).unwrap();
+        let orphan = root.join("attachment_00000000000000000000000000000001");
+        fs::write(&orphan, b"value").unwrap();
+        connection
+            .execute(
+                "INSERT INTO project_agent_message_attachments(relative_path) VALUES (?1)",
+                ["../outside"],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(
+            cleanup_stale_attachment_files(&database, SystemTime::now() + Duration::from_secs(1),),
+            0
+        );
+        assert!(orphan.exists());
+    }
 }

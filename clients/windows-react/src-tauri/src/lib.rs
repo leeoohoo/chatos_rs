@@ -339,6 +339,7 @@ pub fn run() {
             let attachment_manager = app.state::<AttachmentManager>().inner().clone();
             let media_studio_manager = app.state::<MediaStudioManager>().inner().clone();
             let story_studio_manager = app.state::<StoryStudioManager>().inner().clone();
+            let agent_conversation_store = app.state::<AgentConversationStore>().inner().clone();
             let machine_resources = app.state::<MachineResourceGovernor>().inner().clone();
             tauri::async_runtime::spawn(async move {
                 let Ok(_permit) = machine_resources
@@ -353,6 +354,7 @@ pub fn run() {
                 let _ = attachment_manager.cleanup_stale_temporaries().await;
                 let _ = media_studio_manager.cleanup_stale_temporaries().await;
                 let _ = story_studio_manager.cleanup_stale_temporaries().await;
+                let _ = agent_conversation_store.cleanup_stale_attachment_files().await;
                 let _ = app_data_maintenance::cleanup_stale_temporaries(app_data_maintenance_root)
                     .await;
                 let _ =
