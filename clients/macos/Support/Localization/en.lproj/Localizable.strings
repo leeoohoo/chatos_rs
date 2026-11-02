@@ -257,6 +257,7 @@
 "运行信息" = "Run Information";
 "返回上一级" = "Go to Parent Folder";
 "返回任务列表" = "Back to Task List";
+"返回聊天" = "Back to Chat";
 "还没有运行实例" = "No Run Instances Yet";
 "这个运行目标不依赖额外的开发工具，可以直接启动。" = "This run target does not require additional development tools and can start directly.";
 "这个需求下面还没有任务" = "This requirement has no tasks yet";
