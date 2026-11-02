@@ -137,6 +137,44 @@ async fn planner_resolves_control_plane_state_for_the_run_owner() {
 }
 
 #[tokio::test]
+async fn selected_remote_target_is_sent_on_initial_and_resumed_steps() {
+    for task in [false, true] {
+        let planner = if task {
+            ControlPlaneLocalAiStepPlanner::task_execution(OwnerCheckingModelResolver, OwnerCheckingCapabilityResolver)
+        } else {
+            ControlPlaneLocalAiStepPlanner::main_chat(OwnerCheckingModelResolver, OwnerCheckingCapabilityResolver)
+        };
+        for checkpoint in [Value::Null, json!({"request_input_items": [], "conversation_memory": []})] {
+            let mut current = claim(checkpoint, None);
+            if task {
+                current.run.profile_key = TASK_EXECUTION_PROFILE_KEY.into();
+                current.run.input = json!({"prompt":"Inspect two services", "remote_connection_id":"selected-server", "tool_options":{"requires_execution":true,"enabled_builtin_kinds":["RemoteConnectionController"],"plugin_hints":[],"external_mcp_config_ids":[]}});
+            } else {
+                current.run.input = json!({"message":"Inspect two services", "runtime_settings":{"reasoning_enabled":false,"remote_connection_id":"selected-server"}, "remote_connection_id":"stale-server"});
+            }
+            let prepared = planner.prepare_ai_step(&current).await.unwrap();
+            let context = prepared.request.prefixed_input_items.iter().filter_map(|item|
+                item["content"].as_str().and_then(|text| serde_json::from_str::<Value>(text).ok())
+            ).find(|item| item["type"] == "bound_remote_connection_context").unwrap();
+            assert_eq!(context["remote_connection_id"], "selected-server");
+            assert_eq!(context["target_selected"], true);
+            assert!(context["guidance"].as_str().unwrap().contains("Do not ask"));
+        }
+    }
+}
+
+#[test]
+fn clearing_remote_selection_does_not_restore_a_historical_target() {
+    let context = bound_remote_connection_context(&json!({
+        "runtime_settings":{"remote_connection_id":null},
+        "remote_connection_id":"stale-server"
+    }), true);
+    let context: Value = serde_json::from_str(context["content"].as_str().unwrap()).unwrap();
+    assert_eq!(context["target_selected"], false);
+    assert_eq!(context["remote_connection_id"], Value::Null);
+}
+
+#[tokio::test]
 async fn requirement_plan_is_sent_each_step_outside_truncated_memory_for_main_and_task() {
     for task in [false, true] {
         let planner = if task {

@@ -116,7 +116,7 @@ pub fn task_process_prompt_item() -> Value {
                 TASK_OUTCOME_REPORT_TOOL,
                 TASK_PROCESS_ALLOCATE_SERVICE_TOOL,
                 TASK_OUTCOME_REPORT_TOOL
-            )
+            ) + " If the report is rejected with task_outcome_validation, no report was accepted: correct its structure using the frozen acceptance criteria and resubmit. Only the accepted report must be the final tool call. Preserve failed and not_verified findings; fixing a report must not trigger repeated external operations."
         }]
     })
 }
@@ -406,20 +406,24 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
                     .map_err(|error| error.to_string())?
                     > 0
                 {
-                    return Err("Task outcome was already reported for this Run".to_string());
+                    return Ok(rejected_outcome_report("Task outcome was already reported for this Run".to_string()));
                 }
-                let args: ReportOutcomeArgs = serde_json::from_value(invocation.arguments.clone())
-                    .map_err(|error| format!("invalid Task outcome input: {error}"))?;
+                let args: ReportOutcomeArgs = match serde_json::from_value(invocation.arguments.clone()) {
+                    Ok(args) => args,
+                    Err(error) => return Ok(rejected_outcome_report(format!("invalid Task outcome input: {error}"))),
+                };
                 // A successful Plugin call is neither necessary (an authorized fallback
                 // may satisfy research) nor sufficient (opening a session is not delivery).
                 // Validate the frozen acceptance contract instead of inventing a global
                 // Plugin artifact requirement. This checks report structure, not evidence truth.
-                validate_task_acceptance_report(&run.input, &invocation.arguments)?;
+                if let Err(error) = validate_task_acceptance_report(&run.input, &invocation.arguments) {
+                    return Ok(rejected_outcome_report(error));
+                }
                 let reason = args.reason.trim();
                 if reason.is_empty() || reason.chars().count() > OUTCOME_REASON_MAX_CHARS {
-                    return Err(format!(
+                    return Ok(rejected_outcome_report(format!(
                         "Task outcome reason must be 1..={OUTCOME_REASON_MAX_CHARS} characters"
-                    ));
+                    )));
                 }
                 let result_status = match args.result_status {
                     ReportedResultStatus::Succeeded => "succeeded",
@@ -445,6 +449,21 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
             tool_name => return Err(format!("unsupported Task process tool: {tool_name}")),
         };
         Ok(LocalAgentToolOutcome::Succeeded { output })
+    }
+}
+
+fn rejected_outcome_report(error: String) -> LocalAgentToolOutcome {
+    // No result has been accepted and no external action has been dispatched.
+    // Return a known tool failure so the model can repair its report. Err remains
+    // reserved for execution/storage failures whose effect cannot be confirmed.
+    LocalAgentToolOutcome::Failed {
+        error,
+        detail: json!({
+            "phase": "task_outcome_validation",
+            "reported": false,
+            "retryable": true,
+            "guidance": "Correct the report against the frozen task_acceptance_contract, covering every criterion exactly once, and call task_run_process_report_outcome again. Preserve actual failed or unverified findings; do not rerun remote commands merely to fix report structure."
+        }),
     }
 }
 
@@ -619,13 +638,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn incomplete_outcome_report_can_be_corrected_through_the_real_scheduler() {
+        use crate::{LocalToolRegistry, LocalToolScheduler, ToolSchedulerTick};
+        use chatos_local_agent_protocol::{ClaimNextRunCommand, CommitStepCommand, HostResult,
+            LocalAgentRunStatus, LocalAgentStepOutcome, LocalAgentToolCall};
+        let runtime = runtime_with_input("task_execution", "task", json!({
+            "acceptance_report_version":1,
+            "acceptance_criteria":["target", "services", "read only", "redaction", "no mutation", "evidence"]
+        })).await;
+        let mut tools = LocalToolRegistry::new();
+        tools.register(TASK_OUTCOME_REPORT_TOOL, LocalTaskProcessToolExecutor::new(runtime.clone(), "user-1").unwrap()).unwrap();
+        let scheduler = LocalToolScheduler::new(runtime.clone(), tools, "user-1", "test-worker").unwrap();
+        for count in [5, 6] {
+            let request = |id: String, command| HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION, command_id: id, command
+            };
+            let HostResult::Claim { claim: Some(claim) } = runtime.try_handle(request(format!("claim-{count}"), HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id:"user-1".into(), worker_id:"model".into(), lease_duration_ms:10_000
+            }))).await.unwrap() else { panic!("model must be able to continue") };
+            let checks = (0..count).map(|i| json!({"criterion_index":i,"status":if i==3 {"failed"} else {"passed"},"evidence":"actual finding"})).collect::<Vec<_>>();
+            runtime.try_handle(request(format!("step-{count}"), HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id:"user-1".into(), run_id:claim.run.run_id, claim_token:claim.claim_token, expected_version:claim.run.version,
+                outcome:LocalAgentStepOutcome::WaitForTool {
+                    batch_id:format!("batch-{count}"), checkpoint:json!({}),
+                    tool_calls:vec![LocalAgentToolCall {
+                        call_id:format!("call-{count}"), tool_name:TASK_OUTCOME_REPORT_TOOL.into(),
+                        arguments:json!({"result_status":"failed", "reason":"A business criterion failed", "final_response":"Actual findings with an unmet criterion", "acceptance_checks":checks}),
+                        side_effecting:true, requires_approval:false
+                    }]
+                }
+            }))).await.unwrap();
+            let ToolSchedulerTick::Committed(result) = scheduler.run_once().await.unwrap() else { panic!("expected report execution") };
+            assert_eq!(result.run.status, LocalAgentRunStatus::ContinuationReady);
+            if count == 5 {
+                assert_eq!(result.invocation.status, LocalAgentToolStatus::Failed);
+                assert!(result.invocation.error.unwrap().contains("all 6 criteria"));
+                assert_eq!(result.invocation.result.unwrap()["retryable"], true);
+            } else {
+                assert_eq!(result.invocation.status, LocalAgentToolStatus::Succeeded);
+                assert_eq!(result.invocation.result.unwrap()["result_status"], "failed");
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn outcome_executor_separates_unverified_acceptance_from_execution_and_enforces_limit() {
         let executor = LocalTaskProcessToolExecutor::new(runtime_with_input("task_execution","task",json!({"acceptance_report_version":1,"acceptance_criteria":["Short response"],"final_response_max_chars":4})).await,"user-1").unwrap();
         let mut report = json!({"status":"succeeded","reason":"done","final_response":"中文\n!!","acceptance_checks":[{"criterion_index":0,"status":"passed","evidence":"Checked actual final response"}]});
-        let error = executor
+        let outcome = executor
             .execute_tool(&invocation(TASK_OUTCOME_REPORT_TOOL, report.clone()))
             .await
-            .unwrap_err();
+            .unwrap();
+        let LocalAgentToolOutcome::Failed { error, .. } = outcome else {
+            panic!("expected correctable validation failure")
+        };
         assert!(error.contains("5 characters"));
         report["final_response"] = json!("中文");
         report["acceptance_checks"][0]["status"] = json!("not_verified");

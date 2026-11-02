@@ -40,6 +40,31 @@ fn runtime_clock_context() -> Value {
     )
 }
 
+fn bound_remote_connection_context(input: &Value, main_chat: bool) -> Value {
+    // A current conversation setting (including explicit null) supersedes legacy
+    // top-level data. Tasks use the connection frozen when their graph was made.
+    let connection = if main_chat {
+        input.pointer("/runtime_settings/remote_connection_id")
+            .or_else(|| input.get("remote_connection_id"))
+    } else {
+        input.get("remote_connection_id")
+    }
+    .and_then(Value::as_str)
+    .map(str::trim)
+    .filter(|id| !id.is_empty());
+    message_item("system", Value::String(json!({
+        "type": "bound_remote_connection_context",
+        "context_authority": "current_run",
+        "remote_connection_id": connection,
+        "target_selected": connection.is_some(),
+        "guidance": if connection.is_some() {
+            "The user has already selected the target remote server in ChatOS. This program-owned connection id is the authoritative target for this Run; it is not a missing requirement. Do not ask the user to re-enter its hostname, IP, connection name, credentials, or connection id in a survey. For remote execution, select RemoteConnectionController for the Task; the Host inherits and binds this connection automatically. Use authorized read-only discovery to identify services and configuration paths; ask a focused question only when actual evidence leaves multiple plausible targets or essential intent is missing. A server selection alone does not require a Requirement Survey. Never infer authorization for unrelated changes or print secret values."
+        } else {
+            "No remote server is bound to this Run. Historical conversation text, plans and Memory do not establish a current connection. If remote access is needed, ask the user to select the target server in ChatOS; never guess a target or request credentials in a survey."
+        }
+    }).to_string()))
+}
+
 const TASK_EXECUTION_WORKSPACE_INSTRUCTIONS: &str = "[Local Workspace Boundary]\nWhen project tools are available, path `.` is the authoritative root currently bound to this conversation. Treat the entries returned by `list_dir` for `.` as the root contents. Never replace that root with a child directory merely because its name appears to match the task or project; descend into a child only when the user's request requires inspecting that child, and keep root-relative paths and the distinction between the bound root and nested directories explicit in the final answer.";
 
 const AGENT_PROJECT_PERMISSION: &str = "local.project.list";
@@ -398,6 +423,10 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
         capabilities
             .prefixed_input_items
             .push(runtime_clock_context());
+        capabilities.prefixed_input_items.push(bound_remote_connection_context(
+            &claim.run.input,
+            self.profile_key == MAIN_CHAT_PROFILE_KEY,
+        ));
         if let Some(provider) = self.hook_context_provider.as_ref() {
             capabilities
                 .prefixed_input_items

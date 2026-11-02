@@ -48,7 +48,7 @@ async fn correction_requires_cancel_and_does_not_reuse_unaffected_active_graph()
         .await
         .expect("replacement rejection precedes mutation");
     let error = preparation_error(error);
-    assert!(error.contains("must be cancelled before replacement"));
+    assert!(error.contains("must be cancelled or held for replacement"));
 
     let cancelled = succeeded_output(
         &executor,
