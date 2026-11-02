@@ -32,6 +32,7 @@ const MAXIMUM_PROJECT_PAGE_SIZE: usize = 200;
 const DEFAULT_HISTORY_PAGE_SIZE: usize = 20;
 const STALE_STORY_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const MAXIMUM_STORY_CLEANUP_ENTRIES: usize = 20_000;
+const MAXIMUM_STORY_HISTORY_SCAN_ENTRIES: usize = 20_000;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -287,7 +288,13 @@ impl StoryProjectStore {
         };
 
         let mut candidates = Vec::with_capacity(limit.saturating_add(1));
-        for entry in fs::read_dir(&projects_directory).map_err(|_| store_error())? {
+        for (visited, entry) in fs::read_dir(&projects_directory)
+            .map_err(|_| store_error())?
+            .enumerate()
+        {
+            if visited >= MAXIMUM_STORY_HISTORY_SCAN_ENTRIES {
+                return Err(store_error());
+            }
             let Ok(entry) = entry else { continue };
             let project_id = entry.file_name().to_string_lossy().into_owned();
             if canonical_project_id(&project_id).is_err() {
@@ -503,7 +510,13 @@ impl StoryProjectStore {
         }
         validate_private_directory(&runs_directory)?;
         let mut candidates = Vec::with_capacity(limit.saturating_add(1));
-        for entry in fs::read_dir(&runs_directory).map_err(|_| planning_store_error())? {
+        for (visited, entry) in fs::read_dir(&runs_directory)
+            .map_err(|_| planning_store_error())?
+            .enumerate()
+        {
+            if visited >= MAXIMUM_STORY_HISTORY_SCAN_ENTRIES {
+                return Err(planning_store_error());
+            }
             let Ok(entry) = entry else { continue };
             let filename = entry.file_name().to_string_lossy().into_owned();
             let Some(run_id) = filename.strip_suffix(".json") else {
@@ -746,7 +759,13 @@ impl StoryProjectStore {
         let project_directory = projects.join(&project_id);
         validate_private_directory(&project_directory)?;
         let mut candidates = Vec::with_capacity(limit.saturating_add(1));
-        for entry in fs::read_dir(&project_directory).map_err(|_| media_batch_store_error())? {
+        for (visited, entry) in fs::read_dir(&project_directory)
+            .map_err(|_| media_batch_store_error())?
+            .enumerate()
+        {
+            if visited >= MAXIMUM_STORY_HISTORY_SCAN_ENTRIES {
+                return Err(media_batch_store_error());
+            }
             let Ok(entry) = entry else { continue };
             let filename = entry.file_name().to_string_lossy().into_owned();
             let Some(batch_id) = filename
@@ -841,7 +860,13 @@ impl StoryProjectStore {
         validate_private_directory(&project_directory)?;
         let mut unfinished = false;
         let mut unreadable = 0usize;
-        for entry in fs::read_dir(&project_directory).map_err(|_| media_batch_store_error())? {
+        for (visited, entry) in fs::read_dir(&project_directory)
+            .map_err(|_| media_batch_store_error())?
+            .enumerate()
+        {
+            if visited >= MAXIMUM_STORY_HISTORY_SCAN_ENTRIES {
+                return Err(media_batch_store_error());
+            }
             let Ok(entry) = entry else { continue };
             let filename = entry.file_name().to_string_lossy().into_owned();
             let Some(batch_id) = filename

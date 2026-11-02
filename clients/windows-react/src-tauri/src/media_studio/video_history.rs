@@ -14,6 +14,7 @@ use super::{
 
 const MANIFEST_VERSION: u32 = 1;
 const MAXIMUM_MANIFEST_BYTES: usize = 2 * 1_024 * 1_024;
+const MAXIMUM_HISTORY_DIRECTORY_ENTRIES: usize = 20_000;
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -162,7 +163,13 @@ impl MediaStudioVideoHistoryStore {
         }
         validate_private_directory(&account_directory)?;
         let mut candidates = Vec::with_capacity(limit.saturating_add(1));
-        for entry in fs::read_dir(&account_directory).map_err(|_| video_history_error())? {
+        for (visited, entry) in fs::read_dir(&account_directory)
+            .map_err(|_| video_history_error())?
+            .enumerate()
+        {
+            if visited >= MAXIMUM_HISTORY_DIRECTORY_ENTRIES {
+                return Err(video_history_error());
+            }
             let Ok(entry) = entry else { continue };
             let Ok(file_type) = entry.file_type() else {
                 continue;
