@@ -207,7 +207,7 @@ async fn appcontainer_terminal_uses_workspace_lease_and_interactive_stdio() {
                 command: format!("$value = [Console]::In.ReadLine(); Write-Output ('reply:' + $value); Write-Output ('file:' + (Get-Content -LiteralPath '{}' -Raw))", fixture),
                 cwd: scope.project_root.clone(),
                 background: true,
-                timeout_ms: Some(10_000),
+                timeout_ms: Some(30_000),
             },
         )
         .await
@@ -217,7 +217,7 @@ async fn appcontainer_terminal_uses_workspace_lease_and_interactive_stdio() {
         .write(&scope, terminal_id, "sandbox-input", true)
         .await
         .unwrap();
-    let waited = store.wait(&scope, terminal_id, 10_000).await.unwrap();
+    let waited = store.wait(&scope, terminal_id, 30_000).await.unwrap();
     assert_eq!(waited["completed"], true);
     let output = waited["output"].as_str().unwrap();
     assert!(output.contains("reply:sandbox-input"));

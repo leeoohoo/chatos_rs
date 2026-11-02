@@ -3086,13 +3086,16 @@ mod tests {
     #[test]
     fn workspace_parent_traversal_is_journaled_and_restored() {
         let app_data = tempfile::tempdir().unwrap();
-        let workspace = tempfile::tempdir().unwrap();
-        let parent = workspace.path().parent().unwrap().to_path_buf();
+        let parent_root = tempfile::tempdir().unwrap();
+        let workspace_path = parent_root.path().join("workspace");
+        std::fs::create_dir(&workspace_path).unwrap();
+        let workspace = workspace_path;
+        let parent = workspace.parent().unwrap().to_path_buf();
         let original_parent_dacl = read_dacl_sddl(&parent).unwrap();
         let manager = WorkspaceLeaseManager::open(app_data.path()).unwrap();
         let profile = AppContainerProfile::create("ChatOS.AppContainer.Probe").unwrap();
         let lease = manager
-            .grant(workspace.path(), profile.sid, WorkspaceAccess::ReadOnly)
+            .grant(&workspace, profile.sid, WorkspaceAccess::ReadOnly)
             .unwrap();
         assert_ne!(read_dacl_sddl(&parent).unwrap(), original_parent_dacl);
         let journal_path = lease.journal_path.clone();
