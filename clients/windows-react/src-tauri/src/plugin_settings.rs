@@ -28,6 +28,10 @@ use crate::{
     computer_use_worker::TrustedComputerUseLaunch,
     connector_state,
     host_lifecycle::HostManager,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePermit,
+        MachineResourcePriority,
+    },
     plugin_application::PluginApplicationManager,
     plugin_credentials::{environment_secret_references, secret_name},
     plugin_installer::{
@@ -63,15 +67,34 @@ pub(crate) struct PluginSettingsManager {
     plugin_root: PathBuf,
     manual_selections: Arc<Mutex<BTreeMap<String, ManualPluginSelection>>>,
     installation_transactions: Arc<AsyncMutex<()>>,
+    resources: MachineResourceGovernor,
 }
 
 impl PluginSettingsManager {
+    #[cfg(test)]
     pub(crate) fn new(app_data_directory: PathBuf) -> Self {
+        Self::new_with_resources(app_data_directory, MachineResourceGovernor::default())
+    }
+
+    pub(crate) fn new_with_resources(
+        app_data_directory: PathBuf,
+        resources: MachineResourceGovernor,
+    ) -> Self {
         Self {
             plugin_root: app_data_directory.join("NativeConnector").join("Plugins"),
             manual_selections: Arc::new(Mutex::new(BTreeMap::new())),
             installation_transactions: Arc::new(AsyncMutex::new(())),
+            resources,
         }
+    }
+
+    async fn acquire_install_resource(&self) -> Result<MachineResourcePermit, String> {
+        self.resources
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await
     }
 
     pub(crate) fn plugin_root(&self) -> &Path {
@@ -525,6 +548,7 @@ pub(crate) async fn install_git_plugin_source(
     subdirectory: Option<String>,
     expected_fingerprint: String,
 ) -> Result<LocalPluginInstallResult, String> {
+    let _resource_permit = settings.acquire_install_resource().await?;
     let generation = authentication
         .session_generation_for_owner(owner_user_id)
         .await?;
@@ -560,6 +584,7 @@ pub(crate) async fn install_npm_plugin_source(
     subdirectory: Option<String>,
     expected_fingerprint: String,
 ) -> Result<LocalPluginInstallResult, String> {
+    let _resource_permit = settings.acquire_install_resource().await?;
     let generation = authentication
         .session_generation_for_owner(owner_user_id)
         .await?;
@@ -593,6 +618,7 @@ pub(crate) async fn install_custom_npm_mcp(
     draft: NpmMcpDraft,
     expected_fingerprint: String,
 ) -> Result<(LocalPluginInstallResult, NpmMcpInspection), String> {
+    let _resource_permit = settings.acquire_install_resource().await?;
     let generation = authentication
         .session_generation_for_owner(owner_user_id)
         .await?;

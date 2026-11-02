@@ -317,7 +317,10 @@ pub fn run() {
                 .open(data_dir.join("clipboard-history"))
                 .map_err(std::io::Error::other)?;
             app.manage(PetPreferencesStore::new(data_dir.clone()));
-            app.manage(PluginSettingsManager::new(data_dir.clone()));
+            app.manage(PluginSettingsManager::new_with_resources(
+                data_dir.clone(),
+                app.state::<MachineResourceGovernor>().inner().clone(),
+            ));
             let app_data_maintenance_root = data_dir.clone();
             app.manage(
                 PluginApplicationManager::try_new_with_resources(

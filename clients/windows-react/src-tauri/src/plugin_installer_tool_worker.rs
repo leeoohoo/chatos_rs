@@ -10,6 +10,9 @@ use tauri::{AppHandle, Manager};
 use crate::{
     authentication::AuthenticationManager,
     host_lifecycle::HostManager,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
     plugin_application::PluginApplicationManager,
     plugin_installer::{
         inspect_git_package, inspect_local_package_source, inspect_npm_mcp,
@@ -167,7 +170,24 @@ pub(crate) async fn execute_plugin_installer_tool(
         .arguments
         .as_object()
         .ok_or_else(|| "Plugin 安装工具参数无效。".to_owned())?;
-    match claim.invocation.tool_name.as_str() {
+    let tool_name = claim.invocation.tool_name.as_str();
+    let _resource_permit = if matches!(
+        tool_name,
+        PLUGIN_INSTALLER_INSPECT_NPM | PLUGIN_INSTALLER_INSPECT_SOURCE
+    ) {
+        Some(
+            app.state::<MachineResourceGovernor>()
+                .inner()
+                .acquire(
+                    MachineResourceKind::CodeReadWorker,
+                    MachineResourcePriority::Interactive,
+                )
+                .await?,
+        )
+    } else {
+        None
+    };
+    match tool_name {
         PLUGIN_INSTALLER_SEARCH_NPM => {
             validate_keys(arguments, &["query"])?;
             let output = search_npm_packages(&required_string(arguments, "query", 240)?).await?;
