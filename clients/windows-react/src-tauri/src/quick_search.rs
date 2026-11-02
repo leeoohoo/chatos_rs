@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, HashMap, VecDeque},
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    fs::{self, File},
+    io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -14,11 +14,14 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 use crate::{
+    app_data_transaction::replace_owned_file,
     authentication::AuthenticationManager,
     general_settings::GeneralSettingsStore,
     global_utilities::{dispatch_action, GlobalUtilityAction, GlobalUtilityPreferencesStore},
     host_lifecycle::validate_owner,
-    machine_resource_governor::{MachineResourceGovernor, MachineResourceKind, MachineResourcePriority},
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
 };
 
 const WINDOW_LABEL: &str = "quick-search";
@@ -1324,13 +1327,7 @@ fn save_usage(path: &Path, records: &BTreeMap<String, UsageRecord>) -> Result<()
     }
     let parent = path.parent().ok_or_else(search_error)?;
     fs::create_dir_all(parent).map_err(|_| search_error())?;
-    let temporary = parent.join(format!(".quick-search-{}.tmp", Uuid::new_v4()));
-    let result =
-        write_private_file(&temporary, &bytes).and_then(|_| replace_file(&temporary, path));
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-        return Err(search_error());
-    }
+    replace_owned_file(parent, path, ".quick-search-", &bytes).map_err(|_| search_error())?;
     if let Ok(directory) = File::open(parent) {
         let _ = directory.sync_all();
     }
@@ -1358,55 +1355,6 @@ fn prune_usage(records: &mut BTreeMap<String, UsageRecord>) {
         .map(|(key, _)| key)
         .collect::<std::collections::BTreeSet<_>>();
     records.retain(|key, _| retained.contains(key));
-}
-
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::rename(source, destination)
-}
-
-#[cfg(target_os = "windows")]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let result = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
 }
 
 fn require_presentation(

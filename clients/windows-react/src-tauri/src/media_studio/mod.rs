@@ -837,7 +837,10 @@ fn cleanup_history_record(
         if !state.visit() {
             return;
         }
-        if entry.file_name().to_str() != Some("record.json.tmp") {
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !canonical_history_manifest_temporary_name(&name) {
             continue;
         }
         let path = entry.path();
@@ -880,6 +883,16 @@ fn canonical_owner_hash(value: &str) -> bool {
 
 fn canonical_record_id(value: &str) -> bool {
     Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value)
+}
+
+fn canonical_history_manifest_temporary_name(value: &str) -> bool {
+    if value == "record.json.tmp" {
+        return true;
+    }
+    value
+        .strip_prefix(".image-history-")
+        .and_then(|value| value.strip_suffix(".tmp"))
+        .is_some_and(canonical_record_id)
 }
 
 fn safe_cleanup_directory(path: &Path) -> bool {
@@ -2088,11 +2101,19 @@ mod tests {
         fs::create_dir_all(&incomplete_record).unwrap();
 
         let image_temporary = image_record.join("record.json.tmp");
+        let image_owned_temporary =
+            image_record.join(format!(".image-history-{}.tmp", Uuid::new_v4()));
         let video_temporary = video_record.join("record.json.tmp");
         let committed = image_record.join("record.json");
         let unrelated = image_record.join("notes.tmp");
         let incomplete_asset = incomplete_record.join("00000000000000000000000000000001.png");
-        for path in [&image_temporary, &video_temporary, &committed, &unrelated] {
+        for path in [
+            &image_temporary,
+            &image_owned_temporary,
+            &video_temporary,
+            &committed,
+            &unrelated,
+        ] {
             fs::write(path, b"value").unwrap();
         }
         fs::write(&incomplete_asset, b"orphaned asset").unwrap();
@@ -2128,9 +2149,10 @@ mod tests {
                 &manager.video_history.temporary_cleanup_root(),
                 SystemTime::now() + Duration::from_secs(1),
             ),
-            3
+            4
         );
         assert!(!image_temporary.exists());
+        assert!(!image_owned_temporary.exists());
         assert!(!video_temporary.exists());
         assert!(!incomplete_record.exists());
         assert!(committed.exists());

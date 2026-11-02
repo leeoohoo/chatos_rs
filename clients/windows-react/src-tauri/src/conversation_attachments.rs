@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
-    io::{Cursor, Read, Write},
+    io::{Cursor, Read},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -18,6 +18,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 use crate::{
+    app_data_transaction::{create_owned_file, replace_owned_file},
     app_owned_export::try_remove_stale_owned_file,
     host_lifecycle::HostManager,
     machine_resource_governor::{
@@ -420,15 +421,8 @@ impl AttachmentManager {
         let attachment_id = format!("attachment_{token}");
         let directory = self.ensure_scope_directory(&scope_key)?;
         let file = directory.join(&token);
-        let temporary_file = directory.join(format!("{token}.tmp"));
-        if let Err(error) = write_private_file(&temporary_file, &candidate.bytes) {
-            let _ = fs::remove_file(&temporary_file);
-            return Err(error);
-        }
-        fs::rename(&temporary_file, &file).map_err(|error| {
-            let _ = fs::remove_file(&temporary_file);
-            format!("无法保存附件：{error}")
-        })?;
+        create_owned_file(&directory, &file, ".attachment-payload-", &candidate.bytes)
+            .map_err(|error| format!("无法保存附件：{error}"))?;
         let metadata = VaultMetadata {
             attachment_id: attachment_id.clone(),
             token: token.clone(),
@@ -937,10 +931,23 @@ fn validate_cleanup_directory(path: &Path) -> Result<(), ()> {
 }
 
 fn canonical_attachment_temporary_name(name: &str) -> bool {
-    let token = name
+    let legacy_token = name
         .strip_suffix(".json.tmp")
         .or_else(|| name.strip_suffix(".tmp"));
-    token.is_some_and(|value| Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value))
+    if legacy_token.is_some_and(valid_attachment_temporary_token) {
+        return true;
+    }
+    [".attachment-payload-", ".attachment-metadata-"]
+        .iter()
+        .any(|prefix| {
+            name.strip_prefix(prefix)
+                .and_then(|value| value.strip_suffix(".tmp"))
+                .is_some_and(valid_attachment_temporary_token)
+        })
+}
+
+fn valid_attachment_temporary_token(value: &str) -> bool {
+    Uuid::parse_str(value).is_ok_and(|uuid| uuid.to_string() == value)
 }
 
 #[cfg(windows)]

@@ -15,7 +15,8 @@ use tauri::{http, AppHandle, LogicalSize, Manager, State, WebviewUrl, WebviewWin
 use uuid::Uuid;
 
 use crate::{
-    general_settings::GeneralSettingsStore, global_utilities::GlobalUtilityPreferencesStore,
+    app_data_transaction::create_owned_file, general_settings::GeneralSettingsStore,
+    global_utilities::GlobalUtilityPreferencesStore,
 };
 
 #[cfg(any(target_os = "windows", test))]
@@ -23,7 +24,7 @@ use chrono::Utc;
 #[cfg(any(target_os = "windows", test))]
 use sha2::{Digest, Sha256};
 #[cfg(any(target_os = "windows", test))]
-use std::{fs::OpenOptions, io::Write, path::Path};
+use std::path::Path;
 
 const WINDOW_LABEL: &str = "clipboard-history";
 const MAXIMUM_PAYLOAD_BYTES: u64 = 25 * 1_024 * 1_024;
@@ -852,25 +853,7 @@ fn encode_rgba_png(width: usize, height: usize, rgba: &[u8]) -> Result<Vec<u8>, 
 fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or_else(clipboard_error)?;
     fs::create_dir_all(parent).map_err(|_| clipboard_error())?;
-    let temporary = parent.join(format!(".clipboard-{}.tmp", Uuid::new_v4()));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let result = (|| {
-        let mut file = options.open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        fs::rename(&temporary, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-        return Err(clipboard_error());
-    }
-    Ok(())
+    create_owned_file(parent, path, ".clipboard-", bytes).map_err(|_| clipboard_error())
 }
 
 fn clipboard_error() -> String {

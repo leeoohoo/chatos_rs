@@ -160,32 +160,12 @@ fn ensure_private_directory(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(path)
-        .map_err(|error| format!("无法保存附件：{error}"))?;
-    file.write_all(bytes)
-        .and_then(|_| file.sync_all())
-        .map_err(|error| format!("无法保存附件：{error}"))
-}
-
 fn write_metadata(directory: &Path, metadata: &VaultMetadata) -> Result<(), String> {
     let bytes =
         serde_json::to_vec(metadata).map_err(|error| format!("无法记录附件元数据：{error}"))?;
     let target = metadata_path(directory, &metadata.token);
-    let temporary = directory.join(format!("{}.json.tmp", metadata.token));
-    write_private_file(&temporary, &bytes)?;
-    fs::rename(&temporary, target).map_err(|error| {
-        let _ = fs::remove_file(&temporary);
-        format!("无法记录附件元数据：{error}")
-    })
+    replace_owned_file(directory, &target, ".attachment-metadata-", &bytes)
+        .map_err(|error| format!("无法记录附件元数据：{error}"))
 }
 
 fn read_metadata(directory: &Path, token: &str) -> Result<VaultMetadata, String> {

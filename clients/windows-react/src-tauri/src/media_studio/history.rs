@@ -10,6 +10,7 @@ use std::{
 use uuid::Uuid;
 
 use super::provider::{GeneratedImageAsset, ImageGenerationResult};
+use crate::app_data_transaction::replace_owned_file;
 
 const MANIFEST_VERSION: u32 = 1;
 const MAXIMUM_IMAGE_BYTES: usize = 20 * 1_024 * 1_024;
@@ -553,10 +554,9 @@ fn commit_manifest(directory: &Path, manifest: &HistoryManifest) -> Result<(), S
     if bytes.len() > MAXIMUM_MANIFEST_BYTES {
         return Err(history_error());
     }
-    let temporary = directory.join("record.json.tmp");
     let target = directory.join("record.json");
-    write_private_file(&temporary, &bytes)?;
-    fs::rename(&temporary, &target).map_err(|_| history_error())?;
+    replace_owned_file(directory, &target, ".image-history-", &bytes)
+        .map_err(|_| history_error())?;
     if let Ok(record) = File::open(directory) {
         let _ = record.sync_all();
     }

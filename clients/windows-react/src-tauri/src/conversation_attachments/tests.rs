@@ -189,11 +189,17 @@ mod tests {
         let token = "00000000-0000-0000-0000-000000000000";
         let payload_temporary = scope_directory.join(format!("{token}.tmp"));
         let metadata_temporary = scope_directory.join(format!("{token}.json.tmp"));
+        let owned_payload_temporary =
+            scope_directory.join(format!(".attachment-payload-{token}.tmp"));
+        let owned_metadata_temporary =
+            scope_directory.join(format!(".attachment-metadata-{token}.tmp"));
         let final_payload = scope_directory.join(token);
         let unrelated = scope_directory.join("notes.tmp");
         for path in [
             &payload_temporary,
             &metadata_temporary,
+            &owned_payload_temporary,
+            &owned_metadata_temporary,
             &final_payload,
             &unrelated,
         ] {
@@ -207,9 +213,11 @@ mod tests {
             &manager.inner.root,
             SystemTime::now() + Duration::from_secs(1),
         );
-        assert_eq!(removed, 2);
+        assert_eq!(removed, 4);
         assert!(!payload_temporary.exists());
         assert!(!metadata_temporary.exists());
+        assert!(!owned_payload_temporary.exists());
+        assert!(!owned_metadata_temporary.exists());
         assert!(final_payload.exists());
         assert!(unrelated.exists());
         assert!(too_deep.exists());

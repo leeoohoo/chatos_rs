@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    fs::{self, File, OpenOptions},
-    io::{ErrorKind, Read, Write},
+    fs::{self, File},
+    io::{ErrorKind, Read},
     path::{Path, PathBuf},
     sync::Mutex,
 };
-use uuid::Uuid;
+
+use crate::app_data_transaction::create_owned_file;
 
 use super::models::{ToolApprovalDecision, ToolApprovalMode};
 
@@ -190,21 +191,10 @@ fn write_record(directory: &Path, record: &RecordedToolApprovalDecision) -> Resu
     if destination.exists() {
         return Err("approval journal identity already exists".into());
     }
-    let temporary = directory.join(format!(".approval-{}.tmp", Uuid::new_v4()));
-    let result = (|| {
-        let mut file = private_file(&temporary)?;
-        file.write_all(&bytes)
-            .and_then(|()| file.sync_all())
-            .map_err(|error| format!("failed to persist approval journal: {error}"))?;
-        fs::rename(&temporary, &destination)
-            .map_err(|error| format!("failed to publish approval journal: {error}"))?;
-        sync_directory(directory);
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
+    create_owned_file(directory, &destination, ".approval-", &bytes)
+        .map_err(|error| format!("failed to persist approval journal: {error}"))?;
+    sync_directory(directory);
+    Ok(())
 }
 
 fn remove_record_file(
@@ -253,26 +243,6 @@ fn ensure_private_directory(path: &Path) -> Result<(), String> {
             .map_err(|error| format!("failed to protect approval journal directory: {error}"))?;
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn private_file(path: &Path) -> Result<File, String> {
-    use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|error| format!("failed to create approval journal record: {error}"))
-}
-
-#[cfg(not(unix))]
-fn private_file(path: &Path) -> Result<File, String> {
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| format!("failed to create approval journal record: {error}"))
 }
 
 #[cfg(unix)]
