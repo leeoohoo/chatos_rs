@@ -111,7 +111,10 @@ pub(crate) fn load_agent_plugin_skill_snapshot<'a>(
     if !installation_root.is_dir() {
         return Err(plugin_runtime_error());
     }
-    let mut directories = manifest_directories.map(str::to_owned).collect::<Vec<_>>();
+    let mut directories = manifest_directories
+        .take(MAXIMUM_PLUGIN_SKILLS.saturating_add(1))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
     if directories.is_empty() {
         directories = discover_bundled_skill_directories(&installation_root, package_name)?;
     }
