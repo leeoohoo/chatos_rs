@@ -69,9 +69,15 @@ const CLEANUP_SCOPES: &[CleanupScope] = &[
 const DIRECTORY_CLEANUP_SCOPES: &[DirectoryCleanupScope] = &[
     DirectoryCleanupScope {
         components: &["NativeConnector", "Plugins", ".source-staging"],
+        pattern: DirectoryNamePattern::Uuid,
     },
     DirectoryCleanupScope {
         components: &["NativeConnector", "Plugins", ".staging"],
+        pattern: DirectoryNamePattern::Uuid,
+    },
+    DirectoryCleanupScope {
+        components: &["remote-connections", "runtime"],
+        pattern: DirectoryNamePattern::PrefixedUuid("connection-test-"),
     },
 ];
 
@@ -82,6 +88,12 @@ struct CleanupScope {
 
 struct DirectoryCleanupScope {
     components: &'static [&'static str],
+    pattern: DirectoryNamePattern,
+}
+
+enum DirectoryNamePattern {
+    Uuid,
+    PrefixedUuid(&'static str),
 }
 
 enum CleanupNamePattern {
@@ -187,7 +199,7 @@ fn cleanup_directory_scope(
             continue;
         };
         let path = entry.path();
-        if canonical_uuid(&name)
+        if canonical_directory_name(&name, &scope.pattern)
             && try_remove_stale_owned_directory_tree(
                 &path,
                 cutoff,
@@ -198,6 +210,15 @@ fn cleanup_directory_scope(
         }
     }
     removed
+}
+
+fn canonical_directory_name(name: &str, pattern: &DirectoryNamePattern) -> bool {
+    match pattern {
+        DirectoryNamePattern::Uuid => canonical_uuid(name),
+        DirectoryNamePattern::PrefixedUuid(prefix) => name
+            .strip_prefix(prefix)
+            .is_some_and(canonical_uuid),
+    }
 }
 
 pub(crate) fn try_remove_stale_owned_directory_tree(
@@ -512,6 +533,32 @@ mod tests {
         assert!(linked_tree.exists());
         assert!(outside.exists());
         assert!(committed.exists());
+    }
+
+    #[test]
+    fn ssh_runtime_cleanup_removes_only_stale_canonical_session_trees() {
+        let root = tempdir().unwrap();
+        let runtime = root.path().join("remote-connections/runtime");
+        let stale = runtime
+            .join("connection-test-00000000-0000-0000-0000-000000000000");
+        let malformed = runtime.join("connection-test-NOT-A-UUID");
+        let unrelated = runtime.join("session-00000000-0000-0000-0000-000000000000");
+        for directory in [&stale, &malformed, &unrelated] {
+            fs::create_dir_all(directory).unwrap();
+            fs::write(directory.join("ssh_config"), b"value").unwrap();
+        }
+
+        assert_eq!(cleanup_stale_temporaries_before(root.path(), UNIX_EPOCH), 0);
+        assert_eq!(
+            cleanup_stale_temporaries_before(
+                root.path(),
+                SystemTime::now() + Duration::from_secs(1),
+            ),
+            1
+        );
+        assert!(!stale.exists());
+        assert!(malformed.exists());
+        assert!(unrelated.exists());
     }
 
     #[test]
