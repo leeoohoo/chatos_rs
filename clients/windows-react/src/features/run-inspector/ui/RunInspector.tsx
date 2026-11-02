@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useRunInspectorStore } from "../application/runInspectorStore";
 import {
   graphHasActiveTasks,
@@ -75,6 +75,7 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
   const retry = useRunInspectorStore((state) => state.retry);
   const cancel = useRunInspectorStore((state) => state.cancel);
   const restart = useRunInspectorStore((state) => state.restart);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const pollingKey = phase.kind === "open" && graphHasActiveTasks(phase.graph)
     ? `${phase.lookup.userMessageId}:${phase.selectedTaskId}`
     : null;
@@ -86,6 +87,18 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
     }, POLL_INTERVAL_MILLISECONDS);
     return () => window.clearInterval(timer);
   }, [pollingKey, port, refresh]);
+
+  useEffect(() => {
+    if (phase.kind !== "open") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      close();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    closeButtonRef.current?.focus();
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [close, phase.kind]);
 
   if (phase.kind !== "open") return null;
   const selected = phase.taskDetail?.task;
@@ -105,7 +118,7 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
           </div>
           <div className="run-inspector__header-actions">
             <InspectorHeaderActions phase={phase} onCancel={() => void cancel(port)} />
-            <button aria-label="关闭" className="inspector-close" onClick={close} type="button">×</button>
+            <button aria-label="关闭" className="inspector-close" onClick={close} ref={closeButtonRef} type="button">×</button>
           </div>
         </header>
         <div className="run-inspector__body">
@@ -117,6 +130,8 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
                   task.task_id === phase.selectedTaskId ? "run-task--active" : "",
                   isTaskAttentionStatus(displayStatus) ? "run-task--attention" : "",
                 ].filter(Boolean).join(" ")}
+                aria-current={task.task_id === phase.selectedTaskId ? "true" : undefined}
+                aria-label={`${task.title}，${statusLabel(displayStatus)}`}
                 key={task.task_id}
                 onClick={() => void selectTask(port, task.task_id)}
                 style={{ paddingLeft: 10 + Math.min(depth, 4) * 12 }}
@@ -142,8 +157,10 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
             <div className="inspector-segmented" role="tablist" aria-label="检查内容">
               {sections.map((section) => (
                 <button
+                  aria-controls={`run-inspector-panel-${section.id}`}
                   aria-selected={phase.section === section.id}
                   className={phase.section === section.id ? "is-selected" : undefined}
+                  id={`run-inspector-tab-${section.id}`}
                   key={section.id}
                   onClick={() => void setSection(port, section.id)}
                   role="tab"
@@ -154,7 +171,13 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
               ))}
             </div>
             {phase.error ? <div className="inspector-error">{phase.error}</div> : null}
-            <div className="run-detail__scroll">
+            <div
+              aria-label={sections.find((section) => section.id === phase.section)?.label}
+              aria-labelledby={`run-inspector-tab-${phase.section}`}
+              className="run-detail__scroll"
+              id={`run-inspector-panel-${phase.section}`}
+              role="tabpanel"
+            >
               {phase.isLoadingTask && !phase.taskDetail ? (
                 <InspectorState loading message="正在加载任务基础详情…" />
               ) : phase.section === "detail" ? (

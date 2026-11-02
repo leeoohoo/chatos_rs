@@ -15,6 +15,8 @@ export function PetActivitySurface({ port }: { port: PetPresentationPort }) {
   return (
     <main
       aria-label={copy.title}
+      aria-atomic="true"
+      aria-live="polite"
       className={`pet-activity-overlay pet-activity-overlay--${activity.kind} ${taskGate ? "pet-activity-overlay--task-gate" : ""}`}
     >
       <span aria-hidden="true">{taskGate ? "Ⅱ" : activityIcon(activity.kind)}</span>

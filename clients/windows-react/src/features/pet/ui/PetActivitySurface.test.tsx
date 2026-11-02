@@ -50,5 +50,7 @@ describe("PetActivitySurface", () => {
     expect(screen.getByText("后续执行已暂停，等待你确认要求")).toBeVisible();
     expect(screen.getByText("Ⅱ")).toBeVisible();
     expect(screen.getByRole("main")).toHaveClass("pet-activity-overlay--task-gate");
+    expect(screen.getByRole("main")).toHaveAttribute("aria-live", "polite");
+    expect(screen.getByRole("main")).toHaveAttribute("aria-atomic", "true");
   });
 });
