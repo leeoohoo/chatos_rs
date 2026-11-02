@@ -67,6 +67,7 @@ const MAXIMUM_PLUGIN_SKILLS: usize = 128;
 const MAXIMUM_SKILL_INSTRUCTIONS_BYTES: u64 = 256 * 1_024;
 const MAXIMUM_SKILL_RESOURCE_BYTES: u64 = 1_024 * 1_024;
 const MAXIMUM_SKILL_RESOURCES: usize = 256;
+const MAXIMUM_SKILL_DIRECTORY_ENTRIES: usize = MAXIMUM_SKILL_RESOURCES * 2;
 const MAXIMUM_SKILL_CATALOG_BYTES: u64 = 16 * 1_024 * 1_024;
 const MAXIMUM_SKILL_PAGE_CHARACTERS: usize = 160_000;
 
@@ -186,12 +187,14 @@ fn discover_bundled_skill_directories(
             continue;
         }
         let root = secure_existing_skill_path(installation_root, &root_path)?;
-        let mut children = std::fs::read_dir(root)
+        for (visited, child) in std::fs::read_dir(root)
             .map_err(|_| plugin_runtime_error())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| plugin_runtime_error())?;
-        children.sort_by_key(std::fs::DirEntry::file_name);
-        for child in children {
+            .enumerate()
+        {
+            if visited >= MAXIMUM_SKILL_DIRECTORY_ENTRIES {
+                return Err(plugin_runtime_error());
+            }
+            let child = child.map_err(|_| plugin_runtime_error())?;
             let name = child
                 .file_name()
                 .into_string()
@@ -364,6 +367,7 @@ fn load_skill_resources(
 ) -> Result<BTreeMap<String, String>, String> {
     let mut resources = BTreeMap::new();
     let mut observed = 0_usize;
+    let mut visited_entries = 0_usize;
     let mut stack = Vec::new();
     for resource_root in ["scripts", "references", "assets"] {
         let candidate = skill_directory.join(resource_root);
@@ -384,12 +388,12 @@ fn load_skill_resources(
         stack.push((canonical, PathBuf::from(resource_root)));
     }
     while let Some((directory, relative_directory)) = stack.pop() {
-        let mut entries = std::fs::read_dir(&directory)
-            .map_err(|_| plugin_runtime_error())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| plugin_runtime_error())?;
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        for entry in entries {
+        for entry in std::fs::read_dir(&directory).map_err(|_| plugin_runtime_error())? {
+            visited_entries = visited_entries.saturating_add(1);
+            if visited_entries > MAXIMUM_SKILL_DIRECTORY_ENTRIES {
+                return Err(plugin_runtime_error());
+            }
+            let entry = entry.map_err(|_| plugin_runtime_error())?;
             let name = entry
                 .file_name()
                 .into_string()

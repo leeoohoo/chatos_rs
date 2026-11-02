@@ -100,6 +100,7 @@ Windows 产品版本：`3.0.9`
 - [x] App-owned 残留清理在 Unix 兼容构建上也拒绝多硬链接文件：共享 `try_remove_stale_owned_file` 在执行删除前验证 `nlink == 1`，避免回收仍被其他目录引用的文件。
 - [x] 项目创建恢复 journal 加载改为有界枚举：最多检查 128 个目录项、接受最多 64 个 JSON journal，超过上限立即失败，不再先把整个目录收集到内存。
 - [x] Plugin 完整性树快照改为流式遍历：最多检查 40,000 个文件/目录条目，并继续限制文件数与总字节数，避免大量空目录造成无界条目收集。
+- [x] Agent Plugin Skill 目录发现与资源快照改为有界流式遍历：每个 Skill 目录及其资源树最多检查 512 项，同时保留 256 个资源和 16 MiB 总内容上限。
 - [x] 固定 AppData 临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-appdata-temp-cleanup-final-nsis.json`：全新目录安装 `2,281 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,214 ms`、卸载 `667 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin 事务临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-temp-cleanup-final-nsis.json`：全新目录安装 `2,181 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,187 ms`、卸载 `638 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin staging 崩溃残留清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-staging-cleanup-final-nsis.json`：全新目录安装 `2,187 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,173 ms`、卸载 `647 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
