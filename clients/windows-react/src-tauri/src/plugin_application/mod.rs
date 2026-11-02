@@ -127,14 +127,15 @@ impl PluginApplicationManager {
                 app_data_directory
                     .join("NativeConnector")
                     .join("PluginRuntime"),
-                resources,
+                resources.clone(),
             ),
-            agent_runtime: AgentPluginRuntime::new(
+            agent_runtime: AgentPluginRuntime::new_with_resources(
                 plugin_root,
                 app_data_directory
                     .join("NativeConnector")
                     .join("PluginRuntime")
                     .join("InvocationJournal"),
+                resources,
             ),
             #[cfg(target_os = "windows")]
             workspace_leases,

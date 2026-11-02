@@ -31,6 +31,10 @@ use crate::windows_appcontainer::{SandboxedChild, WorkspaceAccess, WorkspaceLeas
 use crate::{
     app_owned_export::try_remove_stale_owned_file,
     host_lifecycle::HostManager,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePermit,
+        MachineResourcePriority,
+    },
     plugin_application::{
         PluginApplicationManager, ResolvedAgentPluginExecution, TrustedAgentPluginOption,
     },
@@ -454,14 +458,29 @@ pub(crate) struct AgentPluginRuntime {
     plugin_root: PathBuf,
     journal: InvocationJournal,
     sessions: Arc<Mutex<HashMap<String, Arc<McpSession>>>>,
+    resources: MachineResourceGovernor,
 }
 
 impl AgentPluginRuntime {
+    #[cfg(test)]
     pub(crate) fn new(plugin_root: PathBuf, journal_root: PathBuf) -> Self {
+        Self::new_with_resources(
+            plugin_root,
+            journal_root,
+            MachineResourceGovernor::default(),
+        )
+    }
+
+    pub(crate) fn new_with_resources(
+        plugin_root: PathBuf,
+        journal_root: PathBuf,
+        resources: MachineResourceGovernor,
+    ) -> Self {
         Self {
             plugin_root,
             journal: InvocationJournal::new(journal_root),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            resources,
         }
     }
 
@@ -925,12 +944,25 @@ impl AgentPluginRuntime {
         if let Some(stale) = stale {
             stale.invalidate().await;
         }
+        let resource_permit = if resolved.executable.is_some() {
+            Some(
+                self.resources
+                    .acquire(
+                        MachineResourceKind::CodeReadWorker,
+                        MachineResourcePriority::Interactive,
+                    )
+                    .await?,
+            )
+        } else {
+            None
+        };
         let session = Arc::new(
             McpSession::connect(
                 &self.plugin_root,
                 context,
                 resolved,
                 runtime_fingerprint.clone(),
+                resource_permit,
                 #[cfg(windows)]
                 manager.workspace_leases(),
             )
@@ -1057,6 +1089,7 @@ struct McpConnection {
     stdout: BufReader<McpStdout>,
     #[cfg(windows)]
     stderr_task: tokio::task::JoinHandle<()>,
+    resource_permit: Option<MachineResourcePermit>,
     next_request_id: u64,
     unusable: bool,
 }
@@ -1067,6 +1100,7 @@ impl McpSession {
         context: &AgentPluginRunContext,
         resolved: ResolvedAgentPluginExecution,
         runtime_fingerprint: String,
+        resource_permit: Option<MachineResourcePermit>,
         #[cfg(windows)] workspace_leases: &WorkspaceLeaseManager,
     ) -> Result<Self, String> {
         let skills_by_option = resolved
@@ -1151,6 +1185,7 @@ impl McpSession {
                 stdin: tokio::fs::File::from_std(stdin),
                 stdout: BufReader::new(tokio::fs::File::from_std(stdout)),
                 stderr_task,
+                resource_permit,
                 next_request_id: 1,
                 unusable: false,
             }
@@ -1188,6 +1223,7 @@ impl McpSession {
                 _termination: termination,
                 stdin,
                 stdout: BufReader::new(stdout),
+                resource_permit,
                 next_request_id: 1,
                 unusable: false,
             }
@@ -1530,6 +1566,7 @@ impl McpSession {
             return;
         }
         connection.unusable = true;
+        connection.resource_permit.take();
         #[cfg(windows)]
         {
             if let Some(child) = connection.child.take() {
@@ -2625,9 +2662,9 @@ mod tests {
 
         let bounded = (1..=3)
             .map(|index| {
-                let path = directory.path().join(format!(
-                    ".00000000-0000-0000-0000-00000000000{index}.tmp"
-                ));
+                let path = directory
+                    .path()
+                    .join(format!(".00000000-0000-0000-0000-00000000000{index}.tmp"));
                 std::fs::write(&path, b"stale").unwrap();
                 path
             })
@@ -2793,6 +2830,7 @@ mod tests {
             &context,
             resolved,
             fingerprint,
+            None,
             #[cfg(windows)]
             manager.workspace_leases(),
         )
@@ -2936,16 +2974,26 @@ fn main() {
         let fingerprint = resolved_runtime_fingerprint(&resolved).unwrap();
         let app_data = directory.path().join("app-data");
         let manager = PluginApplicationManager::new(app_data.clone());
+        let resources = MachineResourceGovernor::default();
+        let permit = resources
+            .acquire(
+                MachineResourceKind::CodeReadWorker,
+                MachineResourcePriority::Interactive,
+            )
+            .await
+            .unwrap();
         let session = McpSession::connect(
             &plugin_root,
             &context,
             resolved,
             fingerprint,
+            Some(permit),
             #[cfg(windows)]
             manager.workspace_leases(),
         )
         .await
         .unwrap();
+        assert_eq!(resources.used_resource_units(), 1);
 
         assert_eq!(session.definitions.len(), 1);
         assert_eq!(session.definitions[0].name, "echo_document");
@@ -3026,6 +3074,7 @@ fn main() {
         #[cfg(not(windows))]
         let _ = std::fs::remove_file(installation.join("plugin-escape.txt"));
         session.invalidate().await;
+        assert_eq!(resources.used_resource_units(), 0);
         #[cfg(windows)]
         for journal in [
             app_data
