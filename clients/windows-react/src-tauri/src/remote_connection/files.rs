@@ -8,6 +8,7 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use crate::app_owned_export::try_remove_stale_owned_file;
 use std::{
     collections::HashMap,
     fs,
@@ -15,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Mutex as StandardMutex,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::State;
 
@@ -33,6 +34,9 @@ const MAXIMUM_PENDING_SELECTIONS: usize = 32;
 const SELECTION_LIFETIME: Duration = Duration::from_secs(15 * 60);
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const TRANSFER_PROCESS_LIFETIME: Duration = Duration::from_secs(65 * 60);
+const STALE_DOWNLOAD_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const MAXIMUM_DOWNLOAD_CLEANUP_ENTRIES: usize = 2_000;
+const DOWNLOAD_TEMPORARY_PREFIX: &str = ".chatos-download-";
 
 type FileFuture<'a> = Pin<Box<dyn Future<Output = Result<SshProcessProgress, String>> + Send + 'a>>;
 
@@ -732,6 +736,17 @@ pub async fn download_remote_file(
     };
     let remote_path = validate_mutable_remote_path(&remote_path)?;
     let temporary_path = download_temporary_path(&destination, &selection_id, &input.operation_id)?;
+    let cleanup_parent = temporary_path
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(local_selection_error)?;
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let cutoff = SystemTime::now()
+            .checked_sub(STALE_DOWNLOAD_TEMPORARY_AGE)
+            .unwrap_or(UNIX_EPOCH);
+        cleanup_stale_download_temporaries(&cleanup_parent, cutoff)
+    })
+    .await;
     let operation = RemoteFileOperation {
         identity: format!("download\0{selection_id}\0{remote_path}\0{overwrite}"),
         command: download_script(&remote_path),
@@ -1119,6 +1134,38 @@ fn download_temporary_path(
     digest.update(operation_id.as_bytes());
     let suffix = format!("{:x}", digest.finalize());
     Ok(parent.join(format!(".chatos-download-{}.tmp", &suffix[..24])))
+}
+
+fn cleanup_stale_download_temporaries(parent: &Path, cutoff: SystemTime) -> usize {
+    let Ok(metadata) = fs::symlink_metadata(parent) else {
+        return 0;
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        return 0;
+    }
+    let Ok(entries) = fs::read_dir(parent) else {
+        return 0;
+    };
+    entries
+        .take(MAXIMUM_DOWNLOAD_CLEANUP_ENTRIES)
+        .filter_map(Result::ok)
+        .filter(|entry| canonical_download_temporary_name(&entry.file_name()))
+        .filter(|entry| try_remove_stale_owned_file(&entry.path(), cutoff))
+        .count()
+}
+
+fn canonical_download_temporary_name(name: &std::ffi::OsStr) -> bool {
+    let Some(value) = name
+        .to_str()
+        .and_then(|value| value.strip_prefix(DOWNLOAD_TEMPORARY_PREFIX))
+        .and_then(|value| value.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    value.len() == 24
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn persist_download(source: &Path, destination: &Path, overwrite: bool) -> Result<(), String> {
@@ -1569,6 +1616,38 @@ mod tests {
         assert!(script.contains("ln -- \"$tmp\" \"$target\""));
         assert!(!script.contains("/Users/"));
         assert!(!script.contains("C:\\"));
+    }
+
+    #[test]
+    fn download_cleanup_removes_only_stale_canonical_owned_temporaries() {
+        let directory = tempfile::tempdir().unwrap();
+        let stale = directory
+            .path()
+            .join(".chatos-download-0123456789abcdef01234567.tmp");
+        let fresh = directory
+            .path()
+            .join(".chatos-download-fedcba9876543210fedcba98.tmp");
+        let malformed = directory.path().join(".chatos-download-not-owned.tmp");
+        let unrelated = directory.path().join("notes.tmp");
+        for path in [&stale, &fresh, &malformed, &unrelated] {
+            fs::write(path, b"value").unwrap();
+        }
+
+        assert_eq!(
+            cleanup_stale_download_temporaries(directory.path(), UNIX_EPOCH),
+            0
+        );
+        assert_eq!(
+            cleanup_stale_download_temporaries(
+                directory.path(),
+                SystemTime::now() + Duration::from_secs(1),
+            ),
+            2
+        );
+        assert!(!stale.exists());
+        assert!(!fresh.exists());
+        assert!(malformed.exists());
+        assert!(unrelated.exists());
     }
 
     #[test]
