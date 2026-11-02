@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
+    io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
 };
@@ -929,7 +930,13 @@ fn load_payload(file: &Path) -> Result<OverridePayload, String> {
     if !metadata.is_file() || metadata.len() > MAXIMUM_PAYLOAD_BYTES {
         return Err("Skill 配置不是普通文件或超过本地存储上限。".to_owned());
     }
-    let bytes = fs::read(file).map_err(|_| storage_error())?;
+    let mut bytes = Vec::with_capacity(metadata.len().min(MAXIMUM_PAYLOAD_BYTES) as usize + 1);
+    fs::File::open(file)
+        .and_then(|file| file.take(MAXIMUM_PAYLOAD_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|_| storage_error())?;
+    if bytes.len() as u64 > MAXIMUM_PAYLOAD_BYTES {
+        return Err("Skill 配置超过本地存储上限。".to_owned());
+    }
     let mut payload: OverridePayload =
         serde_json::from_slice(&bytes).map_err(|_| storage_error())?;
     if !(1..=2).contains(&payload.schema_version) {

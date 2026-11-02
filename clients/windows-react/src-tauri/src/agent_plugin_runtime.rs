@@ -20,7 +20,7 @@ use std::{
 #[cfg(not(windows))]
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::{
-    io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     sync::Mutex,
 };
 
@@ -2259,7 +2259,17 @@ async fn read_journal_record(path: &Path) -> Result<Option<JournalRecord>, Strin
     {
         return Err(journal_error());
     }
-    let bytes = tokio::fs::read(path).await.map_err(|_| journal_error())?;
+    let mut bytes = Vec::with_capacity(metadata.len().min(MAXIMUM_JOURNAL_BYTES) as usize + 1);
+    tokio::fs::File::open(path)
+        .await
+        .map_err(|_| journal_error())?
+        .take(MAXIMUM_JOURNAL_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|_| journal_error())?;
+    if bytes.len() as u64 > MAXIMUM_JOURNAL_BYTES {
+        return Err(journal_error());
+    }
     serde_json::from_slice(&bytes)
         .map(Some)
         .map_err(|_| journal_error())

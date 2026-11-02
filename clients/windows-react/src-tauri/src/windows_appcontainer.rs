@@ -1771,7 +1771,11 @@ fn restore_directory_leases(mut leases: Vec<DirectoryLease>) -> Result<(), Strin
 }
 
 fn restore_lease_journal(journal_path: &Path) -> Result<(), String> {
-    let bytes = std::fs::read(journal_path)
+    let mut bytes = Vec::with_capacity(MAXIMUM_LEASE_JOURNAL_BYTES + 1);
+    File::open(journal_path)
+        .map_err(|error| format!("Reading the workspace ACL journal failed: {error}"))?
+        .take(MAXIMUM_LEASE_JOURNAL_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
         .map_err(|error| format!("Reading the workspace ACL journal failed: {error}"))?;
     if bytes.len() > MAXIMUM_LEASE_JOURNAL_BYTES {
         return Err("The workspace ACL journal exceeds its safety limit.".to_owned());
@@ -2523,7 +2527,11 @@ fn write_profile_journal(journal_path: &Path, profile_name: &str) -> Result<(), 
 }
 
 fn recover_profile_journal(journal_path: &Path) -> Result<(), String> {
-    let bytes = std::fs::read(journal_path)
+    let mut bytes = Vec::with_capacity(1_025);
+    File::open(journal_path)
+        .map_err(|error| format!("Reading the AppContainer profile lease failed: {error}"))?
+        .take(1_025)
+        .read_to_end(&mut bytes)
         .map_err(|error| format!("Reading the AppContainer profile lease failed: {error}"))?;
     if bytes.len() > 1_024 {
         return Err("The AppContainer profile lease exceeds its safety limit.".to_owned());
