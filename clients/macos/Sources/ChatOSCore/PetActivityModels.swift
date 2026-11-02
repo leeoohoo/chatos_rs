@@ -150,6 +150,15 @@ public struct PetActivity: Identifiable, Sendable, Equatable, Codable {
     }
 }
 
+public extension PetActivity {
+    var canReplyInline: Bool {
+        guard kind == .waitingForUser else { return false }
+        return route.promptID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty == false
+    }
+}
+
 public enum PetActivityEvent: Sendable, Equatable {
     case upsert(PetActivity)
     case remove(id: String)
