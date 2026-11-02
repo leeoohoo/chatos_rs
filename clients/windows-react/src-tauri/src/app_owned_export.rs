@@ -202,7 +202,7 @@ pub(crate) fn try_remove_stale_owned_file(path: &Path, cutoff: SystemTime) -> bo
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return false;
     };
-    if is_regular_non_reparse(&metadata)
+    if single_link_regular_file(path, &metadata)
         && metadata.modified().is_ok_and(|modified| modified <= cutoff)
     {
         return fs::remove_file(path).is_ok();
@@ -263,6 +263,17 @@ fn is_regular_non_reparse(metadata: &fs::Metadata) -> bool {
     metadata.file_type().is_file()
         && !metadata.file_type().is_symlink()
         && !is_windows_reparse_point(metadata)
+}
+
+#[cfg(unix)]
+fn single_link_regular_file(_: &Path, metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    is_regular_non_reparse(metadata) && metadata.nlink() == 1
+}
+
+#[cfg(not(any(windows, unix)))]
+fn single_link_regular_file(_: &Path, metadata: &fs::Metadata) -> bool {
+    is_regular_non_reparse(metadata)
 }
 
 #[cfg(windows)]
@@ -355,6 +366,25 @@ mod tests {
             ".chatos-artifact-export-not-owned.tmp",
             ".chatos-artifact-export-"
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_keeps_canonical_files_with_multiple_hard_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let owned = directory
+            .path()
+            .join(".chatos-artifact-export-00000000-0000-0000-0000-000000000000.tmp");
+        let linked = directory.path().join("linked.tmp");
+        fs::write(&owned, b"owned").unwrap();
+        fs::hard_link(&owned, &linked).unwrap();
+
+        assert!(!try_remove_stale_owned_file(
+            &owned,
+            SystemTime::now() + Duration::from_secs(1)
+        ));
+        assert!(owned.exists());
+        assert!(linked.exists());
     }
 
     #[test]
