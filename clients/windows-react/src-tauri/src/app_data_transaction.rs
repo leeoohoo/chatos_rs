@@ -55,10 +55,14 @@ fn write_owned_file(
 
     let temporary = directory.join(format!("{temporary_prefix}{}.tmp", uuid::Uuid::new_v4()));
     let mut cleanup = TemporaryTransaction::new(temporary.clone());
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&temporary)?;
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary)?;
     file.write_all(bytes)?;
     file.flush()?;
     file.sync_all()?;

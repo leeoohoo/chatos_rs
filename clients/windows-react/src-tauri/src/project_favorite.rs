@@ -1,4 +1,5 @@
 use crate::{
+    app_data_transaction::replace_owned_file,
     authentication::AuthenticationManager,
     host_lifecycle::validate_owner,
     project_creation::{recover_project_creations, ProjectCreationManager},
@@ -8,14 +9,12 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    fs::{self, File},
+    io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tauri::{AppHandle, Manager, State};
-use uuid::Uuid;
-
 const CURRENT_VERSION: u32 = 1;
 const MAXIMUM_FILE_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAXIMUM_FAVORITES: usize = 10_000;
@@ -139,13 +138,8 @@ impl ProjectFavoriteStore {
         }
         let parent = self.path.parent().ok_or_else(favorite_error)?;
         fs::create_dir_all(parent).map_err(|_| favorite_error())?;
-        let temporary = parent.join(format!(".project-favorites-{}.tmp", Uuid::new_v4()));
-        let result =
-            write_private_file(&temporary, &bytes).and_then(|_| fs::rename(&temporary, &self.path));
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-            return Err(favorite_error());
-        }
+        replace_owned_file(parent, &self.path, ".project-favorites-", &bytes)
+            .map_err(|_| favorite_error())?;
         if let Ok(directory) = File::open(parent) {
             let _ = directory.sync_all();
         }
@@ -258,19 +252,6 @@ fn validate_identifier(value: &str) -> Result<(), String> {
     } else {
         Ok(())
     }
-}
-
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
 }
 
 fn favorite_error() -> String {

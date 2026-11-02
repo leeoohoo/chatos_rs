@@ -1,3 +1,9 @@
+use crate::{
+    app_data_transaction::replace_owned_file,
+    authentication::AuthenticationManager,
+    general_settings::GeneralSettingsStore,
+    host_lifecycle::{validate_owner, HostManager},
+};
 use chatos_local_agent_protocol::{
     GetTaskGraphCommand, HostCommand, HostResult, ListRunsCommand, ListTaskGraphsCommand,
     LocalAgentRunListScope, LocalAgentRunStatus, LocalAgentRunSummary, LocalTaskGraphListScope,
@@ -6,21 +12,14 @@ use image::{ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, File, OpenOptions},
-    io::{Cursor, Read, Write},
+    fs::{self, File},
+    io::{Cursor, Read},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tauri::{
     http, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewUrl,
     WebviewWindowBuilder, WindowEvent,
-};
-use uuid::Uuid;
-
-use crate::{
-    authentication::AuthenticationManager,
-    general_settings::GeneralSettingsStore,
-    host_lifecycle::{validate_owner, HostManager},
 };
 
 pub(crate) const PET_WINDOW_LABEL: &str = "pet-overlay";
@@ -225,13 +224,7 @@ impl PetPreferencesStore {
         }
         let parent = self.path.parent().ok_or_else(pet_error)?;
         fs::create_dir_all(parent).map_err(|_| pet_error())?;
-        let temporary = parent.join(format!(".preferences-{}.tmp", Uuid::new_v4()));
-        let result =
-            write_private_file(&temporary, &bytes).and_then(|_| fs::rename(&temporary, &self.path));
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-            return Err(pet_error());
-        }
+        replace_owned_file(parent, &self.path, ".preferences-", &bytes).map_err(|_| pet_error())?;
         if let Ok(directory) = File::open(parent) {
             let _ = directory.sync_all();
         }
@@ -884,19 +877,6 @@ fn read_bounded(path: &Path, maximum_bytes: u64) -> std::io::Result<Vec<u8>> {
         return Err(std::io::Error::other("pet asset too large"));
     }
     Ok(bytes)
-}
-
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
 }
 
 fn pet_error() -> String {

@@ -1,16 +1,16 @@
 use super::models::ProjectRunEnvironmentVariable;
+use crate::app_data_transaction::replace_owned_file;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
-    path::{Path, PathBuf},
+    fs::{self, File},
+    io::Read,
+    path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
 };
 use uuid::Uuid;
-
 const CURRENT_VERSION: u32 = 1;
 const MAXIMUM_PREFERENCES_BYTES: u64 = 4 * 1_024 * 1_024;
 const MAXIMUM_OWNERS: usize = 32;
@@ -355,13 +355,8 @@ impl ProjectRunPreferencesStore {
         }
         let parent = self.path.parent().ok_or_else(preferences_error)?;
         fs::create_dir_all(parent).map_err(|_| preferences_error())?;
-        let temporary = parent.join(format!(".preferences-{}.tmp", Uuid::new_v4()));
-        let result =
-            write_private_file(&temporary, &bytes).and_then(|_| fs::rename(&temporary, &self.path));
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-            return Err(preferences_error());
-        }
+        replace_owned_file(parent, &self.path, ".preferences-", &bytes)
+            .map_err(|_| preferences_error())?;
         if let Ok(directory) = File::open(parent) {
             let _ = directory.sync_all();
         }
@@ -552,19 +547,6 @@ fn secret_account(owner_user_id: &str, project_id: &str, key: &str, secret_id: &
         digest.update([0]);
     }
     format!("env-{:x}", digest.finalize())
-}
-
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
 }
 
 fn preferences_error() -> String {

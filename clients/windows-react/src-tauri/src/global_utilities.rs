@@ -1,23 +1,22 @@
+use crate::{
+    app_data_transaction::replace_owned_file,
+    authentication::AuthenticationManager,
+    clipboard_history::{show_clipboard_history, ClipboardHistoryManager},
+    host_lifecycle::validate_owner,
+    quick_search::{dismiss_quick_search, show_quick_search},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
-    path::{Path, PathBuf},
+    fs::{self, File},
+    io::Read,
+    path::PathBuf,
     str::FromStr,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
-use uuid::Uuid;
-
-use crate::{
-    authentication::AuthenticationManager,
-    clipboard_history::{show_clipboard_history, ClipboardHistoryManager},
-    host_lifecycle::validate_owner,
-    quick_search::{dismiss_quick_search, show_quick_search},
-};
 
 const FILE_VERSION: u32 = 1;
 const MAXIMUM_FILE_BYTES: u64 = 64 * 1_024;
@@ -285,13 +284,8 @@ impl GlobalUtilityPreferencesStore {
         }
         let parent = self.path.parent().ok_or_else(utility_error)?;
         fs::create_dir_all(parent).map_err(|_| utility_error())?;
-        let temporary = parent.join(format!(".global-utilities-{}.tmp", Uuid::new_v4()));
-        let result =
-            write_private_file(&temporary, &bytes).and_then(|_| fs::rename(&temporary, &self.path));
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-            return Err(utility_error());
-        }
+        replace_owned_file(parent, &self.path, ".global-utilities-", &bytes)
+            .map_err(|_| utility_error())?;
         if let Ok(directory) = File::open(parent) {
             let _ = directory.sync_all();
         }
@@ -668,19 +662,6 @@ pub(crate) fn dispatch_action(app: &AppHandle, action: GlobalUtilityAction) {
         "global-utility-triggered",
         GlobalUtilityTriggered { action },
     );
-}
-
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
 }
 
 fn utility_error() -> String {
