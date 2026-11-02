@@ -39,6 +39,7 @@ Windows 产品版本：`3.0.9`
 - [x] Computer Use 的诊断和 onboarding 子进程现在共享 `CodeReadWorker + Interactive` permit；诊断 permit 覆盖检查及超时回收，onboarding permit 持有到一小时生命周期或提前退出，启动失败和进程树回收都会释放容量。
 - [x] 项目运行 runtime 的用户目标进程现在共享 `CodeReadWorker + Interactive` permit；permit 覆盖启动、输出读取和运行生命周期，并在自然退出、停止、项目释放、账号切换、应用 reset 与启动失败时释放。
 - [x] Plugin 安装器的 Git/npm/MCP 预检与安装子进程现在共享 `CodeReadWorker + Interactive` permit；普通 Registry 元数据查询不占用容量，设置页安装与 Agent 安装助手均覆盖 npm/Git 子进程及超时回收。
+- [x] 剩余 process-spawn/重型 in-process 入口审计已完成：本机终端、项目运行、Plugin 应用、Agent Plugin MCP、Computer Use、Plugin 安装器、项目 Git 与 OpenSSH 均进入共享 permit；Host 进程继续使用自己的 Host scheduler durable claim，已领取 durable claim 的附件/终端 tool work 不重复进入 App pool，Explorer/系统 onboarding 只保留用户明确触发的外部短进程。
 - [x] Agent Artifact 与记事本 Markdown 导出已使用公共 app-owned 原子事务：同目录独占临时文件完整写入并刷盘后再替换目标，失败自动清理；仅回收当前导出目录内、严格 canonical 命名、超过 24 小时且非 reparse/多硬链接的 ChatOS 残留。Windows 不会按 `.tmp` 后缀扫描或删除任意用户文件。
 - [x] 附件 vault、Media Studio 图片/视频历史与 Story Studio 确定性 manifest 已接入所有权明确的启动后台清理：共享资源 governor 的 `CodeReadWorker` 后台 permit，只处理超过 24 小时的 canonical 临时文件；目录层级/目录项有界，账号 hash、记录 UUID、文件名、普通文件、reparse 与多硬链接均失败关闭，不碰已提交记录、媒体素材或任意后缀相同文件。
 - [x] 固定 AppData 元数据目录的事务临时文件已接入同一后台清理链：General Settings、Global Utilities、Quick Search、Pet 偏好/收藏、Project Run、Remote Connection credential index、Clipboard payload 与 Tool Approval journal 共 6 个固定 scope、9 种受审计前缀；每 scope 最多 2,000 项，只删除超过 24 小时的 canonical 小写 UUID 临时文件。
@@ -122,7 +123,7 @@ Windows 产品版本：`3.0.9`
 
 ### P2：平台/发布质量
 
-- [ ] Windows App 的统一容量治理已完成基础共享 permit、机器资源诊断 snapshot、快速搜索、项目 Git、远程文件、本机终端、Plugin 应用 runtime、Agent Plugin MCP、Computer Use、项目运行 runtime 和 Plugin 安装器接入，但仍需逐项审计剩余的 process-spawn/重型 in-process 入口。Host v49 与 App pool 已响应同一系统压力；已经领取 durable claim 的附件/终端 tool work 必须继续排除在外层等待之外。
+- [x] Windows App 的统一容量治理已完成基础共享 permit、机器资源诊断 snapshot、快速搜索、项目 Git、远程文件、本机终端、Plugin 应用 runtime、Agent Plugin MCP、Computer Use、项目运行 runtime 和 Plugin 安装器接入；已完成剩余 process-spawn/重型 in-process 入口审计。Host v49 与 App pool 已响应同一系统压力；已经领取 durable claim 的附件/终端 tool work 继续排除在外层等待之外。
 - [ ] `3.0.9.4` 的文件 worker 隔离和临时文件生命周期仍需 Windows 继续拉齐：公共原子导出与安全的 24 小时残留回收已覆盖 Agent Artifact、记事本 Markdown和项目文件保存；附件 vault、Media History、Story manifest/尾帧临时媒体、固定 AppData 元数据、Connector state/审批历史、Project Creation journal、Agent Skill overrides、AppContainer workspace/profile journal 与隔离自检目录、Plugin 安装完整性事务、Agent Plugin per-run journal、Plugin source/install staging 树，以及 `.backups` 的 Host-authoritative 崩溃恢复已完成，远程下载已有独立原子提交。运行路径中的无归属 `NamedTempFile` 与匿名 `tempdir` 已清零；其余用户目录及 App-owned 直接写入点仍需按实际提交语义逐项审计，禁止用全盘后缀清理冒充统一治理。
 - [ ] Windows 安装包代码签名、发布证书、签名校验和 SmartScreen 信誉验证。仓库可生成安装包，但本机未配置正式签名身份。
 - [ ] Windows Installer 无法由 Restart Manager 正常关闭的强制文件锁及需重启场景仍需在一次性 Windows VM 中补验；客户端正常运行造成的文件占用、事务中途故障回滚均已关闭。本机已有其他软件留下的待重启文件操作，不能为了测试篡改系统队列。历史 `0.1.0` 安装包自身允许降级，已发布二进制无法由新版本追溯修改。
