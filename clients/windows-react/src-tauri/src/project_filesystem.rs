@@ -613,7 +613,7 @@ fn search_entries(
             break;
         }
         visited_directories += 1;
-        let remaining_visits = MAXIMUM_SEARCH_VISITS - visited_entries;
+        let remaining_visits = MAXIMUM_SEARCH_VISITS.saturating_sub(visited_entries + stack.len());
         if remaining_visits == 0 {
             is_truncated = true;
             break;
@@ -631,7 +631,11 @@ fn search_entries(
             let child_relative = child_path(&directory_relative, &name);
             let is_directory = metadata.is_dir();
             if is_directory && !ignored_search_directory(&name) {
-                stack.push((path, child_relative.clone()));
+                if visited_directories + stack.len() < MAXIMUM_SEARCH_VISITS {
+                    stack.push((path, child_relative.clone()));
+                } else {
+                    is_truncated = true;
+                }
             }
             if search_fold(&name).contains(&needle)
                 || search_fold(&child_relative).contains(&needle)
