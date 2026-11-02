@@ -29,6 +29,7 @@ const MAXIMUM_QUERY_CHARACTERS: usize = 256;
 const MAXIMUM_MEMORY_RESULTS: usize = 36;
 const MAXIMUM_TOTAL_RESULTS: usize = 50;
 const MAXIMUM_APPLICATION_RECORDS: usize = 4_096;
+const MAXIMUM_SEARCH_DIRECTORIES: usize = 10_000;
 const FILE_SEARCH_TIMEOUT: Duration = Duration::from_secs(3);
 const FILE_SEARCH_CANDIDATE_LIMIT: usize = 256;
 
@@ -1056,7 +1057,9 @@ fn scan_applications() -> Vec<ApplicationRecord> {
                 }
                 let is_application = is_application_path(&path);
                 if metadata.is_dir() && !is_application {
-                    directories.push_back(path);
+                    if directories.len() < MAXIMUM_SEARCH_DIRECTORIES {
+                        directories.push_back(path);
+                    }
                     continue;
                 }
                 if !is_application {
@@ -1207,7 +1210,11 @@ fn search_files(query: &str, timeout: Duration) -> FileSearchResult {
                 }
             }
             if metadata.is_dir() && depth < 12 {
-                directories.push_back((path, depth + 1));
+                if directories.len() < MAXIMUM_SEARCH_DIRECTORIES {
+                    directories.push_back((path, depth + 1));
+                } else {
+                    source_issue = true;
+                }
             }
         }
         if candidates.len() >= FILE_SEARCH_CANDIDATE_LIMIT {
@@ -1533,7 +1540,9 @@ mod tests {
                     });
                 }
                 if metadata.is_dir() && depth < 12 {
-                    directories.push_back((path, depth + 1));
+                    if directories.len() < MAXIMUM_SEARCH_DIRECTORIES {
+                        directories.push_back((path, depth + 1));
+                    }
                 }
             }
         }
