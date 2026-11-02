@@ -8,6 +8,7 @@ import {
 } from '../constants.js';
 import { DocumentError } from '../errors.js';
 import { attributeValues, decodeXmlText, tagTexts } from '../inspect/xml.js';
+import { isSafeOoxmlArchiveEntryName } from '../security/ooxml-archive.js';
 
 export interface TextSection {
   kind: 'document' | 'sheet' | 'slide' | 'page';
@@ -17,11 +18,6 @@ export interface TextSection {
 }
 
 const DECODER = new TextDecoder('utf-8', { fatal: false });
-
-function safeArchiveName(name: string): boolean {
-  if (!name || name.includes('\\') || name.startsWith('/') || /^[A-Za-z]:/.test(name)) return false;
-  return !name.split('/').some((component) => !component || component === '.' || component === '..');
-}
 
 function wantedPart(name: string): boolean {
   return name === 'word/document.xml'
@@ -45,7 +41,7 @@ function readParts(data: Uint8Array): Record<string, Uint8Array> {
         if (entryCount > MAX_OOXML_ENTRIES || totalSize > MAX_OOXML_UNPACKED_BYTES) {
           throw new DocumentError('UNSAFE_ARCHIVE', 'The OOXML archive exceeds extraction safety limits.');
         }
-        if (!safeArchiveName(file.name)) {
+        if (!isSafeOoxmlArchiveEntryName(file.name)) {
           throw new DocumentError('UNSAFE_ARCHIVE', 'The OOXML archive contains an unsafe entry path.');
         }
         return wantedPart(file.name) && file.originalSize <= MAX_EXTRACTED_XML_BYTES;

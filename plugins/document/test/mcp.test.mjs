@@ -66,16 +66,18 @@ test('reads current-session artifacts without a project workspace', async () => 
   });
 });
 
-function minimalDocx() {
+function minimalDocx({ explicitDirectories = false } = {}) {
   return zipSync({
+    ...(explicitDirectories ? { 'docProps/': new Uint8Array(), 'word/': new Uint8Array() } : {}),
     '[Content_Types].xml': strToU8('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>'),
     'docProps/core.xml': strToU8('<?xml version="1.0"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>测试文档</dc:title><dc:creator>Chatos</dc:creator></cp:coreProperties>'),
     'word/document.xml': strToU8('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p><w:tbl></w:tbl></w:body></w:document>')
   });
 }
 
-function minimalXlsx() {
+function minimalXlsx({ explicitDirectories = false } = {}) {
   return zipSync({
+    ...(explicitDirectories ? { 'xl/': new Uint8Array(), 'xl/worksheets/': new Uint8Array() } : {}),
     '[Content_Types].xml': strToU8('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>'),
     'xl/workbook.xml': strToU8('<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="数据" sheetId="1"/></sheets></workbook>'),
     'xl/sharedStrings.xml': strToU8('<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>Revenue</t></si></sst>'),
@@ -83,8 +85,9 @@ function minimalXlsx() {
   });
 }
 
-function minimalPptx() {
+function minimalPptx({ explicitDirectories = false } = {}) {
   return zipSync({
+    ...(explicitDirectories ? { 'ppt/': new Uint8Array(), 'ppt/slides/': new Uint8Array() } : {}),
     '[Content_Types].xml': strToU8('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>'),
     'ppt/presentation.xml': strToU8('<?xml version="1.0"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"></p:presentation>'),
     'ppt/slides/slide1.xml': strToU8('<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><a:t>Quarterly Review</a:t><a:t>Growth</a:t></p:cSld></p:sld>')
@@ -247,6 +250,46 @@ test('extracts structured spreadsheet and presentation text', async () => {
     assert.equal(presentation.structuredContent.sections[0].kind, 'slide');
     assert.match(presentation.structuredContent.sections[0].text, /Quarterly Review/);
     assert.match(presentation.structuredContent.sections[0].text, /Growth/);
+  });
+});
+
+test('accepts safe explicit OOXML directory entries and rejects unsafe entry path variants', async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'document-mcp-workspace-'));
+  await writeFile(path.join(workspace, 'directories.docx'), minimalDocx({ explicitDirectories: true }));
+  await writeFile(path.join(workspace, 'directories.xlsx'), minimalXlsx({ explicitDirectories: true }));
+  await writeFile(path.join(workspace, 'directories.pptx'), minimalPptx({ explicitDirectories: true }));
+  const unsafeEntryNames = [
+    '../outside.xml',
+    '/absolute.xml',
+    'C:/drive.xml',
+    'word\\backslash.xml',
+    'word//double.xml',
+    'word/./dot.xml',
+    'word/../parent.xml',
+    'word/\0nul.xml'
+  ];
+  for (const [index, unsafeEntryName] of unsafeEntryNames.entries()) {
+    await writeFile(path.join(workspace, `unsafe-${index}.docx`), zipSync({
+      '[Content_Types].xml': strToU8('<Types/>'),
+      'word/document.xml': strToU8('<w:document/>'),
+      [unsafeEntryName]: strToU8('<unsafe/>')
+    }));
+  }
+
+  await withClient(workspace, async (client) => {
+    for (const inputPath of ['directories.docx', 'directories.xlsx', 'directories.pptx']) {
+      const inspected = await client.callTool({ name: 'document_inspect', arguments: { inputPath } });
+      assert.equal(inspected.isError, false, JSON.stringify(inspected.structuredContent));
+
+      const extracted = await client.callTool({ name: 'document_extract_text', arguments: { inputPath } });
+      assert.equal(extracted.isError, false, JSON.stringify(extracted.structuredContent));
+    }
+
+    for (const index of unsafeEntryNames.keys()) {
+      const rejected = await client.callTool({ name: 'document_inspect', arguments: { inputPath: `unsafe-${index}.docx` } });
+      assert.equal(rejected.isError, true);
+      assert.equal(rejected.structuredContent.error.code, 'UNSAFE_ARCHIVE');
+    }
   });
 });
 
@@ -422,7 +465,12 @@ test('creates and edits validated Office artifacts with typed operations', async
       }
     });
     assert.equal(spreadsheet.isError, false, JSON.stringify(spreadsheet.structuredContent));
-    await copyFile(path.join(artifact, 'created.xlsx'), path.join(workspace, 'created.xlsx'));
+    const createdSpreadsheetZip = unzipSync(await readFile(path.join(artifact, 'created.xlsx')));
+    await writeFile(path.join(workspace, 'created.xlsx'), zipSync({
+      'xl/': new Uint8Array(),
+      'xl/worksheets/': new Uint8Array(),
+      ...createdSpreadsheetZip
+    }));
 
     const readRange = await client.callTool({
       name: 'spreadsheet_read_range',

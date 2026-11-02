@@ -5,17 +5,13 @@ import {
   MAX_OOXML_UNPACKED_BYTES
 } from '../constants.js';
 import { DocumentError } from '../errors.js';
+import { isSafeOoxmlArchiveEntryName } from '../security/ooxml-archive.js';
 import { attributeValues, countTags, firstTagText } from './xml.js';
 
 type OoxmlKind = 'docx' | 'xlsx' | 'pptx';
 
 const TEXT_DECODER = new TextDecoder('utf-8', { fatal: false });
 const ALWAYS_READ = new Set(['[Content_Types].xml', 'docProps/core.xml', 'docProps/app.xml']);
-
-function safeArchiveName(name: string): boolean {
-  if (!name || name.includes('\\') || name.startsWith('/') || /^[A-Za-z]:/.test(name)) return false;
-  return !name.split('/').some((component) => !component || component === '.' || component === '..');
-}
 
 function shouldRead(name: string): boolean {
   return ALWAYS_READ.has(name)
@@ -75,7 +71,7 @@ export function inspectOoxml(data: Uint8Array, extension: string): {
         if (entryCount > MAX_OOXML_ENTRIES) {
           throw new DocumentError('UNSAFE_ARCHIVE', 'The OOXML archive contains too many entries.');
         }
-        if (!safeArchiveName(file.name)) {
+        if (!isSafeOoxmlArchiveEntryName(file.name)) {
           throw new DocumentError('UNSAFE_ARCHIVE', 'The OOXML archive contains an unsafe entry path.');
         }
         names.push(file.name);
