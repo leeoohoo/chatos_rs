@@ -17,6 +17,7 @@ use tauri::{http, State};
 use uuid::Uuid;
 
 use crate::{
+    app_data_maintenance::try_remove_stale_owned_directory_tree,
     app_owned_export::try_remove_stale_owned_file,
     authentication::{AuthenticationManager, GatewayModelConfig},
     host_lifecycle::validate_owner,
@@ -52,6 +53,7 @@ const MAXIMUM_PROVIDER_RESPONSE_BYTES: usize = 48 * 1_024 * 1_024;
 const MAXIMUM_IMAGE_REFERENCES: usize = 8;
 const STALE_HISTORY_TEMPORARY_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const MAXIMUM_HISTORY_CLEANUP_ENTRIES_PER_ROOT: usize = 10_000;
+const MAXIMUM_HISTORY_CLEANUP_TREE_ENTRIES: usize = 20_000;
 
 #[derive(Clone)]
 pub(crate) struct MediaStudioManager {
@@ -810,6 +812,24 @@ fn cleanup_history_record(
     cutoff: SystemTime,
     state: &mut HistoryTemporaryCleanupState,
 ) {
+    let manifest = record.join("record.json");
+    match fs::symlink_metadata(&manifest) {
+        Ok(metadata)
+            if metadata.file_type().is_file()
+                && !metadata.file_type().is_symlink()
+                && !is_windows_reparse_point(&metadata) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if try_remove_stale_owned_directory_tree(
+                record,
+                cutoff,
+                MAXIMUM_HISTORY_CLEANUP_TREE_ENTRIES,
+            ) {
+                state.removed = state.removed.saturating_add(1);
+            }
+            return;
+        }
+        _ => return,
+    }
     let Ok(entries) = fs::read_dir(record) else {
         return;
     };
@@ -2058,16 +2078,24 @@ mod tests {
             .temporary_cleanup_root()
             .join(&owner)
             .join(Uuid::new_v4().to_string());
+        let incomplete_record = manager
+            .history
+            .temporary_cleanup_root()
+            .join(&owner)
+            .join(Uuid::new_v4().to_string());
         fs::create_dir_all(&image_record).unwrap();
         fs::create_dir_all(&video_record).unwrap();
+        fs::create_dir_all(&incomplete_record).unwrap();
 
         let image_temporary = image_record.join("record.json.tmp");
         let video_temporary = video_record.join("record.json.tmp");
         let committed = image_record.join("record.json");
         let unrelated = image_record.join("notes.tmp");
+        let incomplete_asset = incomplete_record.join("00000000000000000000000000000001.png");
         for path in [&image_temporary, &video_temporary, &committed, &unrelated] {
             fs::write(path, b"value").unwrap();
         }
+        fs::write(&incomplete_asset, b"orphaned asset").unwrap();
 
         let invalid_owner_temporary = manager
             .history
@@ -2100,10 +2128,11 @@ mod tests {
                 &manager.video_history.temporary_cleanup_root(),
                 SystemTime::now() + Duration::from_secs(1),
             ),
-            2
+            3
         );
         assert!(!image_temporary.exists());
         assert!(!video_temporary.exists());
+        assert!(!incomplete_record.exists());
         assert!(committed.exists());
         assert!(unrelated.exists());
         assert!(invalid_owner_temporary.exists());

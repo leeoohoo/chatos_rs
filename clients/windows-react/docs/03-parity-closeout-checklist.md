@@ -93,6 +93,7 @@ Windows 产品版本：`3.0.9`
 - [x] Story manifest 临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-story-temp-cleanup-final-nsis.json`：全新目录安装 `2,194 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,161 ms`、卸载 `657 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Agent 对话附件写入路径已补齐启动清理：`NativeConnector/AgentMessageAttachments` 只扫描固定的 `messages/<bucket>/attachment_<小写 32 位 hex>` 与 `drafts/<bucket>/document-draft_<小写 32 位 hex>` 两层对象，按数据库引用保护仍在使用的文件，孤儿文件须超过 24 小时且为普通单硬链接文件才回收；目录越界、reparse、未知名称、数据库引用异常和超过 20,000 项均失败关闭。
 - [x] OpenSSH 会话运行目录已接入同一启动后台清理：只处理 `remote-connections/runtime/connection-test-<带连字符的小写 UUID>` 的完整目录树，所有节点均超过 24 小时且通过普通文件、reparse 和硬链接检查才回收；正常会话仍由 Drop 即时清理，近期目录和未知名称保留。
+- [x] Media Studio 图片/视频历史清理已覆盖崩溃中断的记录目录：账号 hash 和记录 UUID 通过固定层级校验后，缺失 `record.json` 且整棵树超过 24 小时、无 reparse/多硬链接的目录才回收；已有 manifest 的记录只清理 canonical `record.json.tmp`，未知名称和近期写入保留。
 - [x] 固定 AppData 临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-appdata-temp-cleanup-final-nsis.json`：全新目录安装 `2,281 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,214 ms`、卸载 `667 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin 事务临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-temp-cleanup-final-nsis.json`：全新目录安装 `2,181 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,187 ms`、卸载 `638 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin staging 崩溃残留清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-staging-cleanup-final-nsis.json`：全新目录安装 `2,187 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,173 ms`、卸载 `647 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
@@ -126,7 +127,7 @@ Windows 产品版本：`3.0.9`
 ### P2：平台/发布质量
 
 - [x] Windows App 的统一容量治理已完成基础共享 permit、机器资源诊断 snapshot、快速搜索、项目 Git、远程文件、本机终端、Plugin 应用 runtime、Agent Plugin MCP、Computer Use、项目运行 runtime 和 Plugin 安装器接入；已完成剩余 process-spawn/重型 in-process 入口审计。Host v49 与 App pool 已响应同一系统压力；已经领取 durable claim 的附件/终端 tool work 继续排除在外层等待之外。
-- [ ] `3.0.9.4` 的文件 worker 隔离和临时文件生命周期仍需 Windows 继续拉齐：公共原子导出与安全的 24 小时残留回收已覆盖 Agent Artifact、记事本 Markdown、项目文件保存和 Agent 对话附件；附件 vault、Media History、Story manifest/尾帧临时媒体、固定 AppData 元数据、Connector state/审批历史、Project Creation journal、Agent Skill overrides、AppContainer workspace/profile journal 与隔离自检目录、Plugin 安装完整性事务、Agent Plugin per-run journal、Plugin source/install staging 树，以及 `.backups` 的 Host-authoritative 崩溃恢复已完成，远程下载已有独立原子提交。运行路径中的无归属 `NamedTempFile` 与匿名 `tempdir` 已清零；其余用户目录及 App-owned 直接写入点仍需按实际提交语义逐项审计，禁止用全盘后缀清理冒充统一治理。
+- [ ] `3.0.9.4` 的文件 worker 隔离和临时文件生命周期仍需 Windows 继续拉齐：公共原子导出与安全的 24 小时残留回收已覆盖 Agent Artifact、记事本 Markdown、项目文件保存、Agent 对话附件和 Media Studio 历史记录；附件 vault、Media History、Story manifest/尾帧临时媒体、固定 AppData 元数据、Connector state/审批历史、Project Creation journal、Agent Skill overrides、AppContainer workspace/profile journal 与隔离自检目录、Plugin 安装完整性事务、Agent Plugin per-run journal、Plugin source/install staging 树，以及 `.backups` 的 Host-authoritative 崩溃恢复已完成，远程下载已有独立原子提交。运行路径中的无归属 `NamedTempFile` 与匿名 `tempdir` 已清零；其余用户目录及 App-owned 直接写入点仍需按实际提交语义逐项审计，禁止用全盘后缀清理冒充统一治理。
 - [ ] Windows 安装包代码签名、发布证书、签名校验和 SmartScreen 信誉验证。仓库可生成安装包，但本机未配置正式签名身份。
 - [ ] Windows Installer 无法由 Restart Manager 正常关闭的强制文件锁及需重启场景仍需在一次性 Windows VM 中补验；客户端正常运行造成的文件占用、事务中途故障回滚均已关闭。本机已有其他软件留下的待重启文件操作，不能为了测试篡改系统队列。历史 `0.1.0` 安装包自身允许降级，已发布二进制无法由新版本追溯修改。
 - [ ] 固定分辨率与 100%/125%/150% 缩放的原生截图对照、键盘导航、焦点顺序、屏幕阅读器标签和对比度验收。
