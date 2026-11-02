@@ -34,6 +34,7 @@ use crate::{
 const MAXIMUM_ARCHIVE_BYTES: u64 = 512 * 1_024 * 1_024;
 const MAXIMUM_UNPACKED_BYTES: u64 = 512 * 1_024 * 1_024;
 const MAXIMUM_ARCHIVE_ENTRIES: usize = 20_000;
+const MAXIMUM_COMPATIBLE_SKILL_ENTRIES: usize = 256;
 const MAXIMUM_PACKAGE_JSON_BYTES: u64 = 1_024 * 1_024;
 const MAXIMUM_MANIFEST_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAXIMUM_NPM_METADATA_BYTES: u64 = 2 * 1_024 * 1_024;
@@ -958,13 +959,15 @@ fn normalize_compatible_skills(package_root: &Path) -> Result<Vec<String>, Strin
     if !metadata.is_dir() || is_symlink_or_reparse(&metadata) {
         return Err(install_error("兼容 Skill 根目录无效"));
     }
-    let mut entries = fs::read_dir(&skills_root)
-        .map_err(|_| install_error("无法读取兼容 Skill 目录"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| install_error("无法读取兼容 Skill 目录"))?;
-    entries.sort_by_key(fs::DirEntry::file_name);
     let mut skills = Vec::new();
-    for entry in entries {
+    for (visited, entry) in fs::read_dir(&skills_root)
+        .map_err(|_| install_error("无法读取兼容 Skill 目录"))?
+        .enumerate()
+    {
+        if visited >= MAXIMUM_COMPATIBLE_SKILL_ENTRIES {
+            return Err(install_error("兼容 Skill 目录条目超过限制"));
+        }
+        let entry = entry.map_err(|_| install_error("无法读取兼容 Skill 目录"))?;
         let name = entry
             .file_name()
             .into_string()
@@ -988,6 +991,7 @@ fn normalize_compatible_skills(package_root: &Path) -> Result<Vec<String>, Strin
             return Err(install_error("兼容 Skill 数量超过限制"));
         }
     }
+    skills.sort();
     Ok(skills)
 }
 
@@ -1030,17 +1034,27 @@ fn valid_compatible_skill_name(value: &str) -> bool {
 }
 
 fn copy_compatible_skill_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    let mut visited = 0usize;
+    copy_compatible_skill_tree_bounded(source, destination, &mut visited)
+}
+
+fn copy_compatible_skill_tree_bounded(
+    source: &Path,
+    destination: &Path,
+    visited: &mut usize,
+) -> Result<(), String> {
     let metadata =
         fs::symlink_metadata(source).map_err(|_| install_error("无法读取兼容 Skill 资源"))?;
     if !metadata.is_dir() || is_symlink_or_reparse(&metadata) {
         return Err(install_error("兼容 Skill 资源目录无效"));
     }
     fs::create_dir_all(destination).map_err(|_| install_error("无法创建兼容 Skill 资源目录"))?;
-    let entries = fs::read_dir(source)
-        .map_err(|_| install_error("无法读取兼容 Skill 资源"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| install_error("无法读取兼容 Skill 资源"))?;
-    for entry in entries {
+    for entry in fs::read_dir(source).map_err(|_| install_error("无法读取兼容 Skill 资源"))? {
+        *visited = visited.saturating_add(1);
+        if *visited > MAXIMUM_ARCHIVE_ENTRIES {
+            return Err(install_error("兼容 Skill 资源条目超过限制"));
+        }
+        let entry = entry.map_err(|_| install_error("无法读取兼容 Skill 资源"))?;
         let metadata = fs::symlink_metadata(entry.path())
             .map_err(|_| install_error("无法读取兼容 Skill 资源"))?;
         if is_symlink_or_reparse(&metadata) {
@@ -1048,7 +1062,7 @@ fn copy_compatible_skill_tree(source: &Path, destination: &Path) -> Result<(), S
         }
         let target = destination.join(entry.file_name());
         if metadata.is_dir() {
-            copy_compatible_skill_tree(&entry.path(), &target)?;
+            copy_compatible_skill_tree_bounded(&entry.path(), &target, visited)?;
         } else if metadata.is_file() {
             fs::copy(entry.path(), target).map_err(|_| install_error("无法复制兼容 Skill 资源"))?;
         } else {
@@ -4467,6 +4481,17 @@ mod tests {
         .unwrap();
         normalize_compatible_mcp_package(duplicate.path()).unwrap();
         assert!(validate_local_package(duplicate.path()).is_err());
+    }
+
+    #[test]
+    fn compatible_skill_directory_scan_is_bounded_before_processing() {
+        let directory = tempfile::tempdir().unwrap();
+        let skills = directory.path().join("skills");
+        fs::create_dir_all(&skills).unwrap();
+        for index in 0..=MAXIMUM_COMPATIBLE_SKILL_ENTRIES {
+            fs::create_dir(skills.join(format!("skill-{index}"))).unwrap();
+        }
+        assert!(normalize_compatible_skills(directory.path()).is_err());
     }
 
     #[test]
