@@ -2,10 +2,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    fs::{self, File},
+    io::Read,
     path::{Component, Path, PathBuf},
 };
+
+use crate::app_data_transaction::replace_owned_file;
 
 const INTEGRITY_SCHEMA_VERSION: u32 = 1;
 const INTEGRITY_DIRECTORY: &str = ".integrity";
@@ -146,24 +148,8 @@ pub(crate) fn write_installation_integrity(
         return Err(integrity_error());
     }
     let destination = directory.join(format!("{artifact_sha256}.json"));
-    let temporary = directory.join(format!(".{artifact_sha256}-{}.tmp", uuid::Uuid::new_v4()));
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(|_| integrity_error())?;
-        file.write_all(&bytes).map_err(|_| integrity_error())?;
-        file.sync_all().map_err(|_| integrity_error())?;
-        if destination.exists() {
-            fs::remove_file(&destination).map_err(|_| integrity_error())?;
-        }
-        fs::rename(&temporary, &destination).map_err(|_| integrity_error())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
+    replace_owned_file(&directory, &destination, ".integrity-", &bytes)
+        .map_err(|_| integrity_error())
 }
 
 pub(crate) fn verify_installation_integrity(

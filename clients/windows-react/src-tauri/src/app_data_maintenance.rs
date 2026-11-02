@@ -215,9 +215,9 @@ fn cleanup_directory_scope(
 fn canonical_directory_name(name: &str, pattern: &DirectoryNamePattern) -> bool {
     match pattern {
         DirectoryNamePattern::Uuid => canonical_uuid(name),
-        DirectoryNamePattern::PrefixedUuid(prefix) => name
-            .strip_prefix(prefix)
-            .is_some_and(canonical_uuid),
+        DirectoryNamePattern::PrefixedUuid(prefix) => {
+            name.strip_prefix(prefix).is_some_and(canonical_uuid)
+        }
     }
 }
 
@@ -337,11 +337,18 @@ fn canonical_temporary_name(name: &str, pattern: &CleanupNamePattern) -> bool {
                 .and_then(|value| value.strip_suffix(".tmp"))
                 .is_some_and(canonical_uuid)
         }),
-        CleanupNamePattern::PluginIntegrity => name
-            .strip_prefix('.')
-            .and_then(|value| value.strip_suffix(".tmp"))
-            .and_then(|value| value.split_once('-'))
-            .is_some_and(|(digest, token)| canonical_sha256(digest) && canonical_uuid(token)),
+        CleanupNamePattern::PluginIntegrity => {
+            let legacy = name
+                .strip_prefix('.')
+                .and_then(|value| value.strip_suffix(".tmp"))
+                .and_then(|value| value.split_once('-'))
+                .is_some_and(|(digest, token)| canonical_sha256(digest) && canonical_uuid(token));
+            let shared = name
+                .strip_prefix(".integrity-")
+                .and_then(|value| value.strip_suffix(".tmp"))
+                .is_some_and(canonical_uuid);
+            legacy || shared
+        }
     }
 }
 
@@ -465,12 +472,14 @@ mod tests {
         fs::create_dir_all(&integrity).unwrap();
         let journal_temporary = journal.join(format!(".{token}.tmp"));
         let integrity_temporary = integrity.join(format!(".{digest}-{token}.tmp"));
+        let shared_integrity_temporary = integrity.join(format!(".integrity-{token}.tmp"));
         let committed_journal = journal.join(format!("{digest}.intent.json"));
         let committed_integrity = integrity.join(format!("{digest}.json"));
         let malformed_integrity = integrity.join(format!(".not-a-digest-{token}.tmp"));
         for path in [
             &journal_temporary,
             &integrity_temporary,
+            &shared_integrity_temporary,
             &committed_journal,
             &committed_integrity,
             &malformed_integrity,
@@ -483,10 +492,11 @@ mod tests {
                 root.path(),
                 SystemTime::now() + Duration::from_secs(1),
             ),
-            2
+            3
         );
         assert!(!journal_temporary.exists());
         assert!(!integrity_temporary.exists());
+        assert!(!shared_integrity_temporary.exists());
         assert!(committed_journal.exists());
         assert!(committed_integrity.exists());
         assert!(malformed_integrity.exists());
@@ -542,8 +552,7 @@ mod tests {
     fn ssh_runtime_cleanup_removes_only_stale_canonical_session_trees() {
         let root = tempdir().unwrap();
         let runtime = root.path().join("remote-connections/runtime");
-        let stale = runtime
-            .join("connection-test-00000000-0000-0000-0000-000000000000");
+        let stale = runtime.join("connection-test-00000000-0000-0000-0000-000000000000");
         let malformed = runtime.join("connection-test-NOT-A-UUID");
         let unrelated = runtime.join("session-00000000-0000-0000-0000-000000000000");
         for directory in [&stale, &malformed, &unrelated] {
