@@ -494,6 +494,7 @@ pub(crate) async fn import_notepad_image(
     input: NotepadImageInput,
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, HostManager>,
+    resources: State<'_, MachineResourceGovernor>,
 ) -> Result<Option<NotepadImageInsertion>, String> {
     validate_owner(&input.owner_user_id)?;
     validate_identifier(&input.note_id)?;
@@ -507,26 +508,39 @@ pub(crate) async fn import_notepad_image(
     if current.note.version != input.expected_version {
         return Err("笔记已经变化，请刷新后重试。".into());
     }
-    let candidate =
-        match input.source {
-            NotepadImageSource::Picker => {
-                let selected = rfd::AsyncFileDialog::new()
-                    .set_title("选择笔记图片")
-                    .add_filter("图片", &["png", "jpg", "jpeg", "webp", "gif"])
-                    .pick_file()
-                    .await;
-                let Some(selected) = selected else {
-                    return Ok(None);
-                };
-                let path = selected.path().to_path_buf();
-                tokio::task::spawn_blocking(move || read_image_file(&path))
-                    .await
-                    .map_err(|error| format!("无法读取图片：{error}"))??
-            }
-            NotepadImageSource::Clipboard => tokio::task::spawn_blocking(read_clipboard_image)
+    let candidate = match input.source {
+        NotepadImageSource::Picker => {
+            let selected = rfd::AsyncFileDialog::new()
+                .set_title("选择笔记图片")
+                .add_filter("图片", &["png", "jpg", "jpeg", "webp", "gif"])
+                .pick_file()
+                .await;
+            let Some(selected) = selected else {
+                return Ok(None);
+            };
+            let path = selected.path().to_path_buf();
+            let _permit = resources
+                .acquire(
+                    MachineResourceKind::CodeReadWorker,
+                    MachineResourcePriority::Interactive,
+                )
+                .await?;
+            tokio::task::spawn_blocking(move || read_image_file(&path))
                 .await
-                .map_err(|error| format!("无法读取剪贴板图片：{error}"))??,
-        };
+                .map_err(|error| format!("无法读取图片：{error}"))??
+        }
+        NotepadImageSource::Clipboard => {
+            let _permit = resources
+                .acquire(
+                    MachineResourceKind::CodeReadWorker,
+                    MachineResourcePriority::Interactive,
+                )
+                .await?;
+            tokio::task::spawn_blocking(read_clipboard_image)
+                .await
+                .map_err(|error| format!("无法读取剪贴板图片：{error}"))??
+        }
+    };
     authentication
         .require_session_generation(&input.owner_user_id, generation)
         .await?;

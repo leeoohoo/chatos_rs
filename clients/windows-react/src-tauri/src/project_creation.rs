@@ -1,6 +1,12 @@
 use crate::{
-    app_data_transaction::create_owned_file, authentication::AuthenticationManager,
-    connector_state, host_lifecycle::validate_owner, workspace_index::open_project_registry,
+    app_data_transaction::create_owned_file,
+    authentication::AuthenticationManager,
+    connector_state,
+    host_lifecycle::validate_owner,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
+    workspace_index::open_project_registry,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -279,6 +285,7 @@ pub async fn create_local_project(
     project_type_key: String,
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, ProjectCreationManager>,
+    resources: State<'_, MachineResourceGovernor>,
 ) -> Result<CreatedLocalProject, String> {
     validate_owner(&owner_user_id)?;
     validate_route_identifier(&presentation_id, "presentationId")?;
@@ -288,6 +295,12 @@ pub async fn create_local_project(
     validate_project_type(&project_type_key)?;
     authentication
         .access_token_for_owner(&owner_user_id)
+        .await?;
+    let _permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
         .await?;
     let selection = manager.begin_save(&owner_user_id, &presentation_id, &selection_id)?;
     let transaction_lock = Arc::clone(&manager.transaction);
