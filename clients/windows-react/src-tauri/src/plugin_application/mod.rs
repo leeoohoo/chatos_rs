@@ -20,6 +20,7 @@ mod runtime;
 use crate::agent_plugin_runtime::{
     load_agent_plugin_skill_snapshot, AgentPluginRuntime, AgentPluginSkillSnapshot,
 };
+use crate::machine_resource_governor::MachineResourceGovernor;
 use crate::plugin_credentials::{
     environment_secret_references, platform_plugin_credential_store, secret_name, secret_reference,
     validate_secret, PluginCredentialStore,
@@ -70,8 +71,24 @@ impl PluginApplicationManager {
             .unwrap_or_else(|error| panic!("Plugin runtime initialization failed: {error}"))
     }
 
+    #[cfg(test)]
     pub(crate) fn try_new(app_data_directory: PathBuf) -> Result<Self, String> {
-        Self::try_with_credential_store(app_data_directory, platform_plugin_credential_store())
+        Self::try_with_credential_store_and_resources(
+            app_data_directory,
+            platform_plugin_credential_store(),
+            MachineResourceGovernor::default(),
+        )
+    }
+
+    pub(crate) fn try_new_with_resources(
+        app_data_directory: PathBuf,
+        resources: MachineResourceGovernor,
+    ) -> Result<Self, String> {
+        Self::try_with_credential_store_and_resources(
+            app_data_directory,
+            platform_plugin_credential_store(),
+            resources,
+        )
     }
 
     #[cfg(test)]
@@ -83,9 +100,22 @@ impl PluginApplicationManager {
             .unwrap_or_else(|error| panic!("Plugin runtime initialization failed: {error}"))
     }
 
+    #[cfg(test)]
     fn try_with_credential_store(
         app_data_directory: PathBuf,
         credentials: Arc<dyn PluginCredentialStore>,
+    ) -> Result<Self, String> {
+        Self::try_with_credential_store_and_resources(
+            app_data_directory,
+            credentials,
+            MachineResourceGovernor::default(),
+        )
+    }
+
+    fn try_with_credential_store_and_resources(
+        app_data_directory: PathBuf,
+        credentials: Arc<dyn PluginCredentialStore>,
+        resources: MachineResourceGovernor,
     ) -> Result<Self, String> {
         let plugin_root = app_data_directory.join("NativeConnector").join("Plugins");
         #[cfg(target_os = "windows")]
@@ -93,10 +123,11 @@ impl PluginApplicationManager {
         Ok(Self {
             plugin_root: plugin_root.clone(),
             credentials,
-            runtime: PluginApplicationRuntime::new(
+            runtime: PluginApplicationRuntime::new_with_resources(
                 app_data_directory
                     .join("NativeConnector")
                     .join("PluginRuntime"),
+                resources,
             ),
             agent_runtime: AgentPluginRuntime::new(
                 plugin_root,

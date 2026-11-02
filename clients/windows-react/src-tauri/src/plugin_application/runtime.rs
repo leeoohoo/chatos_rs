@@ -5,7 +5,12 @@ use super::{
 #[cfg(windows)]
 use crate::windows_appcontainer::{WorkspaceAccess, WorkspaceLeaseManager};
 use crate::{
-    platform_execution_context::resolve_project_root, terminal_runtime::process::ProcessTermination,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePermit,
+        MachineResourcePriority,
+    },
+    platform_execution_context::resolve_project_root,
+    terminal_runtime::process::ProcessTermination,
 };
 use reqwest::{redirect::Policy, Client};
 use rusqlite::{params, Connection, OpenFlags};
@@ -22,7 +27,7 @@ use std::{
     process::Stdio,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex as StandardMutex,
     },
 };
 use tokio::{
@@ -99,6 +104,7 @@ pub(super) struct PluginApplicationRuntime {
     epoch: Arc<AtomicU64>,
     state: Arc<Mutex<RuntimeState>>,
     health_client: Client,
+    resources: MachineResourceGovernor,
     #[cfg(all(windows, not(test)))]
     sandbox: Arc<Mutex<Option<Arc<WorkspaceLeaseManager>>>>,
 }
@@ -171,6 +177,7 @@ struct RunningPluginApplication {
     termination: RuntimeTermination,
     alive: AtomicBool,
     finished: Notify,
+    resource_permit: StandardMutex<Option<MachineResourcePermit>>,
 }
 
 enum RuntimeTermination {
@@ -247,7 +254,12 @@ struct PackageManifest {
 }
 
 impl PluginApplicationRuntime {
+    #[cfg(test)]
     pub(super) fn new(root: PathBuf) -> Self {
+        Self::new_with_resources(root, MachineResourceGovernor::default())
+    }
+
+    pub(super) fn new_with_resources(root: PathBuf, resources: MachineResourceGovernor) -> Self {
         Self {
             root,
             epoch: Arc::new(AtomicU64::new(1)),
@@ -257,6 +269,7 @@ impl PluginApplicationRuntime {
                 .no_proxy()
                 .build()
                 .expect("static loopback health client configuration"),
+            resources,
             #[cfg(all(windows, not(test)))]
             sandbox: Arc::new(Mutex::new(None)),
         }
@@ -339,13 +352,42 @@ impl PluginApplicationRuntime {
             self.release_reservation(&key).await;
             return Err(stale_launch_error());
         }
+        let resource_permit = if resolved.contribution.runtime.is_some() {
+            match self
+                .resources
+                .acquire(
+                    MachineResourceKind::CodeReadWorker,
+                    MachineResourcePriority::Interactive,
+                )
+                .await
+            {
+                Ok(permit) => Some(permit),
+                Err(error) => {
+                    self.release_reservation(&key).await;
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+        if !self.accepts(expected_epoch, &request).await {
+            self.release_reservation(&key).await;
+            return Err(stale_launch_error());
+        }
         #[cfg(all(windows, not(test)))]
-        let sandbox = Some(self.ensure_sandbox().await?);
+        let sandbox = match self.ensure_sandbox().await {
+            Ok(sandbox) => Some(sandbox),
+            Err(error) => {
+                self.release_reservation(&key).await;
+                return Err(error);
+            }
+        };
         #[cfg(all(windows, test))]
         let sandbox = None;
         let (process, launch_timeout) = match spawn_application_runtime(
             &resolved,
             &runtime_context,
+            resource_permit,
             #[cfg(windows)]
             sandbox,
         )
@@ -695,6 +737,12 @@ impl PluginApplicationRuntime {
 }
 
 impl RunningPluginApplication {
+    fn release_resource(&self) {
+        if let Ok(mut permit) = self.resource_permit.lock() {
+            permit.take();
+        }
+    }
+
     fn terminate_now(&self) {
         match &self.termination {
             RuntimeTermination::Process(termination) => {
@@ -1048,6 +1096,7 @@ fn resolve_runtime_context(
 async fn spawn_application_runtime(
     resolved: &ResolvedPluginApplication,
     context: &ResolvedRuntimeContext,
+    resource_permit: Option<MachineResourcePermit>,
     #[cfg(windows)] sandbox: Option<Arc<WorkspaceLeaseManager>>,
 ) -> Result<(Arc<RunningPluginApplication>, u64), String> {
     if resolved.contribution.runtime.is_none() {
@@ -1060,6 +1109,7 @@ async fn spawn_application_runtime(
     let process = spawn_runtime_process(
         resolved,
         prepared,
+        resource_permit,
         #[cfg(windows)]
         sandbox,
     )
@@ -1087,6 +1137,7 @@ async fn spawn_static_runtime(
         termination: RuntimeTermination::Static(shutdown.clone()),
         alive: AtomicBool::new(true),
         finished: Notify::new(),
+        resource_permit: StandardMutex::new(None),
     });
     tokio::spawn(run_static_server(
         process.clone(),
@@ -1215,6 +1266,7 @@ async fn run_static_server(
         }
     }
     process.alive.store(false, Ordering::SeqCst);
+    process.release_resource();
     process.finished.notify_waiters();
 }
 
@@ -1406,11 +1458,12 @@ fn prepare_runtime_process(
 async fn spawn_runtime_process(
     resolved: &ResolvedPluginApplication,
     prepared: PreparedRuntimeProcess,
+    resource_permit: Option<MachineResourcePermit>,
     #[cfg(windows)] sandbox: Option<Arc<WorkspaceLeaseManager>>,
 ) -> Result<Arc<RunningPluginApplication>, String> {
     #[cfg(windows)]
     if let Some(sandbox) = sandbox {
-        return spawn_sandboxed_runtime(resolved, prepared, sandbox).await;
+        return spawn_sandboxed_runtime(resolved, prepared, resource_permit, sandbox).await;
     }
     let mut command = Command::new(&prepared.executable);
     command
@@ -1449,6 +1502,7 @@ async fn spawn_runtime_process(
         termination: RuntimeTermination::Process(termination),
         alive: AtomicBool::new(true),
         finished: Notify::new(),
+        resource_permit: StandardMutex::new(resource_permit),
     });
     let stdout_task = stdout.map(|pipe| tokio::spawn(drain_pipe(pipe)));
     let stderr_task = stderr.map(|pipe| tokio::spawn(drain_pipe(pipe)));
@@ -1465,6 +1519,7 @@ async fn spawn_runtime_process(
 async fn spawn_sandboxed_runtime(
     resolved: &ResolvedPluginApplication,
     prepared: PreparedRuntimeProcess,
+    resource_permit: Option<MachineResourcePermit>,
     sandbox: Arc<WorkspaceLeaseManager>,
 ) -> Result<Arc<RunningPluginApplication>, String> {
     use std::sync::Mutex as StdMutex;
@@ -1521,6 +1576,7 @@ async fn spawn_sandboxed_runtime(
         termination: RuntimeTermination::Process(termination),
         alive: AtomicBool::new(true),
         finished: Notify::new(),
+        resource_permit: StandardMutex::new(resource_permit),
     });
     tokio::spawn(wait_for_sandboxed_process(
         process.clone(),
@@ -1572,6 +1628,7 @@ async fn wait_for_sandboxed_process(
     })
     .await;
     process.alive.store(false, Ordering::SeqCst);
+    process.release_resource();
     process.finished.notify_waiters();
     let _ = timeout(Duration::from_secs(1), stdout).await;
     let _ = timeout(Duration::from_secs(1), stderr).await;
@@ -1595,6 +1652,7 @@ async fn wait_for_process(
 ) {
     let _ = child.wait().await;
     process.alive.store(false, Ordering::SeqCst);
+    process.release_resource();
     process.finished.notify_waiters();
     if let Some(task) = stdout {
         let _ = timeout(Duration::from_secs(1), task).await;
@@ -2081,6 +2139,7 @@ mod tests {
 
         assert_eq!(first.url, second.url);
         assert_ne!(first.session_id, second.session_id);
+        assert_eq!(runtime.resources.used_resource_units(), 1);
         assert!(first.url.starts_with("http://127.0.0.1:"));
         assert_eq!(second.bridge_capabilities, ["host.context.read"]);
         assert_eq!(second.host_session_nonce.len(), 64);
@@ -2140,6 +2199,7 @@ mod tests {
         runtime.reset().await;
         assert_ne!(runtime.epoch(), epoch);
         assert!(runtime.state.lock().await.processes.is_empty());
+        assert_eq!(runtime.resources.used_resource_units(), 0);
     }
 
     #[tokio::test]

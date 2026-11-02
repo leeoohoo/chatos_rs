@@ -405,6 +405,11 @@ impl MachineResourceGovernor {
             host: None,
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn used_resource_units(&self) -> usize {
+        self.lock_state().active.len()
+    }
 }
 
 #[tauri::command]

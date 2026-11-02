@@ -317,7 +317,13 @@ pub fn run() {
             app.manage(PetPreferencesStore::new(data_dir.clone()));
             app.manage(PluginSettingsManager::new(data_dir.clone()));
             let app_data_maintenance_root = data_dir.clone();
-            app.manage(PluginApplicationManager::try_new(data_dir).map_err(std::io::Error::other)?);
+            app.manage(
+                PluginApplicationManager::try_new_with_resources(
+                    data_dir,
+                    app.state::<MachineResourceGovernor>().inner().clone(),
+                )
+                .map_err(std::io::Error::other)?,
+            );
             let resource_directory = app
                 .path()
                 .resource_dir()
