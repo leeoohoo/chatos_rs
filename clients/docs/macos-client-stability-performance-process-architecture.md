@@ -2729,6 +2729,12 @@ App ZIP 在独立临时目录提交公证，Accepted 后 staple、validate 并�
 
 此阶段尚未证明本次消失的完整根因。后台全局工具复用主应用 bundle 身份、同进程 pet 输入临时改变应用 activation policy、SwiftUI sheet 与手工主窗口在全屏下的关系仍需安装后按事件确认，不将疑点直接当作已证实的故障链；不得用这些测试宣称根治完成。
 
+安装后实测（2026-11-02 15:14—15:18）：已安装 `/Applications/ChatOS.app` 的 Release 构建为 `4baacd022849c102591486196e209a2de7ecd7eb`，arm64、包签名、构建清单与启动冒烟验证通过。原 wms 会话的同一附件“粘贴的图片 2026-11-02 14.01.18.png”以原生 sheet 打开，用户明确确认主窗口和图片预览均可见；随后用户连续开关图片、切换其他应用后返回并测试记事本弹窗，回复“都正常，没有再消失”。这次包含用户桌面可见性确认，未以工具离屏截图替代。
+
+对应事件记录：15:14:56 主窗口 7813 完成原生全屏，collectionBehavior=128（fullScreenPrimary，无 moveToActiveSpace）；图片 sheet 8244 的 sheetParent=7813，显示时父子窗口均 activeSpace=true。15:17:36—15:18:02 记录五组 willBeginSheet/didEndSheet，主窗口始终 fullscreen=true、visible=true、activeSpace=true；该观察时段未记录主窗口 close、orderOut 或 appHidden。界面工具在跨 Space 和菜单操作期间仍有状态变动、ScreenCaptureKit 参数失败，不能归因为用户干扰或将其等同客户端窗口消失。
+
+结论：本阶段公共恢复路径修正、原生回归及上述用户实测通过，保留图片和其他弹窗。原始故障发生时尚无完整 Space/焦点事件轨迹，因此仍不宣称已证明所有触发条件或所有弹窗的长期稳定性。保留无正文的事件诊断，以便再次发生时定位确切窗口归属；不据未证实的 companion/pet 疑点扩大改动。
+
 ## 十三、验证矩阵
 
 | 场景 | 必须验证 |
