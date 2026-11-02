@@ -1990,10 +1990,18 @@ fn lease_tree_handles(root: &Path) -> Result<Vec<LeaseTreeHandle>, String> {
     let mut result = vec![root_entry];
     let mut pending = vec![root.to_owned()];
     while let Some(directory) = pending.pop() {
-        let mut children = std::fs::read_dir(&directory)
+        let remaining = MAXIMUM_LEASE_TREE_ENTRIES.saturating_sub(result.len());
+        let mut children = Vec::new();
+        for child in std::fs::read_dir(&directory)
             .map_err(|error| format!("Reading the workspace ACL tree failed: {error}"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("Reading the workspace ACL tree failed: {error}"))?;
+        {
+            if children.len() >= remaining {
+                return Err("The workspace ACL tree exceeds its entry limit.".to_owned());
+            }
+            children.push(
+                child.map_err(|error| format!("Reading the workspace ACL tree failed: {error}"))?,
+            );
+        }
         children.sort_by_key(std::fs::DirEntry::file_name);
         for child in children {
             let path = child.path();
@@ -2004,9 +2012,6 @@ fn lease_tree_handles(root: &Path) -> Result<Vec<LeaseTreeHandle>, String> {
             }
             let is_directory = entry.is_directory;
             result.push(entry);
-            if result.len() > MAXIMUM_LEASE_TREE_ENTRIES {
-                return Err("The workspace ACL tree exceeds its entry limit.".to_owned());
-            }
             if is_directory {
                 pending.push(path);
             }
