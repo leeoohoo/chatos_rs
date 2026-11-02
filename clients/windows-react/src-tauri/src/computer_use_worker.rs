@@ -1,3 +1,6 @@
+use crate::machine_resource_governor::{
+    MachineResourceGovernor, MachineResourceKind, MachineResourcePermit, MachineResourcePriority,
+};
 use crate::terminal_runtime::process::ProcessTermination;
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::PathBuf, process::Stdio, time::Duration};
@@ -26,13 +29,21 @@ pub(crate) struct ComputerUseDiagnostics {
 
 pub(crate) async fn diagnose(
     launch: &TrustedComputerUseLaunch,
+    resources: &MachineResourceGovernor,
 ) -> Result<ComputerUseDiagnostics, String> {
-    diagnose_with_timeout(launch, DIAGNOSTIC_TIMEOUT).await
+    let permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
+    diagnose_with_timeout_and_permit(launch, DIAGNOSTIC_TIMEOUT, Some(permit)).await
 }
 
-async fn diagnose_with_timeout(
+async fn diagnose_with_timeout_and_permit(
     launch: &TrustedComputerUseLaunch,
     maximum_duration: Duration,
+    _permit: Option<MachineResourcePermit>,
 ) -> Result<ComputerUseDiagnostics, String> {
     validate_launch(launch)?;
     let mut command = prepared_command(launch);
@@ -90,8 +101,17 @@ async fn diagnose_with_timeout(
     parse_diagnostics(&bytes)
 }
 
-pub(crate) fn open_onboarding(launch: &TrustedComputerUseLaunch) -> Result<(), String> {
+pub(crate) async fn open_onboarding(
+    launch: &TrustedComputerUseLaunch,
+    resources: &MachineResourceGovernor,
+) -> Result<(), String> {
     validate_launch(launch)?;
+    let permit = resources
+        .acquire(
+            MachineResourceKind::CodeReadWorker,
+            MachineResourcePriority::Interactive,
+        )
+        .await?;
     let mut command = prepared_command(launch);
     command
         .arg("--onboarding")
@@ -116,6 +136,7 @@ pub(crate) fn open_onboarding(launch: &TrustedComputerUseLaunch) -> Result<(), S
         } else {
             let _ = termination.terminate(true);
         }
+        drop(permit);
     });
     Ok(())
 }
@@ -236,18 +257,17 @@ mod tests {
             executable: executable.canonicalize().unwrap(),
             working_directory: root,
         };
-        assert!(
-            diagnose_with_timeout(&launch, Duration::from_secs(1))
-                .await
-                .unwrap()
-                .all_granted
-        );
+        let resources = MachineResourceGovernor::default();
+        assert!(diagnose(&launch, &resources).await.unwrap().all_granted);
+        assert_eq!(resources.used_resource_units(), 0);
 
         std::fs::write(&executable, "#!/bin/sh\nexec sleep 2\n").unwrap();
-        assert!(diagnose_with_timeout(&launch, Duration::from_millis(50))
-            .await
-            .unwrap_err()
-            .contains("超时"));
+        assert!(
+            diagnose_with_timeout_and_permit(&launch, Duration::from_millis(50), None)
+                .await
+                .unwrap_err()
+                .contains("超时")
+        );
     }
 
     #[test]
