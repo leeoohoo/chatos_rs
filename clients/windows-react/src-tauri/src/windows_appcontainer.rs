@@ -85,6 +85,7 @@ static FIXED_PROFILE_IN_USE: Mutex<bool> = Mutex::new(false);
 static FIXED_PROFILE_AVAILABLE: Condvar = Condvar::new();
 const MAXIMUM_LEASE_TREE_ENTRIES: usize = 100_000;
 const MAXIMUM_LEASE_JOURNAL_BYTES: usize = 64 * 1_024 * 1_024;
+const MAXIMUM_LEASE_JOURNAL_ENTRIES: usize = 1_024;
 const WORKSPACE_JOURNAL_TEMPORARY_PREFIX: &str = ".appcontainer-workspace-";
 const PROFILE_JOURNAL_TEMPORARY_PREFIX: &str = ".appcontainer-profile-";
 const PROBE_TEMPORARY_PREFIX: &str = "chatos-appcontainer-probe-";
@@ -533,16 +534,21 @@ impl WorkspaceLeaseManager {
     }
 
     fn recover_all(&self) -> Result<usize, String> {
-        let mut entries = std::fs::read_dir(&self.journal_root)
+        let mut entries = Vec::new();
+        for (visited, entry) in std::fs::read_dir(&self.journal_root)
             .map_err(|error| format!("Reading AppContainer workspace leases failed: {error}"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("Reading AppContainer workspace leases failed: {error}"))?;
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        if entries.len() > 1_024 {
-            return Err(
-                "Too many AppContainer workspace lease records require recovery.".to_owned(),
-            );
+            .enumerate()
+        {
+            if visited >= MAXIMUM_LEASE_JOURNAL_ENTRIES {
+                return Err(
+                    "Too many AppContainer workspace lease records require recovery.".to_owned(),
+                );
+            }
+            entries.push(entry.map_err(|error| {
+                format!("Reading AppContainer workspace leases failed: {error}")
+            })?);
         }
+        entries.sort_by_key(std::fs::DirEntry::file_name);
         let mut recovered = 0;
         for entry in entries {
             let file_type = entry.file_type().map_err(|error| {
@@ -573,14 +579,21 @@ impl WorkspaceLeaseManager {
     }
 
     fn recover_profiles(&self) -> Result<usize, String> {
-        let mut entries = std::fs::read_dir(&self.profile_journal_root)
+        let mut entries = Vec::new();
+        for (visited, entry) in std::fs::read_dir(&self.profile_journal_root)
             .map_err(|error| format!("Reading AppContainer profile leases failed: {error}"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("Reading AppContainer profile leases failed: {error}"))?;
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        if entries.len() > 1_024 {
-            return Err("Too many AppContainer profile leases require recovery.".to_owned());
+            .enumerate()
+        {
+            if visited >= MAXIMUM_LEASE_JOURNAL_ENTRIES {
+                return Err("Too many AppContainer profile leases require recovery.".to_owned());
+            }
+            entries.push(
+                entry.map_err(|error| {
+                    format!("Reading AppContainer profile leases failed: {error}")
+                })?,
+            );
         }
+        entries.sort_by_key(std::fs::DirEntry::file_name);
         let mut recovered = 0;
         for entry in entries {
             let file_type = entry.file_type().map_err(|error| {

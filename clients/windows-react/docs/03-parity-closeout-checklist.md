@@ -104,6 +104,7 @@ Windows 产品版本：`3.0.9`
 - [x] 兼容 Plugin 导入的 Skill 根目录与资源复制也改为有界遍历：根目录最多 256 项，递归资源树最多 20,000 项，超过限制立即拒绝，不再先收集整个目录。
 - [x] npm Plugin 安装后的 shim 清理与安装目录 sanitization 共享 20,000 项全树上限；递归清理遇到超限立即拒绝，避免恶意 npm 包通过大量目录或 `.bin` 条目造成无界扫描。
 - [x] Media Studio 图片/视频历史与 Story Studio 项目、规划运行和媒体批次分页读取均限制每个目录最多扫描 20,000 项，超限立即失败关闭，避免旧产物堆积导致无界历史遍历。
+- [x] AppContainer workspace/profile journal 恢复改为流式有界枚举：每个 journal 根最多检查 1,024 项，超过上限立即失败，不再先把整个目录收集到内存。
 - [x] 固定 AppData 临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-appdata-temp-cleanup-final-nsis.json`：全新目录安装 `2,281 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,214 ms`、卸载 `667 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin 事务临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-temp-cleanup-final-nsis.json`：全新目录安装 `2,181 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,187 ms`、卸载 `638 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
 - [x] Plugin staging 崩溃残留清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-plugin-staging-cleanup-final-nsis.json`：全新目录安装 `2,187 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,173 ms`、卸载 `647 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
