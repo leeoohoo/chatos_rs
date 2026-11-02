@@ -221,8 +221,11 @@ struct MessageTaskWorkspaceSheet: View {
                         }
                     } else {
                         VSplitView {
-                            graphCanvas(graph).frame(minHeight: 80)
+                            graphCanvas(graph)
+                                .frame(width: viewport.size.width)
+                                .frame(minHeight: 80)
                             MessageTaskInspectorView(viewModel: viewModel, fillsAvailableWidth: true)
+                                .frame(width: viewport.size.width)
                                 .frame(minHeight: 80)
                         }
                     }
