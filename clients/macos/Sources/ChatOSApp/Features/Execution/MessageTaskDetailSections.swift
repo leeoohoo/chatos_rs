@@ -76,10 +76,6 @@ struct MessageTaskDetailSections: View {
             }
         }
 
-        if let usage = TaskCapabilityUsageSummary.decode(task.taskToolStateJSON) {
-            TaskCapabilityUsageView(usage: usage)
-        }
-
         modelOutputSection
 
         if let summary = distinctResultSummary {
@@ -644,10 +640,18 @@ struct TaskCapabilityUsageSummary: Decodable {
 }
 
 struct TaskCapabilityUsageView: View {
+    private struct UsedPlugin: Identifiable {
+        let id: String
+        let name: String
+        let callCount: Int
+    }
+
     let usage: TaskCapabilityUsageSummary
+    @State private var showsSystemTools = false
+    @State private var showsUnusedPlugins = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 Image(systemName: "puzzlepiece.extension.fill")
                     .appFont(.system(size: 13, weight: .semibold))
@@ -656,40 +660,101 @@ struct TaskCapabilityUsageView: View {
                     .background(AppPalette.ai, in: RoundedRectangle(cornerRadius: 9))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("插件与工具").appFont(.subheadline.weight(.semibold))
-                    Text("本任务启用的插件与实际工具调用")
+                    Text("只在这里汇总本任务真实使用的能力")
                         .appFont(.caption2)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                StatusCapsule(title: "\(usage.tools.reduce(0) { $0 + $1.callCount }) 次调用", color: AppPalette.ai)
+                StatusCapsule(title: "\(totalCallCount) 次调用", color: AppPalette.ai)
             }
 
-            if !usage.plugins.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("插件").appFont(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                usageFact(value: usedPlugins.count, label: "实际插件", systemImage: "puzzlepiece.extension")
+                usageFact(value: externalTools.count, label: "外部工具", systemImage: "point.3.connected.trianglepath.dotted")
+                usageFact(value: systemTools.count, label: "系统工具", systemImage: "gearshape.2")
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("实际使用的插件")
+                    .appFont(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if usedPlugins.isEmpty {
+                    Label("本任务没有调用插件能力", systemImage: "minus.circle")
+                        .appFont(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 6)
+                } else {
                     LazyVGrid(
                         columns: [GridItem(.adaptive(minimum: 180), spacing: 8)],
                         alignment: .leading,
                         spacing: 8
                     ) {
-                        ForEach(usage.plugins) { plugin in
-                            pluginCard(plugin)
+                        ForEach(usedPlugins) { plugin in
+                            usedPluginCard(plugin)
                         }
                     }
                 }
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("工具调用").appFont(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                if usage.tools.isEmpty {
-                    Label("尚未产生工具调用", systemImage: "hourglass")
+                Text("插件与外部工具调用")
+                    .appFont(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if externalTools.isEmpty {
+                    Label("尚未产生插件或外部工具调用", systemImage: "hourglass")
                         .appFont(.callout)
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 6)
                 } else {
-                    ForEach(usage.tools) { tool in
+                    ForEach(externalTools) { tool in
                         toolRow(tool)
                     }
+                }
+            }
+
+            if !systemTools.isEmpty {
+                DisclosureGroup(isExpanded: $showsSystemTools) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("系统工具用于读取文件、搜索和记录过程，默认折叠以减少干扰。")
+                            .appFont(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.bottom, 4)
+                        ForEach(systemTools) { tool in
+                            toolRow(tool)
+                        }
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    HStack {
+                        Text("系统内置工具")
+                            .appFont(.caption.weight(.semibold))
+                        Spacer()
+                        Text("\(systemCallCount) 次")
+                            .appFont(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if !unusedPlugins.isEmpty {
+                DisclosureGroup(isExpanded: $showsUnusedPlugins) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(unusedPlugins) { plugin in
+                            HStack {
+                                Text(plugin.displayName)
+                                    .appFont(.caption)
+                                Spacer()
+                                Text("未调用")
+                                    .appFont(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Text("已启用但未调用（\(unusedPlugins.count)）")
+                        .appFont(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -698,20 +763,65 @@ struct TaskCapabilityUsageView: View {
         .overlay { RoundedRectangle(cornerRadius: 12).stroke(AppPalette.ai.opacity(0.22)) }
     }
 
-    private func pluginCard(_ plugin: TaskCapabilityUsageSummary.Plugin) -> some View {
+    private var totalCallCount: Int {
+        usage.tools.reduce(0) { $0 + $1.callCount }
+    }
+
+    private var systemCallCount: Int {
+        systemTools.reduce(0) { $0 + $1.callCount }
+    }
+
+    private var externalTools: [TaskCapabilityUsageSummary.Tool] {
+        usage.tools.filter(isExternalTool)
+    }
+
+    private var systemTools: [TaskCapabilityUsageSummary.Tool] {
+        usage.tools.filter { !isExternalTool($0) }
+    }
+
+    private var usedPlugins: [UsedPlugin] {
+        var totals: [String: Int] = [:]
+        for tool in externalTools where resolvedPluginName(for: tool) != nil {
+            guard let name = resolvedPluginName(for: tool) else { continue }
+            totals[name, default: 0] += tool.callCount
+        }
+        return totals.map { UsedPlugin(id: $0.key, name: $0.key, callCount: $0.value) }
+            .sorted { lhs, rhs in
+                lhs.callCount == rhs.callCount ? lhs.name < rhs.name : lhs.callCount > rhs.callCount
+            }
+    }
+
+    private var unusedPlugins: [TaskCapabilityUsageSummary.Plugin] {
+        let names = Set(usedPlugins.map(\.name))
+        return usage.plugins.filter { !names.contains($0.displayName) }
+    }
+
+    private func usageFact(value: Int, label: String, systemImage: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: systemImage)
+                .appFont(.caption)
+                .foregroundStyle(AppPalette.ai)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(String(value)).appFont(.callout.weight(.semibold)).monospacedDigit()
+                Text(label).appFont(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(9)
+        .background(AppPalette.surfaceSubtle.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private func usedPluginCard(_ plugin: UsedPlugin) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: plugin.callCount > 0 ? "puzzlepiece.extension.fill" : "puzzlepiece.extension")
-                .foregroundStyle(plugin.callCount > 0 ? AppPalette.ai : Color.secondary)
+            Image(systemName: "puzzlepiece.extension.fill")
+                .foregroundStyle(AppPalette.ai)
                 .frame(width: 26, height: 26)
-                .background(
-                    (plugin.callCount > 0 ? AppPalette.ai : Color.secondary).opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: 7)
-                )
+                .background(AppPalette.ai.opacity(0.10), in: RoundedRectangle(cornerRadius: 7))
             VStack(alignment: .leading, spacing: 2) {
-                Text(plugin.displayName).appFont(.caption.weight(.semibold)).lineLimit(1)
-                Text(plugin.callCount > 0 ? "已调用 \(plugin.callCount) 次" : "已启用 · 尚未调用")
+                Text(plugin.name).appFont(.caption.weight(.semibold)).lineLimit(1)
+                Text("实际调用 \(plugin.callCount) 次")
                     .appFont(.caption2)
-                    .foregroundStyle(plugin.callCount > 0 ? AppPalette.ai : Color.secondary)
+                    .foregroundStyle(AppPalette.ai)
             }
             Spacer(minLength: 0)
         }
@@ -733,7 +843,7 @@ struct TaskCapabilityUsageView: View {
                         Text("×\(tool.callCount)").appFont(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                     }
                 }
-                Text(tool.pluginName.map { "插件 · \($0)" } ?? routeTitle(tool.route))
+                Text(resolvedPluginName(for: tool).map { "插件 · \($0)" } ?? routeTitle(tool.route))
                     .appFont(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -746,6 +856,25 @@ struct TaskCapabilityUsageView: View {
                 .background(toolColor(tool.status).opacity(0.09), in: Capsule())
         }
         .padding(.vertical, 5)
+    }
+
+    private func isExternalTool(_ tool: TaskCapabilityUsageSummary.Tool) -> Bool {
+        if tool.pluginID?.nonEmpty != nil || tool.pluginName?.nonEmpty != nil { return true }
+        return ["external_mcp", "mcp", "plugin", "capability", "project"]
+            .contains(tool.route.lowercased())
+    }
+
+    private func resolvedPluginName(for tool: TaskCapabilityUsageSummary.Tool) -> String? {
+        let candidates = [tool.pluginID, tool.pluginName]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty }
+        if let plugin = usage.plugins.first(where: { plugin in
+            let identifiers = [plugin.id, plugin.key, plugin.componentKey, plugin.displayName]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty }
+            return !Set(identifiers).isDisjoint(with: candidates)
+        }) {
+            return plugin.displayName
+        }
+        return tool.pluginName?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
     }
 
     private func toolStatus(_ status: String) -> String {

@@ -18,6 +18,8 @@ struct MessageTaskInspectorView: View {
                             detail(task)
                         case .process:
                             process(task)
+                        case .capabilities:
+                            capabilities(task)
                         case .run:
                             run(task)
                         }
@@ -113,9 +115,6 @@ struct MessageTaskInspectorView: View {
     @ViewBuilder
     private func process(_ task: MessageTask) -> some View {
         TaskInspectorTitle(task: task)
-        if let usage = TaskCapabilityUsageSummary.decode(task.taskToolStateJSON) {
-            TaskCapabilityUsageView(usage: usage)
-        }
         TaskProcessTimelineView(
             items: TaskProcessTimelineBuilder.build(
                 processLog: task.processLog,
@@ -128,11 +127,22 @@ struct MessageTaskInspectorView: View {
     }
 
     @ViewBuilder
-    private func run(_ task: MessageTask) -> some View {
+    private func capabilities(_ task: MessageTask) -> some View {
         TaskInspectorTitle(task: task)
         if let usage = TaskCapabilityUsageSummary.decode(task.taskToolStateJSON) {
             TaskCapabilityUsageView(usage: usage)
+        } else {
+            ContentUnavailableView(
+                "暂无插件与工具记录",
+                systemImage: "puzzlepiece.extension",
+                description: Text("任务产生真实调用后，会在这里集中展示。")
+            )
         }
+    }
+
+    @ViewBuilder
+    private func run(_ task: MessageTask) -> some View {
+        TaskInspectorTitle(task: task)
         if viewModel.isLoadingRun && viewModel.runDetail == nil {
             ProgressView("正在加载运行详情…")
         } else if let detail = viewModel.runDetail {

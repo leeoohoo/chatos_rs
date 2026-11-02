@@ -10,12 +10,14 @@ enum TaskReplyInspectorPollingPolicy {
 enum TaskReplyInspectorSection: String, CaseIterable {
     case process = "执行过程"
     case detail = "任务详情"
+    case capabilities = "插件与工具"
 
     func title(language: ChatOSLanguage) -> String {
         guard language == .english else { return rawValue }
         return switch self {
         case .process: "Execution Process"
         case .detail: "Task Details"
+        case .capabilities: "Plugins & Tools"
         }
     }
 }
@@ -176,9 +178,10 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         self.section = section
         guard changed else { return }
         switch section {
-        case .process where task != nil:
-            // The process timeline is fully contained in the task response. Reuse it instead of
-            // issuing the task + run request pair again when the user switches tabs.
+        case .process where task != nil,
+             .capabilities where task != nil:
+            // Process and capability data are fully contained in the task response. Reuse it
+            // instead of issuing the task + run request pair again when the user switches tabs.
             loadGeneration += 1
             loadTask?.cancel()
             isLoading = false

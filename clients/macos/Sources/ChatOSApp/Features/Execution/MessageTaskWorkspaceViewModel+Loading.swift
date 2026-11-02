@@ -567,6 +567,7 @@ private extension MessageTaskWorkspaceViewModel.InspectorSection {
         switch self {
         case .detail: .detail
         case .process: .process
+        case .capabilities: .detail
         case .run: .run
         }
     }

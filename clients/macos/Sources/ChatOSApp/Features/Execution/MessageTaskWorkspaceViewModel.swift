@@ -6,6 +6,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     enum InspectorSection: String, CaseIterable, Sendable {
         case detail = "任务详情"
         case process = "执行过程"
+        case capabilities = "插件与工具"
         case run = "运行详情"
 
         func title(language: ChatOSLanguage) -> String {
@@ -13,6 +14,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
             return switch self {
             case .detail: "Task Details"
             case .process: "Execution Process"
+            case .capabilities: "Plugins & Tools"
             case .run: "Run Details"
             }
         }
@@ -238,6 +240,8 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         case .detail:
             loadModelOutput(for: task)
         case .process:
+            cancelInspectorRequests()
+        case .capabilities:
             cancelInspectorRequests()
         case .run:
             guard runDetail == nil, !isLoadingRun else { return }

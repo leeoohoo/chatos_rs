@@ -96,7 +96,7 @@ struct TaskReplyInlineInspectorView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(viewModel.section.title(language: model.interfaceLanguage))
                     .appFont(.subheadline.weight(.semibold))
-                Text(viewModel.section == .process ? "按时间查看任务的真实执行节点" : "查看目标、结果与诊断信息")
+                Text(sectionSubtitle)
                     .appFont(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -140,6 +140,15 @@ struct TaskReplyInlineInspectorView: View {
         switch viewModel.section {
         case .process: "waveform.path.ecg"
         case .detail: "doc.text.magnifyingglass"
+        case .capabilities: "puzzlepiece.extension"
+        }
+    }
+
+    private var sectionSubtitle: String {
+        switch viewModel.section {
+        case .process: "按时间查看任务的真实执行节点"
+        case .detail: "查看目标、结果与诊断信息"
+        case .capabilities: "集中查看本任务真正使用的插件与工具"
         }
     }
 }
@@ -166,9 +175,6 @@ struct TaskReplyInspectorContent: View {
                 TaskInspectorTitle(task: task)
                 switch viewModel.section {
                 case .process:
-                    if let usage = TaskCapabilityUsageSummary.decode(task.taskToolStateJSON) {
-                        TaskCapabilityUsageView(usage: usage)
-                    }
                     TaskProcessTimelineView(
                         items: viewModel.processTimelineItems,
                         allowsTextSelection: true,
@@ -177,6 +183,16 @@ struct TaskReplyInspectorContent: View {
                     )
                 case .detail:
                     taskDetail(task)
+                case .capabilities:
+                    if let usage = TaskCapabilityUsageSummary.decode(task.taskToolStateJSON) {
+                        TaskCapabilityUsageView(usage: usage)
+                    } else {
+                        ContentUnavailableView(
+                            "暂无插件与工具记录",
+                            systemImage: "puzzlepiece.extension",
+                            description: Text("任务产生真实调用后，会在这里集中展示。")
+                        )
+                    }
                 }
             }
         }

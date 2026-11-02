@@ -766,3 +766,13 @@
 "本任务启用的插件与实际工具调用" = "Plugins Enabled and Tools Actually Used by This Task";
 "这些信息用于排查问题，日常查看无需展开。" = "Use this information for troubleshooting; it can stay collapsed during normal review.";
 "选择节点后查看完整上下文" = "Select a Node to View Its Full Context";
+"任务产生真实调用后，会在这里集中展示。" = "Actual calls made by the task will appear here.";
+"只在这里汇总本任务真实使用的能力" = "The single place for capabilities actually used by this task";
+"实际使用的插件" = "Plugins Actually Used";
+"尚未产生插件或外部工具调用" = "No Plugin or External Tool Calls Yet";
+"插件与外部工具调用" = "Plugin and External Tool Calls";
+"暂无插件与工具记录" = "No Plugin or Tool Records Yet";
+"未调用" = "Not Used";
+"本任务没有调用插件能力" = "This Task Did Not Use Any Plugin Capabilities";
+"系统内置工具" = "Built-in System Tools";
+"系统工具用于读取文件、搜索和记录过程，默认折叠以减少干扰。" = "System tools support file access, search, and process recording. They are collapsed by default to reduce noise.";
