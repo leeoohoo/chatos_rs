@@ -2,16 +2,35 @@ import ChatOSCore
 import SwiftUI
 
 struct TurnProcessSheet: View {
-    @EnvironmentObject private var model: AppModel
     @StateObject private var viewModel: TurnProcessViewModel
-    @Environment(\.dismiss) private var dismiss
+    let onClose: () -> Void
 
-    init(viewModel: TurnProcessViewModel) {
+    init(viewModel: TurnProcessViewModel, onClose: @escaping () -> Void) {
         _viewModel = StateObject(wrappedValue: viewModel)
+        self.onClose = onClose
     }
 
     var body: some View {
-        NavigationStack {
+        GeometryReader { viewport in
+            workspace
+                .frame(width: viewport.size.width, height: viewport.size.height)
+                .clipped()
+        }
+        .onExitCommand(perform: onClose)
+        .onAppear(perform: viewModel.load)
+        .onDisappear(perform: viewModel.stop)
+    }
+
+    private var workspace: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button("返回聊天", systemImage: "chevron.left", action: onClose)
+                Text("任务过程").appFont(.headline)
+                Spacer()
+                Button("关闭", action: onClose)
+            }
+            .padding(16)
+            Divider()
             Group {
                 if viewModel.isLoading && viewModel.nodes.isEmpty {
                     ProgressView("正在加载任务节点…")
@@ -33,22 +52,15 @@ struct TurnProcessSheet: View {
                     processTimeline
                 }
             }
-            .navigationTitle("任务过程")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭", action: dismiss.callAsFunction)
-                }
-            }
+            .workspaceFill()
         }
-        .frame(minWidth: 680, minHeight: 560)
-        .environment(\.locale, model.interfaceLocale)
-        .onAppear(perform: viewModel.load)
-        .onDisappear(perform: viewModel.stop)
+        .workspaceFill()
+        .background(Color(nsColor: .textBackgroundColor))
     }
 
     private var processTimeline: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 header
                 ForEach(Array(viewModel.nodes.enumerated()), id: \.element.id) { index, node in
                     ProcessNodeRow(

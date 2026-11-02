@@ -21,6 +21,7 @@ struct ConversationTimelineView: View {
                 conversation: conversation,
                 projectRootPath: projectRootPath
             )
+            .id(conversation.sessionID)
             .workspaceFill()
             ComposerView(conversation: conversation)
                 .padding(16)
@@ -39,7 +40,7 @@ private struct ConversationTimelineContentView: View {
     let projectRootPath: String?
     @ObservedObject private var timelineObservationState: ConversationTimelineObservationState
     @Environment(\.locale) private var locale
-    @State private var selectedProcessTurn: ConversationTurn?
+    @State private var turnProcessPresentation: TurnProcessPresentation?
     @State private var taskWorkspacePresentation: TaskWorkspacePresentation?
     @State private var selectedTaskReply: TaskReplySelection?
     @State private var hasPositionedInitialTimeline = false
@@ -56,20 +57,31 @@ private struct ConversationTimelineContentView: View {
 
     var body: some View {
         let _ = timelineObservationState.revision
-        Group {
-            if let presentation = taskWorkspacePresentation {
-                MessageTaskWorkspaceSheet(viewModel: presentation.viewModel) {
-                    taskWorkspacePresentation = nil
-                }
-                .transition(.opacity)
-            } else {
+        GeometryReader { viewport in
+            ZStack {
+                // Keep the chat mounted while inspecting a task. Replacing it
+                // tears down ScrollViewReader and loses its viewport on return.
                 timeline
+                    .opacity(isInspectingWorkspace ? 0 : 1)
+                    .allowsHitTesting(!isInspectingWorkspace)
+                    .accessibilityHidden(isInspectingWorkspace)
+
+                if let presentation = taskWorkspacePresentation {
+                    MessageTaskWorkspaceSheet(viewModel: presentation.viewModel) {
+                        taskWorkspacePresentation = nil
+                    }
+                    .id(presentation.turnID)
+                } else if let presentation = turnProcessPresentation {
+                    TurnProcessSheet(viewModel: presentation.viewModel) {
+                        turnProcessPresentation = nil
+                    }
+                    .id(presentation.turnID)
+                }
             }
-        }
-        .sheet(item: $selectedProcessTurn) { turn in
-            if let viewModel = conversation.makeTurnProcessViewModel(for: turn) {
-                TurnProcessSheet(viewModel: viewModel)
-            }
+            // Detail content must fit the existing chat viewport, never resize
+            // the parent AppKit window through its intrinsic minimum size.
+            .frame(width: viewport.size.width, height: viewport.size.height)
+            .clipped()
         }
         .alert(
             localized("任务操作失败", english: "Task Action Failed"),
@@ -206,6 +218,7 @@ private struct ConversationTimelineContentView: View {
                     applyFocusRequest(using: proxy)
                 }
                 .onChange(of: timelineUpdateToken) {
+                    guard !isInspectingWorkspace else { return }
                     guard hasPositionedInitialTimeline else {
                         positionInitialTimeline(using: proxy)
                         return
@@ -221,6 +234,7 @@ private struct ConversationTimelineContentView: View {
                     applyFocusRequest(using: proxy)
                 }
                 .onPreferenceChange(ConversationTimelineBottomPreferenceKey.self) { bottomY in
+                    guard !isInspectingWorkspace else { return }
                     let nextPinned = bottomY <= viewport.size.height + 28
                     guard ConversationViewportPolicy.shouldPublishPinnedState(
                         currentIsPinned: isPinnedToBottom,
@@ -252,7 +266,7 @@ private struct ConversationTimelineContentView: View {
             UserTurnMessageView(
                 turn: turn,
                 showsTaskGraph: conversation.hasTaskGraph(for: turn),
-                onOpenProcess: { selectedProcessTurn = turn },
+                onOpenProcess: { openTurnProcess(for: turn) },
                 onOpenTaskGraph: {
                     openTaskWorkspace(for: turn)
                 }
@@ -421,12 +435,23 @@ private struct ConversationTimelineContentView: View {
             initialTaskID: initialTaskID,
             initialRunID: initialRunID
         ) else { return }
-        withAnimation(.easeInOut(duration: 0.16)) {
-            taskWorkspacePresentation = TaskWorkspacePresentation(
-                turnID: turn.id,
-                viewModel: viewModel
-            )
-        }
+        initialPositionTask?.cancel()
+        turnProcessPresentation = nil
+        taskWorkspacePresentation = TaskWorkspacePresentation(
+            turnID: turn.id,
+            viewModel: viewModel
+        )
+    }
+
+    private var isInspectingWorkspace: Bool {
+        taskWorkspacePresentation != nil || turnProcessPresentation != nil
+    }
+
+    private func openTurnProcess(for turn: ConversationTurn) {
+        guard let viewModel = conversation.makeTurnProcessViewModel(for: turn) else { return }
+        initialPositionTask?.cancel()
+        taskWorkspacePresentation = nil
+        turnProcessPresentation = TurnProcessPresentation(turnID: turn.id, viewModel: viewModel)
     }
 
     private func scrollToBottom(using proxy: ScrollViewProxy) {
@@ -462,4 +487,9 @@ private struct TaskWorkspacePresentation: Identifiable {
     let viewModel: MessageTaskWorkspaceViewModel
 
     var id: String { turnID }
+}
+
+private struct TurnProcessPresentation {
+    let turnID: String
+    let viewModel: TurnProcessViewModel
 }

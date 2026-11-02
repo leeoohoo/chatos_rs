@@ -20,14 +20,18 @@ struct MessageTaskWorkspaceSheet: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if let graph = viewModel.displayGraph, graph.hasOverview {
-                graphOverview(graph)
-                Divider()
+            GeometryReader { viewport in
+                VStack(spacing: 0) {
+                    if let graph = viewModel.displayGraph, graph.hasOverview {
+                        ScrollView { graphOverview(graph) }
+                            .frame(height: showsGraphOverview ? min(160, viewport.size.height * 0.25) : 48)
+                        Divider()
+                    }
+                    content
+                        .workspaceFill()
+                }
             }
-            content
-                .workspaceFill()
         }
-        .frame(minWidth: 760, minHeight: 560)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(\.locale, model.interfaceLocale)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -166,12 +170,14 @@ struct MessageTaskWorkspaceSheet: View {
     @ViewBuilder
     private var content: some View {
         if !viewModel.executionActivity.isEmpty {
-            VStack(spacing: 0) {
-                TaskExecutionActivityView(viewModel: viewModel)
-                    .frame(height: executionActivityHeight)
-                Divider()
-                graphContent
-                    .workspaceFill()
+            GeometryReader { viewport in
+                VStack(spacing: 0) {
+                    TaskExecutionActivityView(viewModel: viewModel)
+                        .frame(height: min(executionActivityHeight, viewport.size.height * 0.3))
+                    Divider()
+                    graphContent
+                        .workspaceFill()
+                }
             }
         } else {
             graphContent
@@ -207,15 +213,19 @@ struct MessageTaskWorkspaceSheet: View {
                     Button("重试", action: viewModel.load)
                 }
             } else if let graph = viewModel.displayGraph, !graph.nodes.isEmpty {
-                HSplitView {
-                    MessageTaskGraphCanvas(
-                        graph: graph,
-                        selectedTaskID: viewModel.selectedTaskID,
-                        onSelect: viewModel.select,
-                        onStop: { viewModel.requestCancellation(for: $0) }
-                    )
-                    .frame(minWidth: 700)
-                    MessageTaskInspectorView(viewModel: viewModel)
+                GeometryReader { viewport in
+                    if viewport.size.width >= 900 {
+                        HSplitView {
+                            graphCanvas(graph).frame(minWidth: 350)
+                            MessageTaskInspectorView(viewModel: viewModel)
+                        }
+                    } else {
+                        VSplitView {
+                            graphCanvas(graph).frame(minHeight: 80)
+                            MessageTaskInspectorView(viewModel: viewModel, fillsAvailableWidth: true)
+                                .frame(minHeight: 80)
+                        }
+                    }
                 }
             } else {
                 ContentUnavailableView(
@@ -226,6 +236,15 @@ struct MessageTaskWorkspaceSheet: View {
             }
         }
         .workspaceFill()
+    }
+
+    private func graphCanvas(_ graph: MessageTaskGraphSnapshot) -> some View {
+        MessageTaskGraphCanvas(
+            graph: graph,
+            selectedTaskID: viewModel.selectedTaskID,
+            onSelect: viewModel.select,
+            onStop: { viewModel.requestCancellation(for: $0) }
+        )
     }
 }
 

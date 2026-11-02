@@ -150,6 +150,22 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         model.prepareForApplicationTermination()
     }
 
+    func applicationDidHide(_ notification: Notification) {
+        (mainWindowController?.window as? MainWorkspaceWindow)?.record("appHidden")
+    }
+
+    func applicationDidUnhide(_ notification: Notification) {
+        (mainWindowController?.window as? MainWorkspaceWindow)?.record("appUnhidden")
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        (mainWindowController?.window as? MainWorkspaceWindow)?.record("appActive")
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        (mainWindowController?.window as? MainWorkspaceWindow)?.record("appInactive")
+    }
+
     private static var buildSmokeTestExitDelay: TimeInterval? {
         let environment = ProcessInfo.processInfo.environment
         guard isBuildSmokeTest,
@@ -266,7 +282,10 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
     private func makeMainWindowController() -> NSWindowController {
         let content = ChatOSMainSceneView(model: model)
         let hostingController = NSHostingController(rootView: content)
-        let window = NSWindow(
+        // AppKit owns the main window dimensions. A presented detail must not
+        // propagate its intrinsic content size into the top-level window.
+        hostingController.sizingOptions = []
+        let window = MainWorkspaceWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_440, height: 900),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
@@ -281,6 +300,8 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         window.collectionBehavior.insert([.moveToActiveSpace, .fullScreenPrimary])
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
+        window.hidesOnDeactivate = false
+        window.tabbingMode = .disallowed
         installTitlebarActions(in: window)
         window.setFrameAutosaveName("ChatOSMainWindow")
         if !window.setFrameUsingName("ChatOSMainWindow") {

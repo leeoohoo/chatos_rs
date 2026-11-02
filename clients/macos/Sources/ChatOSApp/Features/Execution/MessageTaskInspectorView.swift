@@ -4,6 +4,7 @@ import SwiftUI
 struct MessageTaskInspectorView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var viewModel: MessageTaskWorkspaceViewModel
+    var fillsAvailableWidth = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,7 +32,11 @@ struct MessageTaskInspectorView: View {
                 )
             }
         }
-        .frame(minWidth: 320, idealWidth: 360, maxWidth: 420)
+        .frame(
+            minWidth: fillsAvailableWidth ? 0 : 320,
+            idealWidth: fillsAvailableWidth ? nil : 360,
+            maxWidth: fillsAvailableWidth ? .infinity : 420
+        )
         .frame(maxHeight: .infinity)
         .background(AppPalette.canvas)
         .conversationFileLinks(conversationID: viewModel.turn.sessionID)
