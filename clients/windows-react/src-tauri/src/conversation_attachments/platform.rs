@@ -189,8 +189,26 @@ fn write_metadata(directory: &Path, metadata: &VaultMetadata) -> Result<(), Stri
 }
 
 fn read_metadata(directory: &Path, token: &str) -> Result<VaultMetadata, String> {
-    let bytes = fs::read(metadata_path(directory, token))
+    let path = metadata_path(directory, token);
+    let metadata =
+        fs::symlink_metadata(&path).map_err(|error| format!("无法读取附件元数据：{error}"))?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || is_windows_reparse_point(&metadata)
+    {
+        return Err("附件元数据不是普通文件。".into());
+    }
+    let mut bytes = Vec::with_capacity(
+        metadata.len().min(MAXIMUM_ATTACHMENT_METADATA_BYTES as u64) as usize + 1,
+    );
+    fs::File::open(&path)
+        .map_err(|error| format!("无法读取附件元数据：{error}"))?
+        .take((MAXIMUM_ATTACHMENT_METADATA_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
         .map_err(|error| format!("无法读取附件元数据：{error}"))?;
+    if bytes.len() > MAXIMUM_ATTACHMENT_METADATA_BYTES {
+        return Err("附件元数据超过大小限制。".into());
+    }
     serde_json::from_slice(&bytes).map_err(|error| format!("附件元数据无效：{error}"))
 }
 

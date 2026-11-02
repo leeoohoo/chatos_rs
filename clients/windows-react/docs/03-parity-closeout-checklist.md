@@ -112,6 +112,7 @@ Windows 产品版本：`3.0.9`
 - [x] AppData 临时目录树清理在入队前同时约束已访问和待处理节点，超过 20,000 项立即保留整棵树，避免超大目录一次性膨胀清理队列。
 - [x] Agent Plugin journal、Agent Skill overrides 与 AppContainer workspace/profile journal 均改为句柄上的 `take(limit + 1)` 流式读取，metadata 检查后的文件膨胀不会造成无界分配。
 - [x] Plugin 设置页加载已安装 manifest 改为句柄限长读取，metadata 检查后的文件替换或膨胀不会触发无界 `read_to_string` 分配。
+- [x] 附件 vault metadata JSON 改为 64 KiB 句柄限长读取，损坏或竞态文件不会通过无界 `fs::read` 占用内存。
 - [x] 终端项目 `list_dir` 与文本搜索改为有界目录枚举：目录列表最多读取请求上限加一项，递归搜索每个目录最多排队 10,000 个子项且全局待处理栈计入 100,000 项预算，并显式标记截断，避免大目录一次性占满内存。
 - [x] Agent Plugin Skill manifest 目录清单在处理前限制为最多 64 项加一项，超限立即拒绝，不再先收集不可信清单的全部目录。
 - [x] 固定 AppData 临时文件清理版本的新 NSIS 已通过 `%TEMP%\chatos-windows-appdata-temp-cleanup-final-nsis.json`：全新目录安装 `2,281 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `3,214 ms`、卸载 `667 ms`，全部退出码为 `0`；安装后 v49 sidecar SHA-256 与构建资源一致，隔离用户数据已清理。
