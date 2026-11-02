@@ -756,3 +756,13 @@
 "之前的浏览器点击、导出、授权或文件修改可能已经发生，请确认重复执行是安全的。" = "Previous browser clicks, exports, authorizations, or file changes may already have occurred. Confirm that repeating the execution is safe.";
 "系统会终止当前 Run 并创建新的执行。之前的浏览器点击、导出、授权或文件修改可能已经发生，请确认重复执行是安全的。" = "The system will stop the current Run and create a new execution. Previous browser clicks, exports, authorizations, or file changes may already have occurred. Confirm that repeating the execution is safe.";
 "任务和正在运行的插件进程会被终止；已经发生的外部操作不会自动撤销。" = "The Task and its running plugin processes will be stopped. External actions that already occurred will not be undone automatically.";
+"交付输出" = "Delivery Output";
+"刷新任务图" = "Refresh Task Graph";
+"尚未产生工具调用" = "No Tool Calls Yet";
+"拖动画布 · 滚动缩放 · 点击节点查看详情" = "Drag to Pan · Scroll to Zoom · Click a Node for Details";
+"按发生顺序查看任务、推理与工具节点" = "View Task, Reasoning, and Tool Nodes in Execution Order";
+"插件与工具" = "Plugins and Tools";
+"显示全部节点" = "Show All Nodes";
+"本任务启用的插件与实际工具调用" = "Plugins Enabled and Tools Actually Used by This Task";
+"这些信息用于排查问题，日常查看无需展开。" = "Use this information for troubleshooting; it can stay collapsed during normal review.";
+"选择节点后查看完整上下文" = "Select a Node to View Its Full Context";
