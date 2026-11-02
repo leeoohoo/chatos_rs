@@ -76,6 +76,24 @@ describe("Run Inspector launcher", () => {
     expect(trigger).toHaveFocus();
     trigger.remove();
   });
+
+  it("uses roving tab focus for inspector sections", async () => {
+    const inspectorPort = port();
+    await act(async () => {
+      await useRunInspectorStore.getState().probe(inspectorPort, lookup);
+      await useRunInspectorStore.getState().open(inspectorPort, lookup);
+    });
+    render(<RunInspectorSheet port={inspectorPort} />);
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs[0]).toHaveAttribute("tabindex", "0");
+    expect(tabs[1]).toHaveAttribute("tabindex", "-1");
+    tabs[0].focus();
+    fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
+    expect(tabs[1]).toHaveFocus();
+    fireEvent.keyDown(tabs[1], { key: "End" });
+    expect(tabs[2]).toHaveFocus();
+  });
 });
 
 function port(): RunInspectorPort {

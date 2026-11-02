@@ -78,6 +78,7 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const tabRefs = useRef<Partial<Record<RunInspectorSection, HTMLButtonElement | null>>>({});
   const pollingKey = phase.kind === "open" && graphHasActiveTasks(phase.graph)
     ? `${phase.lookup.userMessageId}:${phase.selectedTaskId}`
     : null;
@@ -189,7 +190,26 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
                   id={`run-inspector-tab-${section.id}`}
                   key={section.id}
                   onClick={() => void setSection(port, section.id)}
+                  onKeyDown={(event) => {
+                    const currentIndex = sections.findIndex((item) => item.id === section.id);
+                    const targetIndex = event.key === "ArrowRight"
+                      ? (currentIndex + 1) % sections.length
+                      : event.key === "ArrowLeft"
+                        ? (currentIndex - 1 + sections.length) % sections.length
+                        : event.key === "Home"
+                          ? 0
+                          : event.key === "End"
+                            ? sections.length - 1
+                            : -1;
+                    if (targetIndex < 0) return;
+                    event.preventDefault();
+                    const target = sections[targetIndex];
+                    tabRefs.current[target.id]?.focus();
+                    void setSection(port, target.id);
+                  }}
+                  ref={(element) => { tabRefs.current[section.id] = element; }}
                   role="tab"
+                  tabIndex={phase.section === section.id ? 0 : -1}
                   type="button"
                 >
                   {section.label}
