@@ -8,7 +8,8 @@ use chatos_ai_runtime::{
     AiRuntimeResult, AiSingleStepOutcome, ContextualTurnRequest, ContextualTurnRunner,
 };
 use chatos_local_agent_protocol::{
-    task_acceptance_report_for_run, validate_task_acceptance_report, LocalAgentRunClaim,
+    incomplete_task_acceptance_checks, task_acceptance_report_for_run,
+    task_acceptance_report_is_terminal, validate_task_acceptance_report, LocalAgentRunClaim,
     LocalAgentStepOutcome, LocalAgentToolCall,
 };
 use chatos_local_agent_runtime::LocalAgentProfile;
@@ -328,6 +329,20 @@ fn reduce_ai_step_outcome_for_claim(
             (&outcome, task_acceptance_report_for_run(&claim.run))
         {
             validate_task_acceptance_report(&claim.run.input, report)?;
+            if !task_acceptance_report_is_terminal(&claim.run.input, report)? {
+                return Ok(LocalAgentStepOutcome::Continue {
+                    checkpoint: response_checkpoint(
+                        response.clone(),
+                        Some(json!({
+                            "reason": "task_acceptance_incomplete",
+                            "input_items": [task_acceptance_incomplete_message(
+                                &claim.run.input,
+                                report,
+                            )?]
+                        })),
+                    ),
+                });
+            }
             // Do not let a second model response rewrite an already-checked deliverable.
             let mut output = response_value(response.clone());
             output["content"] = report["final_response"].clone();
@@ -469,10 +484,33 @@ fn task_outcome_report_required_message() -> Value {
     message_item(
         "system",
         Value::String(
-            "[Task Outcome Required]\nThe previous response cannot finish this run because no explicit task outcome was reported. Check the bound Task criteria before calling `task_run_process_report_outcome`. For acceptance_report_version=1 include one acceptance_checks entry per criterion (zero-based index, passed/failed/not_verified, concrete evidence) and the exact final_response. `result_status` is only the internal result and dependency gate: succeeded unlocks dependent Tasks, while failed or blocked prevents them from running. It does not set execution status; the Host owns execution status from the Run lifecycle. Obey final_response_max_chars including Markdown and whitespace. After an accepted report, use no more tools; the Host delivers its checked final_response unchanged."
+            "[Task Outcome Required]\nThe previous response cannot finish this run because no explicit terminal Task outcome was reported. Continue using tools until every actionable frozen acceptance criterion has concrete passed evidence. Keep the live checklist current through `task_run_process_record_process.acceptance_checks`. Then call `task_run_process_report_outcome` with result_status=succeeded, one passed entry per criterion, and the exact final_response. If a criterion genuinely requires user or external intervention, mark that criterion blocked, finish every other actionable criterion, and report result_status=blocked only when all remaining checks are passed or blocked. Failed and not_verified findings do not permit completion. Obey final_response_max_chars including Markdown and whitespace."
                 .to_string(),
         ),
     )
+}
+
+fn task_acceptance_incomplete_message(input: &Value, report: &Value) -> Result<Value, String> {
+    let remaining = incomplete_task_acceptance_checks(input, report)?;
+    let (blocked, actionable): (Vec<_>, Vec<_>) = remaining.into_iter().partition(|check| {
+        check
+            .get("criterion_index")
+            .is_some_and(|index| !index.is_null())
+            && check.get("status").and_then(Value::as_str) == Some("blocked")
+    });
+    Ok(message_item(
+        "system",
+        Value::String(
+            json!({
+                "type": "task_acceptance_gate",
+                "completion_allowed": false,
+                "guidance": "Do not finish or repeat the summary. Continue the same Task with the available tools and resolve every actionable remaining criterion. Preserve genuinely blocked criteria and do not retry them unless the external condition changed. A blocked criterion does not waive other checks: report the Task as blocked only after every other criterion has passed. Update the live checklist as evidence changes. Never relabel a criterion as passed without concrete evidence.",
+                "actionable_acceptance_checks": actionable,
+                "blocked_acceptance_checks": blocked,
+            })
+            .to_string(),
+        ),
+    ))
 }
 
 pub fn reduce_ai_step_outcome(
@@ -1331,27 +1369,49 @@ mod tests {
             panic!("retained acceptance should allow final completion")
         };
         assert_eq!(output["content"], report["final_response"]);
-        // A review can finish normally while finding failed or unverified
-        // criteria. Preserve those findings; do not turn them into execution
-        // errors or allow the model to replace the accepted final text.
+        // Failed or unverified criteria are preserved and automatically returned
+        // to the same model instead of allowing a summary to end the Task.
         for verdict in ["failed", "not_verified"] {
             claim.run.checkpoint["response"]["task_acceptance"]["acceptance_checks"][0]["status"] =
                 json!(verdict);
-            let LocalAgentStepOutcome::Succeed { output } = reduce_ai_step_outcome_for_claim(
+            let LocalAgentStepOutcome::Continue { checkpoint } = reduce_ai_step_outcome_for_claim(
                 AiSingleStepOutcome::Final(response(None)),
                 &claim,
                 10000,
                 &ConservativeToolSafetyPolicy,
             )
-            .expect("valid review finding must not become an execution failure") else {
-                panic!("expected completed review with independent acceptance finding")
+            .expect("incomplete acceptance must continue the Run") else {
+                panic!("expected automatic continuation for incomplete acceptance")
             };
-            assert_eq!(output["content"], report["final_response"]);
             assert_eq!(
-                output["task_acceptance"]["acceptance_checks"][0]["status"],
-                verdict
+                checkpoint["continuation"]["reason"],
+                "task_acceptance_incomplete"
             );
+            let guidance = checkpoint["continuation"]["input_items"][0]["content"]
+                .as_str()
+                .expect("acceptance continuation guidance");
+            assert!(guidance.contains("actionable_acceptance_checks"));
+            assert!(guidance.contains(verdict));
         }
+        claim.run.checkpoint["response"]["task_acceptance"] = json!({
+            "reported": true,
+            "result_status": "blocked",
+            "reason": "Waiting for user credentials",
+            "final_response": "Blocked pending credentials.",
+            "acceptance_checks": [
+                {"criterion_index":0,"status":"blocked","evidence":"A required credential must be supplied by the user"}
+            ]
+        });
+        let LocalAgentStepOutcome::Succeed { output } = reduce_ai_step_outcome_for_claim(
+            AiSingleStepOutcome::Final(response(None)),
+            &claim,
+            10_000,
+            &ConservativeToolSafetyPolicy,
+        )
+        .expect("a fully resolved blocked report must stop automatic continuation") else {
+            panic!("expected blocked Task report to become terminal")
+        };
+        assert_eq!(output["task_acceptance"]["result_status"], "blocked");
         // Malformed reports still fail validation rather than bypassing it.
         claim.run.checkpoint["response"]["task_acceptance"]["acceptance_checks"][0]["status"] =
             json!("unknown-verdict");
@@ -1362,6 +1422,7 @@ mod tests {
             &ConservativeToolSafetyPolicy,
         )
         .unwrap_err();
-        assert!(error.contains("acceptance check status must be passed, failed, or not_verified"));
+        assert!(error
+            .contains("acceptance check status must be passed, failed, not_verified, or blocked"));
     }
 }

@@ -33,7 +33,9 @@ mod task_write_scope;
 mod tool;
 
 pub use task_acceptance::{
-    completed_task_acceptance_report, task_acceptance_report_for_run,
+    completed_task_acceptance_report, incomplete_task_acceptance_checks,
+    task_acceptance_report_for_run, task_acceptance_report_is_blocked,
+    task_acceptance_report_is_complete, task_acceptance_report_is_terminal,
     validate_task_acceptance_report, validate_task_final_response_limit,
 };
 

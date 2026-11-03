@@ -7,7 +7,9 @@ use chatos_ai_runtime::{
     append_responses_history_items, build_tool_output_items, message_item, user_text_item,
     ModelRuntimeConfig,
 };
-use chatos_local_agent_protocol::{LocalAgentRunClaim, LocalConversationAttachmentSpec};
+use chatos_local_agent_protocol::{
+    task_acceptance_report_is_terminal, LocalAgentRunClaim, LocalConversationAttachmentSpec,
+};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
@@ -156,22 +158,31 @@ pub(super) fn completed_async_task_handoff(continuation: Option<&Value>) -> bool
         })
 }
 
-pub(super) fn completed_task_outcome_report(continuation: Option<&Value>) -> bool {
-    continuation
+pub(super) fn completed_task_outcome_report(continuation: Option<&Value>, input: &Value) -> bool {
+    let report = continuation
         .and_then(|value| value.get("invocations"))
         .and_then(Value::as_array)
-        .is_some_and(|invocations| {
-            invocations.iter().any(|invocation| {
-                invocation.get("tool_name").and_then(Value::as_str)
+        .and_then(|invocations| {
+            invocations.iter().rev().find_map(|invocation| {
+                (invocation.get("tool_name").and_then(Value::as_str)
                     == Some("task_run_process_report_outcome")
                     && invocation.get("status").and_then(Value::as_str) == Some("succeeded")
                     && invocation
                         .get("result")
                         .and_then(|result| result.get("reported"))
                         .and_then(Value::as_bool)
-                        == Some(true)
+                        == Some(true))
+                .then(|| invocation.get("result"))
+                .flatten()
             })
-        })
+        });
+    report.is_some_and(|report| {
+        input
+            .get("acceptance_report_version")
+            .and_then(Value::as_u64)
+            != Some(1)
+            || task_acceptance_report_is_terminal(input, report).unwrap_or(false)
+    })
 }
 
 pub(super) fn apply_run_thinking_level(

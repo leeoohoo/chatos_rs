@@ -3,8 +3,8 @@
 
 use super::{ClientStorageError, SqliteClientStorage, SqliteResultExt};
 use chatos_local_agent_protocol::{
-    local_task_runtime_write_scope, local_task_write_scope_overlap, LocalAgentRunRecord,
-    LocalAgentRunStatus,
+    local_task_runtime_write_scope, local_task_write_scope_overlap,
+    task_acceptance_report_is_blocked, LocalAgentRunRecord, LocalAgentRunStatus,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -167,6 +167,7 @@ WHERE status = 'pending'
 pub(super) struct ReportedTaskOutcome {
     pub result_status: String,
     pub reason: String,
+    report: Value,
 }
 
 pub(super) async fn start_next_task_run(
@@ -667,10 +668,30 @@ pub(super) async fn reconcile_task_after_run(
     {
         return Ok(());
     }
+    // Read and validate the durable result gate before mutating the Task graph.
+    // A blocked acceptance report is terminal only after every other criterion
+    // has passed, and it intentionally leaves the Task blocked for explicit
+    // human or external intervention instead of presenting false success.
+    let reported_outcome = reported_task_outcome(connection, &run.run_id).await?;
+    let result_status = reported_outcome
+        .as_ref()
+        .map(|outcome| outcome.result_status.clone());
+    if result_status.as_deref() == Some("blocked")
+        && run
+            .input
+            .get("acceptance_report_version")
+            .and_then(Value::as_u64)
+            == Some(1)
+        && !reported_outcome.as_ref().is_some_and(|outcome| {
+            task_acceptance_report_is_blocked(&run.input, &outcome.report).unwrap_or(false)
+        })
+    {
+        return Err(ClientStorageError::InvalidState(
+            "Task cannot become blocked while actionable acceptance checks remain".to_string(),
+        ));
+    }
     let task_status = match run.status {
-        // Execution state belongs exclusively to the Host. A normally completed
-        // Run always means the Task execution succeeded; its internal result is
-        // stored in the outcome report and gates dependencies separately.
+        LocalAgentRunStatus::Succeeded if result_status.as_deref() == Some("blocked") => "blocked",
         LocalAgentRunStatus::Succeeded => "succeeded",
         LocalAgentRunStatus::Failed => "failed",
         LocalAgentRunStatus::Cancelled => "cancelled",
@@ -680,14 +701,6 @@ pub(super) async fn reconcile_task_after_run(
         LocalAgentRunStatus::NeedsReview => "blocked",
         _ => return Ok(()),
     };
-    // Read and validate the durable result gate before mutating the Task graph.
-    // This is a reconciliation input and an audit-event field, not the Task's
-    // execution status. Keeping the snapshot separate preserves that boundary,
-    // makes the event describe the exact input used for this reconciliation,
-    // and avoids trying to reborrow the connection while insert_event owns it.
-    let result_status = reported_task_outcome(connection, &run.run_id)
-        .await?
-        .map(|outcome| outcome.result_status);
     let updated = sqlx::query(
         "UPDATE local_tasks SET status = ?, active_run_id = NULL, version = version + 1, \
          updated_at_unix_ms = ? WHERE task_id = ? AND status IN ('ready','running') \
@@ -787,6 +800,7 @@ pub(super) async fn reported_task_outcome(
     Ok(Some(ReportedTaskOutcome {
         result_status: result_status.to_string(),
         reason: reason.to_string(),
+        report: value,
     }))
 }
 

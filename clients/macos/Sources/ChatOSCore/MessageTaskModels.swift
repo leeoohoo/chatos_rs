@@ -21,6 +21,8 @@ public struct MessageTask: Identifiable, Sendable, Equatable {
     public var title: String
     public var description: String?
     public var objective: String?
+    public var acceptanceCriteria: [String]
+    public var acceptanceProgress: [MessageTaskAcceptanceReport.Check]
     public var status: String?
     public var priority: Int?
     public var tags: [String]
@@ -59,6 +61,8 @@ public struct MessageTask: Identifiable, Sendable, Equatable {
         title: String,
         description: String? = nil,
         objective: String? = nil,
+        acceptanceCriteria: [String] = [],
+        acceptanceProgress: [MessageTaskAcceptanceReport.Check] = [],
         status: String? = nil,
         priority: Int? = nil,
         tags: [String] = [],
@@ -96,6 +100,8 @@ public struct MessageTask: Identifiable, Sendable, Equatable {
         self.title = title
         self.description = description
         self.objective = objective
+        self.acceptanceCriteria = acceptanceCriteria
+        self.acceptanceProgress = acceptanceProgress
         self.status = status
         self.priority = priority
         self.tags = tags

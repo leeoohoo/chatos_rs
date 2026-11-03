@@ -32,6 +32,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     }
 
     private static let taskProcessRecordTool = "task_run_process_record_process"
+    private static let taskOutcomeReportTool = "task_run_process_report_outcome"
     private static let eventPageLimit: UInt32 = 500
     private static let maximumProcessEventPages = 10
 
@@ -716,6 +717,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
                 eventType: "tool_batch_completed"
             )) ?? []
             mapped.processLog = Self.processLog(from: completedToolEvents)
+            mapped.acceptanceProgress = Self.acceptanceProgress(from: completedToolEvents)
             mapped.taskToolStateJSON = try? await taskToolUsageJSON(
                 ownerUserID: owner,
                 runID: run.runID,
@@ -736,6 +738,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             title: task.title,
             description: Self.string("description", in: task.input),
             objective: Self.string("objective", in: task.input),
+            acceptanceCriteria: Self.strings("acceptance_criteria", in: task.input),
             status: Self.taskDisplayStatus(task),
             defaultModelConfigID: task.modelConfigRef,
             thinkingLevel: Self.taskThinkingLevel(in: task.input),
@@ -934,6 +937,46 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             }
         }
         return log
+    }
+
+    static func acceptanceProgress(
+        from events: [LocalAgentEventRecord]
+    ) -> [MessageTaskAcceptanceReport.Check] {
+        var latestByIndex: [Int: MessageTaskAcceptanceReport.Check] = [:]
+        for event in events.sorted(by: { $0.cursor < $1.cursor }) {
+            guard event.eventType == "tool_batch_completed",
+                  case let .object(payload)? = event.payload,
+                  case let .array(invocations)? = payload["invocations"] else { continue }
+            for invocation in invocations {
+                guard case let .object(record) = invocation,
+                      case let .string(toolName)? = record["tool_name"],
+                      [taskProcessRecordTool, taskOutcomeReportTool].contains(toolName),
+                      case let .string(invocationStatus)? = record["status"],
+                      invocationStatus == "succeeded",
+                      case let .object(arguments)? = record["arguments"],
+                      case let .array(checks)? = arguments["acceptance_checks"] else { continue }
+                for rawCheck in checks {
+                    guard case let .object(check) = rawCheck,
+                          case let .number(rawIndex)? = check["criterion_index"],
+                          let index = Int(exactly: rawIndex),
+                          case let .string(status)? = check["status"],
+                          ["pending", "in_progress", "passed", "failed", "not_verified", "blocked"]
+                            .contains(status) else { continue }
+                    let evidence: String
+                    if case let .string(value)? = check["evidence"] {
+                        evidence = value
+                    } else {
+                        evidence = ""
+                    }
+                    latestByIndex[index] = .init(
+                        criterionIndex: index,
+                        status: status,
+                        evidence: evidence
+                    )
+                }
+            }
+        }
+        return latestByIndex.values.sorted { $0.criterionIndex < $1.criterionIndex }
     }
 
     private func taskToolUsageJSON(

@@ -1133,6 +1133,76 @@ async fn successful_task_outcome_report_forces_a_tool_free_final_response() {
 }
 
 #[tokio::test]
+async fn blocked_task_outcome_disables_tools_only_after_other_checks_pass() {
+    let planner = ControlPlaneLocalAiStepPlanner::task_execution(
+        OwnerCheckingModelResolver,
+        OwnerCheckingCapabilityResolver,
+    )
+    .with_local_tools(vec![
+        json!({"type": "function", "name": "read_file", "parameters": {}}),
+        json!({
+            "type": "function",
+            "name": "task_run_process_report_outcome",
+            "parameters": {}
+        }),
+    ])
+    .expect("Task tools");
+    let mut reported = claim(
+        json!({"response": {
+            "request_input_items": [{"role": "user", "content": "do the work"}],
+            "response_output_items": []
+        }}),
+        Some(json!({
+            "type": "tool_results",
+            "invocations": [{
+                "call_id": "call-outcome",
+                "tool_name": "task_run_process_report_outcome",
+                "status": "succeeded",
+                "result": {
+                    "reported": true,
+                    "result_status": "blocked",
+                    "reason": "Waiting for credentials",
+                    "final_response": "Blocked pending credentials.",
+                    "acceptance_checks": [
+                        {"criterion_index":0,"status":"blocked","evidence":"User must provide credentials"},
+                        {"criterion_index":1,"status":"not_verified","evidence":"Local verification is still pending"}
+                    ]
+                }
+            }]
+        })),
+    );
+    reported.run.profile_key = TASK_EXECUTION_PROFILE_KEY.to_string();
+    reported.run.owner_entity_type = "task".to_string();
+    reported.run.owner_entity_id = "task-1".to_string();
+    reported.run.input = json!({
+        "prompt": "do the work",
+        "acceptance_report_version": 1,
+        "acceptance_criteria": ["Credentials available", "Local verification complete"],
+        "tool_options": {
+            "requires_execution": false,
+            "enabled_builtin_kinds": ["CodeMaintainerRead"],
+            "plugin_hints": []
+        }
+    });
+
+    let actionable = planner
+        .prepare_ai_step(&reported)
+        .await
+        .expect("prepare continued Task work");
+    assert!(!actionable.request.model_request.tools.is_empty());
+
+    reported.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
+        ["acceptance_checks"][1]["status"] = json!("passed");
+    reported.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
+        ["acceptance_checks"][1]["evidence"] = json!("Local verification passed");
+    let terminal = planner
+        .prepare_ai_step(&reported)
+        .await
+        .expect("prepare blocked Task final response");
+    assert!(terminal.request.model_request.tools.is_empty());
+}
+
+#[tokio::test]
 async fn guidance_after_handoff_keeps_task_control_tools_and_latest_intent() {
     let planner = ControlPlaneLocalAiStepPlanner::main_chat(
         OwnerCheckingModelResolver,

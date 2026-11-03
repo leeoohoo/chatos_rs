@@ -74,8 +74,8 @@ pub fn validate_task_acceptance_report(input: &Value, report: &Value) -> Result<
         let _verdict = check
             .get("status")
             .and_then(Value::as_str)
-            .filter(|s| matches!(*s, "passed" | "failed" | "not_verified"))
-            .ok_or("acceptance check status must be passed, failed, or not_verified")?;
+            .filter(|s| matches!(*s, "passed" | "failed" | "not_verified" | "blocked"))
+            .ok_or("acceptance check status must be passed, failed, not_verified, or blocked")?;
         check.get("evidence").and_then(Value::as_str)
             .filter(|s| !s.trim().is_empty() && s.chars().count() <= 2_000)
             .ok_or("each acceptance check needs 1..=2000 characters of concrete evidence or an explanation of the gap")?;
@@ -87,11 +87,110 @@ pub fn validate_task_acceptance_report(input: &Value, report: &Value) -> Result<
     Ok(())
 }
 
+/// Returns the frozen acceptance criteria that still prevent successful completion.
+/// Structural validation remains separate so callers never treat a malformed report as
+/// an ordinary incomplete result.
+pub fn incomplete_task_acceptance_checks(
+    input: &Value,
+    report: &Value,
+) -> Result<Vec<Value>, String> {
+    validate_task_acceptance_report(input, report)?;
+    if input
+        .get("acceptance_report_version")
+        .and_then(Value::as_u64)
+        != Some(1)
+    {
+        return Ok(Vec::new());
+    }
+    let criteria = input
+        .get("acceptance_criteria")
+        .and_then(Value::as_array)
+        .ok_or("Task has no bound acceptance criteria")?;
+    let checks = report
+        .get("acceptance_checks")
+        .and_then(Value::as_array)
+        .ok_or("acceptance_checks is required for this Task")?;
+    let mut incomplete = Vec::new();
+    for check in checks {
+        if check.get("status").and_then(Value::as_str) == Some("passed") {
+            continue;
+        }
+        let index = check
+            .get("criterion_index")
+            .and_then(Value::as_u64)
+            .ok_or("criterion_index is out of range (zero-based)")? as usize;
+        incomplete.push(serde_json::json!({
+            "criterion_index": index,
+            "criterion": criteria.get(index).and_then(Value::as_str).unwrap_or_default(),
+            "status": check.get("status"),
+            "evidence": check.get("evidence"),
+        }));
+    }
+    let result_status = report
+        .get("result_status")
+        .or_else(|| report.get("status"))
+        .and_then(Value::as_str);
+    if incomplete.is_empty() && result_status != Some("succeeded") {
+        incomplete.push(serde_json::json!({
+            "criterion_index": Value::Null,
+            "criterion": "Task result must be reported as succeeded",
+            "status": result_status,
+            "evidence": report.get("reason"),
+        }));
+    }
+    Ok(incomplete)
+}
+
+pub fn task_acceptance_report_is_complete(input: &Value, report: &Value) -> Result<bool, String> {
+    Ok(incomplete_task_acceptance_checks(input, report)?.is_empty())
+}
+
+/// A Task may stop for external intervention only after every criterion that the
+/// model can still act on has passed. One blocked criterion does not waive the
+/// remaining acceptance contract.
+pub fn task_acceptance_report_is_blocked(input: &Value, report: &Value) -> Result<bool, String> {
+    validate_task_acceptance_report(input, report)?;
+    if input
+        .get("acceptance_report_version")
+        .and_then(Value::as_u64)
+        != Some(1)
+    {
+        return Ok(false);
+    }
+    if report
+        .get("result_status")
+        .or_else(|| report.get("status"))
+        .and_then(Value::as_str)
+        != Some("blocked")
+    {
+        return Ok(false);
+    }
+    let checks = report
+        .get("acceptance_checks")
+        .and_then(Value::as_array)
+        .ok_or("acceptance_checks is required for this Task")?;
+    Ok(checks
+        .iter()
+        .any(|check| check.get("status").and_then(Value::as_str) == Some("blocked"))
+        && checks.iter().all(|check| {
+            matches!(
+                check.get("status").and_then(Value::as_str),
+                Some("passed" | "blocked")
+            )
+        }))
+}
+
+pub fn task_acceptance_report_is_terminal(input: &Value, report: &Value) -> Result<bool, String> {
+    Ok(task_acceptance_report_is_complete(input, report)?
+        || task_acceptance_report_is_blocked(input, report)?)
+}
+
 pub fn completed_task_acceptance_report(continuation: Option<&Value>) -> Option<&Value> {
     continuation?
         .get("invocations")?
         .as_array()?
         .iter()
+        .rev()
         .find_map(|invocation| {
             (invocation.get("tool_name")?.as_str()? == "task_run_process_report_outcome"
                 && invocation.get("status")?.as_str()? == "succeeded"
@@ -162,5 +261,37 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn successful_completion_requires_every_frozen_check_to_pass() {
+        let input = json!({
+            "acceptance_report_version": 1,
+            "acceptance_criteria": ["Saved", "Verified"]
+        });
+        let mut report = json!({
+            "result_status": "succeeded",
+            "reason": "Work inspected",
+            "final_response": "Done",
+            "acceptance_checks": [
+                {"criterion_index":0,"status":"passed","evidence":"Saved row exists"},
+                {"criterion_index":1,"status":"not_verified","evidence":"UI was not opened"}
+            ]
+        });
+        let incomplete = incomplete_task_acceptance_checks(&input, &report).unwrap();
+        assert_eq!(incomplete.len(), 1);
+        assert_eq!(incomplete[0]["criterion"], "Verified");
+        assert!(!task_acceptance_report_is_complete(&input, &report).unwrap());
+        report["acceptance_checks"][1]["status"] = json!("passed");
+        assert!(task_acceptance_report_is_complete(&input, &report).unwrap());
+        report["result_status"] = json!("blocked");
+        assert!(!task_acceptance_report_is_complete(&input, &report).unwrap());
+        assert!(!task_acceptance_report_is_blocked(&input, &report).unwrap());
+        report["acceptance_checks"][1]["status"] = json!("blocked");
+        assert!(task_acceptance_report_is_blocked(&input, &report).unwrap());
+        assert!(task_acceptance_report_is_terminal(&input, &report).unwrap());
+        report["acceptance_checks"][0]["status"] = json!("not_verified");
+        assert!(!task_acceptance_report_is_blocked(&input, &report).unwrap());
+        assert!(!task_acceptance_report_is_terminal(&input, &report).unwrap());
     }
 }

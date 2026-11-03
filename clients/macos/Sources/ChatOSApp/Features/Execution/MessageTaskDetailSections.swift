@@ -73,6 +73,26 @@ struct MessageTaskDetailSections: View {
                     value: task.description ?? "-",
                     allowsTextSelection: allowsTextSelection
                 )
+                if !task.acceptanceCriteria.isEmpty {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("验收项目")
+                                .appFont(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text(acceptanceProgressSummary)
+                                .appFont(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(Array(task.acceptanceCriteria.enumerated()), id: \.offset) { index, criterion in
+                            acceptanceCriterionRow(
+                                index: index,
+                                criterion: criterion,
+                                check: currentAcceptanceCheck(at: index)
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -222,6 +242,44 @@ struct MessageTaskDetailSections: View {
         }
     }
 
+    @ViewBuilder
+    private func acceptanceCriterionRow(
+        index: Int,
+        criterion: String,
+        check: MessageTaskAcceptanceReport.Check?
+    ) -> some View {
+        let status = check?.status ?? "pending"
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: acceptanceStatusIcon(status))
+                .appFont(.system(size: 13, weight: .semibold))
+                .foregroundStyle(acceptanceStatusColor(status))
+                .frame(width: 22, height: 22)
+                .background(
+                    acceptanceStatusColor(status).opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 6)
+                )
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(index + 1). \(criterion)")
+                        .appFont(.callout.weight(.medium))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(acceptanceStatusTitle(status))
+                        .appFont(.caption2.weight(.semibold))
+                        .foregroundStyle(acceptanceStatusColor(status))
+                }
+                if let evidence = check?.evidence
+                    .trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+                    Text(evidence)
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .appTextSelection(allowsTextSelection)
+                }
+            }
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.38), in: RoundedRectangle(cornerRadius: 9))
+    }
+
     private var basicInformation: some View {
         LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 132), spacing: 10)],
@@ -332,6 +390,55 @@ struct MessageTaskDetailSections: View {
         }
         guard summary != modelOutput else { return nil }
         return summary
+    }
+
+    private func currentAcceptanceCheck(at index: Int) -> MessageTaskAcceptanceReport.Check? {
+        if let terminal = task.lastRun?.acceptanceReport?.checks.first(where: {
+            $0.criterionIndex == index
+        }) {
+            return terminal
+        }
+        return task.acceptanceProgress.first { $0.criterionIndex == index }
+    }
+
+    private var acceptanceProgressSummary: String {
+        let passed = task.acceptanceCriteria.indices.filter {
+            currentAcceptanceCheck(at: $0)?.status == "passed"
+        }.count
+        return "\(passed) / \(task.acceptanceCriteria.count) 已通过"
+    }
+
+    private func acceptanceStatusTitle(_ status: String) -> String {
+        switch status {
+        case "passed": "已通过"
+        case "failed": "未通过"
+        case "not_verified": "未核验"
+        case "blocked": "阻塞"
+        case "in_progress": "校验中"
+        default: "待校验"
+        }
+    }
+
+    private func acceptanceStatusIcon(_ status: String) -> String {
+        switch status {
+        case "passed": "checkmark"
+        case "failed": "xmark"
+        case "not_verified": "questionmark"
+        case "blocked": "hand.raised"
+        case "in_progress": "ellipsis"
+        default: "circle"
+        }
+    }
+
+    private func acceptanceStatusColor(_ status: String) -> Color {
+        switch status {
+        case "passed": .green
+        case "failed": .red
+        case "not_verified": .orange
+        case "blocked": .orange
+        case "in_progress": AppPalette.ai
+        default: .secondary
+        }
     }
 
     private var isActiveTask: Bool {

@@ -1396,12 +1396,15 @@ async fn future_contact_async_task_waits_until_its_run_at_deadline() {
 }
 
 #[tokio::test]
-async fn blocked_internal_result_keeps_execution_successful_but_blocks_dependents() {
+async fn blocked_internal_result_blocks_task_and_dependents_after_run_finishes() {
     let storage = SqliteClientStorage::connect_memory()
         .await
         .expect("storage");
+    let mut task_graph = graph();
+    task_graph.tasks[0].input["acceptance_report_version"] = json!(1);
+    task_graph.tasks[0].input["acceptance_criteria"] = json!(["Inspect protected host"]);
     storage
-        .create_task_graph(&command("create-reported-graph"), &graph(), 1_000)
+        .create_task_graph(&command("create-reported-graph"), &task_graph, 1_000)
         .await
         .expect("create graph");
     storage
@@ -1437,7 +1440,7 @@ async fn blocked_internal_result_keeps_execution_successful_but_blocks_dependent
     )
     .bind(&claim.run.run_id)
     .bind(TASK_OUTCOME_REPORT_TOOL)
-    .bind(r#"{"result_status":"blocked","reason":"Waiting for a required credential."}"#)
+    .bind(r#"{"result_status":"blocked","reason":"Waiting for a required credential.","final_response":"Blocked pending credentials.","acceptance_checks":[{"criterion_index":0,"status":"blocked","evidence":"User must supply the required credential"}]}"#)
     .execute(&storage.pool)
     .await
     .expect("store reported outcome");
@@ -1472,7 +1475,7 @@ async fn blocked_internal_result_keeps_execution_successful_but_blocks_dependent
         .await
         .expect("get graph")
         .expect("graph");
-    assert_eq!(graph.tasks[0].status, LocalTaskStatus::Succeeded);
+    assert_eq!(graph.tasks[0].status, LocalTaskStatus::Blocked);
     assert!(graph.tasks[1..]
         .iter()
         .all(|task| task.status == LocalTaskStatus::Blocked));
@@ -1484,7 +1487,7 @@ async fn blocked_internal_result_keeps_execution_successful_but_blocks_dependent
         .iter()
         .find(|event| event.event_type == "task_state_reconciled")
         .expect("task reconciliation event");
-    assert_eq!(reconciliation.payload["status"], "succeeded");
+    assert_eq!(reconciliation.payload["status"], "blocked");
     assert_eq!(reconciliation.payload["result_status"], "blocked");
 }
 

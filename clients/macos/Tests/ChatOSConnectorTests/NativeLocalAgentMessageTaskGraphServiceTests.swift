@@ -356,6 +356,55 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertFalse(log?.contains("failed entry") == true)
     }
 
+    func testAcceptanceProgressUsesLatestSuccessfulCheckPerCriterion() throws {
+        let events = try JSONDecoder().decode(
+            [LocalAgentEventRecord].self,
+            from: JSONSerialization.data(withJSONObject: [
+                processEvent(
+                    cursor: 1,
+                    operation: "append",
+                    content: "checking",
+                    acceptanceChecks: [[
+                        "criterion_index": 0,
+                        "status": "in_progress",
+                        "evidence": "Running the focused test",
+                    ]]
+                ),
+                processEvent(
+                    cursor: 2,
+                    operation: "append",
+                    content: "verified",
+                    acceptanceChecks: [[
+                        "criterion_index": 0,
+                        "status": "passed",
+                        "evidence": "Focused test passed",
+                    ], [
+                        "criterion_index": 1,
+                        "status": "blocked",
+                        "evidence": "User must connect a real device",
+                    ]]
+                ),
+                processEvent(
+                    cursor: 3,
+                    operation: "append",
+                    content: "ignored",
+                    status: "failed",
+                    acceptanceChecks: [[
+                        "criterion_index": 1,
+                        "status": "passed",
+                        "evidence": "Must not override successful history",
+                    ]]
+                ),
+            ])
+        )
+
+        let progress = NativeLocalAgentMessageTaskGraphService.acceptanceProgress(from: events)
+
+        XCTAssertEqual(progress.map(\.criterionIndex), [0, 1])
+        XCTAssertEqual(progress.map(\.status), ["passed", "blocked"])
+        XCTAssertEqual(progress[0].evidence, "Focused test passed")
+    }
+
     func testNeedsReviewErrorSurfacesLatestToolFailure() throws {
         let events = try JSONDecoder().decode(
             [LocalAgentEventRecord].self,
@@ -443,7 +492,8 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         cursor: Int,
         operation: String,
         content: Any,
-        status: String = "succeeded"
+        status: String = "succeeded",
+        acceptanceChecks: [[String: Any]] = []
     ) -> [String: Any] {
         [
             "cursor": cursor,
@@ -457,6 +507,7 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
                     "arguments": [
                         "operation": operation,
                         "content": content,
+                        "acceptance_checks": acceptanceChecks,
                     ],
                 ]],
             ],

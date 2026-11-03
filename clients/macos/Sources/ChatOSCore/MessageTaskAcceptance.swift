@@ -30,6 +30,13 @@ public struct MessageTaskAcceptanceReport: Decodable, Sendable, Equatable {
         public let criterionIndex: Int
         public let status: String
         public let evidence: String
+
+        public init(criterionIndex: Int, status: String, evidence: String) {
+            self.criterionIndex = criterionIndex
+            self.status = status
+            self.evidence = evidence
+        }
+
         enum CodingKeys: String, CodingKey {
             case criterionIndex = "criterion_index", status, evidence
         }
@@ -60,14 +67,16 @@ public struct MessageTaskAcceptanceReport: Decodable, Sendable, Equatable {
               !report.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               report.resultStatus != "succeeded" || !report.checks.isEmpty,
               Set(report.checks.map(\.criterionIndex)) == Set(0..<report.checks.count),
-              report.checks.allSatisfy({ ["passed", "failed", "not_verified"].contains($0.status)
+              report.checks.allSatisfy({ ["passed", "failed", "not_verified", "blocked"].contains($0.status)
                   && !$0.evidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
         else { return nil }
         return report
     }
 
     public var disposition: MessageTaskResultDisposition {
-        if resultStatus == "blocked" { return .blocked }
+        if resultStatus == "blocked" || checks.contains(where: { $0.status == "blocked" }) {
+            return .blocked
+        }
         if checks.contains(where: { $0.status == "failed" }) { return .acceptanceFailed }
         if checks.contains(where: { $0.status == "not_verified" }) { return .evidenceIncomplete }
         if resultStatus == "failed" { return .acceptanceFailed }
