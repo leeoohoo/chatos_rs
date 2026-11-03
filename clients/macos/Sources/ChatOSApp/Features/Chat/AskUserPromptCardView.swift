@@ -40,7 +40,19 @@ struct AskUserPromptCardView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if !prompt.fields.isEmpty {
+            if hasUnsupportedSensitiveFields {
+                Label(
+                    model.localized(
+                        "此请求包含密码、令牌或其他凭据。为防止凭据进入 Local Agent IPC 或数据库，客户端不会显示或提交这些字段。请取消请求，在目标页面中自行完成登录后，让任务继续。",
+                        english: "This request contains a password, token, or other credential. To keep credentials out of Local Agent IPC and its database, these fields cannot be displayed or submitted. Cancel the request, authenticate directly in the target UI, then continue the task."
+                    ),
+                    systemImage: "lock.shield.fill"
+                )
+                .appFont(.caption)
+                .foregroundStyle(.orange)
+            }
+
+            if !safeFields.isEmpty {
                 fieldsForm
             }
 
@@ -94,7 +106,7 @@ struct AskUserPromptCardView: View {
             alignment: .leading,
             spacing: 14
         ) {
-            ForEach(prompt.fields) { field in
+            ForEach(safeFields) { field in
                 VStack(alignment: .leading, spacing: 7) {
                     HStack(spacing: 3) {
                         Text(field.label).appFont(.subheadline.weight(.medium))
@@ -208,7 +220,7 @@ struct AskUserPromptCardView: View {
 
     private var actions: some View {
         HStack(spacing: 10) {
-            if prompt.allowsCancel {
+            if prompt.allowsCancel || hasUnsupportedSensitiveFields {
                 Button(model.localized("取消请求", english: "Cancel Request")) {
                     conversation.cancelAskUserPrompt(prompt)
                 }
@@ -216,18 +228,20 @@ struct AskUserPromptCardView: View {
                 .disabled(isSubmitting)
             }
             Spacer()
-            Button {
-                conversation.submitAskUserPrompt(prompt, submission: submission)
-            } label: {
-                if isSubmitting {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label(model.localized("确认提交", english: "Submit"), systemImage: "checkmark")
+            if !hasUnsupportedSensitiveFields {
+                Button {
+                    conversation.submitAskUserPrompt(prompt, submission: submission)
+                } label: {
+                    if isSubmitting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label(model.localized("确认提交", english: "Submit"), systemImage: "checkmark")
+                    }
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(AppPalette.ai)
+                .disabled(!isValid || isSubmitting)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(AppPalette.ai)
-            .disabled(!isValid || isSubmitting)
         }
     }
 
@@ -267,6 +281,14 @@ struct AskUserPromptCardView: View {
 
     private var isSubmitting: Bool {
         conversation.isSubmitting(promptID: prompt.id)
+    }
+
+    private var safeFields: [AskUserField] {
+        prompt.fields.filter { !$0.isSensitiveCredentialField }
+    }
+
+    private var hasUnsupportedSensitiveFields: Bool {
+        safeFields.count != prompt.fields.count
     }
 
     private func binding(for key: String) -> Binding<String> {

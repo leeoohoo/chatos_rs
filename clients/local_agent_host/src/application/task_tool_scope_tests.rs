@@ -117,6 +117,10 @@ fn invocation(
             object
                 .entry("acceptance_criteria")
                 .or_insert_with(|| json!(["Test expectation is satisfied"]));
+            object.entry("context_summary").or_insert_with(|| {
+                json!("Execute the stated Task objective within its bound project. The Task needs no additional conversation history or attachments.")
+            });
+            object.entry("attachment_refs").or_insert_with(|| json!([]));
         } else if tool_name == CREATE_TASKS_TOOL {
             object
                 .entry("graph_goal")
@@ -131,6 +135,10 @@ fn invocation(
                             .or_insert_with(|| json!(["Task output"]));
                         task.entry("acceptance_criteria")
                             .or_insert_with(|| json!(["Task expectation is satisfied"]));
+                        task.entry("context_summary").or_insert_with(|| {
+                            json!("Execute this Task's stated objective within its bound project. The Task needs no additional conversation history or attachments.")
+                        });
+                        task.entry("attachment_refs").or_insert_with(|| json!([]));
                     }
                 }
             }

@@ -173,7 +173,7 @@ public actor NativeLocalAgentAskUserPromptService: AskUserPromptServicing {
         prompt: AskUserPrompt
     ) throws {
         let secretKeys = Set(prompt.fields.lazy.filter {
-            $0.isSecret || isSensitiveKey($0.key)
+            $0.isSensitiveCredentialField || isSensitiveKey($0.key)
         }.map(\.key))
         guard !submission.values.contains(where: {
             (secretKeys.contains($0.key) || isSensitiveKey($0.key)) && !$0.value.isEmpty

@@ -122,12 +122,39 @@ mod tests {
             json!({"type":"request","id":2,"method":"bridge.listTargets","params":{}}),
         )
         .await;
-        let extension_request = receive_json(&mut extension).await;
-        assert_eq!(extension_request["method"], "extension.listTargets");
+        let list_targets = receive_json(&mut extension).await;
+        assert_eq!(list_targets["method"], "extension.listTargets");
+
+        // A slow extension response must not block the next Browser request.
+        send_json(
+            &mut browser,
+            json!({
+                "type":"request","id":3,"method":"bridge.configureSession",
+                "params":{"session_name":"Concurrent task"}
+            }),
+        )
+        .await;
+        let configure_session = tokio::time::timeout(
+            Duration::from_millis(500),
+            receive_json(&mut extension),
+        )
+        .await
+        .expect("second Browser request must bypass a pending extension response");
+        assert_eq!(configure_session["method"], "extension.configureSession");
         send_json(
             &mut extension,
             json!({
-                "type":"response","id":extension_request["id"],
+                "type":"response","id":configure_session["id"],
+                "result":{"session_name":"Concurrent task"}
+            }),
+        )
+        .await;
+        assert_eq!(receive_json(&mut browser).await["id"], 3);
+
+        send_json(
+            &mut extension,
+            json!({
+                "type":"response","id":list_targets["id"],
                 "result":{"targets":[{"id":"target_one","title":"Shared","url":"https://example.test/","kind":"page"}]}
             }),
         )
@@ -138,7 +165,7 @@ mod tests {
         send_json(
             &mut browser,
             json!({
-                "type":"request","id":3,"method":"bridge.subscribe",
+                "type":"request","id":4,"method":"bridge.subscribe",
                 "params":{"subscription_id":"sub_one","session_id":"session_one","methods":["Runtime.consoleAPICalled"]}
             }),
         )
@@ -150,7 +177,7 @@ mod tests {
             json!({"type":"response","id":subscribe["id"],"result":{}}),
         )
         .await;
-        assert_eq!(receive_json(&mut browser).await["id"], 3);
+        assert_eq!(receive_json(&mut browser).await["id"], 4);
         send_json(
             &mut extension,
             json!({
@@ -165,7 +192,7 @@ mod tests {
 
         send_json(
             &mut browser,
-            json!({"type":"request","id":4,"method":"bridge.close","params":{}}),
+            json!({"type":"request","id":5,"method":"bridge.close","params":{}}),
         )
         .await;
         let end_session = receive_json(&mut extension).await;
@@ -175,7 +202,7 @@ mod tests {
             json!({"type":"response","id":end_session["id"],"result":{}}),
         )
         .await;
-        assert_eq!(receive_json(&mut browser).await["id"], 4);
+        assert_eq!(receive_json(&mut browser).await["id"], 5);
 
         // The credential remains private and time-bounded, but it can be
         // reused after the previous authenticated MCP connection closes. This

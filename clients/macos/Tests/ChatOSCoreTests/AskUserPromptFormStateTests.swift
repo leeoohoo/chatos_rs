@@ -117,6 +117,28 @@ struct AskUserPromptFormStateTests {
         #expect(state.values == ["token": "", "note": "keep"])
     }
 
+    @Test
+    func credentialFieldsAreNeverStoredValidatedOrSubmitted() {
+        let credential = AskUserField(
+            key: "login_value",
+            label: "授权登录密码",
+            defaultValue: "must-not-be-stored"
+        )
+        let safe = AskUserField(key: "note", label: "Note", defaultValue: "keep")
+        let prompt = prompt(fields: [credential, safe])
+        var state = AskUserPromptFormState(prompt: prompt)
+
+        #expect(credential.isSensitiveCredentialField)
+        #expect(state.values == ["note": "keep"])
+        #expect(!state.isValid(for: prompt))
+
+        state.values[credential.key] = "must-not-cross-ipc"
+        #expect(state.submission(for: prompt).values == ["note": "keep"])
+
+        state.clearSecretValues(fields: prompt.fields)
+        #expect(state.values[credential.key] == "")
+    }
+
     private func prompt(
         fields: [AskUserField] = [],
         choice: AskUserChoice? = nil

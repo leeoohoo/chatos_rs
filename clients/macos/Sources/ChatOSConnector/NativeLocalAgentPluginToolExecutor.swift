@@ -35,11 +35,30 @@ actor NativeLocalAgentPluginToolExecutor {
         guard NativeAgentCapabilityBrokerToolCatalog.toolNames.contains(invocation.toolName) else {
             throw NativeLocalAgentPlatformToolError.unsupportedTool
         }
-        let provider = try await provider(
-            ownerUserID: ownerUserID,
-            runID: invocation.runID,
-            context: context
-        )
+        let toolProvider: any AgentToolProvider
+        do {
+            toolProvider = try await provider(
+                ownerUserID: ownerUserID,
+                runID: invocation.runID,
+                context: context
+            )
+        } catch let error as NativeLocalAgentPlatformToolError {
+            throw error
+        } catch let error as NativePluginRuntimeError {
+            // Provider construction happens before the requested Plugin tool can run.
+            // Treat a stale Release or another bootstrap rejection as a recoverable
+            // validation failure, even when capability_invoke itself is side-effecting.
+            throw NativeLocalAgentPlatformToolError.projectToolRejected(
+                Self.providerFailureMessage(error, projectRootURL: context.executionRootURL)
+            )
+        } catch {
+            // Host snapshot reads and provider assembly also precede Plugin execution.
+            // Keep their diagnostic bounded and never escalate them as an uncertain
+            // business side effect.
+            throw NativeLocalAgentPlatformToolError.projectToolRejected(
+                "Plugin 能力初始化失败，请重新查看能力；若 Plugin 已更新，请重新创建任务。"
+            )
+        }
         // The timeout is an idle-session timeout, not a deadline for an active
         // plugin call. In particular, browser_session_open can legitimately
         // wait for the user to approve attaching to Chrome. Starting the idle
@@ -50,7 +69,7 @@ actor NativeLocalAgentPluginToolExecutor {
         // arm a new one once the provider becomes idle again.
         suspendExpiration(runID: invocation.runID)
         defer { refreshExpiration(runID: invocation.runID) }
-        let outcome = try await provider.execute(.init(
+        let outcome = try await toolProvider.execute(.init(
             id: invocation.callID,
             name: invocation.toolName,
             arguments: NativeJSONValue.object(arguments).canonicalJSONString
@@ -147,5 +166,19 @@ actor NativeLocalAgentPluginToolExecutor {
     private func expire(runID: String) {
         expirationTasks.removeValue(forKey: runID)?.cancel()
         sessions.removeValue(forKey: runID)
+    }
+
+    private static func providerFailureMessage(
+        _ error: NativePluginRuntimeError,
+        projectRootURL: URL
+    ) -> String {
+        if case let .invalidRequest(message) = error,
+           message == "任务固定的 Plugin Release 已变更，请重新创建任务" {
+            return message
+        }
+        return NativeAgentPluginFailurePresenter.message(
+            for: error,
+            projectRootURLs: [projectRootURL]
+        )
     }
 }

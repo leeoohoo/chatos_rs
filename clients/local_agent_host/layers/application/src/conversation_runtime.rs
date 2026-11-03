@@ -5,8 +5,9 @@ use super::{new_event_id, LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand};
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, HostCommand, HostResult,
-    LocalAgentRunRecord, LocalAgentRunStatus, LocalConversationResourceBinding,
-    LocalConversationResourceKind, ResumeConversationTurnCommand, StartConversationTurnCommand,
+    LocalAgentRunRecord, LocalAgentRunStatus, LocalConversationAttachmentRecord,
+    LocalConversationResourceBinding, LocalConversationResourceKind, ResumeConversationTurnCommand,
+    StartConversationTurnCommand,
 };
 use serde_json::json;
 use std::collections::HashSet;
@@ -15,6 +16,34 @@ const LOCAL_TASK_CONTEXT_MAX_ITEMS: usize = 16;
 const LOCAL_TASK_CONTEXT_MAX_BYTES: usize = 64 * 1024;
 
 impl LocalAgentRuntime {
+    /// Returns only recent attachment metadata and opaque authorization references.
+    /// Main Chat uses this catalog to select the minimum inputs for a Task; attachment
+    /// bytes and base64 are never copied into the model-owned Task arguments.
+    pub async fn recent_conversation_attachments(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+    ) -> Result<Vec<LocalConversationAttachmentRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .get_conversation_history(owner_user_id, conversation_id, None, 100)
+            .await?
+            .attachments)
+    }
+
+    /// Resolves one opaque reference inside the source conversation boundary.
+    pub async fn conversation_attachment_by_ref(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        authorized_local_ref: &str,
+    ) -> Result<Option<LocalConversationAttachmentRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .get_conversation_attachment(owner_user_id, conversation_id, authorized_local_ref)
+            .await?)
+    }
+
     /// Returns the newest program-owned Task writebacks from the authoritative
     /// local conversation log. This deliberately does not depend on retained
     /// Memory, which may be offline or behind the local commit watermark.

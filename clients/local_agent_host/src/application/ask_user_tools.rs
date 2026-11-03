@@ -164,6 +164,22 @@ fn normalize_fields(value: Option<&Value>, required: bool) -> Result<Vec<Value>,
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .unwrap_or(key.as_str());
+            if object.get("secret").and_then(Value::as_bool).unwrap_or(false)
+                || [
+                    Some(key.as_str()),
+                    Some(label),
+                    object.get("description").and_then(Value::as_str),
+                    object.get("placeholder").and_then(Value::as_str),
+                ]
+                .into_iter()
+                .flatten()
+                .any(sensitive_field_text)
+            {
+                return Err(
+                    "Ask User cannot request passwords, tokens, API keys, credentials, or other secrets because replies cross Local Agent IPC and SQLite. Ask the user to authenticate directly in the target UI, then request only a non-secret confirmation, or continue with a safe fallback."
+                        .to_string(),
+                );
+            }
             Ok(json!({
                 "key": key,
                 "label": label,
@@ -172,7 +188,7 @@ fn normalize_fields(value: Option<&Value>, required: bool) -> Result<Vec<Value>,
                 "default_value": limited_text(object.get("default"), 4_000)?,
                 "required": object.get("required").and_then(Value::as_bool).unwrap_or(false),
                 "multiline": object.get("multiline").and_then(Value::as_bool).unwrap_or(false),
-                "secret": object.get("secret").and_then(Value::as_bool).unwrap_or(false)
+                "secret": false
             }))
         })
         .collect()
@@ -280,11 +296,35 @@ fn limited_text(value: Option<&Value>, max: usize) -> Result<String, String> {
     Ok(text.to_string())
 }
 
+fn sensitive_field_text(value: &str) -> bool {
+    let normalized = value
+        .to_lowercase()
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .collect::<String>();
+    [
+        "apikey",
+        "accesstoken",
+        "password",
+        "passwd",
+        "passcode",
+        "secret",
+        "credential",
+        "密码",
+        "口令",
+        "令牌",
+        "密钥",
+        "凭据",
+    ]
+    .into_iter()
+    .any(|keyword| normalized.contains(keyword))
+}
+
 pub fn ask_user_model_tools() -> Vec<Value> {
     vec![
         ask_user_tool(
             ASK_USER_KEY_VALUES_TOOL,
-            "Ask the user for structured values and wait for their submission.",
+            "Ask the user for non-secret structured values and wait for their submission. Never request passwords, tokens, API keys, credentials, or other secrets; ask the user to authenticate directly in the target UI and request only a non-secret confirmation.",
             fields_schema(true),
         ),
         ask_user_tool(
@@ -294,7 +334,7 @@ pub fn ask_user_model_tools() -> Vec<Value> {
         ),
         ask_user_tool(
             ASK_USER_MIXED_FORM_TOOL,
-            "Ask the user for fields and an optional choice in one form, then wait.",
+            "Ask the user for non-secret fields and an optional choice in one form, then wait. Never request passwords, tokens, API keys, credentials, or other secrets; ask the user to authenticate directly in the target UI and request only a non-secret confirmation.",
             mixed_schema(),
         ),
     ]
@@ -327,11 +367,35 @@ fn field_items_schema() -> Value {
             "id": {"type": "string", "minLength": 1, "maxLength": 256},
             "label": {"type": "string"}, "description": {"type": "string"},
             "placeholder": {"type": "string"}, "default": {"type": "string"},
-            "required": {"type": "boolean"}, "multiline": {"type": "boolean"},
-            "secret": {"type": "boolean"}
+            "required": {"type": "boolean"}, "multiline": {"type": "boolean"}
         },
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod input_safety_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_secret_fields_before_a_waiting_user_prompt_is_created() {
+        for field in [
+            json!({"key":"password", "label":"Password"}),
+            json!({"key":"login_value", "label":"授权登录密码"}),
+            json!({"key":"value", "label":"Value", "secret":true}),
+        ] {
+            let error = normalize_fields(Some(&json!([field])), true).unwrap_err();
+            assert!(error.contains("authenticate directly in the target UI"));
+        }
+    }
+
+    #[test]
+    fn model_schema_cannot_generate_a_secret_field() {
+        for tool in ask_user_model_tools() {
+            let encoded = serde_json::to_string(&tool["parameters"]).unwrap();
+            assert!(!encoded.contains("\"secret\""));
+        }
+    }
 }
 
 fn fields_schema(required: bool) -> Value {

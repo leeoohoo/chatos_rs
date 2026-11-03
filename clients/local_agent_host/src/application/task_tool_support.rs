@@ -465,6 +465,7 @@ pub(super) fn attach_dependency_context_payload(
 pub(super) fn task_prompt(
     objective: &str,
     description: &str,
+    context_summary: &str,
     expected_outputs: &[String],
     acceptance_criteria: &[String],
     input_payload: &Value,
@@ -488,6 +489,16 @@ pub(super) fn task_prompt(
         });
         prompt.push_str(description);
     }
+    let context_summary = context_summary.trim();
+    if context_summary.is_empty() {
+        return Err("task context_summary cannot be empty".to_string());
+    }
+    prompt.push_str(if english {
+        "\n\nCurated Context (minimum self-contained source context):\n"
+    } else {
+        "\n\n精选上下文（最小且自包含的来源上下文）：\n"
+    });
+    prompt.push_str(context_summary);
     append_task_contract_list(
         &mut prompt,
         if english {

@@ -40,6 +40,18 @@ public struct AskUserField: Identifiable, Codable, Sendable, Equatable {
         self.isMultiline = isMultiline
         self.isSecret = isSecret
     }
+
+    public var isSensitiveCredentialField: Bool {
+        if isSecret { return true }
+        let text = [key, label, description ?? "", placeholder ?? ""]
+            .joined(separator: " ")
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+        return [
+            "apikey", "accesstoken", "password", "passwd", "passcode",
+            "secret", "credential", "密码", "口令", "令牌", "密钥", "凭据",
+        ].contains(where: text.contains)
+    }
 }
 
 public struct AskUserChoiceOption: Identifiable, Codable, Sendable, Equatable {

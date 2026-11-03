@@ -907,6 +907,14 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertFalse(observed.isError)
         XCTAssertTrue(observed.content.contains("process_count"))
 
+        let staleReleaseSnapshot = NativeLocalAgentTaskPluginReleaseSnapshot(
+            pluginKey: "plugin-1",
+            componentKey: "test-mcp",
+            pluginID: "plugin-1",
+            releaseID: "stale-release",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64)
+        )
         do {
             _ = try await service.makeTaskExecutionCapabilityToolProvider(
                 ownerUserID: "alice",
@@ -920,16 +928,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 executionRootURL: project,
                 workspaceScopeID: "workspace-1",
                 pluginSelectionIDs: [selectionID],
-                pluginReleaseSnapshots: [
-                    selectionID: .init(
-                        pluginKey: "plugin-1",
-                        componentKey: "test-mcp",
-                        pluginID: "plugin-1",
-                        releaseID: "stale-release",
-                        version: "1.0.0",
-                        artifactSHA256: String(repeating: "a", count: 64)
-                    ),
-                ]
+                pluginReleaseSnapshots: [selectionID: staleReleaseSnapshot]
             )
             XCTFail("stale Plugin Release snapshot must be rejected")
         } catch let error as NativePluginRuntimeError {
@@ -937,6 +936,54 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 return XCTFail("unexpected stale Release error: \(error)")
             }
         }
+
+        let stalePlatformExecutor = NativeLocalAgentPluginToolExecutor(connector: service)
+        let stalePlatformContext = NativeLocalAgentTaskExecutionContext(
+            conversationID: "conversation-1",
+            projectID: "project-1",
+            applicationContext: .init(
+                projectID: "project-1",
+                projectName: "Test",
+                projectRoot: project.path
+            ),
+            resolvedPath: try await service.resolveProjectPath(project.path),
+            executionRootURL: project,
+            workspaceScopeID: "workspace-1",
+            toolAuthorization: .init(
+                requiresExecution: true,
+                enabledBuiltinKinds: [],
+                pluginSelectionIDs: [selectionID],
+                pluginReleaseSnapshots: [selectionID: staleReleaseSnapshot]
+            )
+        )
+        do {
+            _ = try await stalePlatformExecutor.execute(
+                ownerUserID: "alice",
+                invocation: platformInvocation(
+                    runID: "task-run-stale-release",
+                    name: "capability_invoke",
+                    arguments: .object([
+                        "plugin_option": .string("plugin_1"),
+                        "tool_option": .string("tool_1"),
+                        "arguments": .object([:]),
+                    ])
+                ),
+                context: stalePlatformContext,
+                arguments: [
+                    "plugin_option": .string("plugin_1"),
+                    "tool_option": .string("tool_1"),
+                    "arguments": .object([:]),
+                ]
+            )
+            XCTFail("stale Plugin Release must fail before Plugin execution")
+        } catch let error as NativeLocalAgentPlatformToolError {
+            XCTAssertEqual(
+                error,
+                .projectToolRejected("任务固定的 Plugin Release 已变更，请重新创建任务")
+            )
+            XCTAssertTrue(error.isKnownPreEffectFailure)
+        }
+        await stalePlatformExecutor.reset()
 
         let taskBroker = try await service.makeTaskExecutionCapabilityToolProvider(
             ownerUserID: "alice",

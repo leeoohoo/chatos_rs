@@ -90,6 +90,17 @@ process owns a distinct Bridge connection and each task can control only its own
 debugger sessions, and subscriptions. Older extension versions remain single-Bridge and must be
 upgraded for concurrent existing-Chrome control.
 
+Browser plugin 0.1.24 keeps clicks functional when another task moves its own tab to the foreground;
+background task tabs no longer wait on animation frames that Chrome suspends.
+
+Browser plugin 0.1.25 removes per-Bridge head-of-line blocking, continues the remaining native
+mouse sequence after a lost CDP response, and retries read-only page observations once.
+
+Browser plugin 0.1.26 avoids issuing the nonessential native `mouseMoved` command for background
+extension tabs. Chrome can execute that command without resolving its debugger response while
+another task owns the foreground tab; press/release still carry the target coordinates and remain
+fully isolated per task.
+
 Production and local staged builds compile the fixed Chrome Web Store extension ID into the Browser
 MCP binary. The MCP-owned Bridge creates a fresh, single-use credential for every MCP process and
 cleans it up when the process exits. `CHATOS_BROWSER_EXTENSION_ID` can still override the store ID

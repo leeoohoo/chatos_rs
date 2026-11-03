@@ -62,13 +62,58 @@ pub(super) async fn evaluate_value(
         .unwrap_or(Value::Null))
 }
 
+pub(super) async fn evaluate_read_only_with_retry(
+    backend: &dyn BrowserBackend,
+    session_id: &BackendSessionId,
+    expression: &str,
+) -> CoreResult<Value> {
+    match evaluate_value(backend, session_id, expression).await {
+        Err(CoreError::Timeout(_)) => evaluate_value(backend, session_id, expression).await,
+        result => result,
+    }
+}
+
+pub(super) async fn dispatch_mouse_event(
+    backend: &dyn BrowserBackend,
+    session_id: &BackendSessionId,
+    params: Value,
+) -> CoreResult<bool> {
+    match backend
+        .send_command(
+            Some(session_id),
+            "Input.dispatchMouseEvent",
+            params,
+            INPUT_RESPONSE_TIMEOUT,
+        )
+        .await
+    {
+        Ok(_) => Ok(true),
+        // Chrome can execute an input command but lose its empty response.
+        // Continue the remaining move/press/release sequence; the caller
+        // reports this ambiguity and requires a fresh snapshot for proof.
+        Err(CoreError::Timeout(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+pub(super) fn should_dispatch_mouse_move(mode: BrowserMode, point: &Value) -> bool {
+    mode != BrowserMode::ChromeExtension
+        || point
+            .get("visibility_state")
+            .and_then(Value::as_str)
+            .is_none_or(|state| state == "visible")
+}
+
 pub(super) fn virtual_cursor_move_script(selector: &str) -> String {
     format!(
         r##"(async () => {{
   const el = document.querySelector({selector});
   if (!el) throw new Error('element not found');
   el.scrollIntoView({{block:'center', inline:'center'}});
-  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  // Reading the rect forces layout after scrollIntoView. Do not wait for
+  // requestAnimationFrame here: Chrome suspends animation frames for a
+  // background tab, which is common when another Browser task owns the
+  // foreground tab and would leave Runtime.evaluate pending indefinitely.
   const rect = el.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) throw new Error('element is not visible');
   const x = Math.max(0, Math.min(innerWidth - 1, rect.left + rect.width / 2));
@@ -103,8 +148,13 @@ pub(super) fn virtual_cursor_move_script(selector: &str) -> String {
   host.style.transform = `translate3d(${{x}}px, ${{y}}px, 0)`;
   host.dataset.x = String(x);
   host.dataset.y = String(y);
-  await new Promise(resolve => setTimeout(resolve, {move_wait_ms}));
-  return {{x, y}};
+  // Preserve the visible cursor animation for the foreground task. Background
+  // tabs are timer-throttled as well as frame-suspended, and nobody can see the
+  // animation there, so dispatch the click immediately.
+  if (document.visibilityState === 'visible') {{
+    await new Promise(resolve => setTimeout(resolve, {move_wait_ms}));
+  }}
+  return {{x, y, visibility_state: document.visibilityState}};
 }})()"##,
         selector = selector,
         cursor_id = serde_json::to_string(VIRTUAL_CURSOR_ID).unwrap(),
@@ -182,12 +232,35 @@ mod virtual_cursor_tests {
     fn cursor_script_targets_the_element_and_draws_an_overlay() {
         let script = virtual_cursor_move_script("\"#submit\"");
         assert!(script.contains("document.querySelector(\"#submit\")"));
+        assert!(!script.contains("requestAnimationFrame("));
+        assert!(script.contains("document.visibilityState === 'visible'"));
+        assert!(script.contains("visibility_state: document.visibilityState"));
         assert!(script.contains(VIRTUAL_CURSOR_ID));
         assert!(script.contains("attachShadow"));
         assert!(script.contains("transform 280ms"));
         assert!(script.contains("animation:chatos-click 620ms"));
         assert!(script.contains("linearGradient"));
-        assert!(script.contains("return {x, y}"));
+        assert!(script.contains("return {x, y, visibility_state:"));
+    }
+
+    #[test]
+    fn background_extension_tab_skips_only_the_native_mouse_move() {
+        assert!(!should_dispatch_mouse_move(
+            BrowserMode::ChromeExtension,
+            &json!({"visibility_state": "hidden"}),
+        ));
+        assert!(should_dispatch_mouse_move(
+            BrowserMode::ChromeExtension,
+            &json!({"visibility_state": "visible"}),
+        ));
+        assert!(should_dispatch_mouse_move(
+            BrowserMode::ChromeExtension,
+            &json!({"x": 10, "y": 20}),
+        ));
+        assert!(should_dispatch_mouse_move(
+            BrowserMode::Managed,
+            &json!({"visibility_state": "hidden"}),
+        ));
     }
 
     #[test]
@@ -212,7 +285,9 @@ pub(super) async fn read_page_state(
     backend: &dyn BrowserBackend,
     session_id: &BackendSessionId,
 ) -> CoreResult<PageState> {
-    serde_json::from_value(evaluate_value(backend, session_id, PAGE_STATE_SCRIPT).await?)
+    serde_json::from_value(
+        evaluate_read_only_with_retry(backend, session_id, PAGE_STATE_SCRIPT).await?,
+    )
         .map_err(|error| CoreError::Backend(format!("invalid page state: {error}")))
 }
 

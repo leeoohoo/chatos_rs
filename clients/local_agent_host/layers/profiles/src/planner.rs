@@ -44,7 +44,8 @@ fn bound_remote_connection_context(input: &Value, main_chat: bool) -> Value {
     // A current conversation setting (including explicit null) supersedes legacy
     // top-level data. Tasks use the connection frozen when their graph was made.
     let connection = if main_chat {
-        input.pointer("/runtime_settings/remote_connection_id")
+        input
+            .pointer("/runtime_settings/remote_connection_id")
             .or_else(|| input.get("remote_connection_id"))
     } else {
         input.get("remote_connection_id")
@@ -423,10 +424,12 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
         capabilities
             .prefixed_input_items
             .push(runtime_clock_context());
-        capabilities.prefixed_input_items.push(bound_remote_connection_context(
-            &claim.run.input,
-            self.profile_key == MAIN_CHAT_PROFILE_KEY,
-        ));
+        capabilities
+            .prefixed_input_items
+            .push(bound_remote_connection_context(
+                &claim.run.input,
+                self.profile_key == MAIN_CHAT_PROFILE_KEY,
+            ));
         if let Some(provider) = self.hook_context_provider.as_ref() {
             capabilities
                 .prefixed_input_items
@@ -519,6 +522,46 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             }
         }
         if self.profile_key == MAIN_CHAT_PROFILE_KEY {
+            let attachment_catalog = if let (Some(runtime), Some(conversation_id)) = (
+                self.local_context_runtime.as_ref(),
+                claim
+                    .run
+                    .input
+                    .get("conversation_id")
+                    .and_then(Value::as_str),
+            ) {
+                runtime
+                    .recent_conversation_attachments(&claim.run.owner_user_id, conversation_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .into_iter()
+                    .map(|attachment| {
+                        json!({
+                            "attachment_id": attachment.attachment_id,
+                            "turn_id": attachment.turn_id,
+                            "display_name": attachment.display_name,
+                            "media_type": attachment.media_type,
+                            "byte_size": attachment.byte_size,
+                            "sha256": attachment.sha256,
+                            "authorized_local_ref": attachment.authorized_local_ref,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            capabilities.prefixed_input_items.push(message_item(
+                "system",
+                Value::String(
+                    json!({
+                        "type": "task_context_compilation_contract",
+                        "guidance": "Main Chat is the context curator for every Task. Before creating a Task, select only the prior facts, decisions, constraints, identifiers, paths, URLs, and verified results that the Task actually needs, then rewrite them as a self-contained context_summary. Never say 'see above', 'use prior chat', 'read Memory', or assume the Task can inspect Main Chat history. Do not dump the conversation or all retained Memory. Select only necessary attachments through attachment_refs using the opaque authorized_local_ref values in available_attachments; explain each selected attachment's purpose in context_summary. Never copy attachment bytes, base64, passwords, tokens, Authorization headers, or other secret values into Task arguments. If a required fact or safe reference is unavailable, resolve that gap before dispatch instead of creating an impossible Task.",
+                        "available_attachments": attachment_catalog,
+                        "attachment_catalog_scope": "recent_source_conversation_history",
+                    })
+                    .to_string(),
+                ),
+            ));
             capabilities.prefixed_input_items.push(message_item(
                 "system",
                 Value::String(

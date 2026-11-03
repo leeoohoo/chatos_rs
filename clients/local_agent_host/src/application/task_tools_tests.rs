@@ -56,7 +56,27 @@ async fn initialize_parent(runtime: Arc<LocalAgentRuntime>) -> Arc<LocalAgentRun
     runtime
 }
 
-fn invocation(arguments: Value) -> LocalAgentToolInvocationRecord {
+fn invocation(mut arguments: Value) -> LocalAgentToolInvocationRecord {
+    if let Some(tasks) = arguments.get_mut("tasks").and_then(Value::as_array_mut) {
+        for task in tasks {
+            if let Some(task) = task.as_object_mut() {
+                task.entry("context_summary").or_insert_with(|| {
+                    json!(
+                        "No additional prior conversation context is required for this test Task."
+                    )
+                });
+                task.entry("attachment_refs").or_insert_with(|| json!([]));
+            }
+        }
+    } else if arguments.get("objective").is_some() {
+        let arguments = arguments.as_object_mut().expect("task arguments object");
+        arguments.entry("context_summary").or_insert_with(|| {
+            json!("No additional prior conversation context is required for this test Task.")
+        });
+        arguments
+            .entry("attachment_refs")
+            .or_insert_with(|| json!([]));
+    }
     LocalAgentToolInvocationRecord {
         invocation_id: "invocation-1".to_string(),
         run_id: "parent-run".to_string(),
@@ -209,6 +229,53 @@ async fn single_task_freezes_the_exact_source_user_message() {
     assert_eq!(
         graph.tasks[0].input["source_user_message"],
         Value::String(exact_source)
+    );
+}
+
+#[tokio::test]
+async fn task_creation_requires_a_minimal_self_contained_context_package() {
+    let executor = LocalTaskToolExecutor::new(runtime_with_parent().await, "user-1").unwrap();
+    let base = json!({
+        "title": "Inspect",
+        "objective": "Inspect the supplied evidence",
+        "context_summary": "Use local-attachment:brief-1 as the only relevant evidence for this inspection.",
+        "attachment_refs": ["local-attachment:brief-1"],
+        "expected_outputs": ["Evidence-backed report"],
+        "acceptance_criteria": ["The selected evidence is inspected"],
+        "requires_execution": false,
+        "enabled_builtin_kinds": ["CodeMaintainerRead"]
+    });
+    let invalid_contexts = [
+        Value::String(String::new()),
+        json!("See above and use previous chat."),
+        json!("Use data:image/png;base64,AAAA as the original image."),
+        json!("Call the endpoint with Authorization: Bearer raw-secret-value."),
+    ];
+    for (index, context) in invalid_contexts.into_iter().enumerate() {
+        let mut call = invocation(base.clone());
+        call.tool_name = CREATE_TASK_TOOL.into();
+        call.invocation_id = format!("invalid-context-{index}");
+        call.arguments["context_summary"] = context;
+        let error = preparation_error(executor.execute_tool(&call).await.unwrap());
+        assert!(error.contains("context_summary"));
+    }
+
+    let mut unnamed = invocation(base.clone());
+    unnamed.tool_name = CREATE_TASK_TOOL.into();
+    unnamed.arguments["context_summary"] = json!("Inspect the supplied evidence.");
+    assert!(
+        preparation_error(executor.execute_tool(&unnamed).await.unwrap())
+            .contains("must name selected attachment reference")
+    );
+
+    let mut unavailable = invocation(base);
+    unavailable.tool_name = CREATE_TASK_TOOL.into();
+    unavailable.arguments["context_summary"] =
+        json!("Use local-attachment:missing as the only relevant evidence.");
+    unavailable.arguments["attachment_refs"] = json!(["local-attachment:missing"]);
+    assert!(
+        preparation_error(executor.execute_tool(&unavailable).await.unwrap())
+            .contains("unavailable in the source conversation")
     );
 }
 
@@ -412,6 +479,8 @@ async fn batch_tool_creates_an_idempotent_local_dag() {
                 "client_ref": "research",
                 "title": "Research",
                 "objective": "Inspect the code",
+                "context_summary": "No prior attachment is needed; inspect the current project source and configuration.",
+                "attachment_refs": [],
                 "expected_outputs": ["Code inspection findings"],
                 "acceptance_criteria": ["Relevant source paths are identified"],
                 "requires_execution": false,
@@ -421,6 +490,8 @@ async fn batch_tool_creates_an_idempotent_local_dag() {
                 "client_ref": "implement",
                 "title": "Implement",
                 "objective": "Apply the change",
+                "context_summary": "Use local-attachment:brief-1 as the user-provided implementation brief; read it through the authorized attachment tool before changing code.",
+                "attachment_refs": ["local-attachment:brief-1"],
                 "expected_outputs": ["Implemented code change"],
                 "acceptance_criteria": ["The requested behavior is implemented and verified"],
                 "prerequisite_refs": ["research"],
@@ -494,10 +565,14 @@ async fn batch_tool_creates_an_idempotent_local_dag() {
     }));
     assert_eq!(graph.tasks[0].input["final_delivery"], false);
     assert_eq!(graph.tasks[1].input["final_delivery"], true);
+    assert_eq!(graph.tasks[0].input["attachments"], json!([]));
     assert_eq!(
         graph.tasks[1].input["attachments"][0]["authorized_local_ref"],
         "local-attachment:brief-1"
     );
+    assert!(graph.tasks[1].input["prompt"]
+        .as_str()
+        .is_some_and(|prompt| prompt.contains("local-attachment:brief-1")));
     assert!(graph.tasks[0].input["prompt"]
         .as_str()
         .is_some_and(|prompt| prompt.starts_with("Task Objective:\nInspect the code")));
@@ -950,6 +1025,8 @@ fn task_model_definitions_are_host_owned_and_closed() {
             "client_ref",
             "title",
             "objective",
+            "context_summary",
+            "attachment_refs",
             "expected_outputs",
             "acceptance_criteria",
             "requires_execution",
@@ -965,16 +1042,20 @@ fn task_model_definitions_are_host_owned_and_closed() {
         .as_str()
         .expect("create graph description")
         .contains("independent Tasks must not wait"));
-    assert!(tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]
-        ["prerequisite_refs"]["description"]
-        .as_str()
-        .expect("hard prerequisite description")
-        .contains("Hard scheduling gates"));
-    assert!(tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]
-        ["context_refs"]["description"]
-        .as_str()
-        .expect("context reference description")
-        .contains("never delay scheduling"));
+    assert!(
+        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["prerequisite_refs"]
+            ["description"]
+            .as_str()
+            .expect("hard prerequisite description")
+            .contains("Hard scheduling gates")
+    );
+    assert!(
+        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["context_refs"]
+            ["description"]
+            .as_str()
+            .expect("context reference description")
+            .contains("never delay scheduling")
+    );
     assert_eq!(
         tools[3]["parameters"]["properties"]["notification_policy"]["default"],
         "progress_summary"
@@ -1003,6 +1084,8 @@ fn task_model_definitions_are_host_owned_and_closed() {
         json!([
             "title",
             "objective",
+            "context_summary",
+            "attachment_refs",
             "expected_outputs",
             "acceptance_criteria",
             "requires_execution",
@@ -1122,6 +1205,7 @@ fn project_inspection_task_prompt_requires_code_and_validation_evidence() {
     let prompt = task_prompt(
         "检查当前项目",
         "给出项目概览",
+        "无需额外历史信息；以当前项目源码与测试作为依据。",
         &["项目检查报告".to_string()],
         &["报告引用源码与测试证据".to_string()],
         &Value::Null,
@@ -1134,6 +1218,7 @@ fn project_inspection_task_prompt_requires_code_and_validation_evidence() {
     assert!(prompt.contains("测试或 CI 配置"));
     assert!(prompt.contains("预期输出"));
     assert!(prompt.contains("验收标准"));
+    assert!(prompt.contains("精选上下文"));
 }
 
 #[tokio::test]

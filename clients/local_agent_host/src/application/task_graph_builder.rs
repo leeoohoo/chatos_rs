@@ -4,9 +4,7 @@
 use super::super::{CreateTaskArgs, CreateTasksArgs};
 use crate::application::{
     task_model_policy::resolve_task_model,
-    task_tool_source_context::{
-        source_attachments, source_conversation_context, source_user_message,
-    },
+    task_tool_source_context::{source_conversation_context, source_user_message},
     task_tool_support::*,
 };
 use chatos_local_agent_protocol::{
@@ -31,6 +29,7 @@ pub(in crate::application::task_tools) fn create_single_graph(
     let prompt = task_prompt(
         &args.objective,
         &args.description,
+        &args.context_summary,
         &args.expected_outputs,
         &args.acceptance_criteria,
         &args.input_payload,
@@ -40,7 +39,6 @@ pub(in crate::application::task_tools) fn create_single_graph(
     let graph_id = format!("local-task-graph-{}", invocation.invocation_id);
     let source_context = source_conversation_context(parent);
     let source_user_message = source_user_message(parent);
-    let source_attachments = source_attachments(parent)?;
     Ok(CreateTaskGraphCommand {
         graph_id,
         owner_user_id: parent.owner_user_id.clone(),
@@ -61,6 +59,7 @@ pub(in crate::application::task_tools) fn create_single_graph(
                 "acceptance_report_version": 1,
                 "final_response_max_chars": args.final_response_max_chars,
                 "description": args.description,
+                "context_summary": args.context_summary,
                 "input_payload": args.input_payload,
                 "priority": args.priority,
                 "tags": args.tags,
@@ -78,7 +77,7 @@ pub(in crate::application::task_tools) fn create_single_graph(
                 "remote_connection_id": source_context.remote_connection_id.clone(),
                 "source_run_id": parent.run_id,
                 "runtime_settings": runtime_settings,
-                "attachments": source_attachments,
+                "attachments": args.selected_attachments,
                 "prerequisite_task_ids": args.prerequisite_task_ids,
                 "supersedes_task_ids": args.supersedes_task_ids,
                 "followup_message_id": parent.input.pointer("/task_followup_review/review_message_id"),
@@ -145,7 +144,6 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
         .collect();
     let source_context = source_conversation_context(parent);
     let source_user_message = source_user_message(parent);
-    let source_attachments = source_attachments(parent)?;
     let mut tasks = Vec::with_capacity(items.len());
     let mut dependencies = Vec::new();
     for item in items {
@@ -168,6 +166,7 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
         let prompt = task_prompt(
             &item.objective,
             &item.description,
+            &item.context_summary,
             &item.expected_outputs,
             &item.acceptance_criteria,
             &input_payload,
@@ -208,6 +207,7 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
                 "notification_milestone": item.notification_milestone,
                 "final_delivery": args.final_delivery_ref.as_deref().is_some_and(|value| value.trim() == item.client_ref.trim()),
                 "description": item.description,
+                "context_summary": item.context_summary,
                 "input_payload": input_payload,
                 "client_ref": item.client_ref,
                 "priority": item.priority,
@@ -226,7 +226,7 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
                 "remote_connection_id": source_context.remote_connection_id.clone(),
                 "source_run_id": parent.run_id,
                 "runtime_settings": runtime_settings,
-                "attachments": source_attachments.clone(),
+                "attachments": item.selected_attachments,
                 "prerequisite_task_ids": item.prerequisite_task_ids,
                 "supersedes_task_ids": args.supersedes_task_ids,
                 "followup_message_id": parent.input.pointer("/task_followup_review/review_message_id"),
