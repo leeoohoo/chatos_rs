@@ -226,6 +226,12 @@ pub(super) struct TaskPluginReleaseSnapshot {
     pub(super) release_id: String,
     pub(super) version: String,
     pub(super) artifact_sha256: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(super) allows_parallel_task_execution: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn selected_plugin_release_snapshots(
@@ -269,7 +275,9 @@ fn selected_plugin_release_snapshots(
         let key = hint.plugin_key.trim();
         let component = hint.component_key.trim();
         let snapshot = by_key.get(&(key, component)).ok_or_else(|| {
-            format!("Plugin component is not frozen in the current capability policy: {key}/{component}")
+            format!(
+                "Plugin component is not frozen in the current capability policy: {key}/{component}"
+            )
         })?;
         selected.push((*snapshot).clone());
     }

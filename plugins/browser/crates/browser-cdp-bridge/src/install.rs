@@ -125,14 +125,24 @@ async fn write_owned_manifest(path: &Path, manifest: &NativeHostManifest) -> Res
             .await
             .map_err(|error| format!("could not secure {}: {error}", temporary.display()))?;
     }
-    if tokio::fs::try_exists(path).await.unwrap_or(false) {
-        tokio::fs::remove_file(path)
+    if let Err(error) = tokio::fs::rename(&temporary, path).await {
+        if !matches!(
+            error.kind(),
+            std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+        ) {
+            return Err(format!("could not install {}: {error}", path.display()));
+        }
+        match tokio::fs::remove_file(path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!("could not replace {}: {error}", path.display()));
+            }
+        }
+        tokio::fs::rename(&temporary, path)
             .await
-            .map_err(|error| format!("could not replace {}: {error}", path.display()))?;
+            .map_err(|error| format!("could not install {}: {error}", path.display()))?;
     }
-    tokio::fs::rename(&temporary, path)
-        .await
-        .map_err(|error| format!("could not install {}: {error}", path.display()))?;
     Ok(())
 }
 

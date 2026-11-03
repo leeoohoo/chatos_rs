@@ -58,7 +58,8 @@ extension NativeLocalConnectorService {
                     pluginKey: record.pluginKey,
                     componentKey: componentKey,
                     displayName: displayName,
-                    description: server.agent?.description ?? manifest.description
+                    description: server.agent?.description ?? manifest.description,
+                    allowsParallelTaskExecution: server.allowsParallelTaskExecution
                 )
             }
             if !mcpComponents.isEmpty {
@@ -81,7 +82,8 @@ extension NativeLocalConnectorService {
                 displayName: manifest.interface?.displayName ?? manifest.name,
                 description: manifest.description.isEmpty
                     ? "Installed Plugin Skills"
-                    : manifest.description
+                    : manifest.description,
+                allowsParallelTaskExecution: false
             )
             let selectionID = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
                 pluginKey: plugin.pluginKey,
@@ -223,6 +225,16 @@ extension NativeLocalConnectorService {
                     runtimeRootURL: pluginRuntimeRootURL
                 )
                 let client = NativePluginStdioClient(launch: launch)
+                let reservesBrowserProcessLease = componentKey
+                    == NativeBrowserPluginIdentity.componentKey
+                    && launch.server.requiresExclusiveExecution
+                if reservesBrowserProcessLease {
+                    guard await pluginRuntimeStore.reserveExclusiveExecution(
+                        adapterSessionID: adapterSessionID
+                    ) else {
+                        throw NativePluginRuntimeError.cancelled
+                    }
+                }
                 do {
                     try await client.start()
                     let initialized = try await client.initialize()
@@ -283,6 +295,11 @@ extension NativeLocalConnectorService {
                     }
                 } catch {
                     await client.terminate()
+                    if reservesBrowserProcessLease {
+                        await pluginRuntimeStore.releaseExclusiveExecutionReservation(
+                            adapterSessionID: adapterSessionID
+                        )
+                    }
                     try? FileManager.default.removeItem(at: launch.visualSessionURL)
                     throw error
                 }

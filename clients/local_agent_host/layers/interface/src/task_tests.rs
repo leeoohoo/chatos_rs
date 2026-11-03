@@ -220,6 +220,29 @@ fn plugins_lock_their_own_runtime_and_external_mcp_locks_the_project() {
             .expect("second document lock");
     assert!(local_task_write_scope_overlap(&document_scope, &another_document_scope).is_some());
 
+    let parallel_browser = capability_task(
+        "parallel-browser",
+        json!({
+            "enabled_builtin_kinds": [],
+            "plugin_hints": [{"plugin_key": "browser", "component_key": "browser-mcp"}],
+            "plugin_release_snapshots": [{
+                "plugin_key": "browser",
+                "component_key": "browser-mcp",
+                "plugin_id": "browser-id",
+                "release_id": "browser-release",
+                "version": "1.0.0",
+                "artifact_sha256": "a".repeat(64),
+                "allows_parallel_task_execution": true
+            }],
+            "external_mcp_config_ids": []
+        }),
+    );
+    assert_eq!(
+        local_task_runtime_write_scope(&parallel_browser.input, &parallel_browser.task_id)
+            .expect("parallel browser runtime scope"),
+        None
+    );
+
     let external = capability_task(
         "external",
         json!({

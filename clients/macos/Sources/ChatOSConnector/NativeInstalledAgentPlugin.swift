@@ -8,6 +8,7 @@ public struct NativeInstalledAgentPlugin: Sendable, Equatable, Identifiable {
     public let componentKey: String
     public let displayName: String
     public let description: String
+    public let allowsParallelTaskExecution: Bool
 
     public var id: String { "\(pluginID):\(componentKey)" }
 
@@ -16,7 +17,8 @@ public struct NativeInstalledAgentPlugin: Sendable, Equatable, Identifiable {
         pluginKey: String? = nil,
         componentKey: String,
         displayName: String,
-        description: String
+        description: String,
+        allowsParallelTaskExecution: Bool = false
     ) {
         self.pluginID = pluginID
         let normalizedPluginKey = pluginKey?
@@ -25,5 +27,6 @@ public struct NativeInstalledAgentPlugin: Sendable, Equatable, Identifiable {
         self.componentKey = componentKey
         self.displayName = displayName
         self.description = description
+        self.allowsParallelTaskExecution = allowsParallelTaskExecution
     }
 }

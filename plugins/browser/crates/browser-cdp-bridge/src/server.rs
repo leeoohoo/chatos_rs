@@ -46,6 +46,7 @@ const PAIRING_FILE_NAME: &str = "extension-pairing.json";
 #[derive(Debug, Clone)]
 pub struct BridgeServerConfig {
     pub data_dir: PathBuf,
+    pub pairing_file: Option<PathBuf>,
     pub extension_id: String,
     pub bind_address: String,
     pub mcp_token_lifetime: Duration,
@@ -55,6 +56,7 @@ impl BridgeServerConfig {
     pub fn development(data_dir: PathBuf, extension_id: impl Into<String>) -> Self {
         Self {
             data_dir,
+            pairing_file: None,
             extension_id: extension_id.into(),
             bind_address: "127.0.0.1:0".into(),
             mcp_token_lifetime: DEFAULT_MCP_TOKEN_LIFETIME,
@@ -72,6 +74,7 @@ pub struct BridgeReady {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct BridgeStateFile {
+    pub instance_id: String,
     pub protocol_version: String,
     pub control_endpoint: String,
     pub extension_endpoint: String,
@@ -179,11 +182,14 @@ impl BridgeServer {
         let state_file = config.data_dir.join(STATE_FILE_NAME);
         let credential_file = config.data_dir.join("mcp-credential.json");
         let pairing_file = config.data_dir.join(PAIRING_FILE_NAME);
+        let pairing_file = config.pairing_file.unwrap_or(pairing_file);
+        let instance_id = format!("bridge_{}", Uuid::new_v4().simple());
         tokio::fs::create_dir_all(&config.data_dir)
             .await
             .map_err(|error| format!("could not create Bridge data directory: {error}"))?;
         let paired = load_persisted_pairing(&pairing_file, &allowed_extension_origin).await;
         let persisted = BridgeStateFile {
+            instance_id,
             protocol_version: PROTOCOL_VERSION.into(),
             control_endpoint: format!("{base}/v1/control"),
             extension_endpoint: format!("{base}/v1/extension"),

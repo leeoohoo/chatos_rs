@@ -9,6 +9,10 @@ connections from arbitrary local processes.
 - Browser MCP starts the Bridge on numeric loopback, creates a private credential file, and passes
   the endpoint and credential directly to its in-process Extension backend. The
   `CHATOS_BROWSER_BRIDGE_*` variables are development-only external-Bridge overrides.
+- Every Browser MCP process owns a separate Bridge instance directory, loopback listener, state
+  file, credentials, and registry entry under `active-bridges/`. The Native Messaging Host
+  discovers all live entries; stale or malformed entries are removed. This permits concurrent
+  tasks to use one Chrome without sharing credentials or protocol state.
 - A credential file is a JSON object containing `token` and `expires_at_unix_ms`. On Unix it must
   be a regular, non-symlink file with no group/other permission bits (normally mode `0600`).
 - The endpoint must use `ws://` with a numeric loopback address (`127.0.0.0/8` or `::1`). Userinfo,
@@ -61,7 +65,7 @@ Stable methods:
 | `bridge.close` | `{}` | Best-effort orderly shutdown; disconnect also revokes all attachments. |
 
 `Target` has `id`, optional `title`, optional `url`, and `kind`. Target IDs and session IDs are
-opaque. Browser-level CDP commands are permitted only when the extension/Bridge can implement them
+opaque and local to one task-owned Bridge. Browser-level CDP commands are permitted only when the extension/Bridge can implement them
 faithfully. Otherwise the Bridge returns `unsupported_by_backend`; it must never synthesize a
 successful response that changes semantics.
 

@@ -4,9 +4,37 @@ import test from 'node:test';
 import {
   EXTENSION_SUBPROTOCOL,
   LocalConnectorBridge,
+  discoverBridges,
   validateBootstrap,
   validateLoopbackEndpoint
 } from '../src/bridge.js';
+
+test('discovery returns every active Browser MCP bridge', async () => {
+  const native = new FakeNativePort();
+  native.postMessage = message => {
+    native.lastRequest = message;
+    queueMicrotask(() => native.onMessage.emit({
+      type: 'response',
+      id: message.id,
+      result: {
+        protocol_version: '1.0',
+        bridges: [1, 2].map(index => ({
+          bridge_id: `bridge_task_connection_${index}`
+        }))
+      }
+    }));
+  };
+  const bridges = await discoverBridges({
+    chromeApi: {runtime: {connectNative: () => native}}
+  });
+
+  assert.deepEqual(
+    bridges.map(bridge => bridge.bridgeId),
+    ['bridge_task_connection_1', 'bridge_task_connection_2']
+  );
+  assert.equal(native.lastRequest.method, 'extension.discover');
+  assert.deepEqual(native.lastRequest.params, {protocol_version: '1.0'});
+});
 
 test('bootstrap accepts only short-lived loopback credentials', () => {
   const now = 1_000_000;
@@ -60,9 +88,11 @@ test('bridge authenticates before serving connector requests', async () => {
     assert.deepEqual(params, {});
     return {targets: []};
   });
-  await bridge.connect({pairingRequested: true});
+  await bridge.connect({pairingRequested: true, bridgeId: 'bridge_task_connection_1'});
   assert.equal(bridge.connected, true);
   assert.equal(native.lastRequest.params.pairing_requested, true);
+  assert.equal(native.lastRequest.params.bridge_id, 'bridge_task_connection_1');
+  assert.equal(native.disconnected, false);
   const socket = FakeWebSocket.instances.at(-1);
   assert.equal(socket.protocol, EXTENSION_SUBPROTOCOL);
   assert.equal(socket.sent[0].method, 'extension.authenticate');
@@ -73,6 +103,7 @@ test('bridge authenticates before serving connector requests', async () => {
   assert.deepEqual(socket.sent.at(-1), {type: 'response', id: 42, result: {targets: []}});
   await bridge.disconnect('test_complete');
   assert.equal(bridge.connected, false);
+  assert.equal(native.disconnected, true);
 });
 
 test('authenticated bridge remains connected after the bootstrap credential expires', async () => {
@@ -118,6 +149,7 @@ class FakeNativePort {
   onMessage = hook();
   onDisconnect = hook();
   lastRequest = null;
+  disconnected = false;
 
   constructor({credentialLifetimeMs = 60_000} = {}) {
     this.credentialLifetimeMs = credentialLifetimeMs;
@@ -131,6 +163,7 @@ class FakeNativePort {
         id: message.id,
         result: {
           protocol_version: '1.0',
+          bridge_id: message.params.bridge_id ?? 'bridge_default_connection',
           endpoint: 'ws://127.0.0.1:39001/v1/extension',
           token: 'extension-bootstrap-token-012345',
           expires_at_unix_ms: Date.now() + this.credentialLifetimeMs
@@ -139,7 +172,9 @@ class FakeNativePort {
     });
   }
 
-  disconnect() {}
+  disconnect() {
+    this.disconnected = true;
+  }
 }
 
 class FakeWebSocket {

@@ -367,7 +367,8 @@ extension NativeLocalConnectorService {
                 pluginID: plugin.pluginID,
                 releaseID: record.releaseID,
                 version: record.version,
-                artifactSHA256: record.artifactSHA256
+                artifactSHA256: record.artifactSHA256,
+                allowsParallelTaskExecution: plugin.allowsParallelTaskExecution
             )
         }.sorted { ($0.pluginKey, $0.componentKey) < ($1.pluginKey, $1.componentKey) }
         let policyPluginSelectionIDs = Set(installedPlugins.filter {
@@ -429,6 +430,7 @@ extension NativeLocalConnectorService {
                     "release_id": .string(snapshot.releaseID),
                     "version": .string(snapshot.version),
                     "artifact_sha256": .string(snapshot.artifactSHA256),
+                    "allows_parallel_task_execution": .bool(snapshot.allowsParallelTaskExecution),
                 ])
             }),
         ])

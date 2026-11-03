@@ -14,8 +14,9 @@ Implemented:
   including target/session routing, raw CDP commands, bounded events, explicit capabilities, and
   fail-closed disconnect handling.
 - Manifest v3 Chrome Extension using Native Messaging bootstrap, short-lived loopback WebSocket
-  authentication, explicit per-tab sharing, task-owned native Chrome tab groups, opaque
-  identifiers, and `chrome.debugger` routing.
+  authentication, multi-Bridge discovery, explicit per-tab sharing, task-owned native Chrome tab
+  groups, opaque identifiers, and isolated `chrome.debugger` routing for concurrent tasks in the
+  same Chrome instance.
 - Opaque browser, tab, CDP-session, element-reference, and artifact identifiers.
 - Session/tab, navigation, snapshot/find, virtual-mouse click/type/fill, key/scroll/wait,
   screenshot, and raw CDP tools. Automated clicks move a visible in-page cursor and use native CDP
@@ -83,6 +84,11 @@ In `chrome_extension` mode, `browser_session_open.session_name` becomes the nati
 title. Tabs created by the task join that group automatically. Explicitly shared user tabs are
 never moved into it. Closing the browser session preserves and collapses the task group for review
 while removing those tabs from the next task's control catalog.
+
+Browser plugin 0.1.23 with extension 0.1.6 supports multiple Browser tasks concurrently. Each MCP
+process owns a distinct Bridge connection and each task can control only its own targets, tab group,
+debugger sessions, and subscriptions. Older extension versions remain single-Bridge and must be
+upgraded for concurrent existing-Chrome control.
 
 Production and local staged builds compile the fixed Chrome Web Store extension ID into the Browser
 MCP binary. The MCP-owned Bridge creates a fresh, single-use credential for every MCP process and

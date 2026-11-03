@@ -8,8 +8,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::plugin_manifest::{
-    component_key_from_path, PluginComponentKind, PluginManifest, PluginMcpServer, PluginPathRef,
-    PluginPermissionRequirement,
+    PluginComponentKind, PluginManifest, PluginMcpServer, PluginPathRef,
+    PluginPermissionRequirement, component_key_from_path,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,6 +57,12 @@ pub fn plugin_component_descriptors(manifest: &PluginManifest) -> Vec<PluginComp
         if server.requires_exclusive_execution() {
             descriptor.metadata.insert(
                 "requires_exclusive_execution".to_string(),
+                Value::Bool(true),
+            );
+        }
+        if server.allows_parallel_task_execution() {
+            descriptor.metadata.insert(
+                "allows_parallel_task_execution".to_string(),
                 Value::Bool(true),
             );
         }

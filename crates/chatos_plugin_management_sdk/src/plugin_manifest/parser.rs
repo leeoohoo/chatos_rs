@@ -6,13 +6,13 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use super::components::{
-    component_key_from_path, PluginAgent, PluginApp, PluginAuthor, PluginCommand,
-    PluginDependencySpec, PluginHook, PluginInterfaceMetadata, PluginMcpServer, PluginPathRef,
-    PluginPermissionRequirement, PluginRuntimeContext, PluginUiContribution,
+    PluginAgent, PluginApp, PluginAuthor, PluginCommand, PluginDependencySpec, PluginHook,
+    PluginInterfaceMetadata, PluginMcpServer, PluginPathRef, PluginPermissionRequirement,
+    PluginRuntimeContext, PluginUiContribution, component_key_from_path,
 };
-use super::normalized::{PluginManifest, PLUGIN_MANIFEST_SCHEMA_VERSION};
+use super::normalized::{PLUGIN_MANIFEST_SCHEMA_VERSION, PluginManifest};
 use super::paths::normalize_plugin_relative_path;
-use super::{validate_plugin_manifest, PluginManifestError};
+use super::{PluginManifestError, validate_plugin_manifest};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -125,6 +125,8 @@ struct RawMcpServer {
     connect_timeout_ms: Option<u64>,
     #[serde(default)]
     requires_exclusive_execution: bool,
+    #[serde(default)]
+    allows_parallel_task_execution: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -412,6 +414,12 @@ fn normalize_inline_mcp(
     component_key: String,
     raw: RawMcpServer,
 ) -> Result<PluginMcpServer, PluginManifestError> {
+    if raw.requires_exclusive_execution && raw.allows_parallel_task_execution {
+        return invalid_field(
+            format!("mcpServers.{component_key}.allowsParallelTaskExecution"),
+            "cannot be true when requiresExclusiveExecution is true",
+        );
+    }
     let transport = raw
         .transport
         .as_deref()
@@ -438,6 +446,7 @@ fn normalize_inline_mcp(
                 args: raw.args,
                 env: raw.env,
                 requires_exclusive_execution: raw.requires_exclusive_execution,
+                allows_parallel_task_execution: raw.allows_parallel_task_execution,
             })
         }
         "http" => {
@@ -455,6 +464,7 @@ fn normalize_inline_mcp(
                 oauth_resource: normalize_optional(raw.oauth_resource),
                 connect_timeout_ms: raw.connect_timeout_ms,
                 requires_exclusive_execution: raw.requires_exclusive_execution,
+                allows_parallel_task_execution: raw.allows_parallel_task_execution,
             })
         }
         _ => invalid_field(

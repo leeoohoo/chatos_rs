@@ -24,7 +24,8 @@ test('manifest launches the installed stdio binary', () => {
   assert.deepEqual(manifest.mcpServers['browser-cdp-mcp'], {
     type: 'stdio',
     bin: 'chatos-browser-cdp',
-    requiresExclusiveExecution: true,
+    requiresExclusiveExecution: false,
+    allowsParallelTaskExecution: true,
     args: ['mcp'],
     env: {}
   });

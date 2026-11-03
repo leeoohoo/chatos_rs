@@ -28,6 +28,10 @@ export class ExtensionController {
   #groupId = null;
   #sessionName = null;
   #started = false;
+  #debuggerEventHandler = null;
+  #debuggerDetachHandler = null;
+  #tabRemovedHandler = null;
+  #tabUpdatedHandler = null;
 
   constructor({chromeApi = globalThis.chrome, bridge, randomId = () => crypto.randomUUID()}) {
     this.#chrome = chromeApi;
@@ -38,18 +42,35 @@ export class ExtensionController {
   start() {
     if (this.#started) return;
     this.#started = true;
-    this.#chrome.debugger.onEvent.addListener((source, method, params) => {
+    this.#debuggerEventHandler = (source, method, params) => {
       this.#onDebuggerEvent(source, method, params ?? {});
-    });
-    this.#chrome.debugger.onDetach.addListener((source, reason) => {
+    };
+    this.#debuggerDetachHandler = (source, reason) => {
       this.#onDebuggerDetach(source, reason);
-    });
-    this.#chrome.tabs.onRemoved.addListener(tabId => {
+    };
+    this.#tabRemovedHandler = tabId => {
       void this.#removeTab(tabId, 'tab_closed');
-    });
-    this.#chrome.tabs.onUpdated.addListener((tabId, _changeInfo, tab) => {
+    };
+    this.#tabUpdatedHandler = (tabId, _changeInfo, tab) => {
       void this.#updateTab(tabId, tab);
-    });
+    };
+    this.#chrome.debugger.onEvent.addListener(this.#debuggerEventHandler);
+    this.#chrome.debugger.onDetach.addListener(this.#debuggerDetachHandler);
+    this.#chrome.tabs.onRemoved.addListener(this.#tabRemovedHandler);
+    this.#chrome.tabs.onUpdated.addListener(this.#tabUpdatedHandler);
+  }
+
+  stop() {
+    if (!this.#started) return;
+    this.#started = false;
+    this.#chrome.debugger.onEvent.removeListener(this.#debuggerEventHandler);
+    this.#chrome.debugger.onDetach.removeListener(this.#debuggerDetachHandler);
+    this.#chrome.tabs.onRemoved.removeListener(this.#tabRemovedHandler);
+    this.#chrome.tabs.onUpdated.removeListener(this.#tabUpdatedHandler);
+    this.#debuggerEventHandler = null;
+    this.#debuggerDetachHandler = null;
+    this.#tabRemovedHandler = null;
+    this.#tabUpdatedHandler = null;
   }
 
   async handleRequest(method, params = {}) {

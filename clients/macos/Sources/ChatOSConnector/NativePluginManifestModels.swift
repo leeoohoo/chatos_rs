@@ -31,6 +31,7 @@ struct NativePluginManifest: Decodable, Sendable {
         var args: [String]
         var env: [String: String]
         var requiresExclusiveExecution: Bool
+        var allowsParallelTaskExecution: Bool
         var agent: AgentPresentation?
 
         init(from decoder: Decoder) throws {
@@ -43,11 +44,22 @@ struct NativePluginManifest: Decodable, Sendable {
                 Bool.self,
                 forKey: .requiresExclusiveExecution
             ) ?? false
+            allowsParallelTaskExecution = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .allowsParallelTaskExecution
+            ) ?? false
+            if requiresExclusiveExecution && allowsParallelTaskExecution {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .allowsParallelTaskExecution,
+                    in: container,
+                    debugDescription: "Parallel task execution conflicts with exclusive execution"
+                )
+            }
             agent = try container.decodeIfPresent(AgentPresentation.self, forKey: .agent)
         }
 
         private enum CodingKeys: String, CodingKey {
-            case type, bin, args, env, requiresExclusiveExecution, agent
+            case type, bin, args, env, requiresExclusiveExecution, allowsParallelTaskExecution, agent
         }
     }
 

@@ -1,6 +1,5 @@
 use std::{
     env,
-    fs::{File, OpenOptions},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -14,9 +13,9 @@ use browser_cdp_bridge::{
 use browser_cdp_core::{BrowserBackendFactory, BrowserRuntime};
 use browser_cdp_direct::DirectBackendFactory;
 use browser_cdp_extension::ExtensionBackendFactory;
-use fs2::FileExt;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing_subscriber::EnvFilter;
+use uuid::Uuid;
 
 #[tokio::main]
 async fn main() {
@@ -125,8 +124,8 @@ struct ManagedBridgeRuntime {
     ready: BridgeReady,
     shutdown: Option<oneshot::Sender<()>>,
     task: JoinHandle<Result<(), String>>,
-    _lease: File,
     locator_file: PathBuf,
+    instance_dir: PathBuf,
 }
 
 impl ManagedBridgeRuntime {
@@ -140,22 +139,18 @@ impl ManagedBridgeRuntime {
         tokio::fs::create_dir_all(&bridge_dir)
             .await
             .map_err(|error| format!("could not create Browser Bridge directory: {error}"))?;
-        let lease_path = locator_dir.join("bridge.lock");
-        let lease = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lease_path)
-            .map_err(|error| format!("could not open Browser Bridge lease: {error}"))?;
-        lease.try_lock_exclusive().map_err(|_| {
-            "another Browser MCP process already owns the Existing Chrome bridge".to_owned()
-        })?;
+        let instance_dir = bridge_dir
+            .join("instances")
+            .join(Uuid::new_v4().simple().to_string());
+        tokio::fs::create_dir_all(&instance_dir)
+            .await
+            .map_err(|error| format!("could not create Browser Bridge instance: {error}"))?;
         let executable = env::current_exe()
             .map_err(|error| format!("could not resolve Browser MCP executable: {error}"))?;
         install_native_host(&executable, &extension_id).await?;
-        let (server, ready) =
-            BridgeServer::bind(BridgeServerConfig::development(bridge_dir, extension_id)).await?;
+        let mut config = BridgeServerConfig::development(instance_dir.clone(), extension_id);
+        config.pairing_file = Some(bridge_dir.join("extension-pairing.json"));
+        let (server, ready) = BridgeServer::bind(config).await?;
         let locator_file = install_active_bridge_locator(&locator_dir, &ready.state_file).await?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let task = tokio::spawn(server.serve_until(async {
@@ -165,8 +160,8 @@ impl ManagedBridgeRuntime {
             ready,
             shutdown: Some(shutdown_tx),
             task,
-            _lease: lease,
             locator_file,
+            instance_dir,
         })
     }
 
@@ -191,6 +186,7 @@ impl ManagedBridgeRuntime {
         remove_active_bridge_locator_if_owned(&self.locator_file, &self.ready.state_file).await;
         remove_if_owned(&self.ready.state_file).await;
         remove_if_owned(&self.ready.mcp_credential_file).await;
+        let _ = tokio::fs::remove_dir(&self.instance_dir).await;
     }
 }
 

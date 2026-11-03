@@ -223,6 +223,7 @@ struct NativeLocalAgentTaskPluginReleaseSnapshot: Sendable, Equatable {
     let releaseID: String
     let version: String
     let artifactSHA256: String
+    let allowsParallelTaskExecution: Bool
 
     init(
         pluginKey: String,
@@ -230,7 +231,8 @@ struct NativeLocalAgentTaskPluginReleaseSnapshot: Sendable, Equatable {
         pluginID: String,
         releaseID: String,
         version: String,
-        artifactSHA256: String
+        artifactSHA256: String,
+        allowsParallelTaskExecution: Bool = false
     ) {
         self.pluginKey = pluginKey
         self.componentKey = componentKey
@@ -238,6 +240,7 @@ struct NativeLocalAgentTaskPluginReleaseSnapshot: Sendable, Equatable {
         self.releaseID = releaseID
         self.version = version
         self.artifactSHA256 = artifactSHA256
+        self.allowsParallelTaskExecution = allowsParallelTaskExecution
     }
 
     init(jsonValue: LocalAgentJSONValue) throws {
@@ -256,13 +259,20 @@ struct NativeLocalAgentTaskPluginReleaseSnapshot: Sendable, Equatable {
               !artifactSHA256.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NativeLocalAgentPlatformToolError.invalidRunContext
         }
+        let allowsParallelTaskExecution: Bool
+        switch values["allows_parallel_task_execution"] {
+        case .some(.bool(let value)): allowsParallelTaskExecution = value
+        case nil: allowsParallelTaskExecution = false
+        default: throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
         self.init(
             pluginKey: pluginKey,
             componentKey: componentKey,
             pluginID: pluginID,
             releaseID: releaseID,
             version: version,
-            artifactSHA256: artifactSHA256
+            artifactSHA256: artifactSHA256,
+            allowsParallelTaskExecution: allowsParallelTaskExecution
         )
     }
 }

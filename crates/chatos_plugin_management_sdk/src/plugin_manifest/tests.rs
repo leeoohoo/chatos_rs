@@ -4,7 +4,7 @@
 use serde_json::json;
 
 use super::*;
-use crate::{normalized_plugin_manifest_sha256, plugin_component_descriptors, PluginComponentKind};
+use crate::{PluginComponentKind, normalized_plugin_manifest_sha256, plugin_component_descriptors};
 
 fn manifest_with_mcp(server: serde_json::Value) -> String {
     json!({
@@ -88,7 +88,7 @@ fn preserves_published_manifest_hashes() {
         ),
         (
             include_str!("../../../../plugins/document/chatos.plugin.json"),
-            "fcd2e4610025c0453b502f017f3f7d243ed30df587632e87a46742c516b3a236",
+            "1bd2ea703843d41c57197dd0cfb24badb11e5d25cf3154ff04990489ee1eba0a",
             true,
         ),
     ];
@@ -113,6 +113,40 @@ fn infers_stdio_transport_from_bin() {
     ));
     let normalized = serde_json::to_value(&manifest.mcp_servers[0]).expect("normalized MCP");
     assert!(normalized.get("requires_exclusive_execution").is_none());
+    assert!(normalized.get("allows_parallel_task_execution").is_none());
+}
+
+#[test]
+fn parses_browser_parallel_task_execution_capability() {
+    let manifest = parse_plugin_manifest(include_str!(
+        "../../../../plugins/browser/npm/chatos.plugin.json"
+    ))
+    .expect("browser manifest");
+    let server = manifest.mcp_servers.first().expect("browser MCP server");
+
+    assert!(!server.requires_exclusive_execution());
+    assert!(server.allows_parallel_task_execution());
+    let descriptors = plugin_component_descriptors(&manifest);
+    let descriptor = descriptors
+        .iter()
+        .find(|component| component.component_key == "browser-cdp-mcp")
+        .expect("browser component descriptor");
+    assert_eq!(
+        descriptor.metadata.get("allows_parallel_task_execution"),
+        Some(&json!(true))
+    );
+}
+
+#[test]
+fn rejects_conflicting_exclusive_and_parallel_task_capabilities() {
+    let raw = manifest_with_mcp(json!({
+        "type": "stdio",
+        "bin": "unsafe-mcp",
+        "requiresExclusiveExecution": true,
+        "allowsParallelTaskExecution": true
+    }));
+
+    assert!(parse_plugin_manifest(&raw).is_err());
 }
 
 #[test]
