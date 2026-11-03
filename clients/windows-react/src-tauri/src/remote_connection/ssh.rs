@@ -1702,7 +1702,9 @@ fn wait_for_verification_code(path: &Path) -> Option<String> {
                 .ok()?;
             let code = code.trim();
             if !code.is_empty() && code.len() <= 1_024 && !code.contains(['\0', '\r', '\n']) {
-                let _ = OpenOptions::new().write(true).truncate(true).open(path);
+                if let Some(parent) = path.parent() {
+                    let _ = replace_owned_file(parent, path, ".ssh-verification-", &[]);
+                }
                 return Some(code.to_owned());
             }
             return None;
@@ -1858,6 +1860,7 @@ mod tests {
             .unwrap();
         file.write_all(b"654321").unwrap();
         file.sync_all().unwrap();
+        drop(file);
         assert_eq!(waiter.join().unwrap(), "654321");
         assert_eq!(fs::metadata(response).unwrap().len(), 0);
     }
