@@ -132,6 +132,25 @@ const expectedTools = [
 if (!Array.isArray(tools) || JSON.stringify(tools.map((tool) => tool.name)) !== JSON.stringify(expectedTools)) {
   throw new Error("Windows worker MCP tools/list did not expose the expected 11-tool contract.");
 }
+const expectedSkillGates = {
+  check_permissions: ["visual-computer-use", "visual-safety-verification"],
+  request_permissions: ["visual-computer-use", "visual-safety-verification"],
+  observe_screen: ["visual-computer-use", "visual-observation-targeting"],
+  move_mouse: ["visual-computer-use", "visual-observation-targeting"],
+  click: ["visual-computer-use", "visual-pointer-keyboard"],
+  scroll: ["visual-computer-use", "visual-pointer-keyboard"],
+  type_text: ["visual-computer-use", "visual-pointer-keyboard"],
+  key_press: ["visual-computer-use", "visual-pointer-keyboard"],
+  active_application: ["visual-computer-use", "visual-application-focus"],
+  activate_application: ["visual-computer-use", "visual-application-focus"],
+  list_shortcuts: ["visual-computer-use", "visual-application-focus"],
+};
+for (const tool of tools) {
+  const gate = tool?._meta?.["chatos/skillGate"]?.allOf;
+  if (JSON.stringify(gate) !== JSON.stringify(expectedSkillGates[tool.name])) {
+    throw new Error(`Windows worker tool ${tool.name} has an invalid Skill gate.`);
+  }
+}
 const permissionResult = responses.find((response) => response.id === 3)?.result;
 const permissionSnapshot = permissionResult?.structuredContent;
 for (const field of ["screenCaptureAvailable", "inputDesktopAvailable", "processElevated", "allGranted"]) {
