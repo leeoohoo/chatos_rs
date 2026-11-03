@@ -776,3 +776,4 @@
 "本任务没有调用插件能力" = "This Task Did Not Use Any Plugin Capabilities";
 "系统内置工具" = "Built-in System Tools";
 "系统工具用于读取文件、搜索和记录过程，默认折叠以减少干扰。" = "System tools support file access, search, and process recording. They are collapsed by default to reduce noise.";
+"验收项目" = "Acceptance Checks";
