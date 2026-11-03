@@ -7,6 +7,8 @@ use std::{
 };
 use uuid::Uuid;
 
+use crate::app_data_transaction::replace_owned_file_cancellable;
+
 use super::{
     history::owner_hash,
     video_provider::{VideoGenerationResult, MAXIMUM_VIDEO_BYTES},
@@ -369,14 +371,21 @@ fn commit_manifest(
     if bytes.len() > MAXIMUM_MANIFEST_BYTES {
         return Err(video_history_error());
     }
-    let temporary = directory.join("record.json.tmp");
     let target = directory.join("record.json");
-    write_private_file_cancellable(&temporary, &bytes, cancelled)?;
+    replace_owned_file_cancellable(directory, &target, ".video-history-", &bytes, || {
+        cancelled.load(Ordering::Acquire)
+    })
+    .map_err(|error| {
+        if cancelled.load(Ordering::Acquire) || error.kind() == std::io::ErrorKind::Interrupted {
+            "视频生成已取消。".to_owned()
+        } else {
+            video_history_error()
+        }
+    })?;
     if cancelled.load(Ordering::Acquire) {
-        let _ = fs::remove_file(&temporary);
+        let _ = fs::remove_file(&target);
         return Err("视频生成已取消。".into());
     }
-    fs::rename(&temporary, &target).map_err(|_| video_history_error())?;
     if let Ok(record) = File::open(directory) {
         let _ = record.sync_all();
     }

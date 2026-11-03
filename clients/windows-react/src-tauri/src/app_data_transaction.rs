@@ -10,12 +10,31 @@ pub(crate) fn replace_owned_file(
     temporary_prefix: &str,
     bytes: &[u8],
 ) -> io::Result<()> {
-    write_owned_file(
+    let never_cancel = || false;
+    write_owned_file_with_cancel(
         directory,
         destination,
         temporary_prefix,
         bytes,
         CommitMode::Replace,
+        &never_cancel,
+    )
+}
+
+pub(crate) fn replace_owned_file_cancellable(
+    directory: &Path,
+    destination: &Path,
+    temporary_prefix: &str,
+    bytes: &[u8],
+    should_cancel: impl Fn() -> bool,
+) -> io::Result<()> {
+    write_owned_file_with_cancel(
+        directory,
+        destination,
+        temporary_prefix,
+        bytes,
+        CommitMode::Replace,
+        &should_cancel,
     )
 }
 
@@ -25,12 +44,14 @@ pub(crate) fn create_owned_file(
     temporary_prefix: &str,
     bytes: &[u8],
 ) -> io::Result<()> {
-    write_owned_file(
+    let never_cancel = || false;
+    write_owned_file_with_cancel(
         directory,
         destination,
         temporary_prefix,
         bytes,
         CommitMode::CreateNew,
+        &never_cancel,
     )
 }
 
@@ -39,12 +60,13 @@ enum CommitMode {
     CreateNew,
 }
 
-fn write_owned_file(
+fn write_owned_file_with_cancel(
     directory: &Path,
     destination: &Path,
     temporary_prefix: &str,
     bytes: &[u8],
     mode: CommitMode,
+    should_cancel: &dyn Fn() -> bool,
 ) -> io::Result<()> {
     validate_temporary_prefix(temporary_prefix)?;
     validate_directory(directory)?;
@@ -63,7 +85,15 @@ fn write_owned_file(
         options.mode(0o600);
     }
     let mut file = options.open(&temporary)?;
-    file.write_all(bytes)?;
+    for chunk in bytes.chunks(256 * 1_024) {
+        if should_cancel() {
+            return Err(cancelled());
+        }
+        file.write_all(chunk)?;
+    }
+    if should_cancel() {
+        return Err(cancelled());
+    }
     file.flush()?;
     file.sync_all()?;
     let metadata = fs::symlink_metadata(&temporary)?;
@@ -196,6 +226,10 @@ fn invalid_input() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "invalid app data transaction")
 }
 
+fn cancelled() -> io::Error {
+    io::Error::new(io::ErrorKind::Interrupted, "app data transaction cancelled")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,6 +274,26 @@ mod tests {
         )
         .is_err());
         assert_eq!(fs::read(&destination).unwrap(), b"first");
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn cancellation_cleans_the_transaction_and_preserves_the_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("state.json");
+        fs::write(&destination, b"old").unwrap();
+
+        let error = replace_owned_file_cancellable(
+            directory.path(),
+            &destination,
+            ".cancellable-state-",
+            &vec![b'x'; 512 * 1_024],
+            || true,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 }

@@ -889,10 +889,12 @@ fn canonical_history_manifest_temporary_name(value: &str) -> bool {
     if value == "record.json.tmp" {
         return true;
     }
-    value
-        .strip_prefix(".image-history-")
-        .and_then(|value| value.strip_suffix(".tmp"))
-        .is_some_and(canonical_record_id)
+    [".image-history-", ".video-history-"].iter().any(|prefix| {
+        value
+            .strip_prefix(prefix)
+            .and_then(|value| value.strip_suffix(".tmp"))
+            .is_some_and(canonical_record_id)
+    })
 }
 
 fn safe_cleanup_directory(path: &Path) -> bool {
@@ -2104,6 +2106,9 @@ mod tests {
         let image_owned_temporary =
             image_record.join(format!(".image-history-{}.tmp", Uuid::new_v4()));
         let video_temporary = video_record.join("record.json.tmp");
+        let video_owned_temporary =
+            video_record.join(format!(".video-history-{}.tmp", Uuid::new_v4()));
+        let video_manifest = video_record.join("record.json");
         let committed = image_record.join("record.json");
         let unrelated = image_record.join("notes.tmp");
         let incomplete_asset = incomplete_record.join("00000000000000000000000000000001.png");
@@ -2111,6 +2116,8 @@ mod tests {
             &image_temporary,
             &image_owned_temporary,
             &video_temporary,
+            &video_owned_temporary,
+            &video_manifest,
             &committed,
             &unrelated,
         ] {
@@ -2149,11 +2156,13 @@ mod tests {
                 &manager.video_history.temporary_cleanup_root(),
                 SystemTime::now() + Duration::from_secs(1),
             ),
-            4
+            5
         );
         assert!(!image_temporary.exists());
         assert!(!image_owned_temporary.exists());
         assert!(!video_temporary.exists());
+        assert!(!video_owned_temporary.exists());
+        assert!(video_manifest.exists());
         assert!(!incomplete_record.exists());
         assert!(committed.exists());
         assert!(unrelated.exists());
