@@ -7,6 +7,7 @@ internal sealed class McpService(ComputerController controller)
 {
     internal const string Name = "visual-computer-use";
     internal const string Version = "0.9.0";
+    private const int MaxScrollDeltaPixels = 1200;
 
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -87,8 +88,8 @@ internal sealed class McpService(ComputerController controller)
             case "scroll":
                 RequireCursorInsideRequestedRegion(arguments);
                 await controller.ScrollAsync(
-                    Integer(arguments, "delta_x", 0),
-                    Integer(arguments, "delta_y"),
+                    ScrollDelta(arguments, "delta_x", 0),
+                    ScrollDelta(arguments, "delta_y"),
                     Number(arguments, "duration", 0.55),
                     Integer(arguments, "steps", 18)).ConfigureAwait(false);
                 await SettleAsync(arguments, 180).ConfigureAwait(false);
@@ -253,6 +254,15 @@ internal sealed class McpService(ComputerController controller)
         return fallback ?? throw new VisualComputerUseException($"{key} must be an integer.");
     }
 
+    private static int ScrollDelta(JsonObject arguments, string key, int? fallback = null)
+    {
+        var value = Integer(arguments, key, fallback);
+        if (value is < -MaxScrollDeltaPixels or > MaxScrollDeltaPixels)
+            throw new VisualComputerUseException(
+                $"{key} must be an integer from -{MaxScrollDeltaPixels} through {MaxScrollDeltaPixels} pixels.");
+        return value;
+    }
+
     private static IReadOnlyList<string> StringArray(JsonObject arguments, string key)
     {
         if (arguments[key] is not JsonArray values || values.Count == 0)
@@ -310,7 +320,7 @@ internal sealed class McpService(ComputerController controller)
         Tool("scroll", "Scroll and observe", "Send a smooth sequence of real Windows wheel events at the virtual pointer, restore the physical pointer, and observe. Positive delta_y scrolls up; negative scrolls down.", ObjectSchema(Merge(
             new JsonObject
             {
-                ["delta_y"] = IntegerProperty(), ["delta_x"] = IntegerProperty(0),
+                ["delta_y"] = ScrollDeltaProperty(), ["delta_x"] = ScrollDeltaProperty(0),
                 ["duration"] = NumberProperty(0.55, 0, 3), ["steps"] = IntegerProperty(18, 2, 80),
                 ["settle_ms"] = SettleProperty(180)
             }, CaptureProperties(1400)), ["delta_y"]), false, false, false, true),
@@ -467,6 +477,20 @@ internal sealed class McpService(ComputerController controller)
         ["enum"] = new JsonArray(values.Select(value => JsonValue.Create(value)).ToArray()),
         ["default"] = defaultValue
     };
+
+    private static JsonObject ScrollDeltaProperty(int? defaultValue = null)
+    {
+        var property = new JsonObject
+        {
+            ["type"] = "integer",
+            ["minimum"] = -MaxScrollDeltaPixels,
+            ["maximum"] = MaxScrollDeltaPixels,
+            ["description"] = "Scroll distance in pixels. Positive values scroll up or right; negative values scroll down or left."
+        };
+        if (defaultValue is not null)
+            property["default"] = defaultValue;
+        return property;
+    }
 
     private static JsonObject CaptureAfterProperty() => new()
     {

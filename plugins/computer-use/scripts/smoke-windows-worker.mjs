@@ -102,9 +102,10 @@ function readMcpHandshake() {
       }),
       JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
       JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "check_permissions", arguments: {} } }),
+      JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "scroll", arguments: { delta_y: 1201 } } }),
     ];
     if (requireScreenObservation) {
-      requests.push(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "observe_screen", arguments: {} } }));
+      requests.push(JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "observe_screen", arguments: {} } }));
     }
     child.stdin.end(`${requests.join("\n")}\n`);
   });
@@ -158,8 +159,12 @@ for (const field of ["screenCaptureAvailable", "inputDesktopAvailable", "process
     throw new Error(`Windows worker MCP check_permissions did not return boolean ${field}.`);
   }
 }
+const invalidScroll = responses.find((response) => response.id === 4)?.result;
+if (!invalidScroll?.isError || !invalidScroll.content?.[0]?.text?.includes("-1200 through 1200")) {
+  throw new Error("Windows worker did not reject an out-of-range scroll delta.");
+}
 if (requireScreenObservation) {
-  const observation = responses.find((response) => response.id === 4)?.result;
+  const observation = responses.find((response) => response.id === 5)?.result;
   const observationSnapshot = observation?.structuredContent;
   if (observation?.isError || !observationSnapshot || typeof observationSnapshot !== "object") {
     throw new Error("Windows worker MCP observe_screen did not return structured content.");
