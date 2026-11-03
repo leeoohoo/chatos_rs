@@ -359,7 +359,24 @@ internal sealed class McpService(ComputerController controller)
             ["destructiveHint"] = destructive,
             ["idempotentHint"] = idempotent,
             ["openWorldHint"] = openWorld
+        },
+        ["_meta"] = new JsonObject
+        {
+            ["chatos/skillGate"] = new JsonObject
+            {
+                ["allOf"] = new JsonArray(
+                    JsonValue.Create(Name),
+                    JsonValue.Create(SpecialistSkill(name)))
+            }
         }
+    };
+
+    private static string SpecialistSkill(string toolName) => toolName switch
+    {
+        "check_permissions" or "request_permissions" => "visual-safety-verification",
+        "observe_screen" or "move_mouse" => "visual-observation-targeting",
+        "active_application" or "activate_application" or "list_shortcuts" => "visual-application-focus",
+        _ => "visual-pointer-keyboard"
     };
 
     private static JsonObject ObjectSchema(JsonObject? properties = null, string[]? required = null)

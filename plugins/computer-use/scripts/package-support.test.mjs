@@ -82,3 +82,14 @@ test("keeps package, manifest, and both native implementations on one release", 
     "windows-arm64",
   ]);
 });
+
+test("routes skill-gate audits through the native worker for each supported host", () => {
+  const auditScript = readFileSync(
+    path.join(projectRoot, "scripts", "audit-skill-gates.mjs"),
+    "utf8",
+  );
+  assert.match(auditScript, /process\.platform === "win32"/);
+  assert.match(auditScript, /path\.join\(packageRoot, "bin", "open-computer-use"\)/);
+  assert.match(auditScript, /process\.platform === "darwin"/);
+  assert.match(auditScript, /swift.*visual-computer-use-mcp/s);
+});
