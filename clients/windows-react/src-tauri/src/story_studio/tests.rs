@@ -299,6 +299,14 @@ fn stale_story_cleanup_only_removes_canonical_uncommitted_manifests() {
         "{}.json.tmp",
         Uuid::new_v4().to_string().to_lowercase()
     ));
+    let project_shared_temporary = project_directory.join(format!(
+        ".story-json-{}.tmp",
+        Uuid::new_v4().to_string().to_lowercase()
+    ));
+    let run_shared_temporary = runs_directory.join(format!(
+        ".story-json-{}.tmp",
+        Uuid::new_v4().to_string().to_lowercase()
+    ));
     let unrelated = project_directory.join("notes.json.tmp");
     let invalid_batch = project_directory.join("media-batch-not-a-uuid.json.tmp");
     let invalid_run = runs_directory.join("not-a-uuid.json.tmp");
@@ -308,6 +316,8 @@ fn stale_story_cleanup_only_removes_canonical_uncommitted_manifests() {
         &project_temporary,
         &batch_temporary,
         &run_temporary,
+        &project_shared_temporary,
+        &run_shared_temporary,
         &unrelated,
         &invalid_batch,
         &invalid_run,
@@ -325,11 +335,13 @@ fn stale_story_cleanup_only_removes_canonical_uncommitted_manifests() {
         store.cleanup_stale_temporaries_before(
             std::time::SystemTime::now() + std::time::Duration::from_secs(1),
         ),
-        4
+        6
     );
     assert!(!project_temporary.exists());
     assert!(!batch_temporary.exists());
     assert!(!run_temporary.exists());
+    assert!(!project_shared_temporary.exists());
+    assert!(!run_shared_temporary.exists());
     assert!(!orphan_asset.exists());
     assert!(referenced_asset.exists());
     assert!(project_directory.join("project.json").exists());

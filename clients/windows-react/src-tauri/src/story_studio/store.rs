@@ -14,7 +14,9 @@ use std::{
 };
 use uuid::Uuid;
 
-use crate::app_owned_export::try_remove_stale_owned_file;
+use crate::{
+    app_data_transaction::replace_owned_file, app_owned_export::try_remove_stale_owned_file,
+};
 
 use super::{
     batch::{StoryMediaBatchHistoryPage, StoryMediaBatchRecord, MAXIMUM_MEDIA_BATCH_BYTES},
@@ -1185,7 +1187,7 @@ impl StoryTemporaryCleanupState {
 }
 
 fn canonical_story_project_temporary_name(name: &str) -> bool {
-    if name == "project.json.tmp" {
+    if name == "project.json.tmp" || canonical_story_shared_temporary_name(name) {
         return true;
     }
     name.strip_prefix("media-batch-")
@@ -1195,6 +1197,13 @@ fn canonical_story_project_temporary_name(name: &str) -> bool {
 
 fn canonical_story_run_temporary_name(name: &str) -> bool {
     name.strip_suffix(".json.tmp")
+        .is_some_and(|value| canonical_project_id(value).is_ok())
+        || canonical_story_shared_temporary_name(name)
+}
+
+fn canonical_story_shared_temporary_name(name: &str) -> bool {
+    name.strip_prefix(".story-json-")
+        .and_then(|value| value.strip_suffix(".tmp"))
         .is_some_and(|value| canonical_project_id(value).is_ok())
 }
 
@@ -1303,16 +1312,7 @@ fn commit_private_json(
         }
         fs::remove_file(&temporary).map_err(|_| store_error())?;
     }
-    if let Ok(metadata) = fs::symlink_metadata(&target) {
-        if !is_private_file_metadata(&metadata) {
-            return Err(store_error());
-        }
-    }
-    write_private_file(&temporary, bytes)?;
-    if let Err(error) = replace_file(&temporary, &target) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
-    }
+    replace_owned_file(directory, &target, ".story-json-", bytes).map_err(|_| store_error())?;
     sync_directory(directory)
 }
 
@@ -1442,41 +1442,6 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     file.write_all(bytes)
         .and_then(|_| file.sync_all())
         .map_err(|_| store_error())
-}
-
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
-    fs::rename(source, destination).map_err(|_| store_error())
-}
-
-#[cfg(windows)]
-fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let succeeded = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if succeeded == 0 {
-        Err(store_error())
-    } else {
-        Ok(())
-    }
 }
 
 fn sync_directory(path: &Path) -> Result<(), String> {
