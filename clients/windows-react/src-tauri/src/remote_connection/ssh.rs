@@ -1,4 +1,5 @@
 use super::models::{PresentedRemoteConnectionTestResult, RemoteCredentialBundle};
+use crate::app_data_transaction::replace_owned_file;
 use crate::machine_resource_governor::{
     MachineResourceGovernor, MachineResourceKind, MachineResourcePermit, MachineResourcePriority,
 };
@@ -647,19 +648,13 @@ impl PreparedSshSession {
     }
 
     fn write_verification_code(&self, code: &str) -> Result<(), String> {
-        let metadata =
-            fs::symlink_metadata(&self.verification_response).map_err(|_| runtime_error())?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
-            return Err(runtime_error());
-        }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&self.verification_response)
-            .map_err(|_| runtime_error())?;
-        file.write_all(code.as_bytes())
-            .map_err(|_| runtime_error())?;
-        file.sync_all().map_err(|_| runtime_error())
+        replace_owned_file(
+            &self.directory,
+            &self.verification_response,
+            ".ssh-verification-",
+            code.as_bytes(),
+        )
+        .map_err(|_| runtime_error())
     }
 }
 
@@ -1865,6 +1860,27 @@ mod tests {
         file.sync_all().unwrap();
         assert_eq!(waiter.join().unwrap(), "654321");
         assert_eq!(fs::metadata(response).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn submitted_verification_code_replaces_the_private_response_atomically() {
+        let directory = tempfile::tempdir().unwrap();
+        let prepared = PreparedSshSession::create(directory.path(), &password_material()).unwrap();
+        fs::write(&prepared.verification_response, b"stale").unwrap();
+
+        prepared.write_verification_code("654321").unwrap();
+
+        assert_eq!(
+            fs::read(&prepared.verification_response).unwrap(),
+            b"654321"
+        );
+        let entries = fs::read_dir(&prepared.directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert!(entries
+            .iter()
+            .all(|name| { !name.to_string_lossy().starts_with(".ssh-verification-") }));
     }
 
     #[tokio::test]
