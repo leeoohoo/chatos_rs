@@ -20,6 +20,7 @@ Windows 产品版本：`3.0.9`
 - 任务终端已接入独立 AppContainer profile、项目目录读写租约、默认禁网、交互式 stdin/stdout/stderr、超时与进程树回收；绝对路径读写和租约恢复已有真实 Windows 测试。租约现在会在运行期间为工作目录父级临时授予仅 `FILE_TRAVERSE`，并在正常释放、启动失败和 journal 恢复时按 AppContainer SID 撤销，父级不获得列举、读写权限。
 - Plugin 应用后端的生产启动路径已接入独立 AppContainer：安装目录只读、数据与缓存目录读写，并按 manifest 的 `network.client` 选择 `loopback`/`controlled` capability；本机实测 `CheckNetIsolation LoopbackExempt` 返回 Win32 5（需要管理员权限），不能放进普通用户启动路径，Windows loopback exemption/proxy 尚未闭环，健康检查仍可能超时，测试构建继续使用 Host runtime 以保留既有健康检查覆盖。
 - Agent Plugin invocation journal 现在在每次校验私有 journal 根目录时，额外有界清理超过 24 小时的 canonical `.<小写 UUID>.tmp` 残留；清理复用普通非 reparse/单硬链接所有权检查，最多扫描 2,000 项，未知名称和近期临时文件保留。定向 journal 测试覆盖 stale、fresh、malformed 和扫描上限。
+- OpenSSH MFA 验证码提交与 AskPass 消费现在都通过同目录私有临时文件原子替换，读取方不会看到半截验证码；临时运行目录的既有有界清理会回收崩溃遗留。
 - Computer Use Windows worker 的本机协议门禁已补齐：`npm run smoke:windows` 现在同时验证 `--doctor`、真实 stdio `initialize`、`tools/list` 和只读 `tools/call(check_permissions)`，严格确认 `visual-computer-use` 身份、11 个工具契约及权限快照字段；仓库自带 worker 已完成真实 Notepad 截图、鼠标移动、按键和关闭链路，客户端触发的诊断与引导进程也通过进程组/Job Object 边界回收整棵进程树，跨平台 `.tgz` 与 Marketplace 签名发布仍未完成。
 - 任务审查窗口与桌面宠物状态已补齐键盘/无障碍语义：打开审查窗口后焦点落到关闭按钮，Tab 焦点保持在 modal 内，页签使用 roving focus 并支持方向键/Home/End，`Escape` 关闭并还原触发控件焦点，任务与检查页声明当前项及关联面板，宠物状态使用有界的 `polite` live region；这改善了键盘导航和屏幕阅读器投影，但不替代原生窗口逐态视觉取证。
 - 当前仍未完全拉齐的基础差异有三类：细粒度目标/目的地出站规则仍未完成；Plugin 应用后端的 Windows loopback 健康代理/exemption 尚未闭环；任务审查的原生窗口逐态视觉取证尚未完成。这些差异继续保持为不可编辑/不可用状态，不对用户虚报为已支持。
