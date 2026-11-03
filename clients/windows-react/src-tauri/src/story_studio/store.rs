@@ -1101,13 +1101,10 @@ fn cleanup_story_project(
         let path = entry.path();
         if name == "runs" && safe_cleanup_directory(&path) {
             cleanup_story_runs(&path, cutoff, state);
-        } else if canonical_story_project_temporary_name(&name)
-            && try_remove_stale_owned_file(&path, cutoff)
-        {
-            state.removed = state.removed.saturating_add(1);
-        } else if referenced_media
-            .as_ref()
-            .is_some_and(|media| canonical_story_media_name(&name) && !media.contains(&name))
+        } else if (canonical_story_project_temporary_name(&name)
+            || referenced_media
+                .as_ref()
+                .is_some_and(|media| canonical_story_media_name(&name) && !media.contains(&name)))
             && try_remove_stale_owned_file(&path, cutoff)
         {
             state.removed = state.removed.saturating_add(1);

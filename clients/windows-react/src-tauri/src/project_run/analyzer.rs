@@ -94,12 +94,12 @@ pub(crate) fn analyze_project(root: &Path) -> Result<ProjectRunAnalysis, String>
                 continue;
             }
             let lowercase = name.to_lowercase();
-            if metadata.is_dir() {
-                if depth < MAXIMUM_DEPTH && !IGNORED_DIRECTORIES.contains(&lowercase.as_str()) {
-                    if queue.len() < MAXIMUM_DIRECTORIES {
-                        queue.push_back((path, depth + 1));
-                    }
-                }
+            if metadata.is_dir()
+                && depth < MAXIMUM_DEPTH
+                && !IGNORED_DIRECTORIES.contains(&lowercase.as_str())
+                && queue.len() < MAXIMUM_DIRECTORIES
+            {
+                queue.push_back((path, depth + 1));
             } else if metadata.is_file() {
                 files.insert(lowercase, path);
             }

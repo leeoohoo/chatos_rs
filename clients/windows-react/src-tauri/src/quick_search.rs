@@ -1487,10 +1487,9 @@ mod tests {
                         modified_at: metadata.modified().unwrap_or(UNIX_EPOCH),
                     });
                 }
-                if metadata.is_dir() && depth < 12 {
-                    if directories.len() < MAXIMUM_SEARCH_DIRECTORIES {
-                        directories.push_back((path, depth + 1));
-                    }
+                if metadata.is_dir() && depth < 12 && directories.len() < MAXIMUM_SEARCH_DIRECTORIES
+                {
+                    directories.push_back((path, depth + 1));
                 }
             }
         }
