@@ -36,20 +36,12 @@ struct MessageTaskDetailSections: View {
                 }
             }
         }
-        if let report = task.lastRun?.acceptanceReport {
-            TaskDetailDisclosureSection(
-                title: report.checks.isEmpty ? "交付结果" : "验收结果",
-                defaultExpanded: true
-            ) {
-                VStack(alignment: .leading, spacing: 10) {
-                    TaskDetailMarkdownText(text: report.reason, allowsTextSelection: allowsTextSelection)
-                    ForEach(report.checks, id: \.criterionIndex) { check in
-                        TaskDetailNamedText(label: "\(check.criterionIndex + 1). \(check.status == "passed" ? "已通过" : check.status == "failed" ? "未通过" : "未核验")",
-                            value: check.evidence, allowsTextSelection: allowsTextSelection)
-                    }
-                    Text("验收依据来自执行者报告；不等同于浏览器或工具运行状态。")
-                        .foregroundStyle(.secondary)
-                }
+        if let report = task.lastRun?.acceptanceReport, report.checks.isEmpty {
+            TaskDetailDisclosureSection(title: "交付结果", defaultExpanded: true) {
+                TaskDetailMarkdownText(
+                    text: report.reason,
+                    allowsTextSelection: allowsTextSelection
+                )
             }
         }
         if let error = task.lastRun?.errorMessage, !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
