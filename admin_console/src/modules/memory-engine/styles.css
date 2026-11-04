@@ -417,7 +417,9 @@ body,
 }
 
 .engine-data-detail-tabs .ant-tabs-content-holder,
-.engine-data-detail-tabs .ant-tabs-content,
+.engine-data-detail-tabs .ant-tabs-body-holder,
+.engine-data-detail-tabs .ant-tabs-body,
+.engine-data-detail-tabs .ant-tabs-content:not(.ant-tabs-content-hidden),
 .engine-data-detail-tabs .ant-tabs-tabpane-active {
   display: flex;
   flex: 1;
