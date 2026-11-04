@@ -319,6 +319,25 @@ enum AgentDeliveryRepository {
         ) { string($0, 0) }
     }
 
+    static func outstandingDeliveryIDs(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        preparedStatement: () -> Void
+    ) throws -> [String] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT id FROM project_agent_deliveries
+            WHERE owner_user_id = ? AND target_agent_id = ?
+              AND status IN ('pending', 'running')
+            ORDER BY created_at_unix_ms, id
+            """,
+            [.text(ownerUserID), .text(agentID)]
+        ) { string($0, 0) }
+    }
+
     private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
         guard let value = sqlite3_column_text(statement, index) else { return "" }
         return String(cString: value)

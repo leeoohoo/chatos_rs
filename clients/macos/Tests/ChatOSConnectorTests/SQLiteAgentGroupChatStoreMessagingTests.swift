@@ -110,6 +110,186 @@ extension SQLiteAgentGroupChatStoreTests {
         XCTAssertNotEqual(replacement.id, room.id)
     }
 
+    func testArchiveAgentRemovesActiveStateButPreservesHistory() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let removed = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "待删除 Agent",
+                rolePrompt: "处理任务。",
+                modelConfigID: "model-1",
+                heartbeatEnabled: true
+            )
+        )
+        let replacement = try await makeAgent(store, name: "保留 Agent")
+        let room = try await makeRoom(store, projectID: "agent-archive-project")
+        _ = try await store.addMember(
+            ownerUserID: "alice", roomID: room.id, agentID: removed.id,
+            draft: .init(role: "负责人")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice", roomID: room.id, agentID: replacement.id,
+            draft: .init(role: "接替者")
+        )
+        _ = try await store.setDefaultAgent(
+            ownerUserID: "alice", roomID: room.id, agentID: removed.id
+        )
+        let direct = try await store.openHumanAgentDirect(
+            ownerUserID: "alice", agentID: removed.id
+        )
+        let directPost = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: direct.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "保留这条历史消息"),
+            limits: .init()
+        )
+        let delivery = try XCTUnwrap(directPost.deliveries.first)
+        let claimedDeliveryValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: removed.id,
+            nowUnixMs: directPost.message.createdAtUnixMs + 1
+        )
+        let claimedDelivery = try XCTUnwrap(claimedDeliveryValue)
+        let runID = UUID()
+        let context = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: direct.projectID,
+            roomID: direct.id,
+            agentID: removed.id,
+            deliveryID: claimedDelivery.id,
+            triggerMessageID: directPost.message.id,
+            rootMessageID: directPost.message.rootMessageID,
+            runID: runID.uuidString.lowercased(),
+            hopCount: claimedDelivery.hopCount
+        )
+        var checkpoint = AgentRunCheckpoint(
+            scope: LocalAgentGroupChatRun.runtimeScope(for: context),
+            messages: [.init(role: .system, content: "system")]
+        )
+        checkpoint.id = runID
+        checkpoint.status = .paused
+        try await store.saveRun(try LocalAgentGroupChatRun(
+            id: runID,
+            context: context,
+            modelConfigID: removed.draft.modelConfigID,
+            policy: .init(),
+            checkpoint: checkpoint,
+            createdAtUnixMs: directPost.message.createdAtUnixMs + 1,
+            updatedAtUnixMs: directPost.message.createdAtUnixMs + 1
+        ))
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: removed.id,
+            requestKey: "archive-agent-todo",
+            draft: .init(title: "未完成任务", teamRoomID: room.id),
+            nowUnixMs: directPost.message.createdAtUnixMs
+        )
+
+        let archived = try await store.archiveAgent(
+            ownerUserID: "alice",
+            agentID: removed.id,
+            nowUnixMs: directPost.message.createdAtUnixMs + 1
+        )
+
+        let activeAgents = try await store.listAgents(ownerUserID: "alice")
+        let allAgents = try await store.listAgents(ownerUserID: "alice", includeArchived: true)
+        let loadedRoom = try await store.room(ownerUserID: "alice", roomID: room.id)
+        let updatedRoom = try XCTUnwrap(loadedRoom)
+        let members = try await store.listMembers(ownerUserID: "alice", roomID: room.id)
+        let stoppedDelivery = try await store.delivery(
+            ownerUserID: "alice", deliveryID: delivery.id
+        )
+        let stoppedRun = try await store.run(ownerUserID: "alice", runID: runID)
+        let cancelledTodo = try await store.agentTodo(
+            ownerUserID: "alice", agentID: removed.id, todoID: todo.id
+        )
+        let activeDirects = try await store.listDirectConversations(ownerUserID: "alice")
+        let allDirects = try await store.listDirectConversations(
+            ownerUserID: "alice", includeArchived: true
+        )
+        let historicalMessages = try await store.listMessages(
+            ownerUserID: "alice", roomID: direct.id, afterUnixMs: nil, limit: 20
+        )
+
+        XCTAssertEqual(archived.status, .archived)
+        XCTAssertFalse(archived.draft.heartbeatEnabled)
+        XCTAssertNil(archived.nextHeartbeatAtUnixMs)
+        XCTAssertEqual(activeAgents.map(\.id), [replacement.id])
+        XCTAssertTrue(allAgents.contains { $0.id == removed.id && $0.status == .archived })
+        XCTAssertEqual(updatedRoom.defaultAgentID, replacement.id)
+        XCTAssertEqual(members.map(\.agentID), [replacement.id])
+        XCTAssertEqual(stoppedDelivery?.status, .failed)
+        XCTAssertEqual(stoppedRun?.checkpoint.status, .failed)
+        XCTAssertEqual(stoppedRun?.checkpoint.stopReason, "Agent 已由用户删除。")
+        XCTAssertEqual(cancelledTodo?.status, .cancelled)
+        XCTAssertTrue(activeDirects.isEmpty)
+        XCTAssertEqual(allDirects.first(where: { $0.id == direct.id })?.status, .archived)
+        XCTAssertTrue(historicalMessages.contains { $0.id == directPost.message.id })
+    }
+
+    func testArchiveAgentIsOwnerScoped() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(store, owner: "alice", name: "Alice Agent")
+
+        do {
+            _ = try await store.archiveAgent(
+                ownerUserID: "bob", agentID: agent.id, nowUnixMs: 10
+            )
+            XCTFail("another owner must not archive the Agent")
+        } catch let error as AgentGroupChatError {
+            guard case .notFound = error else { return XCTFail("unexpected error: \(error)") }
+        }
+
+        let aliceAgentIDs = try await store.listAgents(ownerUserID: "alice").map(\.id)
+        XCTAssertEqual(aliceAgentIDs, [agent.id])
+    }
+
+    func testArchiveProjectManagerTransfersAuthorityOnlyToAnotherManager() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        func makeManager(_ name: String) async throws -> LocalAgentProfile {
+            try await store.createAgent(
+                ownerUserID: "alice",
+                draft: .init(
+                    name: name,
+                    rolePrompt: "管理项目。",
+                    modelConfigID: "model-1",
+                    professionKey: "project_manager"
+                )
+            )
+        }
+        let removedManager = try await makeManager("原项目经理")
+        let replacementManager = try await makeManager("接任项目经理")
+        let room = try await store.createManagedRoom(
+            ownerUserID: "alice",
+            projectID: "manager-transfer-project",
+            draft: .init(name: "经理交接团队"),
+            projectManagerAgentID: removedManager.id
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: replacementManager.id,
+            draft: .init(role: "候补项目经理")
+        )
+
+        _ = try await store.archiveAgent(
+            ownerUserID: "alice",
+            agentID: removedManager.id,
+            nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
+
+        let activeRooms = try await store.listRooms(ownerUserID: "alice")
+        let loadedRoom = try XCTUnwrap(activeRooms.first)
+        XCTAssertEqual(loadedRoom.defaultAgentID, replacementManager.id)
+        XCTAssertEqual(loadedRoom.projectManagerAgentID, replacementManager.id)
+    }
+
     func testHumanAgentDirectReusesConversationAndRoutesWithoutProjectTeam() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }

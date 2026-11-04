@@ -259,6 +259,132 @@ extension SQLiteAgentGroupChatStore {
         }
     }
 
+    /// Safely removes an Agent from active use while preserving its profile, messages, Runs and
+    /// audit history. All dependent active state is closed in the same transaction so no scheduler
+    /// can continue dispatching work to an archived profile.
+    public func archiveAgent(
+        ownerUserID: String,
+        agentID: String,
+        nowUnixMs: Int64
+    ) throws -> LocalAgentProfile {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            guard let existing = try readAgent(ownerUserID: ownerUserID, agentID: agentID),
+                  existing.status == .active else {
+                throw AgentGroupChatError.notFound
+            }
+            let archivedAt = max(nowUnixMs, existing.updatedAtUnixMs)
+            let reason = "Agent 已由用户删除。"
+
+            _ = try stopOutstandingDeliveriesForAgentInTransaction(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                reason: reason,
+                nowUnixMs: archivedAt
+            )
+            try execute(
+                """
+                UPDATE local_agent_todos
+                SET status = 'cancelled', blocked_reason = '', result = ?,
+                    updated_at_unix_ms = ?
+                WHERE owner_user_id = ? AND agent_id = ?
+                  AND status IN ('pending', 'in_progress', 'blocked')
+                """,
+                [.text(reason), .integer(archivedAt), .text(ownerUserID), .text(agentID)]
+            )
+
+            // Direct chats are hidden from active navigation but remain intact for local history.
+            try execute(
+                """
+                UPDATE project_agent_rooms
+                SET status = 'archived', updated_at_unix_ms = ?
+                WHERE owner_user_id = ? AND status = 'active'
+                  AND conversation_kind != 'project_team'
+                  AND id IN (
+                    SELECT room_id FROM project_agent_room_members
+                    WHERE owner_user_id = ? AND agent_id = ? AND status = 'active'
+                  )
+                """,
+                [
+                    .integer(archivedAt), .text(ownerUserID),
+                    .text(ownerUserID), .text(agentID),
+                ]
+            )
+            try execute(
+                """
+                UPDATE project_agent_room_members
+                SET status = 'removed'
+                WHERE owner_user_id = ? AND agent_id = ? AND status = 'active'
+                  AND room_id IN (
+                    SELECT id FROM project_agent_rooms
+                    WHERE owner_user_id = ? AND conversation_kind = 'project_team'
+                  )
+                """,
+                [.text(ownerUserID), .text(agentID), .text(ownerUserID)]
+            )
+            // Repoint defaults after membership removal; an empty team legitimately has no default.
+            try execute(
+                """
+                UPDATE project_agent_rooms
+                SET default_agent_id = (
+                        SELECT member.agent_id
+                        FROM project_agent_room_members member
+                        JOIN local_agent_profiles profile
+                          ON profile.owner_user_id = member.owner_user_id
+                         AND profile.id = member.agent_id
+                        WHERE member.owner_user_id = project_agent_rooms.owner_user_id
+                          AND member.room_id = project_agent_rooms.id
+                          AND member.status = 'active' AND profile.status = 'active'
+                        ORDER BY member.joined_at_unix_ms, member.agent_id LIMIT 1
+                    ),
+                    updated_at_unix_ms = ?
+                WHERE owner_user_id = ? AND status = 'active'
+                  AND conversation_kind = 'project_team' AND default_agent_id = ?
+                """,
+                [.integer(archivedAt), .text(ownerUserID), .text(agentID)]
+            )
+            // Project-manager authority is never transferred to an arbitrary profession. Prefer
+            // another active project manager when one exists; otherwise leave the team unmanaged.
+            try execute(
+                """
+                UPDATE project_agent_rooms
+                SET project_manager_agent_id = (
+                        SELECT member.agent_id
+                        FROM project_agent_room_members member
+                        JOIN local_agent_profiles profile
+                          ON profile.owner_user_id = member.owner_user_id
+                         AND profile.id = member.agent_id
+                        WHERE member.owner_user_id = project_agent_rooms.owner_user_id
+                          AND member.room_id = project_agent_rooms.id
+                          AND member.status = 'active' AND profile.status = 'active'
+                          AND profile.profession_key = 'project_manager'
+                        ORDER BY member.joined_at_unix_ms, member.agent_id LIMIT 1
+                    ),
+                    updated_at_unix_ms = ?
+                WHERE owner_user_id = ? AND status = 'active'
+                  AND conversation_kind = 'project_team' AND project_manager_agent_id = ?
+                """,
+                [.integer(archivedAt), .text(ownerUserID), .text(agentID)]
+            )
+            try execute(
+                """
+                UPDATE local_agent_profiles
+                SET status = 'archived', heartbeat_enabled = 0,
+                    next_heartbeat_at_unix_ms = NULL, updated_at_unix_ms = ?
+                WHERE owner_user_id = ? AND id = ? AND status = 'active'
+                """,
+                [.integer(archivedAt), .text(ownerUserID), .text(agentID)]
+            )
+            guard sqlite3_changes(database) == 1,
+                  let archived = try readAgent(ownerUserID: ownerUserID, agentID: agentID) else {
+                throw AgentGroupChatError.conflict
+            }
+            return archived
+        }
+    }
+
     public func updateAgentMembership(
         ownerUserID: String,
         roomID: String,

@@ -25,6 +25,7 @@ struct AgentManagementView: View {
     @State private var showsSkillManager = false
     @State private var skillRevision = 0
     @State private var runToAbandon: AgentGroupChatWorkspaceViewModel.TriggerRunPresentation?
+    @State private var agentPendingDeletion: LocalAgentProfile?
     @State private var agentPage = 0
     @State private var agentPageSize = 20
     @State private var runPage = 0
@@ -157,6 +158,23 @@ struct AgentManagementView: View {
             expandedRunIDs = []
         }
         .confirmationDialog(
+            "删除这个 Agent？",
+            isPresented: Binding(
+                get: { agentPendingDeletion != nil },
+                set: { if !$0 { agentPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("删除 Agent", role: .destructive) {
+                guard let agent = agentPendingDeletion else { return }
+                agentPendingDeletion = nil
+                Task { await viewModel.deleteAgent(agent) }
+            }
+            Button("取消", role: .cancel) { agentPendingDeletion = nil }
+        } message: {
+            Text("Agent 会从列表和现有团队中移除，未完成的任务与运行会停止，主动巡检会关闭；历史消息、运行记录和审计数据仍保留在本机。")
+        }
+        .confirmationDialog(
             "结束这次运行？",
             isPresented: Binding(
                 get: { runToAbandon != nil },
@@ -192,8 +210,10 @@ struct AgentManagementView: View {
                 ?? agent.draft.professionKey,
             isSelected: viewModel.selectedAgentID == agent.id,
             isPreparingEditor: preparingEditorTargetID == agent.id,
+            isDeleting: viewModel.deletingAgentIDs.contains(agent.id),
             onOpenDirect: { openDirect(agent) },
             onEdit: { openEditor(.edit(agent)) },
+            onDelete: { agentPendingDeletion = agent },
             onSelect: { Task { await viewModel.selectAgent(agent.id) } }
         )
         .equatable()

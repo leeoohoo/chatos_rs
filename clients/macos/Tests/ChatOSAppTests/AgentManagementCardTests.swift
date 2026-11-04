@@ -31,7 +31,8 @@ final class AgentManagementCardTests: XCTestCase {
             ), createdAtUnixMs: 1, updatedAtUnixMs: 1),
             modelAvailability: availability, professionLabel: profession,
             isSelected: selected, isPreparingEditor: preparingID == id,
-            onOpenDirect: {}, onEdit: {}, onSelect: {}
+            isDeleting: false,
+            onOpenDirect: {}, onEdit: {}, onDelete: {}, onSelect: {}
         )
     }
 }

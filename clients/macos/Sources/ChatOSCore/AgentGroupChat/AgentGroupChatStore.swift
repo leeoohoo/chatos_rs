@@ -8,6 +8,11 @@ public protocol AgentGroupChatStore: Sendable {
         agentID: String,
         draft: LocalAgentProfileDraft
     ) async throws -> LocalAgentProfile
+    func archiveAgent(
+        ownerUserID: String,
+        agentID: String,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentProfile
     func updateAgentMembership(
         ownerUserID: String,
         roomID: String,
