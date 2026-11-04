@@ -246,6 +246,33 @@ pub struct SetActivePluginHookBundlesCommand {
     pub bundle_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResolveAgentTeamHookContextCommand {
+    pub owner_user_id: String,
+    pub session_id: String,
+    pub run_id: String,
+    pub prompt: String,
+    pub lane: String,
+    pub workspace_root: String,
+}
+
+impl ResolveAgentTeamHookContextCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        validate_identifier("session_id", &self.session_id)?;
+        validate_identifier("run_id", &self.run_id)?;
+        validate_text("prompt", &self.prompt, 256 * 1_024)?;
+        if !matches!(self.lane.as_str(), "manager" | "executor") {
+            return Err("lane must be manager or executor".to_string());
+        }
+        validate_text("workspace_root", &self.workspace_root, 4_096)?;
+        if !self.workspace_root.starts_with('/') {
+            return Err("workspace_root must be absolute".to_string());
+        }
+        Ok(())
+    }
+}
+
 impl SetActivePluginHookBundlesCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("owner_user_id", &self.owner_user_id)?;

@@ -17,6 +17,7 @@ public protocol AgentRuntimeExecuting: Sendable {
         tools: [AgentToolDefinition],
         execute: @escaping AgentRuntime.Executor,
         completionCheck: @escaping AgentRuntime.CompletionCheck,
+        incompletionReminder: @escaping AgentRuntime.IncompletionReminder,
         contextProvider: (any AgentContextProviding)?,
         record: @escaping AgentRuntime.Recorder
     ) async throws -> AgentRunCheckpoint
@@ -24,6 +25,31 @@ public protocol AgentRuntimeExecuting: Sendable {
 
 public extension AgentRuntimeExecuting {
     func checkExecutionAdmission() async throws {}
+
+    func executeRun(
+        checkpoint: AgentRunCheckpoint,
+        scope: String,
+        policy: AgentRunPolicy,
+        model: any AgentModelClient,
+        tools: [AgentToolDefinition],
+        execute: @escaping AgentRuntime.Executor,
+        completionCheck: @escaping AgentRuntime.CompletionCheck,
+        contextProvider: (any AgentContextProviding)?,
+        record: @escaping AgentRuntime.Recorder
+    ) async throws -> AgentRunCheckpoint {
+        try await executeRun(
+            checkpoint: checkpoint,
+            scope: scope,
+            policy: policy,
+            model: model,
+            tools: tools,
+            execute: execute,
+            completionCheck: completionCheck,
+            incompletionReminder: { nil },
+            contextProvider: contextProvider,
+            record: record
+        )
+    }
 }
 
 extension AgentRuntime: AgentRuntimeExecuting {
@@ -35,6 +61,7 @@ extension AgentRuntime: AgentRuntimeExecuting {
         tools: [AgentToolDefinition],
         execute: @escaping AgentRuntime.Executor,
         completionCheck: @escaping AgentRuntime.CompletionCheck,
+        incompletionReminder: @escaping AgentRuntime.IncompletionReminder,
         contextProvider: (any AgentContextProviding)?,
         record: @escaping AgentRuntime.Recorder
     ) async throws -> AgentRunCheckpoint {
@@ -46,6 +73,7 @@ extension AgentRuntime: AgentRuntimeExecuting {
             tools: tools,
             execute: execute,
             completionCheck: completionCheck,
+            incompletionReminder: incompletionReminder,
             contextProvider: contextProvider,
             record: record
         )

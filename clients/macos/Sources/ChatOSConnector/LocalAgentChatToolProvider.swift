@@ -32,6 +32,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let todoDependencyOptionsToolName = "todo_dependency_options"
     public static let todoGetContextToolName = "todo_get_context"
     public static let todoProgressAppendToolName = "todo_progress_append"
+    public static let todoAcceptanceUpdateToolName = "todo_acceptance_update"
     public static let todoReadProgressToolName = "todo_read_progress"
     public static let todoCompleteToolName = "todo_complete"
     public static let todoBlockToolName = "todo_block"
@@ -55,6 +56,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     let roomChangeHandler: @Sendable (String) async -> Void
     let progressiveSkills: LocalAgentProgressiveSkillSession
     let productSkills: ProductToolSkillSession
+    let managerInboxSession: LocalAgentManagerInboxSession
 
     public init(
         store: any AgentGroupChatStore,
@@ -79,6 +81,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             snapshot: progressiveSkillSnapshot
         )
         self.productSkills = productSkillSession
+        self.managerInboxSession = LocalAgentManagerInboxSession()
         self.limits = limits
         self.now = now
         self.references = LocalAgentRunReferenceVault(
@@ -101,6 +104,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             let executorTools: Set<String> = [
                 Self.todoGetContextToolName,
                 Self.todoProgressAppendToolName,
+                Self.todoAcceptanceUpdateToolName,
                 Self.todoCompleteToolName,
                 Self.todoBlockToolName,
                 Self.teamAssetListToolName,
@@ -115,6 +119,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         let executorOnly: Set<String> = [
             Self.todoGetContextToolName,
             Self.todoProgressAppendToolName,
+            Self.todoAcceptanceUpdateToolName,
             Self.todoCompleteToolName,
             Self.todoBlockToolName,
         ]
@@ -235,6 +240,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await todoGetContext(call)
         case Self.todoProgressAppendToolName:
             return try await appendTodoProgress(call)
+        case Self.todoAcceptanceUpdateToolName:
+            return try await updateTodoAcceptance(call)
         case Self.todoReadProgressToolName:
             return try await readTodoProgress(call)
         case Self.todoCompleteToolName:
@@ -361,7 +368,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
              todoAddToolName, todoUpdateToolName, todoReorderToolName,
              todoExecutionOptionsToolName, todoDependencyOptionsToolName:
             ProductToolSkillBindingID.todoPlanning
-        case todoGetContextToolName, todoProgressAppendToolName, todoReadProgressToolName,
+        case todoGetContextToolName, todoProgressAppendToolName, todoAcceptanceUpdateToolName,
+             todoReadProgressToolName,
              todoCompleteToolName, todoBlockToolName:
             ProductToolSkillBindingID.todoExecution
         case teamAssetListToolName, teamAssetGetToolName, teamAssetCreateToolName,

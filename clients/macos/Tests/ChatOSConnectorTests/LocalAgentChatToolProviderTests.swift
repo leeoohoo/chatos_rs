@@ -4,6 +4,16 @@ import ChatOSCore
 import Foundation
 import XCTest
 
+private struct StaticAgentToolProvider: AgentToolProvider, Sendable {
+    let toolDefinitions: [AgentToolDefinition]
+
+    func definitions() async throws -> [AgentToolDefinition] { toolDefinitions }
+
+    func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        .failure("Static test provider does not execute \(call.name)")
+    }
+}
+
 final class LocalAgentChatToolProviderTests: XCTestCase {
     func testAttachmentTextSliceDoesNotRequireMaterializingAllCharacters() {
         let text = String(repeating: "🙂", count: 50_000)
@@ -49,8 +59,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
     func testAllChatToolsHaveCentralSkillCoverage() {
         let report = LocalAgentChatToolProvider.skillCoverageReport()
 
-        XCTAssertEqual(report.totalTools, 33)
-        XCTAssertEqual(report.coveredTools, 33)
+        XCTAssertEqual(report.totalTools, 34)
+        XCTAssertEqual(report.coveredTools, 34)
         XCTAssertTrue(report.isComplete)
         XCTAssertTrue(report.issues.isEmpty)
     }
@@ -1038,6 +1048,18 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             name: LocalAgentChatToolProvider.todoScheduleStateToolName,
             arguments: "{}"
         ))
+        let rejectedUnreadCycle = try await provider.execute(.init(
+            id: "complete-before-read-all",
+            name: LocalAgentChatToolProvider.completeManagerCycleToolName,
+            arguments: "{}"
+        ))
+        XCTAssertTrue(rejectedUnreadCycle.isError)
+        XCTAssertTrue(rejectedUnreadCycle.content.contains("manager_inbox_not_read"))
+        _ = try await provider.execute(.init(
+            id: "read-all-before-complete",
+            name: LocalAgentChatToolProvider.readAllUnreadToolName,
+            arguments: "{}"
+        ))
         _ = try await provider.execute(.init(
             id: "complete-cycle",
             name: LocalAgentChatToolProvider.completeManagerCycleToolName,
@@ -1231,7 +1253,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         ))
         XCTAssertTrue(inbox.content.contains("今天放假通知"))
         XCTAssertTrue(inbox.content.contains("请修复登录错误"))
-        XCTAssertTrue(inbox.content.contains(#""marked_read":true"#))
+        XCTAssertTrue(inbox.content.contains(#""marked_read":false"#))
         XCTAssertFalse(inbox.content.contains(first.id))
         XCTAssertFalse(inbox.content.contains(second.id))
         XCTAssertFalse(inbox.content.contains(informational.message.id))
@@ -1242,8 +1264,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let secondUnread = try await store.listUnreadMessages(
             ownerUserID: "alice", roomID: second.id, agentID: agent.id, limit: 20
         )
-        XCTAssertTrue(firstUnread.messages.isEmpty)
-        XCTAssertTrue(secondUnread.messages.isEmpty)
+        XCTAssertFalse(firstUnread.messages.isEmpty)
+        XCTAssertFalse(secondUnread.messages.isEmpty)
 
         let json = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: Data(inbox.content.utf8)) as? [String: Any]
@@ -1338,8 +1360,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 ($0["name"] as? String) == second.draft.name
             })?["assignees"] as? [[String: Any]])?.first?["assignee_ref"] as? String
         )
-        // A restored runtime creates a fresh tool provider after the inbox cursor was already
-        // advanced. Every opaque authority issued earlier in the same Run must still resolve.
+        // A restored runtime creates a fresh tool provider before cycle completion. Unread
+        // messages remain replayable, and every opaque authority from the same Run still resolves.
         let resumedProvider = try await relayMCP.connect(
             context: context,
             todoPluginOptions: pluginOptions
@@ -1350,7 +1372,11 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             name: LocalAgentChatToolProvider.readAllUnreadToolName,
             arguments: "{}"
         ))
-        XCTAssertTrue(emptyAfterResume.content.contains(#""message_count":0"#))
+        XCTAssertTrue(emptyAfterResume.content.contains("今天放假通知"))
+        XCTAssertFalse(
+            emptyAfterResume.content.contains("请修复登录错误"),
+            "回复该消息时已经由通讯动作确认；未处理消息仍须安全重读"
+        )
 
         let foreignRunProvider = try await relayMCP.connect(
             context: try .init(
@@ -1868,10 +1894,29 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         ))
         let executorDefinitions = try await executor.definitions()
         XCTAssertEqual(Set(executorDefinitions.map(\.name)), Set([
-            "todo_get_context", "todo_progress_append", "todo_complete", "todo_block",
+            "todo_get_context", "todo_progress_append", "todo_acceptance_update",
+            "todo_complete", "todo_block",
             "team_asset_list", "team_asset_get",
             "agent_skill_activate", "agent_skill_read_resource",
         ]))
+        let capabilityProvider = StaticAgentToolProvider(
+            toolDefinitions: NativeAgentCapabilityBrokerToolCatalog.definitions(
+                skillToolNames: .agentGroupChat
+            )
+        )
+        let productionRegistry = try await AgentToolProviderRegistry(
+            providers: [executor, capabilityProvider]
+        )
+        XCTAssertEqual(
+            productionRegistry.definitions.count,
+            executorDefinitions.count + 5
+        )
+        XCTAssertTrue(productionRegistry.definitions.contains {
+            $0.name == "capability_skill_activate"
+        })
+        XCTAssertTrue(productionRegistry.definitions.contains {
+            $0.name == "agent_skill_activate"
+        })
         _ = try await store.appendAgentTodoProgress(
             ownerUserID: "alice",
             agentID: agent.id,
@@ -1908,13 +1953,34 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "detail": "已完成验证。",
             ])
         ))
+        let rejectedBeforeAcceptance = try await executor.execute(.init(
+            id: "complete-before-acceptance",
+            name: LocalAgentChatToolProvider.todoCompleteToolName,
+            arguments: try toolArguments(["summary": "不能用总结代替验收。"])
+        ))
+        XCTAssertTrue(rejectedBeforeAcceptance.isError)
+        XCTAssertTrue(rejectedBeforeAcceptance.content.contains("acceptance_checks_incomplete"))
+        let accepted = try await executor.execute(.init(
+            id: "accept-default-criterion",
+            name: LocalAgentChatToolProvider.todoAcceptanceUpdateToolName,
+            arguments: try toolArguments([
+                "criterion_index": 1,
+                "status": "passed",
+                "evidence": "已执行验证并读取结果。",
+                "requires_human": false,
+            ])
+        ))
+        XCTAssertFalse(accepted.isError, accepted.content)
         let missingCommit = try await executor.execute(.init(
             id: "complete-without-write-evidence",
             name: LocalAgentChatToolProvider.todoCompleteToolName,
             arguments: try toolArguments(["summary": "任务已经完成并通过验证。"])
         ))
         XCTAssertTrue(missingCommit.isError)
-        XCTAssertTrue(missingCommit.content.contains("project_write_commit_evidence_missing"))
+        XCTAssertTrue(
+            missingCommit.content.contains("project_write_commit_evidence_missing"),
+            missingCommit.content
+        )
         _ = try await store.appendAgentTodoProgress(
             ownerUserID: "alice",
             agentID: agent.id,
@@ -1932,7 +1998,10 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             arguments: try toolArguments(["summary": "任务已经完成并通过验证。"])
         ))
         XCTAssertTrue(missingReadback.isError)
-        XCTAssertTrue(missingReadback.content.contains("project_write_readback_evidence_missing"))
+        XCTAssertTrue(
+            missingReadback.content.contains("project_write_readback_evidence_missing"),
+            missingReadback.content
+        )
         _ = try await store.appendAgentTodoProgress(
             ownerUserID: "alice",
             agentID: agent.id,
@@ -1949,7 +2018,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             name: LocalAgentChatToolProvider.todoCompleteToolName,
             arguments: try toolArguments(["summary": "任务已经完成并通过验证。"])
         ))
-        XCTAssertFalse(completed.isError)
+        XCTAssertFalse(completed.isError, completed.content)
         _ = try await store.failDelivery(
             ownerUserID: "alice",
             deliveryID: concurrentManagerDelivery.id,
@@ -2012,10 +2081,16 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertTrue(progress.content.contains("已完成验证"))
         XCTAssertTrue(progress.content.contains("任务已经完成"))
         _ = try await manager.execute(.init(
+            id: "manager-read-all-before-complete",
+            name: LocalAgentChatToolProvider.readAllUnreadToolName,
+            arguments: "{}"
+        ))
+        let cycleCompletion = try await manager.execute(.init(
             id: "cycle-complete",
             name: LocalAgentChatToolProvider.completeManagerCycleToolName,
             arguments: "{}"
         ))
+        XCTAssertFalse(cycleCompletion.isError, cycleCompletion.content)
         let completedManagerDelivery = try await store.delivery(
             ownerUserID: "alice",
             deliveryID: managerDelivery.id
@@ -2027,6 +2102,119 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             limit: 20
         )
         XCTAssertEqual(directTranscript.map(\.content), ["并行处理通讯消息"])
+    }
+
+    func testHumanBlockedAcceptanceDoesNotSkipIndependentChecks() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let service = NativeAgentGroupChatService(databaseURL: url)
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "验收执行者", rolePrompt: "逐项验收。", modelConfigID: "model")
+        )
+        let room = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "acceptance-block-project",
+            draft: .init(name: "验收项目")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        let source = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "执行两项验收"),
+            limits: .init()
+        ).message
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "acceptance-block-todo",
+            draft: .init(
+                title: "逐项验收",
+                teamRoomID: room.id,
+                sourceRoomID: room.id,
+                sourceMessageID: source.id,
+                executionContract: .init(
+                    objective: "完成两项独立验收",
+                    scope: "测试",
+                    expectedOutputs: ["验收记录"],
+                    acceptanceCriteria: ["自动检查通过", "Human 提供测试账号"]
+                )
+            ),
+            nowUnixMs: source.createdAtUnixMs + 1
+        )
+        _ = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: source.createdAtUnixMs + 2
+        )
+        let claimedDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            lane: .executor,
+            nowUnixMs: source.createdAtUnixMs + 3
+        )
+        let delivery = try XCTUnwrap(claimedDelivery)
+        let provider = try await LocalAgentRelayMCPServer(
+            service: service,
+            now: { source.createdAtUnixMs + 4 }
+        ).connect(context: try .init(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            roomID: room.id,
+            agentID: agent.id,
+            deliveryID: delivery.id,
+            triggerMessageID: delivery.messageID,
+            rootMessageID: delivery.rootMessageID,
+            runID: "acceptance-block-run",
+            hopCount: 0,
+            lane: .executor
+        ))
+        let humanBlocked = try await provider.execute(.init(
+            id: "block-human-check",
+            name: LocalAgentChatToolProvider.todoAcceptanceUpdateToolName,
+            arguments: try toolArguments([
+                "criterion_index": 2,
+                "status": "blocked",
+                "evidence": "当前没有测试账号。",
+                "blocked_reason": "需要 Human 提供测试账号。",
+                "requires_human": true,
+            ])
+        ))
+        XCTAssertFalse(humanBlocked.isError, humanBlocked.content)
+        let prematureBlock = try await provider.execute(.init(
+            id: "premature-block",
+            name: LocalAgentChatToolProvider.todoBlockToolName,
+            arguments: #"{"reason":"等待测试账号"}"#
+        ))
+        XCTAssertTrue(prematureBlock.isError)
+        XCTAssertTrue(prematureBlock.content.contains("actionable_acceptance_checks_remaining"))
+        XCTAssertTrue(prematureBlock.content.contains("自动检查通过"))
+
+        let independentPassed = try await provider.execute(.init(
+            id: "pass-independent-check",
+            name: LocalAgentChatToolProvider.todoAcceptanceUpdateToolName,
+            arguments: try toolArguments([
+                "criterion_index": 1,
+                "status": "passed",
+                "evidence": "自动化检查返回 0。",
+                "requires_human": false,
+            ])
+        ))
+        XCTAssertFalse(independentPassed.isError, independentPassed.content)
+        XCTAssertTrue(independentPassed.content.contains(#""status":"blocked""#))
+        let persisted = try await store.agentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id
+        )
+        XCTAssertEqual(persisted?.status, .blocked)
+        XCTAssertEqual(persisted?.acceptanceChecks.map(\.status), [.passed, .blocked])
     }
 
     func testTodoAssigneeRoutesPrivateSourceReportToTeamWithoutInterrupting() async throws {

@@ -195,6 +195,95 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertEqual(communicationSkill.contentSHA256.count, 64)
     }
 
+    func testManagerAndExecutorReceiveOnlyTheirBoundMessageAttachments() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-bound-attachments-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(databaseURL: folder.appendingPathComponent("chat.db"))
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "附件执行者", rolePrompt: "处理来源附件。", modelConfigID: "model")
+        )
+        let room = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "attachment-project",
+            draft: .init(name: "附件团队")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        let sourceData = Data("todo-source".utf8)
+        let source = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "处理这个附件",
+                attachments: [.init(
+                    name: "source.txt",
+                    mimeType: "text/plain",
+                    kind: .file,
+                    origin: .file,
+                    data: sourceData
+                )]
+            )
+        ).message
+        let unrelated = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "无关消息",
+                attachments: [.init(
+                    name: "unrelated.txt",
+                    mimeType: "text/plain",
+                    kind: .file,
+                    origin: .file,
+                    data: Data("must-not-leak".utf8)
+                )]
+            )
+        ).message
+
+        let managerAttachments = try await LocalAgentGroupChatScheduler.boundInputAttachments(
+            store: store,
+            ownerUserID: "alice",
+            roomID: room.id,
+            triggerMessageID: source.id,
+            executionTodo: nil
+        )
+        XCTAssertEqual(managerAttachments.map(\.name), ["source.txt"])
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(managerAttachments.first?.localFileURL)), sourceData)
+
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "bound-attachment-todo",
+            draft: .init(
+                title: "只处理绑定来源",
+                teamRoomID: room.id,
+                sourceRoomID: room.id,
+                sourceMessageID: source.id
+            ),
+            nowUnixMs: 100
+        )
+        let executorAttachments = try await LocalAgentGroupChatScheduler.boundInputAttachments(
+            store: store,
+            ownerUserID: "alice",
+            roomID: room.id,
+            triggerMessageID: unrelated.id,
+            executionTodo: todo
+        )
+        XCTAssertEqual(executorAttachments.map(\.name), ["source.txt"])
+        XCTAssertFalse(executorAttachments.contains { $0.name == "unrelated.txt" })
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(executorAttachments.first?.localFileURL)), sourceData)
+    }
+
     func testSchedulerRunsDeliveryLocallyAndPersistsCompletedRun() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-scheduler-\(UUID().uuidString)")
@@ -399,7 +488,7 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         let completedRun = try XCTUnwrap(completedRunValue)
         XCTAssertEqual(completedRun.id, failedRun.id)
         XCTAssertEqual(completedRun.checkpoint.status, .completed)
-        XCTAssertEqual(completedRun.checkpoint.modelCalls, 2)
+        XCTAssertEqual(completedRun.checkpoint.modelCalls, 3)
         let completedDelivery = try await store.delivery(
             ownerUserID: "alice",
             deliveryID: firstPending.id

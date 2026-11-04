@@ -46,7 +46,8 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
     }
 
     public func definitions() async throws -> [AgentToolDefinition] {
-        guard try await canAccessLocalProjects() else { return [] }
+        guard context.lane == .manager,
+              try await canAccessLocalProjects() else { return [] }
         try await registerSkillBindings()
         let options = try await existingProjectOptions()
         let labels = options.map { "\($0.token)=\($0.label)" }.joined(separator: "；")
@@ -160,7 +161,8 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
     }
 
     public func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
-        guard try await canAccessLocalProjects() else {
+        guard context.lane == .manager,
+              try await canAccessLocalProjects() else {
             throw AgentGroupChatError.permissionDenied
         }
         try await registerSkillBindings()

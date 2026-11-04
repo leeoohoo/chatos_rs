@@ -14,7 +14,7 @@ public extension Notification.Name {
 }
 
 enum NativeLocalAgentHostProtocol {
-    static let version = 51
+    static let version = 52
 }
 
 public enum NativeLocalAgentHostPressureLevel: String, Codable, Sendable, Comparable {

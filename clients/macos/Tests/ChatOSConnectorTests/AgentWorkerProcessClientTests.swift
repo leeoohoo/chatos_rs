@@ -103,6 +103,47 @@ final class AgentWorkerProcessClientTests: XCTestCase {
         XCTAssertTrue(kinds.contains("completed"))
     }
 
+    func testBuiltWorkerRequestsSpecificIncompletionReminderThroughIPC() async throws {
+        let executable = try workerExecutable()
+        let scope = "agent-worker-specific-incompletion-reminder"
+        var checkpoint = AgentRunCheckpoint(
+            scope: scope,
+            messages: [.init(role: .user, content: "完成所有验收项")]
+        )
+        checkpoint.id = UUID()
+        let model = AgentWorkerSpecificReminderModel()
+        let result = try await AgentWorkerProcessClient(
+            executableURL: executable,
+            shutdownGraceSeconds: 5
+        ).executeRun(
+            checkpoint: checkpoint,
+            scope: scope,
+            policy: testPolicy(),
+            model: model,
+            tools: [.init(
+                name: "finish",
+                description: "完成运行",
+                schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8),
+                effect: .terminal
+            )],
+            execute: { call in
+                XCTAssertEqual(call.name, "finish")
+                return .init("worker-completed-after-reminder")
+            },
+            completionCheck: { nil },
+            incompletionReminder: {
+                "仍未通过：#2 [failed] 编译并运行测试。请继续调用工具。"
+            },
+            contextProvider: nil,
+            record: { _, _ in }
+        )
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.result, "worker-completed-after-reminder")
+        let didReceiveSpecificReminder = await model.didReceiveSpecificReminder()
+        XCTAssertTrue(didReceiveSpecificReminder)
+    }
+
     func testConcurrentRunsUseDistinctWorkerProcessesAndDoNotBlockEachOther() async throws {
         guard let path = ProcessInfo.processInfo.environment["CHATOS_TEST_AGENT_WORKER_PATH"],
               !path.isEmpty else {
@@ -768,6 +809,30 @@ private struct AgentWorkerTestModel: AgentModelClient {
             .init(id: "finish-call", name: "finish", arguments: "{}"),
         ])
     }
+}
+
+private actor AgentWorkerSpecificReminderModel: AgentModelClient {
+    private var callCount = 0
+    private var sawSpecificReminder = false
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        callCount += 1
+        if callCount == 1 {
+            return .init(role: .assistant, content: "我已完成。")
+        }
+        sawSpecificReminder = messages.contains {
+            $0.role == .user && $0.content.contains("#2 [failed] 编译并运行测试")
+        }
+        return .init(role: .assistant, toolCalls: [
+            .init(id: "finish-after-reminder", name: "finish", arguments: "{}"),
+        ])
+    }
+
+    func didReceiveSpecificReminder() -> Bool { sawSpecificReminder }
 }
 
 private actor AgentWorkerTestMemory: AgentMemoryServicing {

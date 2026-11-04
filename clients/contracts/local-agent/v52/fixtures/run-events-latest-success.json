@@ -1,5 +1,5 @@
 {
-  "protocol_version": 51,
+  "protocol_version": 52,
   "command_id": "contract-run-events-latest-1",
   "ok": true,
   "result": {

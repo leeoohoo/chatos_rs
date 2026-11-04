@@ -254,5 +254,15 @@ extension AgentGroupChatMigrations {
                 throw error
             }
         }
+        if !hasColumn("acceptance_checks_json", table: "local_agent_todos") {
+            try execute(
+                "ALTER TABLE local_agent_todos ADD COLUMN acceptance_checks_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        }
+        if !hasMigration(34) {
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (34)"
+            )
+        }
     }
 }

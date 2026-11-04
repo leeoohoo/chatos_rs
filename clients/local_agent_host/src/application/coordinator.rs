@@ -833,6 +833,30 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
                 ),
             );
         }
+        if let HostCommand::ResolveAgentTeamHookContext(command) = &request.command {
+            if let Err(message) = request.validate() {
+                return HostResponseEnvelope::failure(
+                    request.command_id,
+                    HostError::new("invalid_request", message, false),
+                );
+            }
+            let Some(hooks) = self.hook_coordinator.as_ref() else {
+                return HostResponseEnvelope::success(
+                    request.command_id,
+                    HostResult::AgentTeamHookContext { contexts: Vec::new() },
+                );
+            };
+            return match hooks.resolve_agent_team_context(command).await {
+                Ok(contexts) => HostResponseEnvelope::success(
+                    request.command_id,
+                    HostResult::AgentTeamHookContext { contexts },
+                ),
+                Err(message) => HostResponseEnvelope::failure(
+                    request.command_id,
+                    HostError::new("hook_execution_failed", message, true),
+                ),
+            };
+        }
         if let HostCommand::StartConversationTurn(command) = &request.command {
             if let Err(message) = request.validate() {
                 return HostResponseEnvelope::failure(
@@ -992,6 +1016,7 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::ListPluginHookBundles(_)
         | HostCommand::ListPluginHookInvocations(_)
         | HostCommand::SetActivePluginHookBundles(_)
+        | HostCommand::ResolveAgentTeamHookContext(_)
         | HostCommand::CreateConversation(_)
         | HostCommand::GetConversation(_)
         | HostCommand::GetConversationContext(_)

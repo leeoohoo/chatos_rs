@@ -11,7 +11,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: readAllUnreadToolName,
-            description: "读取当前 Agent 账户在全部群聊和私聊中的未读消息。Agent 每次启动和重试都先调用本工具，不把触发群聊当作运行范围。返回内容即视为已读并自动推进各会话游标；回复时只把 message_ref 传给 chat_send_message，通讯层自行定位原会话。消息不一定需要行动，请自行判断是否回复、忽略或加入 TodoList。",
+            description: "读取当前 Agent 账户在全部群聊和私聊中的未读消息。Agent 每次启动和重试都先调用本工具，不把触发群聊当作运行范围。消息会在 agent_cycle_complete 成功时与通讯周期原子确认；中途崩溃或恢复会安全重读，不会丢消息。回复时只把 message_ref 传给 chat_send_message，通讯层自行定位原会话。消息不一定需要行动，请自行判断是否回复、忽略或加入 TodoList。",
             schema: Data(#"{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}"#.utf8)
         ),
         .init(
@@ -181,14 +181,20 @@ extension LocalAgentChatToolProvider {
             effect: .write
         ),
         .init(
+            name: todoAcceptanceUpdateToolName,
+            description: "仅用于 Todo 执行线程：逐项记录验收结果。criterion_index 使用 todo_get_context 返回的 1 起始序号；passed 必须提供可核验证据，failed 说明当前验证失败及后续动作，blocked 必须说明原因并明确是否确实需要 Human。某一项需要 Human 不代表其余项目可以跳过，仍须继续处理所有独立项目。",
+            schema: Data(#"{"type":"object","properties":{"criterion_index":{"type":"integer","minimum":1,"maximum":64},"status":{"type":"string","enum":["passed","failed","blocked"]},"evidence":{"type":"string","maxLength":16000},"blocked_reason":{"type":"string","maxLength":8000},"requires_human":{"type":"boolean","default":false}},"required":["criterion_index","status","evidence","requires_human"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
             name: todoCompleteToolName,
-            description: "仅用于 Todo 执行线程：当前任务负责人保存完成总结，把自己负责的任务置为 completed 并结束执行；不要求负责人是项目经理。负责人职责内的可核验交付已完成、后续需要不同角色继续时，应在总结中明确交接并正常完成，由项目经理另建后续 Todo；不要仅因项目存在下一步而把当前任务阻塞。发现应长期保留的项目背景、进度、技术栈、架构、规范、决策或参考资料时，通过 asset_update_suggestions 提交完整 Markdown 和事实理由。建议只进入完成事件，由项目经理审核后才能写入团队共享资产；不要为没有持久价值的过程信息提交建议。",
+            description: "仅用于 Todo 执行线程：只有 todo_get_context 中每个 acceptance_check 都已经通过 todo_acceptance_update 标记为 passed，才保存完成总结、置为 completed 并结束执行；自由文本总结不能代替逐项验收。不要求负责人是项目经理。负责人职责内的可核验交付已完成、后续需要不同角色继续时，应在总结中明确交接并正常完成，由项目经理另建后续 Todo。发现应长期保留的项目背景、进度、技术栈、架构、规范、决策或参考资料时，通过 asset_update_suggestions 提交完整 Markdown 和事实理由。",
             schema: Data(#"{"type":"object","properties":{"summary":{"type":"string","minLength":1,"maxLength":16000},"asset_update_suggestions":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"category":{"type":"string","enum":["overview","current_progress","tech_stack","architecture","conventions","decision","reference"]},"title":{"type":"string","minLength":1,"maxLength":240},"markdown":{"type":"string","minLength":1,"maxLength":128000},"rationale":{"type":"string","minLength":1,"maxLength":4000}},"required":["category","title","markdown","rationale"],"additionalProperties":false}}},"required":["summary"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: todoBlockToolName,
-            description: "仅用于 Todo 执行线程：只在当前负责人自己的职责内交付因缺少必要信息、权限、访问或安全恢复路径而无法继续时，保存精确原因和执行现场并置为 blocked。负责人已经完成自身可核验交付、剩余只是不同角色的后续工作时，必须改用 todo_complete 并在总结中写明交接，由项目经理拆单、重派或协调；不得把普通依赖直接要求 Human 处理。",
+            description: "仅用于 Todo 执行线程：只有至少一项 acceptance_check 已标记 blocked 且 requires_human=true，并且其他独立验收项均已 passed，才保存精确原因并置为 blocked。一个 Human 阻塞项不能跳过其他仍可执行的项目；普通失败或可由 Agent 继续处理的阻塞不会结束任务。",
             schema: Data(#"{"type":"object","properties":{"reason":{"type":"string","minLength":1,"maxLength":8000}},"required":["reason"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),

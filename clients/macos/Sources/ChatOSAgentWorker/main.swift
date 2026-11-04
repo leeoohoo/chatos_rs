@@ -354,6 +354,21 @@ do {
             }
             return response.result
         },
+        incompletionReminder: {
+            let request = AgentWorkerIncompletionReminderRequest(id: UUID())
+            try await peer.send(.incompletionReminderRequest(request))
+            guard case let .incompletionReminderResponse(response) = try await peer.receive(),
+                  response.requestID == request.id else {
+                throw AgentRuntimeError.invalidResponse
+            }
+            if let failure = response.failure {
+                throw AgentRemoteCallbackError(
+                    detail: failure.detail,
+                    transient: failure.transient
+                )
+            }
+            return response.reminder
+        },
         contextProvider: contextProvider,
         record: { checkpoint, event in
             let request = AgentWorkerRecordRequest(

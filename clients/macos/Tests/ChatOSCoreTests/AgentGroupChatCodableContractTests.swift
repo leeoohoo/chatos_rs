@@ -208,13 +208,21 @@ final class AgentGroupChatCodableContractTests: XCTestCase {
                 selectionRevision: "revision-1",
                 selectedAtUnixMs: 90
             ),
+            acceptanceChecks: [.init(
+                position: 1,
+                criterion: "Round-trip passes",
+                status: .passed,
+                evidence: "Round-trip test passed",
+                updatedAtUnixMs: 200
+            )],
             createdAtUnixMs: 100,
             updatedAtUnixMs: 200
         )
         try assertRoundTrip(todo, expectedKeys: [
             "id", "ownerUserID", "agentID", "teamRoomID", "sourceRoomID", "sourceMessageID",
             "title", "detail", "priority", "sortOrder", "status", "blockedReason", "result",
-            "executionContract", "executionPlan", "createdAtUnixMs", "updatedAtUnixMs",
+            "executionContract", "executionPlan", "acceptanceChecks",
+            "createdAtUnixMs", "updatedAtUnixMs",
         ])
         let todoObject = try encodedObject(todo)
         XCTAssertEqual(

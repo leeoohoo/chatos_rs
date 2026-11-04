@@ -157,6 +157,20 @@ public struct AgentWorkerCompletionResponse: Codable, Equatable, Sendable {
     }
 }
 
+public struct AgentWorkerIncompletionReminderRequest: Codable, Equatable, Sendable {
+    public let id: UUID
+    public init(id: UUID) { self.id = id }
+}
+
+public struct AgentWorkerIncompletionReminderResponse: Codable, Equatable, Sendable {
+    public let requestID: UUID
+    public let reminder: String?
+    public let failure: AgentWorkerRemoteFailure?
+    public init(requestID: UUID, reminder: String?, failure: AgentWorkerRemoteFailure? = nil) {
+        self.requestID = requestID; self.reminder = reminder; self.failure = failure
+    }
+}
+
 public struct AgentWorkerContextRequest: Codable, Equatable, Sendable {
     public let id: UUID
     public let checkpoint: AgentRunCheckpoint
@@ -239,6 +253,8 @@ public enum AgentWorkerMessage: Codable, Equatable, Sendable {
     case toolResponse(AgentWorkerToolResponse)
     case completionRequest(AgentWorkerCompletionRequest)
     case completionResponse(AgentWorkerCompletionResponse)
+    case incompletionReminderRequest(AgentWorkerIncompletionReminderRequest)
+    case incompletionReminderResponse(AgentWorkerIncompletionReminderResponse)
     case contextRequest(AgentWorkerContextRequest)
     case contextResponse(AgentWorkerContextResponse)
     case recordRequest(AgentWorkerRecordRequest)

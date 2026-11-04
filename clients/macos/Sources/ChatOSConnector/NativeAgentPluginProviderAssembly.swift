@@ -59,7 +59,10 @@ extension NativeLocalConnectorService {
                     componentKey: componentKey,
                     displayName: displayName,
                     description: server.agent?.description ?? manifest.description,
-                    allowsParallelTaskExecution: server.allowsParallelTaskExecution
+                    allowsParallelTaskExecution: server.allowsParallelTaskExecution,
+                    releaseID: record.releaseID,
+                    version: record.version,
+                    artifactSHA256: record.artifactSHA256
                 )
             }
             if !mcpComponents.isEmpty {
@@ -83,7 +86,10 @@ extension NativeLocalConnectorService {
                 description: manifest.description.isEmpty
                     ? "Installed Plugin Skills"
                     : manifest.description,
-                allowsParallelTaskExecution: false
+                allowsParallelTaskExecution: false,
+                releaseID: record.releaseID,
+                version: record.version,
+                artifactSHA256: record.artifactSHA256
             )
             let selectionID = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
                 pluginKey: plugin.pluginKey,
@@ -328,9 +334,14 @@ extension NativeLocalConnectorService {
         let installed = try await installedAgentPlugins(ownerUserID: ownerUserID)
         let installedByID = Dictionary(uniqueKeysWithValues: installed.map { ($0.id, $0) })
         let selectedPlugins = try executionPlan.plugins.map { selection in
-            guard let plugin = installedByID["\(selection.pluginID):\(selection.componentKey)"] else {
+            guard let plugin = installedByID["\(selection.pluginID):\(selection.componentKey)"],
+                  !selection.releaseID.isEmpty,
+                  selection.pluginKey == plugin.pluginKey,
+                  selection.releaseID == plugin.releaseID,
+                  selection.version == plugin.version,
+                  selection.artifactSHA256 == plugin.artifactSHA256 else {
                 throw NativePluginRuntimeError.invalidRequest(
-                    "Todo 所需 Plugin component「\(selection.displayName)」已经卸载或停用，请由通讯线程调整任务计划。"
+                    "Todo 固定的 Plugin Release「\(selection.displayName)」已经卸载、停用或发生变化，请由项目经理重新规划任务。"
                 )
             }
             return plugin
@@ -342,7 +353,8 @@ extension NativeLocalConnectorService {
             projectContext: projectContext,
             resolvedProject: resolvedProject,
             builtinCapabilities: Set(executionPlan.builtinCapabilities),
-            installedPlugins: selectedPlugins
+            installedPlugins: selectedPlugins,
+            skillToolNames: .agentGroupChat
         )
     }
     func approveAgentPluginTool(

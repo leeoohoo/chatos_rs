@@ -157,6 +157,9 @@ pub enum HostResult {
     ActivePluginHookBundlesUpdated {
         active_bundle_ids: Vec<String>,
     },
+    AgentTeamHookContext {
+        contexts: Vec<String>,
+    },
     Conversation {
         conversation: LocalConversationDetail,
     },

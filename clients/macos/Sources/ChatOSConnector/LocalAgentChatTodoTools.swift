@@ -96,6 +96,18 @@ extension LocalAgentChatToolProvider {
             var assignees: [TodoAssigneeOptionResponse] = []
             for member in members where member.status == .active {
                 guard let profile = profilesByID[member.agentID] else { continue }
+                let allowedOptions = todoPluginOptions.filter { option in
+                    (profile.draft.defaultPluginIDs.isEmpty
+                        || profile.draft.defaultPluginIDs.contains(option.pluginID))
+                        && (member.draft.pluginAllowlist.isEmpty
+                            || member.draft.pluginAllowlist.contains(option.pluginID))
+                }
+                var allowedPluginReferences: [String] = []
+                for option in allowedOptions {
+                    allowedPluginReferences.append(
+                        await references.pluginReference(option: option)
+                    )
+                }
                 assignees.append(.init(
                     assigneeReference: await references.assigneeReference(
                         agentID: member.agentID,
@@ -104,6 +116,8 @@ extension LocalAgentChatToolProvider {
                     name: profile.draft.name,
                     profession: profile.draft.professionKey,
                     role: member.draft.role,
+                    responsibility: member.draft.responsibility,
+                    allowedPluginReferences: allowedPluginReferences,
                     isProjectManager: room.projectManagerAgentID == member.agentID
                 ))
             }

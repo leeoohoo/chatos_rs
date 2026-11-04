@@ -68,6 +68,7 @@ pub use hook::{
     ListPluginHookBundlesCommand, ListPluginHookInvocationsCommand, LocalPluginHookBundleRecord,
     LocalPluginHookBundleSpec, LocalPluginHookDefinition, LocalPluginHookInvocationDiagnostic,
     LocalPluginHookInvocationPage, PutPluginHookBundleCommand, SetActivePluginHookBundlesCommand,
+    ResolveAgentTeamHookContextCommand,
     LOCAL_PLUGIN_HOOK_HISTORY_MAX_PAGE_SIZE, LOCAL_PLUGIN_HOOK_MAX_BUNDLES,
     LOCAL_PLUGIN_HOOK_MAX_DEFINITIONS,
 };
@@ -137,7 +138,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 51;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 52;
 /// Maximum bytes in one physical IPC frame. The high bit of the frame prefix is reserved
 /// as the continuation flag, so this limit must stay below `i32::MAX`.
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
@@ -218,6 +219,7 @@ pub enum HostCommand {
     ListPluginHookBundles(ListPluginHookBundlesCommand),
     ListPluginHookInvocations(ListPluginHookInvocationsCommand),
     SetActivePluginHookBundles(SetActivePluginHookBundlesCommand),
+    ResolveAgentTeamHookContext(ResolveAgentTeamHookContextCommand),
     CreateConversation(CreateConversationCommand),
     GetConversation(GetConversationCommand),
     GetConversationContext(GetConversationCommand),
@@ -306,6 +308,7 @@ impl HostCommand {
             Self::ListPluginHookBundles(command) => command.validate(),
             Self::ListPluginHookInvocations(command) => command.validate(),
             Self::SetActivePluginHookBundles(command) => command.validate(),
+            Self::ResolveAgentTeamHookContext(command) => command.validate(),
             Self::CreateConversation(command) => command.validate(),
             Self::GetConversation(command) => command.validate(),
             Self::GetConversationContext(command) => command.validate(),

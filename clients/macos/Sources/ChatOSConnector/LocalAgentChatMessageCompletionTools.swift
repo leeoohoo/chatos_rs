@@ -46,9 +46,21 @@ extension LocalAgentChatToolProvider {
                 nextTool: Self.todoStartNextToolName
             )
         }
-        _ = try await store.completeHeartbeatDelivery(
+        let inboxReceipt = await managerInboxSession.completionReceipt()
+        guard inboxReceipt.didRead else {
+            return Self.structuredFailure(
+                code: "manager_inbox_not_read",
+                field: "manager_cycle",
+                message: "本轮尚未读取全局未读消息。请先调用 chat_read_all_unread，再处理消息和任务。",
+                retryable: true,
+                nextTool: Self.readAllUnreadToolName
+            )
+        }
+        _ = try await store.completeManagerCycleDelivery(
             ownerUserID: context.ownerUserID,
             deliveryID: context.deliveryID,
+            agentID: context.agentID,
+            readThroughMessageIDsByRoom: inboxReceipt.readThrough,
             nowUnixMs: now()
         )
         return try Self.outcome(["status": "completed"])

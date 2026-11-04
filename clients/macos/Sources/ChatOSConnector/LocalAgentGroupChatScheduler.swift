@@ -288,6 +288,14 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     public typealias ContextLanguageProvider = @Sendable (
         _ ownerUserID: String
     ) async -> ChatOSLanguage
+    public typealias TeamHookContextProvider = @Sendable (
+        _ ownerUserID: String,
+        _ projectID: String,
+        _ roomID: String,
+        _ runID: String,
+        _ lane: LocalAgentRunLane,
+        _ prompt: String
+    ) async throws -> [String]
 
     let service: NativeAgentGroupChatService
     let services: any AgentServiceProviding
@@ -305,6 +313,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     let professionCatalogProvider: ProfessionCatalogProvider
     let todoPluginCatalogProvider: TodoPluginCatalogProvider
     let contextLanguageProvider: ContextLanguageProvider
+    let teamHookContextProvider: TeamHookContextProvider
     let now: @Sendable () -> Int64
 
     public init(
@@ -327,6 +336,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         },
         todoPluginCatalogProvider: @escaping TodoPluginCatalogProvider = { _ in [] },
         contextLanguageProvider: @escaping ContextLanguageProvider = { _ in .simplifiedChinese },
+        teamHookContextProvider: @escaping TeamHookContextProvider = { _, _, _, _, _, _ in [] },
         additionalToolProviders: @escaping AdditionalToolProviderFactory = { _, _, _, _ in [] },
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
@@ -358,6 +368,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.professionCatalogProvider = professionCatalogProvider
         self.todoPluginCatalogProvider = todoPluginCatalogProvider
         self.contextLanguageProvider = contextLanguageProvider
+        self.teamHookContextProvider = teamHookContextProvider
         self.additionalToolProviders = additionalToolProviders
         self.now = now
     }

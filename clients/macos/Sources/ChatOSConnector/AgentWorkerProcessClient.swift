@@ -82,6 +82,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
         tools: [AgentToolDefinition],
         execute: @escaping AgentRuntime.Executor,
         completionCheck: @escaping AgentRuntime.CompletionCheck,
+        incompletionReminder: @escaping AgentRuntime.IncompletionReminder,
         contextProvider: (any AgentContextProviding)?,
         record: @escaping AgentRuntime.Recorder
     ) async throws -> AgentRunCheckpoint {
@@ -128,6 +129,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
                             tools: tools,
                             execute: execute,
                             completionCheck: completionCheck,
+                            incompletionReminder: incompletionReminder,
                             contextProvider: contextProvider,
                             modelTransportConfiguration: modelTransportConfiguration,
                             record: record
@@ -162,6 +164,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
         tools: [AgentToolDefinition],
         execute: @escaping AgentRuntime.Executor,
         completionCheck: @escaping AgentRuntime.CompletionCheck,
+        incompletionReminder: @escaping AgentRuntime.IncompletionReminder,
         contextProvider: (any AgentContextProviding)?,
         modelTransportConfiguration: AgentWorkerModelTransportConfiguration?,
         record: @escaping AgentRuntime.Recorder
@@ -178,6 +181,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
                         tools: tools,
                         execute: execute,
                         completionCheck: completionCheck,
+                        incompletionReminder: incompletionReminder,
                         contextProvider: contextProvider,
                         modelTransportConfiguration: modelTransportConfiguration,
                         record: record
@@ -213,6 +217,7 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
         tools: [AgentToolDefinition],
         execute: @escaping AgentRuntime.Executor,
         completionCheck: @escaping AgentRuntime.CompletionCheck,
+        incompletionReminder: @escaping AgentRuntime.IncompletionReminder,
         contextProvider: (any AgentContextProviding)?,
         modelTransportConfiguration: AgentWorkerModelTransportConfiguration?,
         record: @escaping AgentRuntime.Recorder
@@ -309,6 +314,20 @@ public struct AgentWorkerProcessClient: AgentRuntimeExecuting, Sendable {
                     try await controller.send(.completionResponse(.init(
                         requestID: request.id,
                         result: nil,
+                        failure: remoteFailure(error)
+                    )))
+                }
+            case let .incompletionReminderRequest(request):
+                do {
+                    let reminder = try await incompletionReminder()
+                    try await controller.send(.incompletionReminderResponse(.init(
+                        requestID: request.id,
+                        reminder: reminder
+                    )))
+                } catch {
+                    try await controller.send(.incompletionReminderResponse(.init(
+                        requestID: request.id,
+                        reminder: nil,
                         failure: remoteFailure(error)
                     )))
                 }

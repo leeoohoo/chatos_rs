@@ -9,12 +9,29 @@ public struct LocalAgentTodoPluginOption: Sendable, Equatable {
     public let componentKey: String
     public let displayName: String
     public let description: String
+    public let pluginKey: String
+    public let releaseID: String
+    public let version: String
+    public let artifactSHA256: String
 
-    public init(pluginID: String, componentKey: String, displayName: String, description: String) {
+    public init(
+        pluginID: String,
+        componentKey: String,
+        displayName: String,
+        description: String,
+        pluginKey: String = "",
+        releaseID: String = "",
+        version: String = "",
+        artifactSHA256: String = ""
+    ) {
         self.pluginID = pluginID
         self.componentKey = componentKey
         self.displayName = displayName
         self.description = description
+        self.pluginKey = pluginKey
+        self.releaseID = releaseID
+        self.version = version
+        self.artifactSHA256 = artifactSHA256
     }
 }
 

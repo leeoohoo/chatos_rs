@@ -659,6 +659,9 @@ impl LocalAgentRuntime {
             | HostCommand::SetActivePluginHookBundles(_)) => {
                 self.handle_plugin_command(&idempotency, command).await
             }
+            HostCommand::ResolveAgentTeamHookContext(_) => {
+                unreachable!("Agent team Hook context is resolved by the Host coordinator")
+            }
             command @ (HostCommand::CreateConversation(_)
             | HostCommand::GetConversation(_)
             | HostCommand::GetConversationContext(_)

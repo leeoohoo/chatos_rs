@@ -52,6 +52,7 @@ impl HostCommand {
             Self::ListPluginHookBundles(command) => Some(&command.owner_user_id),
             Self::ListPluginHookInvocations(command) => Some(&command.owner_user_id),
             Self::SetActivePluginHookBundles(command) => Some(&command.owner_user_id),
+            Self::ResolveAgentTeamHookContext(command) => Some(&command.owner_user_id),
             Self::CreateConversation(command) => Some(&command.owner_user_id),
             Self::GetConversation(command) => Some(&command.owner_user_id),
             Self::GetConversationContext(command) => Some(&command.owner_user_id),

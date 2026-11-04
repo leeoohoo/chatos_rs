@@ -420,7 +420,7 @@ enum AgentTodoRepository {
                     try AgentGroupChatRowMapper.todo(statement)
                 }
                 return StartState(
-                    agentIsActive: sqlite3_column_int64(statement, 18) != 0,
+                    agentIsActive: sqlite3_column_int64(statement, 19) != 0,
                     todo: todo
                 )
             }

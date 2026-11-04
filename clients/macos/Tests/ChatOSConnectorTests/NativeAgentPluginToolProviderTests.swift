@@ -597,6 +597,32 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertFalse(recovered.isError)
         XCTAssertTrue(recovered.content.contains("local-plugin-ok"))
 
+        do {
+            _ = try await service.makeAgentCapabilityToolProvider(
+                ownerUserID: "alice",
+                runContext: runContext,
+                projectContext: .init(
+                    projectID: "project-1",
+                    projectName: "Test",
+                    projectRoot: project.path
+                ),
+                executionPlan: .init(plugins: [.init(
+                    pluginID: "plugin-1",
+                    componentKey: "test-mcp",
+                    displayName: "test-agent-plugin",
+                    pluginKey: "plugin-1",
+                    releaseID: "stale-release",
+                    version: "1.0.0",
+                    artifactSHA256: String(repeating: "a", count: 64)
+                )])
+            )
+            XCTFail("team Todo must reject a changed Plugin Release")
+        } catch let error as NativePluginRuntimeError {
+            guard case .invalidRequest = error else {
+                return XCTFail("unexpected team Release error: \(error)")
+            }
+        }
+
         let broker = try await service.makeAgentCapabilityToolProvider(
             ownerUserID: "alice",
             runContext: runContext,
@@ -609,15 +635,23 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 builtinCapabilities: [
                     .projectRead, .projectWrite, .terminal,
                 ],
-                plugins: [.init(pluginID: "plugin-1", componentKey: "test-mcp", displayName: "test-agent-plugin")]
+                plugins: [.init(
+                    pluginID: "plugin-1",
+                    componentKey: "test-mcp",
+                    displayName: "test-agent-plugin",
+                    pluginKey: "plugin-1",
+                    releaseID: "release-1",
+                    version: "1.0.0",
+                    artifactSHA256: String(repeating: "a", count: 64)
+                )]
             )
         )
         let brokerDefinitions = try await broker.definitions()
         XCTAssertEqual(
             Set(brokerDefinitions.map(\.name)),
             [
-                "capability_search", "capability_describe", "agent_skill_activate",
-                "agent_skill_read_resource", "capability_invoke",
+                "capability_search", "capability_describe", "capability_skill_activate",
+                "capability_skill_read_resource", "capability_invoke",
             ]
         )
         let brokerCoverage = ToolSkillCoverageCatalog.product.audit(
@@ -631,11 +665,11 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         )
         XCTAssertEqual(brokerCoverage.coveredTools, 5)
         XCTAssertTrue(brokerCoverage.isComplete)
-        for removedAlias in ["capability_skill_activate", "capability_skill_read_resource"] {
+        for relayOwnedName in ["agent_skill_activate", "agent_skill_read_resource"] {
             let rejected = try await broker.execute(.init(
-                id: "removed-\(removedAlias)",
-                name: removedAlias,
-                arguments: #"{"plugin_option":"plugin_1","skill_name":"test-agent-plugin"}"#
+                id: "relay-owned-\(relayOwnedName)",
+                name: relayOwnedName,
+                arguments: #"{"skill_ref":"plugin-skill:plugin_1:test-agent-plugin"}"#
             ))
             XCTAssertTrue(rejected.isError)
             XCTAssertTrue(rejected.content.contains("能力发现工具不可用"))
@@ -652,7 +686,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
 
         let guessedSkillActivation = try await broker.execute(.init(
             id: "activate-undisclosed-plugin-skill",
-            name: "agent_skill_activate",
+            name: "capability_skill_activate",
             arguments: #"{"skill_ref":"plugin-skill:plugin_1:test-agent-plugin"}"#
         ))
         XCTAssertTrue(
@@ -709,7 +743,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
 
         let pluginActivation = try await broker.execute(.init(
             id: "activate-plugin-skill",
-            name: "agent_skill_activate",
+            name: "capability_skill_activate",
             arguments: #"{"skill_ref":"plugin-skill:plugin_1:test-agent-plugin"}"#
         ))
         XCTAssertFalse(pluginActivation.isError)
@@ -717,7 +751,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertTrue(pluginActivation.content.contains("references/examples.md"))
         let pluginReference = try await broker.execute(.init(
             id: "read-plugin-reference",
-            name: "agent_skill_read_resource",
+            name: "capability_skill_read_resource",
             arguments: #"{"skill_ref":"plugin-skill:plugin_1:test-agent-plugin","relative_path":"references/examples.md","max_chars":12000}"#
         ))
         XCTAssertFalse(pluginReference.isError)
@@ -851,7 +885,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
 
         let ambiguousActivation = try await broker.execute(.init(
             id: "activate-terminal-ambiguous",
-            name: "agent_skill_activate",
+            name: "capability_skill_activate",
             arguments: #"{"skill_ref":"product-skill:chatos-terminal","skill_refs":["product-skill:chatos-terminal-process-observation"]}"#
         ))
         XCTAssertTrue(ambiguousActivation.isError)
@@ -859,7 +893,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
 
         let duplicateActivation = try await broker.execute(.init(
             id: "activate-terminal-duplicate",
-            name: "agent_skill_activate",
+            name: "capability_skill_activate",
             arguments: #"{"skill_refs":["product-skill:chatos-terminal","product-skill:chatos-terminal"]}"#
         ))
         XCTAssertTrue(duplicateActivation.isError)
@@ -877,7 +911,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
 
         let activatedTerminalSkills = try await broker.execute(.init(
             id: "activate-terminal-skills",
-            name: "agent_skill_activate",
+            name: "capability_skill_activate",
             arguments: #"{"skill_refs":["product-skill:chatos-terminal","product-skill:chatos-terminal-process-observation"]}"#
         ))
         XCTAssertFalse(activatedTerminalSkills.isError)
@@ -891,7 +925,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
 
         let reference = try await broker.execute(.init(
             id: "read-terminal-reference",
-            name: "agent_skill_read_resource",
+            name: "capability_skill_read_resource",
             arguments: #"{"skill_ref":"product-skill:chatos-terminal-process-observation","relative_path":"references/scenarios.md","max_chars":2000}"#
         ))
         XCTAssertFalse(reference.isError)

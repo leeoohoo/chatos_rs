@@ -14,7 +14,7 @@ use chatos_local_agent_ports::{
 use chatos_local_agent_protocol::{
     LocalAgentRunClaim, LocalAgentRunRecord, LocalAgentStepOutcome, LocalAgentToolCall,
     LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalPluginHookBundleRecord,
-    LocalPluginHookDefinition, StartConversationTurnCommand,
+    LocalPluginHookDefinition, ResolveAgentTeamHookContextCommand, StartConversationTurnCommand,
 };
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use futures::future::join_all;
@@ -223,6 +223,81 @@ impl LocalHookCoordinator {
             });
         }
         Ok(LocalHookPromptDecision::Allow)
+    }
+
+    pub(crate) async fn resolve_agent_team_context(
+        &self,
+        command: &ResolveAgentTeamHookContextCommand,
+    ) -> Result<Vec<String>, String> {
+        let workspace_root = PathBuf::from(&command.workspace_root);
+        if !workspace_root.is_absolute() || !workspace_root.is_dir() {
+            return Err("Agent team Hook workspace root is not an existing directory".to_string());
+        }
+        let cwd = workspace_root.display().to_string();
+        let events = if command.lane == "manager" {
+            vec![
+                HookEvent::new_for_owner_with_sequence(
+                    &command.owner_user_id,
+                    "SessionStart",
+                    &command.session_id,
+                    stable_sequence(&["agent_team_session", &command.session_id]),
+                    "startup",
+                    json!({
+                        "session_id": command.session_id,
+                        "hook_event_name": "SessionStart",
+                        "source": "startup",
+                        "cwd": cwd,
+                    }),
+                )?,
+                HookEvent::new_for_owner_with_sequence(
+                    &command.owner_user_id,
+                    "UserPromptSubmit",
+                    &command.run_id,
+                    stable_sequence(&["agent_team_prompt", &command.run_id]),
+                    "",
+                    json!({
+                        "session_id": command.session_id,
+                        "hook_event_name": "UserPromptSubmit",
+                        "prompt": command.prompt,
+                        "cwd": cwd,
+                    }),
+                )?,
+            ]
+        } else {
+            vec![HookEvent::new_for_owner_with_sequence(
+                &command.owner_user_id,
+                "SubagentStart",
+                &command.run_id,
+                stable_sequence(&["agent_team_subagent", &command.run_id]),
+                "task_execution",
+                json!({
+                    "session_id": command.session_id,
+                    "hook_event_name": "SubagentStart",
+                    "agent_id": command.run_id,
+                    "agent_type": "task_execution",
+                    "prompt": command.prompt,
+                    "cwd": cwd,
+                }),
+            )?]
+        };
+        let mut contexts = Vec::new();
+        for event in events {
+            let outcome = self
+                .execute_event_at(event, Some(workspace_root.clone()))
+                .await?;
+            if outcome.failed {
+                return Err(format!("trusted {} Hook execution failed", outcome.event_type));
+            }
+            if outcome.blocked && outcome.event_type == "UserPromptSubmit" {
+                return Err(outcome.block_reason.unwrap_or_else(|| {
+                    "A trusted UserPromptSubmit Hook blocked this team message".to_string()
+                }));
+            }
+            if let Some(context) = outcome.additional_context {
+                contexts.push(context);
+            }
+        }
+        Ok(contexts)
     }
 
     pub(crate) async fn gate_tool_outcome(
@@ -897,6 +972,14 @@ impl LocalHookCoordinator {
     }
 
     async fn execute_event(&self, event: HookEvent) -> Result<PersistedEventOutcome, String> {
+        self.execute_event_at(event, self.workspace_root.clone()).await
+    }
+
+    async fn execute_event_at(
+        &self,
+        event: HookEvent,
+        workspace_root: Option<PathBuf>,
+    ) -> Result<PersistedEventOutcome, String> {
         let event_lock = {
             let mut inflight = self
                 .inflight_events
@@ -912,12 +995,13 @@ impl LocalHookCoordinator {
             }
         };
         let _event_guard = event_lock.lock().await;
-        self.execute_event_serial(event).await
+        self.execute_event_serial(event, workspace_root).await
     }
 
     async fn execute_event_serial(
         &self,
         mut event: HookEvent,
+        workspace_root: Option<PathBuf>,
     ) -> Result<PersistedEventOutcome, String> {
         let prepared = self.persist_event_snapshot(&mut event).await?;
         if prepared.status == "completed" {
@@ -967,11 +1051,18 @@ impl LocalHookCoordinator {
                 synchronous.push(invocation);
             }
         }
-        let results =
-            join_all(synchronous.into_iter().map(|(bundle, hook, record)| {
-                self.execute_invocation(&event, bundle, hook, record)
-            }))
-            .await;
+        let results = join_all(synchronous.into_iter().map(|(bundle, hook, record)| {
+            Self::execute_invocation_with(
+                Arc::clone(&self.runtime),
+                Arc::clone(&self.runner),
+                workspace_root.clone(),
+                &event,
+                bundle,
+                hook,
+                record,
+            )
+        }))
+        .await;
         let mut outcomes = Vec::with_capacity(results.len());
         for outcome in results {
             outcomes.push(outcome?);
@@ -989,7 +1080,7 @@ impl LocalHookCoordinator {
             }
             let runtime = Arc::clone(&self.runtime);
             let runner = Arc::clone(&self.runner);
-            let workspace_root = self.workspace_root.clone();
+            let workspace_root = workspace_root.clone();
             let event = event.clone();
             tokio::spawn(async move {
                 let _ = Self::execute_invocation_with(
@@ -1049,25 +1140,6 @@ impl LocalHookCoordinator {
             .prepare_hook_event_for_host_worker(&event.spec)
             .await
             .map_err(|error| error.to_string())
-    }
-
-    async fn execute_invocation(
-        &self,
-        event: &HookEvent,
-        bundle: LocalPluginHookBundleRecord,
-        hook: LocalPluginHookDefinition,
-        record: LocalHookInvocationRecord,
-    ) -> Result<InvocationOutcome, String> {
-        Self::execute_invocation_with(
-            Arc::clone(&self.runtime),
-            Arc::clone(&self.runner),
-            self.workspace_root.clone(),
-            event,
-            bundle,
-            hook,
-            record,
-        )
-        .await
     }
 
     async fn execute_invocation_with(

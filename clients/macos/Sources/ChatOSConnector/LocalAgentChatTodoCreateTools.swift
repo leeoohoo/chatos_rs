@@ -40,6 +40,28 @@ extension LocalAgentChatToolProvider {
         } else {
             assigneeID = context.agentID
         }
+        let teamMembers = try await store.listMembers(
+            ownerUserID: context.ownerUserID,
+            roomID: teamID
+        )
+        guard let assigneeMember = teamMembers.first(where: {
+            $0.agentID == assigneeID && $0.status == .active
+        }) else {
+            return Self.structuredFailure(
+                code: "invalid_assignee_ref",
+                field: "assignee_ref",
+                message: "负责人已不再是该团队的活跃成员，请重新读取执行选项。",
+                retryable: true,
+                nextTool: Self.todoExecutionOptionsToolName
+            )
+        }
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: false
+        )
+        guard let assigneeProfile = profiles.first(where: { $0.id == assigneeID }) else {
+            throw AgentGroupChatError.notFound
+        }
         let dependencyReferences = try Self.optionalStringArray(
             arguments,
             key: "depends_on_todo_refs"
@@ -169,12 +191,28 @@ extension LocalAgentChatToolProvider {
                     retryable: true
                 )
             }
+            guard (assigneeProfile.draft.defaultPluginIDs.isEmpty
+                    || assigneeProfile.draft.defaultPluginIDs.contains(option.pluginID)),
+                  (assigneeMember.draft.pluginAllowlist.isEmpty
+                    || assigneeMember.draft.pluginAllowlist.contains(option.pluginID)) else {
+                return Self.structuredFailure(
+                    code: "plugin_not_authorized_for_assignee",
+                    field: "plugin_hints[\(index)].plugin_ref",
+                    message: "该 Plugin 不在负责人个人默认范围与当前团队允许范围的交集中，请重新读取执行选项。",
+                    retryable: true,
+                    nextTool: Self.todoExecutionOptionsToolName
+                )
+            }
             let reason = (hint["reason"] as? String) ?? ""
             pluginSelections.append(.init(
                 pluginID: option.pluginID,
                 componentKey: option.componentKey,
                 displayName: option.displayName,
-                reason: reason
+                reason: reason,
+                pluginKey: option.pluginKey,
+                releaseID: option.releaseID,
+                version: option.version,
+                artifactSHA256: option.artifactSHA256
             ))
         }
         let expectedOutputs = try Self.optionalStringArray(arguments, key: "expected_outputs")

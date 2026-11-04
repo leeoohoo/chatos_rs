@@ -10,6 +10,72 @@ public enum LocalAgentTodoStatus: String, Codable, Sendable, CaseIterable {
     public var isTerminal: Bool { self == .completed || self == .cancelled }
 }
 
+public enum LocalAgentTodoAcceptanceStatus: String, Codable, Sendable, CaseIterable {
+    case pending
+    case passed
+    case failed
+    case blocked
+}
+
+/// Durable, program-owned verification state for one immutable acceptance criterion. Executors
+/// update these records explicitly; a free-form completion summary cannot make them pass.
+public struct LocalAgentTodoAcceptanceCheck: Codable, Sendable, Equatable, Identifiable {
+    public var id: Int { position }
+    public let position: Int
+    public let criterion: String
+    public let status: LocalAgentTodoAcceptanceStatus
+    public let evidence: String
+    public let blockedReason: String
+    public let requiresHuman: Bool
+    public let updatedAtUnixMs: Int64
+
+    public init(
+        position: Int,
+        criterion: String,
+        status: LocalAgentTodoAcceptanceStatus = .pending,
+        evidence: String = "",
+        blockedReason: String = "",
+        requiresHuman: Bool = false,
+        updatedAtUnixMs: Int64 = 0
+    ) {
+        self.position = position
+        self.criterion = criterion
+        self.status = status
+        self.evidence = evidence
+        self.blockedReason = blockedReason
+        self.requiresHuman = requiresHuman
+        self.updatedAtUnixMs = updatedAtUnixMs
+    }
+
+    public func validate() throws {
+        guard position > 0, updatedAtUnixMs >= 0,
+              requiresHuman == (status == .blocked && requiresHuman) else {
+            throw AgentGroupChatError.invalidField("todoAcceptanceCheck")
+        }
+        try AgentGroupChatValidation.text(
+            criterion,
+            field: "todoAcceptanceCriterion",
+            maximumLength: 4_000
+        )
+        try AgentGroupChatValidation.optionalText(
+            evidence,
+            field: "todoAcceptanceEvidence",
+            maximumLength: 16_000
+        )
+        try AgentGroupChatValidation.optionalText(
+            blockedReason,
+            field: "todoAcceptanceBlockedReason",
+            maximumLength: 8_000
+        )
+        if status == .passed && evidence.isEmpty {
+            throw AgentGroupChatError.invalidField("todoAcceptanceEvidence")
+        }
+        if status == .blocked && blockedReason.isEmpty {
+            throw AgentGroupChatError.invalidField("todoAcceptanceBlockedReason")
+        }
+    }
+}
+
 /// Stable semantic capabilities which a model may request without learning any project, MCP or
 /// Plugin identifier. The client resolves these values against the bound team project.
 public enum LocalAgentTodoBuiltinCapability: String, Codable, Sendable, CaseIterable, Hashable {
@@ -25,12 +91,29 @@ public struct LocalAgentTodoPluginSelection: Codable, Sendable, Equatable {
     public let componentKey: String
     public let displayName: String
     public let reason: String
+    public let pluginKey: String
+    public let releaseID: String
+    public let version: String
+    public let artifactSHA256: String
 
-    public init(pluginID: String, componentKey: String, displayName: String, reason: String = "") {
+    public init(
+        pluginID: String,
+        componentKey: String,
+        displayName: String,
+        reason: String = "",
+        pluginKey: String = "",
+        releaseID: String = "",
+        version: String = "",
+        artifactSHA256: String = ""
+    ) {
         self.pluginID = pluginID
         self.componentKey = componentKey
         self.displayName = displayName
         self.reason = reason
+        self.pluginKey = pluginKey
+        self.releaseID = releaseID
+        self.version = version
+        self.artifactSHA256 = artifactSHA256
     }
 
     public func validate() throws {
@@ -45,6 +128,33 @@ public struct LocalAgentTodoPluginSelection: Codable, Sendable, Equatable {
             reason,
             field: "todoPluginReason",
             maximumLength: 1_000
+        )
+        for (value, field) in [
+            (pluginKey, "todoPluginKey"),
+            (releaseID, "todoPluginReleaseID"),
+            (version, "todoPluginVersion"),
+            (artifactSHA256, "todoPluginArtifactSHA256"),
+        ] {
+            try AgentGroupChatValidation.optionalText(value, field: field, maximumLength: 512)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pluginID, componentKey, displayName, reason
+        case pluginKey, releaseID, version, artifactSHA256
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            pluginID: try values.decode(String.self, forKey: .pluginID),
+            componentKey: try values.decode(String.self, forKey: .componentKey),
+            displayName: try values.decode(String.self, forKey: .displayName),
+            reason: try values.decodeIfPresent(String.self, forKey: .reason) ?? "",
+            pluginKey: try values.decodeIfPresent(String.self, forKey: .pluginKey) ?? "",
+            releaseID: try values.decodeIfPresent(String.self, forKey: .releaseID) ?? "",
+            version: try values.decodeIfPresent(String.self, forKey: .version) ?? "",
+            artifactSHA256: try values.decodeIfPresent(String.self, forKey: .artifactSHA256) ?? ""
         )
     }
 }
@@ -309,6 +419,7 @@ public struct LocalAgentTodo: Codable, Sendable, Equatable, Identifiable {
     public let result: String
     public let executionContract: LocalAgentTodoExecutionContract
     public let executionPlan: LocalAgentTodoExecutionPlan
+    public let acceptanceChecks: [LocalAgentTodoAcceptanceCheck]
     public let createdAtUnixMs: Int64
     public let updatedAtUnixMs: Int64
 
@@ -328,6 +439,7 @@ public struct LocalAgentTodo: Codable, Sendable, Equatable, Identifiable {
         result: String = "",
         executionContract: LocalAgentTodoExecutionContract = .init(),
         executionPlan: LocalAgentTodoExecutionPlan = .init(),
+        acceptanceChecks: [LocalAgentTodoAcceptanceCheck] = [],
         createdAtUnixMs: Int64,
         updatedAtUnixMs: Int64
     ) {
@@ -346,6 +458,7 @@ public struct LocalAgentTodo: Codable, Sendable, Equatable, Identifiable {
         self.result = result
         self.executionContract = executionContract
         self.executionPlan = executionPlan
+        self.acceptanceChecks = acceptanceChecks
         self.createdAtUnixMs = createdAtUnixMs
         self.updatedAtUnixMs = updatedAtUnixMs
     }
@@ -374,6 +487,14 @@ public struct LocalAgentTodo: Codable, Sendable, Equatable, Identifiable {
         try AgentGroupChatValidation.optionalText(result, field: "todoResult", maximumLength: 16_000)
         try executionContract.validate()
         try executionPlan.validate()
+        guard acceptanceChecks.count == executionContract.acceptanceCriteria.count,
+              acceptanceChecks.enumerated().allSatisfy({ offset, check in
+                  check.position == offset + 1
+                      && check.criterion == executionContract.acceptanceCriteria[offset]
+              }) else {
+            throw AgentGroupChatError.invalidField("todoAcceptanceChecks")
+        }
+        for check in acceptanceChecks { try check.validate() }
         try AgentGroupChatValidation.timestamps(createdAtUnixMs, updatedAtUnixMs)
     }
 }

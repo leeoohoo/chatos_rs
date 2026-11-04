@@ -257,6 +257,18 @@ public protocol AgentGroupChatStore: Sendable {
         limit: Int,
         nowUnixMs: Int64
     ) async throws -> [LocalAgentUnreadConversation]
+    func listAllUnreadMessages(
+        ownerUserID: String,
+        agentID: String,
+        limit: Int
+    ) async throws -> [LocalAgentUnreadConversation]
+    func completeManagerCycleDelivery(
+        ownerUserID: String,
+        deliveryID: String,
+        agentID: String,
+        readThroughMessageIDsByRoom: [String: String],
+        nowUnixMs: Int64
+    ) async throws -> ProjectAgentDelivery
     func listAgentTodos(
         ownerUserID: String,
         agentID: String,
@@ -345,6 +357,17 @@ public protocol AgentGroupChatStore: Sendable {
         agentID: String,
         todoID: String,
         update: LocalAgentTodoUpdate,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentTodo
+    func updateAgentTodoAcceptanceCheck(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        position: Int,
+        status: LocalAgentTodoAcceptanceStatus,
+        evidence: String,
+        blockedReason: String,
+        requiresHuman: Bool,
         nowUnixMs: Int64
     ) async throws -> LocalAgentTodo
     func agentTodoRequiresHumanRetry(

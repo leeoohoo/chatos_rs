@@ -105,6 +105,38 @@ extension SQLiteAgentGroupChatStoreTests {
             productSkillSession: productSkillSession,
             now: { post.message.createdAtUnixMs + 2 }
         )
+        let executorContext = try LocalAgentChatRunContext(
+            ownerUserID: context.ownerUserID,
+            projectID: context.projectID,
+            roomID: context.roomID,
+            agentID: context.agentID,
+            deliveryID: context.deliveryID,
+            triggerMessageID: context.triggerMessageID,
+            rootMessageID: context.rootMessageID,
+            runID: "team-tool-executor-run",
+            hopCount: context.hopCount,
+            lane: .executor
+        )
+        let executorProvider = LocalAgentProjectToolProvider(
+            store: store,
+            projects: [target],
+            projectsService: projectsService,
+            context: executorContext,
+            productSkillSession: productSkillSession,
+            now: { post.message.createdAtUnixMs + 2 }
+        )
+        let executorDefinitions = try await executorProvider.definitions()
+        XCTAssertTrue(executorDefinitions.isEmpty)
+        do {
+            _ = try await executorProvider.execute(.init(
+                id: "executor-must-not-manage-projects",
+                name: LocalAgentProjectToolProvider.catalogToolName,
+                arguments: "{}"
+            ))
+            XCTFail("executor lane must not receive project/team management authority")
+        } catch AgentGroupChatError.permissionDenied {
+            // Expected: the provider also enforces the lane if it is mounted accidentally.
+        }
         let definitions = try await provider.definitions()
         XCTAssertEqual(definitions.map(\.name), [
             "project_catalog",

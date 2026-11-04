@@ -1,10 +1,10 @@
 import ChatOSCore
 import Foundation
 
-struct NativeLocalAgentHookBundleClient: Sendable {
+public struct NativeLocalAgentHookBundleClient: Sendable {
     private let host: any LocalAgentHostClientServicing
 
-    init(host: any LocalAgentHostClientServicing) {
+    public init(host: any LocalAgentHostClientServicing) {
         self.host = host
     }
 
@@ -66,6 +66,29 @@ struct NativeLocalAgentHookBundleClient: Sendable {
             nextBeforeInvocationID: response.page.nextBeforeInvocationID
         )
     }
+
+    public func resolveAgentTeamContext(
+        ownerUserID: String,
+        sessionID: String,
+        runID: String,
+        prompt: String,
+        lane: LocalAgentRunLane,
+        workspaceRoot: URL
+    ) async throws -> [String] {
+        let response: TeamContextResult = try await host.request(TeamContextCommand(
+            type: "resolve_agent_team_hook_context",
+            ownerUserID: ownerUserID,
+            sessionID: sessionID,
+            runID: runID,
+            prompt: prompt,
+            lane: lane.rawValue,
+            workspaceRoot: workspaceRoot.path
+        ))
+        guard response.type == "agent_team_hook_context" else {
+            throw NativeLocalAgentHookBundleClientError.invalidResponse
+        }
+        return response.contexts
+    }
 }
 
 private enum NativeLocalAgentHookBundleClientError: LocalizedError {
@@ -115,6 +138,24 @@ private struct InvocationListCommand: Encodable, Sendable {
         case pluginID = "plugin_id"
         case beforeUpdatedAtUnixMs = "before_updated_at_unix_ms"
         case beforeInvocationID = "before_invocation_id"
+    }
+}
+
+private struct TeamContextCommand: Encodable, Sendable {
+    var type: String
+    var ownerUserID: String
+    var sessionID: String
+    var runID: String
+    var prompt: String
+    var lane: String
+    var workspaceRoot: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type, prompt, lane
+        case ownerUserID = "owner_user_id"
+        case sessionID = "session_id"
+        case runID = "run_id"
+        case workspaceRoot = "workspace_root"
     }
 }
 
@@ -223,6 +264,11 @@ private struct ActiveResult: Decodable, Sendable {
 private struct InvocationListResult: Decodable, Sendable {
     var type: String
     var page: InvocationPage
+}
+
+private struct TeamContextResult: Decodable, Sendable {
+    var type: String
+    var contexts: [String]
 }
 
 private struct InvocationPage: Decodable, Sendable {

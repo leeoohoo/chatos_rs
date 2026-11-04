@@ -1,5 +1,5 @@
 {
-  "protocol_version": 51,
+  "protocol_version": 52,
   "command_id": "contract-conversation-history-1",
   "ok": true,
   "result": {

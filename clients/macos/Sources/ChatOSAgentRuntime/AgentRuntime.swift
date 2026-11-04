@@ -17,6 +17,7 @@ public struct AgentRuntime: Sendable {
     }
     public typealias Executor = @Sendable (AgentToolCall) async throws -> AgentToolOutcome
     public typealias CompletionCheck = @Sendable () async throws -> String?
+    public typealias IncompletionReminder = @Sendable () async throws -> String?
     public typealias Recorder = @Sendable (AgentRunCheckpoint, AgentRunEvent) async throws -> Void
 
     public func run(
@@ -24,6 +25,7 @@ public struct AgentRuntime: Sendable {
         model: any AgentModelClient, tools: [AgentToolDefinition],
         execute: @escaping Executor,
         completionCheck: @escaping CompletionCheck = { nil },
+        incompletionReminder: @escaping IncompletionReminder = { nil },
         contextProvider: (any AgentContextProviding)? = nil,
         shouldPause: @escaping @Sendable () async -> Bool = { false },
         onModelStreamEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void = { _ in },
@@ -276,7 +278,13 @@ public struct AgentRuntime: Sendable {
                 state.usage = accumulatedUsage
                 state.messages.append(response)
                 if response.toolCalls.isEmpty {
-                    state.messages.append(.init(role: .user, content: "请根据已保存的业务状态继续调用工具；只有调用结束工具并通过业务校验才能结束。"))
+                    let specificReminder = try await incompletionReminder()?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    state.messages.append(.init(
+                        role: .user,
+                        content: specificReminder.flatMap { $0.isEmpty ? nil : $0 }
+                            ?? "请根据已保存的业务状态继续调用工具；只有调用结束工具并通过业务校验才能结束。"
+                    ))
                 } else if response.toolCalls.count > 1 && response.toolCalls.contains(where: { registry[$0.name]?.effect == .terminal }) {
                     for call in response.toolCalls {
                         let rejection = AgentToolOutcome.failure("结束工具必须单独调用；本批次没有执行任何工具。")

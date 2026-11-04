@@ -122,6 +122,37 @@ final class AgentRuntimeTests: XCTestCase {
         let callCount = await model.callCount
         XCTAssertEqual(callCount, 0)
     }
+
+    func testToollessSummaryReceivesSpecificIncompletionReminder() async throws {
+        let checkpoint = AgentRunCheckpoint(
+            scope: "specific-reminder",
+            messages: [.init(role: .user, content: "完成任务")]
+        )
+        let model = SpecificReminderModel()
+        let result = try await AgentRuntime().run(
+            checkpoint: checkpoint,
+            scope: "specific-reminder",
+            policy: .init(),
+            model: model,
+            tools: [.init(
+                name: "finish",
+                description: "结束",
+                schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8),
+                effect: .terminal
+            )],
+            execute: { call in
+                XCTAssertEqual(call.name, "finish")
+                return .init("done")
+            },
+            incompletionReminder: {
+                "仍未通过：#2 [failed] 编译并运行测试。请继续调用工具。"
+            }
+        )
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.result, "done")
+        let sawSpecificReminder = await model.sawSpecificReminder
+        XCTAssertTrue(sawSpecificReminder)
+    }
 }
 
 private actor CompletionCheckModel: AgentModelClient {
@@ -129,5 +160,29 @@ private actor CompletionCheckModel: AgentModelClient {
     func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) async throws -> AgentMessage {
         callCount += 1
         return .init(role: .assistant)
+    }
+}
+
+private actor SpecificReminderModel: AgentModelClient {
+    private(set) var sawSpecificReminder = false
+    private var callCount = 0
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        callCount += 1
+        if callCount == 1 {
+            return .init(role: .assistant, content: "我已完成。")
+        }
+        sawSpecificReminder = messages.contains {
+            $0.role == .user && $0.content.contains("#2 [failed] 编译并运行测试")
+        }
+        return .init(role: .assistant, toolCalls: [.init(
+            id: "finish-after-reminder",
+            name: "finish",
+            arguments: "{}"
+        )])
     }
 }

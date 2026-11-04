@@ -424,7 +424,11 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                         pluginID: $0.pluginID,
                         componentKey: $0.componentKey,
                         displayName: $0.displayName,
-                        description: $0.description
+                        description: $0.description,
+                        pluginKey: $0.pluginKey,
+                        releaseID: $0.releaseID,
+                        version: $0.version,
+                        artifactSHA256: $0.artifactSHA256
                     )
                 }
             },
@@ -433,9 +437,34 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                     forKey: "ChatOS.internalContextLanguage"
                 ))
             },
+            teamHookContextProvider: { ownerUserID, projectID, roomID, runID, lane, prompt in
+                guard let localAgentHost else { return [] }
+                let projectContext = try await localProjectsService.pluginContext(
+                    ownerUserID: ownerUserID,
+                    projectID: projectID
+                )
+                guard let projectRoot = projectContext.projectRoot else {
+                    throw NativeConnectorError.workspaceUnavailable
+                }
+                let resolvedRoot = try await localConnectorService.conversationFileRoot(
+                    ownerUserID: ownerUserID,
+                    conversationID: roomID,
+                    projectRootPath: projectRoot
+                )
+                return try await NativeLocalAgentHookBundleClient(host: localAgentHost)
+                    .resolveAgentTeamContext(
+                        ownerUserID: ownerUserID,
+                        sessionID: roomID,
+                        runID: runID,
+                        prompt: prompt,
+                        lane: lane,
+                        workspaceRoot: resolvedRoot
+                    )
+            },
             additionalToolProviders: { profile, member, runContext, productSkillSession in
                 var providers: [any AgentToolProvider] = []
-                if LocalAgentPermission.canAccessLocalProjects(profile.draft.defaultSkillIDs) {
+                if runContext.lane == .manager,
+                   LocalAgentPermission.canAccessLocalProjects(profile.draft.defaultSkillIDs) {
                     let store = try await agentGroupChatService.store()
                     let registry = try await localProjectsService.registry()
                     let projects = try await registry.list(
