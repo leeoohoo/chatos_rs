@@ -18,6 +18,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let proposeMemberToolName = "agent_propose_member"
     public static let proposeExistingMemberToolName = "agent_propose_existing_member"
     public static let proposeMemberRemovalToolName = "agent_propose_member_removal"
+    public static let deleteAgentToolName = "agent_delete"
     public static let sendMessageToolName = "chat_send_message"
     public static let completeHeartbeatToolName = "chat_heartbeat_complete"
     public static let completeManagerCycleToolName = "agent_cycle_complete"
@@ -126,6 +127,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 $0.name != Self.proposeMemberToolName
                     && $0.name != Self.proposeExistingMemberToolName
                     && $0.name != Self.proposeMemberRemovalToolName
+                    && $0.name != Self.deleteAgentToolName
             }
         } else {
             definitions.removeAll { $0.name == Self.proposeMemberToolName }
@@ -205,6 +207,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await proposeExistingMember(call)
         case Self.proposeMemberRemovalToolName:
             return try await proposeMemberRemoval(call)
+        case Self.deleteAgentToolName:
+            return try await deleteAgent(call)
         case Self.sendMessageToolName:
             return try await sendMessage(call)
         case Self.completeHeartbeatToolName:
@@ -273,7 +277,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 "thinking_level": [
                     "type": "string",
                     "enum": LocalAgentThinkingLevelCatalog.allValues.sorted(),
-                    "description": "省略时继承当前 Agent 的思考等级；确认创建时会按实际模型能力重新校验。",
+                    "description": "省略时继承当前 Agent 的思考等级；创建时会按实际模型能力重新校验。",
                 ],
                 "profession_key": [
                     "type": "string",
@@ -287,7 +291,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         ]
         return .init(
             name: Self.proposeMemberToolName,
-            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。必须从客户端目录选择职业；模型配置由客户端继承并透传，AI 不填写模型 ID；thinking_level 省略时继承当前 Agent。该工具只持久化待确认提案，绝不会直接创建 Agent。",
+            description: "使用已授予的人员管理权限直接创建新 Agent，同时保留已批准的审计记录，不再等待 Human 逐项确认。必须从客户端目录选择职业；模型配置由客户端继承并透传，AI 不填写模型 ID；thinking_level 省略时继承当前 Agent。",
             schema: try JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]),
             effect: .write
         )
@@ -351,7 +355,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
              completeHeartbeatToolName, completeManagerCycleToolName:
             ProductToolSkillBindingID.collaborationMessaging
         case proposeMemberToolName, proposeExistingMemberToolName,
-             proposeMemberRemovalToolName:
+             proposeMemberRemovalToolName, deleteAgentToolName:
             ProductToolSkillBindingID.agentStaffing
         case todoListToolName, todoScheduleStateToolName, todoStartNextToolName,
              todoAddToolName, todoUpdateToolName, todoReorderToolName,

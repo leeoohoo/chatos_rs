@@ -114,7 +114,8 @@ extension SQLiteAgentGroupChatStore {
         ownerUserID: String,
         roomID: String,
         proposalID: String,
-        nowUnixMs: Int64
+        nowUnixMs: Int64,
+        sendResolutionNotification: Bool = true
     ) throws -> LocalAgentRemovalProposal {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(roomID, field: "roomID")
@@ -148,7 +149,7 @@ extension SQLiteAgentGroupChatStore {
                   AND status IN ('pending', 'running')
                 """,
                 [
-                    .text("成员已由 Human 确认移出当前团队。"), .integer(nowUnixMs),
+                    .text("成员已被移出当前团队。"), .integer(nowUnixMs),
                     .text(ownerUserID), .text(roomID), .text(proposal.draft.targetAgentID),
                 ]
             )
@@ -192,15 +193,17 @@ extension SQLiteAgentGroupChatStore {
                     roomID: roomID,
                     proposalID: proposalID
                   ) else { throw AgentGroupChatError.conflict }
-            try enqueueProposalResolutionNotification(
-                ownerUserID: ownerUserID,
-                roomID: roomID,
-                proposerAgentID: approved.proposerAgentID,
-                proposalID: approved.id,
-                proposalLabel: "Agent 移出团队提案",
-                approved: true,
-                nowUnixMs: nowUnixMs
-            )
+            if sendResolutionNotification {
+                try enqueueProposalResolutionNotification(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    proposerAgentID: approved.proposerAgentID,
+                    proposalID: approved.id,
+                    proposalLabel: "Agent 移出团队提案",
+                    approved: true,
+                    nowUnixMs: nowUnixMs
+                )
+            }
             return approved
         }
     }

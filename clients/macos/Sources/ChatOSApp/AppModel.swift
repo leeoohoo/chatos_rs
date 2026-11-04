@@ -450,7 +450,15 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                         ),
                         projectsService: localProjectsService,
                         context: runContext,
-                        productSkillSession: productSkillSession
+                        productSkillSession: productSkillSession,
+                        roomChangeHandler: { roomID in
+                            await agentGroupChatService.publishChange(.init(
+                                ownerUserID: runContext.ownerUserID,
+                                roomID: roomID,
+                                agentID: runContext.agentID,
+                                kind: .roomUpdated
+                            ))
+                        }
                     ))
                 }
                 if runContext.lane == .executor {

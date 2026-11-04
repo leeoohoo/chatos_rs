@@ -466,6 +466,17 @@ extension LocalAgentChatToolProvider {
         let subject: String
     }
 
+    struct AgentDeletionResponse: Encodable {
+        let status: String
+        let subject: String
+        let alreadyArchived: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case status, subject
+            case alreadyArchived = "already_archived"
+        }
+    }
+
     struct SendResponse: Encodable {
         let messageReference: String
         let completed: Bool

@@ -107,14 +107,16 @@ extension SQLiteAgentGroupChatStore {
         ownerUserID: String,
         roomID: String,
         proposalID: String,
-        nowUnixMs: Int64
+        nowUnixMs: Int64,
+        sendResolutionNotification: Bool = true
     ) throws -> LocalAgentProposalApproval {
         try approveAgentProposal(
             ownerUserID: ownerUserID,
             roomID: roomID,
             proposalID: proposalID,
             nowUnixMs: nowUnixMs,
-            draftOverride: nil
+            draftOverride: nil,
+            sendResolutionNotification: sendResolutionNotification
         )
     }
 
@@ -123,14 +125,16 @@ extension SQLiteAgentGroupChatStore {
         roomID: String,
         proposalID: String,
         nowUnixMs: Int64,
-        resolvedDraft: LocalAgentDraft
+        resolvedDraft: LocalAgentDraft,
+        sendResolutionNotification: Bool = true
     ) throws -> LocalAgentProposalApproval {
         try approveAgentProposal(
             ownerUserID: ownerUserID,
             roomID: roomID,
             proposalID: proposalID,
             nowUnixMs: nowUnixMs,
-            draftOverride: resolvedDraft
+            draftOverride: resolvedDraft,
+            sendResolutionNotification: sendResolutionNotification
         )
     }
 
@@ -139,7 +143,8 @@ extension SQLiteAgentGroupChatStore {
         roomID: String,
         proposalID: String,
         nowUnixMs: Int64,
-        draftOverride: LocalAgentDraft?
+        draftOverride: LocalAgentDraft?,
+        sendResolutionNotification: Bool
     ) throws -> LocalAgentProposalApproval {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(roomID, field: "roomID")
@@ -261,15 +266,17 @@ extension SQLiteAgentGroupChatStore {
                     roomID: roomID,
                     proposalID: proposalID
                   ) else { throw AgentGroupChatError.conflict }
-            try enqueueProposalResolutionNotification(
-                ownerUserID: ownerUserID,
-                roomID: roomID,
-                proposerAgentID: approved.proposerAgentID,
-                proposalID: approved.id,
-                proposalLabel: "新 Agent 创建提案",
-                approved: true,
-                nowUnixMs: nowUnixMs
-            )
+            if sendResolutionNotification {
+                try enqueueProposalResolutionNotification(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    proposerAgentID: approved.proposerAgentID,
+                    proposalID: approved.id,
+                    proposalLabel: "新 Agent 创建提案",
+                    approved: true,
+                    nowUnixMs: nowUnixMs
+                )
+            }
             return .init(proposal: approved, agent: agent, member: member)
         }
     }

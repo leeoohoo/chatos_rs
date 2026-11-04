@@ -143,7 +143,7 @@ public extension ToolSkillCoverageCatalog {
                     providerID: ProductToolProviderID.localAgentChat,
                     toolNames: [
                         "agent_propose_member", "agent_propose_existing_member",
-                        "agent_propose_member_removal",
+                        "agent_propose_member_removal", "agent_delete",
                     ],
                     routerSkillName: "chatos-agent-staffing",
                     specialistSkillName: "chatos-agent-staffing"

@@ -38,7 +38,8 @@ public protocol AgentGroupChatStore: Sendable {
         ownerUserID: String,
         roomID: String,
         proposalID: String,
-        nowUnixMs: Int64
+        nowUnixMs: Int64,
+        sendResolutionNotification: Bool
     ) async throws -> LocalAgentProposalApproval
     func rejectAgentProposal(
         ownerUserID: String,
@@ -64,7 +65,8 @@ public protocol AgentGroupChatStore: Sendable {
         ownerUserID: String,
         roomID: String,
         proposalID: String,
-        nowUnixMs: Int64
+        nowUnixMs: Int64,
+        sendResolutionNotification: Bool
     ) async throws -> LocalAgentRemovalProposal
     func rejectAgentRemovalProposal(
         ownerUserID: String,
@@ -90,7 +92,8 @@ public protocol AgentGroupChatStore: Sendable {
         ownerUserID: String,
         sourceRoomID: String,
         proposalID: String,
-        nowUnixMs: Int64
+        nowUnixMs: Int64,
+        sendResolutionNotification: Bool
     ) async throws -> LocalAgentMembershipProposalApproval
     func rejectMembershipProposal(
         ownerUserID: String,
@@ -117,7 +120,8 @@ public protocol AgentGroupChatStore: Sendable {
         sourceRoomID: String,
         proposalID: String,
         resolvedProjectID: String,
-        nowUnixMs: Int64
+        nowUnixMs: Int64,
+        sendResolutionNotification: Bool
     ) async throws -> LocalAgentTeamProposalApproval
     func rejectTeamProposal(
         ownerUserID: String,
@@ -485,6 +489,68 @@ public protocol AgentGroupChatStore: Sendable {
 }
 
 public extension AgentGroupChatStore {
+    func approveAgentProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposalID: String,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentProposalApproval {
+        try await approveAgentProposal(
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            proposalID: proposalID,
+            nowUnixMs: nowUnixMs,
+            sendResolutionNotification: true
+        )
+    }
+
+    func approveAgentRemovalProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposalID: String,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentRemovalProposal {
+        try await approveAgentRemovalProposal(
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            proposalID: proposalID,
+            nowUnixMs: nowUnixMs,
+            sendResolutionNotification: true
+        )
+    }
+
+    func approveMembershipProposal(
+        ownerUserID: String,
+        sourceRoomID: String,
+        proposalID: String,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentMembershipProposalApproval {
+        try await approveMembershipProposal(
+            ownerUserID: ownerUserID,
+            sourceRoomID: sourceRoomID,
+            proposalID: proposalID,
+            nowUnixMs: nowUnixMs,
+            sendResolutionNotification: true
+        )
+    }
+
+    func approveTeamProposal(
+        ownerUserID: String,
+        sourceRoomID: String,
+        proposalID: String,
+        resolvedProjectID: String,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentTeamProposalApproval {
+        try await approveTeamProposal(
+            ownerUserID: ownerUserID,
+            sourceRoomID: sourceRoomID,
+            proposalID: proposalID,
+            resolvedProjectID: resolvedProjectID,
+            nowUnixMs: nowUnixMs,
+            sendResolutionNotification: true
+        )
+    }
+
     /// Compatibility implementation for alternate stores and test doubles. SQLite overrides this
     /// requirement with one joined query on the executor hot path.
     func runningTodoForDelivery(

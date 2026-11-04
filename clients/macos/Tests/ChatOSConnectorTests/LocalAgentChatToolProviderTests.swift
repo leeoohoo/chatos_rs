@@ -49,10 +49,171 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
     func testAllChatToolsHaveCentralSkillCoverage() {
         let report = LocalAgentChatToolProvider.skillCoverageReport()
 
-        XCTAssertEqual(report.totalTools, 32)
-        XCTAssertEqual(report.coveredTools, 32)
+        XCTAssertEqual(report.totalTools, 33)
+        XCTAssertEqual(report.coveredTools, 33)
         XCTAssertTrue(report.isComplete)
         XCTAssertTrue(report.issues.isEmpty)
+    }
+
+    func testStaffManagerCanDeleteAnotherAgentWithoutConfirmationButCannotDeleteSelf() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let service = NativeAgentGroupChatService(databaseURL: url)
+        let store = try await service.store()
+        let manager = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "管理员",
+                rolePrompt: "管理团队。",
+                modelConfigID: "model",
+                defaultSkillIDs: LocalAgentPermission.normalized(
+                    preserving: [],
+                    canManageStaff: true
+                )
+            )
+        )
+        let target = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "待删除成员", rolePrompt: "执行任务。", modelConfigID: "model")
+        )
+        let ordinary = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "普通成员", rolePrompt: "执行任务。", modelConfigID: "model")
+        )
+        let room = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "staff-delete-project",
+            draft: .init(name: "管理团队")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: manager.id,
+            draft: .init(role: "管理员")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: ordinary.id,
+            draft: .init(role: "普通成员")
+        )
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "删除不再需要的 Agent",
+                mentionedAgentIDs: [manager.id]
+            ),
+            limits: .init()
+        )
+        let claimedDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: manager.id,
+            nowUnixMs: post.message.createdAtUnixMs + 1
+        )
+        let delivery = try XCTUnwrap(claimedDelivery)
+        let context = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            roomID: room.id,
+            agentID: manager.id,
+            deliveryID: delivery.id,
+            triggerMessageID: post.message.id,
+            rootMessageID: post.message.rootMessageID,
+            runID: "staff-delete-run",
+            hopCount: delivery.hopCount
+        )
+        let provider = try await LocalAgentRelayMCPServer(service: service).connect(context: context)
+        let definitions = try await provider.definitions()
+        XCTAssertTrue(definitions.contains { $0.name == LocalAgentChatToolProvider.deleteAgentToolName })
+        try await activateProductSkill("chatos-agent-staffing", on: provider)
+        let snapshot = try await provider.execute(.init(
+            id: "staff-delete-snapshot",
+            name: LocalAgentChatToolProvider.workspaceSnapshotToolName,
+            arguments: "{}"
+        ))
+        let snapshotJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(snapshot.content.utf8)) as? [String: Any]
+        )
+        let agents = try XCTUnwrap(snapshotJSON["agents"] as? [[String: Any]])
+        let targetReference = try XCTUnwrap(
+            agents.first(where: { $0["name"] as? String == target.draft.name })?["agent_ref"]
+                as? String
+        )
+        let managerReference = try XCTUnwrap(
+            agents.first(where: { ($0["is_current_agent"] as? Bool) == true })?["agent_ref"]
+                as? String
+        )
+
+        let deleted = try await provider.execute(.init(
+            id: "delete-target-agent",
+            name: LocalAgentChatToolProvider.deleteAgentToolName,
+            arguments: try toolArguments(["target_agent_ref": targetReference])
+        ))
+        XCTAssertFalse(deleted.isError, deleted.content)
+        XCTAssertTrue(deleted.content.contains(#""status":"archived""#))
+        XCTAssertTrue(deleted.content.contains(#""already_archived":false"#))
+        let allAgents = try await store.listAgents(ownerUserID: "alice", includeArchived: true)
+        XCTAssertEqual(allAgents.first(where: { $0.id == target.id })?.status, .archived)
+
+        let replayed = try await provider.execute(.init(
+            id: "delete-target-agent-retry",
+            name: LocalAgentChatToolProvider.deleteAgentToolName,
+            arguments: try toolArguments(["target_agent_ref": targetReference])
+        ))
+        XCTAssertFalse(replayed.isError, replayed.content)
+        XCTAssertTrue(replayed.content.contains(#""already_archived":true"#))
+
+        let selfDeletion = try await provider.execute(.init(
+            id: "delete-manager-self",
+            name: LocalAgentChatToolProvider.deleteAgentToolName,
+            arguments: try toolArguments(["target_agent_ref": managerReference])
+        ))
+        XCTAssertTrue(selfDeletion.isError)
+        XCTAssertTrue(selfDeletion.content.contains("self_deletion_not_allowed"))
+
+        let ordinaryPost = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "检查普通成员权限",
+                mentionedAgentIDs: [ordinary.id]
+            ),
+            limits: .init()
+        )
+        let ordinaryClaim = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: ordinary.id,
+            nowUnixMs: ordinaryPost.message.createdAtUnixMs + 1
+        )
+        let ordinaryDelivery = try XCTUnwrap(ordinaryClaim)
+        let ordinaryContext = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            roomID: room.id,
+            agentID: ordinary.id,
+            deliveryID: ordinaryDelivery.id,
+            triggerMessageID: ordinaryPost.message.id,
+            rootMessageID: ordinaryPost.message.rootMessageID,
+            runID: "ordinary-staff-permission-run",
+            hopCount: ordinaryDelivery.hopCount
+        )
+        let ordinaryProvider = try await LocalAgentRelayMCPServer(service: service).connect(
+            context: ordinaryContext
+        )
+        let ordinaryToolNames = Set(try await ordinaryProvider.definitions().map(\.name))
+        for staffToolName in [
+            LocalAgentChatToolProvider.proposeMemberToolName,
+            LocalAgentChatToolProvider.proposeExistingMemberToolName,
+            LocalAgentChatToolProvider.proposeMemberRemovalToolName,
+            LocalAgentChatToolProvider.deleteAgentToolName,
+        ] {
+            XCTAssertFalse(ordinaryToolNames.contains(staffToolName), staffToolName)
+        }
     }
 
     func testBoundProgressiveSkillsRequireActivationAndRejectIdentitySwitching() async throws {
@@ -301,6 +462,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "agent_workspace_snapshot", "chat_read_attachment", "chat_document_create",
                 "agent_propose_member",
                 "agent_propose_existing_member", "agent_propose_member_removal",
+                "agent_delete",
                 "chat_send_message", "chat_read_all_unread",
                 "todo_list", "todo_execution_options", "todo_add", "todo_update",
                 "todo_reorder", "todo_read_progress", "todo_dependency_options",
@@ -486,7 +648,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         ))
         XCTAssertTrue(staleDashboardUpdate.isError)
         XCTAssertTrue(staleDashboardUpdate.content.contains("dashboard_revision_changed"))
-        let thirdReference = try XCTUnwrap(
+        var thirdReference = try XCTUnwrap(
             workspaceAgents.first(where: {
                 ($0["is_current_agent"] as? Bool) == false
                     && (($0["teams"] as? [String])?.isEmpty == true)
@@ -547,16 +709,72 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             )
         )
         XCTAssertTrue(proposed.content.contains("测试 Agent"))
-        XCTAssertTrue(proposed.content.contains(#""status":"pending""#))
-        let pendingProposals = try await store.listAgentProposals(
+        XCTAssertTrue(proposed.content.contains(#""status":"approved""#))
+        let approvedProposals = try await store.listAgentProposals(
+            ownerUserID: "alice",
+            roomID: room.id,
+            status: .approved
+        )
+        XCTAssertEqual(approvedProposals.count, 1)
+        XCTAssertEqual(approvedProposals.first?.proposerAgentID, first.id)
+        XCTAssertEqual(approvedProposals.first?.draft.modelConfigID, first.draft.modelConfigID)
+        XCTAssertEqual(approvedProposals.first?.draft.thinkingLevel, "medium")
+        let createdAgentID = try XCTUnwrap(approvedProposals.first?.createdAgentID)
+        let membersAfterCreation = try await store.listMembers(
+            ownerUserID: "alice",
+            roomID: room.id
+        )
+        XCTAssertTrue(membersAfterCreation.contains {
+            $0.agentID == createdAgentID && $0.status == .active
+        })
+        let pendingCreationProposals = try await store.listAgentProposals(
             ownerUserID: "alice",
             roomID: room.id,
             status: .pending
         )
-        XCTAssertEqual(pendingProposals.count, 1)
-        XCTAssertEqual(pendingProposals.first?.proposerAgentID, first.id)
-        XCTAssertEqual(pendingProposals.first?.draft.modelConfigID, first.draft.modelConfigID)
-        XCTAssertEqual(pendingProposals.first?.draft.thinkingLevel, "medium")
+        XCTAssertTrue(pendingCreationProposals.isEmpty)
+        let refreshedWorkspace = try await provider.execute(.init(
+            id: "workspace-after-agent-creation",
+            name: LocalAgentChatToolProvider.workspaceSnapshotToolName,
+            arguments: "{}"
+        ))
+        let refreshedWorkspaceJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(refreshedWorkspace.content.utf8))
+                as? [String: Any]
+        )
+        let refreshedAgents = try XCTUnwrap(
+            refreshedWorkspaceJSON["agents"] as? [[String: Any]]
+        )
+        let createdAgentReference = try XCTUnwrap(
+            refreshedAgents.first(where: { $0["name"] as? String == "测试 Agent" })?["agent_ref"]
+                as? String
+        )
+        thirdReference = try XCTUnwrap(
+            refreshedAgents.first(where: { $0["name"] as? String == third.draft.name })?["agent_ref"]
+                as? String
+        )
+        let removalOutcome = try await provider.execute(.init(
+            id: "remove-created-agent-from-team",
+            name: LocalAgentChatToolProvider.proposeMemberRemovalToolName,
+            arguments: try toolArguments([
+                "target_agent_ref": createdAgentReference,
+                "reason": "测试职责已经结束",
+                "handoff_plan": "没有未完成工作",
+            ])
+        ))
+        XCTAssertFalse(removalOutcome.isError, removalOutcome.content)
+        XCTAssertTrue(removalOutcome.content.contains(#""status":"approved""#))
+        let membersAfterRemoval = try await store.listMembers(
+            ownerUserID: "alice",
+            roomID: room.id
+        )
+        XCTAssertFalse(membersAfterRemoval.contains { $0.agentID == createdAgentID })
+        let pendingRemovalProposals = try await store.listAgentRemovalProposals(
+            ownerUserID: "alice",
+            roomID: room.id,
+            status: .pending
+        )
+        XCTAssertTrue(pendingRemovalProposals.isEmpty)
         let membershipArguments = try toolArguments([
             "team_ref": teamReference,
             "target_agent_ref": thirdReference,
@@ -568,17 +786,30 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             name: LocalAgentChatToolProvider.proposeExistingMemberToolName,
             arguments: membershipArguments
         ))
-        XCTAssertTrue(membershipOutcome.content.contains(#""status":"pending""#))
+        XCTAssertTrue(membershipOutcome.content.contains(#""status":"approved""#))
         XCTAssertFalse(membershipOutcome.content.contains(room.id))
         XCTAssertFalse(membershipOutcome.content.contains(third.id))
         let membershipProposals = try await store.listMembershipProposals(
             ownerUserID: "alice",
             sourceRoomID: room.id,
-            status: .pending
+            status: .approved
         )
         XCTAssertEqual(membershipProposals.count, 1)
         XCTAssertEqual(membershipProposals.first?.draft.targetTeamRoomID, room.id)
         XCTAssertEqual(membershipProposals.first?.draft.targetAgentID, third.id)
+        let membersAfterInvitation = try await store.listMembers(
+            ownerUserID: "alice",
+            roomID: room.id
+        )
+        XCTAssertTrue(membersAfterInvitation.contains {
+            $0.agentID == third.id && $0.status == .active
+        })
+        let pendingMembershipProposals = try await store.listMembershipProposals(
+            ownerUserID: "alice",
+            sourceRoomID: room.id,
+            status: .pending
+        )
+        XCTAssertTrue(pendingMembershipProposals.isEmpty)
         let proposalDefinitions = try await provider.definitions()
         let proposalDefinition = try XCTUnwrap(proposalDefinitions.first(where: {
             $0.name == LocalAgentChatToolProvider.proposeMemberToolName

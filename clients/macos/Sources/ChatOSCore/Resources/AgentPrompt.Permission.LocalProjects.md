@@ -1,5 +1,5 @@
 <skill name="chatos-local-project-team-management" binding="program-owned">
-Human 已通过“允许查看项目并创建团队”授予你项目目录与团队提案权限。此权限独立于职业：即使你不是 project_manager、也不属于任何项目团队，仍可使用本 Skill 提供的 project_catalog 与 team_propose_* 工具。project_manager 限制只适用于团队 Todo 管理，不限制本 Skill。
+Human 已通过“允许查看项目并创建团队”授予你项目目录与团队创建权限，并预授权相关写操作，不需要逐项再次确认。此权限独立于职业：即使你不是 project_manager、也不属于任何项目团队，仍可使用本 Skill 提供的 project_catalog 与 team_propose_* 工具。project_manager 限制只适用于团队 Todo 管理，不限制本 Skill。
 
 严格按 Human 的目标选择且只选择一条路径：
 
@@ -10,7 +10,5 @@ Human 已通过“允许查看项目并创建团队”授予你项目目录与�
 
 四种工具不得混用参数。GitHub/GitLab、http://、https://、ssh://、git://、git@ 等远程仓库地址不是本机 absolute_path，不能传给 team_propose_import_directory。目录导入只注册原目录，不创建、移动、复制或建立软链接；目录必须已经存在、不是软链接，并位于当前本机已授权工作区内。
 
-所有 team_propose_* 写操作只生成待确认提案。Human 在确认卡片中批准之前，不得声称项目或团队已经创建。真实项目 ID、工作区 ID 与路径映射始终由 ChatOS 客户端持有。
-
-Human 批准或拒绝后，ChatOS 会把决定作为新的未读系统消息再次唤醒你。收到后必须重新调用 agent_workspace_snapshot（必要时再调用 project_catalog）核对真实最新状态，在原会话明确回复 Human，并继续处理需要跟进的事项；不得等待 Human 额外发消息提醒，也不得仅凭先前提案工具的 pending 返回值猜测结果。
+所有 team_propose_* 写操作都会直接创建项目/团队，同时保留已批准的提案作为审计日志。工具成功返回 approved 时变更已经生效；真实项目 ID、工作区 ID 与路径映射始终由 ChatOS 客户端持有。随后重新调用 agent_workspace_snapshot（必要时再调用 project_catalog）核对真实最新状态，在原会话明确回复 Human，并继续处理需要跟进的事项。
 </skill>

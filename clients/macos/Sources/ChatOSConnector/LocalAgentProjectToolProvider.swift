@@ -17,6 +17,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
     private let projectsService: NativeLocalProjectsService?
     private let context: LocalAgentChatRunContext
     private let productSkills: ProductToolSkillSession
+    private let roomChangeHandler: @Sendable (String) async -> Void
     private let now: @Sendable () -> Int64
 
     public init(
@@ -26,6 +27,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         projectsService: NativeLocalProjectsService? = nil,
         context: LocalAgentChatRunContext,
         productSkillSession: ProductToolSkillSession = .init(),
+        roomChangeHandler: @escaping @Sendable (String) async -> Void = { _ in },
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
         }
@@ -39,6 +41,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         self.projectsService = projectsService
         self.context = context
         self.productSkills = productSkillSession
+        self.roomChangeHandler = roomChangeHandler
         self.now = now
     }
 
@@ -119,7 +122,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         if !options.isEmpty {
             definitions.append(.init(
                 name: Self.proposeExistingTeamToolName,
-                description: "为 project_catalog 中尚无活跃团队的已有 ChatOS 项目提交建团队提案。只传该工具 schema 中的 project_option、team_name、team_goal；不得传新项目字段、absolute_path 或 URL。拥有‘查看项目并创建团队’权限即可调用，不要求项目经理职业。只生成提案，必须等待 Human 确认；确认结果会作为新的未读系统消息再次唤醒你，收到后必须核对状态并回复。",
+                description: "为 project_catalog 中尚无活跃团队的已有 ChatOS 项目直接创建团队。只传该工具 schema 中的 project_option、team_name、team_goal；不得传新项目字段、absolute_path 或 URL。拥有‘查看项目并创建团队’权限即可调用，不要求项目经理职业。操作立即生效，并保留已批准的审计记录，不再等待 Human 逐项确认。",
                 schema: try JSONSerialization.data(
                     withJSONObject: existingSchema,
                     options: [.sortedKeys]
@@ -131,7 +134,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         }
         definitions.append(.init(
             name: Self.proposeNewProjectTeamToolName,
-            description: "在 Human 明确要求新建 ChatOS 项目并同时创建团队时提交提案，目录由 ChatOS 在默认工作区创建。只传该工具 schema 中的新项目与团队字段；不得传 project_option、absolute_path 或 URL。拥有‘查看项目并创建团队’权限即可调用，不要求项目经理职业。只生成提案，必须等待 Human 确认；确认结果会作为新的未读系统消息再次唤醒你，收到后必须核对状态并回复。",
+            description: "在 Human 明确要求新建 ChatOS 项目并同时创建团队时直接执行，目录由 ChatOS 在默认工作区创建。只传该工具 schema 中的新项目与团队字段；不得传 project_option、absolute_path 或 URL。拥有‘查看项目并创建团队’权限即可调用，不要求项目经理职业。操作立即生效，并保留已批准的审计记录，不再等待 Human 逐项确认。",
             schema: try JSONSerialization.data(
                 withJSONObject: newProjectSchema,
                 options: [.sortedKeys]
@@ -143,7 +146,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         if projectsService != nil {
             definitions.append(.init(
                 name: Self.proposeImportedDirectoryTeamToolName,
-                description: "把 Human 当前消息明确给出的、已经存在的本机绝对目录注册为 ChatOS 项目并创建团队。absolute_path 必须原样使用 Human 给出的以 / 开头的目录；不得猜测、补全或编造 /。GitHub/GitLab URL、git@ 和其他远程仓库地址都不是本机路径。目录必须位于已授权工作区且不能是软链接；导入不会创建、移动、复制或链接目录。拥有‘查看项目并创建团队’权限即可调用，不要求项目经理职业。只生成提案，必须等待 Human 确认；确认结果会作为新的未读系统消息再次唤醒你，收到后必须核对状态并回复。",
+                description: "把 Human 当前消息明确给出的、已经存在的本机绝对目录直接注册为 ChatOS 项目并创建团队。absolute_path 必须原样使用 Human 给出的以 / 开头的目录；不得猜测、补全或编造 /。GitHub/GitLab URL、git@ 和其他远程仓库地址都不是本机路径。目录必须位于已授权工作区且不能是软链接；导入不会创建、移动、复制或链接目录。拥有‘查看项目并创建团队’权限即可调用，不要求项目经理职业。操作立即生效，并保留已批准的审计记录，不再等待 Human 逐项确认。",
                 schema: try JSONSerialization.data(
                     withJSONObject: importDirectorySchema,
                     options: [.sortedKeys]
@@ -174,16 +177,30 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
                     + missingSkills.joined(separator: ", ")
             )
         }
+        let replayedProposal = try await store.listTeamProposals(
+            ownerUserID: context.ownerUserID,
+            sourceRoomID: context.roomID,
+            status: nil
+        ).first {
+            $0.proposerAgentID == context.agentID
+                && $0.sourceDeliveryID == context.deliveryID
+                && $0.requestKey == call.id
+        }
         let draft: LocalAgentTeamCreationProposalDraft
         let projectLabel: String
         switch call.name {
         case Self.proposeExistingTeamToolName:
             let arguments = try decode(ExistingTeamProposalArguments.self, from: call.arguments)
-            let options = try await existingProjectOptions()
+            let options = allProjectOptions()
             guard let selected = options.first(where: {
                 $0.token == arguments.projectOption
             }), let projectID = selected.projectID else {
                 throw AgentGroupChatError.invalidField("project_option")
+            }
+            if replayedProposal == nil {
+                guard !(try await occupiedProjectIDs()).contains(projectID) else {
+                    throw AgentGroupChatError.conflict
+                }
             }
             draft = .init(
                 existingProjectID: projectID,
@@ -263,8 +280,22 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
                 draft: draft,
                 nowUnixMs: now()
             )
+        if proposal.status == .pending {
+            let resolvedProjectID = try await resolveProjectID(for: proposal.draft)
+            let approval = try await store.approveTeamProposal(
+                ownerUserID: context.ownerUserID,
+                sourceRoomID: context.roomID,
+                proposalID: proposal.id,
+                resolvedProjectID: resolvedProjectID,
+                nowUnixMs: now(),
+                sendResolutionNotification: false
+            )
+            await roomChangeHandler(approval.room.id)
+        } else if let roomID = proposal.createdRoomID {
+            await roomChangeHandler(roomID)
+        }
         return try outcome(ProposalResponse(
-            status: proposal.status.rawValue,
+            status: LocalAgentTeamCreationProposalStatus.approved.rawValue,
             projectLabel: projectLabel,
             createsNewProject: draft.existingProjectID == nil
         ))
@@ -320,22 +351,35 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
 
     private func existingProjectOptions() async throws -> [ProjectOption] {
         let occupiedProjectIDs = try await occupiedProjectIDs()
-        let available = projects.filter { !occupiedProjectIDs.contains($0.id) }
-        return available.enumerated().map { offset, project in
+        return projects.enumerated().compactMap { offset, project in
+            guard !occupiedProjectIDs.contains(project.id) else { return nil }
+            return
                 .init(
                     token: "existing_\(offset + 1)",
                     label: project.draft.name,
                     projectID: project.id
                 )
-            }
+        }
+    }
+
+    private func allProjectOptions() -> [ProjectOption] {
+        projects.enumerated().map { offset, project in
+            .init(
+                token: "existing_\(offset + 1)",
+                label: project.draft.name,
+                projectID: project.id
+            )
+        }
     }
 
     private func projectCatalog() async throws -> ProjectCatalogResponse {
         let occupied = try await occupiedProjectIDs()
         let available = projects.filter { !occupied.contains($0.id) }
-        let optionByProjectID = Dictionary(uniqueKeysWithValues: available.enumerated().map {
-            ($0.element.id, "existing_\($0.offset + 1)")
-        })
+        let optionPairs: [(String, String)] = projects.enumerated().compactMap {
+            guard !occupied.contains($0.element.id) else { return nil }
+            return ($0.element.id, "existing_\($0.offset + 1)")
+        }
+        let optionByProjectID = Dictionary(uniqueKeysWithValues: optionPairs)
         return .init(
             totalProjectCount: projects.count,
             availableForTeamCount: available.count,
@@ -370,6 +414,38 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
             includeArchived: false
         )
         return Set(rooms.map(\.projectID))
+    }
+
+    private func resolveProjectID(
+        for draft: LocalAgentTeamCreationProposalDraft
+    ) async throws -> String {
+        if let existingProjectID = draft.existingProjectID {
+            guard projects.contains(where: {
+                $0.id == existingProjectID && $0.status == .active
+            }) else {
+                throw AgentGroupChatError.notFound
+            }
+            return existingProjectID
+        }
+        guard let projectsService else { throw AgentGroupChatError.permissionDenied }
+        if let importedDraft = draft.importedProjectDraft,
+           let absolutePath = draft.importedProjectAbsolutePath {
+            return try await projectsService.createFromExistingDirectory(
+                ownerUserID: context.ownerUserID,
+                draft: importedDraft,
+                absolutePath: absolutePath
+            ).id
+        }
+        if let newProjectName = draft.newProjectName {
+            return try await projectsService.createInDefaultWorkspace(
+                ownerUserID: context.ownerUserID,
+                name: newProjectName,
+                description: draft.newProjectDescription,
+                projectTypeKey: draft.newProjectTypeKey
+                    ?? LocalAgentSkillCatalog.legacyProjectTypeKey
+            ).id
+        }
+        throw AgentGroupChatError.conflict
     }
 
     private static func looksLikeRemoteRepository(_ value: String) -> Bool {

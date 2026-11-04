@@ -29,20 +29,26 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: Self.proposeMemberToolName,
-            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。该工具只持久化待确认提案，绝不会直接创建 Agent；私聊中确认后只创建独立 Agent，团队会话中确认后才加入当前团队。模型配置由客户端继承并透传，AI 不填写模型 ID；thinking_level 省略时继承当前 Agent。",
+            description: "使用已授予的人员管理权限直接创建新 Agent，同时保留已批准的审计记录，不再等待 Human 逐项确认。私聊中创建独立 Agent，团队会话中同时加入当前团队。模型配置由客户端继承并透传，AI 不填写模型 ID；thinking_level 省略时继承当前 Agent。",
             schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"thinking_level":{"type":"string","enum":["auto","none","minimal","low","medium","high","xhigh","max"]},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: proposeExistingMemberToolName,
-            description: "使用人员管理权限，把账户中已有 Agent 邀请进指定项目团队。先调用 agent_workspace_snapshot，使用其中同一轮返回的 team_ref 和 agent_ref；真实 ID 由客户端解析，不得猜测。该工具只生成待确认提案，Human 确认后才建立成员关系；一个 Agent 可以加入多个团队。",
+            description: "使用已授予的人员管理权限，直接把账户中已有 Agent 加入指定项目团队，同时保留已批准的审计记录。先调用 agent_workspace_snapshot，使用其中同一轮返回的 team_ref 和 agent_ref；真实 ID 由客户端解析，不得猜测。一个 Agent 可以加入多个团队。",
             schema: Data(#"{"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600},"target_agent_ref":{"type":"string","minLength":1,"maxLength":600},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000}},"required":["team_ref","target_agent_ref","role"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: proposeMemberRemovalToolName,
-            description: "使用已授予的人员管理权限，向 Human 提交把一个 Agent 移出当前项目团队的提案。必须提供事实理由和可选交接计划；该工具不会删除可复用的 Agent profile，也不会绕过 Human 确认。",
+            description: "使用已授予的人员管理权限，直接把一个 Agent 移出当前项目团队，同时保留已批准的审计记录。必须提供事实理由和可选交接计划；该工具不会删除可复用的 Agent profile。项目经理必须先完成显式交接才能被移出。",
             schema: Data(#"{"type":"object","properties":{"target_agent_ref":{"type":"string","minLength":1,"maxLength":600},"reason":{"type":"string","minLength":1,"maxLength":4000},"handoff_plan":{"type":"string","maxLength":8000}},"required":["target_agent_ref","reason"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: deleteAgentToolName,
+            description: "使用已授予的人员管理权限，直接安全删除另一个已有 Agent。先调用 agent_workspace_snapshot，并把其中同一轮返回的 agent_ref 作为 target_agent_ref。删除会停止其运行和心跳、取消未完成任务、移出全部团队并归档私聊，但保留历史与审计记录；不能删除自己。重复删除同一 Agent 按成功处理。",
+            schema: Data(#"{"type":"object","properties":{"target_agent_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["target_agent_ref"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(

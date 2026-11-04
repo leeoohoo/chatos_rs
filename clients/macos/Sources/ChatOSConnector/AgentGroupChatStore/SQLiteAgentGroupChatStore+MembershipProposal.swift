@@ -124,7 +124,8 @@ extension SQLiteAgentGroupChatStore {
         ownerUserID: String,
         sourceRoomID: String,
         proposalID: String,
-        nowUnixMs: Int64
+        nowUnixMs: Int64,
+        sendResolutionNotification: Bool = true
     ) throws -> LocalAgentMembershipProposalApproval {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(sourceRoomID, field: "sourceRoomID")
@@ -252,15 +253,17 @@ extension SQLiteAgentGroupChatStore {
                     nowUnixMs: nowUnixMs
                 )
             }
-            try enqueueProposalResolutionNotification(
-                ownerUserID: ownerUserID,
-                roomID: sourceRoomID,
-                proposerAgentID: approved.proposerAgentID,
-                proposalID: approved.id,
-                proposalLabel: "现有 Agent 加入团队提案",
-                approved: true,
-                nowUnixMs: nowUnixMs
-            )
+            if sendResolutionNotification {
+                try enqueueProposalResolutionNotification(
+                    ownerUserID: ownerUserID,
+                    roomID: sourceRoomID,
+                    proposerAgentID: approved.proposerAgentID,
+                    proposalID: approved.id,
+                    proposalLabel: "现有 Agent 加入团队提案",
+                    approved: true,
+                    nowUnixMs: nowUnixMs
+                )
+            }
             return .init(proposal: approved, member: member, room: updatedRoom)
         }
     }
