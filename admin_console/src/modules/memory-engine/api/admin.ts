@@ -2,7 +2,10 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type {
+  AgentDirectoryQuery,
   DashboardOverview,
+  EngineAgentDirectoryItem,
+  EngineAgentProject,
   EngineJobPolicy,
   EngineSource,
   GenerateJobPolicyPromptPayload,
@@ -59,6 +62,30 @@ function normalizeJobPolicy(data: Partial<EngineJobPolicy>): EngineJobPolicy {
 }
 
 export const adminApi = {
+  async listAgents(params?: AgentDirectoryQuery): Promise<EngineAgentDirectoryItem[]> {
+    const { data } = await client.get('/admin/agents', {
+      params: {
+        tenant_id: params?.tenant_id,
+        source_id: params?.source_id,
+        agent_id: params?.agent_id,
+        limit: params?.limit ?? 100,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async listAgentProjects(
+    agentSubjectId: string,
+    params: { tenant_id: string; source_id: string },
+  ): Promise<EngineAgentProject[]> {
+    const { data } = await client.get(
+      `/admin/agents/${encodeURIComponent(agentSubjectId)}/projects`,
+      { params },
+    );
+    return data.items ?? [];
+  },
+
   async listSources(): Promise<EngineSource[]> {
     const { data } = await client.get('/admin/sources', {
       params: { limit: 500 },

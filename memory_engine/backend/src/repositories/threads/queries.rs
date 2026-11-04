@@ -149,7 +149,7 @@ pub async fn list_threads(
         ],
         false,
     );
-    append_json_aliases(
+    append_agent_filter(
         &mut query,
         values.agent_id,
         &[
@@ -163,7 +163,6 @@ pub async fn list_threads(
             "{metadata,source_metadata,ui_chat_selection,selected_agent_id}",
             "{metadata,source_metadata,ui_chat_selection,selectedAgentId}",
         ],
-        false,
     );
     append_json_aliases(
         &mut query,
@@ -231,6 +230,38 @@ fn append_json_aliases(
             query.push("data #>> '").push(*path).push("'");
         }
         query.push("=").push_bind(value);
+    }
+    query.push(")");
+}
+
+fn append_agent_filter(
+    query: &mut QueryBuilder<Postgres>,
+    value: Option<&str>,
+    metadata_paths: &[&str],
+) {
+    let Some(agent_id) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    let agent_subject_id = if agent_id.starts_with("agent:") {
+        agent_id.to_string()
+    } else {
+        format!("agent:{agent_id}")
+    };
+    let raw_agent_id = agent_subject_id
+        .strip_prefix("agent:")
+        .unwrap_or(agent_id)
+        .to_string();
+    query
+        .push(" AND (subject_id=")
+        .push_bind(agent_subject_id.clone())
+        .push(" OR data->'labels' ? ")
+        .push_bind(agent_subject_id);
+    for path in metadata_paths {
+        query
+            .push(" OR data #>> '")
+            .push(*path)
+            .push("'=")
+            .push_bind(raw_agent_id.clone());
     }
     query.push(")");
 }

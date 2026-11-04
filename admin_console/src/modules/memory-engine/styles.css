@@ -232,6 +232,84 @@ body,
   gap: 16px;
 }
 
+.engine-agent-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(160px, 0.8fr) minmax(200px, 1fr) 140px minmax(420px, 2fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.engine-agent-filter-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding-bottom: 12px;
+}
+
+.engine-agent-workspace {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(380px, 0.72fr) minmax(0, 1.28fr);
+  gap: 16px;
+}
+
+.engine-agent-detail-card .ant-card-body {
+  gap: 12px;
+}
+
+.engine-agent-statistics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid #e2e9ee;
+  border-radius: 12px;
+  background: #f8fbfc;
+}
+
+.engine-agent-statistics .ant-statistic-content {
+  font-size: 20px;
+}
+
+.engine-agent-detail-tabs {
+  flex: 1;
+}
+
+.engine-agent-project-pane {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(180px, 0.7fr) minmax(260px, 1.3fr);
+  gap: 14px;
+}
+
+.engine-agent-project-memory {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 4px;
+  border-top: 1px solid #e2e9ee;
+}
+
+.engine-agent-project-memory .ant-typography {
+  flex: 0 0 auto;
+}
+
+.engine-agent-thread-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.engine-agent-thread-pane .engine-data-workspace {
+  flex: 1;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(420px, 1.15fr);
+}
+
+.engine-agent-thread-pane .engine-data-card {
+  box-shadow: none;
+}
+
 .engine-data-column {
   min-height: 0;
   display: flex;
@@ -396,12 +474,34 @@ body,
 }
 
 @media (max-width: 1440px) {
+  .engine-agent-workspace {
+    grid-template-columns: minmax(340px, 0.64fr) minmax(0, 1.36fr);
+  }
+
+  .engine-agent-filter-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .engine-agent-filter-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
   .engine-data-workspace {
     grid-template-columns: minmax(320px, 0.96fr) minmax(0, 1.04fr);
   }
 }
 
 @media (max-width: 1200px) {
+  .engine-agent-workspace {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .engine-agent-statistics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .engine-data-workspace {
     grid-template-columns: 1fr;
   }
@@ -420,6 +520,11 @@ body,
 }
 
 @media (max-width: 768px) {
+  .engine-agent-filter-grid,
+  .engine-agent-statistics {
+    grid-template-columns: 1fr;
+  }
+
   .engine-data-filter-grid {
     grid-template-columns: 1fr;
   }

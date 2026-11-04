@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod agent_directory;
 mod common;
 mod compose;
 mod control_plane;
@@ -14,6 +15,7 @@ mod system;
 mod thread_snapshots;
 mod threads;
 
+pub use self::agent_directory::{AgentDirectoryItem, AgentProjectItem};
 pub use self::common::{default_active, now_plus_seconds_rfc3339, now_rfc3339};
 pub use self::compose::{
     ComposeContextBlock, ComposeContextMeta, ComposeContextPolicy, ComposeContextRequest,

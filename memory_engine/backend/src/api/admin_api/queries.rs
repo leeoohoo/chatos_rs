@@ -21,3 +21,18 @@ pub struct JobRunStatsQuery {
     pub source_id: Option<String>,
     pub since_hours: Option<i64>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct AgentDirectoryQuery {
+    pub tenant_id: Option<String>,
+    pub source_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgentProjectsQuery {
+    pub tenant_id: Option<String>,
+    pub source_id: Option<String>,
+}
