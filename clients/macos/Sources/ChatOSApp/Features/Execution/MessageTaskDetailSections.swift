@@ -60,11 +60,14 @@ struct MessageTaskDetailSections: View {
                     value: task.objective ?? "-",
                     allowsTextSelection: allowsTextSelection
                 )
-                TaskDetailNamedText(
-                    label: "描述",
-                    value: task.description ?? "-",
-                    allowsTextSelection: allowsTextSelection
-                )
+                if let description = task.description?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+                    TaskDetailNamedText(
+                        label: "描述",
+                        value: description,
+                        allowsTextSelection: allowsTextSelection
+                    )
+                }
                 if !task.acceptanceCriteria.isEmpty {
                     Divider()
                     VStack(alignment: .leading, spacing: 10) {
