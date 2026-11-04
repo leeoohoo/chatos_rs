@@ -163,7 +163,10 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     public func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         do {
-            return try await executeValidated(call)
+            if let failure = try await productSkillGateFailure(for: call.name) {
+                return failure
+            }
+            return try await executeIdentityBound(call)
         } catch let error as AgentGroupChatError {
             // Validation, authorization and optimistic-concurrency failures are known to have
             // rolled back locally. Returning them as tool failures lets the model correct its
@@ -181,10 +184,34 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         }
     }
 
-    private func executeValidated(_ call: AgentToolCall) async throws -> AgentToolOutcome {
-        if let failure = try await productSkillGateFailure(for: call.name) {
-            return failure
+    /// Executes a team Executor tool after the Rust Host has already applied its immutable
+    /// run-bound Product Skill policy. The native bridge still applies every identity, Todo,
+    /// acceptance and optimistic-concurrency check owned by this provider.
+    func executeFromNativeTeamExecutor(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        guard NativeLocalAgentPlatformToolCatalog.teamExecutorToolNames.contains(call.name) else {
+            return Self.structuredFailure(
+                code: "team_executor_tool_not_allowed",
+                field: "tool",
+                message: "当前 Host Run 未授权这个团队执行工具。",
+                retryable: false
+            )
         }
+        do {
+            return try await executeIdentityBound(call)
+        } catch let error as AgentGroupChatError {
+            guard case .storage = error else {
+                return Self.structuredFailure(
+                    code: Self.errorCode(error),
+                    field: Self.errorField(error),
+                    message: error.localizedDescription,
+                    retryable: error != .permissionDenied
+                )
+            }
+            throw error
+        }
+    }
+
+    private func executeIdentityBound(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         switch call.name {
         case Self.bootstrapToolName:
             return try await bootstrap(call)

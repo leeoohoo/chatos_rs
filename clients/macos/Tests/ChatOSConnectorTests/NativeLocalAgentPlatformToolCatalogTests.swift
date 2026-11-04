@@ -408,7 +408,7 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         XCTAssertTrue(text.contains("direct_task_tool"))
 
         let bindings = snapshot.bundle.toolSkillBindings
-        XCTAssertEqual(bindings.count, 6)
+        XCTAssertEqual(bindings.count, 8)
         XCTAssertEqual(
             Set(bindings.flatMap(\.toolNames)).count,
             bindings.flatMap(\.toolNames).count
@@ -427,6 +427,15 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         XCTAssertEqual(broker.activationPolicy, .runBound)
         XCTAssertTrue(broker.toolNames.contains("agent_skill_activate"))
         XCTAssertTrue(broker.toolNames.contains("capability_invoke"))
+        let todoExecution = try XCTUnwrap(bindings.first {
+            $0.bindingID == ProductToolSkillBindingID.todoExecution
+        })
+        XCTAssertEqual(todoExecution.activationPolicy, .runBound)
+        XCTAssertTrue(todoExecution.toolNames.contains("todo_acceptance_update"))
+        let teamKnowledge = try XCTUnwrap(bindings.first {
+            $0.bindingID == ProductToolSkillBindingID.teamKnowledge
+        })
+        XCTAssertEqual(Set(teamKnowledge.toolNames), ["team_asset_list", "team_asset_get"])
         XCTAssertTrue(Set(snapshot.bundle.documents.map(\.skillRef)).isSuperset(of: [
             "product-skill:chatos-capability-discovery",
             "product-skill:chatos-project-files",

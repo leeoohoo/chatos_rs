@@ -128,6 +128,9 @@ extension LocalAgentGroupChatScheduler {
                     messageID: delivery.messageID
                 )?.content ?? ""
             }
+            // Resolve Agent-team SubagentStart against the exact Project workspace. The migrated
+            // Host owns PreToolUse/PostToolUse/SubagentStop; this bridge preserves the project-
+            // scoped startup context until Host project resources can resolve local paths itself.
             let hookContexts = if room.conversationKind == .projectTeam {
                 try await teamHookContextProvider(
                     ownerUserID,
@@ -234,6 +237,84 @@ extension LocalAgentGroupChatScheduler {
                 assetUpdateSuggestions: [],
                 nowUnixMs: now()
             )
+        }
+
+        if let todo = executionTodo, let nativeExecutor {
+            try await session.record(
+                checkpoint: checkpoint,
+                event: .init(
+                    kind: "native_host_started",
+                    detail: "团队 Executor 已交由 Rust Local Agent Host 执行。",
+                    modelCalls: checkpoint.modelCalls
+                )
+            )
+            let outcome: NativeLocalAgentTeamExecutorOutcome
+            do {
+                outcome = try await nativeExecutor.execute(
+                    profile: profile,
+                    room: room,
+                    member: member,
+                    delivery: delivery,
+                    todo: todo,
+                    groupRun: run
+                )
+            } catch NativeLocalAgentConversationServiceError.notConfigured {
+                checkpoint.status = .paused
+                checkpoint.stopReason = "Rust Local Agent Host 尚未完成配置，已安全暂停并等待恢复。"
+                _ = try await session.finish(checkpoint: checkpoint)
+                return .init(
+                    deliveryID: delivery.id,
+                    agentID: delivery.targetAgentID,
+                    outcome: .suspended,
+                    detail: checkpoint.stopReason
+                )
+            }
+            switch outcome.state {
+            case .completed:
+                checkpoint.status = .completed
+                checkpoint.result = outcome.detail
+                checkpoint.stopReason = nil
+                _ = try await session.finish(checkpoint: checkpoint)
+                return .init(
+                    deliveryID: delivery.id,
+                    agentID: delivery.targetAgentID,
+                    outcome: .completed,
+                    detail: outcome.detail
+                )
+            case .suspended:
+                checkpoint.status = .paused
+                checkpoint.stopReason = outcome.detail ?? "Rust Local Agent Host Run 已暂停。"
+                _ = try await session.finish(checkpoint: checkpoint)
+                return .init(
+                    deliveryID: delivery.id,
+                    agentID: delivery.targetAgentID,
+                    outcome: .suspended,
+                    detail: checkpoint.stopReason
+                )
+            case .failed:
+                checkpoint.status = .failed
+                checkpoint.stopReason = outcome.detail ?? "Rust Local Agent Host Run 失败。"
+                _ = try await session.finish(checkpoint: checkpoint)
+                if try await store.delivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: delivery.id
+                )?.status == .running {
+                    try await failDeliveryAndNotifyManager(
+                        store: store,
+                        ownerUserID: ownerUserID,
+                        delivery: delivery,
+                        runID: context.runID,
+                        detail: checkpoint.stopReason ?? "Rust Local Agent Host Run 失败。",
+                        stage: "native_executor_failed"
+                    )
+                }
+                return .init(
+                    deliveryID: delivery.id,
+                    agentID: delivery.targetAgentID,
+                    outcome: .failed,
+                    detail: checkpoint.stopReason
+                )
+            }
         }
 
         var memoryProvider: AgentMemoryContextProvider?

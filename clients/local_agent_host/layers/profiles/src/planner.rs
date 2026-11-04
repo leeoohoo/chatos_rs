@@ -135,9 +135,14 @@ fn agent_direct_instructions(input: &Value) -> Result<Option<String>, String> {
 
 fn scope_agent_direct_tools(mut tools: Vec<Value>, input: &Value) -> Vec<Value> {
     let Some(context) = input.get("agent_execution_context") else {
-        tools.retain(|tool| tool_name(tool).is_none_or(|name| !name.starts_with("team_asset_")));
+        tools.retain(|tool| {
+            tool_name(tool).is_none_or(|name| {
+                !name.starts_with("team_asset_") && !TEAM_EXECUTOR_TOOLS.contains(&name)
+            })
+        });
         return tools;
     };
+    let is_team_executor = input.get("team_executor_context").is_some();
     let is_team_agent = context.get("schema_version").and_then(Value::as_u64) == Some(2);
     let is_project_manager = context
         .get("is_project_manager")
@@ -157,7 +162,9 @@ fn scope_agent_direct_tools(mut tools: Vec<Value>, input: &Value) -> Vec<Value> 
     }
     tools.retain(|tool| {
         tool_name(tool).is_none_or(|name| {
-            if matches!(name, "team_asset_list" | "team_asset_get") {
+            if TEAM_EXECUTOR_TOOLS.contains(&name) {
+                is_team_agent && is_team_executor
+            } else if matches!(name, "team_asset_list" | "team_asset_get") {
                 is_team_agent
             } else if matches!(
                 name,
@@ -171,6 +178,14 @@ fn scope_agent_direct_tools(mut tools: Vec<Value>, input: &Value) -> Vec<Value> 
     });
     tools
 }
+
+const TEAM_EXECUTOR_TOOLS: [&str; 5] = [
+    "todo_get_context",
+    "todo_progress_append",
+    "todo_acceptance_update",
+    "todo_complete",
+    "todo_block",
+];
 
 /// A model runtime resolved for one step. This type is deliberately neither
 /// serializable nor debuggable because `model_config` may contain credentials.
@@ -419,9 +434,11 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             capabilities.tools = main_chat_scoped_tools(capabilities.tools, &claim.run.input);
             capabilities.tools = scope_agent_direct_tools(capabilities.tools, &claim.run.input);
         }
-        capabilities
-            .prefixed_input_items
-            .extend(self.local_prefixed_input_items.clone());
+        if claim.run.input.get("team_executor_context").is_none() {
+            capabilities
+                .prefixed_input_items
+                .extend(self.local_prefixed_input_items.clone());
+        }
         // Refresh even for resumed Tasks; page text is not the runtime clock.
         capabilities
             .prefixed_input_items

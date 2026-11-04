@@ -603,6 +603,57 @@ fn task_tools_are_filtered_to_the_declared_minimum_capabilities() {
 }
 
 #[test]
+fn team_executor_tools_require_the_normalized_team_execution_context() {
+    let tools = [
+        "todo_get_context",
+        "todo_progress_append",
+        "todo_acceptance_update",
+        "todo_complete",
+        "todo_block",
+        "team_asset_list",
+        "team_asset_get",
+        "task_run_process_record_process",
+    ]
+    .map(|name| json!({"name": name}))
+    .to_vec();
+    let base = json!({
+        "tool_options": {
+            "requires_execution": true,
+            "enabled_builtin_kinds": ["CodeMaintainerRead"],
+            "plugin_hints": []
+        },
+        "agent_execution_context": {"schema_version": 2}
+    });
+    assert_eq!(
+        task_scoped_tools(tools.clone(), &base)
+            .expect("filter ordinary Task")
+            .iter()
+            .filter_map(tool_name)
+            .collect::<Vec<_>>(),
+        vec!["task_run_process_record_process"]
+    );
+
+    let mut executor = base;
+    executor["team_executor_context"] = json!({"delivery_id": "delivery-1"});
+    assert_eq!(
+        task_scoped_tools(tools, &executor)
+            .expect("filter team Executor")
+            .iter()
+            .filter_map(tool_name)
+            .collect::<Vec<_>>(),
+        vec![
+            "todo_get_context",
+            "todo_progress_append",
+            "todo_acceptance_update",
+            "todo_complete",
+            "todo_block",
+            "team_asset_list",
+            "team_asset_get",
+        ]
+    );
+}
+
+#[test]
 fn plugin_tasks_cannot_use_notepad_as_a_writable_fallback() {
     let tools = [
         "notepad_list_folders",

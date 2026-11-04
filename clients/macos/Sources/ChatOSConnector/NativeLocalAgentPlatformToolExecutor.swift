@@ -32,6 +32,7 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
   private let projectTools: (any NativeLocalAgentProjectToolExecuting)?
   private let externalMCPs: NativeLocalAgentExternalMCPExecutor
   private let pluginInstallerTools: NativeLocalAgentPluginInstallerToolExecutor?
+  private let teamExecutorTools: NativeLocalAgentTeamExecutorToolRouter?
 
   init(
     host: any LocalAgentHostClientServicing,
@@ -39,6 +40,7 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
     projectTools: (any NativeLocalAgentProjectToolExecuting)? = nil,
     attachmentWorkspaceResolver: (any NativeLocalAgentAttachmentWorkspaceResolving)? = nil,
     connector: NativeLocalConnectorService? = nil,
+    agentGroupChatService: NativeAgentGroupChatService? = nil,
     mediaWorker: any MediaWorkerImageNormalizing = MediaWorkerProcessClient.shared,
     codeReadWorker: any CodeReadWorkerExecuting = CodeReadWorkerProcessClient.shared
   ) {
@@ -52,12 +54,24 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
     pluginInstallerTools = connector.map {
       NativeLocalAgentPluginInstallerToolExecutor(host: host, connector: $0)
     }
+    teamExecutorTools = agentGroupChatService.map(NativeLocalAgentTeamExecutorToolRouter.init)
   }
 
   func execute(
     ownerUserID: String,
     invocation: LocalAgentToolInvocationRecord
   ) async throws -> LocalAgentJSONValue {
+    if NativeLocalAgentPlatformToolCatalog.teamExecutorToolNames.contains(invocation.toolName) {
+      guard let teamExecutorTools else {
+        throw NativeLocalAgentPlatformToolError.unsupportedTool
+      }
+      let run = try await runtime.run(ownerUserID: ownerUserID, runID: invocation.runID)
+      return try await teamExecutorTools.execute(
+        ownerUserID: ownerUserID,
+        run: run,
+        invocation: invocation
+      )
+    }
     if invocation.toolName.hasPrefix(
       NativeLocalAgentPlatformToolCatalog.pluginInstallerToolPrefix
     ) {
@@ -83,10 +97,24 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
       guard let projectTools else {
         throw NativeLocalAgentPlatformToolError.projectUnavailable
       }
-      return try await projectTools.execute(
+      let output = try await projectTools.execute(
         ownerUserID: ownerUserID,
         invocation: invocation
       )
+      if let teamExecutorTools {
+        let run = try await runtime.run(ownerUserID: ownerUserID, runID: invocation.runID)
+        if case let .object(input) = run.input,
+          input["team_executor_context"] != nil
+        {
+          try await teamExecutorTools.appendProjectToolAudit(
+            ownerUserID: ownerUserID,
+            run: run,
+            invocation: invocation,
+            output: output
+          )
+        }
+      }
+      return output
     }
     guard invocation.toolName == NativeLocalAgentPlatformToolCatalog.attachmentReadToolName else {
       throw NativeLocalAgentPlatformToolError.unsupportedTool
@@ -191,6 +219,7 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
   func reset() async {
     await externalMCPs.reset()
     await projectTools?.reset()
+    await teamExecutorTools?.reset()
   }
 
   func release(runID: String) async {

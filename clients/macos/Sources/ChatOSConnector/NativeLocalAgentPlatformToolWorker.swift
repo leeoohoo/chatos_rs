@@ -63,6 +63,7 @@ public actor NativeLocalAgentPlatformToolWorker {
     attachmentRootURL: URL,
     projects: NativeLocalProjectsService,
     connector: NativeLocalConnectorService,
+    agentGroupChatService: NativeAgentGroupChatService? = nil,
     remoteConnectionProvider: (any NativeRemoteConnectionRuntimeProviding)? = nil,
     eventHub: NativeLocalAgentEventHub? = nil,
     workerID: String = "macos-platform-tool-worker",
@@ -85,7 +86,8 @@ public actor NativeLocalAgentPlatformToolWorker {
       attachmentWorkspaceResolver: NativeLocalAgentProjectContextResolver(
         host: host, projects: projects, connector: connector
       ),
-      connector: connector
+      connector: connector,
+      agentGroupChatService: agentGroupChatService
     )
     approvalHandler = NativeLocalAgentToolApprovalHandler(
       host: host,

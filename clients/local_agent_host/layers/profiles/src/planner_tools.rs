@@ -96,7 +96,7 @@ pub(super) fn task_scoped_tools(tools: Vec<Value>, input: &Value) -> Result<Vec<
                 return Some(tool);
             }
             if name.starts_with("task_run_process_") {
-                return Some(tool);
+                return input.get("team_executor_context").is_none().then_some(tool);
             }
             if matches!(name.as_str(), "tool_result_read" | "tool_result_query") {
                 return Some(tool);
@@ -108,6 +108,22 @@ pub(super) fn task_scoped_tools(tools: Vec<Value>, input: &Value) -> Result<Vec<
                 return has_attachments.then_some(tool);
             }
             if matches!(name.as_str(), "team_asset_list" | "team_asset_get") {
+                let is_team_executor = input
+                    .get("agent_execution_context")
+                    .and_then(|context| context.get("schema_version"))
+                    .and_then(Value::as_u64)
+                    == Some(2)
+                    && input.get("team_executor_context").is_some();
+                return is_team_executor.then_some(tool);
+            }
+            if matches!(
+                name.as_str(),
+                "todo_get_context"
+                    | "todo_progress_append"
+                    | "todo_acceptance_update"
+                    | "todo_complete"
+                    | "todo_block"
+            ) {
                 let is_team_executor = input
                     .get("agent_execution_context")
                     .and_then(|context| context.get("schema_version"))

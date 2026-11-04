@@ -119,6 +119,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let askUserPromptService: NativeLocalAgentAskUserPromptService?
     let requirementSurveyClient: NativeLocalAgentRequirementSurveyClient?
     let platformToolWorker: NativeLocalAgentPlatformToolWorker?
+    let localAgentTeamExecutor: NativeLocalAgentTeamExecutor?
     let workspaceService: NativeLocalAgentWorkspaceService?
     let localConnectorService: NativeLocalConnectorService
     let pluginApplicationListUseCase: PluginApplicationListUseCase
@@ -299,6 +300,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         let localAgentRuntimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?
         let localAgentConversationService: NativeLocalAgentConversationService?
         let localAgentPlatformToolWorker: NativeLocalAgentPlatformToolWorker?
+        let localAgentTeamExecutor: NativeLocalAgentTeamExecutor?
         let localAgentEventHub: NativeLocalAgentEventHub?
         if let localAgentHost {
             let attachmentRootURL = RuntimeConfiguration.nativeConnectorStateURL
@@ -311,6 +313,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 attachmentRootURL: attachmentRootURL,
                 projects: localProjectsService,
                 connector: localConnectorService,
+                agentGroupChatService: agentGroupChatService,
                 remoteConnectionProvider: remoteConnectionService,
                 eventHub: eventHub,
                 maximumConcurrentClaims: RuntimeConfiguration
@@ -319,6 +322,11 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             localAgentRuntimeSettingsService = settings
             localAgentEventHub = eventHub
             localAgentPlatformToolWorker = worker
+            localAgentTeamExecutor = NativeLocalAgentTeamExecutor(
+                host: localAgentHost,
+                groupChatService: agentGroupChatService,
+                platformToolWorker: worker
+            )
             localAgentConversationService = NativeLocalAgentConversationService(
                 host: localAgentHost,
                 attachmentRootURL: attachmentRootURL,
@@ -331,6 +339,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             localAgentEventHub = nil
             localAgentConversationService = nil
             localAgentPlatformToolWorker = nil
+            localAgentTeamExecutor = nil
         }
         self.localAgentHost = localAgentHost
         self.localAgentEventHub = localAgentEventHub
@@ -369,6 +378,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             NativeLocalAgentRequirementSurveyClient(host: $0)
         }
         self.platformToolWorker = localAgentPlatformToolWorker
+        self.localAgentTeamExecutor = localAgentTeamExecutor
         let workspaceService = localAgentHost.map {
             NativeLocalAgentWorkspaceService(host: $0)
         }
@@ -399,6 +409,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             service: agentGroupChatService,
             services: agentServices,
             runtime: AgentWorkerProcessClient(),
+            nativeExecutor: localAgentTeamExecutor,
             maximumConcurrentExecutions: RuntimeConfiguration.swiftAgentMaximumConcurrentRuns,
             machineResourceGovernor: .shared,
             projectTypeKeyProvider: { ownerUserID, projectID in

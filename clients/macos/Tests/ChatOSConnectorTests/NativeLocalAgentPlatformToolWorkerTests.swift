@@ -514,7 +514,8 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         XCTAssertEqual(
             NativeLocalAgentPlatformToolCatalog.readOnlyToolNames,
             [
-                "local_attachment_read", "read_file_raw", "read_file_range", "list_dir",
+                "local_attachment_read", "todo_get_context", "team_asset_list", "team_asset_get",
+                "read_file_raw", "read_file_range", "list_dir",
                 "search_text", "read_file", "search_files", "process_poll", "process_log",
                 "process_wait", "remote_connection_controller_download_file",
                 "remote_connection_controller_list_directory",
@@ -544,12 +545,15 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "local_attachment_read",
                 "capability_search", "capability_describe", "agent_skill_activate",
                 "agent_skill_read_resource", "capability_invoke",
+                "todo_get_context", "todo_progress_append", "todo_acceptance_update",
+                "todo_complete", "todo_block", "team_asset_list", "team_asset_get",
             ])
         )
         XCTAssertEqual(
             NativeLocalAgentPlatformToolCatalog.approvalExemptToolNames,
             [
                 "open_edit_session", "stage_edit_batch", "abort_edit_session",
+                "todo_progress_append", "todo_acceptance_update", "todo_complete", "todo_block",
                 "capability_invoke",
                 "plugin_installer_install_npm", "plugin_installer_install_source",
             ]

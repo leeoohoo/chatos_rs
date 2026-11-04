@@ -56,6 +56,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
 
   public static let readOnlyToolNames =
     [attachmentReadToolName]
+    + ["todo_get_context", "team_asset_list", "team_asset_get"]
     + projectReadOnlyToolNames + terminalReadOnlyToolNames
     + taskExecutionRemoteReadOnlyToolNames.sorted()
     + pluginReadOnlyToolNames
@@ -65,6 +66,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
     ]
   public static let approvalExemptToolNames = [
     "open_edit_session", "stage_edit_batch", "abort_edit_session",
+    "todo_progress_append", "todo_acceptance_update", "todo_complete", "todo_block",
     NativeAgentCapabilityBrokerToolCatalog.invokeToolName,
     pluginInstallerInstallNPMToolName, pluginInstallerInstallSourceToolName,
   ]

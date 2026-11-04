@@ -301,6 +301,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     let services: any AgentServiceProviding
     let settings: AgentSettingsStore
     let runtime: any AgentRuntimeExecuting
+    let nativeExecutor: NativeLocalAgentTeamExecutor?
     let limits: AgentGroupChatRoutingLimits
     let relayMCP: LocalAgentRelayMCPServer
     let executorTaskRegistry: LocalAgentExecutorTaskRegistry
@@ -321,6 +322,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         services: any AgentServiceProviding,
         settings: AgentSettingsStore = .init(),
         runtime: any AgentRuntimeExecuting = AgentRuntime(),
+        nativeExecutor: NativeLocalAgentTeamExecutor? = nil,
         limits: AgentGroupChatRoutingLimits = .init(),
         maximumConcurrentExecutions: Int = NativeClientResourceBudgetPolicy.adaptiveDefault.swiftAgentRuns,
         machineResourceGovernor: ClientMachineResourceGovernor? = nil,
@@ -346,6 +348,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.services = services
         self.settings = settings
         self.runtime = runtime
+        self.nativeExecutor = nativeExecutor
         self.limits = limits
         let executorTaskRegistry = LocalAgentExecutorTaskRegistry()
         self.executorTaskRegistry = executorTaskRegistry

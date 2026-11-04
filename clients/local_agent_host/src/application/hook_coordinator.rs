@@ -337,7 +337,9 @@ impl LocalHookCoordinator {
         let LocalAgentStepOutcome::Succeed { output } = outcome else {
             return Ok(outcome);
         };
-        let event_type = if self.is_delegated_task(&claim.run).await? {
+        let event_type = if self.is_delegated_task(&claim.run).await?
+            || is_team_executor_run(&claim.run)
+        {
             "SubagentStop"
         } else if claim.run.owner_entity_type == "conversation_turn"
             && claim.run.profile_key == MAIN_CHAT_PROFILE_KEY
@@ -1226,6 +1228,16 @@ impl LocalHookCoordinator {
             .map(|path| path.display().to_string())
             .unwrap_or_default()
     }
+}
+
+fn is_team_executor_run(run: &LocalAgentRunRecord) -> bool {
+    run.profile_key == TASK_EXECUTION_PROFILE_KEY
+        && run.input.get("team_executor_context").is_some()
+        && run
+            .input
+            .pointer("/agent_execution_context/schema_version")
+            .and_then(Value::as_u64)
+            == Some(2)
 }
 
 #[async_trait]

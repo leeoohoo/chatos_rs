@@ -9,6 +9,7 @@ public struct NativeLocalAgentServiceShutdownAdapter: LocalAgentServiceShutdownP
     private let turnProcessService: NativeLocalAgentTurnProcessService?
     private let runtimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?
     private let platformToolWorker: NativeLocalAgentPlatformToolWorker?
+    private let teamExecutor: NativeLocalAgentTeamExecutor?
     private let workspaceService: NativeLocalAgentWorkspaceService?
     private let projectConversationService: NativeLocalAgentProjectConversationService?
     private let notepadService: NativeLocalAgentNotepadService
@@ -27,7 +28,8 @@ public struct NativeLocalAgentServiceShutdownAdapter: LocalAgentServiceShutdownP
         projectConversationService: NativeLocalAgentProjectConversationService?,
         notepadService: NativeLocalAgentNotepadService,
         remoteConnectionMetadataService: NativeLocalAgentRemoteConnectionMetadataService,
-        host: any LocalAgentHostLifecycleServicing
+        host: any LocalAgentHostLifecycleServicing,
+        teamExecutor: NativeLocalAgentTeamExecutor? = nil
     ) {
         self.commandService = commandService
         self.petActivityService = petActivityService
@@ -41,12 +43,14 @@ public struct NativeLocalAgentServiceShutdownAdapter: LocalAgentServiceShutdownP
         self.notepadService = notepadService
         self.remoteConnectionMetadataService = remoteConnectionMetadataService
         self.host = host
+        self.teamExecutor = teamExecutor
     }
 
     public func reset(_ stage: LocalAgentServiceShutdownStage) async {
         switch stage {
         case .conversationCommand:
             await commandService?.reset()
+            await teamExecutor?.reset()
         case .petActivity:
             await petActivityService?.reset()
         case .messageTaskGraph:

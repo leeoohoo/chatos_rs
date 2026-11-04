@@ -180,7 +180,8 @@ extension AppModel {
             messageTaskGraphService: messageTaskGraphService,
             askUserPromptService: askUserPromptService,
             turnProcessService: turnProcessService,
-            platformToolWorker: platformToolWorker
+            platformToolWorker: platformToolWorker,
+            teamExecutor: localAgentTeamExecutor
         )
         let launchPort = AppLocalAgentHostLaunchAdapter(
             host: localAgentHost,
@@ -445,7 +446,8 @@ extension AppModel {
             projectConversationService: projectConversationService,
             notepadService: notepadService,
             remoteConnectionMetadataService: remoteConnectionMetadataService,
-            host: localAgentHost
+            host: localAgentHost,
+            teamExecutor: localAgentTeamExecutor
         )
         let shutdownUseCase = LocalAgentServiceShutdownUseCase()
         let previousShutdown = localAgentHostShutdownTask
