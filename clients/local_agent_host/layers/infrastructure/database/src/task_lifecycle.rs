@@ -432,9 +432,9 @@ async fn task_input_with_prerequisites(
     let has_prerequisites = !rows.is_empty();
     let mut contexts = Vec::with_capacity(rows.len());
     let mut text = if english {
-        "[Prerequisite Task Results]\nPath reliability rule: prose summaries may contain inaccurate paths. Confirm every prerequisite file path through directory listing or search before reading it.".to_string()
+        "[Prerequisite Task Results]\nEvidence reuse rule: start from these delivered results and acceptance facts; do not repeat a broad audit already completed by the prerequisite. Re-read only a path you will modify, a claim that requires fresh current-Run evidence, or evidence whose version, hash, or path may have changed. When validation is needed, use one targeted list/search and batch independent read-only checks instead of rediscovering the whole project.".to_string()
     } else {
-        "[前置任务执行结果]\n文件路径可靠性规则：文字摘要中的路径可能不准确。读取前置任务提到的任何文件前，必须先通过目录列表或搜索确认路径存在。".to_string()
+        "[前置任务执行结果]\n证据复用规则：先复用以下已交付结果和验收事实，不要重复前置任务已经完成的大范围核查。仅在准备修改文件、验收必须取得本次运行的新证据，或版本、哈希、路径可能已变化时重新读取。确需确认时只做一次针对性目录/搜索，并把相互独立的只读检查合并批量执行，不要重新遍历整个项目。".to_string()
     };
     for (index, row) in rows.into_iter().enumerate() {
         let prerequisite_id: String = row.try_get("task_id").db()?;

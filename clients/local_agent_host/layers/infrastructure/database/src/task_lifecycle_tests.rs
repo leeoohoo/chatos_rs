@@ -1172,6 +1172,8 @@ async fn dependent_task_receives_only_user_visible_prerequisite_results() {
     );
 
     assert!(prompt.contains("[Prerequisite Task Results]"));
+    assert!(prompt.contains("do not repeat a broad audit"));
+    assert!(prompt.contains("batch independent read-only checks"));
     assert!(prompt.contains("Implemented the data model."));
     assert!(prompt.contains("Tests: 12 passed"));
     assert!(prompt.contains("[Current Task]"));
