@@ -5,7 +5,7 @@ import OSLog
 
 public typealias NativeApprovalMemoryProviderFactory = @Sendable (
     _ tenantID: String,
-    _ workspaceID: String,
+    _ workspaceID: String?,
     _ runID: UUID,
     _ runtimeScope: String
 ) async throws -> AgentMemoryContextProvider

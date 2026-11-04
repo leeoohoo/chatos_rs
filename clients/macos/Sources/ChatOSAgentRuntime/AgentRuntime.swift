@@ -122,6 +122,7 @@ public struct AgentRuntime: Sendable {
                     } else if state.memory != nil { throw AgentContextError.unavailable }
                     state.status = .completed; state.result = completion
                     try await emit("completed", "业务完成条件已确认")
+                    try await contextProvider?.finalizeMemory()
                     return snapshot(state)
                 }
                 if !state.pendingCalls.isEmpty {

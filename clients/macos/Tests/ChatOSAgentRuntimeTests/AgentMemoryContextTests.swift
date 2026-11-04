@@ -26,14 +26,15 @@ final class AgentMemoryContextTests: XCTestCase {
             runID: UUID(),
             runtimeScope: "account:user-a:project:project-2:agent:agent-a"
         )
-        XCTAssertEqual(first.subjectID, "agent-manager:agent-a")
-        XCTAssertEqual(first.threadID, "client-agent:manager:agent-a")
+        XCTAssertEqual(first.subjectID, "agent:agent-a")
+        XCTAssertEqual(first.projectSubjectID, "project:project-1")
         XCTAssertEqual(firstInAnotherProject.subjectID, first.subjectID)
-        XCTAssertEqual(firstInAnotherProject.threadID, first.threadID)
-        XCTAssertEqual(second.subjectID, "agent-manager:agent-b")
+        XCTAssertNotEqual(firstInAnotherProject.threadID, first.threadID)
+        XCTAssertEqual(firstInAnotherProject.projectSubjectID, "project:project-2")
+        XCTAssertEqual(second.subjectID, "agent:agent-b")
         XCTAssertNotEqual(first.subjectID, second.subjectID)
         XCTAssertNotEqual(first.threadID, second.threadID)
-        XCTAssertNil(first.includeSubjectMemory)
+        XCTAssertEqual(first.includeSubjectMemory, true)
     }
 
     func testTodoMemoryIsStableForOneTodoAndIsolatedFromManagerAndOtherTodos() throws {
@@ -42,20 +43,25 @@ final class AgentMemoryContextTests: XCTestCase {
             runID: UUID(), runtimeScope: "manager"
         )
         let firstAttempt = try AgentMemoryScope(
-            tenantID: "user-a", todoID: "todo-a", runID: UUID(), runtimeScope: "executor-a"
+            tenantID: "user-a", todoID: "todo-a", agentID: "agent-a", projectID: "project-1",
+            runID: UUID(), runtimeScope: "executor-a"
         )
         let resumedAttempt = try AgentMemoryScope(
-            tenantID: "user-a", todoID: "todo-a", runID: UUID(), runtimeScope: "executor-b"
+            tenantID: "user-a", todoID: "todo-a", agentID: "agent-a", projectID: "project-1",
+            runID: UUID(), runtimeScope: "executor-b"
         )
         let otherTodo = try AgentMemoryScope(
-            tenantID: "user-a", todoID: "todo-b", runID: UUID(), runtimeScope: "executor-c"
+            tenantID: "user-a", todoID: "todo-b", agentID: "agent-a", projectID: "project-1",
+            runID: UUID(), runtimeScope: "executor-c"
         )
 
         XCTAssertEqual(firstAttempt.threadID, resumedAttempt.threadID)
         XCTAssertEqual(firstAttempt.subjectID, resumedAttempt.subjectID)
         XCTAssertNotEqual(firstAttempt.threadID, otherTodo.threadID)
         XCTAssertNotEqual(firstAttempt.threadID, manager.threadID)
-        XCTAssertEqual(firstAttempt.includeSubjectMemory, false)
+        XCTAssertEqual(firstAttempt.subjectID, manager.subjectID)
+        XCTAssertEqual(firstAttempt.projectSubjectID, manager.projectSubjectID)
+        XCTAssertEqual(firstAttempt.includeSubjectMemory, true)
         XCTAssertTrue(firstAttempt.allowsCrossRunHistory)
     }
 
@@ -119,7 +125,9 @@ final class AgentMemoryContextTests: XCTestCase {
             context: .init(blocks: [.init(blockType: "thread_summary", text: "previous work")],
                            recentRecords: records))
         XCTAssertEqual(result[0], checkpoint.messages[0])
-        XCTAssertEqual(result[1], .init(role: .system, content: "[thread_summary]\nprevious work"))
+        XCTAssertEqual(result[1].role, .system)
+        XCTAssertTrue(result[1].content.contains("[thread_summary]\nprevious work"))
+        XCTAssertTrue(result[1].content.contains("historical context only"))
         XCTAssertEqual(result.filter { $0.role == .tool }.map(\.toolCallID), ["a", "b"])
         XCTAssertEqual(result[result.count - 2].content, "next")
         XCTAssertEqual(result.last, checkpoint.messages[1], "Current task contract must remain sticky")
@@ -190,7 +198,7 @@ final class AgentMemoryContextTests: XCTestCase {
         }
     }
 
-    func testLocalAgentComposeAcceptsEarlierRunRecordsOnStableThread() throws {
+    func testIndependentAgentThreadsUseSummaryBlocksInsteadOfEarlierRawRecords() throws {
         let earlierRunID = UUID()
         let currentRunID = UUID()
         let earlierScope = try AgentMemoryScope(
@@ -201,7 +209,7 @@ final class AgentMemoryContextTests: XCTestCase {
             tenantID: "user-a", agentID: "agent-a", projectID: "project-2",
             runID: currentRunID, runtimeScope: "account:user-a:project:project-2:agent:agent-a"
         )
-        XCTAssertEqual(earlierScope.threadID, currentScope.threadID)
+        XCTAssertNotEqual(earlierScope.threadID, currentScope.threadID)
 
         let earlierReply = AgentMessage(role: .assistant, content: "已经创建三国自走棋团队")
         let currentSystem = AgentMessage(role: .system, content: "Only authorized tools")
@@ -212,8 +220,8 @@ final class AgentMemoryContextTests: XCTestCase {
         )
         checkpoint.id = currentRunID
         let memory = AgentMemoryCheckpoint(scope: currentScope, pinnedMessageCount: 2)
-        let context = AgentMemoryContext(
-            blocks: [],
+        let invalidContext = AgentMemoryContext(
+            blocks: [.init(blockType: "agent_memory_recent", text: "已经创建三国自走棋团队")],
             recentRecords: [
                 .init(id: earlierScope.recordID(at: 2), message: earlierReply),
                 .init(id: currentScope.recordID(at: 0), message: currentSystem),
@@ -221,11 +229,22 @@ final class AgentMemoryContextTests: XCTestCase {
             ]
         )
 
-        let result = try AgentContextAssembler.assemble(
-            checkpoint: checkpoint, memory: memory, context: context
-        )
+        XCTAssertThrowsError(try AgentContextAssembler.assemble(
+            checkpoint: checkpoint, memory: memory, context: invalidContext
+        ))
 
-        XCTAssertEqual(result, [currentSystem, earlierReply, currentRequest])
+        let validContext = AgentMemoryContext(
+            blocks: [.init(blockType: "agent_memory_recent", text: "已经创建三国自走棋团队")],
+            recentRecords: [
+                .init(id: currentScope.recordID(at: 0), message: currentSystem),
+                .init(id: currentScope.recordID(at: 1), message: currentRequest),
+            ]
+        )
+        let result = try AgentContextAssembler.assemble(
+            checkpoint: checkpoint, memory: memory, context: validContext
+        )
+        XCTAssertTrue(result.contains { $0.role == .system && $0.content.contains("agent_memory_recent") })
+        XCTAssertEqual(result.last, currentRequest)
     }
 
     func testCrossRunHistoryStillRejectsMalformedDuplicateAndUnknownCurrentRunRecords() throws {

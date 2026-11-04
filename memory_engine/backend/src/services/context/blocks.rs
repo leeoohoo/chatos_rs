@@ -9,7 +9,7 @@ use crate::repositories::{subject_memories, summaries};
 
 use super::policy::ResolvedComposeContextPolicy;
 
-const FIXED_SUBJECT_MEMORY_LIMIT: i64 = 1;
+const RECENT_SUBJECT_MEMORY_LIMIT: i64 = 3;
 
 pub(crate) struct BuiltContextBlocks {
     pub(crate) blocks: Vec<ComposeContextBlock>,
@@ -149,6 +149,23 @@ pub(crate) fn thread_agent_subject_id(thread: &EngineThread) -> Option<String> {
     agent_id.map(|agent_id| format!("agent:{agent_id}"))
 }
 
+pub(crate) fn thread_identity_subject_ids(thread: &EngineThread) -> Vec<String> {
+    let mut subjects = Vec::new();
+    if let Some(agent) = thread_agent_subject_id(thread) {
+        subjects.push(agent);
+    }
+    for label in thread.labels.as_ref().into_iter().flatten() {
+        let label = label.trim();
+        if label.starts_with("project:")
+            && label.len() > "project:".len()
+            && !subjects.iter().any(|value| value == label)
+        {
+            subjects.push(label.to_string());
+        }
+    }
+    subjects
+}
+
 pub(crate) fn build_thread_summary_level0_text(rows: &[EngineSummary]) -> String {
     let mut ordered = rows.to_vec();
     ordered.sort_by(|left, right| left.created_at.cmp(&right.created_at));
@@ -229,22 +246,79 @@ async fn load_subject_memory_blocks(
 ) -> Result<Vec<ComposeContextBlock>, String> {
     let mut blocks = Vec::new();
 
-    if let Some(memory) = subject_memories::list_subject_memories_by_subject_ids(
-        db,
-        tenant_id,
-        source_id,
-        subject_ids,
-        None,
-        FIXED_SUBJECT_MEMORY_LIMIT,
-    )
-    .await?
-    .into_iter()
-    .next()
-    {
-        blocks.push(ComposeContextBlock {
-            block_type: "subject_memory".to_string(),
-            text: format_subject_memory(memory),
-        });
+    for subject_id in subject_ids {
+        let (memory_type, rollup_block_type, recent_block_type) =
+            if subject_id.starts_with("agent:") {
+                ("agent_memory", "agent_memory_rollup", "agent_memory_recent")
+            } else if subject_id.starts_with("project:") {
+                (
+                    "project_summary",
+                    "project_summary_rollup",
+                    "project_summary_recent",
+                )
+            } else {
+                continue;
+            };
+
+        let rollup = subject_memories::list_subject_memories(
+            db,
+            tenant_id,
+            source_id,
+            subject_id,
+            Some(memory_type),
+            None,
+            1,
+            0,
+        )
+        .await?
+        .into_iter()
+        .find(|memory| memory.level > 0);
+        let has_rollup = rollup.is_some();
+        if let Some(memory) = rollup {
+            blocks.push(ComposeContextBlock {
+                block_type: rollup_block_type.to_string(),
+                text: format_subject_memory(memory),
+            });
+        }
+
+        let mut recent = subject_memories::query_subject_memories(
+            db,
+            tenant_id,
+            source_id,
+            subject_id,
+            Some(memory_type),
+            Some(0),
+            None,
+            Some("pending"),
+            Some(subject_id),
+            None,
+            RECENT_SUBJECT_MEMORY_LIMIT,
+            0,
+        )
+        .await?;
+        if recent.is_empty() && !has_rollup {
+            recent = subject_memories::list_subject_memories(
+                db,
+                tenant_id,
+                source_id,
+                subject_id,
+                Some(memory_type),
+                Some(0),
+                1,
+                0,
+            )
+            .await?;
+        }
+        if !recent.is_empty() {
+            blocks.push(ComposeContextBlock {
+                block_type: recent_block_type.to_string(),
+                text: recent
+                    .into_iter()
+                    .map(format_subject_memory)
+                    .collect::<Vec<_>>()
+                    .join("\n\n---\n\n"),
+            });
+        }
     }
 
     Ok(blocks)

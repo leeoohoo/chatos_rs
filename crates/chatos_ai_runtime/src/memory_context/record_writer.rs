@@ -27,6 +27,12 @@ pub struct MemoryRecordScope {
     pub thread_id: Option<String>,
     pub record_type: String,
     pub default_summary_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_kind: Option<String>,
 }
 
 impl MemoryRecordScope {
@@ -37,6 +43,9 @@ impl MemoryRecordScope {
             thread_id: None,
             record_type: "message".to_string(),
             default_summary_status: Some("pending".to_string()),
+            agent_id: None,
+            project_id: None,
+            thread_kind: None,
         }
     }
 
@@ -47,6 +56,9 @@ impl MemoryRecordScope {
             thread_id: Some(thread_id.into()),
             record_type: "message".to_string(),
             default_summary_status: Some("pending".to_string()),
+            agent_id: None,
+            project_id: None,
+            thread_kind: None,
         }
     }
 
@@ -59,6 +71,9 @@ impl MemoryRecordScope {
             thread_id: None,
             record_type: "message".to_string(),
             default_summary_status: Some("pending".to_string()),
+            agent_id: None,
+            project_id: None,
+            thread_kind: None,
         }
     }
 
@@ -76,6 +91,25 @@ impl MemoryRecordScope {
         self.default_summary_status = default_summary_status;
         self
     }
+
+    pub fn with_memory_identity(
+        mut self,
+        agent_id: impl Into<String>,
+        project_id: Option<String>,
+        thread_kind: impl Into<String>,
+    ) -> Self {
+        self.agent_id = Some(agent_id.into());
+        self.project_id = project_id;
+        self.thread_kind = Some(thread_kind.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecordThreadIdentity {
+    agent_id: Option<String>,
+    project_id: Option<String>,
+    thread_kind: String,
 }
 
 #[derive(Clone)]
@@ -121,7 +155,8 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
     async fn save_record(&self, input: SaveRecordInput) -> Result<(), String> {
         let tenant_id = self.tenant_id_for_record(&input)?;
         let thread_id = self.thread_id_for_record(&input)?;
-        self.ensure_thread(tenant_id.as_str(), thread_id.as_str())
+        let identity = self.thread_identity_for_record(&input);
+        self.ensure_thread(tenant_id.as_str(), thread_id.as_str(), &identity)
             .await?;
         let record = self.upsert_record_input(input)?;
         let records = vec![record];
@@ -189,6 +224,9 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
             let input: SaveRecordInput = input.into();
             let tenant_id = self.tenant_id_for_record(&input)?;
             let thread_id = self.thread_id_for_record(&input)?;
+            let identity = self.thread_identity_for_record(&input);
+            self.ensure_thread(tenant_id.as_str(), thread_id.as_str(), &identity)
+                .await?;
             let record = self.upsert_record_input(input)?;
             batches
                 .entry((tenant_id, thread_id))
@@ -197,8 +235,6 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
         }
 
         for ((tenant_id, thread_id), records) in batches {
-            self.ensure_thread(tenant_id.as_str(), thread_id.as_str())
-                .await?;
             let summary = summarize_record_batch(records.as_slice());
             let source_id = self.source_id.as_deref().unwrap_or("");
             info!(
@@ -260,22 +296,46 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
 }
 
 impl MemoryEngineRecordWriter {
-    async fn ensure_thread(&self, tenant_id: &str, thread_id: &str) -> Result<(), String> {
+    async fn ensure_thread(
+        &self,
+        tenant_id: &str,
+        thread_id: &str,
+        identity: &RecordThreadIdentity,
+    ) -> Result<(), String> {
         let key = (tenant_id.to_string(), thread_id.to_string());
         if self.ensured_threads.lock().await.contains(&key) {
             return Ok(());
         }
+        let agent_subject = identity
+            .agent_id
+            .as_deref()
+            .map(|agent_id| format!("agent:{agent_id}"));
+        let labels = agent_subject.as_ref().map(|agent_subject| {
+            let mut labels = vec![
+                "memory-schema:v2".to_string(),
+                agent_subject.clone(),
+                format!("thread-kind:{}", identity.thread_kind),
+            ];
+            if let Some(project_id) = identity.project_id.as_deref() {
+                labels.push(format!("project:{project_id}"));
+            }
+            labels
+        });
         self.client
             .upsert_thread(
                 thread_id,
                 &SdkUpsertThreadRequest {
                     tenant_id: tenant_id.to_string(),
-                    subject_id: tenant_id.to_string(),
+                    subject_id: agent_subject.unwrap_or_else(|| format!("thread:{thread_id}")),
                     thread_type: "conversation".to_string(),
                     external_thread_id: Some(thread_id.to_string()),
                     title: None,
-                    labels: None,
-                    metadata: None,
+                    labels,
+                    metadata: Some(serde_json::json!({
+                        "agent_id": identity.agent_id,
+                        "project_id": identity.project_id,
+                        "thread_kind": identity.thread_kind,
+                    })),
                     status: Some("active".to_string()),
                     created_at: None,
                     updated_at: None,
@@ -285,6 +345,43 @@ impl MemoryEngineRecordWriter {
             .await?;
         self.ensured_threads.lock().await.insert(key);
         Ok(())
+    }
+
+    fn thread_identity_for_record(&self, input: &SaveRecordInput) -> RecordThreadIdentity {
+        let metadata = input.metadata.as_ref();
+        let value = |key: &str| {
+            metadata
+                .and_then(|item| item.get(key))
+                .and_then(serde_json::Value::as_str)
+                .and_then(normalized)
+        };
+        let agent_id = self
+            .scope
+            .agent_id
+            .as_deref()
+            .and_then(normalized)
+            .or_else(|| value("agent_id"))
+            .or_else(|| {
+                (value("profile_key").as_deref() == Some("main_chat"))
+                    .then(|| "main-chat".to_string())
+            });
+        RecordThreadIdentity {
+            agent_id,
+            project_id: self
+                .scope
+                .project_id
+                .as_deref()
+                .and_then(normalized)
+                .or_else(|| value("project_id")),
+            thread_kind: self
+                .scope
+                .thread_kind
+                .as_deref()
+                .and_then(normalized)
+                .or_else(|| value("thread_kind"))
+                .or_else(|| value("message_mode"))
+                .unwrap_or_else(|| "conversation".to_string()),
+        }
     }
 
     pub(crate) fn tenant_id_for_record(&self, input: &SaveRecordInput) -> Result<String, String> {

@@ -80,6 +80,7 @@ pub(crate) async fn process_level0_selection(
             db,
             req.tenant_id.as_str(),
             settings.prompt_title.as_str(),
+            req.memory_type.as_str(),
             selected_texts.as_slice(),
             settings.token_limit,
             settings.target_summary_tokens,

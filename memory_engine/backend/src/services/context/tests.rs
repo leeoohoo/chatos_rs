@@ -6,6 +6,7 @@ use super::blocks::{
     subject_ids_for_context, subject_memory_subject_ids_for_context, thread_agent_subject_id,
 };
 use super::policy::ResolvedComposeContextPolicy;
+use super::validate_requested_subjects;
 use crate::models::{EngineSubjectMemory, EngineSummary, EngineThread};
 
 fn summary(id: &str, level: i64, created_at: &str, text: &str) -> EngineSummary {
@@ -228,4 +229,21 @@ fn compose_context_policy_uses_standard_summary_rule_without_recent_record_cap()
     assert!(policy.include_subject_memory);
     assert_eq!(policy.summary_limit, 2);
     assert_eq!(policy.recent_limit, None);
+}
+
+#[test]
+fn compose_rejects_subjects_not_bound_to_the_thread() {
+    let bound = vec!["agent:a-1".to_string(), "project:p-1".to_string()];
+    assert!(validate_requested_subjects(
+        &bound,
+        Some("agent:a-1"),
+        Some(&vec!["project:p-1".to_string()]),
+    )
+    .is_ok());
+    assert!(validate_requested_subjects(
+        &bound,
+        Some("agent:a-2"),
+        Some(&vec!["project:p-1".to_string()]),
+    )
+    .is_err());
 }

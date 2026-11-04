@@ -52,6 +52,8 @@ final class AgentWorkerProcessClientTests: XCTestCase {
         let memoryScope = try AgentMemoryScope(
             tenantID: "agent-worker-test",
             todoID: "isolated-todo",
+            agentID: "worker-agent",
+            projectID: "worker-project",
             runID: runID,
             runtimeScope: scope
         )

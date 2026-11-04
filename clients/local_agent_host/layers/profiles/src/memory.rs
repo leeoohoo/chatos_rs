@@ -49,6 +49,9 @@ pub(super) fn memory_plan(
     let metadata = json!({
         "tenant_id": claim.run.owner_user_id,
         "profile_key": claim.run.profile_key,
+        "agent_id": memory_agent_id(claim),
+        "project_id": memory_project_id(claim),
+        "thread_kind": if is_main_chat { "main_chat" } else if memory_context_string(claim, "todo_id").is_some() { "todo_execution" } else if memory_context_string(claim, "team_id").is_some() { "agent_team_run" } else { "agent_task" },
         "run_id": claim.run.run_id,
         "owner_entity_type": claim.run.owner_entity_type,
         "owner_entity_id": claim.run.owner_entity_id,
@@ -91,17 +94,64 @@ pub(super) fn memory_plan(
         message_mode,
         metadata,
     );
+    let agent_subject_id = format!("agent:{}", memory_agent_id(claim));
+    let mut scope = MemoryScope::thread(
+        claim.run.owner_user_id.clone(),
+        source_id,
+        thread_id.clone(),
+    )
+    .with_subject_id(agent_subject_id);
+    if let Some(project_id) = memory_project_id(claim) {
+        scope = scope.with_related_subject_ids([format!("project:{project_id}")]);
+    }
     Ok(LocalMemoryPlan {
-        scope: MemoryScope::thread(
-            claim.run.owner_user_id.clone(),
-            source_id,
-            thread_id.clone(),
-        ),
+        scope,
         thread_id,
         turn_id,
         record_options,
         user_record,
         external_tool_results: external_tool_results(claim)?,
+    })
+}
+
+fn memory_agent_id(claim: &LocalAgentRunClaim) -> String {
+    if claim.run.profile_key == MAIN_CHAT_PROFILE_KEY {
+        return "main-chat".to_string();
+    }
+    memory_context_string(claim, "agent_id")
+        .or_else(|| {
+            claim
+                .run
+                .input
+                .get("agent_identity")
+                .and_then(|value| value.get("agent_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| format!("profile:{}", claim.run.profile_key))
+}
+
+fn memory_project_id(claim: &LocalAgentRunClaim) -> Option<String> {
+    memory_context_string(claim, "project_id")
+}
+
+fn memory_context_string(claim: &LocalAgentRunClaim, key: &str) -> Option<String> {
+    optional_input_string(&claim.run.input, key).or_else(|| {
+        ["agent_execution_context", "agent_team_execution"]
+            .into_iter()
+            .find_map(|container| {
+                claim
+                    .run
+                    .input
+                    .get(container)
+                    .and_then(|value| value.get(key))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+            })
     })
 }
 
@@ -336,6 +386,7 @@ mod tests {
         assert_eq!(plan.scope.tenant_id, "user-1");
         assert_eq!(plan.scope.source_id, "local_agent");
         assert_eq!(plan.scope.thread_id, "conversation-1");
+        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:main-chat"));
         let user = plan.user_record.expect("user record");
         assert_eq!(user.message_id.as_deref(), Some("message-1"));
         assert_eq!(user.conversation_id, "conversation-1");
@@ -355,6 +406,36 @@ mod tests {
             .unwrap()
             .get("local_agent_step_claim")
             .is_none());
+    }
+
+    #[test]
+    fn team_todo_memory_uses_executor_agent_and_project_subjects_not_room() {
+        let claim = claim(
+            "task_execution",
+            json!({
+                "prompt": "implement the todo",
+                "agent_execution_context": {
+                    "agent_id": "agent-1",
+                    "project_id": "project-1",
+                    "room_id": "room-1"
+                },
+                "agent_team_execution": {
+                    "agent_id": "agent-1",
+                    "project_id": "project-1",
+                    "team_id": "room-1",
+                    "todo_id": "todo-1"
+                }
+            }),
+        );
+
+        let plan = memory_plan(&claim, "local_agent", "prompt").expect("plan");
+
+        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:agent-1"));
+        assert_eq!(plan.scope.related_subject_ids, vec!["project:project-1"]);
+        let metadata = plan.record_options.assistant_metadata.expect("metadata");
+        assert_eq!(metadata["thread_kind"], "todo_execution");
+        assert_eq!(metadata["project_id"], "project-1");
+        assert_ne!(plan.scope.subject_id.as_deref(), Some("room:room-1"));
     }
 
     #[test]

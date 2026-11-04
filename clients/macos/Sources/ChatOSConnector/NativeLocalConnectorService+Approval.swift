@@ -136,7 +136,7 @@ extension NativeLocalConnectorService {
                 let runID = UUID()
                 let runtimeScope = "approval:\(runID.uuidString)"
                 let contextProvider: AgentMemoryContextProvider?
-                if let workspaceID, let approvalMemoryProviderFactory {
+                if let approvalMemoryProviderFactory {
                     contextProvider = try await approvalMemoryProviderFactory(
                         runtime.ownerUserID, workspaceID, runID, runtimeScope
                     )

@@ -2,50 +2,12 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use sqlx::types::Json;
-use sqlx::{Postgres, QueryBuilder};
 
 use crate::db::Db;
 use crate::models::EngineSubjectMemory;
 use crate::repositories::postgres::decode;
 
-use super::common::{build_subject_memory_query, decode_many, normalized_subject_ids};
-
-pub async fn list_subject_memories_by_subject_ids(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    subject_ids: &[String],
-    level: Option<i64>,
-    limit: i64,
-) -> Result<Vec<EngineSubjectMemory>, String> {
-    let ids = normalized_subject_ids(subject_ids);
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut query =
-        QueryBuilder::<Postgres>::new("SELECT data FROM engine_subject_memories WHERE tenant_id=");
-    query
-        .push_bind(tenant_id)
-        .push(" AND source_id=")
-        .push_bind(source_id)
-        .push(" AND subject_id = ANY(")
-        .push_bind(ids)
-        .push(") AND status='active'");
-    if let Some(value) = level {
-        query.push(" AND level=").push_bind(value.max(0));
-        query.push(" ORDER BY updated_at DESC");
-    } else {
-        query.push(" ORDER BY level DESC,updated_at DESC");
-    }
-    query.push(" LIMIT ").push_bind(limit.clamp(1, 1000));
-    decode_many(
-        query
-            .build_query_scalar::<Json<serde_json::Value>>()
-            .fetch_all(db)
-            .await
-            .map_err(|error| error.to_string())?,
-    )
-}
+use super::common::{build_subject_memory_query, decode_many};
 
 pub async fn list_subject_memories(
     db: &Db,

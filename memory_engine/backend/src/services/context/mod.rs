@@ -12,6 +12,7 @@ use crate::repositories::{records, threads};
 
 use self::blocks::{
     build_context_blocks, subject_ids_for_context, subject_memory_subject_ids_for_context,
+    thread_identity_subject_ids,
 };
 use self::policy::ResolvedComposeContextPolicy;
 
@@ -35,11 +36,21 @@ pub async fn compose_context(
             .unwrap_or(thread.subject_id.as_str()),
         req.related_subject_ids.as_ref(),
     );
-    let subject_memory_subject_ids = subject_memory_subject_ids_for_context(
-        &thread,
-        req.subject_id.as_deref(),
-        req.related_subject_ids.as_ref(),
-    );
+    let bound_identity_subject_ids = thread_identity_subject_ids(&thread);
+    let subject_memory_subject_ids = if bound_identity_subject_ids.is_empty() {
+        subject_memory_subject_ids_for_context(
+            &thread,
+            req.subject_id.as_deref(),
+            req.related_subject_ids.as_ref(),
+        )
+    } else {
+        validate_requested_subjects(
+            &bound_identity_subject_ids,
+            req.subject_id.as_deref(),
+            req.related_subject_ids.as_ref(),
+        )?;
+        bound_identity_subject_ids
+    };
     let context_blocks = build_context_blocks(
         db,
         req.tenant_id.as_str(),
@@ -73,4 +84,22 @@ pub async fn compose_context(
             recent_record_count: recent_records.len(),
         },
     })
+}
+
+fn validate_requested_subjects(
+    bound: &[String],
+    requested: Option<&str>,
+    related: Option<&Vec<String>>,
+) -> Result<(), String> {
+    let requested = requested
+        .into_iter()
+        .chain(related.into_iter().flatten().map(String::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    for subject in requested {
+        if !bound.iter().any(|value| value == subject) {
+            return Err("requested subject is not bound to this thread".to_string());
+        }
+    }
+    Ok(())
 }

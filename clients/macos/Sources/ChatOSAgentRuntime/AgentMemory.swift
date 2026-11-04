@@ -7,11 +7,12 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     public let sourceID: String
     public let threadID: String
     public let subjectID: String
+    public let projectSubjectID: String?
+    public let threadKind: String?
     public let runID: UUID
     public let runtimeScope: String
-    /// `nil` preserves the original story behavior (subject recall enabled).
-    /// Approval runs are isolated so prior approval content cannot influence a
-    /// later security decision, while their complete records are still stored.
+    /// Kept optional for checkpoint compatibility. All v2 Agent identities enable
+    /// typed Agent Memory and, when project-bound, typed Project Summary recall.
     public let includeSubjectMemory: Bool?
 
     public init(tenantID: String, profile: String, projectID: UUID, runID: UUID, runtimeScope: String) throws {
@@ -21,22 +22,29 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         )
     }
 
-    public init(tenantID: String, profile: String, projectID: String, runID: UUID, runtimeScope: String) throws {
+    public init(tenantID: String, profile: String, projectID: String?, runID: UUID, runtimeScope: String) throws {
         guard !tenantID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !projectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               ["approval", "story"].contains(profile), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
+        let projectID = projectID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard projectID?.rangeOfCharacter(from: .controlCharacters) == nil else {
+            throw AgentRuntimeError.scopeMismatch
+        }
         self.tenantID = tenantID
         self.sourceID = "chatos"
-        self.threadID = "client-agent:\(profile):\(projectID):\(runID)"
-        self.subjectID = "client-agent:\(profile):\(projectID)"
+        self.threadID = "client-agent:\(profile):\(runID)"
+        let agentID = profile == "approval"
+            ? "local_connector_command_approval_agent"
+            : "builtin-\(profile)-agent"
+        self.subjectID = "agent:\(agentID)"
+        self.projectSubjectID = projectID.flatMap { $0.isEmpty ? nil : "project:\($0)" }
+        self.threadKind = profile == "approval" ? "approval_run" : "\(profile)_run"
         self.runID = runID
         self.runtimeScope = runtimeScope
-        self.includeSubjectMemory = profile == "approval" ? false : nil
+        self.includeSubjectMemory = true
     }
 
-    /// Local chat Agent manager runs own one continuous Memory identity across private chats,
-    /// teams and separate wake-ups. Todo execution deliberately uses the Todo-scoped initializer
-    /// below so execution records never enter the Agent's long-lived communications thread.
+    /// Every run keeps an independent raw Thread. Cross-run continuity comes from the stable
+    /// Agent subject and the optional Project subject, never from a room or a shared raw Thread.
     public init(
         tenantID: String,
         agentID: String,
@@ -52,22 +60,26 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
         self.tenantID = tenantID
         self.sourceID = "chatos"
-        self.threadID = "client-agent:manager:\(agentID)"
-        self.subjectID = "agent-manager:\(agentID)"
+        self.threadID = "client-agent:run:\(agentID):\(runID.uuidString)"
+        self.subjectID = "agent:\(agentID)"
+        self.projectSubjectID = "project:\(projectID)"
+        self.threadKind = "agent_conversation"
         self.runID = runID
         self.runtimeScope = runtimeScope
-        self.includeSubjectMemory = nil
+        self.includeSubjectMemory = true
     }
 
-    /// A Todo owns an isolated Memory identity. It may continue across retries of that same Todo,
-    /// but it never recalls the assignee's manager subject or another Todo's execution history.
+    /// A Todo keeps an isolated raw Thread across retries while recalling and contributing to
+    /// the assignee Agent Memory and current Project Summary.
     public init(
         tenantID: String,
         todoID: String,
+        agentID: String,
+        projectID: String,
         runID: UUID,
         runtimeScope: String
     ) throws {
-        let identifiers = [tenantID, todoID]
+        let identifiers = [tenantID, todoID, agentID, projectID]
         guard identifiers.allSatisfy({ value in
             !value.isEmpty
                 && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -76,10 +88,12 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         self.tenantID = tenantID
         self.sourceID = "chatos"
         self.threadID = "client-agent:todo:\(todoID)"
-        self.subjectID = "todo:\(todoID)"
+        self.subjectID = "agent:\(agentID)"
+        self.projectSubjectID = "project:\(projectID)"
+        self.threadKind = "todo_execution"
         self.runID = runID
         self.runtimeScope = runtimeScope
-        self.includeSubjectMemory = false
+        self.includeSubjectMemory = true
     }
 
     public func recordID(at index: Int) -> String { "client-agent:\(runID):message:\(index)" }
@@ -97,8 +111,7 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     /// respective identity, so compose may return records written by earlier runs of that same
     /// manager or Todo. The legacy group-chat prefix remains accepted for bound pre-migration runs.
     public var allowsCrossRunHistory: Bool {
-        threadID.hasPrefix("client-agent:manager:")
-            || threadID.hasPrefix("client-agent:todo:")
+        threadID.hasPrefix("client-agent:todo:")
             || threadID.hasPrefix("client-agent:group-chat:")
     }
 
@@ -162,6 +175,11 @@ public protocol AgentMemoryServicing: Sendable {
     func ensureThread() async throws
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws
     func compose() async throws -> AgentMemoryContext
+    func flushSummary() async throws
+}
+
+public extension AgentMemoryServicing {
+    func flushSummary() async throws {}
 }
 
 /// The full audit transcript stays in AgentRunCheckpoint.messages, not in each model request.

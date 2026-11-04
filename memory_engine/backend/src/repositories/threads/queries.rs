@@ -7,6 +7,7 @@ use sqlx::{Postgres, QueryBuilder};
 use crate::db::Db;
 use crate::models::EngineThread;
 use crate::repositories::postgres::decode;
+use crate::repositories::postgres::timestamp;
 
 use super::common::{decode_threads, normalize_optional_text};
 use super::ListThreadsQuery;
@@ -63,6 +64,24 @@ pub async fn list_threads_with_pending_records_by_token_threshold(
         .push(" ORDER BY updated_at ASC,created_at ASC LIMIT ")
         .push_bind(limit.clamp(1, 500));
     fetch_threads(db, query).await
+}
+
+pub async fn list_idle_identity_threads(
+    db: &Db,
+    idle_before: &str,
+    limit: i64,
+) -> Result<Vec<EngineThread>, String> {
+    let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_threads WHERE summary_status='pending' \
+         AND pending_record_count>0 AND data->'labels' ? 'memory-schema:v2' \
+         AND updated_at<=$1 ORDER BY updated_at ASC,created_at ASC LIMIT $2",
+    )
+    .bind(timestamp(idle_before)?)
+    .bind(limit.clamp(1, 500))
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    decode_threads(rows)
 }
 
 pub async fn list_threads_by_label(

@@ -261,6 +261,16 @@ impl LocalAgentRuntime {
                 "reasoning_enabled": settings.reasoning_enabled,
             })),
         });
+        if let Some(LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Project,
+            resource_id,
+        }) = conversation.conversation.resource.as_ref()
+        {
+            input
+                .as_object_mut()
+                .expect("conversation Run input is an object")
+                .insert("project_id".to_string(), json!(resource_id));
+        }
         if let Some(selection) = explicit_capability_selection {
             input
                 .as_object_mut()
@@ -1225,6 +1235,7 @@ mod tests {
             panic!("unexpected start result")
         };
         assert_eq!(result.run.profile_key, "task_execution");
+        assert_eq!(result.run.input["project_id"], "project-1");
         assert_eq!(result.run.input["prompt"], "hello");
         assert_eq!(
             result.run.input["tool_options"]["enabled_builtin_kinds"],

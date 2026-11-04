@@ -7,7 +7,9 @@ use sqlx::{Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use crate::db::Db;
-use crate::models::{now_rfc3339, EngineSubjectMemoryScope, UpsertSubjectMemoryScopeRequest};
+use crate::models::{
+    now_rfc3339, EngineSubjectMemoryScope, EngineThread, UpsertSubjectMemoryScopeRequest,
+};
 use crate::repositories::postgres::{decode, json, timestamp};
 
 #[derive(Debug, Clone, Deserialize, sqlx::FromRow, PartialEq, Eq)]
@@ -20,6 +22,98 @@ pub struct SubjectMemoryScopeDispatchOutbox {
     pub subject_memory_dispatch_published_version: i64,
     pub subject_memory_dispatch_consumed_version: i64,
     pub subject_memory_dispatch_pending: bool,
+}
+
+const MEMORY_SCHEMA_V2_LABEL: &str = "memory-schema:v2";
+
+pub async fn ensure_thread_identity_scopes(db: &Db, thread: &EngineThread) -> Result<(), String> {
+    for (scope_key, request) in thread_identity_scope_requests(thread)? {
+        upsert_subject_memory_scope(db, scope_key.as_str(), request).await?;
+    }
+    Ok(())
+}
+
+pub(crate) fn thread_identity_scope_requests(
+    thread: &EngineThread,
+) -> Result<Vec<(String, UpsertSubjectMemoryScopeRequest)>, String> {
+    let labels = thread.labels.as_deref().unwrap_or_default();
+    if !labels
+        .iter()
+        .any(|label| label.trim() == MEMORY_SCHEMA_V2_LABEL)
+    {
+        return Ok(Vec::new());
+    }
+
+    let agents = identity_labels(labels, "agent:");
+    if agents.len() != 1 {
+        return Err("memory-schema:v2 thread requires exactly one agent:<agent_id> label".into());
+    }
+    let agent_subject = agents[0].clone();
+    if thread.subject_id.trim() != agent_subject {
+        return Err("memory-schema:v2 thread subject_id must equal its agent label".into());
+    }
+
+    let projects = identity_labels(labels, "project:");
+    if projects.len() > 1 {
+        return Err("memory-schema:v2 thread allows at most one project:<project_id> label".into());
+    }
+
+    let mut scopes = vec![(
+        format!("identity:{agent_subject}"),
+        identity_scope_request(
+            thread,
+            agent_subject.as_str(),
+            "agent_memory",
+            "Agent durable memory",
+        ),
+    )];
+    if let Some(project_subject) = projects.first() {
+        scopes.push((
+            format!("identity:{project_subject}"),
+            identity_scope_request(
+                thread,
+                project_subject.as_str(),
+                "project_summary",
+                "Project shared summary",
+            ),
+        ));
+    }
+    Ok(scopes)
+}
+
+fn identity_labels(labels: &[String], prefix: &str) -> Vec<String> {
+    let mut values = labels
+        .iter()
+        .map(|label| label.trim())
+        .filter(|label| label.starts_with(prefix) && label.len() > prefix.len())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
+}
+
+fn identity_scope_request(
+    thread: &EngineThread,
+    subject_id: &str,
+    memory_type: &str,
+    prompt_title: &str,
+) -> UpsertSubjectMemoryScopeRequest {
+    UpsertSubjectMemoryScopeRequest {
+        tenant_id: thread.tenant_id.clone(),
+        source_id: thread.source_id.clone(),
+        subject_id: subject_id.to_string(),
+        memory_type: memory_type.to_string(),
+        source_thread_label: subject_id.to_string(),
+        relation_subject_id: Some(subject_id.to_string()),
+        source_summary_type: Some("thread_incremental".to_string()),
+        prompt_title: Some(format!("{prompt_title} for {subject_id}")),
+        memory_metadata: Some(serde_json::json!({
+            "managed_by": "thread_identity_v2",
+            "identity_subject_id": subject_id,
+        })),
+        status: Some("active".to_string()),
+    }
 }
 
 pub async fn upsert_subject_memory_scope(
@@ -495,4 +589,66 @@ fn normalized(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::thread_identity_scope_requests;
+    use crate::models::EngineThread;
+
+    fn thread(subject_id: &str, labels: Vec<&str>) -> EngineThread {
+        EngineThread {
+            id: "thread-1".into(),
+            tenant_id: "tenant-1".into(),
+            source_id: "chatos".into(),
+            subject_id: subject_id.into(),
+            thread_type: "agent_task".into(),
+            external_thread_id: None,
+            title: None,
+            labels: Some(labels.into_iter().map(ToOwned::to_owned).collect()),
+            metadata: None,
+            status: "active".into(),
+            summary_status: "idle".into(),
+            summary_job_run_id: None,
+            summary_locked_at: None,
+            summary_lock_expires_at: None,
+            pending_record_count: 0,
+            pending_summary_tokens: 0,
+            created_at: "2026-11-04T00:00:00Z".into(),
+            updated_at: "2026-11-04T00:00:00Z".into(),
+            archived_at: None,
+        }
+    }
+
+    #[test]
+    fn v2_thread_registers_agent_and_project_scopes() {
+        let requests = thread_identity_scope_requests(&thread(
+            "agent:a-1",
+            vec!["memory-schema:v2", "agent:a-1", "project:p-1", "room:r-1"],
+        ))
+        .expect("identity scopes");
+
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].1.memory_type, "agent_memory");
+        assert_eq!(requests[0].1.subject_id, "agent:a-1");
+        assert_eq!(requests[1].1.memory_type, "project_summary");
+        assert_eq!(requests[1].1.subject_id, "project:p-1");
+        assert!(requests
+            .iter()
+            .all(|(_, request)| !request.subject_id.starts_with("room:")));
+    }
+
+    #[test]
+    fn v2_thread_rejects_missing_or_conflicting_agent_identity() {
+        assert!(thread_identity_scope_requests(&thread(
+            "agent:a-1",
+            vec!["memory-schema:v2", "project:p-1"],
+        ))
+        .is_err());
+        assert!(thread_identity_scope_requests(&thread(
+            "agent:a-2",
+            vec!["memory-schema:v2", "agent:a-1"],
+        ))
+        .is_err());
+    }
 }

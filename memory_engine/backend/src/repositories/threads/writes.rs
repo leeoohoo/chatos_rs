@@ -9,7 +9,7 @@ use crate::models::{
     UpsertThreadRequest,
 };
 use crate::repositories::postgres::{decode, json, optional_timestamp, timestamp};
-use crate::repositories::records;
+use crate::repositories::{records, subject_memory_scopes};
 
 const SUMMARY_LOCK_TIMEOUT_SECS: i64 = 300;
 
@@ -64,6 +64,22 @@ pub async fn upsert_thread(
             .archived_at
             .or_else(|| (status == "archived").then(|| updated_at.clone())),
     };
+    let identity_scopes = subject_memory_scopes::thread_identity_scope_requests(&thread)?;
+    if let Some(existing) = existing.as_ref() {
+        let existing_scopes = subject_memory_scopes::thread_identity_scope_requests(existing)?;
+        if !existing_scopes.is_empty()
+            && identity_scopes
+                .iter()
+                .map(|(_, request)| request.subject_id.as_str())
+                .collect::<Vec<_>>()
+                != existing_scopes
+                    .iter()
+                    .map(|(_, request)| request.subject_id.as_str())
+                    .collect::<Vec<_>>()
+        {
+            return Err("memory-schema:v2 thread identity is immutable".to_string());
+        }
+    }
     let result = sqlx::query(
         "INSERT INTO engine_threads \
          (id,tenant_id,source_id,subject_id,thread_type,external_thread_id,status,summary_status, \
@@ -96,6 +112,7 @@ pub async fn upsert_thread(
     .await
     .map_err(|error| error.to_string())?;
     debug_assert!(result.rows_affected() > 0);
+    subject_memory_scopes::ensure_thread_identity_scopes(db, &thread).await?;
     Ok(thread)
 }
 

@@ -37,16 +37,18 @@ async fn accept_thread_upsert(
     state.thread_upserts.fetch_add(1, Ordering::SeqCst);
     assert_eq!(request["tenant_id"], "user-1");
     assert_eq!(request["source_id"], "chatos");
+    assert_eq!(request["subject_id"], "thread:conversation-1");
+    assert_eq!(request["labels"], Value::Null);
     axum::Json(json!({
         "id": thread_id,
         "tenant_id": "user-1",
         "source_id": "chatos",
-        "subject_id": "user-1",
+        "subject_id": "thread:conversation-1",
         "thread_type": "conversation",
         "external_thread_id": "conversation-1",
         "title": null,
         "labels": null,
-        "metadata": null,
+        "metadata": {"agent_id":null,"project_id":null,"thread_kind":"conversation"},
         "status": "active",
         "summary_status": "idle",
         "summary_job_run_id": null,
