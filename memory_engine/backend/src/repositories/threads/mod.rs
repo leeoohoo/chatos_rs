@@ -81,7 +81,7 @@ pub use dispatch::{
 };
 #[allow(unused_imports)]
 pub use queries::{
-    get_thread, get_thread_by_id, list_idle_identity_threads, list_threads, list_threads_by_label,
+    get_thread, get_thread_by_id, list_idle_task_threads, list_threads, list_threads_by_label,
     list_threads_with_pending_records_by_token_threshold,
 };
 pub(crate) use writes::ensure_thread_scope;

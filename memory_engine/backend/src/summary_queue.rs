@@ -12,7 +12,7 @@ use crate::state::AppState;
 
 const SUMMARY_QUEUE_TRIGGER: &str = "database_worker";
 const SUMMARY_DISPATCH_CLAIM_LEASE_SECS: i64 = 300;
-const IDENTITY_THREAD_IDLE_FLUSH_SECS: i64 = 60;
+const TASK_THREAD_IDLE_FLUSH_SECS: i64 = 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SummaryRequestedEnvelope {
@@ -302,13 +302,13 @@ async fn run_reconciler(state: Arc<AppState>) {
         match flush_idle_identity_threads(&state).await {
             Ok(count) if count > 0 => info!(
                 flushed_count = count,
-                idle_seconds = IDENTITY_THREAD_IDLE_FLUSH_SECS,
-                "Memory Engine started idle Agent/Project thread summaries"
+                idle_seconds = TASK_THREAD_IDLE_FLUSH_SECS,
+                "Memory Engine started idle task thread summaries"
             ),
             Ok(_) => {}
             Err(error) => warn!(
                 error,
-                "Memory Engine failed to start idle Agent/Project thread summaries"
+                "Memory Engine failed to start idle task thread summaries"
             ),
         }
     }
@@ -325,10 +325,9 @@ async fn flush_idle_identity_threads(state: &AppState) -> Result<usize, String> 
         .borrow()
         .active_summary_concurrency
         .max(1);
-    let idle_before = (chrono::Utc::now()
-        - chrono::Duration::seconds(IDENTITY_THREAD_IDLE_FLUSH_SECS))
-    .to_rfc3339();
-    let candidates = threads::list_idle_identity_threads(
+    let idle_before =
+        (chrono::Utc::now() - chrono::Duration::seconds(TASK_THREAD_IDLE_FLUSH_SECS)).to_rfc3339();
+    let candidates = threads::list_idle_task_threads(
         &state.pool,
         idle_before.as_str(),
         i64::try_from(concurrency).unwrap_or(i64::MAX),

@@ -30,7 +30,7 @@ pub struct MemoryRecordScope {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<String>,
+    pub project_aggregation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_kind: Option<String>,
 }
@@ -44,7 +44,7 @@ impl MemoryRecordScope {
             record_type: "message".to_string(),
             default_summary_status: Some("pending".to_string()),
             agent_id: None,
-            project_id: None,
+            project_aggregation_id: None,
             thread_kind: None,
         }
     }
@@ -57,7 +57,7 @@ impl MemoryRecordScope {
             record_type: "message".to_string(),
             default_summary_status: Some("pending".to_string()),
             agent_id: None,
-            project_id: None,
+            project_aggregation_id: None,
             thread_kind: None,
         }
     }
@@ -72,7 +72,7 @@ impl MemoryRecordScope {
             record_type: "message".to_string(),
             default_summary_status: Some("pending".to_string()),
             agent_id: None,
-            project_id: None,
+            project_aggregation_id: None,
             thread_kind: None,
         }
     }
@@ -95,11 +95,11 @@ impl MemoryRecordScope {
     pub fn with_memory_identity(
         mut self,
         agent_id: impl Into<String>,
-        project_id: Option<String>,
+        project_aggregation_id: Option<String>,
         thread_kind: impl Into<String>,
     ) -> Self {
         self.agent_id = Some(agent_id.into());
-        self.project_id = project_id;
+        self.project_aggregation_id = project_aggregation_id;
         self.thread_kind = Some(thread_kind.into());
         self
     }
@@ -108,7 +108,7 @@ impl MemoryRecordScope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RecordThreadIdentity {
     agent_id: Option<String>,
-    project_id: Option<String>,
+    project_aggregation_id: Option<String>,
     thread_kind: String,
 }
 
@@ -316,7 +316,7 @@ impl MemoryEngineRecordWriter {
                 agent_subject.clone(),
                 format!("thread-kind:{}", identity.thread_kind),
             ];
-            if let Some(project_id) = identity.project_id.as_deref() {
+            if let Some(project_id) = identity.project_aggregation_id.as_deref() {
                 labels.push(format!("project:{project_id}"));
             }
             labels
@@ -333,7 +333,7 @@ impl MemoryEngineRecordWriter {
                     labels,
                     metadata: Some(serde_json::json!({
                         "agent_id": identity.agent_id,
-                        "project_id": identity.project_id,
+                        "project_aggregation_id": identity.project_aggregation_id,
                         "thread_kind": identity.thread_kind,
                     })),
                     status: Some("active".to_string()),
@@ -367,12 +367,12 @@ impl MemoryEngineRecordWriter {
             });
         RecordThreadIdentity {
             agent_id,
-            project_id: self
+            project_aggregation_id: self
                 .scope
-                .project_id
+                .project_aggregation_id
                 .as_deref()
                 .and_then(normalized)
-                .or_else(|| value("project_id")),
+                .or_else(|| value("memory_project_id")),
             thread_kind: self
                 .scope
                 .thread_kind

@@ -7,7 +7,7 @@ use chatos_mcp_runtime::ToolResult;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::MAIN_CHAT_PROFILE_KEY;
+use crate::{MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY};
 
 const INLINE_TOOL_RESULT_MAX_BYTES: usize = 160_000;
 const INLINE_TOOL_RESULTS_TOTAL_MAX_BYTES: usize = 800_000;
@@ -28,9 +28,11 @@ pub(super) fn memory_plan(
     initial_text_field: &str,
 ) -> Result<LocalMemoryPlan, String> {
     let is_main_chat = claim.run.profile_key == MAIN_CHAT_PROFILE_KEY;
-    let thread_id = if is_main_chat {
-        optional_input_string(&claim.run.input, "conversation_id")
-            .unwrap_or_else(|| claim.run.owner_entity_id.clone())
+    let is_task_execution = claim.run.profile_key == TASK_EXECUTION_PROFILE_KEY;
+    let agent_id = memory_agent_id(claim);
+    let project_id = memory_project_id(claim);
+    let thread_id = if !is_task_execution {
+        format!("local-agent:agent:{agent_id}")
     } else {
         optional_input_string(&claim.run.input, "memory_thread_id").unwrap_or_else(|| {
             if task_retry_instructions(&claim.run.input).is_some() {
@@ -49,9 +51,10 @@ pub(super) fn memory_plan(
     let metadata = json!({
         "tenant_id": claim.run.owner_user_id,
         "profile_key": claim.run.profile_key,
-        "agent_id": memory_agent_id(claim),
-        "project_id": memory_project_id(claim),
-        "thread_kind": if is_main_chat { "main_chat" } else if memory_context_string(claim, "todo_id").is_some() { "todo_execution" } else if memory_context_string(claim, "team_id").is_some() { "agent_team_run" } else { "agent_task" },
+        "agent_id": agent_id,
+        "project_id": project_id,
+        "memory_project_id": if is_task_execution { project_id.clone() } else { None },
+        "thread_kind": if is_task_execution && memory_context_string(claim, "todo_id").is_some() { "todo_execution" } else if is_task_execution { "agent_task" } else if agent_id == "main-chat" { "main_chat" } else { "agent_conversation" },
         "run_id": claim.run.run_id,
         "owner_entity_type": claim.run.owner_entity_type,
         "owner_entity_id": claim.run.owner_entity_id,
@@ -94,14 +97,14 @@ pub(super) fn memory_plan(
         message_mode,
         metadata,
     );
-    let agent_subject_id = format!("agent:{}", memory_agent_id(claim));
+    let agent_subject_id = format!("agent:{agent_id}");
     let mut scope = MemoryScope::thread(
         claim.run.owner_user_id.clone(),
         source_id,
         thread_id.clone(),
     )
     .with_subject_id(agent_subject_id);
-    if let Some(project_id) = memory_project_id(claim) {
+    if let Some(project_id) = project_id {
         scope = scope.with_related_subject_ids([format!("project:{project_id}")]);
     }
     Ok(LocalMemoryPlan {
@@ -115,9 +118,6 @@ pub(super) fn memory_plan(
 }
 
 fn memory_agent_id(claim: &LocalAgentRunClaim) -> String {
-    if claim.run.profile_key == MAIN_CHAT_PROFILE_KEY {
-        return "main-chat".to_string();
-    }
     memory_context_string(claim, "agent_id")
         .or_else(|| {
             claim
@@ -130,7 +130,16 @@ fn memory_agent_id(claim: &LocalAgentRunClaim) -> String {
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned)
         })
-        .unwrap_or_else(|| format!("profile:{}", claim.run.profile_key))
+        .or_else(|| {
+            (claim.run.profile_key == MAIN_CHAT_PROFILE_KEY).then(|| "main-chat".to_string())
+        })
+        .unwrap_or_else(|| {
+            if claim.run.profile_key == TASK_EXECUTION_PROFILE_KEY {
+                "main-chat".to_string()
+            } else {
+                format!("profile:{}", claim.run.profile_key)
+            }
+        })
 }
 
 fn memory_project_id(claim: &LocalAgentRunClaim) -> Option<String> {
@@ -369,34 +378,39 @@ mod tests {
     }
 
     #[test]
-    fn main_chat_memory_uses_conversation_thread_and_stable_message_ids() {
+    fn main_chat_memory_uses_stable_agent_thread_and_stable_message_ids() {
         let claim = claim(
             MAIN_CHAT_PROFILE_KEY,
             json!({
                 "conversation_id": "conversation-1",
                 "turn_id": "turn-1",
                 "message_id": "message-1",
-                "message": "hello"
+                "message": "hello",
+                "project_id": "project-1"
             }),
         );
         let plan = memory_plan(&claim, "local_agent", "message").expect("plan");
 
-        assert_eq!(plan.thread_id, "conversation-1");
+        assert_eq!(plan.thread_id, "local-agent:agent:main-chat");
         assert_eq!(plan.turn_id, "turn-1");
         assert_eq!(plan.scope.tenant_id, "user-1");
         assert_eq!(plan.scope.source_id, "local_agent");
-        assert_eq!(plan.scope.thread_id, "conversation-1");
+        assert_eq!(plan.scope.thread_id, "local-agent:agent:main-chat");
         assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:main-chat"));
+        assert_eq!(plan.scope.related_subject_ids, vec!["project:project-1"]);
         let user = plan.user_record.expect("user record");
         assert_eq!(user.message_id.as_deref(), Some("message-1"));
-        assert_eq!(user.conversation_id, "conversation-1");
+        assert_eq!(user.conversation_id, "local-agent:agent:main-chat");
         assert_eq!(
             plan.record_options.assistant_message_id.as_deref(),
             Some("run-1:assistant:1")
         );
         assert_eq!(user.metadata.expect("metadata")["tenant_id"], "user-1");
+        let metadata = plan.record_options.assistant_metadata.as_ref().unwrap();
+        assert_eq!(metadata["project_id"], "project-1");
+        assert!(metadata["memory_project_id"].is_null());
         assert_eq!(
-            plan.record_options.assistant_metadata.as_ref().unwrap()["local_agent_step_claim"],
+            metadata["local_agent_step_claim"],
             json!({"run_id": "run-1", "claim_token": "claim-1", "version": 2})
         );
         assert!(plan
@@ -435,7 +449,32 @@ mod tests {
         let metadata = plan.record_options.assistant_metadata.expect("metadata");
         assert_eq!(metadata["thread_kind"], "todo_execution");
         assert_eq!(metadata["project_id"], "project-1");
+        assert_eq!(metadata["memory_project_id"], "project-1");
         assert_ne!(plan.scope.subject_id.as_deref(), Some("room:room-1"));
+    }
+
+    #[test]
+    fn agent_conversation_uses_real_agent_identity_even_on_main_chat_profile() {
+        let claim = claim(
+            MAIN_CHAT_PROFILE_KEY,
+            json!({
+                "message": "continue the project",
+                "agent_execution_context": {
+                    "agent_id": "agent-1",
+                    "project_id": "project-1",
+                    "room_id": "room-1"
+                }
+            }),
+        );
+
+        let plan = memory_plan(&claim, "local_agent", "message").expect("plan");
+
+        assert_eq!(plan.thread_id, "local-agent:agent:agent-1");
+        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:agent-1"));
+        assert_eq!(plan.scope.related_subject_ids, vec!["project:project-1"]);
+        let metadata = plan.record_options.assistant_metadata.expect("metadata");
+        assert_eq!(metadata["thread_kind"], "agent_conversation");
+        assert!(metadata["memory_project_id"].is_null());
     }
 
     #[test]
@@ -474,6 +513,7 @@ mod tests {
 
         assert_eq!(plan.thread_id, "task-1");
         assert_eq!(plan.turn_id, "run-1");
+        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:main-chat"));
         assert!(plan.user_record.is_none());
         assert_eq!(plan.external_tool_results.len(), 1);
         assert_eq!(plan.external_tool_results[0].tool_call_id, "call-1");

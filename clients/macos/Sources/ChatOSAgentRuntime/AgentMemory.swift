@@ -8,6 +8,7 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     public let threadID: String
     public let subjectID: String
     public let projectSubjectID: String?
+    public let projectAggregationSubjectID: String?
     public let threadKind: String?
     public let runID: UUID
     public let runtimeScope: String
@@ -31,20 +32,21 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         }
         self.tenantID = tenantID
         self.sourceID = "chatos"
-        self.threadID = "client-agent:\(profile):\(runID)"
         let agentID = profile == "approval"
             ? "local_connector_command_approval_agent"
             : "builtin-\(profile)-agent"
+        self.threadID = "client-agent:agent:\(agentID)"
         self.subjectID = "agent:\(agentID)"
         self.projectSubjectID = projectID.flatMap { $0.isEmpty ? nil : "project:\($0)" }
-        self.threadKind = profile == "approval" ? "approval_run" : "\(profile)_run"
+        self.projectAggregationSubjectID = nil
+        self.threadKind = profile == "approval" ? "approval_agent" : "story_agent"
         self.runID = runID
         self.runtimeScope = runtimeScope
         self.includeSubjectMemory = true
     }
 
-    /// Every run keeps an independent raw Thread. Cross-run continuity comes from the stable
-    /// Agent subject and the optional Project subject, never from a room or a shared raw Thread.
+    /// One user-scoped Agent keeps one raw Thread across conversations and projects. The current
+    /// Project is recalled dynamically, but ordinary Agent chat does not feed a Project Summary.
     public init(
         tenantID: String,
         agentID: String,
@@ -60,9 +62,10 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
         self.tenantID = tenantID
         self.sourceID = "chatos"
-        self.threadID = "client-agent:run:\(agentID):\(runID.uuidString)"
+        self.threadID = "client-agent:agent:\(agentID)"
         self.subjectID = "agent:\(agentID)"
         self.projectSubjectID = "project:\(projectID)"
+        self.projectAggregationSubjectID = nil
         self.threadKind = "agent_conversation"
         self.runID = runID
         self.runtimeScope = runtimeScope
@@ -90,6 +93,7 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         self.threadID = "client-agent:todo:\(todoID)"
         self.subjectID = "agent:\(agentID)"
         self.projectSubjectID = "project:\(projectID)"
+        self.projectAggregationSubjectID = "project:\(projectID)"
         self.threadKind = "todo_execution"
         self.runID = runID
         self.runtimeScope = runtimeScope
@@ -99,19 +103,19 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     public func recordID(at index: Int) -> String { "client-agent:\(runID):message:\(index)" }
 
     /// Returns whether an immutable record can be written through a Memory service bound to this
-    /// thread. Manager and Todo identities intentionally reuse one thread across separate runs,
-    /// so their durable outbox may contain records created by an earlier run. Run-scoped story
-    /// and approval services must continue to reject those foreign records.
+    /// thread. Agent and Todo identities intentionally reuse one thread across separate runs, so
+    /// their durable outbox may contain records created by an earlier run.
     public func acceptsRecord(id: String, index: Int) -> Bool {
         guard let location = recordLocation(for: id), location.index == index else { return false }
         return location.runID == runID || allowsCrossRunHistory
     }
 
-    /// Story and approval threads belong to one run. Manager and Todo threads are stable for their
-    /// respective identity, so compose may return records written by earlier runs of that same
-    /// manager or Todo. The legacy group-chat prefix remains accepted for bound pre-migration runs.
+    /// Agent and Todo threads are stable for their respective identity, so compose may return
+    /// records written by earlier runs of that same Agent or Todo. The legacy group-chat prefix
+    /// remains accepted for bound pre-migration runs.
     public var allowsCrossRunHistory: Bool {
-        threadID.hasPrefix("client-agent:todo:")
+        threadID.hasPrefix("client-agent:agent:")
+            || threadID.hasPrefix("client-agent:todo:")
             || threadID.hasPrefix("client-agent:group-chat:")
     }
 

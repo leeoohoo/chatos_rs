@@ -166,6 +166,19 @@ pub(crate) fn thread_identity_subject_ids(thread: &EngineThread) -> Vec<String> 
     subjects
 }
 
+pub(crate) fn thread_allows_dynamic_project_recall(thread: &EngineThread) -> bool {
+    thread.labels.as_ref().into_iter().flatten().any(|label| {
+        matches!(
+            label.trim(),
+            "thread-kind:main_chat"
+                | "thread-kind:agent_conversation"
+                | "thread-kind:story_agent"
+                | "thread-kind:approval_agent"
+                | "thread-kind:agent_team_run"
+        )
+    })
+}
+
 pub(crate) fn build_thread_summary_level0_text(rows: &[EngineSummary]) -> String {
     let mut ordered = rows.to_vec();
     ordered.sort_by(|left, right| left.created_at.cmp(&right.created_at));

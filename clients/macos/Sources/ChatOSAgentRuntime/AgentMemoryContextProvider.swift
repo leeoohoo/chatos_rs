@@ -66,6 +66,7 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
     }
 
     public func finalizeMemory() async throws {
+        guard scope.projectAggregationSubjectID != nil else { return }
         try await service.flushSummary()
     }
 

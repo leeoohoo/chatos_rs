@@ -66,7 +66,7 @@ pub async fn list_threads_with_pending_records_by_token_threshold(
     fetch_threads(db, query).await
 }
 
-pub async fn list_idle_identity_threads(
+pub async fn list_idle_task_threads(
     db: &Db,
     idle_before: &str,
     limit: i64,
@@ -74,6 +74,8 @@ pub async fn list_idle_identity_threads(
     let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
         "SELECT data FROM engine_threads WHERE summary_status='pending' \
          AND pending_record_count>0 AND data->'labels' ? 'memory-schema:v2' \
+         AND (data->'labels' ? 'thread-kind:agent_task' \
+              OR data->'labels' ? 'thread-kind:todo_execution') \
          AND updated_at<=$1 ORDER BY updated_at ASC,created_at ASC LIMIT $2",
     )
     .bind(timestamp(idle_before)?)

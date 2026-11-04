@@ -28,9 +28,28 @@ const MEMORY_SCHEMA_V2_LABEL: &str = "memory-schema:v2";
 
 pub async fn ensure_thread_identity_scopes(db: &Db, thread: &EngineThread) -> Result<(), String> {
     for (scope_key, request) in thread_identity_scope_requests(thread)? {
+        if get_subject_memory_scope(db, &request.tenant_id, &request.source_id, &scope_key)
+            .await?
+            .as_ref()
+            .is_some_and(|existing| identity_scope_is_current(existing, &request))
+        {
+            continue;
+        }
         upsert_subject_memory_scope(db, scope_key.as_str(), request).await?;
     }
     Ok(())
+}
+
+fn identity_scope_is_current(
+    existing: &EngineSubjectMemoryScope,
+    request: &UpsertSubjectMemoryScopeRequest,
+) -> bool {
+    existing.subject_id == request.subject_id
+        && existing.memory_type == request.memory_type
+        && existing.source_thread_label == request.source_thread_label
+        && existing.relation_subject_id == request.relation_subject_id
+        && existing.source_summary_type == request.source_summary_type
+        && existing.status == "active"
 }
 
 pub(crate) fn thread_identity_scope_requests(

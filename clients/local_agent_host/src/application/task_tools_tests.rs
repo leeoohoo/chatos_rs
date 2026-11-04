@@ -230,6 +230,51 @@ async fn single_task_freezes_the_exact_source_user_message() {
         graph.tasks[0].input["source_user_message"],
         Value::String(exact_source)
     );
+    assert_eq!(graph.tasks[0].input["agent_id"], "main-chat");
+    assert!(graph.tasks[0].input["project_id"].is_null());
+}
+
+#[tokio::test]
+async fn single_task_inherits_the_real_agent_and_project_identity() {
+    let runtime = runtime_with_parent().await;
+    let mut parent = runtime
+        .get_run_for_host_worker("parent-run")
+        .await
+        .expect("load parent")
+        .expect("parent");
+    parent.input["agent_execution_context"] = json!({
+        "agent_id": "agent-1",
+        "project_id": "project-1",
+        "room_id": "room-ignored"
+    });
+    parent.input["agent_id"] = json!("wrong-fallback-agent");
+    let mut call = invocation(json!({}));
+    call.tool_name = CREATE_TASK_TOOL.into();
+    let args: CreateTaskArgs = serde_json::from_value(json!({
+        "title": "Inspect",
+        "objective": "Inspect configuration",
+        "context_summary": "Inspect only the supplied task context.",
+        "expected_outputs": ["Report"],
+        "acceptance_criteria": ["Source-backed"],
+        "requires_execution": false,
+        "enabled_builtin_kinds": ["CodeMaintainerRead"]
+    }))
+    .expect("task args");
+
+    let command = create_single_graph(
+        &call,
+        &parent,
+        args,
+        ("model-1".into(), "revision-1".into()),
+        8,
+    )
+    .expect("task graph");
+    let input = &command.tasks[0].input;
+
+    assert_eq!(input["agent_id"], "agent-1");
+    assert_eq!(input["project_id"], "project-1");
+    assert!(input.get("room_id").is_none());
+    assert!(input.get("team_id").is_none());
 }
 
 #[tokio::test]
@@ -554,6 +599,14 @@ async fn batch_tool_creates_an_idempotent_local_dag() {
         "conversation-1"
     );
     assert_eq!(graph.tasks[1].input["source_turn_id"], "turn-1");
+    assert!(graph
+        .tasks
+        .iter()
+        .all(|task| task.input["agent_id"] == "main-chat"));
+    assert!(graph
+        .tasks
+        .iter()
+        .all(|task| task.input["project_id"].is_null()));
     assert!(graph
         .tasks
         .iter()

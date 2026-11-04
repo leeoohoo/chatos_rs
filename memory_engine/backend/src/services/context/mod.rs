@@ -12,7 +12,7 @@ use crate::repositories::{records, threads};
 
 use self::blocks::{
     build_context_blocks, subject_ids_for_context, subject_memory_subject_ids_for_context,
-    thread_identity_subject_ids,
+    thread_allows_dynamic_project_recall, thread_identity_subject_ids,
 };
 use self::policy::ResolvedComposeContextPolicy;
 
@@ -44,12 +44,26 @@ pub async fn compose_context(
             req.related_subject_ids.as_ref(),
         )
     } else {
+        let allow_dynamic_project = thread_allows_dynamic_project_recall(&thread);
         validate_requested_subjects(
             &bound_identity_subject_ids,
             req.subject_id.as_deref(),
             req.related_subject_ids.as_ref(),
+            allow_dynamic_project,
         )?;
-        bound_identity_subject_ids
+        let mut subjects = bound_identity_subject_ids;
+        if allow_dynamic_project {
+            for subject in req.related_subject_ids.as_ref().into_iter().flatten() {
+                let subject = subject.trim();
+                if subject.starts_with("project:")
+                    && subject.len() > "project:".len()
+                    && !subjects.iter().any(|value| value == subject)
+                {
+                    subjects.push(subject.to_string());
+                }
+            }
+        }
+        subjects
     };
     let context_blocks = build_context_blocks(
         db,
@@ -90,14 +104,25 @@ fn validate_requested_subjects(
     bound: &[String],
     requested: Option<&str>,
     related: Option<&Vec<String>>,
+    allow_dynamic_project: bool,
 ) -> Result<(), String> {
-    let requested = requested
-        .into_iter()
-        .chain(related.into_iter().flatten().map(String::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    for subject in requested {
+    if let Some(subject) = requested.map(str::trim).filter(|value| !value.is_empty()) {
         if !bound.iter().any(|value| value == subject) {
+            return Err("requested subject is not bound to this thread".to_string());
+        }
+    }
+    for subject in related
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if !bound.iter().any(|value| value == subject)
+            && !(allow_dynamic_project
+                && subject.starts_with("project:")
+                && subject.len() > "project:".len())
+        {
             return Err("requested subject is not bound to this thread".to_string());
         }
     }

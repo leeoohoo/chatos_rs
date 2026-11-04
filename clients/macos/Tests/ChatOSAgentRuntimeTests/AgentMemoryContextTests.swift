@@ -29,8 +29,10 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(first.subjectID, "agent:agent-a")
         XCTAssertEqual(first.projectSubjectID, "project:project-1")
         XCTAssertEqual(firstInAnotherProject.subjectID, first.subjectID)
-        XCTAssertNotEqual(firstInAnotherProject.threadID, first.threadID)
+        XCTAssertEqual(firstInAnotherProject.threadID, first.threadID)
         XCTAssertEqual(firstInAnotherProject.projectSubjectID, "project:project-2")
+        XCTAssertNil(first.projectAggregationSubjectID)
+        XCTAssertNil(firstInAnotherProject.projectAggregationSubjectID)
         XCTAssertEqual(second.subjectID, "agent:agent-b")
         XCTAssertNotEqual(first.subjectID, second.subjectID)
         XCTAssertNotEqual(first.threadID, second.threadID)
@@ -61,8 +63,53 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertNotEqual(firstAttempt.threadID, manager.threadID)
         XCTAssertEqual(firstAttempt.subjectID, manager.subjectID)
         XCTAssertEqual(firstAttempt.projectSubjectID, manager.projectSubjectID)
+        XCTAssertEqual(firstAttempt.projectAggregationSubjectID, "project:project-1")
+        XCTAssertNil(manager.projectAggregationSubjectID)
         XCTAssertEqual(firstAttempt.includeSubjectMemory, true)
         XCTAssertTrue(firstAttempt.allowsCrossRunHistory)
+    }
+
+    func testApprovalAgentUsesOneTenantScopedThreadAndWaitsForThresholdSummary() async throws {
+        let first = try AgentMemoryScope(
+            tenantID: "user-a", profile: "approval", projectID: "workspace-1",
+            runID: UUID(), runtimeScope: "approval:first"
+        )
+        let second = try AgentMemoryScope(
+            tenantID: "user-a", profile: "approval", projectID: "workspace-2",
+            runID: UUID(), runtimeScope: "approval:second"
+        )
+
+        XCTAssertEqual(first.threadID, "client-agent:agent:local_connector_command_approval_agent")
+        XCTAssertEqual(second.threadID, first.threadID)
+        XCTAssertEqual(first.subjectID, "agent:local_connector_command_approval_agent")
+        XCTAssertEqual(second.subjectID, first.subjectID)
+        XCTAssertEqual(first.projectSubjectID, "project:workspace-1")
+        XCTAssertEqual(second.projectSubjectID, "project:workspace-2")
+        XCTAssertNil(first.projectAggregationSubjectID)
+        XCTAssertNil(second.projectAggregationSubjectID)
+        XCTAssertTrue(first.allowsCrossRunHistory)
+
+        let memory = TestMemory(scope: first)
+        let provider = AgentMemoryContextProvider(scope: first, service: memory)
+        try await provider.finalizeMemory()
+        let flushes = await memory.flushes
+        XCTAssertEqual(flushes, 0, "Approval history must accumulate until the normal summary threshold")
+    }
+
+    func testTaskThreadFlushesAndContributesToAgentAndProjectMemory() async throws {
+        let scope = try AgentMemoryScope(
+            tenantID: "user-a", todoID: "todo-a", agentID: "agent-a", projectID: "project-a",
+            runID: UUID(), runtimeScope: "task:todo-a"
+        )
+        let memory = TestMemory(scope: scope)
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+
+        try await provider.finalizeMemory()
+
+        XCTAssertEqual(scope.subjectID, "agent:agent-a")
+        XCTAssertEqual(scope.projectAggregationSubjectID, "project:project-a")
+        let flushes = await memory.flushes
+        XCTAssertEqual(flushes, 1)
     }
 
     func test600ResponsesCallsComposeMemoryOnceAndKeepAuditHistoryComplete() async throws {
@@ -198,7 +245,7 @@ final class AgentMemoryContextTests: XCTestCase {
         }
     }
 
-    func testIndependentAgentThreadsUseSummaryBlocksInsteadOfEarlierRawRecords() throws {
+    func testStableAgentThreadKeepsEarlierRawRecordsAndCurrentProjectSummary() throws {
         let earlierRunID = UUID()
         let currentRunID = UUID()
         let earlierScope = try AgentMemoryScope(
@@ -209,7 +256,7 @@ final class AgentMemoryContextTests: XCTestCase {
             tenantID: "user-a", agentID: "agent-a", projectID: "project-2",
             runID: currentRunID, runtimeScope: "account:user-a:project:project-2:agent:agent-a"
         )
-        XCTAssertNotEqual(earlierScope.threadID, currentScope.threadID)
+        XCTAssertEqual(earlierScope.threadID, currentScope.threadID)
 
         let earlierReply = AgentMessage(role: .assistant, content: "已经创建三国自走棋团队")
         let currentSystem = AgentMessage(role: .system, content: "Only authorized tools")
@@ -220,8 +267,8 @@ final class AgentMemoryContextTests: XCTestCase {
         )
         checkpoint.id = currentRunID
         let memory = AgentMemoryCheckpoint(scope: currentScope, pinnedMessageCount: 2)
-        let invalidContext = AgentMemoryContext(
-            blocks: [.init(blockType: "agent_memory_recent", text: "已经创建三国自走棋团队")],
+        let context = AgentMemoryContext(
+            blocks: [.init(blockType: "project_summary_recent", text: "当前项目状态")],
             recentRecords: [
                 .init(id: earlierScope.recordID(at: 2), message: earlierReply),
                 .init(id: currentScope.recordID(at: 0), message: currentSystem),
@@ -229,21 +276,11 @@ final class AgentMemoryContextTests: XCTestCase {
             ]
         )
 
-        XCTAssertThrowsError(try AgentContextAssembler.assemble(
-            checkpoint: checkpoint, memory: memory, context: invalidContext
-        ))
-
-        let validContext = AgentMemoryContext(
-            blocks: [.init(blockType: "agent_memory_recent", text: "已经创建三国自走棋团队")],
-            recentRecords: [
-                .init(id: currentScope.recordID(at: 0), message: currentSystem),
-                .init(id: currentScope.recordID(at: 1), message: currentRequest),
-            ]
-        )
         let result = try AgentContextAssembler.assemble(
-            checkpoint: checkpoint, memory: memory, context: validContext
+            checkpoint: checkpoint, memory: memory, context: context
         )
-        XCTAssertTrue(result.contains { $0.role == .system && $0.content.contains("agent_memory_recent") })
+        XCTAssertTrue(result.contains { $0.role == .system && $0.content.contains("project_summary_recent") })
+        XCTAssertTrue(result.contains(earlierReply))
         XCTAssertEqual(result.last, currentRequest)
     }
 
@@ -409,6 +446,7 @@ private actor TestMemory: AgentMemoryServicing {
     var composeCalls = 0
     var writes = 0
     var reconciliations = 0
+    var flushes = 0
     init(scope: AgentMemoryScope, loseSyncAck: Bool = false, failWriteNumber: Int? = nil) {
         self.scope = scope; self.loseSyncAck = loseSyncAck; self.failWriteNumber = failWriteNumber
     }
@@ -431,4 +469,5 @@ private actor TestMemory: AgentMemoryServicing {
             recentRecords: entries.map { .init(id: $0.id, message: $0.message) }
         )
     }
+    func flushSummary() { flushes += 1 }
 }

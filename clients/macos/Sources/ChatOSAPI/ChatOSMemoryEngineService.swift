@@ -18,7 +18,7 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             .string(scope.subjectID),
             .string("thread-kind:\(scope.threadKind ?? "client_agent")"),
         ]
-        if let projectSubjectID = scope.projectSubjectID {
+        if let projectSubjectID = scope.projectAggregationSubjectID {
             labels.append(.string(projectSubjectID))
         }
         var metadata: [String: JSONValue] = [

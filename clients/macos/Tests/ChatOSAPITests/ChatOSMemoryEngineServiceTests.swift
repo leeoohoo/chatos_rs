@@ -30,7 +30,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         let labels = try XCTUnwrap(threadBody["labels"] as? [String])
         XCTAssertTrue(labels.contains("memory-schema:v2"))
         XCTAssertTrue(labels.contains(scope.subjectID))
-        XCTAssertTrue(labels.contains(try XCTUnwrap(scope.projectSubjectID)))
+        XCTAssertFalse(labels.contains(try XCTUnwrap(scope.projectSubjectID)))
         let body = try object(calls[1].body)
         XCTAssertEqual(body["source_id"] as? String, "chatos")
         XCTAssertEqual(body["tenant_id"] as? String, scope.tenantID)
@@ -66,6 +66,31 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(try object(requests[0].body)["trigger_reason"] as? String, "agent_run_terminal")
     }
 
+    func testTaskThreadRegistersBothAgentAndProjectAggregationScopes() async throws {
+        let scope = try AgentMemoryScope(
+            tenantID: "user/a?&b", todoID: "todo-1", agentID: "agent-1", projectID: "project-1",
+            runID: UUID(), runtimeScope: "task:todo-1"
+        )
+        let transport = MemoryTransport(
+            scope: scope, refreshToken: false, foreignTenant: false, statusCode: 200,
+            summaryError: nil
+        )
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://app.example/prefix")!),
+            accessToken: "user-token", transport: transport
+        )
+        let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
+
+        try await service.ensureThread()
+
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+        let labels = try XCTUnwrap(try object(request.body)["labels"] as? [String])
+        XCTAssertTrue(labels.contains("agent:agent-1"))
+        XCTAssertTrue(labels.contains("project:project-1"))
+        XCTAssertTrue(labels.contains("thread-kind:todo_execution"))
+    }
+
     func testReconciliationReadsExistingRecordsAndDoesNotResetSummaries() async throws {
         let (scope, transport, client) = try fixture()
         let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
@@ -78,7 +103,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertTrue(requests.dropFirst().allSatisfy { $0.url.query?.contains("thread_id=") == true })
     }
 
-    func testIndependentAgentThreadRejectsRawRecordsCreatedByAnEarlierRun() async throws {
+    func testStableAgentThreadCanFlushRawRecordsCreatedByAnEarlierRun() async throws {
         let agentID = "manager-agent"
         let earlier = try AgentMemoryScope(
             tenantID: "user/a?&b",
@@ -95,7 +120,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
             runtimeScope: "manager:current"
         )
         XCTAssertEqual(earlier.subjectID, current.subjectID)
-        XCTAssertNotEqual(earlier.threadID, current.threadID)
+        XCTAssertEqual(earlier.threadID, current.threadID)
         let transport = MemoryTransport(
             scope: current,
             refreshToken: false,
@@ -110,17 +135,14 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         )
         let service = try await ChatOSMemoryEngineService(client: client, scope: current)
 
-        do {
-            try await service.sync(records(earlier), reconciling: false)
-            XCTFail("Independent raw Threads must not accept records from another run")
-        } catch AgentContextError.invalidHistory {
-        }
+        try await service.sync(records(earlier), reconciling: false)
 
         let requests = await transport.requests
-        XCTAssertTrue(requests.isEmpty)
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertTrue(requests[0].url.path.hasSuffix("/records/batch-sync"))
     }
 
-    func testRunScopedThreadRejectsRecordsCreatedByAnotherRun() async throws {
+    func testStableStoryAgentAcceptsRecordsFromAnEarlierRun() async throws {
         let (scope, transport, client) = try fixture()
         let other = try AgentMemoryScope(
             tenantID: scope.tenantID,
@@ -131,15 +153,9 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         )
         let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
 
-        do {
-            try await service.sync(records(other), reconciling: false)
-            XCTFail("Run-scoped Memory must reject records from another run")
-        } catch AgentContextError.invalidHistory {
-        } catch {
-            XCTFail("Unexpected error: \(error)")
-        }
+        try await service.sync(records(other), reconciling: false)
         let requests = await transport.requests
-        XCTAssertTrue(requests.isEmpty)
+        XCTAssertEqual(requests.count, 1)
     }
 
     func testIncompleteOrChangedReconciliationDoesNotWrite() async throws {

@@ -4,6 +4,7 @@
 use super::blocks::{
     build_thread_summary_blocks_from_rows, build_thread_summary_level0_text, format_subject_memory,
     subject_ids_for_context, subject_memory_subject_ids_for_context, thread_agent_subject_id,
+    thread_allows_dynamic_project_recall,
 };
 use super::policy::ResolvedComposeContextPolicy;
 use super::validate_requested_subjects;
@@ -238,12 +239,43 @@ fn compose_rejects_subjects_not_bound_to_the_thread() {
         &bound,
         Some("agent:a-1"),
         Some(&vec!["project:p-1".to_string()]),
+        false,
     )
     .is_ok());
     assert!(validate_requested_subjects(
         &bound,
         Some("agent:a-2"),
         Some(&vec!["project:p-1".to_string()]),
+        false,
+    )
+    .is_err());
+}
+
+#[test]
+fn stable_agent_thread_allows_only_dynamic_project_recall() {
+    let item = thread(
+        "agent:a-1",
+        Some(vec![
+            "memory-schema:v2",
+            "agent:a-1",
+            "thread-kind:agent_conversation",
+        ]),
+        None,
+    );
+    assert!(thread_allows_dynamic_project_recall(&item));
+    let bound = vec!["agent:a-1".to_string()];
+    assert!(validate_requested_subjects(
+        &bound,
+        Some("agent:a-1"),
+        Some(&vec!["project:p-2".to_string()]),
+        true,
+    )
+    .is_ok());
+    assert!(validate_requested_subjects(
+        &bound,
+        Some("agent:a-1"),
+        Some(&vec!["agent:a-2".to_string()]),
+        true,
     )
     .is_err());
 }

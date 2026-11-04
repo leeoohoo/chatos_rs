@@ -48,7 +48,7 @@ async fn accept_thread_upsert(
         "external_thread_id": "conversation-1",
         "title": null,
         "labels": null,
-        "metadata": {"agent_id":null,"project_id":null,"thread_kind":"conversation"},
+        "metadata": {"agent_id":null,"project_aggregation_id":null,"thread_kind":"conversation"},
         "status": "active",
         "summary_status": "idle",
         "summary_job_run_id": null,
