@@ -206,6 +206,11 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
         if let id = entry.message.toolCallID { payload["tool_call_id"] = .string(id) }
         var metadata: [String: JSONValue] = ["client_agent_run_id": .string(scope.runID.uuidString),
                                              "client_agent_message_index": .number(Double(entry.index))]
+        if let projectSubjectID = scope.projectSubjectID {
+            metadata["memory_project_id"] = .string(
+                String(projectSubjectID.dropFirst("project:".count))
+            )
+        }
         if let id = entry.message.toolCallID { metadata["tool_call_id"] = .string(id) }
         if let output = entry.message.responseOutputJSON {
             metadata["responses_output"] = try JSONDecoder().decode(JSONValue.self, from: output)

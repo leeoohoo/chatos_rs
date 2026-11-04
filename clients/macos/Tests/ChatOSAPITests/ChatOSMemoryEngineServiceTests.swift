@@ -40,6 +40,10 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual((firstPayload["tool_calls"] as? [[String: Any]])?.first?["id"] as? String, "call-a")
         XCTAssertEqual((records[1]["structured_payload"] as? [String: Any])?["tool_call_id"] as? String, "call-a")
         let firstMetadata = try XCTUnwrap(records[0]["metadata"] as? [String: Any])
+        XCTAssertEqual(
+            firstMetadata["memory_project_id"] as? String,
+            try XCTUnwrap(scope.projectSubjectID).replacingOccurrences(of: "project:", with: "")
+        )
         XCTAssertEqual((firstMetadata["responses_output"] as? [[String: Any]])?.first?["type"] as? String, "compaction")
         XCTAssertEqual((firstMetadata["provider_usage"] as? [String: Any])?["cached_tokens"] as? Int, 7)
         XCTAssertNil(records[0]["summary_status"])

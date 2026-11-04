@@ -133,6 +133,7 @@ pub(crate) async fn execute_prepared_thread_summary_job(
             selection.selected.first().map(|item| item.id.clone()),
             selection.selected.last().map(|item| item.id.clone()),
             selection.selected.len(),
+            selection.project_subject_id.as_deref(),
         )
         .await?;
         processed_count = selection.selected.len() as i64 + skipped_count as i64;

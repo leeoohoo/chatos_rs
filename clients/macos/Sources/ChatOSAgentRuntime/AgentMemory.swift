@@ -46,7 +46,8 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     }
 
     /// One user-scoped Agent keeps one raw Thread across conversations and projects. The current
-    /// Project is recalled dynamically, but ordinary Agent chat does not feed a Project Summary.
+    /// Project is recalled dynamically, and each record carries its Project identity so Memory
+    /// Engine can feed the matching Project Summary without binding the Thread to one Project.
     public init(
         tenantID: String,
         agentID: String,

@@ -16,6 +16,7 @@ chatos_local_agent_runtime = { path = "../application" }
 serde = "1"
 serde_json = "1"
 sha2 = "0.10"
+tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]

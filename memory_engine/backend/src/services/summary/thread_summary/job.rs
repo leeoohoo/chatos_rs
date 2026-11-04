@@ -16,6 +16,8 @@ pub(super) struct FrozenThreadSummarySelection {
     pub(super) oversized_record_ids: Vec<String>,
     pub(super) selected_token_count: i64,
     pub(super) oversized_token_count: i64,
+    #[serde(default)]
+    pub(super) project_subject_id: Option<String>,
 }
 
 impl FrozenThreadSummarySelection {
@@ -33,6 +35,7 @@ impl FrozenThreadSummarySelection {
                 .collect(),
             selected_token_count: selection.selected_token_count,
             oversized_token_count: selection.oversized_token_count,
+            project_subject_id: selection.project_subject_id.clone(),
         }
     }
 
@@ -204,6 +207,7 @@ mod tests {
             oversized: vec![record("oversized-1")],
             selected_token_count: 321,
             oversized_token_count: 654,
+            project_subject_id: Some("project:p-1".to_string()),
         };
         let metadata = start_metadata(3, 6_000, 700, &selection);
 
@@ -213,5 +217,6 @@ mod tests {
         assert_eq!(frozen.oversized_record_ids, ["oversized-1"]);
         assert_eq!(frozen.selected_token_count, 321);
         assert_eq!(frozen.oversized_token_count, 654);
+        assert_eq!(frozen.project_subject_id.as_deref(), Some("project:p-1"));
     }
 }

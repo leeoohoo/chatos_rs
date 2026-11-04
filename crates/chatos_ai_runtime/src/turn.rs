@@ -61,6 +61,19 @@ impl ContextualTurnRunner {
             .await
     }
 
+    /// Requests an incremental Thread Summary without waiting for the downstream
+    /// Agent/Project rollups. A missing Memory adapter is a valid no-op.
+    pub async fn run_active_summary(
+        &self,
+        scope: &MemoryScope,
+        trigger_reason: Option<&str>,
+    ) -> Result<(), String> {
+        if let Some(composer) = self.memory_composer.as_ref() {
+            composer.run_active_summary(scope, trigger_reason).await?;
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "local-agent-loop")]
     pub async fn run_turn(
         &self,

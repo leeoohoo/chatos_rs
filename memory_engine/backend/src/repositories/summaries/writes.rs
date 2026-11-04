@@ -57,7 +57,15 @@ pub async fn create_thread_summary(
     source_record_start_id: Option<String>,
     source_record_end_id: Option<String>,
     source_record_count: usize,
+    project_subject_id: Option<&str>,
 ) -> Result<EngineSummary, String> {
+    let mut metadata = serde_json::json!({"generator":"memory_engine_summary_v1"});
+    if let Some(project_subject_id) = project_subject_id
+        .map(str::trim)
+        .filter(|value| value.starts_with("project:") && value.len() > "project:".len())
+    {
+        metadata["project_subject_id"] = serde_json::json!(project_subject_id);
+    }
     create_thread_summary_with_type(
         db,
         tenant_id,
@@ -70,7 +78,7 @@ pub async fn create_thread_summary(
         source_record_start_id,
         source_record_end_id,
         source_record_count,
-        Some(serde_json::json!({"generator":"memory_engine_summary_v1"})),
+        Some(metadata),
     )
     .await
 }

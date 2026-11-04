@@ -40,6 +40,38 @@ pub async fn ensure_thread_identity_scopes(db: &Db, thread: &EngineThread) -> Re
     Ok(())
 }
 
+pub async fn ensure_project_identity_scope(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    project_subject_id: &str,
+) -> Result<(), String> {
+    let project_subject_id = project_subject_id.trim();
+    if !project_subject_id.starts_with("project:")
+        || project_subject_id.len() == "project:".len()
+        || project_subject_id.chars().any(char::is_control)
+    {
+        return Err("project identity subject is invalid".to_string());
+    }
+    let scope_key = format!("identity:{project_subject_id}");
+    let request = identity_scope_request(
+        tenant_id,
+        source_id,
+        project_subject_id,
+        "project_summary",
+        "Project shared summary",
+    );
+    if get_subject_memory_scope(db, tenant_id, source_id, scope_key.as_str())
+        .await?
+        .as_ref()
+        .is_some_and(|existing| identity_scope_is_current(existing, &request))
+    {
+        return Ok(());
+    }
+    upsert_subject_memory_scope(db, scope_key.as_str(), request).await?;
+    Ok(())
+}
+
 fn identity_scope_is_current(
     existing: &EngineSubjectMemoryScope,
     request: &UpsertSubjectMemoryScopeRequest,
@@ -80,7 +112,8 @@ pub(crate) fn thread_identity_scope_requests(
     let mut scopes = vec![(
         format!("identity:{agent_subject}"),
         identity_scope_request(
-            thread,
+            thread.tenant_id.as_str(),
+            thread.source_id.as_str(),
             agent_subject.as_str(),
             "agent_memory",
             "Agent durable memory",
@@ -90,7 +123,8 @@ pub(crate) fn thread_identity_scope_requests(
         scopes.push((
             format!("identity:{project_subject}"),
             identity_scope_request(
-                thread,
+                thread.tenant_id.as_str(),
+                thread.source_id.as_str(),
                 project_subject.as_str(),
                 "project_summary",
                 "Project shared summary",
@@ -113,14 +147,15 @@ fn identity_labels(labels: &[String], prefix: &str) -> Vec<String> {
 }
 
 fn identity_scope_request(
-    thread: &EngineThread,
+    tenant_id: &str,
+    source_id: &str,
     subject_id: &str,
     memory_type: &str,
     prompt_title: &str,
 ) -> UpsertSubjectMemoryScopeRequest {
     UpsertSubjectMemoryScopeRequest {
-        tenant_id: thread.tenant_id.clone(),
-        source_id: thread.source_id.clone(),
+        tenant_id: tenant_id.to_string(),
+        source_id: source_id.to_string(),
         subject_id: subject_id.to_string(),
         memory_type: memory_type.to_string(),
         source_thread_label: subject_id.to_string(),

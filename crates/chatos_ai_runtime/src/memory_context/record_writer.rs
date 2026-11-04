@@ -372,7 +372,7 @@ impl MemoryEngineRecordWriter {
                 .project_aggregation_id
                 .as_deref()
                 .and_then(normalized)
-                .or_else(|| value("memory_project_id")),
+                .or_else(|| value("thread_project_aggregation_id")),
             thread_kind: self
                 .scope
                 .thread_kind

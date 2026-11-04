@@ -8,6 +8,25 @@ use sqlx::types::Json;
 
 use super::super::ListSummariesQuery;
 
+pub async fn get_summary_by_id(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    summary_id: &str,
+) -> Result<Option<EngineSummary>, String> {
+    sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(summary_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|error| error.to_string())?
+    .map(crate::repositories::postgres::decode)
+    .transpose()
+}
+
 pub async fn list_latest_thread_summaries(
     db: &Db,
     tenant_id: &str,

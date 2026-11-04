@@ -9,7 +9,7 @@ use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::{BatchSyncRecordsRequest, EngineRecord, UpsertRecordInput};
 use crate::repositories::postgres::{decode, json, timestamp};
-use crate::repositories::threads;
+use crate::repositories::{subject_memory_scopes, threads};
 
 use super::common::{
     estimate_pending_record_tokens, estimate_record_summary_tokens, summary_status_is_pending,
@@ -75,12 +75,16 @@ async fn batch_sync_records_inner(
     let mut inserted = 0usize;
     let mut delta = SummaryQueueDelta::default();
     let mut keys = HashSet::new();
+    let mut project_subject_ids = HashSet::new();
     for input in &req.records {
         let previous=sqlx::query_scalar::<_,Json<serde_json::Value>>(
             "SELECT data FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=$4 FOR UPDATE"
         ).bind(&req.tenant_id).bind(&req.source_id).bind(thread_id).bind(&input.id)
           .fetch_optional(&mut *tx).await.map_err(|e|e.to_string())?.map(decode::<EngineRecord>).transpose()?;
         let record = make_record(thread_id, &req.tenant_id, &req.source_id, input.clone());
+        if let Some(project_subject_id) = record_project_subject_id(&record) {
+            project_subject_ids.insert(project_subject_id);
+        }
         inserted += usize::from(previous.is_none());
         merge_delta(&mut delta, previous.as_ref(), &record);
         if let Some(key) = CompactTurnKey::from_record(&record) {
@@ -92,6 +96,15 @@ async fn batch_sync_records_inner(
         upsert_record_row(&mut tx, &record).await?;
     }
     tx.commit().await.map_err(|e| e.to_string())?;
+    for project_subject_id in project_subject_ids {
+        subject_memory_scopes::ensure_project_identity_scope(
+            db,
+            req.tenant_id.as_str(),
+            req.source_id.as_str(),
+            project_subject_id.as_str(),
+        )
+        .await?;
+    }
     for key in keys {
         compact_turns::rebuild_compact_turn(
             db,
@@ -115,6 +128,21 @@ async fn batch_sync_records_inner(
         .await?;
     }
     Ok(inserted)
+}
+
+fn record_project_subject_id(record: &EngineRecord) -> Option<String> {
+    let project_id = record
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("memory_project_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    Some(if project_id.starts_with("project:") {
+        project_id.to_string()
+    } else {
+        format!("project:{project_id}")
+    })
 }
 
 pub(crate) async fn upsert_record_row(

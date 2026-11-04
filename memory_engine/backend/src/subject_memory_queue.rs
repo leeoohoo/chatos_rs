@@ -291,11 +291,31 @@ async fn process_source_event(
         summaries::mark_subject_memory_source_dispatch_consumed(&state.pool, &event).await?;
         return Ok(());
     };
+    let mut source_labels = thread.labels.unwrap_or_default();
+    if let Some(project_subject_id) = summaries::get_summary_by_id(
+        &state.pool,
+        envelope.tenant_id.as_str(),
+        envelope.source_id.as_str(),
+        event.id.as_str(),
+    )
+    .await?
+    .and_then(|summary| summary.metadata)
+    .and_then(|metadata| metadata.get("project_subject_id").cloned())
+    .and_then(|value| value.as_str().map(ToOwned::to_owned))
+    .filter(|value| value.starts_with("project:") && value.len() > "project:".len())
+    {
+        if !source_labels
+            .iter()
+            .any(|label| label == &project_subject_id)
+        {
+            source_labels.push(project_subject_id);
+        }
+    }
     let scopes = subject_memory_scopes::list_matching_active_subject_memory_scopes(
         &state.pool,
         envelope.tenant_id.as_str(),
         envelope.source_id.as_str(),
-        thread.labels.unwrap_or_default().as_slice(),
+        source_labels.as_slice(),
         event.summary_type.as_str(),
         10_000,
     )

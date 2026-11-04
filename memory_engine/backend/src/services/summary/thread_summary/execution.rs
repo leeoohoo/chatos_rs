@@ -406,6 +406,7 @@ pub(crate) async fn resume_cloud_summary_job(
             oversized,
             selected_token_count: frozen.selected_token_count,
             oversized_token_count: frozen.oversized_token_count,
+            project_subject_id: frozen.project_subject_id,
         },
     };
     execute_prepared_thread_summary_job(

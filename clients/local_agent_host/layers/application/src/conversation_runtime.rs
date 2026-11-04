@@ -287,6 +287,15 @@ impl LocalAgentRuntime {
             let object = input
                 .as_object_mut()
                 .expect("conversation Run input is an object");
+            let todo_id = context
+                .get("todo_id")
+                .and_then(serde_json::Value::as_str)
+                .expect("normalized executor context has todo_id");
+            object.insert("todo_id".to_string(), json!(todo_id));
+            object.insert(
+                "memory_thread_id".to_string(),
+                json!(format!("client-agent:todo:{todo_id}")),
+            );
             object.insert("prompt".to_string(), json!(&command.message));
             object.insert("owned_paths".to_string(), json!([]));
             object.insert(
@@ -1244,6 +1253,11 @@ mod tests {
         assert_eq!(
             result.run.input["team_executor_context"]["todo_id"],
             "todo-1"
+        );
+        assert_eq!(result.run.input["todo_id"], "todo-1");
+        assert_eq!(
+            result.run.input["memory_thread_id"],
+            "client-agent:todo:todo-1"
         );
     }
 

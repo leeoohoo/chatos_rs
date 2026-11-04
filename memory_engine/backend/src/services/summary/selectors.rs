@@ -18,8 +18,12 @@ pub(crate) fn select_pending_records_for_summary(
     let mut oversized = Vec::new();
     let mut selected_token_count = 0_i64;
     let mut oversized_token_count = 0_i64;
+    let project_subject_id = records.first().and_then(record_project_subject_id);
 
     for record in records {
+        if record_project_subject_id(&record) != project_subject_id {
+            break;
+        }
         let block = record_to_summary_block(&record);
         let record_tokens = estimate_tokens_text(block.as_str());
         if record_tokens > effective_limit {
@@ -43,7 +47,23 @@ pub(crate) fn select_pending_records_for_summary(
         oversized,
         selected_token_count,
         oversized_token_count,
+        project_subject_id,
     }
+}
+
+fn record_project_subject_id(record: &EngineRecord) -> Option<String> {
+    let project_id = record
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("memory_project_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    Some(if project_id.starts_with("project:") {
+        project_id.to_string()
+    } else {
+        format!("project:{project_id}")
+    })
 }
 
 pub(crate) fn select_records_for_repair(records: Vec<EngineRecord>) -> RepairRecordSelection {
@@ -165,6 +185,12 @@ mod tests {
         }
     }
 
+    fn project_record(id: &str, project_id: &str) -> EngineRecord {
+        let mut value = record(id, "project fact");
+        value.metadata = Some(serde_json::json!({"memory_project_id": project_id}));
+        value
+    }
+
     #[test]
     fn pending_selector_caps_the_cumulative_batch_instead_of_only_each_record() {
         let content = "x".repeat(2_000);
@@ -180,6 +206,23 @@ mod tests {
         assert_eq!(selection.selected.len(), 2);
         assert!(selection.selected_token_count <= 1_100);
         assert!(selection.oversized.is_empty());
+    }
+
+    #[test]
+    fn pending_selector_never_mixes_project_segments() {
+        let selection = select_pending_records_for_summary(
+            vec![
+                project_record("project-a-1", "a"),
+                project_record("project-a-2", "a"),
+                project_record("project-b-1", "b"),
+            ],
+            10_000,
+        );
+
+        assert_eq!(selection.project_subject_id.as_deref(), Some("project:a"));
+        assert_eq!(selection.selected.len(), 2);
+        assert_eq!(selection.selected[0].id, "project-a-1");
+        assert_eq!(selection.selected[1].id, "project-a-2");
     }
 
     #[test]

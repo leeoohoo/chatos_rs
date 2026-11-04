@@ -62,6 +62,7 @@ pub(crate) struct PendingRecordSelection {
     pub(crate) oversized: Vec<EngineRecord>,
     pub(crate) selected_token_count: i64,
     pub(crate) oversized_token_count: i64,
+    pub(crate) project_subject_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -118,15 +118,55 @@ impl LocalAiStepExecutor for ChatosAiRuntimeStepExecutor {
         let model_attempt = usize::try_from(claim.run.model_attempt)
             .map_err(|_| "model attempt exceeds usize".to_string())?;
         let tool_definitions = prepared.request.model_request.tools.clone();
+        let memory_scope = prepared.request.memory_scope.clone();
         let outcome = prepared
             .runner
             .execute_once(prepared.request, iteration, prepared.reason, model_attempt)
             .await?;
+        if task_step_should_flush_memory(claim, &outcome) {
+            if let Some(scope) = memory_scope.as_ref() {
+                if let Err(error) = prepared
+                    .runner
+                    .run_active_summary(scope, Some("task_terminal"))
+                    .await
+                {
+                    tracing::warn!(
+                        run_id = claim.run.run_id.as_str(),
+                        thread_id = scope.thread_id.as_str(),
+                        error = error.as_str(),
+                        "task terminal Memory summary request failed; idle flush remains armed"
+                    );
+                }
+            }
+        }
         Ok(ExecutedLocalAiStep {
             outcome,
             tool_definitions,
         })
     }
+}
+
+fn task_step_should_flush_memory(
+    claim: &LocalAgentRunClaim,
+    outcome: &AiSingleStepOutcome,
+) -> bool {
+    if claim.run.profile_key != "task_execution"
+        || !matches!(outcome, AiSingleStepOutcome::Final(_))
+    {
+        return false;
+    }
+    if claim.run.owner_entity_type != "task" {
+        // Agent Team Todo attempts are separate durable Runs over one Todo
+        // Memory Thread. Summarize each ended attempt so the next continuation
+        // can immediately recover the preceding attempt's context.
+        return true;
+    }
+    if task_outcome_reported(claim.run.continuation_input.as_ref()) {
+        return true;
+    }
+    task_acceptance_report_for_run(&claim.run).is_some_and(|report| {
+        task_acceptance_report_is_terminal(&claim.run.input, report).unwrap_or(false)
+    })
 }
 
 pub trait ToolSafetyPolicy: Send + Sync {
@@ -1317,6 +1357,58 @@ mod tests {
                 "result": {"reported": true}
             }]
         }))));
+    }
+
+    #[test]
+    fn incomplete_task_final_does_not_flush_memory() {
+        let claim = task_claim();
+
+        assert!(!task_step_should_flush_memory(
+            &claim,
+            &AiSingleStepOutcome::Final(response(None)),
+        ));
+    }
+
+    #[test]
+    fn terminal_task_final_flushes_memory() {
+        let mut claim = task_claim();
+        claim.run.continuation_input = Some(json!({
+            "type": "tool_results",
+            "invocations": [{
+                "tool_name": "task_run_process_report_outcome",
+                "status": "succeeded",
+                "result": {"reported": true}
+            }]
+        }));
+
+        assert!(task_step_should_flush_memory(
+            &claim,
+            &AiSingleStepOutcome::Final(response(None)),
+        ));
+    }
+
+    #[test]
+    fn team_todo_attempt_final_flushes_memory() {
+        let mut claim = task_claim();
+        claim.run.owner_entity_type = "conversation_turn".to_string();
+        claim.run.owner_entity_id = "todo-1".to_string();
+
+        assert!(task_step_should_flush_memory(
+            &claim,
+            &AiSingleStepOutcome::Final(response(None)),
+        ));
+    }
+
+    #[test]
+    fn stable_agent_final_never_flushes_memory_per_turn() {
+        let mut claim = task_claim();
+        claim.run.profile_key = "main_chat".to_string();
+        claim.run.owner_entity_type = "conversation_turn".to_string();
+
+        assert!(!task_step_should_flush_memory(
+            &claim,
+            &AiSingleStepOutcome::Final(response(None)),
+        ));
     }
 
     #[test]
