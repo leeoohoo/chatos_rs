@@ -165,14 +165,17 @@ struct AgentManagementView: View {
             ),
             titleVisibility: .visible
         ) {
-            Button("删除 Agent", role: .destructive) {
+            Button(model.localized("删除 Agent", english: "Delete Agent"), role: .destructive) {
                 guard let agent = agentPendingDeletion else { return }
                 agentPendingDeletion = nil
                 Task { await viewModel.deleteAgent(agent) }
             }
             Button("取消", role: .cancel) { agentPendingDeletion = nil }
         } message: {
-            Text("Agent 会从列表和现有团队中移除，未完成的任务与运行会停止，主动巡检会关闭；历史消息、运行记录和审计数据仍保留在本机。")
+            Text(model.localized(
+                "Agent 会从列表和现有团队中移除，未完成的任务与运行会停止，主动巡检会关闭；历史消息、运行记录和审计数据仍保留在本机。",
+                english: "The Agent will be removed from the list and existing teams. Unfinished tasks and runs will stop, and proactive checks will be disabled. Messages, run history, and audit data remain on this Mac."
+            ))
         }
         .confirmationDialog(
             "结束这次运行？",
