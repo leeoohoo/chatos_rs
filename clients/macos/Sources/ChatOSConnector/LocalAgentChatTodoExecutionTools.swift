@@ -162,7 +162,7 @@ extension LocalAgentChatToolProvider {
         let position = Int(rawPosition)
         guard let status = LocalAgentTodoAcceptanceStatus(
             rawValue: try Self.requiredString(arguments, key: "status")
-        ), status != .pending else {
+        ), [.passed, .failed, .blocked].contains(status) else {
             throw AgentGroupChatError.invalidField("status")
         }
         let evidence = try Self.requiredString(arguments, key: "evidence")
@@ -201,13 +201,11 @@ extension LocalAgentChatToolProvider {
             assetUpdateSuggestions: [],
             nowUnixMs: timestamp
         )
-        let humanBlocks = updated.acceptanceChecks.filter {
-            $0.status == .blocked && $0.requiresHuman
-        }
-        let stillActionable = updated.acceptanceChecks.filter {
-            $0.status != .passed && !($0.status == .blocked && $0.requiresHuman)
-        }
-        if !humanBlocks.isEmpty, stillActionable.isEmpty {
+        let gateChecks = updated.acceptanceChecks.map(\.gateCheck)
+        if AgentExecutionAcceptanceGate.canFinishBlocked(gateChecks) {
+            let humanBlocks = updated.acceptanceChecks.filter {
+                $0.status == .blocked && $0.requiresHuman
+            }
             let reason = humanBlocks.compactMap { check -> String? in
                 let value = check.blockedReason.trimmingCharacters(in: .whitespacesAndNewlines)
                 return value.isEmpty ? nil : "#\(check.position) \(value)"
@@ -259,8 +257,8 @@ extension LocalAgentChatToolProvider {
                 retryable: false
             )
         }
-        let notPassed = todo.acceptanceChecks.filter { $0.status != .passed }
-        guard notPassed.isEmpty else {
+        guard AgentExecutionAcceptanceGate.canComplete(todo.acceptanceChecks.map(\.gateCheck)) else {
+            let notPassed = todo.acceptanceChecks.filter { $0.status != .passed }
             return Self.structuredFailure(
                 code: "acceptance_checks_incomplete",
                 field: "acceptance_checks",
@@ -330,11 +328,9 @@ extension LocalAgentChatToolProvider {
                 retryable: false
             )
         }
+        let gateChecks = todo.acceptanceChecks.map(\.gateCheck)
         let humanBlocks = todo.acceptanceChecks.filter {
             $0.status == .blocked && $0.requiresHuman
-        }
-        let stillActionable = todo.acceptanceChecks.filter {
-            $0.status != .passed && !($0.status == .blocked && $0.requiresHuman)
         }
         guard !humanBlocks.isEmpty else {
             return Self.structuredFailure(
@@ -345,7 +341,13 @@ extension LocalAgentChatToolProvider {
                 nextTool: Self.todoAcceptanceUpdateToolName
             )
         }
-        guard stillActionable.isEmpty else {
+        guard AgentExecutionAcceptanceGate.canFinishBlocked(gateChecks) else {
+            let actionablePositions = Set(
+                AgentExecutionAcceptanceGate.actionableChecks(gateChecks).map(\.criterionIndex)
+            )
+            let stillActionable = todo.acceptanceChecks.filter {
+                actionablePositions.contains($0.position - 1)
+            }
             return Self.structuredFailure(
                 code: "actionable_acceptance_checks_remaining",
                 field: "acceptance_checks",

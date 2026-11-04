@@ -959,9 +959,10 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
                     guard case let .object(check) = rawCheck,
                           case let .number(rawIndex)? = check["criterion_index"],
                           let index = Int(exactly: rawIndex),
-                          case let .string(status)? = check["status"],
-                          ["pending", "in_progress", "passed", "failed", "not_verified", "blocked"]
-                            .contains(status) else { continue }
+                          case let .string(rawStatus)? = check["status"],
+                          let status = AgentExecutionAcceptanceStatus(rawValue: rawStatus) else {
+                        continue
+                    }
                     let evidence: String
                     if case let .string(value)? = check["evidence"] {
                         evidence = value

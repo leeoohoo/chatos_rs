@@ -10,12 +10,7 @@ public enum LocalAgentTodoStatus: String, Codable, Sendable, CaseIterable {
     public var isTerminal: Bool { self == .completed || self == .cancelled }
 }
 
-public enum LocalAgentTodoAcceptanceStatus: String, Codable, Sendable, CaseIterable {
-    case pending
-    case passed
-    case failed
-    case blocked
-}
+public typealias LocalAgentTodoAcceptanceStatus = AgentExecutionAcceptanceStatus
 
 /// Durable, program-owned verification state for one immutable acceptance criterion. Executors
 /// update these records explicitly; a free-form completion summary cannot make them pass.
@@ -73,6 +68,14 @@ public struct LocalAgentTodoAcceptanceCheck: Codable, Sendable, Equatable, Ident
         if status == .blocked && blockedReason.isEmpty {
             throw AgentGroupChatError.invalidField("todoAcceptanceBlockedReason")
         }
+    }
+
+    public var gateCheck: AgentExecutionAcceptanceGateCheck {
+        .init(
+            criterionIndex: position - 1,
+            status: status,
+            requiresHuman: requiresHuman
+        )
     }
 }
 

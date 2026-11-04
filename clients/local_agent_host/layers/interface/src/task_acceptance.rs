@@ -290,8 +290,13 @@ mod tests {
         report["acceptance_checks"][1]["status"] = json!("blocked");
         assert!(task_acceptance_report_is_blocked(&input, &report).unwrap());
         assert!(task_acceptance_report_is_terminal(&input, &report).unwrap());
-        report["acceptance_checks"][0]["status"] = json!("not_verified");
-        assert!(!task_acceptance_report_is_blocked(&input, &report).unwrap());
-        assert!(!task_acceptance_report_is_terminal(&input, &report).unwrap());
+        for actionable_status in ["failed", "not_verified"] {
+            report["acceptance_checks"][0]["status"] = json!(actionable_status);
+            assert!(
+                !task_acceptance_report_is_blocked(&input, &report).unwrap(),
+                "a blocked criterion must not waive a {actionable_status} criterion"
+            );
+            assert!(!task_acceptance_report_is_terminal(&input, &report).unwrap());
+        }
     }
 }

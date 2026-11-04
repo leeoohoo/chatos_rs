@@ -428,8 +428,10 @@ struct TeamTodoBoardView: View {
     private func acceptanceLabel(_ status: LocalAgentTodoAcceptanceStatus) -> String {
         switch status {
         case .pending: "待核验"
+        case .inProgress: "核验中"
         case .passed: "已通过"
         case .failed: "未通过"
+        case .notVerified: "未核验"
         case .blocked: "阻塞"
         }
     }
@@ -437,8 +439,10 @@ struct TeamTodoBoardView: View {
     private func acceptanceIcon(_ status: LocalAgentTodoAcceptanceStatus) -> String {
         switch status {
         case .pending: "circle.dotted"
+        case .inProgress: "ellipsis.circle.fill"
         case .passed: "checkmark.circle.fill"
         case .failed: "xmark.circle.fill"
+        case .notVerified: "questionmark.circle.fill"
         case .blocked: "exclamationmark.octagon.fill"
         }
     }
@@ -446,8 +450,10 @@ struct TeamTodoBoardView: View {
     private func acceptanceColor(_ status: LocalAgentTodoAcceptanceStatus) -> Color {
         switch status {
         case .pending: .secondary
+        case .inProgress: AppPalette.ai
         case .passed: .green
         case .failed: .red
+        case .notVerified: .orange
         case .blocked: .orange
         }
     }

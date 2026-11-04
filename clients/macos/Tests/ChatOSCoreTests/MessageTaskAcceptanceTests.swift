@@ -51,6 +51,22 @@ final class MessageTaskAcceptanceTests: XCTestCase {
         XCTAssertEqual(legacyWithoutChecks.disposition, .blocked)
     }
 
+    func testOrdinaryTaskUsesSharedTerminalGate() throws {
+        let complete = try report("succeeded", ["passed", "passed"])
+        XCTAssertTrue(complete.acceptanceCanComplete)
+        XCTAssertFalse(complete.acceptanceCanFinishBlocked)
+        XCTAssertTrue(complete.actionableChecks.isEmpty)
+
+        let terminalBlock = try report("blocked", ["blocked", "passed"])
+        XCTAssertFalse(terminalBlock.acceptanceCanComplete)
+        XCTAssertTrue(terminalBlock.acceptanceCanFinishBlocked)
+        XCTAssertTrue(terminalBlock.actionableChecks.isEmpty)
+
+        let prematureBlock = try report("blocked", ["blocked", "not_verified"])
+        XCTAssertFalse(prematureBlock.acceptanceCanFinishBlocked)
+        XCTAssertEqual(prematureBlock.actionableChecks.map(\.criterionIndex), [1])
+    }
+
     func testPresentationSeparatesNormalRunCompletionFromBlockedDelivery() throws {
         let blocked = try report("blocked", ["not_verified"])
         var task = MessageTask(id: "task", title: "Research", status: "succeeded")

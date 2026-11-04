@@ -401,7 +401,7 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         let progress = NativeLocalAgentMessageTaskGraphService.acceptanceProgress(from: events)
 
         XCTAssertEqual(progress.map(\.criterionIndex), [0, 1])
-        XCTAssertEqual(progress.map(\.status), ["passed", "blocked"])
+        XCTAssertEqual(progress.map(\.status), [.passed, .blocked])
         XCTAssertEqual(progress[0].evidence, "Focused test passed")
     }
 

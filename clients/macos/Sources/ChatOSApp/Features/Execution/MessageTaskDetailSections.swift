@@ -243,7 +243,7 @@ struct MessageTaskDetailSections: View {
         criterion: String,
         check: MessageTaskAcceptanceReport.Check?
     ) -> some View {
-        let status = check?.status ?? "pending"
+        let status = check?.status ?? .pending
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: acceptanceStatusIcon(status))
                 .appFont(.system(size: 13, weight: .semibold))
@@ -398,41 +398,41 @@ struct MessageTaskDetailSections: View {
 
     private var acceptanceProgressSummary: String {
         let passed = task.acceptanceCriteria.indices.filter {
-            currentAcceptanceCheck(at: $0)?.status == "passed"
+            currentAcceptanceCheck(at: $0)?.status == .passed
         }.count
         return "\(passed) / \(task.acceptanceCriteria.count) 已通过"
     }
 
-    private func acceptanceStatusTitle(_ status: String) -> String {
+    private func acceptanceStatusTitle(_ status: AgentExecutionAcceptanceStatus) -> String {
         switch status {
-        case "passed": "已通过"
-        case "failed": "未通过"
-        case "not_verified": "未核验"
-        case "blocked": "阻塞"
-        case "in_progress": "校验中"
-        default: "待校验"
+        case .passed: "已通过"
+        case .failed: "未通过"
+        case .notVerified: "未核验"
+        case .blocked: "阻塞"
+        case .inProgress: "校验中"
+        case .pending: "待校验"
         }
     }
 
-    private func acceptanceStatusIcon(_ status: String) -> String {
+    private func acceptanceStatusIcon(_ status: AgentExecutionAcceptanceStatus) -> String {
         switch status {
-        case "passed": "checkmark"
-        case "failed": "xmark"
-        case "not_verified": "questionmark"
-        case "blocked": "hand.raised"
-        case "in_progress": "ellipsis"
-        default: "circle"
+        case .passed: "checkmark"
+        case .failed: "xmark"
+        case .notVerified: "questionmark"
+        case .blocked: "hand.raised"
+        case .inProgress: "ellipsis"
+        case .pending: "circle"
         }
     }
 
-    private func acceptanceStatusColor(_ status: String) -> Color {
+    private func acceptanceStatusColor(_ status: AgentExecutionAcceptanceStatus) -> Color {
         switch status {
-        case "passed": .green
-        case "failed": .red
-        case "not_verified": .orange
-        case "blocked": .orange
-        case "in_progress": AppPalette.ai
-        default: .secondary
+        case .passed: .green
+        case .failed: .red
+        case .notVerified: .orange
+        case .blocked: .orange
+        case .inProgress: AppPalette.ai
+        case .pending: .secondary
         }
     }
 

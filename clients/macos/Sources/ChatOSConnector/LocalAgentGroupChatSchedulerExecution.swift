@@ -391,9 +391,13 @@ extension LocalAgentGroupChatScheduler {
                         agentID: context.agentID,
                         roomID: context.roomID
                       ) else { return nil }
-                let remaining = currentTodo.acceptanceChecks.filter { check in
-                    check.status != .passed
-                        && !(check.status == .blocked && check.requiresHuman)
+                let actionablePositions = Set(
+                    AgentExecutionAcceptanceGate.actionableChecks(
+                        currentTodo.acceptanceChecks.map(\.gateCheck)
+                    ).map(\.criterionIndex)
+                )
+                let remaining = currentTodo.acceptanceChecks.filter {
+                    actionablePositions.contains($0.position - 1)
                 }
                 guard !remaining.isEmpty else { return nil }
                 return """
