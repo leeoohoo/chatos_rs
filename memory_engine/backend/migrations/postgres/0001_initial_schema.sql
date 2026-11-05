@@ -136,7 +136,6 @@ CREATE TABLE engine_threads (
     rollup_lock_expires_at TIMESTAMPTZ NULL,
     summary_dispatch_pending BOOLEAN NOT NULL DEFAULT false,
     summary_dispatch_version BIGINT NOT NULL DEFAULT 0,
-    summary_dispatch_force_version BIGINT NOT NULL DEFAULT 0,
     summary_dispatch_published_version BIGINT NOT NULL DEFAULT 0,
     summary_dispatch_consumed_version BIGINT NOT NULL DEFAULT 0,
     summary_dispatch_requested_at TIMESTAMPTZ NULL,
