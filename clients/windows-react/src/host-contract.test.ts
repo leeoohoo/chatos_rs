@@ -27,6 +27,9 @@ describe("Local Agent Host v52 shared fixtures", () => {
         active_work_items: 2,
         idle_workers: 2,
         queued_ready_work_items: 3,
+        accepting_new_work: true,
+        active_memory_sync_items: 0,
+        admission_in_flight_work_items: 0,
       });
     }
   });
