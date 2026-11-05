@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use crate::models::now_rfc3339;
 use crate::repositories::{control_plane, threads};
-use crate::services::summary;
+use crate::services::{control_plane as cp_service, summary};
 use crate::state::AppState;
 
 const SUMMARY_QUEUE_TRIGGER: &str = "database_worker";
@@ -272,10 +272,18 @@ fn summary_slot_is_active(thread: &crate::models::EngineThread, now: &str) -> bo
 }
 
 async fn run_reconciler(state: Arc<AppState>) {
-    let mut interval = tokio::time::interval(state.config.summary_outbox_reconcile_interval);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        interval.tick().await;
+        let scan_interval = match control_plane::get_effective_job_policy(&state.pool, "summary")
+            .await
+            .and_then(|policy| cp_service::managed_policy_scan_interval(&policy))
+        {
+            Ok(value) => value,
+            Err(error) => {
+                warn!(error, "Memory Engine summary scan policy is invalid");
+                tokio::time::sleep(state.config.summary_outbox_reconcile_interval).await;
+                continue;
+            }
+        };
         match release_expired_summary_slots(&state).await {
             Ok(count) if count > 0 => info!(
                 recovered_count = count,
@@ -322,6 +330,7 @@ async fn run_reconciler(state: Arc<AppState>) {
                 "Memory Engine failed to start idle task thread summaries"
             ),
         }
+        tokio::time::sleep(scan_interval).await;
     }
 }
 
@@ -389,6 +398,8 @@ async fn recover_stale_claims(state: &AppState) -> Result<usize, String> {
         return Ok(0);
     }
     let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
+    let scan_limit =
+        cp_service::managed_policy_scan_limit(&policy, state.config.summary_outbox_batch_size)?;
     let stale_before = (chrono::Utc::now()
         - chrono::Duration::seconds(SUMMARY_DISPATCH_CLAIM_LEASE_SECS))
     .to_rfc3339();
@@ -396,7 +407,7 @@ async fn recover_stale_claims(state: &AppState) -> Result<usize, String> {
         &state.pool,
         token_threshold,
         stale_before.as_str(),
-        state.config.summary_outbox_batch_size,
+        scan_limit,
     )
     .await?;
     let mut recovered = 0usize;
@@ -422,12 +433,10 @@ async fn arm_automatic_summary_dispatches(state: &AppState) -> Result<usize, Str
         return Ok(0);
     }
     let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
-    let candidates = threads::list_eligible_summary_dispatches(
-        &state.pool,
-        token_threshold,
-        state.config.summary_outbox_batch_size,
-    )
-    .await?;
+    let scan_limit =
+        cp_service::managed_policy_scan_limit(&policy, state.config.summary_outbox_batch_size)?;
+    let candidates =
+        threads::list_eligible_summary_dispatches(&state.pool, token_threshold, scan_limit).await?;
     let mut armed = 0usize;
     for candidate in candidates {
         if threads::rearm_summary_dispatch_if_eligible(

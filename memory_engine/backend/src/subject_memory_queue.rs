@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use crate::config::AppConfig;
 use crate::models::now_rfc3339;
 use crate::repositories::{control_plane, subject_memory_scopes, summaries, threads};
-use crate::services::subject_memory;
+use crate::services::{control_plane as cp_service, subject_memory};
 use crate::state::AppState;
 
 const SOURCE_AVAILABLE_EVENT: &str = "source_available";
@@ -409,11 +409,20 @@ async fn mark_failed_and_defer(
 }
 
 async fn run_reconciler(state: Arc<AppState>) {
-    let mut interval = tokio::time::interval(state.config.subject_memory_outbox_reconcile_interval);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut recovery_offset = 0_u64;
     loop {
-        interval.tick().await;
+        let scan_interval =
+            match control_plane::get_effective_job_policy(&state.pool, "subject_memory")
+                .await
+                .and_then(|policy| cp_service::managed_policy_scan_interval(&policy))
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    warn!(error, "Memory Engine subject-memory scan policy is invalid");
+                    tokio::time::sleep(state.config.subject_memory_outbox_reconcile_interval).await;
+                    continue;
+                }
+            };
         let stale_before = (chrono::Utc::now()
             - chrono::Duration::seconds(SUBJECT_MEMORY_CLAIM_LEASE_SECS))
         .to_rfc3339();
@@ -453,6 +462,7 @@ async fn run_reconciler(state: Arc<AppState>) {
             }
             Err(error) => warn!(error, "Memory Engine failed to arm subject-memory scopes"),
         }
+        tokio::time::sleep(scan_interval).await;
     }
 }
 
@@ -464,11 +474,15 @@ async fn arm_pending_scopes(
     if !policy.enabled {
         return Ok((0, recovery_offset));
     }
+    let scan_limit = cp_service::managed_policy_scan_limit(
+        &policy,
+        state.config.subject_memory_outbox_batch_size,
+    )?;
     let scopes = subject_memory_scopes::list_active_subject_memory_scopes_page(
         &state.pool,
         None,
         None,
-        state.config.subject_memory_outbox_batch_size,
+        scan_limit,
         recovery_offset,
     )
     .await?;
@@ -490,7 +504,7 @@ async fn arm_pending_scopes(
             armed = armed.saturating_add(1);
         }
     }
-    let batch_size = state.config.subject_memory_outbox_batch_size.max(1) as u64;
+    let batch_size = scan_limit as u64;
     let next_offset = if scanned_count < batch_size {
         0
     } else {

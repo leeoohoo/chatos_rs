@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use crate::db::Db;
 use crate::repositories::{subject_memories, summaries};
-use crate::services::ai_pipeline::estimate_tokens_text;
+use crate::services::ai_pipeline::{estimate_tokens_text, MIN_TOKEN_LIMIT};
 
 use super::render::{subject_memory_to_rollup_block, summary_to_subject_memory_block};
 use super::{PendingSourceSummary, RollupSelection};
@@ -18,28 +18,12 @@ pub(crate) fn select_summary_batch(
     if candidates.is_empty() {
         return None;
     }
-    // Count-based triggering should also cap the batch size so one hot scope
-    // does not consume every pending summary in a single run.
-    if count_limit > 0 && (candidates.len() as i64) >= count_limit {
-        return Some(
-            candidates
-                .iter()
-                .take(count_limit as usize)
-                .cloned()
-                .collect::<Vec<_>>(),
-        );
-    }
-
-    let token_sum = candidates
+    let token_sizes = candidates
         .iter()
         .map(summary_to_subject_memory_block)
         .map(|text| estimate_tokens_text(text.as_str()))
-        .sum::<i64>();
-    if token_sum >= token_limit {
-        return Some(candidates.to_vec());
-    }
-
-    None
+        .collect::<Vec<_>>();
+    select_bounded_batch(candidates, token_sizes.as_slice(), token_limit, count_limit)
 }
 
 pub(crate) async fn select_rollup_batch(
@@ -79,31 +63,58 @@ pub(crate) async fn select_rollup_batch(
         if candidates.is_empty() {
             continue;
         }
-        if count_limit > 0 && (candidates.len() as i64) >= count_limit {
-            let batch = candidates
-                .into_iter()
-                .take(count_limit as usize)
-                .collect::<Vec<_>>();
-            return Ok(Some(RollupSelection {
-                level,
-                selected: batch,
-            }));
-        }
-
-        let token_sum = candidates
+        let token_sizes = candidates
             .iter()
             .map(subject_memory_to_rollup_block)
             .map(|text| estimate_tokens_text(text.as_str()))
-            .sum::<i64>();
-        if token_sum >= token_limit {
-            return Ok(Some(RollupSelection {
-                level,
-                selected: candidates,
-            }));
+            .collect::<Vec<_>>();
+        if let Some(selected) = select_bounded_batch(
+            candidates.as_slice(),
+            token_sizes.as_slice(),
+            token_limit,
+            count_limit,
+        ) {
+            return Ok(Some(RollupSelection { level, selected }));
         }
     }
 
     Ok(None)
+}
+
+fn select_bounded_batch<T: Clone>(
+    candidates: &[T],
+    token_sizes: &[i64],
+    token_limit: i64,
+    count_limit: i64,
+) -> Option<Vec<T>> {
+    if candidates.is_empty() || candidates.len() != token_sizes.len() {
+        return None;
+    }
+    let token_limit = token_limit.max(MIN_TOKEN_LIMIT);
+    let count_triggered = count_limit > 0 && (candidates.len() as i64) >= count_limit;
+    if !count_triggered && token_sizes.iter().sum::<i64>() < token_limit {
+        return None;
+    }
+
+    let candidate_limit = if count_triggered {
+        count_limit as usize
+    } else {
+        candidates.len()
+    };
+    let mut selected = Vec::new();
+    let mut selected_tokens = 0_i64;
+    for (candidate, candidate_tokens) in candidates
+        .iter()
+        .zip(token_sizes.iter().copied())
+        .take(candidate_limit)
+    {
+        if !selected.is_empty() && selected_tokens.saturating_add(candidate_tokens) > token_limit {
+            break;
+        }
+        selected_tokens = selected_tokens.saturating_add(candidate_tokens);
+        selected.push(candidate.clone());
+    }
+    Some(selected)
 }
 
 pub(crate) async fn mark_summary_sources_subject_memory_summarized(
@@ -158,7 +169,7 @@ pub(crate) async fn mark_summary_sources_subject_memory_summarized(
 mod tests {
     use crate::models::EngineSummary;
 
-    use super::{select_summary_batch, PendingSourceSummary};
+    use super::{select_bounded_batch, select_summary_batch, PendingSourceSummary};
 
     fn pending_source_summary(idx: usize) -> PendingSourceSummary {
         let summary = EngineSummary {
@@ -222,5 +233,13 @@ mod tests {
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[0].level, 0);
         assert_eq!(selected[1].level, 1);
+    }
+
+    #[test]
+    fn token_limit_caps_subject_memory_batch_instead_of_only_triggering_it() {
+        let candidates = vec!["one", "two", "three", "four"];
+        let selected = select_bounded_batch(&candidates, &[1_000, 1_000, 1_000, 1_000], 1_500, 0)
+            .expect("token trigger");
+        assert_eq!(selected, ["one"]);
     }
 }

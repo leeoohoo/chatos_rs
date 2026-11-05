@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde_json::json;
+use std::time::Duration;
 use tracing::info;
 
 use crate::ai::AiClient;
@@ -106,6 +107,29 @@ pub fn build_rollup_settings_from_policy(
         cloud_source_id: None,
         cloud_thread_id: None,
     })
+}
+
+pub fn managed_policy_scan_interval(policy: &EngineJobPolicy) -> Result<Duration, String> {
+    let seconds = policy.interval_seconds.ok_or_else(|| {
+        format!(
+            "{} job policy interval_seconds is not configured in Configuration Center",
+            policy.job_type
+        )
+    })?;
+    Ok(Duration::from_secs(seconds.max(3) as u64))
+}
+
+pub fn managed_policy_scan_limit(
+    policy: &EngineJobPolicy,
+    infrastructure_limit: i64,
+) -> Result<i64, String> {
+    let policy_limit = policy.max_threads_per_tick.ok_or_else(|| {
+        format!(
+            "{} job policy max_threads_per_tick is not configured in Configuration Center",
+            policy.job_type
+        )
+    })?;
+    Ok(policy_limit.max(1).min(infrastructure_limit.max(1)))
 }
 
 pub fn apply_rollup_setting_overrides(
@@ -216,5 +240,22 @@ mod tests {
         assert_eq!(settings.count_limit, 6);
         assert_eq!(settings.keep_level0_count, 3);
         assert_eq!(settings.max_level, 7);
+    }
+
+    #[test]
+    fn scan_controls_require_configuration_center_values() {
+        let policy = rollup_policy();
+        assert!(managed_policy_scan_interval(&policy).is_err());
+        assert!(managed_policy_scan_limit(&policy, 100).is_err());
+
+        let mut policy = policy;
+        policy.interval_seconds = Some(120);
+        policy.max_threads_per_tick = Some(8);
+        assert_eq!(
+            managed_policy_scan_interval(&policy).unwrap().as_secs(),
+            120
+        );
+        assert_eq!(managed_policy_scan_limit(&policy, 100).unwrap(), 8);
+        assert_eq!(managed_policy_scan_limit(&policy, 5).unwrap(), 5);
     }
 }

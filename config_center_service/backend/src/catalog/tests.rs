@@ -371,6 +371,24 @@ fn catalog_exposes_shared_memory_policies_for_server_and_client() {
             && definition.default_value == json!(null)
             && definition.nullable
     }));
+    for unused_key in [
+        "memory_engine.policy.summary.count_limit",
+        "memory_engine.policy.summary.keep_level0_count",
+        "memory_engine.policy.summary.max_level",
+        "memory_engine.policy.thread_repair.target_summary_tokens",
+        "memory_engine.policy.thread_repair.interval_seconds",
+        "memory_engine.policy.thread_repair.max_threads_per_tick",
+        "memory_engine.policy.thread_repair.count_limit",
+        "memory_engine.policy.thread_repair.keep_level0_count",
+        "memory_engine.policy.thread_repair.max_level",
+    ] {
+        assert!(
+            memory_definitions
+                .iter()
+                .all(|definition| definition.key != unused_key),
+            "unused policy field must not be exposed: {unused_key}"
+        );
+    }
 }
 
 #[test]

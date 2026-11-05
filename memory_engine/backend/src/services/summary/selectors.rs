@@ -136,35 +136,70 @@ pub(crate) async fn select_rollup_batch(
         if candidates.is_empty() {
             continue;
         }
-        // When count_limit triggers, process one fixed-size batch instead of
-        // consuming the whole backlog at once. This lets large queues drain
-        // incrementally across repeated rollup runs.
-        if count_limit > 0 && (candidates.len() as i64) >= count_limit {
-            let batch = candidates
-                .into_iter()
-                .take(count_limit as usize)
-                .collect::<Vec<_>>();
-            return Ok(Some((level, batch, "count_limit")));
-        }
-
-        let token_sum = candidates
-            .iter()
-            .map(summary_to_rollup_block)
-            .map(|text| estimate_tokens_text(text.as_str()))
-            .sum::<i64>();
-        if token_sum >= token_limit {
-            return Ok(Some((level, candidates, "token_limit")));
+        if let Some((selected, reason)) =
+            select_bounded_rollup_candidates(candidates, token_limit, count_limit)
+        {
+            return Ok(Some((level, selected, reason)));
         }
     }
 
     Ok(None)
 }
 
+fn select_bounded_rollup_candidates(
+    candidates: Vec<EngineSummary>,
+    token_limit: i64,
+    count_limit: i64,
+) -> Option<(Vec<EngineSummary>, &'static str)> {
+    if candidates.is_empty() {
+        return None;
+    }
+    let token_limit = token_limit.max(MIN_TOKEN_LIMIT);
+    let token_sizes = candidates
+        .iter()
+        .map(summary_to_rollup_block)
+        .map(|text| estimate_tokens_text(text.as_str()))
+        .collect::<Vec<_>>();
+    let count_triggered = count_limit > 0 && (candidates.len() as i64) >= count_limit;
+    if !count_triggered && token_sizes.iter().sum::<i64>() < token_limit {
+        return None;
+    }
+
+    let candidate_limit = if count_triggered {
+        count_limit as usize
+    } else {
+        candidates.len()
+    };
+    let mut selected = Vec::new();
+    let mut selected_tokens = 0_i64;
+    for (candidate, candidate_tokens) in candidates
+        .into_iter()
+        .zip(token_sizes)
+        .take(candidate_limit)
+    {
+        if !selected.is_empty() && selected_tokens.saturating_add(candidate_tokens) > token_limit {
+            break;
+        }
+        selected_tokens = selected_tokens.saturating_add(candidate_tokens);
+        selected.push(candidate);
+    }
+    Some((
+        selected,
+        if count_triggered {
+            "count_limit"
+        } else {
+            "token_limit"
+        },
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::models::{EngineRecord, EngineSummary};
 
-    use super::{select_pending_records_for_summary, select_rollup_batch};
+    use super::{
+        select_bounded_rollup_candidates, select_pending_records_for_summary, select_rollup_batch,
+    };
 
     fn record(id: &str, content: &str) -> EngineRecord {
         EngineRecord {
@@ -253,22 +288,46 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let selected = if 3 > 0 && (candidates.len() as i64) >= 3 {
-            Some((
-                0,
-                candidates.into_iter().take(3).collect::<Vec<_>>(),
-                "count_limit",
-            ))
-        } else {
-            None
-        };
-
-        let (level, batch, reason) = selected.expect("count limit should select a batch");
-        assert_eq!(level, 0);
+        let (batch, reason) =
+            select_bounded_rollup_candidates(candidates, 50_000, 3).expect("count trigger");
         assert_eq!(reason, "count_limit");
         assert_eq!(batch.len(), 3);
         assert_eq!(batch[0].id, "sum-0");
         assert_eq!(batch[2].id, "sum-2");
+    }
+
+    #[test]
+    fn token_limit_caps_rollup_batch_instead_of_only_triggering_it() {
+        let candidates = (0..4)
+            .map(|idx| EngineSummary {
+                id: format!("sum-{idx}"),
+                tenant_id: "tenant".to_string(),
+                source_id: "source".to_string(),
+                thread_id: "thread".to_string(),
+                subject_id: "subject".to_string(),
+                summary_type: "thread_incremental".to_string(),
+                level: 0,
+                source_digest: None,
+                summary_text: "x".repeat(4_000),
+                source_record_start_id: None,
+                source_record_end_id: None,
+                source_record_count: 1,
+                status: "done".to_string(),
+                rollup_status: "pending".to_string(),
+                rollup_summary_id: None,
+                rolled_up_at: None,
+                subject_memory_summarized: 0,
+                subject_memory_summarized_at: None,
+                metadata: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            })
+            .collect::<Vec<_>>();
+
+        let (selected, reason) =
+            select_bounded_rollup_candidates(candidates, 1_500, 0).expect("token trigger");
+        assert_eq!(reason, "token_limit");
+        assert_eq!(selected.len(), 1);
     }
 
     #[test]
