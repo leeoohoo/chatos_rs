@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde_json::Value;
-
 use crate::db::Db;
 use crate::models::{ComposeContextBlock, EngineSubjectMemory, EngineSummary, EngineThread};
 use crate::repositories::{subject_memories, summaries};
@@ -22,7 +20,6 @@ pub(crate) async fn build_context_blocks(
     source_id: &str,
     thread: &EngineThread,
     policy: &ResolvedComposeContextPolicy,
-    summary_subject_ids: &[String],
     subject_memory_subject_ids: &[String],
 ) -> Result<BuiltContextBlocks, String> {
     let mut blocks = Vec::new();
@@ -42,7 +39,6 @@ pub(crate) async fn build_context_blocks(
     }
 
     if policy.include_subject_memory {
-        let _ = summary_subject_ids;
         blocks.extend(
             load_subject_memory_blocks(db, tenant_id, source_id, subject_memory_subject_ids)
                 .await?,
@@ -55,105 +51,26 @@ pub(crate) async fn build_context_blocks(
     })
 }
 
-pub(crate) fn subject_ids_for_context(
-    primary_subject_id: &str,
-    related_subject_ids: Option<&Vec<String>>,
-) -> Vec<String> {
-    let mut subject_ids = Vec::new();
-    let normalized_primary = primary_subject_id.trim();
-    if !normalized_primary.is_empty() {
-        subject_ids.push(normalized_primary.to_string());
-    }
-    if let Some(extra_ids) = related_subject_ids {
-        for subject_id in extra_ids {
-            let normalized = subject_id.trim();
-            if normalized.is_empty() {
-                continue;
-            }
-            if !subject_ids.iter().any(|item| item == normalized) {
-                subject_ids.push(normalized.to_string());
-            }
-        }
-    }
-    subject_ids
-}
-
-pub(crate) fn subject_memory_subject_ids_for_context(
-    thread: &EngineThread,
-    requested_subject_id: Option<&str>,
-    related_subject_ids: Option<&Vec<String>>,
-) -> Vec<String> {
-    let thread_subject_id = thread.subject_id.trim();
-    let agent_subject_id = thread_agent_subject_id(thread);
-    let requested = requested_subject_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let primary_subject_id = agent_subject_id
-        .as_deref()
-        .or(requested)
-        .unwrap_or(thread_subject_id);
-
-    let mut subject_ids = subject_ids_for_context(primary_subject_id, related_subject_ids);
-    if let Some(value) =
-        requested.filter(|value| *value != thread_subject_id && !value.starts_with("session:"))
-    {
-        if !subject_ids.iter().any(|item| item == value) {
-            subject_ids.push(value.to_string());
-        }
-    }
-    if agent_subject_id.is_some() {
-        subject_ids.retain(|value| {
-            let normalized = value.trim();
-            !normalized.is_empty()
-                && normalized != thread_subject_id
-                && !normalized.starts_with("session:")
-        });
-        if subject_ids.is_empty() {
-            subject_ids.push(primary_subject_id.to_string());
-        }
-    }
-
-    subject_ids
-}
-
-fn text_value(value: Option<&Value>, key: &str) -> Option<String> {
-    value
-        .and_then(|item| item.get(key))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(ToOwned::to_owned)
-}
-
 pub(crate) fn thread_agent_subject_id(thread: &EngineThread) -> Option<String> {
     let subject_id = thread.subject_id.trim();
-    if subject_id.starts_with("agent:") {
-        return Some(subject_id.to_string());
-    }
-
-    if let Some(label) = thread
-        .labels
-        .as_ref()
-        .into_iter()
-        .flatten()
-        .map(|label| label.trim())
-        .find(|label| label.starts_with("agent:") && !label.is_empty())
-    {
-        return Some(label.to_string());
-    }
-
-    let metadata = thread.metadata.as_ref();
-    let legacy_mapping = metadata.and_then(|value| value.get("legacy_session_mapping"));
-    let agent_id =
-        text_value(legacy_mapping, "agent_id").or_else(|| text_value(metadata, "agent_id"));
-    agent_id.map(|agent_id| format!("agent:{agent_id}"))
+    let labels = thread.labels.as_ref()?;
+    let is_v2 = labels
+        .iter()
+        .any(|label| label.trim() == "memory-schema:v2");
+    let has_matching_agent_label = labels.iter().any(|label| label.trim() == subject_id);
+    (is_v2
+        && subject_id.starts_with("agent:")
+        && subject_id.len() > "agent:".len()
+        && has_matching_agent_label)
+        .then(|| subject_id.to_string())
 }
 
 pub(crate) fn thread_identity_subject_ids(thread: &EngineThread) -> Vec<String> {
     let mut subjects = Vec::new();
-    if let Some(agent) = thread_agent_subject_id(thread) {
-        subjects.push(agent);
-    }
+    let Some(agent) = thread_agent_subject_id(thread) else {
+        return subjects;
+    };
+    subjects.push(agent);
     for label in thread.labels.as_ref().into_iter().flatten() {
         let label = label.trim();
         if label.starts_with("project:")

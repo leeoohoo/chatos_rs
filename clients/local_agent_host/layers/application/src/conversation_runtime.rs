@@ -14,6 +14,7 @@ use std::collections::HashSet;
 
 const LOCAL_TASK_CONTEXT_MAX_ITEMS: usize = 16;
 const LOCAL_TASK_CONTEXT_MAX_BYTES: usize = 64 * 1024;
+const JIGULI_AGENT_ID: &str = "jiguli";
 
 impl LocalAgentRuntime {
     /// Returns only recent attachment metadata and opaque authorization references.
@@ -248,6 +249,15 @@ impl LocalAgentRuntime {
                 "executor turns must not contain a Main Chat capability selection",
             ));
         }
+        let conversation_agent_identity =
+            if agent_execution_context.is_none() && team_executor_context.is_none() {
+                Some(normalized_conversation_agent_identity(
+                    &command.message_metadata,
+                    conversation.conversation.resource.as_ref(),
+                )?)
+            } else {
+                None
+            };
         let mut input = json!({
             "conversation_id": &command.conversation_id,
             "turn_id": &command.turn_id,
@@ -261,6 +271,15 @@ impl LocalAgentRuntime {
                 "reasoning_enabled": settings.reasoning_enabled,
             })),
         });
+        if let Some((agent_id, agent_name)) = conversation_agent_identity {
+            let object = input
+                .as_object_mut()
+                .expect("conversation Run input is an object");
+            object.insert("agent_id".to_string(), json!(agent_id));
+            if let Some(agent_name) = agent_name {
+                object.insert("agent_name".to_string(), json!(agent_name));
+            }
+        }
         if let Some(LocalConversationResourceBinding {
             kind: LocalConversationResourceKind::Project,
             resource_id,
@@ -378,6 +397,44 @@ impl LocalAgentRuntime {
             .cancel_conversation_turn(idempotency, &command, &new_event_id(), self.now()?)
             .await?)
     }
+}
+
+fn normalized_conversation_agent_identity(
+    metadata: &serde_json::Value,
+    conversation_resource: Option<&LocalConversationResourceBinding>,
+) -> Result<(String, Option<String>), LocalAgentRuntimeError> {
+    let values = metadata
+        .as_object()
+        .ok_or_else(|| invalid_agent_context("message metadata must be an object"))?;
+    let agent_id = agent_context_string(values, "agent_id", 512, true)?;
+    let conversation_resource = conversation_resource.ok_or_else(|| {
+        invalid_agent_context("Ordinary Agent conversations require an Agent-bound resource")
+    })?;
+    match conversation_resource {
+        LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Project,
+            ..
+        } if agent_id != JIGULI_AGENT_ID => {
+            return Err(invalid_agent_context(
+                "Project conversations must use the jiguli Agent identity",
+            ));
+        }
+        LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Contact,
+            resource_id,
+        } if agent_id != resource_id => {
+            return Err(invalid_agent_context(
+                "Contact resource does not match the Agent identity",
+            ));
+        }
+        _ => {}
+    }
+    let agent_name = values
+        .get("agent_name")
+        .map(|_| agent_context_string(values, "agent_name", 120, false))
+        .transpose()?
+        .map(ToOwned::to_owned);
+    Ok((agent_id.to_string(), agent_name))
 }
 
 fn normalized_agent_execution_context(
@@ -937,7 +994,10 @@ mod tests {
             conversation_id: "conversation-1".to_string(),
             owner_user_id: "user-1".to_string(),
             title: "Local conversation".to_string(),
-            resource: None,
+            resource: Some(LocalConversationResourceBinding {
+                kind: LocalConversationResourceKind::Contact,
+                resource_id: JIGULI_AGENT_ID.to_string(),
+            }),
         }
     }
 
@@ -952,6 +1012,8 @@ mod tests {
             message: "hello".to_string(),
             message_metadata: json!({
                 "source": "composer",
+                "agent_id": "jiguli",
+                "agent_name": "叽咕狸",
                 "explicit_capability_selection": {
                     "kind": "plugin",
                     "plugin_key": "document-plugin",
@@ -1064,6 +1126,42 @@ mod tests {
             &agent_context(),
             "agent-direct-room-1",
             Some(&project_resource()),
+            None,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn ordinary_conversation_identity_comes_from_the_client_and_matches_its_resource() {
+        let jiguli = normalized_conversation_agent_identity(
+            &json!({"agent_id": "jiguli", "agent_name": "叽咕狸"}),
+            Some(&project_resource()),
+        )
+        .expect("Jiguli project identity");
+        assert_eq!(jiguli, ("jiguli".to_string(), Some("叽咕狸".to_string())));
+
+        let plugin_resource = LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Contact,
+            resource_id: "plugin-installer".into(),
+        };
+        let plugin = normalized_conversation_agent_identity(
+            &json!({"agent_id": "plugin-installer", "agent_name": "插件安装助手"}),
+            Some(&plugin_resource),
+        )
+        .expect("plugin Agent identity");
+        assert_eq!(plugin.0, "plugin-installer");
+        assert!(normalized_conversation_agent_identity(
+            &json!({"agent_id": "jiguli"}),
+            Some(&plugin_resource),
+        )
+        .is_err());
+        assert!(normalized_conversation_agent_identity(
+            &json!({"agent_id": "another-agent"}),
+            Some(&project_resource()),
+        )
+        .is_err());
+        assert!(normalized_conversation_agent_identity(
+            &json!({"agent_id": "jiguli"}),
             None,
         )
         .is_err());
@@ -1301,6 +1399,8 @@ mod tests {
         assert_eq!(result.run.owner_entity_type, "conversation_turn");
         assert_eq!(result.run.owner_entity_id, "turn-1");
         assert_eq!(result.run.profile_key, "main_chat");
+        assert_eq!(result.run.input["agent_id"], "jiguli");
+        assert_eq!(result.run.input["agent_name"], "叽咕狸");
         assert_eq!(result.run.input["conversation_id"], "conversation-1");
         assert_eq!(result.run.input["turn_id"], "turn-1");
         assert_eq!(result.run.input["message_id"], "message-1");

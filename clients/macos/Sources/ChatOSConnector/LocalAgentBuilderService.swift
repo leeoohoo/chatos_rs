@@ -146,6 +146,7 @@ public struct LocalAgentBuilderService: Sendable {
             let memoryScope = try AgentMemoryScope(
                 tenantID: ownerUserID,
                 agentID: "builtin-agent-builder",
+                agentName: "Agent 创建器",
                 projectID: projectID,
                 runID: runID,
                 runtimeScope: scope

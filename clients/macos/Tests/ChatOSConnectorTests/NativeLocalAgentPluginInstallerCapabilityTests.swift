@@ -67,6 +67,29 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
         )
     }
 
+    func testConversationAgentIdentityUsesTheBoundAgentInsteadOfAProfileDefault() throws {
+        let project = try NativeLocalAgentConversationService.conversationAgentIdentity(
+            for: .init(kind: .project, resourceID: "project-1")
+        )
+        XCTAssertEqual(project.id, WorkspaceSystemContact.mainID)
+        XCTAssertEqual(project.name, "叽咕狸")
+
+        let installer = try NativeLocalAgentConversationService.conversationAgentIdentity(
+            for: .init(kind: .contact, resourceID: WorkspaceSystemContact.pluginInstallerID)
+        )
+        XCTAssertEqual(installer.id, WorkspaceSystemContact.pluginInstallerID)
+        XCTAssertEqual(installer.name, "插件安装助手")
+
+        XCTAssertThrowsError(
+            try NativeLocalAgentConversationService.conversationAgentIdentity(
+                for: .init(kind: .contact, resourceID: "unknown-contact")
+            )
+        )
+        XCTAssertThrowsError(
+            try NativeLocalAgentConversationService.conversationAgentIdentity(for: nil)
+        )
+    }
+
     func testInstallerRevisionChangesWithBaseCapabilityRevision() throws {
         let first = try NativeLocalConnectorService.pluginInstallerCapability(
             ownerUserID: "user-1",

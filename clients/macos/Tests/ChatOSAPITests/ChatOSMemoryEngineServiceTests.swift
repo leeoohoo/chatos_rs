@@ -31,6 +31,8 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertTrue(labels.contains("memory-schema:v2"))
         XCTAssertTrue(labels.contains(scope.subjectID))
         XCTAssertFalse(labels.contains(try XCTUnwrap(scope.projectSubjectID)))
+        let threadMetadata = try XCTUnwrap(threadBody["metadata"] as? [String: Any])
+        XCTAssertEqual(threadMetadata["agent_name"] as? String, scope.agentName)
         let body = try object(calls[1].body)
         XCTAssertEqual(body["source_id"] as? String, "chatos")
         XCTAssertEqual(body["tenant_id"] as? String, scope.tenantID)

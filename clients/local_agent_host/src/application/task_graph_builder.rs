@@ -39,7 +39,7 @@ pub(in crate::application::task_tools) fn create_single_graph(
     let graph_id = format!("local-task-graph-{}", invocation.invocation_id);
     let source_context = source_conversation_context(parent);
     let source_user_message = source_user_message(parent);
-    let (source_agent_id, source_project_id) = source_memory_identity(parent);
+    let (source_agent_id, source_agent_name, source_project_id) = source_memory_identity(parent)?;
     Ok(CreateTaskGraphCommand {
         graph_id,
         owner_user_id: parent.owner_user_id.clone(),
@@ -78,6 +78,7 @@ pub(in crate::application::task_tools) fn create_single_graph(
                 "remote_connection_id": source_context.remote_connection_id.clone(),
                 "source_run_id": parent.run_id,
                 "agent_id": source_agent_id,
+                "agent_name": source_agent_name,
                 "project_id": source_project_id,
                 "runtime_settings": runtime_settings,
                 "attachments": args.selected_attachments,
@@ -147,7 +148,7 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
         .collect();
     let source_context = source_conversation_context(parent);
     let source_user_message = source_user_message(parent);
-    let (source_agent_id, source_project_id) = source_memory_identity(parent);
+    let (source_agent_id, source_agent_name, source_project_id) = source_memory_identity(parent)?;
     let mut tasks = Vec::with_capacity(items.len());
     let mut dependencies = Vec::new();
     for item in items {
@@ -229,8 +230,9 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
                 "source_user_message": source_user_message.clone(),
                 "remote_connection_id": source_context.remote_connection_id.clone(),
                 "source_run_id": parent.run_id,
-                "agent_id": source_agent_id,
-                "project_id": source_project_id,
+                "agent_id": source_agent_id.clone(),
+                "agent_name": source_agent_name.clone(),
+                "project_id": source_project_id.clone(),
                 "runtime_settings": runtime_settings,
                 "attachments": item.selected_attachments,
                 "prerequisite_task_ids": item.prerequisite_task_ids,
@@ -255,17 +257,34 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
     })
 }
 
-fn source_memory_identity(parent: &LocalAgentRunRecord) -> (String, Option<String>) {
+fn source_memory_identity(
+    parent: &LocalAgentRunRecord,
+) -> Result<(String, Option<String>, Option<String>), String> {
     let input = &parent.input;
-    let agent_id = nested_input_string(input, "agent_execution_context", "agent_id")
-        .or_else(|| nested_input_string(input, "agent_identity", "agent_id"))
-        .or_else(|| input_string(input, "agent_id"))
-        .or_else(|| nested_input_string(input, "agent_team_execution", "agent_id"))
-        .unwrap_or_else(|| "main-chat".to_string());
-    let project_id = input_string(input, "project_id")
-        .or_else(|| nested_input_string(input, "agent_execution_context", "project_id"))
-        .or_else(|| nested_input_string(input, "agent_team_execution", "project_id"));
-    (agent_id, project_id)
+    let agent_id = consistent_input_string(input, "agent_id")?
+        .ok_or_else(|| "Task source requires an explicit agent_id".to_string())?;
+    let agent_name = consistent_input_string(input, "agent_name")?;
+    let project_id = consistent_input_string(input, "project_id")?;
+    Ok((agent_id, agent_name, project_id))
+}
+
+fn consistent_input_string(input: &serde_json::Value, key: &str) -> Result<Option<String>, String> {
+    let values = [
+        nested_input_string(input, "agent_execution_context", key),
+        input_string(input, key),
+        nested_input_string(input, "agent_team_execution", key),
+        nested_input_string(input, "team_executor_context", key),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let Some(value) = values.first() else {
+        return Ok(None);
+    };
+    if values.iter().any(|candidate| candidate != value) {
+        return Err(format!("Task source has conflicting {key} values"));
+    }
+    Ok(Some(value.clone()))
 }
 
 fn nested_input_string(input: &serde_json::Value, container: &str, key: &str) -> Option<String> {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -108,6 +108,7 @@ impl MemoryRecordScope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RecordThreadIdentity {
     agent_id: Option<String>,
+    agent_name: Option<String>,
     project_aggregation_id: Option<String>,
     thread_kind: String,
 }
@@ -117,7 +118,7 @@ pub struct MemoryEngineRecordWriter {
     client: MemoryEngineClient,
     scope: MemoryRecordScope,
     source_id: Option<String>,
-    ensured_threads: Arc<Mutex<HashSet<(String, String)>>>,
+    ensured_threads: Arc<Mutex<HashMap<(String, String), RecordThreadIdentity>>>,
 }
 
 impl MemoryEngineRecordWriter {
@@ -132,7 +133,7 @@ impl MemoryEngineRecordWriter {
             client: MemoryEngineClient::new_direct(base_url, timeout, source_id.clone())?,
             scope,
             source_id: Some(source_id),
-            ensured_threads: Arc::new(Mutex::new(HashSet::new())),
+            ensured_threads: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -141,7 +142,7 @@ impl MemoryEngineRecordWriter {
             client,
             scope,
             source_id: None,
-            ensured_threads: Arc::new(Mutex::new(HashSet::new())),
+            ensured_threads: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -303,36 +304,43 @@ impl MemoryEngineRecordWriter {
         identity: &RecordThreadIdentity,
     ) -> Result<(), String> {
         let key = (tenant_id.to_string(), thread_id.to_string());
-        if self.ensured_threads.lock().await.contains(&key) {
-            return Ok(());
-        }
-        let agent_subject = identity
+        let agent_id = identity
             .agent_id
             .as_deref()
-            .map(|agent_id| format!("agent:{agent_id}"));
-        let labels = agent_subject.as_ref().map(|agent_subject| {
-            let mut labels = vec![
-                "memory-schema:v2".to_string(),
-                agent_subject.clone(),
-                format!("thread-kind:{}", identity.thread_kind),
-            ];
-            if let Some(project_id) = identity.project_aggregation_id.as_deref() {
-                labels.push(format!("project:{project_id}"));
+            .ok_or_else(|| "memory thread requires an explicit agent_id".to_string())?;
+        if let Some(ensured) = self.ensured_threads.lock().await.get(&key).cloned() {
+            if ensured.agent_id != identity.agent_id
+                || ensured.project_aggregation_id != identity.project_aggregation_id
+                || ensured.thread_kind != identity.thread_kind
+            {
+                return Err("memory thread identity changed after it was established".to_string());
             }
-            labels
-        });
+            if ensured.agent_name == identity.agent_name {
+                return Ok(());
+            }
+        }
+        let agent_subject = format!("agent:{agent_id}");
+        let mut labels = vec![
+            "memory-schema:v2".to_string(),
+            agent_subject.clone(),
+            format!("thread-kind:{}", identity.thread_kind),
+        ];
+        if let Some(project_id) = identity.project_aggregation_id.as_deref() {
+            labels.push(format!("project:{project_id}"));
+        }
         self.client
             .upsert_thread(
                 thread_id,
                 &SdkUpsertThreadRequest {
                     tenant_id: tenant_id.to_string(),
-                    subject_id: agent_subject.unwrap_or_else(|| format!("thread:{thread_id}")),
+                    subject_id: agent_subject,
                     thread_type: "conversation".to_string(),
                     external_thread_id: Some(thread_id.to_string()),
                     title: None,
-                    labels,
+                    labels: Some(labels),
                     metadata: Some(serde_json::json!({
                         "agent_id": identity.agent_id,
+                        "agent_name": identity.agent_name,
                         "project_aggregation_id": identity.project_aggregation_id,
                         "thread_kind": identity.thread_kind,
                     })),
@@ -343,7 +351,10 @@ impl MemoryEngineRecordWriter {
                 },
             )
             .await?;
-        self.ensured_threads.lock().await.insert(key);
+        self.ensured_threads
+            .lock()
+            .await
+            .insert(key, identity.clone());
         Ok(())
     }
 
@@ -360,13 +371,10 @@ impl MemoryEngineRecordWriter {
             .agent_id
             .as_deref()
             .and_then(normalized)
-            .or_else(|| value("agent_id"))
-            .or_else(|| {
-                (value("profile_key").as_deref() == Some("main_chat"))
-                    .then(|| "main-chat".to_string())
-            });
+            .or_else(|| value("agent_id"));
         RecordThreadIdentity {
             agent_id,
+            agent_name: value("agent_name"),
             project_aggregation_id: self
                 .scope
                 .project_aggregation_id

@@ -6,7 +6,8 @@ use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, CreateTaskGraphCommand,
     GetMessageTaskGraphCommand, HostCommand, HostRequestEnvelope, HostResult, LocalTaskDependency,
-    LocalTaskSpec, StartConversationTurnCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalConversationResourceBinding, LocalConversationResourceKind, LocalTaskSpec,
+    StartConversationTurnCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -46,7 +47,10 @@ async fn create_conversation(runtime: &LocalAgentRuntime, conversation_id: &str)
                 conversation_id: conversation_id.to_string(),
                 owner_user_id: "user-1".to_string(),
                 title: conversation_id.to_string(),
-                resource: None,
+                resource: Some(LocalConversationResourceBinding {
+                    kind: LocalConversationResourceKind::Contact,
+                    resource_id: conversation_id.to_string(),
+                }),
             }),
         ))
         .await
@@ -70,7 +74,7 @@ async fn start_turn(
                 message_id: format!("message-{turn_id}"),
                 run_id: format!("run-{turn_id}"),
                 message: "make a plan".to_string(),
-                message_metadata: json!({}),
+                message_metadata: json!({"agent_id": conversation_id}),
                 attachments: Vec::new(),
                 model_config_ref: "model-1".to_string(),
                 model_config_revision: "revision-1".to_string(),

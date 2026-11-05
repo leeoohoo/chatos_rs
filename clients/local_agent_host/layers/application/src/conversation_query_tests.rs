@@ -82,7 +82,10 @@ fn create(conversation_id: &str, owner_user_id: &str) -> HostCommand {
         conversation_id: conversation_id.to_string(),
         owner_user_id: owner_user_id.to_string(),
         title: conversation_id.to_string(),
-        resource: None,
+        resource: Some(LocalConversationResourceBinding {
+            kind: LocalConversationResourceKind::Contact,
+            resource_id: conversation_id.to_string(),
+        }),
     })
 }
 
@@ -191,7 +194,7 @@ async fn pages_owner_conversations_and_rejects_cross_account_access() {
                 message_id: "message-a".to_string(),
                 run_id: "run-a".to_string(),
                 message: "hello".to_string(),
-                message_metadata: json!({}),
+                message_metadata: json!({"agent_id": "conversation-a"}),
                 attachments: Vec::new(),
                 model_config_ref: "model-1".to_string(),
                 model_config_revision: "revision-1".to_string(),
@@ -213,7 +216,7 @@ async fn pages_owner_conversations_and_rejects_cross_account_access() {
                 message_id: "message-owned".to_string(),
                 run_id: "run-owned".to_string(),
                 message: "hello".to_string(),
-                message_metadata: json!({}),
+                message_metadata: json!({"agent_id": "conversation-a"}),
                 attachments: Vec::new(),
                 model_config_ref: "model-1".to_string(),
                 model_config_revision: "revision-1".to_string(),

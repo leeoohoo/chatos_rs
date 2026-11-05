@@ -149,21 +149,7 @@ pub async fn list_threads(
         ],
         false,
     );
-    append_agent_filter(
-        &mut query,
-        values.agent_id,
-        &[
-            "{metadata,legacy_session_mapping,agent_id}",
-            "{metadata,source_metadata,chat_runtime,contact_agent_id}",
-            "{metadata,source_metadata,chat_runtime,contactAgentId}",
-            "{metadata,source_metadata,contact,agent_id}",
-            "{metadata,source_metadata,contact,agentId}",
-            "{metadata,source_metadata,ui_contact,agent_id}",
-            "{metadata,source_metadata,ui_contact,agentId}",
-            "{metadata,source_metadata,ui_chat_selection,selected_agent_id}",
-            "{metadata,source_metadata,ui_chat_selection,selectedAgentId}",
-        ],
-    );
+    append_agent_filter(&mut query, values.agent_id);
     append_json_aliases(
         &mut query,
         values.mapping_source,
@@ -237,7 +223,6 @@ fn append_json_aliases(
 fn append_agent_filter(
     query: &mut QueryBuilder<Postgres>,
     value: Option<&str>,
-    metadata_paths: &[&str],
 ) {
     let Some(agent_id) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return;
@@ -247,23 +232,12 @@ fn append_agent_filter(
     } else {
         format!("agent:{agent_id}")
     };
-    let raw_agent_id = agent_subject_id
-        .strip_prefix("agent:")
-        .unwrap_or(agent_id)
-        .to_string();
     query
-        .push(" AND (subject_id=")
+        .push(" AND subject_id=")
         .push_bind(agent_subject_id.clone())
-        .push(" OR data->'labels' ? ")
-        .push_bind(agent_subject_id);
-    for path in metadata_paths {
-        query
-            .push(" OR data #>> '")
-            .push(*path)
-            .push("'=")
-            .push_bind(raw_agent_id.clone());
-    }
-    query.push(")");
+        .push(" AND data->'labels' ? ")
+        .push_bind(agent_subject_id)
+        .push(" AND data->'labels' ? 'memory-schema:v2'");
 }
 
 async fn fetch_threads(

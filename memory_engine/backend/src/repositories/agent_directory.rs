@@ -41,25 +41,15 @@ pub async fn list_agents(
     let rows = sqlx::query_as::<_, AgentDirectoryRow>(
         "WITH thread_identities AS ( \
            SELECT thread.id,thread.tenant_id,thread.source_id,thread.updated_at, \
-                  CASE WHEN thread.subject_id LIKE 'agent:%' THEN thread.subject_id \
-                       ELSE COALESCE(labels.agent_subject_id, \
-                         CASE WHEN NULLIF(BTRIM(COALESCE( \
-                           thread.data #>> '{metadata,legacy_session_mapping,agent_id}', \
-                           thread.data #>> '{metadata,agent_id}', '')), '') IS NOT NULL \
-                         THEN 'agent:' || BTRIM(COALESCE( \
-                           thread.data #>> '{metadata,legacy_session_mapping,agent_id}', \
-                           thread.data #>> '{metadata,agent_id}')) END) END AS agent_subject_id, \
-                  COALESCE(labels.project_subject_id, \
-                    CASE WHEN NULLIF(BTRIM(COALESCE( \
-                      thread.data #>> '{metadata,legacy_session_mapping,project_id}', \
-                      thread.data #>> '{metadata,project_id}', '')), '') IS NOT NULL \
-                    THEN 'project:' || BTRIM(COALESCE( \
-                      thread.data #>> '{metadata,legacy_session_mapping,project_id}', \
-                      thread.data #>> '{metadata,project_id}')) END) AS project_subject_id \
+                  thread.subject_id AS agent_subject_id,labels.project_subject_id, \
+                  COALESCE(NULLIF(BTRIM(thread.data #>> '{metadata,agent_name}'),''), \
+                           NULLIF(BTRIM(subject.data->>'display_name'),'')) AS display_name \
              FROM engine_threads thread \
+             LEFT JOIN engine_subjects subject \
+               ON subject.tenant_id=thread.tenant_id AND subject.source_id=thread.source_id \
+              AND subject.subject_id=thread.subject_id \
              LEFT JOIN LATERAL ( \
-               SELECT MAX(label) FILTER (WHERE label LIKE 'agent:%') AS agent_subject_id, \
-                      MAX(label) FILTER (WHERE label LIKE 'project:%') AS project_subject_id \
+               SELECT MAX(label) FILTER (WHERE label LIKE 'project:%') AS project_subject_id \
                  FROM jsonb_array_elements_text( \
                    CASE WHEN jsonb_typeof(thread.data->'labels')='array' \
                         THEN thread.data->'labels' ELSE '[]'::jsonb END \
@@ -67,19 +57,33 @@ pub async fn list_agents(
              ) labels ON TRUE \
             WHERE ($1::text IS NULL OR thread.tenant_id=$1) \
               AND ($2::text IS NULL OR thread.source_id=$2) \
+              AND thread.subject_id LIKE 'agent:%' \
+              AND thread.data->'labels' ? 'memory-schema:v2' \
+              AND thread.data->'labels' ? thread.subject_id \
+         ), project_identities AS ( \
+           SELECT tenant_id,source_id,agent_subject_id,project_subject_id,updated_at \
+             FROM thread_identities \
+            WHERE agent_subject_id IS NOT NULL AND project_subject_id IS NOT NULL \
+           UNION \
+           SELECT thread.tenant_id,thread.source_id,thread.agent_subject_id, \
+                  CASE WHEN BTRIM(record.data #>> '{metadata,memory_project_id}') LIKE 'project:%' \
+                       THEN BTRIM(record.data #>> '{metadata,memory_project_id}') \
+                       ELSE 'project:' || BTRIM(record.data #>> '{metadata,memory_project_id}') END, \
+                  record.created_at \
+             FROM engine_records record \
+             JOIN thread_identities thread \
+               ON thread.tenant_id=record.tenant_id AND thread.source_id=record.source_id \
+              AND thread.id=record.thread_id \
+            WHERE thread.agent_subject_id IS NOT NULL \
+              AND NULLIF(BTRIM(COALESCE( \
+                    record.data #>> '{metadata,memory_project_id}', '')), '') IS NOT NULL \
          ), agent_identities AS ( \
-           SELECT tenant_id,source_id,subject_id AS agent_subject_id,NULL::text AS display_name,updated_at \
-             FROM engine_subject_memory_scopes \
-            WHERE memory_type='agent_memory' AND subject_id LIKE 'agent:%' \
-           UNION ALL \
-           SELECT tenant_id,source_id,agent_subject_id,NULL::text AS display_name,updated_at \
-             FROM thread_identities WHERE agent_subject_id IS NOT NULL \
-           UNION ALL \
-           SELECT tenant_id,source_id,subject_id AS agent_subject_id, \
-                  NULLIF(BTRIM(data->>'display_name'),'') AS display_name,updated_at \
-             FROM engine_subjects WHERE subject_id LIKE 'agent:%' \
+           SELECT tenant_id,source_id,agent_subject_id,display_name,updated_at \
+             FROM thread_identities \
          ), agents AS ( \
-           SELECT tenant_id,source_id,agent_subject_id,MAX(display_name) AS display_name, \
+           SELECT tenant_id,source_id,agent_subject_id, \
+                  (ARRAY_AGG(display_name ORDER BY updated_at DESC) \
+                    FILTER (WHERE display_name IS NOT NULL))[1] AS display_name, \
                   MAX(updated_at) AS identity_updated_at \
              FROM agent_identities \
             WHERE ($1::text IS NULL OR tenant_id=$1) \
@@ -96,7 +100,7 @@ pub async fn list_agents(
          ), project_stats AS ( \
            SELECT a.tenant_id,a.source_id,a.agent_subject_id, \
                   COUNT(DISTINCT t.project_subject_id)::bigint AS project_count \
-             FROM agents a LEFT JOIN thread_identities t \
+             FROM agents a LEFT JOIN project_identities t \
                ON t.tenant_id=a.tenant_id AND t.source_id=a.source_id \
               AND t.agent_subject_id=a.agent_subject_id \
             GROUP BY a.tenant_id,a.source_id,a.agent_subject_id \
@@ -155,39 +159,40 @@ pub async fn list_agent_projects(
     let rows = sqlx::query_as::<_, AgentProjectRow>(
         "WITH thread_identities AS ( \
            SELECT thread.id,thread.tenant_id,thread.source_id,thread.updated_at, \
-                  CASE WHEN thread.subject_id LIKE 'agent:%' THEN thread.subject_id \
-                       ELSE COALESCE(labels.agent_subject_id, \
-                         CASE WHEN NULLIF(BTRIM(COALESCE( \
-                           thread.data #>> '{metadata,legacy_session_mapping,agent_id}', \
-                           thread.data #>> '{metadata,agent_id}', '')), '') IS NOT NULL \
-                         THEN 'agent:' || BTRIM(COALESCE( \
-                           thread.data #>> '{metadata,legacy_session_mapping,agent_id}', \
-                           thread.data #>> '{metadata,agent_id}')) END) END AS agent_subject_id, \
-                  COALESCE(labels.project_subject_id, \
-                    CASE WHEN NULLIF(BTRIM(COALESCE( \
-                      thread.data #>> '{metadata,legacy_session_mapping,project_id}', \
-                      thread.data #>> '{metadata,project_id}', '')), '') IS NOT NULL \
-                    THEN 'project:' || BTRIM(COALESCE( \
-                      thread.data #>> '{metadata,legacy_session_mapping,project_id}', \
-                      thread.data #>> '{metadata,project_id}')) END) AS project_subject_id \
+                  thread.subject_id AS agent_subject_id,labels.project_subject_id \
              FROM engine_threads thread \
              LEFT JOIN LATERAL ( \
-               SELECT MAX(label) FILTER (WHERE label LIKE 'agent:%') AS agent_subject_id, \
-                      MAX(label) FILTER (WHERE label LIKE 'project:%') AS project_subject_id \
+               SELECT MAX(label) FILTER (WHERE label LIKE 'project:%') AS project_subject_id \
                  FROM jsonb_array_elements_text( \
                    CASE WHEN jsonb_typeof(thread.data->'labels')='array' \
                         THEN thread.data->'labels' ELSE '[]'::jsonb END \
                  ) AS labels(label) \
              ) labels ON TRUE \
             WHERE thread.tenant_id=$1 AND thread.source_id=$2 \
+              AND thread.subject_id LIKE 'agent:%' \
+              AND thread.data->'labels' ? 'memory-schema:v2' \
+              AND thread.data->'labels' ? thread.subject_id \
          ), matching_threads AS ( \
            SELECT id,tenant_id,source_id,updated_at,project_subject_id \
              FROM thread_identities \
-            WHERE agent_subject_id=$3 AND project_subject_id IS NOT NULL \
+            WHERE agent_subject_id=$3 \
          ), project_threads AS ( \
            SELECT thread.tenant_id,thread.source_id,thread.id,thread.updated_at, \
                   thread.project_subject_id \
              FROM matching_threads thread \
+            WHERE thread.project_subject_id IS NOT NULL \
+           UNION \
+           SELECT thread.tenant_id,thread.source_id,thread.id, \
+                  GREATEST(thread.updated_at,record.created_at), \
+                  CASE WHEN BTRIM(record.data #>> '{metadata,memory_project_id}') LIKE 'project:%' \
+                       THEN BTRIM(record.data #>> '{metadata,memory_project_id}') \
+                       ELSE 'project:' || BTRIM(record.data #>> '{metadata,memory_project_id}') END \
+             FROM matching_threads thread \
+             JOIN engine_records record \
+               ON record.tenant_id=thread.tenant_id AND record.source_id=thread.source_id \
+              AND record.thread_id=thread.id \
+            WHERE NULLIF(BTRIM(COALESCE( \
+                    record.data #>> '{metadata,memory_project_id}', '')), '') IS NOT NULL \
          ) \
          SELECT project.tenant_id,project.source_id,project.project_subject_id, \
                 NULLIF(BTRIM(subject.data->>'display_name'),'') AS display_name, \

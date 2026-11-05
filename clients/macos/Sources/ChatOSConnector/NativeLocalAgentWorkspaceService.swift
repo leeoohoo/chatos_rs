@@ -127,6 +127,9 @@ public actor NativeLocalAgentProjectConversationService: ProjectConversationPort
         guard project.projectContext?.projectId == project.id else {
             throw ProjectRegistryError.invalidField("projectContext")
         }
+        guard contact.agentID == WorkspaceSystemContact.mainID else {
+            throw ProjectRegistryError.invalidField("contact.agentID")
+        }
         let binding = LocalAgentConversationResourceBinding(kind: .project, resourceID: project.id)
         if let existing = try await workspace.listAll(ownerUserID: ownerUserID).first(where: {
             $0.resource == binding

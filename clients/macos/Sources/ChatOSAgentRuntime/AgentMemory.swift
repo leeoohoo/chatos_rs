@@ -7,6 +7,7 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     public let sourceID: String
     public let threadID: String
     public let subjectID: String
+    public let agentName: String?
     public let projectSubjectID: String?
     public let projectAggregationSubjectID: String?
     public let threadKind: String?
@@ -37,6 +38,7 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
             : "builtin-\(profile)-agent"
         self.threadID = "client-agent:agent:\(agentID)"
         self.subjectID = "agent:\(agentID)"
+        self.agentName = profile == "approval" ? "本地审批" : "剧情规划 Agent"
         self.projectSubjectID = projectID.flatMap { $0.isEmpty ? nil : "project:\($0)" }
         self.projectAggregationSubjectID = nil
         self.threadKind = profile == "approval" ? "approval_agent" : "story_agent"
@@ -51,6 +53,7 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     public init(
         tenantID: String,
         agentID: String,
+        agentName: String? = nil,
         projectID: String,
         runID: UUID,
         runtimeScope: String
@@ -60,11 +63,16 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
             !value.isEmpty
                 && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
                 && value.rangeOfCharacter(from: .controlCharacters) == nil
-        }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
+        }), agentName.map({ name in
+            !name.isEmpty
+                && name == name.trimmingCharacters(in: .whitespacesAndNewlines)
+                && name.rangeOfCharacter(from: .controlCharacters) == nil
+        }) ?? true, !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
         self.tenantID = tenantID
         self.sourceID = "chatos"
         self.threadID = "client-agent:agent:\(agentID)"
         self.subjectID = "agent:\(agentID)"
+        self.agentName = agentName
         self.projectSubjectID = "project:\(projectID)"
         self.projectAggregationSubjectID = nil
         self.threadKind = "agent_conversation"
@@ -79,6 +87,7 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         tenantID: String,
         todoID: String,
         agentID: String,
+        agentName: String? = nil,
         projectID: String,
         runID: UUID,
         runtimeScope: String
@@ -88,11 +97,16 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
             !value.isEmpty
                 && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
                 && value.rangeOfCharacter(from: .controlCharacters) == nil
-        }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
+        }), agentName.map({ name in
+            !name.isEmpty
+                && name == name.trimmingCharacters(in: .whitespacesAndNewlines)
+                && name.rangeOfCharacter(from: .controlCharacters) == nil
+        }) ?? true, !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
         self.tenantID = tenantID
         self.sourceID = "chatos"
         self.threadID = "client-agent:todo:\(todoID)"
         self.subjectID = "agent:\(agentID)"
+        self.agentName = agentName
         self.projectSubjectID = "project:\(projectID)"
         self.projectAggregationSubjectID = "project:\(projectID)"
         self.threadKind = "todo_execution"
@@ -112,12 +126,10 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     }
 
     /// Agent and Todo threads are stable for their respective identity, so compose may return
-    /// records written by earlier runs of that same Agent or Todo. The legacy group-chat prefix
-    /// remains accepted for bound pre-migration runs.
+    /// records written by earlier runs of that same Agent or Todo.
     public var allowsCrossRunHistory: Bool {
         threadID.hasPrefix("client-agent:agent:")
             || threadID.hasPrefix("client-agent:todo:")
-            || threadID.hasPrefix("client-agent:group-chat:")
     }
 
     /// Parses only record IDs emitted by `recordID(at:)`. Memory Engine has already verified the

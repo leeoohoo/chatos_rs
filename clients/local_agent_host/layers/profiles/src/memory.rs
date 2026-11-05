@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY};
 
+const JIGULI_AGENT_ID: &str = "jiguli";
 const INLINE_TOOL_RESULT_MAX_BYTES: usize = 160_000;
 const INLINE_TOOL_RESULTS_TOTAL_MAX_BYTES: usize = 800_000;
 const TOOL_RESULT_READ_MAX_CHARS: usize = 8_000;
@@ -29,8 +30,9 @@ pub(super) fn memory_plan(
 ) -> Result<LocalMemoryPlan, String> {
     let is_main_chat = claim.run.profile_key == MAIN_CHAT_PROFILE_KEY;
     let is_task_execution = claim.run.profile_key == TASK_EXECUTION_PROFILE_KEY;
-    let agent_id = memory_agent_id(claim);
-    let project_id = memory_project_id(claim);
+    let agent_id = memory_agent_id(claim)?;
+    let agent_name = memory_agent_name(claim, agent_id.as_str())?;
+    let project_id = memory_project_id(claim)?;
     let thread_id = if !is_task_execution {
         format!("client-agent:agent:{agent_id}")
     } else {
@@ -47,10 +49,11 @@ pub(super) fn memory_plan(
         "tenant_id": claim.run.owner_user_id,
         "profile_key": claim.run.profile_key,
         "agent_id": agent_id,
+        "agent_name": agent_name,
         "project_id": project_id,
         "memory_project_id": project_id,
         "thread_project_aggregation_id": if is_task_execution { project_id.clone() } else { None },
-        "thread_kind": if is_task_execution && memory_context_string(claim, "todo_id").is_some() { "todo_execution" } else if is_task_execution { "agent_task" } else if agent_id == "main-chat" { "main_chat" } else { "agent_conversation" },
+        "thread_kind": if is_task_execution && memory_context_string(claim, "todo_id").is_some() { "todo_execution" } else if is_task_execution { "agent_task" } else if is_main_chat && agent_id == JIGULI_AGENT_ID { "main_chat" } else { "agent_conversation" },
         "run_id": claim.run.run_id,
         "owner_entity_type": claim.run.owner_entity_type,
         "owner_entity_id": claim.run.owner_entity_id,
@@ -113,33 +116,18 @@ pub(super) fn memory_plan(
     })
 }
 
-fn memory_agent_id(claim: &LocalAgentRunClaim) -> String {
-    memory_context_string(claim, "agent_id")
-        .or_else(|| {
-            claim
-                .run
-                .input
-                .get("agent_identity")
-                .and_then(|value| value.get("agent_id"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
-        .or_else(|| {
-            (claim.run.profile_key == MAIN_CHAT_PROFILE_KEY).then(|| "main-chat".to_string())
-        })
-        .unwrap_or_else(|| {
-            if claim.run.profile_key == TASK_EXECUTION_PROFILE_KEY {
-                "main-chat".to_string()
-            } else {
-                format!("profile:{}", claim.run.profile_key)
-            }
-        })
+fn memory_agent_id(claim: &LocalAgentRunClaim) -> Result<String, String> {
+    consistent_memory_context_string(claim, "agent_id")?
+        .ok_or_else(|| "Memory identity requires an explicit agent_id".to_string())
 }
 
-fn memory_project_id(claim: &LocalAgentRunClaim) -> Option<String> {
-    memory_context_string(claim, "project_id")
+fn memory_project_id(claim: &LocalAgentRunClaim) -> Result<Option<String>, String> {
+    consistent_memory_context_string(claim, "project_id")
+}
+
+fn memory_agent_name(claim: &LocalAgentRunClaim, agent_id: &str) -> Result<Option<String>, String> {
+    Ok(consistent_memory_context_string(claim, "agent_name")?
+        .or_else(|| (agent_id == JIGULI_AGENT_ID).then(|| "叽咕狸".to_string())))
 }
 
 fn memory_context_string(claim: &LocalAgentRunClaim, key: &str) -> Option<String> {
@@ -150,18 +138,46 @@ fn memory_context_string(claim: &LocalAgentRunClaim, key: &str) -> Option<String
             "team_executor_context",
         ]
         .into_iter()
-        .find_map(|container| {
-            claim
-                .run
-                .input
-                .get(container)
-                .and_then(|value| value.get(key))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
+        .find_map(|container| nested_memory_context_string(claim, container, key))
     })
+}
+
+fn consistent_memory_context_string(
+    claim: &LocalAgentRunClaim,
+    key: &str,
+) -> Result<Option<String>, String> {
+    let values = [
+        nested_memory_context_string(claim, "agent_execution_context", key),
+        optional_input_string(&claim.run.input, key),
+        nested_memory_context_string(claim, "agent_team_execution", key),
+        nested_memory_context_string(claim, "team_executor_context", key),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let Some(value) = values.first() else {
+        return Ok(None);
+    };
+    if values.iter().any(|candidate| candidate != value) {
+        return Err(format!("Memory identity has conflicting {key} values"));
+    }
+    Ok(Some(value.clone()))
+}
+
+fn nested_memory_context_string(
+    claim: &LocalAgentRunClaim,
+    container: &str,
+    key: &str,
+) -> Option<String> {
+    claim
+        .run
+        .input
+        .get(container)
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn initial_user_record(
@@ -330,7 +346,17 @@ mod tests {
     use super::*;
     use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalAgentRunStatus};
 
-    fn claim(profile_key: &str, input: Value) -> LocalAgentRunClaim {
+    fn claim(profile_key: &str, mut input: Value) -> LocalAgentRunClaim {
+        let has_nested_agent = ["agent_execution_context", "agent_team_execution"]
+            .into_iter()
+            .any(|container| input.pointer(&format!("/{container}/agent_id")).is_some());
+        if !has_nested_agent {
+            input
+                .as_object_mut()
+                .expect("test Run input is an object")
+                .entry("agent_id")
+                .or_insert_with(|| json!(JIGULI_AGENT_ID));
+        }
         LocalAgentRunClaim {
             worker_id: "worker-1".to_string(),
             claim_token: "claim-1".to_string(),
@@ -384,16 +410,16 @@ mod tests {
         );
         let plan = memory_plan(&claim, "local_agent", "message").expect("plan");
 
-        assert_eq!(plan.thread_id, "client-agent:agent:main-chat");
+        assert_eq!(plan.thread_id, "client-agent:agent:jiguli");
         assert_eq!(plan.turn_id, "turn-1");
         assert_eq!(plan.scope.tenant_id, "user-1");
         assert_eq!(plan.scope.source_id, "local_agent");
-        assert_eq!(plan.scope.thread_id, "client-agent:agent:main-chat");
-        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:main-chat"));
+        assert_eq!(plan.scope.thread_id, "client-agent:agent:jiguli");
+        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:jiguli"));
         assert_eq!(plan.scope.related_subject_ids, vec!["project:project-1"]);
         let user = plan.user_record.expect("user record");
         assert_eq!(user.message_id.as_deref(), Some("message-1"));
-        assert_eq!(user.conversation_id, "client-agent:agent:main-chat");
+        assert_eq!(user.conversation_id, "client-agent:agent:jiguli");
         assert_eq!(
             plan.record_options.assistant_message_id.as_deref(),
             Some("run-1:assistant:1")
@@ -417,6 +443,44 @@ mod tests {
     }
 
     #[test]
+    fn memory_plan_rejects_runs_without_an_explicit_agent_identity() {
+        let mut claim = claim(MAIN_CHAT_PROFILE_KEY, json!({"message": "hello"}));
+        claim
+            .run
+            .input
+            .as_object_mut()
+            .expect("test Run input is an object")
+            .remove("agent_id");
+
+        match memory_plan(&claim, "local_agent", "message") {
+            Ok(_) => panic!("missing Agent identity must be rejected"),
+            Err(error) => assert_eq!(error, "Memory identity requires an explicit agent_id"),
+        }
+    }
+
+    #[test]
+    fn memory_plan_rejects_conflicting_explicit_identity() {
+        let claim = claim(
+            MAIN_CHAT_PROFILE_KEY,
+            json!({
+                "message": "hello",
+                "agent_id": "wrong-agent",
+                "project_id": "wrong-project",
+                "agent_execution_context": {
+                    "agent_id": "agent-1",
+                    "agent_name": "工程 Agent",
+                    "project_id": "project-1"
+                }
+            }),
+        );
+
+        match memory_plan(&claim, "local_agent", "message") {
+            Ok(_) => panic!("conflicting Agent identity must be rejected"),
+            Err(error) => assert_eq!(error, "Memory identity has conflicting agent_id values"),
+        }
+    }
+
+    #[test]
     fn team_todo_memory_uses_executor_agent_and_project_subjects_not_room() {
         let claim = claim(
             "task_execution",
@@ -424,6 +488,7 @@ mod tests {
                 "prompt": "implement the todo",
                 "agent_execution_context": {
                     "agent_id": "agent-1",
+                    "agent_name": "工程 Agent",
                     "project_id": "project-1",
                     "room_id": "room-1"
                 },
@@ -442,6 +507,7 @@ mod tests {
         assert_eq!(plan.scope.related_subject_ids, vec!["project:project-1"]);
         let metadata = plan.record_options.assistant_metadata.expect("metadata");
         assert_eq!(metadata["thread_kind"], "todo_execution");
+        assert_eq!(metadata["agent_name"], "工程 Agent");
         assert_eq!(metadata["project_id"], "project-1");
         assert_eq!(metadata["memory_project_id"], "project-1");
         assert_eq!(metadata["thread_project_aggregation_id"], "project-1");
@@ -509,7 +575,7 @@ mod tests {
 
         assert_eq!(plan.thread_id, "task-1");
         assert_eq!(plan.turn_id, "run-1");
-        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:main-chat"));
+        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:jiguli"));
         assert!(plan.user_record.is_none());
         assert_eq!(plan.external_tool_results.len(), 1);
         assert_eq!(plan.external_tool_results[0].tool_call_id, "call-1");

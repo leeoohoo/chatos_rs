@@ -3,8 +3,7 @@
 
 use super::blocks::{
     build_thread_summary_blocks_from_rows, build_thread_summary_level0_text, format_subject_memory,
-    subject_ids_for_context, subject_memory_subject_ids_for_context, thread_agent_subject_id,
-    thread_allows_dynamic_project_recall,
+    thread_agent_subject_id, thread_allows_dynamic_project_recall,
 };
 use super::policy::ResolvedComposeContextPolicy;
 use super::validate_requested_subjects;
@@ -130,28 +129,6 @@ fn thread_summary_blocks_keep_highest_level_before_recent_level0_summaries() {
 }
 
 #[test]
-fn collect_subject_ids_keeps_primary_and_deduplicates_related_items() {
-    let subject_ids = subject_ids_for_context(
-        "session:abc",
-        Some(&vec![
-            "contact:1".to_string(),
-            "contact:1".to_string(),
-            "project:9".to_string(),
-            "".to_string(),
-        ]),
-    );
-
-    assert_eq!(
-        subject_ids,
-        vec![
-            "session:abc".to_string(),
-            "contact:1".to_string(),
-            "project:9".to_string(),
-        ]
-    );
-}
-
-#[test]
 fn subject_memory_block_preserves_identity_fields() {
     let block = format_subject_memory(subject_memory(
         "agent:42",
@@ -169,10 +146,10 @@ fn subject_memory_block_preserves_identity_fields() {
 }
 
 #[test]
-fn thread_agent_subject_id_prefers_agent_scope_over_session_subject() {
+fn thread_agent_subject_id_accepts_only_matching_v2_subject_and_label() {
     let item = thread(
-        "session:abc",
-        Some(vec!["project:9", "agent:42"]),
+        "agent:42",
+        Some(vec!["memory-schema:v2", "project:9", "agent:42"]),
         Some(serde_json::json!({
             "legacy_session_mapping": {
                 "agent_id": "999"
@@ -184,41 +161,21 @@ fn thread_agent_subject_id_prefers_agent_scope_over_session_subject() {
 }
 
 #[test]
-fn thread_agent_subject_id_falls_back_to_legacy_mapping() {
-    let item = thread(
+fn thread_agent_subject_id_ignores_legacy_and_metadata_identity() {
+    let legacy = thread(
         "session:abc",
         None,
         Some(serde_json::json!({
             "legacy_session_mapping": {
                 "agent_id": "42"
-            }
+            },
+            "agent_id": "42"
         })),
     );
+    let mismatched_v2 = thread("agent:42", Some(vec!["memory-schema:v2", "agent:99"]), None);
 
-    assert_eq!(thread_agent_subject_id(&item).as_deref(), Some("agent:42"));
-}
-
-#[test]
-fn subject_memory_lookup_prefers_agent_scope_over_session_subject() {
-    let item = thread("session:abc", Some(vec!["agent:42"]), None);
-    let subject_ids = subject_memory_subject_ids_for_context(&item, Some("session:abc"), None);
-
-    assert_eq!(subject_ids, vec!["agent:42".to_string()]);
-}
-
-#[test]
-fn subject_memory_lookup_preserves_explicit_non_session_related_subjects() {
-    let item = thread("session:abc", Some(vec!["agent:42"]), None);
-    let subject_ids = subject_memory_subject_ids_for_context(
-        &item,
-        Some("contact:9"),
-        Some(&vec!["project:1".to_string(), "session:abc".to_string()]),
-    );
-
-    assert_eq!(subject_ids.first().map(String::as_str), Some("agent:42"));
-    assert!(subject_ids.iter().any(|item| item == "contact:9"));
-    assert!(subject_ids.iter().any(|item| item == "project:1"));
-    assert!(!subject_ids.iter().any(|item| item == "session:abc"));
+    assert_eq!(thread_agent_subject_id(&legacy), None);
+    assert_eq!(thread_agent_subject_id(&mismatched_v2), None);
 }
 
 #[test]

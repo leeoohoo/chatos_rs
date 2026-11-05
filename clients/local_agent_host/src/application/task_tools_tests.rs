@@ -31,6 +31,8 @@ async fn initialize_parent(runtime: Arc<LocalAgentRuntime>) -> Arc<LocalAgentRun
                 model_config_revision: "revision-1".to_string(),
                 capability_policy_revision: "policy-1".to_string(),
                 input: json!({
+                    "agent_id": "jiguli",
+                    "agent_name": "叽咕狸",
                     "conversation_id": "conversation-1",
                     "turn_id": "turn-1",
                     "message": "plan this",
@@ -230,7 +232,8 @@ async fn single_task_freezes_the_exact_source_user_message() {
         graph.tasks[0].input["source_user_message"],
         Value::String(exact_source)
     );
-    assert_eq!(graph.tasks[0].input["agent_id"], "main-chat");
+    assert_eq!(graph.tasks[0].input["agent_id"], "jiguli");
+    assert_eq!(graph.tasks[0].input["agent_name"], "叽咕狸");
     assert!(graph.tasks[0].input["project_id"].is_null());
 }
 
@@ -244,10 +247,12 @@ async fn single_task_inherits_the_real_agent_and_project_identity() {
         .expect("parent");
     parent.input["agent_execution_context"] = json!({
         "agent_id": "agent-1",
+        "agent_name": "工程 Agent",
         "project_id": "project-1",
         "room_id": "room-ignored"
     });
-    parent.input["agent_id"] = json!("wrong-fallback-agent");
+    parent.input.as_object_mut().unwrap().remove("agent_id");
+    parent.input.as_object_mut().unwrap().remove("agent_name");
     let mut call = invocation(json!({}));
     call.tool_name = CREATE_TASK_TOOL.into();
     let args: CreateTaskArgs = serde_json::from_value(json!({
@@ -272,9 +277,46 @@ async fn single_task_inherits_the_real_agent_and_project_identity() {
     let input = &command.tasks[0].input;
 
     assert_eq!(input["agent_id"], "agent-1");
+    assert_eq!(input["agent_name"], "工程 Agent");
     assert_eq!(input["project_id"], "project-1");
     assert!(input.get("room_id").is_none());
     assert!(input.get("team_id").is_none());
+}
+
+#[tokio::test]
+async fn task_creation_rejects_conflicting_explicit_agent_identity() {
+    let runtime = runtime_with_parent().await;
+    let mut parent = runtime
+        .get_run_for_host_worker("parent-run")
+        .await
+        .expect("load parent")
+        .expect("parent");
+    parent.input["agent_execution_context"] = json!({
+        "agent_id": "agent-1",
+        "agent_name": "工程 Agent"
+    });
+    let mut call = invocation(json!({}));
+    call.tool_name = CREATE_TASK_TOOL.into();
+    let args: CreateTaskArgs = serde_json::from_value(json!({
+        "title": "Inspect",
+        "objective": "Inspect configuration",
+        "context_summary": "Inspect only the supplied task context.",
+        "expected_outputs": ["Report"],
+        "acceptance_criteria": ["Source-backed"],
+        "requires_execution": false,
+        "enabled_builtin_kinds": ["CodeMaintainerRead"]
+    }))
+    .expect("task args");
+
+    let error = create_single_graph(
+        &call,
+        &parent,
+        args,
+        ("model-1".into(), "revision-1".into()),
+        8,
+    )
+    .expect_err("conflicting identity must fail");
+    assert_eq!(error, "Task source has conflicting agent_id values");
 }
 
 #[tokio::test]
@@ -602,7 +644,11 @@ async fn batch_tool_creates_an_idempotent_local_dag() {
     assert!(graph
         .tasks
         .iter()
-        .all(|task| task.input["agent_id"] == "main-chat"));
+        .all(|task| task.input["agent_id"] == "jiguli"));
+    assert!(graph
+        .tasks
+        .iter()
+        .all(|task| task.input["agent_name"] == "叽咕狸"));
     assert!(graph
         .tasks
         .iter()
@@ -741,6 +787,8 @@ async fn composer_selected_plugin_is_mandatory_and_complementary_plugins_are_add
                 model_config_revision: "revision-1".to_string(),
                 capability_policy_revision: "policy-1".to_string(),
                 input: json!({
+                    "agent_id": "jiguli",
+                    "agent_name": "叽咕狸",
                     "conversation_id": "conversation-1",
                     "turn_id": "turn-1",
                     "message": "帮我整理成正式文档",

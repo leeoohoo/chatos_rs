@@ -38,6 +38,27 @@ final class NativeLocalAgentProjectConversationServiceTests: XCTestCase {
         XCTAssertEqual(commandTypes, [])
     }
 
+    func testProjectConversationRejectsANonJiguliAgent() async throws {
+        let host = ProjectConversationHostStub()
+        let service = makeService(host: host)
+        await service.configure(ownerUserID: "owner-1")
+        let otherAgent = WorkspaceContact(
+            id: "agent-1", agentID: "agent-1", name: "其他 Agent", status: "active"
+        )
+
+        do {
+            _ = try await service.ensureConversation(
+                project: try project(id: "project-1"),
+                contact: otherAgent
+            )
+            XCTFail("A project conversation must stay bound to Jiguli")
+        } catch {
+            XCTAssertEqual(error as? ProjectRegistryError, .invalidField("contact.agentID"))
+        }
+        let commandTypes = await host.commandTypes()
+        XCTAssertEqual(commandTypes, [])
+    }
+
     func testCreatedConversationUsesAuthenticatedOwnerAndProjectBinding() async throws {
         let host = ProjectConversationHostStub()
         let service = makeService(host: host)

@@ -64,7 +64,7 @@ async fn add_project_conversation(
                 message_id: format!("message-{turn_id}"),
                 run_id: run_id.to_string(),
                 message: "Inspect the bound project".to_string(),
-                message_metadata: Value::Null,
+                message_metadata: json!({"agent_id": "jiguli", "agent_name": "叽咕狸"}),
                 attachments: Vec::new(),
                 model_config_ref: "model-1".to_string(),
                 model_config_revision: "revision-1".to_string(),

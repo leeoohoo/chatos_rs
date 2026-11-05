@@ -37,18 +37,25 @@ async fn accept_thread_upsert(
     state.thread_upserts.fetch_add(1, Ordering::SeqCst);
     assert_eq!(request["tenant_id"], "user-1");
     assert_eq!(request["source_id"], "chatos");
-    assert_eq!(request["subject_id"], "thread:conversation-1");
-    assert_eq!(request["labels"], Value::Null);
+    assert_eq!(request["subject_id"], "agent:agent-1");
+    assert_eq!(
+        request["labels"],
+        json!([
+            "memory-schema:v2",
+            "agent:agent-1",
+            "thread-kind:agent_conversation"
+        ])
+    );
     axum::Json(json!({
         "id": thread_id,
         "tenant_id": "user-1",
         "source_id": "chatos",
-        "subject_id": "thread:conversation-1",
+        "subject_id": "agent:agent-1",
         "thread_type": "conversation",
         "external_thread_id": "conversation-1",
         "title": null,
-        "labels": null,
-        "metadata": {"agent_id":null,"project_aggregation_id":null,"thread_kind":"conversation"},
+        "labels": ["memory-schema:v2", "agent:agent-1", "thread-kind:agent_conversation"],
+        "metadata": {"agent_id":"agent-1","agent_name":null,"project_aggregation_id":null,"thread_kind":"agent_conversation"},
         "status": "active",
         "summary_status": "idle",
         "summary_job_run_id": null,
@@ -200,13 +207,33 @@ async fn memory_record_writer_creates_each_thread_before_syncing_records() {
             .save_record(
                 SaveRecordInput::user_message("conversation-1", content)
                     .with_message_id(message_id)
-                    .with_metadata(json!({"tenant_id": "user-1"})),
+                    .with_metadata(json!({
+                        "tenant_id": "user-1",
+                        "agent_id": "agent-1",
+                        "thread_kind": "agent_conversation"
+                    })),
             )
             .await
             .expect("record sync");
     }
 
     assert_eq!(state.thread_upserts.load(Ordering::SeqCst), 1);
+    assert_eq!(state.record_syncs.load(Ordering::SeqCst), 2);
+    let identity_change = writer
+        .save_record(
+            SaveRecordInput::user_message("conversation-1", "wrong Agent")
+                .with_message_id("message-3")
+                .with_metadata(json!({
+                    "tenant_id": "user-1",
+                    "agent_id": "agent-2",
+                    "thread_kind": "agent_conversation"
+                })),
+        )
+        .await;
+    assert_eq!(
+        identity_change.expect_err("thread identity change must fail"),
+        "memory thread identity changed after it was established"
+    );
     assert_eq!(state.record_syncs.load(Ordering::SeqCst), 2);
     server.abort();
 }

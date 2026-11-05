@@ -730,7 +730,7 @@ mod tests {
                 "tenant_id": "user-1",
                 "run_id": "run-1",
                 "toolName": "read_file",
-                "agent_id": "main-chat",
+                "agent_id": "jiguli",
                 "project_id": null,
                 "memory_project_id": null,
                 "thread_project_aggregation_id": null,

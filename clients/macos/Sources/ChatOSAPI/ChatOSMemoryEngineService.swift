@@ -26,6 +26,9 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             "thread_kind": .string(scope.threadKind ?? "client_agent"),
             "run_id": .string(scope.runID.uuidString),
         ]
+        if let agentName = scope.agentName {
+            metadata["agent_name"] = .string(agentName)
+        }
         if let projectSubjectID = scope.projectSubjectID {
             metadata["project_id"] = .string(String(projectSubjectID.dropFirst("project:".count)))
         }

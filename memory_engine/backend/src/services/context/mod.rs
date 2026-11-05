@@ -11,8 +11,7 @@ use crate::models::{ComposeContextMeta, ComposeContextRequest, ComposeContextRes
 use crate::repositories::{records, threads};
 
 use self::blocks::{
-    build_context_blocks, subject_ids_for_context, subject_memory_subject_ids_for_context,
-    thread_allows_dynamic_project_recall, thread_identity_subject_ids,
+    build_context_blocks, thread_allows_dynamic_project_recall, thread_identity_subject_ids,
 };
 use self::policy::ResolvedComposeContextPolicy;
 
@@ -30,48 +29,37 @@ pub async fn compose_context(
     .ok_or_else(|| "thread not found".to_string())?;
 
     let policy = ResolvedComposeContextPolicy::from_request(req.policy.as_ref());
-    let summary_subject_ids = subject_ids_for_context(
-        req.subject_id
-            .as_deref()
-            .unwrap_or(thread.subject_id.as_str()),
-        req.related_subject_ids.as_ref(),
-    );
     let bound_identity_subject_ids = thread_identity_subject_ids(&thread);
-    let subject_memory_subject_ids = if bound_identity_subject_ids.is_empty() {
-        subject_memory_subject_ids_for_context(
-            &thread,
-            req.subject_id.as_deref(),
-            req.related_subject_ids.as_ref(),
-        )
-    } else {
-        let allow_dynamic_project = thread_allows_dynamic_project_recall(&thread);
-        validate_requested_subjects(
-            &bound_identity_subject_ids,
-            req.subject_id.as_deref(),
-            req.related_subject_ids.as_ref(),
-            allow_dynamic_project,
-        )?;
-        let mut subjects = bound_identity_subject_ids;
-        if allow_dynamic_project {
-            for subject in req.related_subject_ids.as_ref().into_iter().flatten() {
-                let subject = subject.trim();
-                if subject.starts_with("project:")
-                    && subject.len() > "project:".len()
-                    && !subjects.iter().any(|value| value == subject)
-                {
-                    subjects.push(subject.to_string());
-                }
+    if bound_identity_subject_ids.is_empty() {
+        return Err("thread is not bound to a canonical agent identity".to_string());
+    }
+    let allow_dynamic_project = thread_allows_dynamic_project_recall(&thread);
+    validate_requested_subjects(
+        &bound_identity_subject_ids,
+        req.subject_id.as_deref(),
+        req.related_subject_ids.as_ref(),
+        allow_dynamic_project,
+    )?;
+    let mut subject_memory_subject_ids = bound_identity_subject_ids;
+    if allow_dynamic_project {
+        for subject in req.related_subject_ids.as_ref().into_iter().flatten() {
+            let subject = subject.trim();
+            if subject.starts_with("project:")
+                && subject.len() > "project:".len()
+                && !subject_memory_subject_ids
+                    .iter()
+                    .any(|value| value == subject)
+            {
+                subject_memory_subject_ids.push(subject.to_string());
             }
         }
-        subjects
-    };
+    }
     let context_blocks = build_context_blocks(
         db,
         req.tenant_id.as_str(),
         req.source_id.as_str(),
         &thread,
         &policy,
-        summary_subject_ids.as_slice(),
         subject_memory_subject_ids.as_slice(),
     )
     .await?;

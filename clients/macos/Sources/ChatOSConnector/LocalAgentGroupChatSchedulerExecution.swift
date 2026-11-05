@@ -328,6 +328,7 @@ extension LocalAgentGroupChatScheduler {
                         tenantID: ownerUserID,
                         todoID: executionTodo.id,
                         agentID: profile.id,
+                        agentName: profile.draft.name,
                         projectID: projectID,
                         runID: runID,
                         runtimeScope: scope
@@ -336,6 +337,7 @@ extension LocalAgentGroupChatScheduler {
                     memoryScope = try AgentMemoryScope(
                         tenantID: ownerUserID,
                         agentID: profile.id,
+                        agentName: profile.draft.name,
                         projectID: projectID,
                         runID: runID,
                         runtimeScope: scope

@@ -20,6 +20,7 @@ pub async fn list_agents(
     Query(query): Query<AgentDirectoryQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
+    let source_id = normalized(query.source_id.as_deref());
     let agent_subject_id = match normalized(query.agent_id.as_deref()) {
         Some(value) => Some(
             normalize_agent_subject_id(value)
@@ -30,7 +31,7 @@ pub async fn list_agents(
     let items = agent_directory::list_agents(
         &state.pool,
         tenant_id.as_deref(),
-        normalized(query.source_id.as_deref()),
+        source_id,
         agent_subject_id.as_deref(),
         query.limit.unwrap_or(100),
         query.offset.unwrap_or(0),
@@ -87,8 +88,8 @@ mod tests {
     #[test]
     fn agent_subject_normalization_accepts_ids_and_preserves_subjects() {
         assert_eq!(
-            normalize_agent_subject_id("main-chat").as_deref(),
-            Some("agent:main-chat")
+            normalize_agent_subject_id("jiguli").as_deref(),
+            Some("agent:jiguli")
         );
         assert_eq!(
             normalize_agent_subject_id(" agent:approval ").as_deref(),
