@@ -92,7 +92,8 @@ pub(super) fn memory_plan(
         .with_assistant_metadata(assistant_metadata)
         .with_tool_message_mode(message_mode)
         .with_tool_message_source(claim.run.profile_key.clone())
-        .with_tool_metadata(metadata.clone());
+        .with_tool_metadata(metadata.clone())
+        .with_summary_on_final_response(terminal_memory_summary_requested(claim));
     let user_record = initial_user_record(
         claim,
         initial_text_field,
@@ -119,6 +120,52 @@ pub(super) fn memory_plan(
         user_record,
         external_tool_results: external_tool_results(claim)?,
     })
+}
+
+pub(super) fn terminal_memory_summary_requested(claim: &LocalAgentRunClaim) -> bool {
+    if claim.run.profile_key != TASK_EXECUTION_PROFILE_KEY {
+        return false;
+    }
+    if claim.run.owner_entity_type == "task" {
+        return task_outcome_reported(claim.run.continuation_input.as_ref());
+    }
+    successful_tool_result(
+        claim.run.continuation_input.as_ref(),
+        &["todo_complete", "todo_block"],
+    )
+}
+
+fn task_outcome_reported(continuation: Option<&Value>) -> bool {
+    successful_tool_result(continuation, &["task_run_process_report_outcome"])
+        && continuation
+            .and_then(|value| value.get("invocations"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|invocation| {
+                invocation.get("tool_name").and_then(Value::as_str)
+                    == Some("task_run_process_report_outcome")
+                    && invocation
+                        .get("result")
+                        .and_then(|result| result.get("reported"))
+                        .and_then(Value::as_bool)
+                        == Some(true)
+            })
+}
+
+fn successful_tool_result(continuation: Option<&Value>, tool_names: &[&str]) -> bool {
+    continuation
+        .and_then(|value| value.get("invocations"))
+        .and_then(Value::as_array)
+        .is_some_and(|invocations| {
+            invocations.iter().any(|invocation| {
+                invocation.get("status").and_then(Value::as_str) == Some("succeeded")
+                    && invocation
+                        .get("tool_name")
+                        .and_then(Value::as_str)
+                        .is_some_and(|name| tool_names.contains(&name))
+            })
+        })
 }
 
 fn memory_agent_id(claim: &LocalAgentRunClaim) -> Result<String, String> {
@@ -478,12 +525,7 @@ mod tests {
 
     #[test]
     fn memory_plan_rejects_runtime_profiles_as_agent_identities() {
-        for agent_id in [
-            "main-chat",
-            "main_chat",
-            "task-execution",
-            "task_execution",
-        ] {
+        for agent_id in ["main-chat", "main_chat", "task-execution", "task_execution"] {
             let claim = claim(
                 MAIN_CHAT_PROFILE_KEY,
                 json!({"message": "hello", "agent_id": agent_id}),

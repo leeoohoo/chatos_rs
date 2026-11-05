@@ -98,8 +98,6 @@ pub fn build_rollup_settings_from_policy(
     };
     Ok(RollupSettings {
         token_limit: required("token_limit", policy.token_limit)?.max(500),
-        target_summary_tokens: required("target_summary_tokens", policy.target_summary_tokens)?
-            .max(128),
         count_limit: required("count_limit", policy.count_limit)?.max(0),
         keep_level0_count: required("keep_level0_count", policy.keep_level0_count)?.max(0),
         max_level: required("max_level", policy.max_level)?.max(1),
@@ -135,16 +133,12 @@ pub fn managed_policy_scan_limit(
 pub fn apply_rollup_setting_overrides(
     settings: &mut RollupSettings,
     token_limit: Option<i64>,
-    target_summary_tokens: Option<i64>,
     count_limit: Option<i64>,
     keep_level0_count: Option<i64>,
     max_level: Option<i64>,
 ) {
     if let Some(value) = token_limit {
         settings.token_limit = value.max(500);
-    }
-    if let Some(value) = target_summary_tokens {
-        settings.target_summary_tokens = value.max(128);
     }
     if let Some(value) = count_limit {
         settings.count_limit = value.max(0);
@@ -179,7 +173,6 @@ pub fn policy_meta(policy: &EngineJobPolicy) -> serde_json::Value {
         "policy_job_type": policy.job_type,
         "policy_enabled": policy.enabled,
         "policy_token_limit": policy.token_limit,
-        "policy_target_summary_tokens": policy.target_summary_tokens,
         "policy_interval_seconds": policy.interval_seconds,
         "policy_max_threads_per_tick": policy.max_threads_per_tick,
         "policy_count_limit": policy.count_limit,
@@ -205,7 +198,6 @@ mod tests {
             rollup_summary_prompt_en: None,
             rollup_summary_prompt_language: "zh".to_string(),
             token_limit: None,
-            target_summary_tokens: None,
             interval_seconds: None,
             max_threads_per_tick: None,
             count_limit: None,
@@ -229,14 +221,12 @@ mod tests {
     fn rollup_settings_use_policy_values_without_runtime_defaults() {
         let mut policy = rollup_policy();
         policy.token_limit = Some(12_345);
-        policy.target_summary_tokens = Some(987);
         policy.count_limit = Some(6);
         policy.keep_level0_count = Some(3);
         policy.max_level = Some(7);
 
         let settings = build_rollup_settings_from_policy(&policy).unwrap();
         assert_eq!(settings.token_limit, 12_345);
-        assert_eq!(settings.target_summary_tokens, 987);
         assert_eq!(settings.count_limit, 6);
         assert_eq!(settings.keep_level0_count, 3);
         assert_eq!(settings.max_level, 7);

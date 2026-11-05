@@ -52,13 +52,15 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
             return .init(statusCode: response.statusCode, headers: response.headers, body: response.body)
         }
         let resolvedThinking = thinkingLevel ?? config.taskThinkingLevel
-        let maximumOutputTokens = (policy.context ?? .init()).outputReserveTokens
+        let context = policy.context ?? .init()
+        let maximumOutputTokens = context.outputReserveTokens
         let promptCacheKey = "story-agent:\(configID):\(resolvedThinking ?? "default")"
         let model: any AgentModelClient = try AgentResponsesModelClient(
             baseURL: url, model: config.model, apiKey: key,
             thinking: resolvedThinking,
             maximumOutputTokens: maximumOutputTokens,
             promptCacheKey: promptCacheKey,
+            compactionThreshold: context.windowTokens - context.outputReserveTokens,
             transport: send, streamTransport: stream
         )
         let workerTransportConfiguration: AgentWorkerModelTransportConfiguration? = if workerModelTransportEnabled {
@@ -69,7 +71,8 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
                 thinking: resolvedThinking,
                 maximumOutputTokens: maximumOutputTokens,
                 temperature: nil,
-                promptCacheKey: promptCacheKey
+                promptCacheKey: promptCacheKey,
+                compactionThreshold: context.windowTokens - context.outputReserveTokens
             ))
         } else {
             nil

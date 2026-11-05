@@ -112,7 +112,6 @@ pub(crate) async fn process_rollup_selection(
                 req.memory_type.as_str(),
                 summarizable.as_slice(),
                 settings.token_limit,
-                settings.target_summary_tokens,
                 level,
                 target_level,
                 job_run_id,

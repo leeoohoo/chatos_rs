@@ -408,7 +408,8 @@ async fn single_step_persists_the_runtime_supplied_assistant_message_id() {
     let options = AiRuntimeOptions::for_conversation("session-idempotent").with_record_options(
         RuntimeRecordOptions::default()
             .with_persist_assistant_records(true)
-            .with_assistant_message_id("cloud-run:1:assistant"),
+            .with_assistant_message_id("cloud-run:1:assistant")
+            .with_summary_on_final_response(true),
     );
 
     AiRuntime::new(None)
@@ -431,6 +432,7 @@ async fn single_step_persists_the_runtime_supplied_assistant_message_id() {
         "opaque-state"
     );
     assert_eq!(metadata["provider_usage"]["cached_tokens"], 8);
+    assert_eq!(metadata["memory_terminal_summary_requested"], true);
 }
 
 #[tokio::test]

@@ -186,12 +186,13 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
         .expect("summarize records"),
         1
     );
-    let rollup_event = crate::repositories::summaries::claim_pending_rollup_dispatches(&pool, 10)
-        .await
-        .expect("claim rollup event")
-        .into_iter()
-        .find(|event| event.id == summary.id)
-        .expect("pending rollup event");
+    let rollup_event =
+        crate::repositories::summaries::claim_pending_rollup_dispatches(&pool, 10_000)
+            .await
+            .expect("claim rollup event")
+            .into_iter()
+            .find(|event| event.id == summary.id)
+            .expect("pending rollup event");
     assert!(
         crate::repositories::summaries::mark_rollup_dispatch_consumed(&pool, &rollup_event)
             .await

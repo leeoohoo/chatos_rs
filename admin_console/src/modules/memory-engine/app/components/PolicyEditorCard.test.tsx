@@ -19,7 +19,6 @@ const basePolicy = {
   rollup_summary_prompt_en: null,
   rollup_summary_prompt_language: 'zh',
   token_limit: 6000,
-  target_summary_tokens: 700,
   interval_seconds: 60,
   max_threads_per_tick: 10,
   count_limit: null,
@@ -39,7 +38,7 @@ describe('PolicyEditorCard', () => {
 
     expect(screen.getByText('运行参数已由全局配置中心统一管理')).toBeTruthy();
     expect(screen.getByText('6000')).toBeTruthy();
-    expect(screen.getByText('700')).toBeTruthy();
+    expect(screen.queryByText('目标总结长度')).toBeNull();
     expect(screen.getByRole('link', { name: '打开配置中心' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: '保存' })).toBeNull();
     expect(screen.queryByRole('textbox')).toBeNull();

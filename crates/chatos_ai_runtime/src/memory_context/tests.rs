@@ -247,6 +247,57 @@ async fn memory_record_writer_creates_each_thread_before_syncing_records() {
     server.abort();
 }
 
+#[tokio::test]
+async fn composer_establishes_a_new_agent_thread_before_first_recall() {
+    use axum::{routing::put, Router};
+
+    let state = MemoryWriteServerState::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn({
+        let state = state.clone();
+        async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route(
+                        "/api/memory-engine/v1/threads/{thread_id}",
+                        put(accept_thread_upsert),
+                    )
+                    .with_state(state),
+            )
+            .await
+            .expect("server");
+        }
+    });
+    let composer = MemoryContextComposer::new_direct(
+        format!("http://{address}"),
+        Duration::from_secs(1),
+        "chatos",
+    )
+    .expect("composer");
+    let scope = MemoryScope::thread("user-1", "chatos", "conversation-1")
+        .with_subject_id("agent:agent-1")
+        .with_related_subject_ids(["project:project-1"]);
+    let record =
+        SaveRecordInput::user_message("conversation-1", "first message").with_metadata(json!({
+            "tenant_id": "user-1",
+            "agent_id": "agent-1",
+            "thread_kind": "agent_conversation",
+            "thread_project_aggregation_id": null,
+        }));
+
+    composer
+        .ensure_thread_for_record(&scope, &record)
+        .await
+        .expect("ensure first Agent thread");
+
+    assert_eq!(state.thread_upserts.load(Ordering::SeqCst), 1);
+    server.abort();
+}
+
 #[test]
 fn direct_composer_rejects_mismatched_scope_source_key() {
     let composer =

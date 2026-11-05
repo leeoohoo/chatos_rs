@@ -215,7 +215,6 @@ pub(crate) fn scope_job_request(scope: &EngineSubjectMemoryScope) -> RunSubjectM
         rollup_summary_prompt: None,
         prompt_title: scope.prompt_title.clone(),
         token_limit: None,
-        target_summary_tokens: None,
         count_limit: None,
         keep_level0_count: None,
         max_level: None,

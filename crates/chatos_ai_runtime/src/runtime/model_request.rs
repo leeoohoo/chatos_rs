@@ -128,7 +128,8 @@ pub(super) async fn dispatch_model_request(
                 output_format: request.output_format.clone(),
                 responses_compaction_threshold: request
                     .supports_responses
-                    .then_some(super::ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS),
+                    .then_some(request.responses_compaction_threshold)
+                    .flatten(),
             },
         )
         .await;

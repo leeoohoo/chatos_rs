@@ -42,7 +42,6 @@ pub async fn run_pending_rollups_once(
         PendingRollupOptions {
             max_threads: req.max_threads,
             token_limit: req.token_limit,
-            target_summary_tokens: req.target_summary_tokens,
             count_limit: req.count_limit,
             keep_level0_count: req.keep_level0_count,
             max_level: req.max_level,

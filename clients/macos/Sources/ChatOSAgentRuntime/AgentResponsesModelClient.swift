@@ -19,9 +19,8 @@ public actor AgentResponsesModelClient: AgentModelClient {
         AgentModelRequestBodyFile
     ) async throws -> AgentHTTPStreamResponse
 
-    public nonisolated let usesServerSideCompaction = true
+    public nonisolated var usesServerSideCompaction: Bool { compactionThreshold != nil }
 
-    private static let compactionThreshold = 200_000
     private let endpoint: URL
     private let model: String
     private let apiKey: String
@@ -29,6 +28,7 @@ public actor AgentResponsesModelClient: AgentModelClient {
     private let maximumOutputTokens: Int?
     private let temperature: Double?
     private let promptCacheKey: String
+    private nonisolated let compactionThreshold: Int?
     private let transport: Transport
     private let streamTransport: StreamTransport
     private let fileTransport: FileTransport
@@ -42,12 +42,14 @@ public actor AgentResponsesModelClient: AgentModelClient {
         baseURL: URL, model: String, apiKey: String, thinking: String? = nil,
         maximumOutputTokens: Int? = nil, temperature: Double? = nil,
         promptCacheKey: String? = nil,
+        compactionThreshold: Int? = nil,
         transport: Transport? = nil,
         streamTransport: StreamTransport? = nil
     ) throws {
         guard ["http", "https"].contains(baseURL.scheme?.lowercased() ?? ""),
               baseURL.host != nil, baseURL.user == nil, baseURL.password == nil,
-              !apiKey.isEmpty, !model.isEmpty else {
+              !apiKey.isEmpty, !model.isEmpty,
+              compactionThreshold.map({ (2_048...2_000_000).contains($0) }) ?? true else {
             throw AgentRuntimeError.invalidResponse
         }
         var endpoint = baseURL
@@ -66,6 +68,7 @@ public actor AgentResponsesModelClient: AgentModelClient {
         self.temperature = temperature
         self.promptCacheKey = promptCacheKey?.trimmingCharacters(in: .whitespacesAndNewlines)
             .nonEmpty ?? "chatos-native:\(model)"
+        self.compactionThreshold = compactionThreshold
         let resolvedTransport: Transport = transport ?? { request in
             let (data, response) = try await BoundedURLSessionDataLoader.load(
                 request: request,
@@ -187,11 +190,13 @@ public actor AgentResponsesModelClient: AgentModelClient {
             "stream": stream,
             "store": false,
             "prompt_cache_key": promptCacheKey,
-            "context_management": [[
-                "type": "compaction",
-                "compact_threshold": Self.compactionThreshold,
-            ]],
         ]
+        if let compactionThreshold {
+            payload["context_management"] = [[
+                "type": "compaction",
+                "compact_threshold": compactionThreshold,
+            ]]
+        }
         if !tools.isEmpty {
             payload["tools"] = try tools.map(Self.responseTool)
             payload["tool_choice"] = "auto"

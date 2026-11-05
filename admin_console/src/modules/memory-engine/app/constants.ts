@@ -43,7 +43,6 @@ export const PIPELINE_POLICY_META: Record<PolicyViewKey, PolicyMeta> = {
     promptPlaceholder:
       '为空时使用默认“消息总结”模板，重点保留已完成事项、当前进展、下一步计划，以及关键约束、风险、路径和用户要求。',
     tokenLimitLabel: '触发 Token 阈值',
-    targetSummaryTokensLabel: '目标总结长度',
     intervalSecondsLabel: '调度间隔（秒）',
     maxThreadsPerTickLabel: '每轮处理线程数',
     showKeepLevel0: false,
@@ -63,7 +62,6 @@ export const PIPELINE_POLICY_META: Record<PolicyViewKey, PolicyMeta> = {
     promptPlaceholder:
       '为空时使用默认“总结再总结”模板，重点沉淀项目整体全貌、常用技能、环境信息、目录结构、接口边界和长期有效经验。',
     tokenLimitLabel: '聚合 Token 阈值',
-    targetSummaryTokensLabel: '目标聚合长度',
     intervalSecondsLabel: '调度间隔（秒）',
     maxThreadsPerTickLabel: '每轮处理线程数',
     countLimitLabel: '聚合条数阈值',
@@ -86,7 +84,6 @@ export const PIPELINE_POLICY_META: Record<PolicyViewKey, PolicyMeta> = {
     promptPlaceholder:
       '为空时使用默认“总结生成记忆”模板，重点沉淀用户画像、协作习惯、长期偏好，以及智能体可复用的常识积累。',
     tokenLimitLabel: '记忆提炼 Token 阈值',
-    targetSummaryTokensLabel: '目标记忆长度',
     intervalSecondsLabel: '调度间隔（秒）',
     maxThreadsPerTickLabel: '每轮处理主题数',
     countLimitLabel: '记忆条数阈值',
@@ -111,7 +108,6 @@ export const PIPELINE_POLICY_META: Record<PolicyViewKey, PolicyMeta> = {
     promptPlaceholder:
       '为空时使用默认“记忆再总结”模板，重点归纳智能体在长期协作中逐渐形成的人格、性格、表达风格和判断方式。',
     tokenLimitLabel: '记忆归并 Token 阈值',
-    targetSummaryTokensLabel: '目标高层记忆长度',
     intervalSecondsLabel: '调度间隔（秒）',
     maxThreadsPerTickLabel: '每轮处理主题数',
     countLimitLabel: '记忆条数阈值',
@@ -137,8 +133,6 @@ export const PIPELINE_POLICY_META: Record<PolicyViewKey, PolicyMeta> = {
     promptPlaceholder:
       '为空时使用默认“修复总结”模板，重点以用户消息为准，指出错误或未验证内容，并保留下轮必须遵守的约束。',
     tokenLimitLabel: '单次分块 Token 上限',
-    targetSummaryTokensLabel: '目标修复总结长度',
-    showTargetSummaryTokens: false,
     intervalSecondsLabel: '状态刷新间隔（秒）',
     showMaxThreadsPerTick: false,
     showKeepLevel0: false,

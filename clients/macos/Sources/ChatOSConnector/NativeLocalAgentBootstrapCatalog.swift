@@ -194,7 +194,10 @@ extension NativeLocalConnectorService {
         return result
     }
 
-    func modelRevision(_ model: GatewayModelConfigDTO) -> String {
+    func modelRevision(
+        _ model: GatewayModelConfigDTO,
+        responsesCompactionThreshold: UInt64
+    ) -> String {
         let fields = [
             model.id,
             model.provider,
@@ -205,6 +208,7 @@ extension NativeLocalConnectorService {
             model.maxOutputTokens.map { String($0) } ?? "",
             String(model.supportsImages ?? false),
             String(model.supportsResponses ?? false),
+            String(responsesCompactionThreshold),
         ].joined(separator: "\u{0}")
         let digest = SHA256.hash(data: Data(fields.utf8))
             .map { String(format: "%02x", $0) }

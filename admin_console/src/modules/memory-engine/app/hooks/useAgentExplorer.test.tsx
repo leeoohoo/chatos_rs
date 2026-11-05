@@ -22,9 +22,9 @@ vi.mock('../../api', () => ({
 const agent = {
   tenant_id: 'tenant-1',
   source_id: 'chatos',
-  agent_subject_id: 'agent:main-chat',
-  agent_id: 'main-chat',
-  display_name: '主对话 Agent',
+  agent_subject_id: 'agent:jiguli',
+  agent_id: 'jiguli',
+  display_name: '叽咕狸',
   thread_count: 1,
   project_count: 1,
   memory_count: 1,
@@ -46,9 +46,9 @@ const thread = {
   id: 'thread-1',
   tenant_id: 'tenant-1',
   source_id: 'chatos',
-  subject_id: 'agent:main-chat',
+  subject_id: 'agent:jiguli',
   thread_type: 'client_agent',
-  labels: ['memory-schema:v2', 'agent:main-chat', 'project:project-1'],
+  labels: ['memory-schema:v2', 'agent:jiguli', 'project:project-1'],
   status: 'active',
   summary_status: 'idle',
   pending_record_count: 0,
@@ -61,7 +61,7 @@ const agentMemory = {
   id: 'memory-agent',
   tenant_id: 'tenant-1',
   source_id: 'chatos',
-  subject_id: 'agent:main-chat',
+  subject_id: 'agent:jiguli',
   memory_key: 'agent-memory-1',
   memory_type: 'agent_memory',
   text: 'Agent memory',
@@ -98,7 +98,7 @@ describe('useAgentExplorer', () => {
 
     await waitFor(() => {
       expect(result.current.agentDetailLoading).toBe(false);
-      expect(result.current.selectedAgent?.agent_id).toBe('main-chat');
+      expect(result.current.selectedAgent?.agent_id).toBe('jiguli');
       expect(result.current.projectMemories).toEqual([projectMemory]);
     });
 
@@ -109,7 +109,7 @@ describe('useAgentExplorer', () => {
       expect.objectContaining({
         tenant_id: 'tenant-1',
         source_id: 'chatos',
-        agent_id: 'main-chat',
+        agent_id: 'jiguli',
         status: '',
       }),
     );

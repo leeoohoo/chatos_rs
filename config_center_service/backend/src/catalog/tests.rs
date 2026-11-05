@@ -375,7 +375,6 @@ fn catalog_exposes_shared_memory_policies_for_server_and_client() {
         "memory_engine.policy.summary.count_limit",
         "memory_engine.policy.summary.keep_level0_count",
         "memory_engine.policy.summary.max_level",
-        "memory_engine.policy.thread_repair.target_summary_tokens",
         "memory_engine.policy.thread_repair.interval_seconds",
         "memory_engine.policy.thread_repair.max_threads_per_tick",
         "memory_engine.policy.thread_repair.count_limit",

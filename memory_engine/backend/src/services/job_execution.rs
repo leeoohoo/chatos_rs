@@ -12,7 +12,6 @@ use crate::state::AppState;
 pub struct PendingRollupOptions {
     pub max_threads: Option<i64>,
     pub token_limit: Option<i64>,
-    pub target_summary_tokens: Option<i64>,
     pub count_limit: Option<i64>,
     pub keep_level0_count: Option<i64>,
     pub max_level: Option<i64>,
@@ -61,7 +60,6 @@ pub async fn run_pending_rollups(
     control_plane::apply_rollup_setting_overrides(
         &mut settings,
         options.token_limit,
-        options.target_summary_tokens,
         options.count_limit,
         options.keep_level0_count,
         options.max_level,

@@ -348,6 +348,11 @@ fn decode_model_config(
             .transpose()
             .map_err(|_| "request_body_limit_bytes does not fit this platform".to_string())?,
         max_transient_retries: snapshot.max_transient_retries.map(|value| value as usize),
+        responses_compaction_threshold: snapshot
+            .responses_compaction_threshold
+            .map(usize::try_from)
+            .transpose()
+            .map_err(|_| "responses_compaction_threshold does not fit this platform".to_string())?,
         output_format: snapshot.output_format.map(decode_output_format),
     })
 }

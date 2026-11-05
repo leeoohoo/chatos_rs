@@ -83,7 +83,14 @@ async fn batch_sync_records_inner(
             "SELECT data FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=$4 FOR UPDATE"
         ).bind(&req.tenant_id).bind(&req.source_id).bind(thread_id).bind(&input.id)
           .fetch_optional(&mut *tx).await.map_err(|e|e.to_string())?.map(decode::<EngineRecord>).transpose()?;
-        let record = make_record(thread_id, &req.tenant_id, &req.source_id, input.clone());
+        let mut record = make_record(thread_id, &req.tenant_id, &req.source_id, input.clone());
+        if let Some(previous) = previous.as_ref() {
+            // A durable client may replay a committed batch after losing the HTTP response.
+            // Summary lifecycle belongs to Memory Engine and must never be reset by that replay.
+            record.summary_status = previous.summary_status.clone();
+            record.summary_id = previous.summary_id.clone();
+            record.summarized_at = previous.summarized_at.clone();
+        }
         if let Some((project_subject_id, project_name)) = record_project_identity(&record)? {
             let stored_name = project_identities.entry(project_subject_id).or_default();
             if project_name.is_some() {
@@ -147,7 +154,20 @@ async fn batch_sync_records_inner(
         )
         .await?;
     }
+    if req.records.iter().any(terminal_summary_requested) {
+        threads::request_forced_summary_dispatch(db, &req.tenant_id, &req.source_id, thread_id)
+            .await?;
+    }
     Ok(inserted)
+}
+
+fn terminal_summary_requested(input: &UpsertRecordInput) -> bool {
+    input
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("memory_terminal_summary_requested"))
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
 }
 
 fn record_project_identity(
@@ -188,8 +208,9 @@ fn record_project_identity(
 
 #[cfg(test)]
 mod project_identity_tests {
-    use super::record_project_identity;
+    use super::{record_project_identity, terminal_summary_requested};
     use crate::models::EngineRecord;
+    use crate::models::UpsertRecordInput;
 
     fn record(metadata: serde_json::Value) -> EngineRecord {
         EngineRecord {
@@ -230,6 +251,35 @@ mod project_identity_tests {
             "project_name": 42,
         })))
         .is_err());
+    }
+
+    #[test]
+    fn only_explicit_true_terminal_marker_requests_a_forced_summary() {
+        let input = |metadata| UpsertRecordInput {
+            id: "record-1".to_string(),
+            external_record_id: None,
+            role: "assistant".to_string(),
+            record_type: "message".to_string(),
+            content: "done".to_string(),
+            structured_payload: None,
+            metadata,
+            summary_status: None,
+            summary_id: None,
+            summarized_at: None,
+            created_at: "2026-11-05T00:00:00Z".to_string(),
+        };
+
+        assert!(terminal_summary_requested(&input(Some(
+            serde_json::json!({
+                "memory_terminal_summary_requested": true
+            })
+        ))));
+        assert!(!terminal_summary_requested(&input(Some(
+            serde_json::json!({
+                "memory_terminal_summary_requested": false
+            })
+        ))));
+        assert!(!terminal_summary_requested(&input(None)));
     }
 }
 

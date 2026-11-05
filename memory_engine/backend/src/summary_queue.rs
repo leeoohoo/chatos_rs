@@ -20,6 +20,7 @@ struct SummaryRequestedEnvelope {
     source_id: String,
     thread_id: String,
     version: i64,
+    force_version: i64,
     attempt: u32,
     requested_at: String,
 }
@@ -31,6 +32,7 @@ impl SummaryRequestedEnvelope {
             source_id: event.source_id.clone(),
             thread_id: event.thread_id.clone(),
             version: event.summary_dispatch_version,
+            force_version: event.summary_dispatch_force_version,
             attempt: 0,
             requested_at: now_rfc3339(),
         }
@@ -44,6 +46,7 @@ impl SummaryRequestedEnvelope {
             summary_dispatch_version: self.version,
             summary_dispatch_published_version: self.version,
             summary_dispatch_consumed_version: 0,
+            summary_dispatch_force_version: self.force_version,
         }
     }
 }
@@ -220,7 +223,7 @@ async fn process_summary_event(
         threads::defer_summary_dispatch_until_unlock(&state.pool, &event).await?;
         return Ok(());
     }
-    if thread.pending_summary_tokens < token_threshold {
+    if !event.forced() && thread.pending_summary_tokens < token_threshold {
         threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
         return Ok(());
     }
@@ -252,14 +255,8 @@ async fn process_summary_event(
         .await?;
     }
     threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
-    let _ = threads::rearm_summary_dispatch_if_eligible(
-        &state.pool,
-        envelope.tenant_id.as_str(),
-        envelope.source_id.as_str(),
-        envelope.thread_id.as_str(),
-        token_threshold,
-    )
-    .await?;
+    let _ = threads::rearm_summary_dispatch_after_processing(&state.pool, &event, token_threshold)
+        .await?;
     Ok(())
 }
 

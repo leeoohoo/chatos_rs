@@ -113,7 +113,7 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         )
         XCTAssertEqual(
             ((body["context_management"] as? [[String: Any]])?.first?["compact_threshold"] as? Int),
-            200_000
+            170_000
         )
         XCTAssertNotNil(body["input"])
         XCTAssertNil(body["messages"])

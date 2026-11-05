@@ -55,11 +55,6 @@ export function PolicyFields({ policy, meta }: PolicyFieldsProps) {
         <Descriptions.Item label={meta.tokenLimitLabel}>
           {value(policy.token_limit)}
         </Descriptions.Item>
-        {meta.showTargetSummaryTokens === false ? null : (
-          <Descriptions.Item label={meta.targetSummaryTokensLabel}>
-            {value(policy.target_summary_tokens)}
-          </Descriptions.Item>
-        )}
         <Descriptions.Item label={meta.intervalSecondsLabel}>
           {value(policy.interval_seconds, ' 秒')}
         </Descriptions.Item>

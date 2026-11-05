@@ -42,7 +42,7 @@ pub(crate) async fn load_repair_summary_preparation(
     )
     .await?;
     info!(
-        "[MEMORY-ENGINE-REPAIR] start tenant_id={} source_id={} thread_id={} pending_before_count={} scanned_pending_records={} token_limit={} target_summary_tokens=disabled",
+        "[MEMORY-ENGINE-REPAIR] start tenant_id={} source_id={} thread_id={} pending_before_count={} scanned_pending_records={} token_limit={}",
         tenant_id,
         source_id,
         thread_id,

@@ -70,11 +70,13 @@ fn normalize_agent_subject_id(value: &str) -> Option<String> {
     if value.is_empty() || value.chars().any(char::is_control) {
         return None;
     }
-    Some(if value.starts_with("agent:") {
+    let subject_id = if value.starts_with("agent:") {
         value.to_string()
     } else {
         format!("agent:{value}")
-    })
+    };
+    crate::repositories::subject_memory_scopes::is_canonical_agent_subject_id(&subject_id)
+        .then_some(subject_id)
 }
 
 fn normalized(value: Option<&str>) -> Option<&str> {
@@ -95,6 +97,16 @@ mod tests {
             normalize_agent_subject_id(" agent:approval ").as_deref(),
             Some("agent:approval")
         );
+        for runtime_profile in [
+            "main-chat",
+            "main_chat",
+            "task-execution",
+            "task_execution",
+            "agent:main-chat",
+            "agent:task_execution",
+        ] {
+            assert_eq!(normalize_agent_subject_id(runtime_profile), None);
+        }
         assert_eq!(normalize_agent_subject_id("  "), None);
     }
 }

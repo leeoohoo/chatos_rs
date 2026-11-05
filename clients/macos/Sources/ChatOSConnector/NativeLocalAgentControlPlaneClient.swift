@@ -18,6 +18,7 @@ public struct LocalAgentModelConfigSnapshot: Codable, Sendable, Equatable {
     public let includePromptCacheRetention: Bool
     public let requestBodyLimitBytes: UInt64?
     public let maxTransientRetries: UInt32?
+    public let responsesCompactionThreshold: UInt64?
     public let outputFormat: LocalAgentJSONSchemaOutputFormat?
 
     public init(
@@ -37,6 +38,7 @@ public struct LocalAgentModelConfigSnapshot: Codable, Sendable, Equatable {
         includePromptCacheRetention: Bool = false,
         requestBodyLimitBytes: UInt64? = nil,
         maxTransientRetries: UInt32? = nil,
+        responsesCompactionThreshold: UInt64? = nil,
         outputFormat: LocalAgentJSONSchemaOutputFormat? = nil
     ) {
         self.ownerUserID = ownerUserID
@@ -55,6 +57,7 @@ public struct LocalAgentModelConfigSnapshot: Codable, Sendable, Equatable {
         self.includePromptCacheRetention = includePromptCacheRetention
         self.requestBodyLimitBytes = requestBodyLimitBytes
         self.maxTransientRetries = maxTransientRetries
+        self.responsesCompactionThreshold = responsesCompactionThreshold
         self.outputFormat = outputFormat
     }
 
@@ -72,6 +75,7 @@ public struct LocalAgentModelConfigSnapshot: Codable, Sendable, Equatable {
         case includePromptCacheRetention = "include_prompt_cache_retention"
         case requestBodyLimitBytes = "request_body_limit_bytes"
         case maxTransientRetries = "max_transient_retries"
+        case responsesCompactionThreshold = "responses_compaction_threshold"
         case outputFormat = "output_format"
     }
 }

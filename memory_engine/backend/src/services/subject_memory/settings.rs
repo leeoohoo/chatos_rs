@@ -53,12 +53,6 @@ fn build_settings(
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| format!("Subject memory {}", req.subject_id)),
         token_limit: configured("token_limit", req.token_limit, policy.token_limit)?.max(500),
-        target_summary_tokens: configured(
-            "target_summary_tokens",
-            req.target_summary_tokens,
-            policy.target_summary_tokens,
-        )?
-        .max(128),
         count_limit: configured("count_limit", req.count_limit, policy.count_limit)?.max(0),
         keep_level0_count: configured(
             "keep_level0_count",

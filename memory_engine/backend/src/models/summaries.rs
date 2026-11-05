@@ -73,7 +73,6 @@ pub struct RunPendingRollupsRequest {
     pub summary_prompt: Option<String>,
     pub max_threads: Option<i64>,
     pub token_limit: Option<i64>,
-    pub target_summary_tokens: Option<i64>,
     pub count_limit: Option<i64>,
     pub keep_level0_count: Option<i64>,
     pub max_level: Option<i64>,

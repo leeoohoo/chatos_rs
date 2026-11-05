@@ -293,19 +293,6 @@ fn memory_policy_definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
                 &mut definitions,
                 kind,
                 &defaults,
-                "target_summary_tokens",
-                "目标输出 Tokens",
-                "模型生成总结或记忆时的目标输出 Token 数",
-                category.as_str(),
-                128,
-                1_000_000,
-                order + 2,
-                now,
-            );
-            push_optional_integer_definition(
-                &mut definitions,
-                kind,
-                &defaults,
                 "interval_seconds",
                 "调度间隔（秒）",
                 "自动扫描待处理任务的间隔；Outbox 补偿间隔由 Queue 分类单独控制",
@@ -394,7 +381,6 @@ fn push_optional_integer_definition(
 ) {
     let default_value = match field {
         "token_limit" => defaults.token_limit,
-        "target_summary_tokens" => defaults.target_summary_tokens,
         "interval_seconds" => defaults.interval_seconds,
         "max_threads_per_tick" => defaults.max_threads_per_tick,
         "count_limit" => defaults.count_limit,

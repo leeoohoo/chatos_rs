@@ -6,9 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use memory_engine_sdk::{
-    MemoryEngineClient, SdkBatchSyncRecordsRequest, SdkUpsertThreadRequest, UpsertRecordInput,
-};
+use memory_engine_sdk::{MemoryEngineClient, SdkBatchSyncRecordsRequest, UpsertRecordInput};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -18,6 +16,7 @@ use crate::traits::{MemoryRecordWriter, SaveRecordInput, SaveToolRecordInput};
 
 use super::log_summary::summarize_record_batch;
 use super::normalized;
+use super::upsert_canonical_memory_thread;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRecordScope {
@@ -319,38 +318,16 @@ impl MemoryEngineRecordWriter {
                 return Ok(());
             }
         }
-        let agent_subject = format!("agent:{agent_id}");
-        let mut labels = vec![
-            "memory-schema:v2".to_string(),
-            agent_subject.clone(),
-            format!("thread-kind:{}", identity.thread_kind),
-        ];
-        if let Some(project_id) = identity.project_aggregation_id.as_deref() {
-            labels.push(format!("project:{project_id}"));
-        }
-        self.client
-            .upsert_thread(
-                thread_id,
-                &SdkUpsertThreadRequest {
-                    tenant_id: tenant_id.to_string(),
-                    subject_id: agent_subject,
-                    thread_type: "conversation".to_string(),
-                    external_thread_id: Some(thread_id.to_string()),
-                    title: None,
-                    labels: Some(labels),
-                    metadata: Some(serde_json::json!({
-                        "agent_id": identity.agent_id,
-                        "agent_name": identity.agent_name,
-                        "project_aggregation_id": identity.project_aggregation_id,
-                        "thread_kind": identity.thread_kind,
-                    })),
-                    status: Some("active".to_string()),
-                    created_at: None,
-                    updated_at: None,
-                    archived_at: None,
-                },
-            )
-            .await?;
+        upsert_canonical_memory_thread(
+            &self.client,
+            tenant_id,
+            thread_id,
+            agent_id,
+            identity.agent_name.as_deref(),
+            identity.project_aggregation_id.as_deref(),
+            identity.thread_kind.as_str(),
+        )
+        .await?;
         self.ensured_threads
             .lock()
             .await

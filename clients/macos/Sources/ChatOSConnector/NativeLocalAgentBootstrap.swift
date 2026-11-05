@@ -169,6 +169,14 @@ extension NativeLocalConnectorService {
             throw NativeLocalAgentBootstrapError.executionAgentUnavailable
         }
         let taskMaxIterations = UInt32(configuredTaskMaxIterations)
+        guard let managedAgentRuntime = managedRuntime.nativeAgentRuntimeSettings,
+              managedAgentRuntime.contextWindowTokens > managedAgentRuntime.outputReserveTokens,
+              let responsesCompactionThreshold = UInt64(exactly:
+                managedAgentRuntime.contextWindowTokens - managedAgentRuntime.outputReserveTokens
+              ),
+              (2_048...2_000_000).contains(responsesCompactionThreshold) else {
+            throw NativeLocalAgentBootstrapError.executionAgentUnavailable
+        }
         // Main Chat may use every enabled model with a valid credential. `taskEnabled`
         // only controls whether create_task may bind that model to a background Task.
         let configs = catalog.required.filter {
@@ -250,7 +258,10 @@ extension NativeLocalConnectorService {
             let snapshot = LocalAgentModelConfigSnapshot(
                 ownerUserID: ownerUserID,
                 modelConfigRef: resolved.id,
-                modelConfigRevision: modelRevision(resolved),
+                modelConfigRevision: modelRevision(
+                    resolved,
+                    responsesCompactionThreshold: responsesCompactionThreshold
+                ),
                 credentialRef: "env:\(variable)",
                 baseURL: baseURL,
                 model: resolved.model,
@@ -262,7 +273,8 @@ extension NativeLocalConnectorService {
                 thinkingLevel: resolved.taskThinkingLevel,
                 maxTransientRetries: settings?.modelRequestMaxRetries.flatMap {
                     UInt32(exactly: min(20, max(0, $0)))
-                }
+                },
+                responsesCompactionThreshold: responsesCompactionThreshold
             )
             snapshots.append(snapshot)
             let supportsReasoning = ModelReasoningCapabilities.forModel(resolved.model) != nil

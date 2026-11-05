@@ -14,4 +14,4 @@ pub use chunking::estimate_tokens_text;
 pub use overflow::is_context_overflow_error;
 pub use types::{SummaryBuildResult, MIN_TOKEN_LIMIT};
 
-pub(crate) use types::{MAX_MERGE_ROUNDS, MAX_OVERFLOW_RETRIES, MIN_MERGE_TARGET_TOKENS};
+pub(crate) use types::{MAX_MERGE_ROUNDS, MAX_OVERFLOW_RETRIES};

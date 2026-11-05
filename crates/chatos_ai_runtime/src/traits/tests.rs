@@ -105,10 +105,12 @@ fn runtime_record_options_builders_configure_persistence() {
         .with_assistant_metadata(json!({"kind": "assistant"}))
         .with_tool_message_mode("task_tool")
         .with_tool_message_source("task_execution")
-        .with_tool_metadata(json!({"kind": "tool"}));
+        .with_tool_metadata(json!({"kind": "tool"}))
+        .with_summary_on_final_response(true);
 
     assert!(options.persist_assistant_records);
     assert!(options.persist_tool_records);
+    assert!(options.request_summary_on_final_response);
     assert_eq!(
         options.assistant_message_id.as_deref(),
         Some("cloud-run:1:assistant")

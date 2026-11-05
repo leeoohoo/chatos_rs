@@ -7,7 +7,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use memory_engine_sdk::{
     ComposeContextMeta, ComposeContextPolicy, ComposeContextResponse, MemoryEngineClient,
-    RunThreadActiveSummaryResponse, SdkComposeContextRequest,
+    RunThreadActiveSummaryResponse, SdkComposeContextRequest, SdkUpsertThreadRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,6 +15,7 @@ use tokio::time::{sleep, Instant};
 use tracing::warn;
 
 use crate::tool_runtime::ToolResultModelBudgetLimits;
+use crate::traits::SaveRecordInput;
 
 pub(crate) const MEMORY_CONTEXT_ITEM_PREFIX: &str = "[memory_engine_context]";
 
@@ -186,6 +187,45 @@ impl MemoryContextComposer {
         }
     }
 
+    /// Establishes the canonical Memory Thread before the first compose call. The current user
+    /// message remains part of the live model input and is persisted through the durable outbox;
+    /// this call only creates the identity boundary needed to recall an otherwise-new Thread.
+    pub async fn ensure_thread_for_record(
+        &self,
+        scope: &MemoryScope,
+        record: &SaveRecordInput,
+    ) -> Result<(), String> {
+        self.validate_scope_source(scope)?;
+        if record.conversation_id.trim() != scope.thread_id {
+            return Err("Memory record thread does not match compose scope".to_string());
+        }
+        let subject_id = scope
+            .subject_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| value.starts_with("agent:") && value.len() > "agent:".len())
+            .ok_or_else(|| "Memory compose scope requires a canonical agent subject".to_string())?;
+        let agent_id = subject_id.trim_start_matches("agent:");
+        let metadata = record.metadata.as_ref();
+        let record_agent_id = metadata_string(metadata, "agent_id")
+            .ok_or_else(|| "Memory record requires metadata.agent_id".to_string())?;
+        if record_agent_id != agent_id {
+            return Err("Memory record agent does not match compose scope".to_string());
+        }
+        let thread_kind = metadata_string(metadata, "thread_kind")
+            .ok_or_else(|| "Memory record requires metadata.thread_kind".to_string())?;
+        upsert_canonical_memory_thread(
+            &self.client,
+            scope.tenant_id.as_str(),
+            scope.thread_id.as_str(),
+            agent_id,
+            metadata_string(metadata, "agent_name").as_deref(),
+            metadata_string(metadata, "thread_project_aggregation_id").as_deref(),
+            thread_kind.as_str(),
+        )
+        .await
+    }
+
     pub async fn compose_input_items(&self, scope: &MemoryScope) -> Result<Vec<Value>, String> {
         self.compose_input_items_with_budget(scope, None).await
     }
@@ -302,6 +342,59 @@ impl MemoryContextComposer {
             ))
         }
     }
+}
+
+pub(crate) async fn upsert_canonical_memory_thread(
+    client: &MemoryEngineClient,
+    tenant_id: &str,
+    thread_id: &str,
+    agent_id: &str,
+    agent_name: Option<&str>,
+    project_aggregation_id: Option<&str>,
+    thread_kind: &str,
+) -> Result<(), String> {
+    let agent_subject = format!("agent:{agent_id}");
+    let mut labels = vec![
+        "memory-schema:v2".to_string(),
+        agent_subject.clone(),
+        format!("thread-kind:{thread_kind}"),
+    ];
+    if let Some(project_id) = project_aggregation_id {
+        labels.push(format!("project:{project_id}"));
+    }
+    client
+        .upsert_thread(
+            thread_id,
+            &SdkUpsertThreadRequest {
+                tenant_id: tenant_id.to_string(),
+                subject_id: agent_subject,
+                thread_type: "conversation".to_string(),
+                external_thread_id: Some(thread_id.to_string()),
+                title: None,
+                labels: Some(labels),
+                metadata: Some(serde_json::json!({
+                    "agent_id": agent_id,
+                    "agent_name": agent_name,
+                    "project_aggregation_id": project_aggregation_id,
+                    "thread_kind": thread_kind,
+                })),
+                status: Some("active".to_string()),
+                created_at: None,
+                updated_at: None,
+                archived_at: None,
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+fn metadata_string(metadata: Option<&Value>, key: &str) -> Option<String> {
+    metadata
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn empty_context(scope: &MemoryScope) -> ComposeContextResponse {

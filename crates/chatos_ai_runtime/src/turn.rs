@@ -88,6 +88,13 @@ impl ContextualTurnRunner {
             current_input_items,
             mut user_record,
         } = request;
+        if let (Some(composer), Some(scope), Some(record)) = (
+            self.memory_composer.as_ref(),
+            memory_scope.as_ref(),
+            user_record.as_ref(),
+        ) {
+            composer.ensure_thread_for_record(scope, record).await?;
+        }
         let contextual_input = build_contextual_input(
             self.memory_composer.as_ref(),
             memory_scope.as_ref(),
@@ -122,6 +129,13 @@ impl ContextualTurnRunner {
             current_input_items,
             user_record,
         } = request;
+        if let (Some(composer), Some(scope), Some(record)) = (
+            self.memory_composer.as_ref(),
+            memory_scope.as_ref(),
+            user_record.as_ref(),
+        ) {
+            composer.ensure_thread_for_record(scope, record).await?;
+        }
         let contextual_input = build_contextual_input(
             self.memory_composer.as_ref(),
             memory_scope.as_ref(),

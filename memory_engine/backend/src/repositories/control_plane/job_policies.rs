@@ -114,9 +114,6 @@ pub async fn upsert_job_policy(
     if let Some(value) = req.token_limit {
         current.token_limit = value.map(|v| v.max(128));
     }
-    if let Some(value) = req.target_summary_tokens {
-        current.target_summary_tokens = value.map(|v| v.max(128));
-    }
     if let Some(value) = req.interval_seconds {
         current.interval_seconds = value.map(|v| v.max(3));
     }

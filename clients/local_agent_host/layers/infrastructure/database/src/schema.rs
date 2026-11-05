@@ -792,3 +792,11 @@ pub(super) const SCHEMA_V44: &[&str] = &[
     "ALTER TABLE local_task_followup_reviews ADD COLUMN decision_action TEXT \
        CHECK(decision_action IS NULL OR decision_action IN ('continue','cancel','clarify','replace'))",
 ];
+
+/// Carries the managed Responses compaction threshold with the immutable model
+/// snapshot so every resumed Run uses the same request policy.
+pub(super) const SCHEMA_V45: &[&str] = &[
+    "ALTER TABLE local_model_config_snapshots ADD COLUMN responses_compaction_threshold INTEGER \
+       CHECK(responses_compaction_threshold IS NULL OR \
+         responses_compaction_threshold BETWEEN 2048 AND 2000000)",
+];

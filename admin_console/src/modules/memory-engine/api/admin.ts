@@ -51,7 +51,6 @@ function normalizeJobPolicy(data: Partial<EngineJobPolicy>): EngineJobPolicy {
     rollup_summary_prompt_en: data.rollup_summary_prompt_en ?? null,
     rollup_summary_prompt_language: data.rollup_summary_prompt_language ?? 'zh',
     token_limit: data.token_limit ?? null,
-    target_summary_tokens: data.target_summary_tokens ?? null,
     interval_seconds: data.interval_seconds ?? null,
     max_threads_per_tick: data.max_threads_per_tick ?? null,
     count_limit: data.count_limit ?? null,
