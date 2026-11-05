@@ -3,6 +3,34 @@ import XCTest
 @testable import ChatOSAgentRuntime
 
 final class AgentMemoryContextTests: XCTestCase {
+    func testRuntimeProfilesCannotBecomeAgentIdentities() throws {
+        for agentID in ["main-chat", "main_chat", "task-execution", "task_execution"] {
+            XCTAssertThrowsError(try AgentMemoryScope(
+                tenantID: "user-a",
+                agentID: agentID,
+                projectID: "project-1",
+                runID: UUID(),
+                runtimeScope: "main-chat"
+            )) { error in
+                guard case AgentRuntimeError.scopeMismatch = error else {
+                    return XCTFail("Expected scopeMismatch, got \(error)")
+                }
+            }
+            XCTAssertThrowsError(try AgentMemoryScope(
+                tenantID: "user-a",
+                todoID: "todo-a",
+                agentID: agentID,
+                projectID: "project-1",
+                runID: UUID(),
+                runtimeScope: "task-execution"
+            )) { error in
+                guard case AgentRuntimeError.scopeMismatch = error else {
+                    return XCTFail("Expected scopeMismatch, got \(error)")
+                }
+            }
+        }
+    }
+
     func testLocalAgentMemoryIsStableAcrossProjectsAndPrivateToAgent() throws {
         let runID = UUID()
         let first = try AgentMemoryScope(

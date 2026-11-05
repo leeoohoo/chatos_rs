@@ -3,7 +3,7 @@
 
 use crate::db::Db;
 use crate::models::{ComposeContextBlock, EngineSubjectMemory, EngineSummary, EngineThread};
-use crate::repositories::{subject_memories, summaries};
+use crate::repositories::{subject_memories, subject_memory_scopes, summaries};
 
 use super::policy::ResolvedComposeContextPolicy;
 
@@ -59,8 +59,7 @@ pub(crate) fn thread_agent_subject_id(thread: &EngineThread) -> Option<String> {
         .any(|label| label.trim() == "memory-schema:v2");
     let has_matching_agent_label = labels.iter().any(|label| label.trim() == subject_id);
     (is_v2
-        && subject_id.starts_with("agent:")
-        && subject_id.len() > "agent:".len()
+        && subject_memory_scopes::is_canonical_agent_subject_id(subject_id)
         && has_matching_agent_label)
         .then(|| subject_id.to_string())
 }

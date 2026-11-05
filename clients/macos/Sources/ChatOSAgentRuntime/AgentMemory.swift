@@ -17,6 +17,10 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     /// typed Agent Memory and, when project-bound, typed Project Summary recall.
     public let includeSubjectMemory: Bool?
 
+    private static func isCanonicalAgentID(_ value: String) -> Bool {
+        !["main-chat", "main_chat", "task-execution", "task_execution"].contains(value)
+    }
+
     public init(tenantID: String, profile: String, projectID: UUID, runID: UUID, runtimeScope: String) throws {
         try self.init(
             tenantID: tenantID, profile: profile, projectID: projectID.uuidString,
@@ -63,7 +67,7 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
             !value.isEmpty
                 && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
                 && value.rangeOfCharacter(from: .controlCharacters) == nil
-        }), agentName.map({ name in
+        }), Self.isCanonicalAgentID(agentID), agentName.map({ name in
             !name.isEmpty
                 && name == name.trimmingCharacters(in: .whitespacesAndNewlines)
                 && name.rangeOfCharacter(from: .controlCharacters) == nil
@@ -97,7 +101,7 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
             !value.isEmpty
                 && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
                 && value.rangeOfCharacter(from: .controlCharacters) == nil
-        }), agentName.map({ name in
+        }), Self.isCanonicalAgentID(agentID), agentName.map({ name in
             !name.isEmpty
                 && name == name.trimmingCharacters(in: .whitespacesAndNewlines)
                 && name.rangeOfCharacter(from: .controlCharacters) == nil

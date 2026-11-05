@@ -58,6 +58,7 @@ pub async fn list_agents(
             WHERE ($1::text IS NULL OR thread.tenant_id=$1) \
               AND ($2::text IS NULL OR thread.source_id=$2) \
               AND thread.subject_id LIKE 'agent:%' \
+              AND thread.subject_id NOT IN ('agent:main-chat','agent:main_chat','agent:task-execution','agent:task_execution') \
               AND thread.data->'labels' ? 'memory-schema:v2' \
               AND thread.data->'labels' ? thread.subject_id \
          ), project_identities AS ( \
@@ -170,6 +171,7 @@ pub async fn list_agent_projects(
              ) labels ON TRUE \
             WHERE thread.tenant_id=$1 AND thread.source_id=$2 \
               AND thread.subject_id LIKE 'agent:%' \
+              AND thread.subject_id NOT IN ('agent:main-chat','agent:main_chat','agent:task-execution','agent:task_execution') \
               AND thread.data->'labels' ? 'memory-schema:v2' \
               AND thread.data->'labels' ? thread.subject_id \
          ), matching_threads AS ( \

@@ -26,6 +26,19 @@ pub struct SubjectMemoryScopeDispatchOutbox {
 
 const MEMORY_SCHEMA_V2_LABEL: &str = "memory-schema:v2";
 
+pub(crate) fn is_canonical_agent_subject_id(value: &str) -> bool {
+    let value = value.trim();
+    let Some(agent_id) = value.strip_prefix("agent:") else {
+        return false;
+    };
+    !agent_id.is_empty()
+        && !agent_id.chars().any(char::is_control)
+        && !matches!(
+            agent_id,
+            "main-chat" | "main_chat" | "task-execution" | "task_execution"
+        )
+}
+
 pub async fn ensure_thread_identity_scopes(db: &Db, thread: &EngineThread) -> Result<(), String> {
     for (scope_key, request) in thread_identity_scope_requests(thread)? {
         if get_subject_memory_scope(db, &request.tenant_id, &request.source_id, &scope_key)
@@ -100,6 +113,9 @@ pub(crate) fn thread_identity_scope_requests(
         return Err("memory-schema:v2 thread requires exactly one agent:<agent_id> label".into());
     }
     let agent_subject = agents[0].clone();
+    if !is_canonical_agent_subject_id(agent_subject.as_str()) {
+        return Err("memory-schema:v2 agent identity must not use a runtime profile key".into());
+    }
     if thread.subject_id.trim() != agent_subject {
         return Err("memory-schema:v2 thread subject_id must equal its agent label".into());
     }
@@ -647,7 +663,7 @@ fn normalized(value: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod identity_tests {
-    use super::thread_identity_scope_requests;
+    use super::{is_canonical_agent_subject_id, thread_identity_scope_requests};
     use crate::models::EngineThread;
 
     fn thread(subject_id: &str, labels: Vec<&str>) -> EngineThread {
@@ -704,5 +720,24 @@ mod identity_tests {
             vec!["memory-schema:v2", "agent:a-1"],
         ))
         .is_err());
+    }
+
+    #[test]
+    fn runtime_profile_keys_are_not_agent_identities() {
+        for subject in [
+            "agent:main-chat",
+            "agent:main_chat",
+            "agent:task-execution",
+            "agent:task_execution",
+        ] {
+            assert!(!is_canonical_agent_subject_id(subject));
+            assert!(thread_identity_scope_requests(&thread(
+                subject,
+                vec!["memory-schema:v2", subject],
+            ))
+            .is_err());
+        }
+        assert!(is_canonical_agent_subject_id("agent:jiguli"));
+        assert!(is_canonical_agent_subject_id("agent:agent-123"));
     }
 }

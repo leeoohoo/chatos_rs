@@ -400,6 +400,9 @@ rollback() {
     mv -Tf "$deploy_root/current.rollback" "$current_link"
     if [[ ${#selected_runtime_services[@]} -gt 0 ]]; then
       restart_selected_release_with_retries "$previous_release" "${selected_runtime_services[@]}" || true
+      if (( deploy_gateway_config == 0 && ${#deploy_services[@]} > 0 )); then
+        restart_selected_release_with_retries "$previous_release" apisix-gateway || true
+      fi
     else
       start_release_with_retries "$previous_release" || true
     fi
@@ -594,6 +597,10 @@ echo "[INFO] switching containers to the new release"
 write_deploy_status running switch "Switching containers to the new release"
 if (( deploy_all == 0 )); then
   restart_selected_release_with_retries "$release_dir" "${selected_runtime_services[@]}"
+  if (( deploy_gateway_config == 0 && ${#deploy_services[@]} > 0 )); then
+    echo "[INFO] refreshing APISIX after selected service containers changed addresses"
+    restart_selected_release_with_retries "$release_dir" apisix-gateway
+  fi
 else
   start_release_with_retries "$release_dir"
 fi

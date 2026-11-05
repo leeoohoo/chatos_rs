@@ -117,8 +117,15 @@ pub(super) fn memory_plan(
 }
 
 fn memory_agent_id(claim: &LocalAgentRunClaim) -> Result<String, String> {
-    consistent_memory_context_string(claim, "agent_id")?
-        .ok_or_else(|| "Memory identity requires an explicit agent_id".to_string())
+    let agent_id = consistent_memory_context_string(claim, "agent_id")?
+        .ok_or_else(|| "Memory identity requires an explicit agent_id".to_string())?;
+    if matches!(
+        agent_id.as_str(),
+        "main-chat" | "main_chat" | "task-execution" | "task_execution"
+    ) {
+        return Err("Memory identity must not use a runtime profile key as agent_id".to_string());
+    }
+    Ok(agent_id)
 }
 
 fn memory_project_id(claim: &LocalAgentRunClaim) -> Result<Option<String>, String> {
@@ -455,6 +462,29 @@ mod tests {
         match memory_plan(&claim, "local_agent", "message") {
             Ok(_) => panic!("missing Agent identity must be rejected"),
             Err(error) => assert_eq!(error, "Memory identity requires an explicit agent_id"),
+        }
+    }
+
+    #[test]
+    fn memory_plan_rejects_runtime_profiles_as_agent_identities() {
+        for agent_id in [
+            "main-chat",
+            "main_chat",
+            "task-execution",
+            "task_execution",
+        ] {
+            let claim = claim(
+                MAIN_CHAT_PROFILE_KEY,
+                json!({"message": "hello", "agent_id": agent_id}),
+            );
+
+            match memory_plan(&claim, "local_agent", "message") {
+                Ok(_) => panic!("runtime profile {agent_id} must not become an Agent identity"),
+                Err(error) => assert_eq!(
+                    error,
+                    "Memory identity must not use a runtime profile key as agent_id"
+                ),
+            }
         }
     }
 
