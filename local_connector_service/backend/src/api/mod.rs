@@ -37,7 +37,9 @@ mod workspaces;
 
 pub use self::auth_middleware::ApiError;
 use self::auth_middleware::{require_public_auth, AuthState};
-use self::controlled_network_readiness::controlled_network_readiness;
+use self::controlled_network_readiness::{
+    controlled_network_readiness, issue_controlled_network_policy,
+};
 use self::devices::{
     connect_device, create_device, disconnect_device, get_device, heartbeat_device, list_devices,
     load_owned_device, revoke_device,
