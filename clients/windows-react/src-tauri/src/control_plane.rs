@@ -1,6 +1,6 @@
 use crate::authentication::{
     model_credential_environment_variable, AuthenticationManager, GatewayAgentCapability,
-    GatewayModelConfig,
+    GatewayModelConfig, GatewayNativeAgentRuntimeSettings,
 };
 use crate::host_lifecycle::transport::{request, ManagedHost};
 use crate::{
@@ -321,13 +321,29 @@ async fn refresh_from_gateway(
         .iter()
         .map(|model| model.id.clone())
         .collect::<Vec<_>>();
-    let (resolved, capability) = tokio::join!(
+    let (resolved, capability, managed_runtime) = tokio::join!(
         authentication.resolved_models_for_owner(owner_user_id, model_config_refs),
         authentication.local_agent_capability_for_owner(owner_user_id),
+        authentication.managed_runtime_config_for_owner(owner_user_id),
     );
     let resolved = resolved.map_err(|error| error.message)?;
     let capability = capability.map_err(|error| error.message)?;
+    let managed_runtime = managed_runtime.map_err(|error| error.message)?;
     validate_capability(&capability, owner_user_id)?;
+    let managed_agent_runtime = managed_runtime
+        .native_agent_runtime_settings
+        .as_ref()
+        .ok_or_else(|| "账号缺少本地 Agent 运行时配置。".to_owned())?;
+    let responses_compaction_threshold =
+        managed_responses_compaction_threshold(managed_agent_runtime)?;
+    let task_max_iterations = managed_runtime
+        .local_task_execution_settings
+        .as_ref()
+        .map(|settings| settings.max_iterations)
+        .unwrap_or(MAX_TASK_ITERATIONS as usize);
+    if !(2..=10_000).contains(&task_max_iterations) {
+        return Err("本地 Task 运行时上限超出 Windows 支持范围。".into());
+    }
 
     let mut environment = persisted.credential_environment.clone();
     let mut refreshed_variables = BTreeSet::new();
@@ -339,7 +355,12 @@ async fn refresh_from_gateway(
             return Err("模型目录刷新顺序不一致。".into());
         }
         let mut option = model_option_from_gateway(&resolved);
-        let (snapshot, credential, variable) = resolved_snapshot(resolved, owner_user_id)?;
+        let (snapshot, credential, variable) = resolved_snapshot(
+            resolved,
+            owner_user_id,
+            managed_agent_runtime,
+            responses_compaction_threshold,
+        )?;
         option.model_config_revision = snapshot.model_config_revision.clone();
         if !refreshed_variables.insert(variable.clone()) {
             return Err("模型标识产生了重复的凭据环境变量。".into());
@@ -365,6 +386,8 @@ async fn refresh_from_gateway(
         owner_user_id,
         &capability.policy_revision,
         &task_enabled_refs,
+        u32::try_from(task_max_iterations)
+            .map_err(|_| "本地 Task 运行时上限超出 Windows 支持范围。")?,
     )
     .await?;
     Ok(RefreshedControlPlane {
@@ -399,6 +422,8 @@ fn validate_capability(
 fn resolved_snapshot(
     model: GatewayModelConfig,
     owner_user_id: &str,
+    managed_runtime: &GatewayNativeAgentRuntimeSettings,
+    responses_compaction_threshold: usize,
 ) -> Result<(LocalModelConfigSnapshot, String, String), String> {
     if model.owner_user_id != owner_user_id || !model.enabled {
         return Err("模型配置与当前账号不匹配。".into());
@@ -433,6 +458,8 @@ fn resolved_snapshot(
         model.max_output_tokens,
         model.supports_images,
         model.supports_responses,
+        managed_runtime.maximum_request_retries,
+        responses_compaction_threshold,
     );
     Ok((
         LocalModelConfigSnapshot {
@@ -451,8 +478,14 @@ fn resolved_snapshot(
             thinking_level: model.task_thinking_level.and_then(non_empty),
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
-            max_transient_retries: None,
-            responses_compaction_threshold: None,
+            max_transient_retries: Some(
+                u32::try_from(managed_runtime.maximum_request_retries)
+                    .map_err(|_| "本地 Agent 重试次数超出 Windows 支持范围。")?,
+            ),
+            responses_compaction_threshold: Some(
+                u64::try_from(responses_compaction_threshold)
+                    .map_err(|_| "本地 Agent 上下文窗口超出 Windows 支持范围。")?,
+            ),
             output_format: None,
         },
         credential,
@@ -642,10 +675,11 @@ async fn publish_capabilities(
     owner_user_id: &str,
     gateway_revision: &str,
     task_enabled_refs: &[String],
+    task_max_iterations: u32,
 ) -> Result<(), String> {
     let revision = capability_revision(gateway_revision);
     let task_policy = json!({
-        "max_iterations": MAX_TASK_ITERATIONS,
+        "max_iterations": task_max_iterations,
         "allowed_model_config_ids": task_enabled_refs,
         "enabled_builtin_kinds": ["CodeMaintainerRead", "CodeMaintainerWrite", "TerminalController"],
         "external_mcp_config_ids": [],
@@ -731,6 +765,8 @@ fn model_revision(
     max_output_tokens: Option<i64>,
     supports_images: bool,
     supports_responses: bool,
+    maximum_request_retries: usize,
+    responses_compaction_threshold: usize,
 ) -> String {
     let fields = [
         id.to_owned(),
@@ -746,10 +782,36 @@ fn model_revision(
             .unwrap_or_default(),
         supports_images.to_string(),
         supports_responses.to_string(),
+        maximum_request_retries.to_string(),
+        responses_compaction_threshold.to_string(),
     ];
     let mut digest = Sha256::new();
     digest.update(fields.join("\0").as_bytes());
     format!("sha256-{:x}", digest.finalize())
+}
+
+fn managed_responses_compaction_threshold(
+    settings: &GatewayNativeAgentRuntimeSettings,
+) -> Result<usize, String> {
+    if !(1..=10_000).contains(&settings.maximum_model_calls)
+        || settings.maximum_request_retries > 10
+        || !(5..=1_800).contains(&settings.request_timeout_seconds)
+        || !(10..=86_400).contains(&settings.run_timeout_seconds)
+        || !(1..=100).contains(&settings.maximum_no_progress_rounds)
+    {
+        return Err("本地 Agent 运行时配置超出 Windows 支持范围。".into());
+    }
+    if settings.context_window_tokens <= settings.output_reserve_tokens {
+        return Err("本地 Agent 上下文窗口必须大于输出预留。".into());
+    }
+    let threshold = settings.context_window_tokens - settings.output_reserve_tokens;
+    if !(2_048..=2_000_000).contains(&threshold) {
+        return Err("本地 Agent 上下文压缩阈值超出 Windows 支持范围。".into());
+    }
+    if settings.maximum_request_retries > 20 {
+        return Err("本地 Agent 重试次数超出 Windows 支持范围。".into());
+    }
+    Ok(threshold)
 }
 
 fn capability_revision(gateway_revision: &str) -> String {
@@ -821,6 +883,37 @@ mod tests {
             option.thinking_levels,
             ["low", "medium", "high", "xhigh", "max"]
         );
+    }
+
+    #[test]
+    fn managed_runtime_settings_resolve_the_host_compaction_threshold() {
+        let settings = GatewayNativeAgentRuntimeSettings {
+            maximum_model_calls: 725,
+            maximum_request_retries: 3,
+            request_timeout_seconds: 240,
+            run_timeout_seconds: 8_000,
+            maximum_no_progress_rounds: 9,
+            context_window_tokens: 1_500_000,
+            output_reserve_tokens: 40_000,
+        };
+        assert_eq!(
+            managed_responses_compaction_threshold(&settings),
+            Ok(1_460_000)
+        );
+    }
+
+    #[test]
+    fn managed_runtime_settings_reject_an_invalid_context_budget() {
+        let settings = GatewayNativeAgentRuntimeSettings {
+            maximum_model_calls: 600,
+            maximum_request_retries: 2,
+            request_timeout_seconds: 180,
+            run_timeout_seconds: 7_200,
+            maximum_no_progress_rounds: 8,
+            context_window_tokens: 30_000,
+            output_reserve_tokens: 30_000,
+        };
+        assert!(managed_responses_compaction_threshold(&settings).is_err());
     }
 
     #[test]

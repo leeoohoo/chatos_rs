@@ -200,6 +200,30 @@ pub(crate) struct GatewayAgentCapability {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayManagedRuntimeConfig {
+    #[serde(default)]
+    pub native_agent_runtime_settings: Option<GatewayNativeAgentRuntimeSettings>,
+    #[serde(default)]
+    pub local_task_execution_settings: Option<GatewayLocalTaskExecutionSettings>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayLocalTaskExecutionSettings {
+    pub max_iterations: usize,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayNativeAgentRuntimeSettings {
+    pub maximum_model_calls: usize,
+    pub maximum_request_retries: usize,
+    pub request_timeout_seconds: usize,
+    pub run_timeout_seconds: usize,
+    pub maximum_no_progress_rounds: usize,
+    pub context_window_tokens: usize,
+    pub output_reserve_tokens: usize,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub(crate) struct GatewayResolvedCapability {
     pub binding: GatewayCapabilityBinding,
     #[serde(default)]
@@ -522,6 +546,14 @@ impl AuthenticationApiClient {
             access_token,
         )
         .await
+    }
+
+    pub(crate) async fn managed_runtime_config(
+        &self,
+        access_token: &str,
+    ) -> Result<GatewayManagedRuntimeConfig, ApiError> {
+        self.control_plane_request("api/local-connectors/config/runtime", None, access_token)
+            .await
     }
 
     pub(crate) async fn plugin_install_sources(
@@ -884,6 +916,30 @@ mod tests {
             assert_eq!(response.token, "secret");
             assert_eq!(response.user.id, "u1");
         }
+    }
+
+    #[test]
+    fn managed_runtime_config_decodes_native_agent_settings() {
+        let config: GatewayManagedRuntimeConfig = serde_json::from_value(serde_json::json!({
+            "native_agent_runtime_settings": {
+                "maximum_model_calls": 725,
+                "maximum_request_retries": 3,
+                "request_timeout_seconds": 240,
+                "run_timeout_seconds": 8000,
+                "maximum_no_progress_rounds": 9,
+                "context_window_tokens": 1500000,
+                "output_reserve_tokens": 40000
+            },
+            "local_task_execution_settings": { "max_iterations": 725 }
+        }))
+        .unwrap();
+        let settings = config.native_agent_runtime_settings.unwrap();
+        assert_eq!(settings.maximum_model_calls, 725);
+        assert_eq!(settings.maximum_request_retries, 3);
+        assert_eq!(
+            settings.context_window_tokens - settings.output_reserve_tokens,
+            1460000
+        );
     }
 
     #[test]
