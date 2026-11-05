@@ -436,9 +436,10 @@ async fn enqueue_on(
         .ok_or_else(|| ClientStorageError::NotFound(record_id.to_string()))
 }
 
-const MEMORY_ROUTING_METADATA_KEYS: [&str; 6] = [
+const MEMORY_ROUTING_METADATA_KEYS: [&str; 7] = [
     "agent_id",
     "project_id",
+    "project_name",
     "memory_project_id",
     "project_aggregation_id",
     "thread_project_aggregation_id",

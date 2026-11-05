@@ -33,6 +33,10 @@ pub(super) fn memory_plan(
     let agent_id = memory_agent_id(claim)?;
     let agent_name = memory_agent_name(claim, agent_id.as_str())?;
     let project_id = memory_project_id(claim)?;
+    let project_name = memory_project_name(claim)?;
+    if project_name.is_some() && project_id.is_none() {
+        return Err("Memory project_name requires project_id".to_string());
+    }
     let thread_id = if !is_task_execution {
         format!("client-agent:agent:{agent_id}")
     } else {
@@ -51,6 +55,7 @@ pub(super) fn memory_plan(
         "agent_id": agent_id,
         "agent_name": agent_name,
         "project_id": project_id,
+        "project_name": project_name,
         "memory_project_id": project_id,
         "thread_project_aggregation_id": if is_task_execution { project_id.clone() } else { None },
         "thread_kind": if is_task_execution && memory_context_string(claim, "todo_id").is_some() { "todo_execution" } else if is_task_execution { "agent_task" } else if is_main_chat && agent_id == JIGULI_AGENT_ID { "main_chat" } else { "agent_conversation" },
@@ -130,6 +135,10 @@ fn memory_agent_id(claim: &LocalAgentRunClaim) -> Result<String, String> {
 
 fn memory_project_id(claim: &LocalAgentRunClaim) -> Result<Option<String>, String> {
     consistent_memory_context_string(claim, "project_id")
+}
+
+fn memory_project_name(claim: &LocalAgentRunClaim) -> Result<Option<String>, String> {
+    consistent_memory_context_string(claim, "project_name")
 }
 
 fn memory_agent_name(claim: &LocalAgentRunClaim, agent_id: &str) -> Result<Option<String>, String> {
@@ -412,7 +421,8 @@ mod tests {
                 "turn_id": "turn-1",
                 "message_id": "message-1",
                 "message": "hello",
-                "project_id": "project-1"
+                "project_id": "project-1",
+                "project_name": "红果逆向"
             }),
         );
         let plan = memory_plan(&claim, "local_agent", "message").expect("plan");
@@ -434,6 +444,7 @@ mod tests {
         assert_eq!(user.metadata.expect("metadata")["tenant_id"], "user-1");
         let metadata = plan.record_options.assistant_metadata.as_ref().unwrap();
         assert_eq!(metadata["project_id"], "project-1");
+        assert_eq!(metadata["project_name"], "红果逆向");
         assert_eq!(metadata["memory_project_id"], "project-1");
         assert!(metadata["thread_project_aggregation_id"].is_null());
         assert_eq!(

@@ -107,6 +107,14 @@ public actor NativeLocalAgentConversationService:
         if let name = agentIdentity.name {
             messageMetadata["agent_name"] = .string(name)
         }
+        if conversation.conversation.resource?.kind == .project {
+            let projectName = conversation.conversation.title.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            if !projectName.isEmpty {
+                messageMetadata["project_name"] = .string(projectName)
+            }
+        }
         if let selection = command.explicitCapabilitySelection {
             var explicitSelection: [String: LocalAgentJSONValue] = [
                 "kind": .string(selection.kind.rawValue),

@@ -285,10 +285,20 @@ impl LocalAgentRuntime {
             resource_id,
         }) = conversation.conversation.resource.as_ref()
         {
-            input
+            let object = input
                 .as_object_mut()
-                .expect("conversation Run input is an object")
-                .insert("project_id".to_string(), json!(resource_id));
+                .expect("conversation Run input is an object");
+            object.insert("project_id".to_string(), json!(resource_id));
+            let metadata = command
+                .message_metadata
+                .as_object()
+                .expect("validated message metadata is an object");
+            if metadata.get("project_name").is_some() {
+                object.insert(
+                    "project_name".to_string(),
+                    json!(agent_context_string(metadata, "project_name", 240, false)?),
+                );
+            }
         }
         if let Some(selection) = explicit_capability_selection {
             input
@@ -1357,6 +1367,50 @@ mod tests {
             result.run.input["memory_thread_id"],
             "client-agent:todo:todo-1"
         );
+    }
+
+    #[tokio::test]
+    async fn project_conversation_carries_its_display_name_into_memory_input() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        runtime.initialize("user-1").await.expect("initialize");
+        runtime
+            .try_handle(request(
+                "create-project-conversation",
+                HostCommand::CreateConversation(CreateConversationCommand {
+                    conversation_id: "project-conversation-1".into(),
+                    owner_user_id: "user-1".into(),
+                    title: "红果逆向".into(),
+                    resource: Some(project_resource()),
+                }),
+            ))
+            .await
+            .expect("create project conversation");
+        let mut turn = start_turn(1);
+        turn.conversation_id = "project-conversation-1".into();
+        turn.message_metadata = json!({
+            "source": "native_main_chat",
+            "agent_id": "jiguli",
+            "agent_name": "叽咕狸",
+            "project_name": "红果逆向",
+        });
+
+        let started = runtime
+            .try_handle(request(
+                "start-project-turn",
+                HostCommand::StartConversationTurn(turn),
+            ))
+            .await
+            .expect("start project Turn");
+        let HostResult::ConversationTurnStarted { result } = started else {
+            panic!("unexpected start result")
+        };
+        assert_eq!(result.run.input["project_id"], "project-1");
+        assert_eq!(result.run.input["project_name"], "红果逆向");
     }
 
     #[tokio::test]
