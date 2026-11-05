@@ -276,6 +276,17 @@ async fn run_reconciler(state: Arc<AppState>) {
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
+        match release_expired_summary_slots(&state).await {
+            Ok(count) if count > 0 => info!(
+                recovered_count = count,
+                "Memory Engine released expired summary thread slots"
+            ),
+            Ok(_) => {}
+            Err(error) => warn!(
+                error,
+                "Memory Engine failed to release expired summary thread slots"
+            ),
+        }
         match recover_stale_claims(&state).await {
             Ok(count) if count > 0 => info!(
                 recovered_count = count,
@@ -312,6 +323,27 @@ async fn run_reconciler(state: Arc<AppState>) {
             ),
         }
     }
+}
+
+async fn release_expired_summary_slots(state: &AppState) -> Result<usize, String> {
+    let threads =
+        threads::list_expired_summary_threads(&state.pool, state.config.summary_outbox_batch_size)
+            .await?;
+    let mut recovered = 0usize;
+    for thread in threads {
+        if threads::release_expired_summary_slot(
+            &state.pool,
+            thread.tenant_id.as_str(),
+            thread.source_id.as_str(),
+            thread.id.as_str(),
+        )
+        .await?
+        .is_some()
+        {
+            recovered = recovered.saturating_add(1);
+        }
+    }
+    Ok(recovered)
 }
 
 async fn flush_idle_identity_threads(state: &AppState) -> Result<usize, String> {

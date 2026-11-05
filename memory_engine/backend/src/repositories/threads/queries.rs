@@ -66,6 +66,23 @@ pub async fn list_threads_with_pending_records_by_token_threshold(
     fetch_threads(db, query).await
 }
 
+pub async fn list_expired_summary_threads(
+    db: &Db,
+    limit: i64,
+) -> Result<Vec<EngineThread>, String> {
+    let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_threads WHERE summary_status='running' \
+         AND (summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now()) \
+         ORDER BY COALESCE(summary_lock_expires_at,summary_locked_at,updated_at),updated_at \
+         LIMIT $1",
+    )
+    .bind(limit.clamp(1, 10_000))
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    decode_threads(rows)
+}
+
 pub async fn list_idle_task_threads(
     db: &Db,
     idle_before: &str,
@@ -220,10 +237,7 @@ fn append_json_aliases(
     query.push(")");
 }
 
-fn append_agent_filter(
-    query: &mut QueryBuilder<Postgres>,
-    value: Option<&str>,
-) {
+fn append_agent_filter(query: &mut QueryBuilder<Postgres>, value: Option<&str>) {
     let Some(agent_id) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return;
     };

@@ -209,7 +209,7 @@ mod tests {
             oversized_token_count: 654,
             project_subject_id: Some("project:p-1".to_string()),
         };
-        let metadata = start_metadata(3, 6_000, 700, &selection);
+        let metadata = start_metadata(3, 12_345, 987, &selection);
 
         let frozen = FrozenThreadSummarySelection::from_metadata(Some(&metadata))
             .expect("frozen selection should decode");

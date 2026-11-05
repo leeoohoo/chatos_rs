@@ -168,7 +168,7 @@ async fn process_rollup_event(
         return Ok(());
     }
 
-    let settings = cp_service::build_rollup_settings_from_policy(&policy);
+    let settings = cp_service::build_rollup_settings_from_policy(&policy)?;
     let Some(prepared) = summary::prepare_thread_rollup(
         &state.pool,
         envelope.tenant_id.as_str(),
@@ -256,7 +256,7 @@ async fn arm_rollup_dispatches(state: &AppState) -> Result<usize, String> {
     if !policy.enabled {
         return Ok(0);
     }
-    let settings = cp_service::build_rollup_settings_from_policy(&policy);
+    let settings = cp_service::build_rollup_settings_from_policy(&policy)?;
     let candidates = summaries::list_threads_with_pending_rollups(
         &state.pool,
         None,

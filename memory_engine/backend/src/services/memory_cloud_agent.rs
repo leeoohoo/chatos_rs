@@ -371,7 +371,7 @@ pub(crate) async fn finalize_terminal(
                 crate::repositories::control_plane::get_effective_job_policy(&state.pool, "rollup")
                     .await?;
             let settings =
-                crate::services::control_plane::build_rollup_settings_from_policy(&policy);
+                crate::services::control_plane::build_rollup_settings_from_policy(&policy)?;
             let Some(mut prepared) = crate::services::summary::prepare_thread_rollup(
                 &state.pool,
                 tenant_id,

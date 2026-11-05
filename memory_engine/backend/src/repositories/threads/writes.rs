@@ -372,6 +372,34 @@ pub async fn release_summary_slot(
     .await
 }
 
+pub async fn release_expired_summary_slot(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+) -> Result<Option<EngineThread>, String> {
+    conditional_summary_mutation(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        "AND summary_status='running' AND (summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now())",
+        None,
+        |thread| {
+            thread.summary_status = if thread.pending_record_count > 0 {
+                "pending"
+            } else {
+                "idle"
+            }
+            .to_string();
+            thread.summary_job_run_id = None;
+            thread.summary_locked_at = None;
+            thread.summary_lock_expires_at = None;
+        },
+    )
+    .await
+}
+
 pub async fn try_acquire_rollup_slot(
     db: &Db,
     tenant_id: &str,

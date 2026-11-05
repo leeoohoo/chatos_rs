@@ -2,14 +2,15 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::db::Db;
-use crate::models::RunSubjectMemoryJobRequest;
+use crate::models::{EngineJobPolicy, RunSubjectMemoryJobRequest};
 use crate::repositories::control_plane as cp_repo;
 
-use super::{
-    SubjectMemoryJobSettings, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_SUMMARY_TOKENS, DEFAULT_TOKEN_LIMIT,
-};
+use super::SubjectMemoryJobSettings;
 
-fn build_settings(req: &RunSubjectMemoryJobRequest) -> Result<SubjectMemoryJobSettings, String> {
+fn build_settings(
+    req: &RunSubjectMemoryJobRequest,
+    policy: &EngineJobPolicy,
+) -> Result<SubjectMemoryJobSettings, String> {
     let subject_id = req.subject_id.trim();
     if subject_id.is_empty() {
         return Err("empty subject_id".to_string());
@@ -22,6 +23,12 @@ fn build_settings(req: &RunSubjectMemoryJobRequest) -> Result<SubjectMemoryJobSe
     if thread_label.is_empty() {
         return Err("empty source_thread_label".to_string());
     }
+
+    let configured = |name: &str, request_value: Option<i64>, policy_value: Option<i64>| {
+        request_value.or(policy_value).ok_or_else(|| {
+            format!("subject_memory job policy {name} is not configured in Configuration Center")
+        })
+    };
 
     Ok(SubjectMemoryJobSettings {
         relation_subject_id: req
@@ -45,14 +52,21 @@ fn build_settings(req: &RunSubjectMemoryJobRequest) -> Result<SubjectMemoryJobSe
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| format!("Subject memory {}", req.subject_id)),
-        token_limit: req.token_limit.unwrap_or(DEFAULT_TOKEN_LIMIT).max(500),
-        target_summary_tokens: req
-            .target_summary_tokens
-            .unwrap_or(DEFAULT_TARGET_SUMMARY_TOKENS)
-            .max(128),
-        count_limit: req.count_limit.unwrap_or(0).max(0),
-        keep_level0_count: req.keep_level0_count.unwrap_or(0).max(0),
-        max_level: req.max_level.unwrap_or(DEFAULT_MAX_LEVEL).max(1),
+        token_limit: configured("token_limit", req.token_limit, policy.token_limit)?.max(500),
+        target_summary_tokens: configured(
+            "target_summary_tokens",
+            req.target_summary_tokens,
+            policy.target_summary_tokens,
+        )?
+        .max(128),
+        count_limit: configured("count_limit", req.count_limit, policy.count_limit)?.max(0),
+        keep_level0_count: configured(
+            "keep_level0_count",
+            req.keep_level0_count,
+            policy.keep_level0_count,
+        )?
+        .max(0),
+        max_level: configured("max_level", req.max_level, policy.max_level)?.max(1),
         memory_metadata: req.memory_metadata.clone(),
     })
 }
@@ -61,30 +75,6 @@ pub(crate) async fn build_settings_with_policy(
     db: &Db,
     req: &RunSubjectMemoryJobRequest,
 ) -> Result<SubjectMemoryJobSettings, String> {
-    let mut settings = build_settings(req)?;
     let policy = cp_repo::get_effective_job_policy(db, "subject_memory").await?;
-
-    if req.token_limit.is_none() {
-        settings.token_limit = policy.token_limit.unwrap_or(settings.token_limit).max(500);
-    }
-    if req.target_summary_tokens.is_none() {
-        settings.target_summary_tokens = policy
-            .target_summary_tokens
-            .unwrap_or(settings.target_summary_tokens)
-            .max(128);
-    }
-    if req.keep_level0_count.is_none() {
-        settings.keep_level0_count = policy
-            .keep_level0_count
-            .unwrap_or(settings.keep_level0_count)
-            .max(0);
-    }
-    if req.count_limit.is_none() {
-        settings.count_limit = policy.count_limit.unwrap_or(settings.count_limit).max(0);
-    }
-    if req.max_level.is_none() {
-        settings.max_level = policy.max_level.unwrap_or(settings.max_level).max(1);
-    }
-
-    Ok(settings)
+    build_settings(req, &policy)
 }

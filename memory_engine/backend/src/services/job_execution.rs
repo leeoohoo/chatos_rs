@@ -57,7 +57,7 @@ pub async fn run_pending_rollups(
                 .unwrap_or(state.config.worker_max_threads_per_tick),
         )
         .max(1);
-    let mut settings = control_plane::build_rollup_settings_from_policy(&policy);
+    let mut settings = control_plane::build_rollup_settings_from_policy(&policy)?;
     control_plane::apply_rollup_setting_overrides(
         &mut settings,
         options.token_limit,
