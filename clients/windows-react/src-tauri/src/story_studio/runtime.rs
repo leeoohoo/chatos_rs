@@ -13,7 +13,9 @@ use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
-use crate::authentication::{AuthenticationManager, GatewayModelConfig};
+use crate::authentication::{
+    AuthenticationManager, GatewayModelConfig, GatewayNativeAgentRuntimeSettings,
+};
 
 use super::{
     execution::StoryPlanningExecutionLease,
@@ -22,9 +24,10 @@ use super::{
         assemble_memory_input, bind_memory, memory_records, synced_digest, StoryMemoryAdapter,
     },
     planning::{
-        project_fingerprint, StoryAgentMessage, StoryAgentMessageRole, StoryAgentReceipt,
-        StoryAgentRunPolicy, StoryAgentToolCall, StoryAgentUsage, StoryPlanningEvent,
-        StoryPlanningRun, StoryPlanningRunSnapshot, StoryPlanningStage, StoryPlanningStatus,
+        project_fingerprint, StoryAgentContextPolicy, StoryAgentMessage, StoryAgentMessageRole,
+        StoryAgentReceipt, StoryAgentRunPolicy, StoryAgentToolCall, StoryAgentUsage,
+        StoryPlanningEvent, StoryPlanningRun, StoryPlanningRunSnapshot, StoryPlanningStage,
+        StoryPlanningStatus,
     },
     projection::StoryProjectSnapshot,
     tools,
@@ -80,13 +83,14 @@ impl StoryPlanningRuntime<'_> {
         let source_length = project.source.chars().count();
         let target_count = target_ids.len();
         let goal_ideas = user_ideas.clone();
+        let policy = self.managed_run_policy().await;
         let run = StoryPlanningRun::new(
             &project,
             self.owner_user_id,
             stage,
             target_ids,
             &user_ideas,
-            StoryAgentRunPolicy::default(),
+            policy,
             system_prompt,
             move |ideas| {
                 tools::goal_prompt(
@@ -99,6 +103,21 @@ impl StoryPlanningRuntime<'_> {
             now,
         )?;
         self.run(run, false).await
+    }
+
+    async fn managed_run_policy(&self) -> StoryAgentRunPolicy {
+        let Ok(config) = self
+            .authentication
+            .managed_runtime_config_for_owner(self.owner_user_id)
+            .await
+        else {
+            return StoryAgentRunPolicy::default();
+        };
+        config
+            .native_agent_runtime_settings
+            .as_ref()
+            .and_then(story_policy_from_managed_settings)
+            .unwrap_or_default()
     }
 
     pub(super) async fn resume(
@@ -1099,6 +1118,23 @@ fn call_fingerprint(call: &StoryAgentToolCall) -> String {
     )
 }
 
+fn story_policy_from_managed_settings(
+    settings: &GatewayNativeAgentRuntimeSettings,
+) -> Option<StoryAgentRunPolicy> {
+    let policy = StoryAgentRunPolicy {
+        maximum_model_calls: u32::try_from(settings.maximum_model_calls).ok()?,
+        request_timeout_seconds: u32::try_from(settings.request_timeout_seconds).ok()?,
+        run_timeout_seconds: u32::try_from(settings.run_timeout_seconds).ok()?,
+        maximum_request_retries: u8::try_from(settings.maximum_request_retries).ok()?,
+        maximum_no_progress_rounds: u8::try_from(settings.maximum_no_progress_rounds).ok()?,
+        context: StoryAgentContextPolicy {
+            window_tokens: u32::try_from(settings.context_window_tokens).ok()?,
+            output_reserve_tokens: u32::try_from(settings.output_reserve_tokens).ok()?,
+        },
+    };
+    policy.validate().then_some(policy)
+}
+
 fn usage_from_value(value: &Value) -> StoryAgentUsage {
     let input_tokens = usage_number(value, &["input_tokens", "prompt_tokens"]);
     let output_tokens = usage_number(value, &["output_tokens", "completion_tokens"]);
@@ -1147,4 +1183,40 @@ fn current_unix_milliseconds() -> u64 {
         .ok()
         .and_then(|value| value.as_millis().try_into().ok())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_story_policy_matches_gateway_limits() {
+        let settings = GatewayNativeAgentRuntimeSettings {
+            maximum_model_calls: 725,
+            maximum_request_retries: 3,
+            request_timeout_seconds: 240,
+            run_timeout_seconds: 8_000,
+            maximum_no_progress_rounds: 9,
+            context_window_tokens: 1_500_000,
+            output_reserve_tokens: 40_000,
+        };
+        let policy = story_policy_from_managed_settings(&settings).expect("valid policy");
+        assert_eq!(policy.maximum_model_calls, 725);
+        assert_eq!(policy.maximum_request_retries, 3);
+        assert_eq!(policy.context.window_tokens, 1_500_000);
+    }
+
+    #[test]
+    fn managed_story_policy_rejects_out_of_range_values() {
+        let settings = GatewayNativeAgentRuntimeSettings {
+            maximum_model_calls: 0,
+            maximum_request_retries: 3,
+            request_timeout_seconds: 240,
+            run_timeout_seconds: 8_000,
+            maximum_no_progress_rounds: 9,
+            context_window_tokens: 1_500_000,
+            output_reserve_tokens: 40_000,
+        };
+        assert!(story_policy_from_managed_settings(&settings).is_none());
+    }
 }
