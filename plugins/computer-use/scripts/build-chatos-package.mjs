@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertMacPackagingHost,
   readDeclaredVersion,
   supportedWindowsRuntimes,
   windowsPlatformFromPortableExecutable,
@@ -53,6 +54,7 @@ const argumentsSet = new Set(process.argv.slice(2));
 if ([...argumentsSet].some(argument => argument !== "--skip-build")) {
   throw new Error(`Unknown packaging argument: ${[...argumentsSet].join(" ")}`);
 }
+assertMacPackagingHost();
 if (!argumentsSet.has("--skip-build")) {
   run("./scripts/build-macos-app.sh", []);
   run(process.execPath, ["./scripts/build-windows-worker.mjs"]);

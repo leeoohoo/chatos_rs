@@ -5,11 +5,20 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertMacPackagingHost,
   readDeclaredVersion,
   windowsPlatformFromPortableExecutable,
 } from "./package-support.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+test("requires a macOS host for the cross-platform package", () => {
+  assertMacPackagingHost("darwin");
+  assert.throws(
+    () => assertMacPackagingHost("win32"),
+    /requires a macOS host.*received win32.*build:windows.*smoke:windows/s,
+  );
+});
 
 function portableExecutable(machine) {
   const bytes = Buffer.alloc(128);
