@@ -189,7 +189,7 @@ if missing:
     raise SystemExit(f"missing selected Compose services: {missing}")
 images = {services[name].get("image") for name in selected}
 for name, service in services.items():
-    if service.get("image") in images:
+    if service.get("image") in images and service.get("restart") != "no":
         print(name)
 ' "$@"
 }
