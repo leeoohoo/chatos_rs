@@ -18,6 +18,7 @@ use crate::services::ai_pipeline::cloud_agent::{
 use crate::state::AppState;
 
 pub(crate) const MEMORY_CLOUD_AGENT_DEFERRED: &str = "memory_cloud_agent_deferred";
+pub(crate) const THREAD_SUMMARY_JOB_RESUME_KIND: &str = "thread_summary_job";
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn generate_or_defer(
@@ -289,7 +290,7 @@ pub(crate) async fn finalize_terminal(
     }
 
     match resume_kind {
-        "queue" | "summary_direct" | "scheduler" | "thread_direct" => {
+        THREAD_SUMMARY_JOB_RESUME_KIND | "database_worker" => {
             let job_run_id = terminal_context
                 .get("job_run_id")
                 .and_then(Value::as_str)
@@ -409,8 +410,23 @@ pub(crate) async fn finalize_terminal(
 fn is_thread_summary_resume_kind(resume_kind: &str) -> bool {
     matches!(
         resume_kind,
-        "queue" | "summary_direct" | "scheduler" | "thread_direct"
+        THREAD_SUMMARY_JOB_RESUME_KIND | "database_worker"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_thread_summary_resume_kind, THREAD_SUMMARY_JOB_RESUME_KIND};
+
+    #[test]
+    fn thread_summary_resume_route_is_not_a_scheduler_trigger() {
+        assert!(is_thread_summary_resume_kind(
+            THREAD_SUMMARY_JOB_RESUME_KIND
+        ));
+        assert!(is_thread_summary_resume_kind("database_worker"));
+        assert!(!is_thread_summary_resume_kind("scheduler"));
+        assert!(!is_thread_summary_resume_kind("thread_direct"));
+    }
 }
 
 async fn settle_summary_dispatch(

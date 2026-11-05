@@ -232,9 +232,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 deploymentIdentifier: RuntimeConfiguration.deployment.identifier
             ),
             ticketProvider: connectorTicketProvider,
-            approvalMemoryProviderFactory: { tenantID, workspaceID, runID, runtimeScope in
+            approvalMemoryProviderFactory: { tenantID, projectID, runID, runtimeScope in
                 let scope = try AgentMemoryScope(
-                    tenantID: tenantID, profile: "approval", projectID: workspaceID,
+                    tenantID: tenantID, profile: "approval", projectID: projectID,
                     runID: runID, runtimeScope: runtimeScope
                 )
                 let memory = try await ChatOSMemoryEngineService(client: apiClient, scope: scope)
@@ -276,18 +276,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             service: localConnectorService
         )
         let remoteAgentServices = ChatOSStoryPlanningService(client: apiClient)
-        let agentServices: any AgentServiceProviding
-        do {
-            agentServices = try OfflineCapableAgentServiceProvider(
-                upstream: remoteAgentServices,
-                databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
-                    .appendingPathComponent("AgentMemoryCache.sqlite3")
-            )
-        } catch {
-            // Storage initialization is validated again by the scheduler. Keep
-            // app startup recoverable if the local cache file needs repair.
-            agentServices = remoteAgentServices
-        }
+        let agentServices: any AgentServiceProviding = remoteAgentServices
         self.agentServices = agentServices
         self.mediaStudio = MediaStudioViewModel(
             service: ChatOSMediaGenerationService(client: apiClient),

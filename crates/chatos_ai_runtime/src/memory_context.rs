@@ -16,6 +16,8 @@ use tracing::warn;
 
 use crate::tool_runtime::ToolResultModelBudgetLimits;
 
+pub(crate) const MEMORY_CONTEXT_ITEM_PREFIX: &str = "[memory_engine_context]";
+
 #[path = "memory_context/compose_items.rs"]
 mod compose_items;
 #[path = "memory_context/log_summary.rs"]

@@ -40,6 +40,8 @@ export function runColumns(): TableColumnsType<EngineJobRun> {
             thread_direct: '线程级直触发',
             subject_direct: '记忆直接触发',
             scheduler: '系统调度',
+            database_worker: '后台自动执行',
+            queue: '后台队列',
           }[value] ?? value
         ),
     },

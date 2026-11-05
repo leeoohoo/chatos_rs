@@ -25,6 +25,7 @@ async fn pool() -> Option<crate::db::Db> {
 }
 
 mod agent_directory_contracts;
+mod context_scope_contracts;
 mod cursor_contracts;
 mod repository_round_trip;
 mod summary_cursor_contracts;

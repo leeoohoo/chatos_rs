@@ -21,6 +21,7 @@ pub(crate) async fn build_context_blocks(
     thread: &EngineThread,
     policy: &ResolvedComposeContextPolicy,
     subject_memory_subject_ids: &[String],
+    context_project_subject_id: Option<&str>,
 ) -> Result<BuiltContextBlocks, String> {
     let mut blocks = Vec::new();
     let mut summary_count = 0usize;
@@ -32,6 +33,8 @@ pub(crate) async fn build_context_blocks(
             source_id,
             thread.id.as_str(),
             policy.summary_limit,
+            thread_allows_dynamic_project_recall(thread),
+            context_project_subject_id,
         )
         .await?;
         summary_count = summary_blocks.1;
@@ -144,22 +147,45 @@ async fn load_thread_summary_blocks(
     source_id: &str,
     thread_id: &str,
     summary_limit: i64,
+    isolate_dynamic_project: bool,
+    context_project_subject_id: Option<&str>,
 ) -> Result<(Vec<ComposeContextBlock>, usize), String> {
-    let level0_rows = summaries::list_latest_thread_summaries_at_level(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        "thread_incremental",
-        0,
-        summary_limit,
-    )
-    .await?;
-    let top_summary =
+    let level0_rows = if isolate_dynamic_project {
+        summaries::list_latest_thread_summaries_at_level_for_project(
+            db,
+            tenant_id,
+            source_id,
+            thread_id,
+            "thread_incremental",
+            0,
+            context_project_subject_id,
+            summary_limit,
+        )
+        .await?
+    } else {
+        summaries::list_latest_thread_summaries_at_level(
+            db,
+            tenant_id,
+            source_id,
+            thread_id,
+            "thread_incremental",
+            0,
+            summary_limit,
+        )
+        .await?
+    };
+    // Stable Agent threads may contain several projects. Their existing rollups can combine
+    // those projects, so only project-scoped level-0 summaries are safe as Thread context.
+    // Cross-project durable knowledge is already supplied by Agent Memory, while the current
+    // project's complete rollup is supplied by Project Summary.
+    let top_summary = if isolate_dynamic_project {
+        None
+    } else {
         summaries::list_latest_thread_summaries(db, tenant_id, source_id, thread_id, 1)
             .await?
             .into_iter()
-            .next();
+            .next()
+    };
 
     Ok(build_thread_summary_blocks_from_rows(
         level0_rows,

@@ -386,7 +386,7 @@ pub async fn try_acquire_rollup_slot(
         "UPDATE engine_threads SET rollup_job_run_id=$4,rollup_locked_at=$5,rollup_lock_expires_at=$6, \
          updated_at=$5,data=jsonb_set(data,'{updated_at}',to_jsonb($7::text),true) \
          WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
-         AND (rollup_job_run_id IS NULL OR rollup_lock_expires_at IS NULL OR rollup_lock_expires_at<=now()) \
+         AND (rollup_job_run_id IS NULL OR rollup_job_run_id=$4 OR rollup_lock_expires_at IS NULL OR rollup_lock_expires_at<=now()) \
          RETURNING data",
     ).bind(tenant_id).bind(source_id).bind(thread_id).bind(job_run_id)
       .bind(timestamp(&now)?).bind(timestamp(&expires)?).bind(&now)

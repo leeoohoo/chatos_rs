@@ -122,7 +122,8 @@ pub(crate) async fn run_thread_summary_with_thread(
     let source_id = thread.source_id.clone();
     let thread_id = thread.id.clone();
     let mut ctx = load_thread_summary_execution_context_for_thread(db, thread).await?;
-    ctx.settings.cloud_resume_kind = Some(trigger_type.to_string());
+    ctx.settings.cloud_resume_kind =
+        Some(crate::services::memory_cloud_agent::THREAD_SUMMARY_JOB_RESUME_KIND.to_string());
     if !ctx.should_run() {
         return Ok(noop_response(thread_id.as_str()));
     }
@@ -397,7 +398,9 @@ pub(crate) async fn resume_cloud_summary_job(
                     .clamp(128, MAX_THREAD_SUMMARY_TARGET_TOKENS),
             ),
             cloud_owner_entity_id: Some(job_run_id.to_string()),
-            cloud_resume_kind: Some(job_run.trigger_type.clone()),
+            cloud_resume_kind: Some(
+                crate::services::memory_cloud_agent::THREAD_SUMMARY_JOB_RESUME_KIND.to_string(),
+            ),
         },
         pending_before_count: metadata_i64(job_run.metadata.as_ref(), "pending_before_count")
             .unwrap_or_else(|| (selected.len() + oversized.len()) as i64),

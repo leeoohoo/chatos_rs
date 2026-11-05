@@ -54,7 +54,8 @@ pub(crate) use queries::list_records_by_ids;
 #[allow(unused_imports)]
 pub use queries::{
     count_records, get_record_by_id, list_compact_turn_slices, list_context_records,
-    list_pending_records, list_records_page, list_turn_process_records,
+    list_context_records_for_project, list_pending_records, list_records_page,
+    list_turn_process_records,
 };
 #[allow(unused_imports)]
 pub use status::{

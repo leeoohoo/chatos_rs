@@ -54,6 +54,10 @@ pub async fn compose_context(
             }
         }
     }
+    let context_project_subject_id = subject_memory_subject_ids
+        .iter()
+        .find(|subject| subject.starts_with("project:"))
+        .map(String::as_str);
     let context_blocks = build_context_blocks(
         db,
         req.tenant_id.as_str(),
@@ -61,18 +65,31 @@ pub async fn compose_context(
         &thread,
         &policy,
         subject_memory_subject_ids.as_slice(),
+        context_project_subject_id,
     )
     .await?;
 
     let recent_records = if policy.include_recent_records {
-        records::list_context_records(
-            db,
-            req.tenant_id.as_str(),
-            req.source_id.as_str(),
-            thread.id.as_str(),
-            policy.recent_limit,
-        )
-        .await?
+        if allow_dynamic_project {
+            records::list_context_records_for_project(
+                db,
+                req.tenant_id.as_str(),
+                req.source_id.as_str(),
+                thread.id.as_str(),
+                context_project_subject_id,
+                policy.recent_limit,
+            )
+            .await?
+        } else {
+            records::list_context_records(
+                db,
+                req.tenant_id.as_str(),
+                req.source_id.as_str(),
+                thread.id.as_str(),
+                policy.recent_limit,
+            )
+            .await?
+        }
     } else {
         Vec::new()
     };

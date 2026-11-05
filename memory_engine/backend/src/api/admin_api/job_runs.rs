@@ -18,8 +18,8 @@ use crate::state::AppState;
 const THREAD_DIRECT_TRIGGER: &str = "thread_direct";
 const SUBJECT_DIRECT_TRIGGER: &str = "subject_direct";
 const SCHEDULER_TRIGGER: &str = "scheduler";
-const JOB_TYPE_SUMMARY: &str = "summary";
-const JOB_TYPE_ROLLUP: &str = "rollup";
+const DATABASE_WORKER_TRIGGER: &str = "database_worker";
+const QUEUE_TRIGGER: &str = "queue";
 
 pub async fn list_job_runs(
     State(state): State<Arc<AppState>>,
@@ -159,27 +159,31 @@ pub async fn dashboard_overview(
 }
 
 fn bundle_trigger_filters(
-    job_type: Option<&str>,
+    _job_type: Option<&str>,
     requested: Option<&str>,
 ) -> (Vec<String>, Vec<String>) {
-    let normalized_job_type = job_type.map(str::trim).filter(|value| !value.is_empty());
-    let scheduler_only_job = matches!(
-        normalized_job_type,
-        Some(JOB_TYPE_SUMMARY | JOB_TYPE_ROLLUP)
-    );
-
     match requested.map(str::trim).filter(|value| !value.is_empty()) {
-        None if scheduler_only_job => (Vec::new(), vec![SCHEDULER_TRIGGER.to_string()]),
         None => (
             vec![
                 THREAD_DIRECT_TRIGGER.to_string(),
                 SUBJECT_DIRECT_TRIGGER.to_string(),
             ],
-            vec![SCHEDULER_TRIGGER.to_string()],
+            vec![
+                SCHEDULER_TRIGGER.to_string(),
+                DATABASE_WORKER_TRIGGER.to_string(),
+                QUEUE_TRIGGER.to_string(),
+            ],
         ),
-        Some(SCHEDULER_TRIGGER) => (Vec::new(), vec![SCHEDULER_TRIGGER.to_string()]),
-        Some(THREAD_DIRECT_TRIGGER) if scheduler_only_job => {
-            (Vec::new(), vec![SCHEDULER_TRIGGER.to_string()])
+        Some(SCHEDULER_TRIGGER) => (
+            Vec::new(),
+            vec![
+                SCHEDULER_TRIGGER.to_string(),
+                DATABASE_WORKER_TRIGGER.to_string(),
+                QUEUE_TRIGGER.to_string(),
+            ],
+        ),
+        Some(other @ (DATABASE_WORKER_TRIGGER | QUEUE_TRIGGER)) => {
+            (Vec::new(), vec![other.to_string()])
         }
         Some(other) => (vec![other.to_string()], Vec::new()),
     }
@@ -188,9 +192,17 @@ fn bundle_trigger_filters(
 #[cfg(test)]
 mod tests {
     use super::{
-        bundle_trigger_filters, JOB_TYPE_ROLLUP, JOB_TYPE_SUMMARY, SCHEDULER_TRIGGER,
+        bundle_trigger_filters, DATABASE_WORKER_TRIGGER, QUEUE_TRIGGER, SCHEDULER_TRIGGER,
         SUBJECT_DIRECT_TRIGGER, THREAD_DIRECT_TRIGGER,
     };
+
+    fn automatic_triggers() -> Vec<String> {
+        vec![
+            SCHEDULER_TRIGGER.to_string(),
+            DATABASE_WORKER_TRIGGER.to_string(),
+            QUEUE_TRIGGER.to_string(),
+        ]
+    }
 
     #[test]
     fn bundle_trigger_filters_defaults_to_thread_and_scheduler_buckets() {
@@ -201,7 +213,7 @@ mod tests {
                     THREAD_DIRECT_TRIGGER.to_string(),
                     SUBJECT_DIRECT_TRIGGER.to_string()
                 ],
-                vec![SCHEDULER_TRIGGER.to_string()]
+                automatic_triggers()
             )
         );
         assert_eq!(
@@ -211,7 +223,7 @@ mod tests {
                     THREAD_DIRECT_TRIGGER.to_string(),
                     SUBJECT_DIRECT_TRIGGER.to_string()
                 ],
-                vec![SCHEDULER_TRIGGER.to_string()]
+                automatic_triggers()
             )
         );
     }
@@ -222,14 +234,14 @@ mod tests {
 
         assert!(direct.iter().any(|item| item == THREAD_DIRECT_TRIGGER));
         assert!(direct.iter().any(|item| item == SUBJECT_DIRECT_TRIGGER));
-        assert_eq!(scheduler, vec![SCHEDULER_TRIGGER.to_string()]);
+        assert_eq!(scheduler, automatic_triggers());
     }
 
     #[test]
     fn bundle_trigger_filters_respects_scheduler_only_requests() {
         assert_eq!(
             bundle_trigger_filters(None, Some("scheduler")),
-            (Vec::new(), vec![SCHEDULER_TRIGGER.to_string()])
+            (Vec::new(), automatic_triggers())
         );
     }
 
@@ -246,26 +258,38 @@ mod tests {
     }
 
     #[test]
-    fn bundle_trigger_filters_routes_summary_jobs_into_scheduler_bucket_by_default() {
+    fn bundle_trigger_filters_keeps_direct_and_automatic_summary_jobs_visible() {
         assert_eq!(
-            bundle_trigger_filters(Some(JOB_TYPE_SUMMARY), None),
-            (Vec::new(), vec![SCHEDULER_TRIGGER.to_string()])
+            bundle_trigger_filters(Some("summary"), None),
+            (
+                vec![
+                    THREAD_DIRECT_TRIGGER.to_string(),
+                    SUBJECT_DIRECT_TRIGGER.to_string()
+                ],
+                automatic_triggers()
+            )
         );
         assert_eq!(
-            bundle_trigger_filters(Some(JOB_TYPE_ROLLUP), None),
-            (Vec::new(), vec![SCHEDULER_TRIGGER.to_string()])
+            bundle_trigger_filters(Some("rollup"), None),
+            (
+                vec![
+                    THREAD_DIRECT_TRIGGER.to_string(),
+                    SUBJECT_DIRECT_TRIGGER.to_string()
+                ],
+                automatic_triggers()
+            )
         );
     }
 
     #[test]
-    fn bundle_trigger_filters_treats_thread_direct_summary_filter_as_scheduler_bucket() {
+    fn bundle_trigger_filters_respects_exact_direct_filter_for_summary_jobs() {
         assert_eq!(
-            bundle_trigger_filters(Some(JOB_TYPE_SUMMARY), Some("thread_direct")),
-            (Vec::new(), vec![SCHEDULER_TRIGGER.to_string()])
+            bundle_trigger_filters(Some("summary"), Some("thread_direct")),
+            (vec![THREAD_DIRECT_TRIGGER.to_string()], Vec::new())
         );
         assert_eq!(
-            bundle_trigger_filters(Some(JOB_TYPE_ROLLUP), Some("thread_direct")),
-            (Vec::new(), vec![SCHEDULER_TRIGGER.to_string()])
+            bundle_trigger_filters(Some("rollup"), Some("database_worker")),
+            (Vec::new(), vec![DATABASE_WORKER_TRIGGER.to_string()])
         );
     }
 }

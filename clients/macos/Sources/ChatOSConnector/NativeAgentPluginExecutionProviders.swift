@@ -243,7 +243,8 @@ extension NativeLocalConnectorService {
             purpose: purpose,
             requestedPermissionsDescription: purpose,
             approvalScopeKey: "agent-project-terminal:\(resolvedProject.workspace.id)",
-            workspaceID: resolvedProject.workspace.id
+            workspaceID: resolvedProject.workspace.id,
+            projectID: runContext.projectID
         )
         guard case .approve = decision else {
             throw NativePluginRuntimeError.invalidRequest("用户未批准 Agent 执行终端命令")
@@ -515,6 +516,7 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
                 policy: policy,
                 projectRootURL: projectRootURL,
                 workspaceID: workspaceID,
+                projectID: identity.projectID,
                 executionPresentation: executionPresentation
             ) else {
                 return .failure("用户未批准这次 Plugin 操作。")

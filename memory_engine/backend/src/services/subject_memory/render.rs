@@ -108,9 +108,14 @@ pub(crate) fn digest_from_ids(namespace: &str, ids: &[String]) -> Option<String>
 
 fn project_id_from_summary_metadata(metadata: Option<&Value>) -> Option<String> {
     metadata
-        .and_then(|value| value.get("legacy_session_mapping"))
-        .and_then(|mapping| mapping.get("project_id"))
+        .and_then(|value| value.get("project_subject_id"))
         .and_then(Value::as_str)
+        .or_else(|| {
+            metadata
+                .and_then(|value| value.get("legacy_session_mapping"))
+                .and_then(|mapping| mapping.get("project_id"))
+                .and_then(Value::as_str)
+        })
         .or_else(|| {
             metadata
                 .and_then(|value| value.get("project_id"))
@@ -124,4 +129,32 @@ fn project_id_from_summary_metadata(metadata: Option<&Value>) -> Option<String> 
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{project_id_from_summary_metadata, summary_to_subject_memory_block};
+    use crate::services::subject_memory::PendingSourceSummary;
+    use serde_json::json;
+
+    #[test]
+    fn current_project_subject_id_is_rendered_for_agent_memory_input() {
+        let item = PendingSourceSummary {
+            id: "summary-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            source_id: "chatos".to_string(),
+            thread_id: "thread-1".to_string(),
+            summary_type: "thread_incremental".to_string(),
+            level: 0,
+            summary_text: "project facts".to_string(),
+            metadata: Some(json!({"project_subject_id": "project:alpha"})),
+            created_at: "2026-11-05T00:00:00Z".to_string(),
+        };
+
+        assert_eq!(
+            project_id_from_summary_metadata(item.metadata.as_ref()).as_deref(),
+            Some("project:alpha")
+        );
+        assert!(summary_to_subject_memory_block(&item).starts_with("[project_id=project:alpha]"));
+    }
 }

@@ -365,6 +365,7 @@ extension NativeLocalConnectorService {
         policy: NativePluginToolPolicy,
         projectRootURL: URL,
         workspaceID: String,
+        projectID: String?,
         executionPresentation: NativeAgentPluginExecutionPresentation
     ) async -> Bool {
         guard policy.approvalMode == "per_call" else { return true }
@@ -413,7 +414,8 @@ extension NativeLocalConnectorService {
             approvalSessionReuse: .declaredScope,
             evaluationArguments: [evaluationEvidence.summary],
             automaticApprovalEvidenceComplete: evaluationEvidence.isComplete,
-            workspaceID: workspaceID
+            workspaceID: workspaceID,
+            projectID: projectID
         )
         if case .approve = decision { return true }
         return false

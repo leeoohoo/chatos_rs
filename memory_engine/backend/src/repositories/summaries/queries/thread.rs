@@ -66,6 +66,35 @@ pub async fn list_latest_thread_summaries_at_level(
         .push_bind(limit.max(1));
     fetch(db, q).await
 }
+pub async fn list_latest_thread_summaries_at_level_for_project(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    summary_type: &str,
+    level: i64,
+    project_subject_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<EngineSummary>, String> {
+    let mut q = build_summary_query(
+        "SELECT data FROM engine_summaries",
+        thread_id,
+        Some(tenant_id),
+        Some(source_id),
+        Some(summary_type),
+        Some("done"),
+        Some(level.max(0)),
+    );
+    if let Some(project_subject_id) = project_subject_id {
+        q.push(" AND BTRIM(COALESCE(data #>> '{metadata,project_subject_id}',''))=")
+            .push_bind(project_subject_id);
+    } else {
+        q.push(" AND BTRIM(COALESCE(data #>> '{metadata,project_subject_id}',''))=''");
+    }
+    q.push(" ORDER BY created_at DESC LIMIT ")
+        .push_bind(limit.max(1));
+    fetch(db, q).await
+}
 pub async fn list_latest_thread_summaries_by_type(
     db: &Db,
     tenant_id: &str,

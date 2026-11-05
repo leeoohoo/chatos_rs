@@ -4,7 +4,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::memory_context::{MemoryContextComposer, MemoryScope};
+use crate::input_transform::content_parts_to_text;
+use crate::memory_context::{MemoryContextComposer, MemoryScope, MEMORY_CONTEXT_ITEM_PREFIX};
 use crate::runtime::{AiRuntime, AiRuntimeOptions, AiSingleStepOutcome, AiSingleStepRequest};
 #[cfg(feature = "local-agent-loop")]
 use crate::runtime::{AiRuntimeResult, AiTurnReport};
@@ -317,15 +318,12 @@ pub async fn build_contextual_input(
     fallback_input: Value,
     excluded_memory_turn_id: Option<&str>,
 ) -> Result<Value, String> {
-    let current_items = if current_input_items.is_empty() {
+    let mut current_items = if current_input_items.is_empty() {
         input_value_to_items(fallback_input)
     } else {
         current_input_items.to_vec()
     };
     let has_durable_response_history = current_items.iter().any(is_durable_history_item);
-    if has_durable_response_history {
-        return Ok(Value::Array(current_items));
-    }
     let memory_items = if let (Some(composer), Some(scope)) = (memory_composer, memory_scope) {
         composer
             .compose_input_items_excluding_turn(scope, excluded_memory_turn_id, None)
@@ -334,11 +332,26 @@ pub async fn build_contextual_input(
         Vec::new()
     };
 
+    if has_durable_response_history {
+        current_items.retain(|item| !is_memory_context_item(item));
+        let mut items = memory_items;
+        items.extend(current_items);
+        return Ok(Value::Array(items));
+    }
+
     let mut items = prefixed_input_items.to_vec();
     items.extend(memory_items);
     items.extend(current_items);
 
     Ok(Value::Array(items))
+}
+
+fn is_memory_context_item(item: &Value) -> bool {
+    item.get("role").and_then(Value::as_str) == Some("system")
+        && item
+            .get("content")
+            .map(content_parts_to_text)
+            .is_some_and(|text| text.trim_start().starts_with(MEMORY_CONTEXT_ITEM_PREFIX))
 }
 
 fn is_responses_output_or_result_item(item: &Value) -> bool {

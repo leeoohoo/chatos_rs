@@ -153,4 +153,6 @@ export const DETAIL_TABLE_SCROLL_Y = '100%';
 export const JOB_TRIGGER_LABELS: Record<string, string> = {
   thread_direct: '线程直接触发',
   scheduler: '系统调度',
+  database_worker: '后台自动执行',
+  queue: '后台队列',
 };

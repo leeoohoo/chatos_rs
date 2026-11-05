@@ -120,7 +120,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn durable_history_is_not_recomposed_with_memory_context() {
+    async fn durable_history_replaces_its_memory_snapshot_with_latest_context() {
         let (composer, scope, server) = memory_composer_mock(json!({
             "thread_id": "thread-1",
             "blocks": [{"block_type": "thread_summary_top_level", "text": "summary"}],
@@ -151,7 +151,10 @@ mod tests {
         server.abort();
 
         let items = input.as_array().expect("items");
-        assert_eq!(items, durable.as_slice());
+        assert_eq!(items.len(), durable.len() + 1);
+        assert!(items[0].to_string().contains("[memory_engine_context]"));
+        assert!(items[0].to_string().contains("summary"));
+        assert_eq!(&items[1..], durable.as_slice());
         assert_eq!(
             items
                 .iter()
@@ -173,6 +176,43 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[tokio::test]
+    async fn durable_history_drops_the_previous_memory_snapshot_before_refreshing() {
+        let (composer, scope, server) = memory_composer_mock(json!({
+            "thread_id": "thread-1",
+            "blocks": [{"block_type": "agent_memory_recent", "text": "fresh-memory"}],
+            "recent_records": [],
+            "meta": {"summary_count": 1, "recent_record_count": 0}
+        }))
+        .await;
+        let durable = vec![
+            json!({
+                "type":"message",
+                "role":"system",
+                "content":[{"type":"input_text","text":"[memory_engine_context]\n\nstale-memory"}]
+            }),
+            json!({"role":"user","content":"continue"}),
+            json!({"type":"reasoning","id":"rs-1","summary":[]}),
+        ];
+
+        let input = build_contextual_input(
+            Some(&composer),
+            Some(&scope),
+            &[],
+            durable.as_slice(),
+            Value::Null,
+            Some("run-1"),
+        )
+        .await
+        .expect("contextual input");
+        server.abort();
+
+        let text = input.to_string();
+        assert!(text.contains("fresh-memory"));
+        assert!(!text.contains("stale-memory"));
+        assert_eq!(text.matches("[memory_engine_context]").count(), 1);
     }
 
     #[tokio::test]

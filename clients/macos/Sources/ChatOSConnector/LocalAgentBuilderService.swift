@@ -141,25 +141,19 @@ public struct LocalAgentBuilderService: Sendable {
         )
         checkpoint.id = runID
 
-        var memoryProvider: AgentMemoryContextProvider?
-        do {
-            let memoryScope = try AgentMemoryScope(
-                tenantID: ownerUserID,
-                agentID: "builtin-agent-builder",
-                agentName: "Agent 创建器",
-                projectID: projectID,
-                runID: runID,
-                runtimeScope: scope
-            )
-            let memory = try await agentServices.makeAgentMemory(scope: memoryScope)
-            try await memory.ensureThread()
-            let candidate = AgentMemoryContextProvider(scope: memoryScope, service: memory)
-            checkpoint = try candidate.bind(checkpoint)
-            checkpoint.memory?.threadCreated = true
-            memoryProvider = candidate
-        } catch {
-            // A fresh Builder run can still produce a draft while Memory Engine is offline.
-        }
+        let memoryScope = try AgentMemoryScope(
+            tenantID: ownerUserID,
+            agentID: "builtin-agent-builder",
+            agentName: "Agent 创建器",
+            projectID: projectID,
+            runID: runID,
+            runtimeScope: scope
+        )
+        let memory = try await agentServices.makeAgentMemory(scope: memoryScope)
+        try await memory.ensureThread()
+        let memoryProvider = AgentMemoryContextProvider(scope: memoryScope, service: memory)
+        checkpoint = try memoryProvider.bind(checkpoint)
+        checkpoint.memory?.threadCreated = true
 
         var policy = try settings.load().global
         policy.maximumModelCalls = min(policy.maximumModelCalls, 12)

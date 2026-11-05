@@ -25,7 +25,8 @@ extension NativeLocalConnectorService {
         approvalSessionReuse: ApprovalSessionReuse = .exactRequest,
         evaluationArguments: [String]? = nil,
         automaticApprovalEvidenceComplete: Bool = true,
-        workspaceID: String? = nil
+        workspaceID: String? = nil,
+        projectID: String? = nil
     ) async -> NativeApprovalDecision {
         let scopedApprovalKey = approvalScopeKey.map {
             approvalSessionScope(
@@ -138,7 +139,7 @@ extension NativeLocalConnectorService {
                 let contextProvider: AgentMemoryContextProvider?
                 if let approvalMemoryProviderFactory {
                     contextProvider = try await approvalMemoryProviderFactory(
-                        runtime.ownerUserID, workspaceID, runID, runtimeScope
+                        runtime.ownerUserID, projectID, runID, runtimeScope
                     )
                 } else {
                     contextProvider = nil

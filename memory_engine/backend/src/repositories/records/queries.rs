@@ -176,6 +176,38 @@ pub async fn list_context_records(
     thread_id: &str,
     limit: Option<i64>,
 ) -> Result<Vec<EngineRecord>, String> {
+    list_context_records_inner(db, tenant_id, source_id, thread_id, None, false, limit).await
+}
+
+pub async fn list_context_records_for_project(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    project_subject_id: Option<&str>,
+    limit: Option<i64>,
+) -> Result<Vec<EngineRecord>, String> {
+    list_context_records_inner(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_subject_id,
+        true,
+        limit,
+    )
+    .await
+}
+
+async fn list_context_records_inner(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    project_subject_id: Option<&str>,
+    filter_project: bool,
+    limit: Option<i64>,
+) -> Result<Vec<EngineRecord>, String> {
     let mut query =
         QueryBuilder::<Postgres>::new("SELECT data FROM engine_records WHERE tenant_id=");
     query
@@ -185,6 +217,9 @@ pub async fn list_context_records(
         .push(" AND thread_id=")
         .push_bind(thread_id)
         .push(" AND summary_status IN ('pending','summarizing','')");
+    if filter_project {
+        append_context_project_filter(&mut query, project_subject_id);
+    }
     let reverse = limit.is_some();
     if let Some(limit) = limit {
         query
@@ -198,6 +233,31 @@ pub async fn list_context_records(
         records.reverse();
     }
     Ok(records)
+}
+
+fn append_context_project_filter(
+    query: &mut QueryBuilder<Postgres>,
+    project_subject_id: Option<&str>,
+) {
+    const PROJECT_PATH: &str = "data #>> '{metadata,memory_project_id}'";
+    if let Some(subject_id) = project_subject_id {
+        let project_id = subject_id.strip_prefix("project:").unwrap_or(subject_id);
+        query
+            .push(" AND (BTRIM(COALESCE(")
+            .push(PROJECT_PATH)
+            .push(",''))=")
+            .push_bind(subject_id)
+            .push(" OR BTRIM(COALESCE(")
+            .push(PROJECT_PATH)
+            .push(",''))=")
+            .push_bind(project_id)
+            .push(")");
+    } else {
+        query
+            .push(" AND BTRIM(COALESCE(")
+            .push(PROJECT_PATH)
+            .push(",''))=''");
+    }
 }
 
 pub async fn list_compact_turn_slices(
