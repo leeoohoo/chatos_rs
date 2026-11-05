@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::task::{LOCAL_TASK_MAX_OWNED_PATHS, LOCAL_TASK_MAX_OWNED_PATH_BYTES};
+use crate::task::{LOCAL_TASK_MAX_OWNED_PATH_BYTES, LOCAL_TASK_MAX_OWNED_PATHS};
 use serde_json::Value;
 use std::collections::HashSet;
 use unicode_normalization::UnicodeNormalization;
@@ -45,14 +45,15 @@ fn normalized_owned_paths(input: &Value, task_id: &str) -> Result<Option<Vec<Str
 /// Returns the project-relative write scope that must be held for the full Task Run.
 ///
 /// `CodeMaintainerWrite` can be constrained by declared `owned_paths`. Terminal and External MCP
-/// execution remain entire-project writers. Plugin execution holds one synthetic lock per selected
-/// Plugin component plus any declared paths: Tasks using different components and disjoint files
-/// may run in parallel, while the same component or an explicitly shared file stays serialized.
+/// execution remain entire-project writers. Exclusive Plugin components hold one synthetic lock per
+/// selected component plus any declared paths. Components whose frozen release snapshot explicitly
+/// permits parallel execution do not take that synthetic lock, but declared project paths still do.
 pub fn local_task_runtime_write_scope(
     input: &Value,
     task_id: &str,
 ) -> Result<Option<Vec<String>>, String> {
     let plugin_components = task_selected_plugin_components(input, task_id)?;
+    let parallel_plugin_components = task_parallel_plugin_components(input, task_id)?;
     let external_mcp_selected = task_selects_external_mcp(input, task_id)?;
     let code_write_scope = local_task_write_scope(input, task_id)?;
     if task_enables_terminal(input) || external_mcp_selected {
@@ -64,12 +65,61 @@ pub fn local_task_runtime_write_scope(
             return Ok(Some(Vec::new()));
         }
         let mut paths = code_write_scope.unwrap_or(declared_paths);
-        paths.extend(plugin_components.into_iter().map(plugin_runtime_lock_path));
+        paths.extend(
+            plugin_components
+                .into_iter()
+                .filter(|component| !parallel_plugin_components.contains(component))
+                .map(plugin_runtime_lock_path),
+        );
         paths.sort();
         paths.dedup();
-        return Ok(Some(paths));
+        return Ok((!paths.is_empty()).then_some(paths));
     }
     Ok(code_write_scope)
+}
+
+fn task_parallel_plugin_components(
+    input: &Value,
+    task_id: &str,
+) -> Result<HashSet<String>, String> {
+    let Some(value) = input.pointer("/tool_options/plugin_release_snapshots") else {
+        return Ok(HashSet::new());
+    };
+    if value.is_null() {
+        return Ok(HashSet::new());
+    }
+    let snapshots = value
+        .as_array()
+        .ok_or_else(|| format!("plugin_release_snapshots must be an array for task: {task_id}"))?;
+    let mut parallel = HashSet::new();
+    for snapshot in snapshots {
+        let plugin_key = snapshot
+            .get("plugin_key")
+            .and_then(Value::as_str)
+            .filter(|key| !key.is_empty() && !key.contains('\0'))
+            .ok_or_else(|| {
+                format!(
+                    "plugin_release_snapshots must contain plugin_key strings for task: {task_id}"
+                )
+            })?;
+        let component_key = snapshot
+            .get("component_key")
+            .and_then(Value::as_str)
+            .filter(|key| !key.is_empty() && !key.contains('\0'))
+            .ok_or_else(|| {
+                format!(
+                    "plugin_release_snapshots must contain component_key strings for task: {task_id}"
+                )
+            })?;
+        let allows_parallel = snapshot
+            .get("allows_parallel_task_execution")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if allows_parallel {
+            parallel.insert(format!("{plugin_key}\0{component_key}"));
+        }
+    }
+    Ok(parallel)
 }
 
 fn task_enables_code_write(input: &Value) -> bool {

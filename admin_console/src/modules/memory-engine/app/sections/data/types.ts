@@ -4,6 +4,9 @@
 import type { FormInstance } from 'antd';
 
 import type {
+  AgentDirectoryQuery,
+  EngineAgentDirectoryItem,
+  EngineAgentProject,
   EngineRecord,
   EngineSubjectMemory,
   EngineSummary,
@@ -59,6 +62,30 @@ export type ThreadWorkspaceProps = {
   subjectMemories: EngineSubjectMemory[];
   detailTab: DataDetailTab;
   onDetailTabChange: (detailTab: DataDetailTab) => void;
+  showMemories?: boolean;
 };
 
-export type DataSectionProps = DataFiltersCardProps & ThreadWorkspaceProps;
+export type AgentFiltersCardProps = {
+  form: FormInstance<AgentDirectoryQuery>;
+  initialValues: AgentDirectoryQuery;
+  loading: boolean;
+  onApplyFilters: () => void;
+  onResetFilters: () => void;
+  onReload: () => void;
+};
+
+export type AgentWorkspaceProps = ThreadWorkspaceProps & {
+  agents: EngineAgentDirectoryItem[];
+  agentsLoading: boolean;
+  selectedAgent: EngineAgentDirectoryItem | null;
+  onSelectAgent: (agent: EngineAgentDirectoryItem) => void;
+  projects: EngineAgentProject[];
+  selectedProject: EngineAgentProject | null;
+  onSelectProject: (project: EngineAgentProject) => void;
+  agentMemories: EngineSubjectMemory[];
+  projectMemories: EngineSubjectMemory[];
+  agentDetailLoading: boolean;
+  projectMemoriesLoading: boolean;
+};
+
+export type DataSectionProps = AgentFiltersCardProps & AgentWorkspaceProps;

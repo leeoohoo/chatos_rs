@@ -20,14 +20,18 @@ struct MessageTaskWorkspaceSheet: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if let graph = viewModel.displayGraph, graph.hasOverview {
-                graphOverview(graph)
-                Divider()
+            GeometryReader { viewport in
+                VStack(spacing: 0) {
+                    if let graph = viewModel.displayGraph, graph.hasOverview {
+                        ScrollView { graphOverview(graph) }
+                            .frame(height: showsGraphOverview ? min(190, viewport.size.height * 0.28) : 48)
+                        Divider()
+                    }
+                    content
+                        .workspaceFill()
+                }
             }
-            content
-                .workspaceFill()
         }
-        .frame(minWidth: 760, minHeight: 560)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(\.locale, model.interfaceLocale)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -93,11 +97,19 @@ struct MessageTaskWorkspaceSheet: View {
             }
             .padding(.top, 10)
         } label: {
-            Label(
-                model.localized("总体方案", english: "Overall Plan"),
-                systemImage: "map.fill"
-            )
-            .appFont(.subheadline.weight(.semibold))
+            HStack(spacing: 10) {
+                Image(systemName: "map.fill")
+                    .foregroundStyle(AppPalette.ai)
+                    .frame(width: 28, height: 28)
+                    .background(AppPalette.aiSoft, in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.localized("总体方案", english: "Overall Plan"))
+                        .appFont(.subheadline.weight(.semibold))
+                    Text(model.localized("任务如何拆分，以及最终由哪个节点交付", english: "How work is decomposed and which node owns delivery"))
+                        .appFont(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -119,17 +131,23 @@ struct MessageTaskWorkspaceSheet: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            Button(
-                model.localized("返回聊天", english: "Back to Chat"),
-                systemImage: "chevron.left",
-                action: onClose
-            )
+            Button(action: onClose) {
+                Image(systemName: "chevron.left")
+                    .frame(width: 30, height: 30)
+                    .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
             .help(model.localized(
                 "关闭任务流程图并返回当前聊天",
                 english: "Close the task flow and return to the current chat"
             ))
-            VStack(alignment: .leading, spacing: 4) {
-                Text("任务流程图").appFont(.title3.weight(.semibold))
+            Image(systemName: "point.3.connected.trianglepath.dotted")
+                .appFont(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(AppPalette.ai, in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("任务图").appFont(.title3.weight(.semibold))
                 Text(viewModel.turn.userMessage.text)
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
@@ -148,6 +166,8 @@ struct MessageTaskWorkspaceSheet: View {
             .labelsHidden()
             .frame(width: 150)
             Button("刷新", systemImage: "arrow.clockwise", action: viewModel.refresh)
+                .labelStyle(.iconOnly)
+                .help("刷新任务图")
             if viewModel.hasCancellableTask {
                 Button(
                     viewModel.isCancelling ? "正在停止…" : "停止任务",
@@ -157,21 +177,27 @@ struct MessageTaskWorkspaceSheet: View {
                 }
                 .disabled(viewModel.isCancelling)
                 .tint(.red)
+                .labelStyle(.iconOnly)
             }
-            Button("关闭", action: onClose)
+            Button("关闭", systemImage: "xmark", action: onClose)
+                .labelStyle(.iconOnly)
         }
-        .padding(16)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(AppPalette.surface)
     }
 
     @ViewBuilder
     private var content: some View {
         if !viewModel.executionActivity.isEmpty {
-            VStack(spacing: 0) {
-                TaskExecutionActivityView(viewModel: viewModel)
-                    .frame(height: executionActivityHeight)
-                Divider()
-                graphContent
-                    .workspaceFill()
+            GeometryReader { viewport in
+                VStack(spacing: 0) {
+                    TaskExecutionActivityView(viewModel: viewModel)
+                        .frame(height: min(executionActivityHeight, viewport.size.height * 0.3))
+                    Divider()
+                    graphContent
+                        .workspaceFill()
+                }
             }
         } else {
             graphContent
@@ -207,15 +233,30 @@ struct MessageTaskWorkspaceSheet: View {
                     Button("重试", action: viewModel.load)
                 }
             } else if let graph = viewModel.displayGraph, !graph.nodes.isEmpty {
-                HSplitView {
-                    MessageTaskGraphCanvas(
-                        graph: graph,
-                        selectedTaskID: viewModel.selectedTaskID,
-                        onSelect: viewModel.select,
-                        onStop: { viewModel.requestCancellation(for: $0) }
-                    )
-                    .frame(minWidth: 700)
-                    MessageTaskInspectorView(viewModel: viewModel)
+                GeometryReader { viewport in
+                    if viewport.size.width >= 900 {
+                        HSplitView {
+                            graphCanvas(graph).frame(minWidth: 350)
+                            MessageTaskInspectorView(viewModel: viewModel)
+                                .frame(minWidth: 380, idealWidth: 440, maxWidth: 520)
+                        }
+                    } else {
+                        // NSSplitView can position an oversized inspector outside the
+                        // chat viewport while measuring its intrinsic content size.
+                        // Keep the compact layout entirely within SwiftUI's proposal.
+                        VStack(spacing: 0) {
+                            graphCanvas(graph)
+                                .frame(width: viewport.size.width, height: viewport.size.height * 0.45)
+                                .clipped()
+                            Divider()
+                            GeometryReader { inspectorViewport in
+                                MessageTaskInspectorView(viewModel: viewModel, fillsAvailableWidth: true)
+                                    .frame(width: inspectorViewport.size.width, height: inspectorViewport.size.height)
+                                    .clipped()
+                            }
+                        }
+                        .frame(width: viewport.size.width, height: viewport.size.height)
+                    }
                 }
             } else {
                 ContentUnavailableView(
@@ -226,6 +267,15 @@ struct MessageTaskWorkspaceSheet: View {
             }
         }
         .workspaceFill()
+    }
+
+    private func graphCanvas(_ graph: MessageTaskGraphSnapshot) -> some View {
+        MessageTaskGraphCanvas(
+            graph: graph,
+            selectedTaskID: viewModel.selectedTaskID,
+            onSelect: viewModel.select,
+            onStop: { viewModel.requestCancellation(for: $0) }
+        )
     }
 }
 
@@ -285,9 +335,13 @@ private struct TaskExecutionActivityView: View {
                                         Text(detail)
                                             .appFont(.caption)
                                             .foregroundStyle(.secondary)
+                                            .lineLimit(2)
                                     }
                                 }
                             }
+                            .padding(10)
+                            .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 9))
+                            .overlay { RoundedRectangle(cornerRadius: 9).stroke(AppPalette.border.opacity(0.5)) }
                         }
                     }
                     .padding(14)

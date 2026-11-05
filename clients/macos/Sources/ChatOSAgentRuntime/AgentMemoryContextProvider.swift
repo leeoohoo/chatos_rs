@@ -33,6 +33,11 @@ public protocol AgentContextProviding: Sendable {
         shouldPause: @escaping @Sendable () async -> Bool,
         record: @escaping AgentRuntime.Recorder
     ) async throws -> AgentPreparedContext
+    func finalizeMemory() async throws
+}
+
+public extension AgentContextProviding {
+    func finalizeMemory() async throws {}
 }
 
 /// No credentials or network configuration are stored in checkpoints.
@@ -58,6 +63,11 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
             checkpoint.memory = .init(scope: scope, pinnedMessageCount: checkpoint.messages.count)
         }
         return checkpoint
+    }
+
+    public func finalizeMemory() async throws {
+        guard scope.projectAggregationSubjectID != nil else { return }
+        try await service.flushSummary()
     }
 
     public func prepare(checkpoint initial: AgentRunCheckpoint, tools: [AgentToolDefinition],

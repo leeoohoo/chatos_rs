@@ -1,11 +1,13 @@
 import { build } from 'esbuild';
-import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const packageJson = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8'));
 
+await rm(path.join(projectRoot, 'dist'), { recursive: true, force: true });
+await rm(path.join(projectRoot, '.build'), { recursive: true, force: true });
 await mkdir(path.join(projectRoot, 'dist'), { recursive: true });
 await mkdir(path.join(projectRoot, '.build'), { recursive: true });
 const buildResult = await build({

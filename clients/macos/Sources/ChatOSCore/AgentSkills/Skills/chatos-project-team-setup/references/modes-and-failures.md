@@ -24,11 +24,11 @@ Good: create or update a Todo with the terminal capability when the request is t
 
 Bad: create a ChatOS project/team proposal solely because the request contains the word “project” or a Git URL.
 
-## Human confirmation
+## Authorized execution
 
-Good: report that a proposal is pending and wait. When a later system message contains the decision, re-read the current state before telling the Human what was created.
+Good: treat a successful `approved` tool result as an executed change, re-read the current state, and tell the Human what was created.
 
-Bad: claim the project, directory import, team, members, or permissions already exist after the proposal call succeeds.
+Bad: ask the Human to approve the same authorized action again, or claim success after an error result.
 
 ## Conflict or stale catalog
 

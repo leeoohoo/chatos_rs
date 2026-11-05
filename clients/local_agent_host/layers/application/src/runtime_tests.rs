@@ -256,14 +256,14 @@ async fn task_execution_cannot_finish_before_reporting_its_outcome() {
 }
 
 #[tokio::test]
-async fn a_normally_completed_run_owns_success_independently_of_internal_result() {
+async fn task_finishes_only_after_all_actionable_acceptance_checks_pass() {
     for result_status in ["succeeded", "failed", "blocked"] {
         let storage = Arc::new(SqliteClientStorage::connect_memory().await.unwrap());
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
         runtime.initialize("user-1").await.unwrap();
         runtime.try_handle(envelope("create", HostCommand::CreateTaskGraph(CreateTaskGraphCommand {
             graph_id:"graph-1".into(),owner_user_id:"user-1".into(),source_entity_type:"test".into(),source_entity_id:"test-1".into(),
-            tasks:vec![LocalTaskSpec { task_id:"task-1".into(),title:"Review".into(),profile_key:"task_execution".into(),model_config_ref:"model-1".into(),model_config_revision:"revision-1".into(),capability_policy_revision:"policy-1".into(),input:json!({"prompt":"Review","acceptance_report_version":1,"acceptance_criteria":["Review completed"],"final_response_max_chars":80}),max_iterations:8 }],dependencies:vec![]
+            tasks:vec![LocalTaskSpec { task_id:"task-1".into(),title:"Review".into(),profile_key:"task_execution".into(),model_config_ref:"model-1".into(),model_config_revision:"revision-1".into(),capability_policy_revision:"policy-1".into(),input:json!({"prompt":"Review","acceptance_report_version":1,"acceptance_criteria":["Review completed","Evidence recorded"],"final_response_max_chars":80}),max_iterations:8 }],dependencies:vec![]
         }))).await.unwrap();
         runtime
             .start_next_task_run("user-1")
@@ -324,7 +324,12 @@ async fn a_normally_completed_run_owns_success_independently_of_internal_result(
         else {
             panic!("tool claim")
         };
-        let report = json!({"reported":true,"result_status":result_status,"status":result_status,"reason":"Review result","final_response":"Review complete: the reviewed artifact has defects.","acceptance_checks":[{"criterion_index":0,"status":if result_status=="succeeded" {"failed"} else {"not_verified"},"evidence":"Compared the requested review criteria"}]});
+        let first_check_status = match result_status {
+            "succeeded" => "passed",
+            "blocked" => "blocked",
+            _ => "not_verified",
+        };
+        let report = json!({"reported":true,"result_status":result_status,"status":result_status,"reason":"Review result","final_response":"Review complete: the reviewed artifact has defects.","acceptance_checks":[{"criterion_index":0,"status":first_check_status,"evidence":if result_status=="blocked" {"User must supply the protected artifact"} else {"Compared the requested review criteria"}},{"criterion_index":1,"status":"passed","evidence":"Evidence was recorded"}]});
         runtime
             .try_handle(envelope(
                 "report",
@@ -372,63 +377,20 @@ async fn a_normally_completed_run_owns_success_independently_of_internal_result(
             ))
             .await
             .is_err());
-        let claim = if result_status == "blocked" {
-            runtime
-                .try_handle(envelope(
-                    "subagent-stop-continue",
-                    HostCommand::CommitStep(CommitStepCommand {
-                        owner_user_id: "user-1".into(),
-                        run_id: claim.run.run_id.clone(),
-                        claim_token: claim.claim_token,
-                        expected_version: claim.run.version,
-                        outcome: LocalAgentStepOutcome::Continue {
-                            checkpoint: json!({
-                                "response": {
-                                    "content": report["final_response"],
-                                    "task_acceptance": report,
-                                    "request_input_items": [],
-                                    "response_output_items": []
-                                },
-                                "continuation": {
-                                    "reason": "trusted_plugin_hook_stop_block",
-                                    "input_items": [],
-                                    "stop_hook_block": {
-                                        "count": 1,
-                                        "reason_sha256": "a".repeat(64),
-                                        "event": "SubagentStop"
-                                    }
-                                }
-                            }),
-                        },
-                    }),
-                ))
-                .await
-                .unwrap();
-            let HostResult::Claim { claim: Some(claim) } = runtime
-                .try_handle(envelope(
-                    "post-subagent-stop-claim",
-                    HostCommand::ClaimNextRun(ClaimNextRunCommand {
-                        owner_user_id: "user-1".into(),
-                        worker_id: "worker".into(),
-                        lease_duration_ms: 10000,
-                    }),
-                ))
-                .await
-                .unwrap()
-            else {
-                panic!("post SubagentStop claim")
-            };
-            claim
-        } else {
-            claim
-        };
-        runtime
+        let finish_result = runtime
             .try_handle(envelope(
                 "finish",
                 finish(&claim, report["final_response"].clone()),
             ))
-            .await
-            .unwrap();
+            .await;
+        if matches!(result_status, "succeeded" | "blocked") {
+            finish_result.expect("all-actionable-passed Task may finish");
+        } else {
+            let error = finish_result.expect_err("incomplete acceptance must not finish");
+            assert!(error
+                .to_string()
+                .contains("every actionable acceptance check has passed"));
+        }
         let HostResult::TaskGraph { graph } = runtime
             .try_handle(envelope(
                 "graph",
@@ -442,6 +404,13 @@ async fn a_normally_completed_run_owns_success_independently_of_internal_result(
         else {
             panic!("graph")
         };
-        assert_eq!(graph.tasks[0].status, LocalTaskStatus::Succeeded);
+        assert_eq!(
+            graph.tasks[0].status,
+            match result_status {
+                "succeeded" => LocalTaskStatus::Succeeded,
+                "blocked" => LocalTaskStatus::Blocked,
+                _ => LocalTaskStatus::Running,
+            }
+        );
     }
 }

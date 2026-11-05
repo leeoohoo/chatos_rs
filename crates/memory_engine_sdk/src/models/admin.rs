@@ -66,7 +66,6 @@ pub struct EngineJobPolicy {
     #[serde(default = "default_prompt_language")]
     pub rollup_summary_prompt_language: String,
     pub token_limit: Option<i64>,
-    pub target_summary_tokens: Option<i64>,
     pub interval_seconds: Option<i64>,
     pub max_threads_per_tick: Option<i64>,
     pub count_limit: Option<i64>,
@@ -87,7 +86,6 @@ pub struct UpsertEngineJobPolicyRequest {
     pub rollup_summary_prompt_en: Option<Option<String>>,
     pub rollup_summary_prompt_language: Option<String>,
     pub token_limit: Option<Option<i64>>,
-    pub target_summary_tokens: Option<Option<i64>>,
     pub interval_seconds: Option<Option<i64>>,
     pub max_threads_per_tick: Option<Option<i64>>,
     pub count_limit: Option<Option<i64>>,
@@ -270,7 +268,6 @@ mod tests {
             "summary_prompt": null,
             "rollup_summary_prompt": null,
             "token_limit": null,
-            "target_summary_tokens": null,
             "interval_seconds": null,
             "max_threads_per_tick": null,
             "count_limit": null,

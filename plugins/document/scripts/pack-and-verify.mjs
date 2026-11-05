@@ -149,6 +149,16 @@ try {
     if (file.size > maxFileBytes) throw new Error(`packed file exceeds ChatOS limit: ${file.path}`);
   }
   const packedPaths = new Set((packed.files ?? []).map((file) => file.path));
+  const allowedDistPaths = new Set([
+    'dist/pdf.worker.mjs',
+    'dist/pdfium.wasm',
+    'dist/server.mjs'
+  ]);
+  const unexpectedDistPaths = [...packedPaths]
+    .filter((packedPath) => packedPath.startsWith('dist/') && !allowedDistPaths.has(packedPath));
+  if (unexpectedDistPaths.length > 0) {
+    throw new Error(`packed artifact contains unexpected dist files: ${unexpectedDistPaths.join(', ')}`);
+  }
   const requiredComplianceFiles = [
     'SBOM.cdx.json',
     'LICENSE',

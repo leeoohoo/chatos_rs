@@ -18,7 +18,8 @@ use serde_json::{json, Value};
 
 use super::{
     compose_response_to_input_items, compose_response_to_input_items_with_budget,
-    MemoryContextCache, MemoryContextComposer, MemoryRecordScope, MemoryScope,
+    standard_compose_policy, MemoryContextCache, MemoryContextComposer, MemoryRecordScope,
+    MemoryScope,
 };
 use crate::tool_runtime::ToolResultModelBudgetLimits;
 use crate::{MemoryRecordWriter, SaveRecordInput};
@@ -37,16 +38,25 @@ async fn accept_thread_upsert(
     state.thread_upserts.fetch_add(1, Ordering::SeqCst);
     assert_eq!(request["tenant_id"], "user-1");
     assert_eq!(request["source_id"], "chatos");
+    assert_eq!(request["subject_id"], "agent:agent-1");
+    assert_eq!(
+        request["labels"],
+        json!([
+            "memory-schema:v2",
+            "agent:agent-1",
+            "thread-kind:agent_conversation"
+        ])
+    );
     axum::Json(json!({
         "id": thread_id,
         "tenant_id": "user-1",
         "source_id": "chatos",
-        "subject_id": "user-1",
+        "subject_id": "agent:agent-1",
         "thread_type": "conversation",
         "external_thread_id": "conversation-1",
         "title": null,
-        "labels": null,
-        "metadata": null,
+        "labels": ["memory-schema:v2", "agent:agent-1", "thread-kind:agent_conversation"],
+        "metadata": {"agent_id":"agent-1","agent_name":null,"project_aggregation_id":null,"thread_kind":"agent_conversation"},
         "status": "active",
         "summary_status": "idle",
         "summary_job_run_id": null,
@@ -102,6 +112,14 @@ fn memory_scope_builder_keeps_runtime_source_key() {
             .and_then(|value| value.recent_record_limit),
         Some(12)
     );
+}
+
+#[test]
+fn standard_compose_policy_keeps_all_unsummarized_records() {
+    let policy = standard_compose_policy().expect("standard compose policy");
+
+    assert_eq!(policy.include_recent_records, Some(true));
+    assert_eq!(policy.recent_record_limit, None);
 }
 
 #[test]
@@ -198,7 +216,11 @@ async fn memory_record_writer_creates_each_thread_before_syncing_records() {
             .save_record(
                 SaveRecordInput::user_message("conversation-1", content)
                     .with_message_id(message_id)
-                    .with_metadata(json!({"tenant_id": "user-1"})),
+                    .with_metadata(json!({
+                        "tenant_id": "user-1",
+                        "agent_id": "agent-1",
+                        "thread_kind": "agent_conversation"
+                    })),
             )
             .await
             .expect("record sync");
@@ -206,6 +228,73 @@ async fn memory_record_writer_creates_each_thread_before_syncing_records() {
 
     assert_eq!(state.thread_upserts.load(Ordering::SeqCst), 1);
     assert_eq!(state.record_syncs.load(Ordering::SeqCst), 2);
+    let identity_change = writer
+        .save_record(
+            SaveRecordInput::user_message("conversation-1", "wrong Agent")
+                .with_message_id("message-3")
+                .with_metadata(json!({
+                    "tenant_id": "user-1",
+                    "agent_id": "agent-2",
+                    "thread_kind": "agent_conversation"
+                })),
+        )
+        .await;
+    assert_eq!(
+        identity_change.expect_err("thread identity change must fail"),
+        "memory thread identity changed after it was established"
+    );
+    assert_eq!(state.record_syncs.load(Ordering::SeqCst), 2);
+    server.abort();
+}
+
+#[tokio::test]
+async fn composer_establishes_a_new_agent_thread_before_first_recall() {
+    use axum::{routing::put, Router};
+
+    let state = MemoryWriteServerState::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn({
+        let state = state.clone();
+        async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route(
+                        "/api/memory-engine/v1/threads/{thread_id}",
+                        put(accept_thread_upsert),
+                    )
+                    .with_state(state),
+            )
+            .await
+            .expect("server");
+        }
+    });
+    let composer = MemoryContextComposer::new_direct(
+        format!("http://{address}"),
+        Duration::from_secs(1),
+        "chatos",
+    )
+    .expect("composer");
+    let scope = MemoryScope::thread("user-1", "chatos", "conversation-1")
+        .with_subject_id("agent:agent-1")
+        .with_related_subject_ids(["project:project-1"]);
+    let record =
+        SaveRecordInput::user_message("conversation-1", "first message").with_metadata(json!({
+            "tenant_id": "user-1",
+            "agent_id": "agent-1",
+            "thread_kind": "agent_conversation",
+            "thread_project_aggregation_id": null,
+        }));
+
+    composer
+        .ensure_thread_for_record(&scope, &record)
+        .await
+        .expect("ensure first Agent thread");
+
+    assert_eq!(state.thread_upserts.load(Ordering::SeqCst), 1);
     server.abort();
 }
 

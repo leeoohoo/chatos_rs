@@ -68,7 +68,8 @@ public extension ToolSkillCoverageCatalog {
                     providerID: ProductToolProviderID.capabilityBroker,
                     toolNames: [
                         "capability_search", "capability_describe", "agent_skill_activate",
-                        "agent_skill_read_resource", "capability_invoke",
+                        "agent_skill_read_resource", "capability_skill_activate",
+                        "capability_skill_read_resource", "capability_invoke",
                     ],
                     routerSkillName: "chatos-capability-discovery",
                     specialistSkillName: "chatos-capability-discovery",
@@ -143,7 +144,7 @@ public extension ToolSkillCoverageCatalog {
                     providerID: ProductToolProviderID.localAgentChat,
                     toolNames: [
                         "agent_propose_member", "agent_propose_existing_member",
-                        "agent_propose_member_removal",
+                        "agent_propose_member_removal", "agent_delete",
                     ],
                     routerSkillName: "chatos-agent-staffing",
                     specialistSkillName: "chatos-agent-staffing"
@@ -164,7 +165,7 @@ public extension ToolSkillCoverageCatalog {
                     providerID: ProductToolProviderID.localAgentChat,
                     toolNames: [
                         "todo_get_context", "todo_progress_append", "todo_read_progress",
-                        "todo_complete", "todo_block",
+                        "todo_acceptance_update", "todo_complete", "todo_block",
                     ],
                     routerSkillName: "chatos-todo-execution",
                     specialistSkillName: "chatos-todo-execution",

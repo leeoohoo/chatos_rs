@@ -236,8 +236,7 @@ struct PetMessageView: View {
                 runningActivitiesSection(runningActivities(), showsHeader: false)
             } else if let approval = approval(for: activity) {
                 approvalContent(approval)
-            } else if activity.kind == .waitingForUser,
-                      activity.source == .askUserPrompt {
+            } else if activity.canReplyInline {
                 PetAskUserInlineView(
                     activity: activity,
                     onLoadPrompt: onLoadPrompt,

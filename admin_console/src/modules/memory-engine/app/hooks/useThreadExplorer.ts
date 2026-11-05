@@ -73,6 +73,7 @@ export function buildThreadFilters(values: ThreadFilterFormValues): ThreadQuery 
 
 type ThreadExplorerOptions = {
   onError?: (message: string) => void;
+  autoLoad?: boolean;
 };
 
 export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) {
@@ -401,7 +402,7 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
   };
 
   useEffect(() => {
-    if (tab === 'data' && threads.length === 0 && !threadsLoading) {
+    if (tab === 'data' && options?.autoLoad !== false && threads.length === 0 && !threadsLoading) {
       void loadThreads();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -432,6 +433,23 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
         reportError(`应用线程筛选失败：${text}`);
       }
     }
+  };
+
+  const applyThreadFilters = async (nextFilters: ThreadQuery) => {
+    const normalizedFilters: ThreadQuery = {
+      ...DEFAULT_THREAD_FILTERS,
+      ...nextFilters,
+      limit: Math.max(1, nextFilters.limit ?? DEFAULT_THREAD_FILTERS.limit ?? 100),
+      offset: 0,
+    };
+    threadFilterForm.setFieldsValue(normalizedFilters);
+    setThreadFilters(normalizedFilters);
+    setThreadPageCursors([null]);
+    await loadThreads(normalizedFilters, {
+      page: 1,
+      pageSize: normalizedFilters.limit,
+      cursor: null,
+    });
   };
 
   const handleResetThreadFilters = async () => {
@@ -644,6 +662,7 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
     threadFilterForm,
     loadThreadDetails,
     loadThreads,
+    applyThreadFilters,
     handleApplyThreadFilters,
     handleResetThreadFilters,
     handleThreadPageChange,

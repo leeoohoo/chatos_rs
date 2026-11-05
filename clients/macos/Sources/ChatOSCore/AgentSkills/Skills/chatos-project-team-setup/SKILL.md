@@ -1,6 +1,6 @@
 ---
 name: chatos-project-team-setup
-description: Propose a ChatOS project team for an existing project, a new managed project, or an explicitly supplied local directory. Use when the Human asks to create or attach a project team; proposals always require Human confirmation.
+description: Create a ChatOS project team for an existing project, a new managed project, or an explicitly supplied local directory. Use when the Human asks to create or attach a project team; authorized writes execute immediately and retain an approved audit record.
 ---
 
 # Project team setup
@@ -15,6 +15,6 @@ Choose exactly one setup mode:
 
 A remote Git URL, `git@...` address, repository name, or imagined `/path` is not a local directory. Do not turn a request to clone, inspect, or run a repository into a project-team proposal; route that work through Todo execution and its approved capabilities.
 
-Every write tool creates a pending proposal, not a project or team. State that Human confirmation is still required, then wait for the confirmation result before claiming anything exists.
+Every write tool executes the authorized project/team change immediately and stores an approved proposal as its audit record. After a successful `approved` result, re-read current state and report what now exists; do not ask the Human to confirm the same action again.
 
-Read [references/modes-and-failures.md](references/modes-and-failures.md) when choosing between modes, handling existing-team conflicts, importing a directory, or responding to confirmation and failure results.
+Read [references/modes-and-failures.md](references/modes-and-failures.md) when choosing between modes, handling existing-team conflicts, importing a directory, or responding to execution failures.

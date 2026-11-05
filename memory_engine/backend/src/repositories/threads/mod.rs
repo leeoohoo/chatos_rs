@@ -76,20 +76,22 @@ pub use dispatch::{
     get_summary_dispatch_state, list_eligible_summary_dispatches,
     list_stale_published_summary_dispatches, mark_summary_dispatch_consumed,
     mark_summary_dispatch_dead_lettered, mark_summary_dispatch_failed,
-    rearm_stale_published_summary_dispatch, rearm_summary_dispatch_if_eligible,
-    replay_dead_lettered_summary_dispatch, SummaryDispatchOutbox,
+    rearm_stale_published_summary_dispatch, rearm_summary_dispatch_after_processing,
+    rearm_summary_dispatch_if_eligible, replay_dead_lettered_summary_dispatch,
+    request_forced_summary_dispatch, SummaryDispatchOutbox,
 };
 #[allow(unused_imports)]
 pub use queries::{
-    get_thread, get_thread_by_id, list_threads, list_threads_by_label,
-    list_threads_with_pending_records_by_token_threshold,
+    get_thread, get_thread_by_id, list_expired_summary_threads, list_idle_task_threads,
+    list_threads, list_threads_by_label, list_threads_with_pending_records_by_token_threshold,
 };
 pub(crate) use writes::ensure_thread_scope;
 #[allow(unused_imports)]
 pub use writes::{
     apply_summary_queue_state_delta, begin_record_sync, delete_thread, finish_record_sync,
-    refresh_summary_queue_state, refresh_summary_slot, release_rollup_slot, release_summary_slot,
-    try_acquire_rollup_slot, try_acquire_summary_slot, upsert_thread,
+    refresh_summary_queue_state, refresh_summary_slot, release_expired_summary_slot,
+    release_rollup_slot, release_summary_slot, try_acquire_rollup_slot, try_acquire_summary_slot,
+    upsert_thread,
 };
 
 #[cfg(test)]

@@ -39,7 +39,6 @@ pub fn default_summary_job_policy() -> EngineJobPolicy {
         rollup_summary_prompt_en: None,
         rollup_summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
         token_limit: None,
-        target_summary_tokens: None,
         interval_seconds: None,
         max_threads_per_tick: None,
         count_limit: None,
@@ -62,7 +61,6 @@ pub fn default_rollup_job_policy() -> EngineJobPolicy {
         rollup_summary_prompt_en: None,
         rollup_summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
         token_limit: None,
-        target_summary_tokens: None,
         interval_seconds: None,
         max_threads_per_tick: None,
         count_limit: None,
@@ -85,7 +83,6 @@ pub fn default_subject_memory_job_policy() -> EngineJobPolicy {
         rollup_summary_prompt_en: Some(DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE_EN.to_string()),
         rollup_summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
         token_limit: None,
-        target_summary_tokens: None,
         interval_seconds: None,
         max_threads_per_tick: None,
         count_limit: None,
@@ -108,7 +105,6 @@ pub fn default_thread_repair_job_policy() -> EngineJobPolicy {
         rollup_summary_prompt_en: None,
         rollup_summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
         token_limit: None,
-        target_summary_tokens: None,
         interval_seconds: None,
         max_threads_per_tick: None,
         count_limit: None,
@@ -136,7 +132,6 @@ pub(crate) fn default_job_policy(job_type: &str) -> EngineJobPolicy {
             rollup_summary_prompt_en: None,
             rollup_summary_prompt_language: PROMPT_LANGUAGE_ZH.to_string(),
             token_limit: None,
-            target_summary_tokens: None,
             interval_seconds: None,
             max_threads_per_tick: None,
             count_limit: None,
@@ -154,7 +149,6 @@ pub(crate) fn normalize_job_policy(policy: &mut EngineJobPolicy) {
     normalize_policy_prompts(policy);
     if policy.job_type == JOB_TYPE_THREAD_REPAIR {
         policy.token_limit = policy.token_limit.map(|value| value.max(128));
-        policy.target_summary_tokens = None;
         policy.max_threads_per_tick = None;
     }
 }
@@ -290,36 +284,31 @@ mod tests {
     };
 
     #[test]
-    fn thread_repair_default_policy_has_model_limits() {
+    fn thread_repair_default_policy_has_input_limit() {
         let policy = default_thread_repair_job_policy();
 
         assert_eq!(policy.token_limit, None);
-        assert_eq!(policy.target_summary_tokens, None);
     }
 
     #[test]
-    fn normalize_thread_repair_preserves_model_limits() {
+    fn normalize_thread_repair_preserves_input_limit() {
         let mut policy = default_thread_repair_job_policy();
         policy.job_type = JOB_TYPE_THREAD_REPAIR.to_string();
         policy.token_limit = Some(4096);
-        policy.target_summary_tokens = Some(512);
 
         normalize_job_policy(&mut policy);
 
         assert_eq!(policy.token_limit, Some(4096));
-        assert_eq!(policy.target_summary_tokens, None);
     }
 
     #[test]
-    fn normalize_thread_repair_preserves_missing_model_limits() {
+    fn normalize_thread_repair_preserves_missing_input_limit() {
         let mut policy = default_thread_repair_job_policy();
         policy.token_limit = None;
-        policy.target_summary_tokens = None;
 
         normalize_job_policy(&mut policy);
 
         assert_eq!(policy.token_limit, None);
-        assert_eq!(policy.target_summary_tokens, None);
     }
 
     #[test]

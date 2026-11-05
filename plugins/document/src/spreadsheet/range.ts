@@ -11,6 +11,7 @@ import { DocumentError } from '../errors.js';
 import { decodeXmlText } from '../inspect/xml.js';
 import { sha256File } from '../inspect/hash.js';
 import { editOfficeArtifact } from '../office/artifact.js';
+import { isSafeOoxmlArchiveEntryName } from '../security/ooxml-archive.js';
 import { resolveWorkspaceFile } from '../security/paths.js';
 
 const DECODER = new TextDecoder('utf-8', { fatal: false });
@@ -31,11 +32,6 @@ interface CellRange {
   rows: number;
   columns: number;
   area: number;
-}
-
-function safeArchiveName(name: string): boolean {
-  if (!name || name.includes('\\') || name.startsWith('/') || /^[A-Za-z]:/.test(name)) return false;
-  return !name.split('/').some((component) => !component || component === '.' || component === '..');
 }
 
 function attribute(attributes: string, name: string): string | undefined {
@@ -127,7 +123,7 @@ function readParts(data: Uint8Array): Record<string, Uint8Array> {
         if (entryCount > MAX_OOXML_ENTRIES || totalSize > MAX_OOXML_UNPACKED_BYTES) {
           throw new DocumentError('UNSAFE_ARCHIVE', 'The XLSX archive exceeds extraction safety limits.');
         }
-        if (!safeArchiveName(file.name)) {
+        if (!isSafeOoxmlArchiveEntryName(file.name)) {
           throw new DocumentError('UNSAFE_ARCHIVE', 'The XLSX archive contains an unsafe entry path.');
         }
         return (

@@ -57,7 +57,6 @@ mod tests {
                     "summary_prompt": null,
                     "rollup_summary_prompt": null,
                     "token_limit": 1200,
-                    "target_summary_tokens": 600,
                     "interval_seconds": 60,
                     "max_threads_per_tick": 10,
                     "count_limit": 12,

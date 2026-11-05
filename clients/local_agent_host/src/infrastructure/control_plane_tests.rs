@@ -192,6 +192,10 @@ async fn model_config_rehydrates_from_sqlite_and_resolves_secret_only_on_demand(
     assert_eq!(runtime.model_config.model, "model-a");
     assert_eq!(runtime.model_config.max_output_tokens, Some(4096));
     assert_eq!(
+        runtime.model_config.responses_compaction_threshold,
+        Some(170_000)
+    );
+    assert_eq!(
         runtime.model_config.request_body_limit_bytes,
         Some(1_048_576)
     );
@@ -248,6 +252,7 @@ fn model_snapshot() -> LocalModelConfigSnapshot {
         include_prompt_cache_retention: true,
         request_body_limit_bytes: Some(1_048_576),
         max_transient_retries: Some(5),
+        responses_compaction_threshold: Some(170_000),
         output_format: None,
     }
 }

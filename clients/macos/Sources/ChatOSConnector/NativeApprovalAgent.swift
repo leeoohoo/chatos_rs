@@ -85,12 +85,14 @@ struct NativeApprovalAgent: Sendable {
         thinkingLevel: String?
     ) throws -> any AgentModelClient {
         let reserve = (policy.context ?? .init()).outputReserveTokens
+        let context = policy.context ?? .init()
         let maximumOutputTokens = min(max(1, model.maxOutputTokens ?? 1_200), reserve)
         return try AgentResponsesModelClient(
             baseURL: model.baseURL, model: model.model, apiKey: model.apiKey,
             thinking: thinkingLevel, maximumOutputTokens: maximumOutputTokens,
             temperature: model.temperature ?? 0,
-            promptCacheKey: "approval-agent:\(model.configID)"
+            promptCacheKey: "approval-agent:\(model.configID)",
+            compactionThreshold: context.windowTokens - context.outputReserveTokens
         )
     }
 

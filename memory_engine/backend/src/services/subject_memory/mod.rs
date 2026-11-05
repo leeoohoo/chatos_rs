@@ -5,9 +5,6 @@ use serde_json::Value;
 
 use crate::models::EngineSubjectMemory;
 
-pub(crate) const DEFAULT_TOKEN_LIMIT: i64 = 6000;
-pub(crate) const DEFAULT_TARGET_SUMMARY_TOKENS: i64 = 700;
-pub(crate) const DEFAULT_MAX_LEVEL: i64 = 4;
 pub(crate) const DEFAULT_MAX_SOURCE_SUMMARIES: i64 = 1000;
 
 #[derive(Debug, Clone)]
@@ -16,7 +13,6 @@ pub(crate) struct SubjectMemoryJobSettings {
     pub(crate) source_summary_type: String,
     pub(crate) prompt_title: String,
     pub(crate) token_limit: i64,
-    pub(crate) target_summary_tokens: i64,
     pub(crate) count_limit: i64,
     pub(crate) keep_level0_count: i64,
     pub(crate) max_level: i64,

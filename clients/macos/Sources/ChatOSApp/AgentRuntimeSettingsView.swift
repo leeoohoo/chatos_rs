@@ -65,7 +65,7 @@ struct AgentRuntimeSettingsView: View {
                             .appFont(.caption.monospacedDigit()).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Text(model.localized("审批和剧情规划使用同一套本机循环。审批不会自动上传记录；剧情规划持续把记录同步到 Memory Engine，但只在每次开始或恢复时 compose 一次。Memory Engine 的摘要由服务端后台自动调度。", english: "Approval and story planning use the same native loop. Approval records are not uploaded automatically. Story planning keeps syncing records to Memory Engine, but composes once per start or resume. Memory Engine summaries are scheduled automatically in the background."))
+                    Text(model.localized("审批和剧情规划使用同一套本机循环，并持续把记录同步到各自 Agent 的 Memory。每次开始或恢复时 compose 一次；普通 Agent 按累积阈值摘要，独立 Task/Todo 另有结束与空闲兜底。", english: "Approval and story planning use the same native loop and continuously sync records to each Agent's Memory. Context is composed once per start or resume; regular Agents summarize at the accumulation threshold, while independent Tasks and Todos also have terminal and idle fallbacks."))
                         .appFont(.caption).foregroundStyle(.secondary)
                     Text(model.localized("模型请求会发送 context_management.compaction，并把完整 response.output 追加到下一次 input，使用无状态 Responses 链继续运行；Memory Engine 仍完整记录用户、助手、工具调用和工具结果，但不再处理轮内溢出。", english: "Model requests send context_management.compaction and append the complete response.output to the next input for stateless Responses chaining. Memory Engine still records every user message, assistant message, tool call, and tool result, but no longer handles in-run overflow."))
                         .appFont(.caption).foregroundStyle(.secondary)

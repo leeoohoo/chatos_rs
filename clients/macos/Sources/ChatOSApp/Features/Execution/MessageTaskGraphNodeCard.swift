@@ -19,6 +19,7 @@ struct MessageTaskGraphNodeCard: View {
                 Circle()
                     .fill(statusColor)
                     .frame(width: scaled(8), height: scaled(8))
+                    .shadow(color: statusColor.opacity(0.45), radius: scaled(3))
                 Text(statusTitle)
                     .appFont(.system(size: scaledFont(11), weight: .medium))
                     .foregroundStyle(statusColor)
@@ -26,6 +27,9 @@ struct MessageTaskGraphNodeCard: View {
                     Text("当前消息")
                         .appFont(.system(size: scaledFont(10), weight: .semibold))
                         .foregroundStyle(AppPalette.ai)
+                        .padding(.horizontal, scaled(6))
+                        .padding(.vertical, scaled(2))
+                        .background(AppPalette.ai.opacity(0.09), in: Capsule())
                 }
                 Spacer()
                 if let startedAt = currentActivity?.startedAt {
@@ -51,12 +55,14 @@ struct MessageTaskGraphNodeCard: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             HStack(spacing: scaled(6)) {
-                actionButton("过程", action: onOpenProcess)
+                actionButton("过程", systemImage: "waveform.path.ecg", action: onOpenProcess)
                 actionButton(
                     node.task.normalizedStatus == "blocked" ? "处理阻塞" : "详情",
+                    systemImage: node.task.normalizedStatus == "blocked"
+                        ? "exclamationmark.triangle" : "doc.text.magnifyingglass",
                     action: onOpenDetail
                 )
-                actionButton("运行", action: onOpenRun)
+                actionButton("运行", systemImage: "clock.arrow.circlepath", action: onOpenRun)
                     .disabled(node.task.lastRunID == nil)
                 if node.task.isCancellableFromGraph {
                     Menu {
@@ -86,11 +92,15 @@ struct MessageTaskGraphNodeCard: View {
             alignment: .topLeading
         )
         .background(
-            Color(nsColor: .windowBackgroundColor),
-            in: RoundedRectangle(cornerRadius: scaled(11))
+            LinearGradient(
+                colors: [statusColor.opacity(isSelected ? 0.10 : 0.045), AppPalette.surface],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: scaled(12))
         )
         .overlay {
-            RoundedRectangle(cornerRadius: scaled(11)).stroke(
+            RoundedRectangle(cornerRadius: scaled(12)).stroke(
                 isSelected ? statusColor : Color(nsColor: .separatorColor),
                 lineWidth: scaled(isSelected ? 2 : 1)
             )
@@ -107,12 +117,14 @@ struct MessageTaskGraphNodeCard: View {
 
     private func actionButton(
         _ title: String,
+        systemImage: String,
         role: ButtonRole? = nil,
         action: @escaping () -> Void
     ) -> some View {
         Button(role: role, action: action) {
-            Text(LocalizedStringKey(title))
-                .appFont(.system(size: scaledFont(10), weight: .medium))
+            Label(LocalizedStringKey(title), systemImage: systemImage)
+                .labelStyle(.titleAndIcon)
+                .appFont(.system(size: scaledFont(9.5), weight: .medium))
                 .padding(.horizontal, scaled(7))
                 .padding(.vertical, scaled(3))
                 .background(

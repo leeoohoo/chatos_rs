@@ -5,6 +5,191 @@ import Foundation
 import Testing
 
 extension NativePluginRuntimeTests {
+    @Test("plugin manifest and frozen task snapshot preserve parallel task capability")
+    func parallelTaskCapabilityRoundTrips() throws {
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {
+              "schemaVersion": 3,
+              "name": "parallel-browser",
+              "version": "1.0.0",
+              "mcpServers": {
+                "browser-cdp-mcp": {
+                  "type": "stdio",
+                  "bin": "browser",
+                  "allowsParallelTaskExecution": true
+                },
+                "legacy-mcp": {"type": "stdio", "bin": "legacy"}
+              }
+            }
+            """.utf8)
+        )
+        #expect(manifest.mcpServers["browser-cdp-mcp"]?.allowsParallelTaskExecution == true)
+        #expect(manifest.mcpServers["legacy-mcp"]?.allowsParallelTaskExecution == false)
+
+        let snapshot = try NativeLocalAgentTaskPluginReleaseSnapshot(jsonValue: .object([
+            "plugin_key": .string("browser"),
+            "component_key": .string("browser-cdp-mcp"),
+            "plugin_id": .string("plugin-id"),
+            "release_id": .string("release-id"),
+            "version": .string("1.0.0"),
+            "artifact_sha256": .string(String(repeating: "a", count: 64)),
+            "allows_parallel_task_execution": .bool(true),
+        ]))
+        #expect(snapshot.allowsParallelTaskExecution)
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(
+                NativePluginManifest.self,
+                from: Data("""
+                {
+                  "schemaVersion": 3,
+                  "name": "conflicting-plugin",
+                  "version": "1.0.0",
+                  "mcpServers": {
+                    "unsafe": {
+                      "type": "stdio",
+                      "bin": "unsafe",
+                      "requiresExclusiveExecution": true,
+                      "allowsParallelTaskExecution": true
+                    }
+                  }
+                }
+                """.utf8)
+            )
+        }
+    }
+
+    @Test("exclusive browser bootstrap waits before the second MCP process starts")
+    func exclusiveBrowserBootstrapIsSerializedAcrossTaskRuns() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let first = try await makeComputerUseLeaseClient(root: root, label: "bootstrap-first")
+        let secondStarted = root.appendingPathComponent("second-process-started")
+        let store = NativePluginRuntimeStore()
+        let firstAdapter = "adapter-bootstrap-first"
+        let secondAdapter = "adapter-bootstrap-second"
+
+        #expect(await store.reserveExclusiveExecution(adapterSessionID: firstAdapter))
+        await store.insert(
+            identity: .init(
+                runID: "run-bootstrap-first",
+                pluginID: "plugin-1",
+                releaseID: "release-1",
+                version: "1.0.0",
+                artifactSHA256: String(repeating: "a", count: 64),
+                componentKey: NativeBrowserPluginIdentity.componentKey,
+                adapterSessionID: firstAdapter,
+                requiresExclusiveExecution: true
+            ),
+            client: first.0,
+            tools: first.1,
+            permissionSnapshot: [],
+            displayName: "First browser",
+            visualSessionURL: first.2,
+            artifactURL: first.3,
+            projectRootURL: root,
+            workspaceID: "workspace-1"
+        )
+
+        let secondBootstrap = Task {
+            let reserved = await store.reserveExclusiveExecution(adapterSessionID: secondAdapter)
+            if reserved {
+                _ = FileManager.default.createFile(
+                    atPath: secondStarted.path,
+                    contents: Data("started".utf8)
+                )
+            }
+            return reserved
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!FileManager.default.fileExists(atPath: secondStarted.path))
+
+        #expect(await store.cancel(adapterSessionID: firstAdapter, invocationID: nil) == "cancelled")
+        #expect(await secondBootstrap.value)
+        #expect(FileManager.default.fileExists(atPath: secondStarted.path))
+        await store.releaseExclusiveExecutionReservation(adapterSessionID: secondAdapter)
+    }
+
+    @Test("browser tool failure keeps bootstrap serialized until its MCP process exits")
+    func browserFailureKeepsProcessLeaseUntilSessionTermination() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let first = try await makeComputerUseLeaseClient(
+            root: root,
+            label: "browser-failing",
+            behavior: .hang
+        )
+        let secondStarted = root.appendingPathComponent("second-browser-process-started")
+        let store = NativePluginRuntimeStore()
+        let firstAdapter = "adapter-browser-failing"
+        let secondAdapter = "adapter-browser-waiting"
+
+        #expect(await store.reserveExclusiveExecution(adapterSessionID: firstAdapter))
+        await store.insert(
+            identity: .init(
+                runID: "run-browser-failing",
+                pluginID: "plugin-1",
+                releaseID: "release-1",
+                version: "1.0.0",
+                artifactSHA256: String(repeating: "a", count: 64),
+                componentKey: NativeBrowserPluginIdentity.componentKey,
+                adapterSessionID: firstAdapter,
+                requiresExclusiveExecution: true
+            ),
+            client: first.0,
+            tools: first.1,
+            permissionSnapshot: [],
+            displayName: "Failing browser",
+            visualSessionURL: first.2,
+            artifactURL: first.3,
+            projectRootURL: root,
+            workspaceID: "workspace-1"
+        )
+
+        let secondBootstrap = Task {
+            let reserved = await store.reserveExclusiveExecution(adapterSessionID: secondAdapter)
+            if reserved {
+                _ = FileManager.default.createFile(
+                    atPath: secondStarted.path,
+                    contents: Data("started".utf8)
+                )
+            }
+            return reserved
+        }
+        let firstCall = Task {
+            try await store.call(
+                adapterSessionID: firstAdapter,
+                invocationID: "browser-failing-call",
+                toolName: "observe",
+                arguments: .object([:]),
+                timeout: .milliseconds(150)
+            )
+        }
+        try await waitForTestFile(at: first.4)
+
+        do {
+            _ = try await firstCall.value
+            Issue.record("expected the first browser call to time out")
+        } catch let error as NativePluginRuntimeError {
+            #expect(error.errorDescription == NativePluginRuntimeError.timeout.errorDescription)
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!FileManager.default.fileExists(atPath: secondStarted.path))
+
+        #expect(await store.cancel(adapterSessionID: firstAdapter, invocationID: nil) == "cancelled")
+        #expect(await secondBootstrap.value)
+        #expect(FileManager.default.fileExists(atPath: secondStarted.path))
+        await store.releaseExclusiveExecutionReservation(adapterSessionID: secondAdapter)
+    }
+
     @Test("computer use adapters hold an exclusive desktop lease until their session closes")
     func computerUseAdaptersAreSerializedAcrossTaskRuns() async throws {
         let root = FileManager.default.temporaryDirectory

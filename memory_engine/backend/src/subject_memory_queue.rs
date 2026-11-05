@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use crate::config::AppConfig;
 use crate::models::now_rfc3339;
 use crate::repositories::{control_plane, subject_memory_scopes, summaries, threads};
-use crate::services::subject_memory;
+use crate::services::{control_plane as cp_service, subject_memory};
 use crate::state::AppState;
 
 const SOURCE_AVAILABLE_EVENT: &str = "source_available";
@@ -291,11 +291,31 @@ async fn process_source_event(
         summaries::mark_subject_memory_source_dispatch_consumed(&state.pool, &event).await?;
         return Ok(());
     };
+    let mut source_labels = thread.labels.unwrap_or_default();
+    if let Some(project_subject_id) = summaries::get_summary_by_id(
+        &state.pool,
+        envelope.tenant_id.as_str(),
+        envelope.source_id.as_str(),
+        event.id.as_str(),
+    )
+    .await?
+    .and_then(|summary| summary.metadata)
+    .and_then(|metadata| metadata.get("project_subject_id").cloned())
+    .and_then(|value| value.as_str().map(ToOwned::to_owned))
+    .filter(|value| value.starts_with("project:") && value.len() > "project:".len())
+    {
+        if !source_labels
+            .iter()
+            .any(|label| label == &project_subject_id)
+        {
+            source_labels.push(project_subject_id);
+        }
+    }
     let scopes = subject_memory_scopes::list_matching_active_subject_memory_scopes(
         &state.pool,
         envelope.tenant_id.as_str(),
         envelope.source_id.as_str(),
-        thread.labels.unwrap_or_default().as_slice(),
+        source_labels.as_slice(),
         event.summary_type.as_str(),
         10_000,
     )
@@ -389,11 +409,20 @@ async fn mark_failed_and_defer(
 }
 
 async fn run_reconciler(state: Arc<AppState>) {
-    let mut interval = tokio::time::interval(state.config.subject_memory_outbox_reconcile_interval);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut recovery_offset = 0_u64;
     loop {
-        interval.tick().await;
+        let scan_interval =
+            match control_plane::get_effective_job_policy(&state.pool, "subject_memory")
+                .await
+                .and_then(|policy| cp_service::managed_policy_scan_interval(&policy))
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    warn!(error, "Memory Engine subject-memory scan policy is invalid");
+                    tokio::time::sleep(state.config.subject_memory_outbox_reconcile_interval).await;
+                    continue;
+                }
+            };
         let stale_before = (chrono::Utc::now()
             - chrono::Duration::seconds(SUBJECT_MEMORY_CLAIM_LEASE_SECS))
         .to_rfc3339();
@@ -433,6 +462,7 @@ async fn run_reconciler(state: Arc<AppState>) {
             }
             Err(error) => warn!(error, "Memory Engine failed to arm subject-memory scopes"),
         }
+        tokio::time::sleep(scan_interval).await;
     }
 }
 
@@ -444,11 +474,15 @@ async fn arm_pending_scopes(
     if !policy.enabled {
         return Ok((0, recovery_offset));
     }
+    let scan_limit = cp_service::managed_policy_scan_limit(
+        &policy,
+        state.config.subject_memory_outbox_batch_size,
+    )?;
     let scopes = subject_memory_scopes::list_active_subject_memory_scopes_page(
         &state.pool,
         None,
         None,
-        state.config.subject_memory_outbox_batch_size,
+        scan_limit,
         recovery_offset,
     )
     .await?;
@@ -470,7 +504,7 @@ async fn arm_pending_scopes(
             armed = armed.saturating_add(1);
         }
     }
-    let batch_size = state.config.subject_memory_outbox_batch_size.max(1) as u64;
+    let batch_size = scan_limit as u64;
     let next_offset = if scanned_count < batch_size {
         0
     } else {

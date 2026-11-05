@@ -271,6 +271,79 @@ extension SQLiteAgentGroupChatStore {
         }
     }
 
+    public func completeManagerCycleDelivery(
+        ownerUserID: String,
+        deliveryID: String,
+        agentID: String,
+        readThroughMessageIDsByRoom: [String: String],
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentDelivery {
+        try validateDeliveryMutation(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID,
+            nowUnixMs: nowUnixMs
+        )
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        guard readThroughMessageIDsByRoom.count <= 500 else {
+            throw AgentGroupChatError.invalidField("readThroughMessages")
+        }
+        return try transaction {
+            guard let delivery = try readDelivery(
+                ownerUserID: ownerUserID,
+                deliveryID: deliveryID
+            ), delivery.status == .running, delivery.lane == .manager,
+            delivery.targetAgentID == agentID else {
+                throw AgentGroupChatError.conflict
+            }
+            var cursors: [ProjectAgentReadCursor] = []
+            for (roomID, messageID) in readThroughMessageIDsByRoom.sorted(by: {
+                $0.key < $1.key
+            }) {
+                try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+                try AgentGroupChatValidation.identifier(messageID, field: "messageID")
+                guard try readMember(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    agentID: agentID
+                )?.status == .active,
+                let message = try readMessage(
+                    ownerUserID: ownerUserID,
+                    messageID: messageID
+                ), message.roomID == roomID else {
+                    throw AgentGroupChatError.notFound
+                }
+                cursors.append(.init(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    agentID: agentID,
+                    messageID: messageID,
+                    messageCreatedAtUnixMs: message.createdAtUnixMs,
+                    updatedAtUnixMs: max(nowUnixMs, message.createdAtUnixMs)
+                ))
+            }
+            try AgentReadCursorRepository.upsert(
+                database,
+                cursors: cursors,
+                preparedStatement: recordPreparedStatement
+            )
+            try execute(
+                """
+                UPDATE project_agent_deliveries
+                SET status = 'completed', response_message_id = NULL,
+                    completed_at_unix_ms = ?
+                WHERE owner_user_id = ? AND id = ? AND status = 'running'
+                """,
+                [.integer(nowUnixMs), .text(ownerUserID), .text(deliveryID)]
+            )
+            guard sqlite3_changes(database) == 1,
+                  let updated = try readDelivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: deliveryID
+                  ) else { throw AgentGroupChatError.conflict }
+            return updated
+        }
+    }
+
     public func failDelivery(
         ownerUserID: String,
         deliveryID: String,
@@ -473,6 +546,71 @@ extension SQLiteAgentGroupChatStore {
             WHERE owner_user_id = ? AND room_id = ? AND status IN ('pending', 'running')
             """,
             [.text(reason), .integer(nowUnixMs), .text(ownerUserID), .text(roomID)]
+        )
+        guard sqlite3_changes(database) == Int32(deliveryIDs.count) else {
+            throw AgentGroupChatError.conflict
+        }
+        return deliveryIDs.count
+    }
+
+    /// Stops one Agent's queued and running work across all rooms while leaving teammates alone.
+    func stopOutstandingDeliveriesForAgentInTransaction(
+        ownerUserID: String,
+        agentID: String,
+        reason: String,
+        nowUnixMs: Int64
+    ) throws -> Int {
+        let deliveryIDs = try AgentDeliveryRepository.outstandingDeliveryIDs(
+            database,
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            preparedStatement: recordPreparedStatement
+        )
+        guard !deliveryIDs.isEmpty else { return 0 }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let runs = try AgentRunRepository.listForOutstandingDeliveries(
+            database,
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            preparedStatement: recordPreparedStatement
+        )
+        var failedRunUpdates: [AgentRunRepository.FailedRunUpdate] = []
+        for var run in runs {
+            run.checkpoint.status = .failed
+            run.checkpoint.stopReason = reason
+            run.events.append(.init(
+                kind: "agent_archived",
+                detail: reason,
+                modelCalls: run.checkpoint.modelCalls
+            ))
+            run.updatedAtUnixMs = max(nowUnixMs, run.updatedAtUnixMs)
+            try run.validate()
+            failedRunUpdates.append(.init(
+                id: run.id,
+                json: String(decoding: try encoder.encode(run), as: UTF8.self),
+                updatedAtUnixMs: run.updatedAtUnixMs
+            ))
+        }
+        let updatedRunCount = try AgentRunRepository.markFailed(
+            database,
+            ownerUserID: ownerUserID,
+            updates: failedRunUpdates,
+            preparedStatement: recordPreparedStatement
+        )
+        guard updatedRunCount == failedRunUpdates.count else {
+            throw AgentGroupChatError.conflict
+        }
+        try execute(
+            """
+            UPDATE project_agent_deliveries
+            SET status = CASE status WHEN 'running' THEN 'failed' ELSE 'cancelled' END,
+                last_error = ?, completed_at_unix_ms = ?
+            WHERE owner_user_id = ? AND target_agent_id = ?
+              AND status IN ('pending', 'running')
+            """,
+            [.text(reason), .integer(nowUnixMs), .text(ownerUserID), .text(agentID)]
         )
         guard sqlite3_changes(database) == Int32(deliveryIDs.count) else {
             throw AgentGroupChatError.conflict

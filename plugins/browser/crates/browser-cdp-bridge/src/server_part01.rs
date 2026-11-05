@@ -133,15 +133,31 @@ async fn handle_browser(mut socket: BridgeSocket, state: Arc<ServerState>) -> Re
             Err(_) => break,
         };
         let method = message.method.clone().unwrap_or_default();
-        let closing = method == "bridge.close";
-        let result = handle_browser_request(&state, &method, message.params).await;
-        let value = match result {
-            Ok(result) => response(id, result),
-            Err(error) => error_response(id, error),
-        };
-        if peer.outbound.send(value).await.is_err() || closing {
+        if method == "bridge.close" {
+            let result = handle_browser_request(&state, &method, message.params).await;
+            let value = match result {
+                Ok(result) => response(id, result),
+                Err(error) => error_response(id, error),
+            };
+            let _ = peer.outbound.send(value).await;
             break;
         }
+
+        // A chrome.debugger command can be delivered while its response is
+        // lost or delayed. Do not let that request head-of-line block every
+        // later command on the same Browser session. Wire response IDs make
+        // out-of-order completion safe, and the extension already dispatches
+        // independent requests concurrently.
+        let request_state = state.clone();
+        let request_outbound = peer.outbound.clone();
+        tokio::spawn(async move {
+            let result = handle_browser_request(&request_state, &method, message.params).await;
+            let value = match result {
+                Ok(result) => response(id, result),
+                Err(error) => error_response(id, error),
+            };
+            let _ = request_outbound.send(value).await;
+        });
     }
     let peer_id = peer.id.clone();
     {

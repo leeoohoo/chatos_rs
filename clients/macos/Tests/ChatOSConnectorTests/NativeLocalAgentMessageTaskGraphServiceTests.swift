@@ -83,6 +83,16 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertTrue(task.processLog?.contains("已确认入口和运行方式。") == true)
         XCTAssertFalse(task.processLog?.contains("list_dir") == true)
         XCTAssertFalse(task.processLog?.contains("private model output") == true)
+        let toolUsageData = try XCTUnwrap(task.taskToolStateJSON?.data(using: .utf8))
+        let toolUsage = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: toolUsageData) as? [String: Any]
+        )
+        let plugins = try XCTUnwrap(toolUsage["plugins"] as? [[String: Any]])
+        XCTAssertEqual(plugins.first?["display_name"] as? String, "Document")
+        XCTAssertEqual(plugins.first?["call_count"] as? Int, 1)
+        let tools = try XCTUnwrap(toolUsage["tools"] as? [[String: Any]])
+        XCTAssertTrue(tools.contains { $0["plugin_name"] as? String == "Document" })
+        XCTAssertTrue(tools.contains { $0["name"] as? String == "list_dir" })
 
         let defaultThinkingTask = try await service.fetchTask(
             messageID: "message-1",
@@ -346,6 +356,55 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertFalse(log?.contains("failed entry") == true)
     }
 
+    func testAcceptanceProgressUsesLatestSuccessfulCheckPerCriterion() throws {
+        let events = try JSONDecoder().decode(
+            [LocalAgentEventRecord].self,
+            from: JSONSerialization.data(withJSONObject: [
+                processEvent(
+                    cursor: 1,
+                    operation: "append",
+                    content: "checking",
+                    acceptanceChecks: [[
+                        "criterion_index": 0,
+                        "status": "in_progress",
+                        "evidence": "Running the focused test",
+                    ]]
+                ),
+                processEvent(
+                    cursor: 2,
+                    operation: "append",
+                    content: "verified",
+                    acceptanceChecks: [[
+                        "criterion_index": 0,
+                        "status": "passed",
+                        "evidence": "Focused test passed",
+                    ], [
+                        "criterion_index": 1,
+                        "status": "blocked",
+                        "evidence": "User must connect a real device",
+                    ]]
+                ),
+                processEvent(
+                    cursor: 3,
+                    operation: "append",
+                    content: "ignored",
+                    status: "failed",
+                    acceptanceChecks: [[
+                        "criterion_index": 1,
+                        "status": "passed",
+                        "evidence": "Must not override successful history",
+                    ]]
+                ),
+            ])
+        )
+
+        let progress = NativeLocalAgentMessageTaskGraphService.acceptanceProgress(from: events)
+
+        XCTAssertEqual(progress.map(\.criterionIndex), [0, 1])
+        XCTAssertEqual(progress.map(\.status), [.passed, .blocked])
+        XCTAssertEqual(progress[0].evidence, "Focused test passed")
+    }
+
     func testNeedsReviewErrorSurfacesLatestToolFailure() throws {
         let events = try JSONDecoder().decode(
             [LocalAgentEventRecord].self,
@@ -433,7 +492,8 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         cursor: Int,
         operation: String,
         content: Any,
-        status: String = "succeeded"
+        status: String = "succeeded",
+        acceptanceChecks: [[String: Any]] = []
     ) -> [String: Any] {
         [
             "cursor": cursor,
@@ -447,6 +507,7 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
                     "arguments": [
                         "operation": operation,
                         "content": content,
+                        "acceptance_checks": acceptanceChecks,
                     ],
                 ]],
             ],
@@ -699,6 +760,18 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
                 "task_id": taskID,
                 "runs": taskID == "task-2" ? [run()] : [],
             ])
+        case "get_run_capability_disclosures":
+            return try json([
+                "type": "run_capability_disclosures",
+                "run_id": "run-task-2",
+                "disclosures": [[
+                    "plugin_option": "plugin_1",
+                    "tool_option": "tool_1",
+                    "tool_name": "document_create",
+                    "provider_id": "plugin:plugin-document",
+                    "schema_sha256": String(repeating: "a", count: 64),
+                ]],
+            ])
         case "list_events":
             if let runError {
                 let filter = object?["event_type"] as? String
@@ -708,6 +781,37 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
                         "detail": ["error": runError],
                     ])] : []
                 return try json(["type": "events", "events": events, "next_cursor": 2])
+            }
+            let filter = object?["event_type"] as? String
+            if filter == "tool_batch_requested" {
+                return try json([
+                    "type": "events",
+                    "events": [
+                        event(
+                            cursor: 1,
+                            type: "tool_batch_requested",
+                            payload: [
+                                "tool_calls": [
+                                    [
+                                        "call_id": "call-plugin",
+                                        "tool_name": "capability_invoke",
+                                        "arguments": [
+                                            "plugin_option": "plugin_1",
+                                            "tool_option": "tool_1",
+                                            "arguments": [:],
+                                        ],
+                                    ],
+                                    [
+                                        "call_id": "call-list",
+                                        "tool_name": "list_dir",
+                                        "arguments": ["path": "."],
+                                    ],
+                                ],
+                            ]
+                        ),
+                    ],
+                    "next_cursor": 1,
+                ])
             }
             return try json([
                 "type": "events",
@@ -719,9 +823,17 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
                             "type": "tool_results",
                             "invocations": [
                                 [
+                                    "call_id": "call-list",
                                     "tool_name": "list_dir",
+                                    "execution_route": "platform",
                                     "status": "succeeded",
                                     "arguments": ["path": "."],
+                                ],
+                                [
+                                    "call_id": "call-plugin",
+                                    "tool_name": "capability_invoke",
+                                    "execution_route": "platform",
+                                    "status": "succeeded",
                                 ],
                                 [
                                     "tool_name": "task_run_process_record_process",
@@ -860,6 +972,17 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
             "input": [
                 "objective": "Ship locally",
                 "runtime_settings": runtimeSettings,
+                "tool_options": [
+                    "plugin_hints": [[
+                        "plugin_key": "document",
+                        "component_key": "document-mcp",
+                    ]],
+                    "release_snapshots": [[
+                        "plugin_id": "plugin-document",
+                        "plugin_key": "document",
+                        "component_key": "document-mcp",
+                    ]],
+                ],
                 "input_payload": [
                     "execution_client_ref": clientRef,
                     "dependency_context_refs": contextRefs,

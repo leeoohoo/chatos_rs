@@ -52,6 +52,11 @@ enum AgentReadCursorRepository {
                 message_id = excluded.message_id,
                 message_created_at_unix_ms = excluded.message_created_at_unix_ms,
                 updated_at_unix_ms = excluded.updated_at_unix_ms
+            WHERE excluded.message_created_at_unix_ms
+                    > project_agent_read_cursors.message_created_at_unix_ms
+               OR (excluded.message_created_at_unix_ms
+                       = project_agent_read_cursors.message_created_at_unix_ms
+                   AND excluded.message_id > project_agent_read_cursors.message_id)
             """,
             values
         )

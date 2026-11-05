@@ -91,7 +91,7 @@ pub fn task_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": CREATE_TASK_TOOL,
-            "description": "Create one coherent durable task for the current conversation/project. Use this only when splitting would not enable useful concurrency, specialization, ownership, or independent acceptance. The Rust Local Agent Host binds, persists, schedules, and writes the result back locally.",
+            "description": "Create one coherent durable task for the current conversation/project. Main Chat must first compile the minimum relevant prior context into context_summary and explicitly select any required attachment_refs. The Task cannot inspect Main Chat history or retained Memory. Never dump the whole conversation, embed base64, or copy secrets. Use this only when splitting would not enable useful concurrency, specialization, ownership, or independent acceptance. The Rust Local Agent Host binds, validates, persists, schedules, and writes the result back locally.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -101,6 +101,8 @@ pub fn task_model_tools() -> Vec<Value> {
                     "acceptance_criteria": task_contract_list_schema("Observable, evidence-based conditions that must be true before this Task can be reported complete."),
                     "final_response_max_chars": {"type":"integer", "minimum":1, "maximum":32000, "description":"Optional explicit maximum for the entire final user-facing response, counted in Unicode scalar values including whitespace, punctuation and Markdown. Set this when the user requires a bounded textual delivery; not a file-content limit."},
                     "description": {"type": "string"},
+                    "context_summary": task_context_summary_schema(),
+                    "attachment_refs": task_attachment_refs_schema(),
                     "input_payload": {},
                     "priority": {"type": "integer"},
                     "tags": {
@@ -132,14 +134,14 @@ pub fn task_model_tools() -> Vec<Value> {
                     "supersedes_task_ids": supersedes_task_ids_schema(),
                     "schedule": task_schedule_schema()
                 },
-                "required": ["title", "objective", "expected_outputs", "acceptance_criteria", "requires_execution", "enabled_builtin_kinds"],
+                "required": ["title", "objective", "context_summary", "attachment_refs", "expected_outputs", "acceptance_criteria", "requires_execution", "enabled_builtin_kinds"],
                 "additionalProperties": false
             }
         }),
         json!({
             "type": "function",
             "name": CREATE_TASKS_TOOL,
-            "description": "Create a durable local multi-Task graph for a compound outcome. Start every Task that can safely run now; independent Tasks must not wait for planning, reporting, persistence, or review work. Use prerequisite_refs only for a true hard gate whose concrete output is required before the dependent can begin. Use context_refs for useful related results that must never delay scheduling. Split auxiliary Solution/Notepad persistence, status writeback, archival, and summary work away from the core critical path. Each Task uses a unique client_ref and references may only name Tasks in this call.",
+            "description": "Create a durable local multi-Task graph for a compound outcome. Main Chat must compile a separate minimum self-contained context_summary and explicit attachment_refs for every Task; never forward the whole conversation, all Memory, base64, or secrets. Start every Task that can safely run now; independent Tasks must not wait for planning, reporting, persistence, or review work. Use prerequisite_refs only for a true hard gate whose concrete output is required before the dependent can begin. Use context_refs for useful related results that must never delay scheduling. Split auxiliary Solution/Notepad persistence, status writeback, archival, and summary work away from the core critical path. Each Task uses a unique client_ref and references may only name Tasks in this call.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -218,6 +220,28 @@ fn task_contract_list_schema(description: &str) -> Value {
     })
 }
 
+fn task_context_summary_schema() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16000,
+        "description": "A minimal, self-contained compilation of only the prior conversation facts this Task needs: concrete decisions, constraints, identifiers, paths, URLs, prior verified results, and the purpose of every selected attachment reference. Do not say 'see above', 'use previous chat', or 'read Memory'. Do not paste the whole conversation, raw logs, base64, passwords, tokens, API keys, Authorization headers, or other secret values. If no prior context is needed, state that explicitly."
+    })
+}
+
+fn task_attachment_refs_schema() -> Value {
+    json!({
+        "type": "array",
+        "maxItems": 32,
+        "uniqueItems": true,
+        "items": {
+            "type": "string",
+            "pattern": "^local-attachment:[A-Za-z0-9_.-]{1,200}$"
+        },
+        "description": "Only the opaque authorized_local_ref values for attachments this Task actually needs. Select from the current task_context_compilation_contract catalog. Use [] when no attachment is needed. Never include paths, bytes, data URLs, or base64."
+    })
+}
+
 fn supersedes_task_ids_schema() -> Value {
     json!({
         "type": "array", "maxItems": 50, "uniqueItems": true,
@@ -289,6 +313,8 @@ fn create_task_item_schema() -> Value {
             "acceptance_criteria": task_contract_list_schema("Observable, evidence-based completion conditions for this Task."),
             "final_response_max_chars": {"type":"integer", "minimum":1, "maximum":32000, "description":"Optional explicit maximum for the entire final user-facing response, counted in Unicode scalar values including whitespace, punctuation and Markdown. Set this when the user requires a bounded textual delivery; not a file-content limit."},
             "description": {"type": "string"},
+            "context_summary": task_context_summary_schema(),
+            "attachment_refs": task_attachment_refs_schema(),
             "input_payload": {},
             "priority": {"type": "integer"},
             "tags": {
@@ -328,7 +354,7 @@ fn create_task_item_schema() -> Value {
             "prerequisite_task_ids": prerequisite_task_ids_schema(),
             "schedule": task_schedule_schema()
         },
-        "required": ["client_ref", "title", "objective", "expected_outputs", "acceptance_criteria", "requires_execution", "enabled_builtin_kinds"],
+        "required": ["client_ref", "title", "objective", "context_summary", "attachment_refs", "expected_outputs", "acceptance_criteria", "requires_execution", "enabled_builtin_kinds"],
         "additionalProperties": false
     })
 }

@@ -119,6 +119,7 @@ mod tests {
             include_prompt_cache_retention: true,
             request_body_limit_bytes: Some(1_048_576),
             max_transient_retries: Some(5),
+            responses_compaction_threshold: Some(170_000),
             output_format: None,
         }
     }

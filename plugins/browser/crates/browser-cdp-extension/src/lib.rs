@@ -440,6 +440,11 @@ impl BrowserBackend for ExtensionCdpBackend {
             Some(session_id) => Some(self.remote_session_id(session_id).await?),
             None => None,
         };
+        let timeout_detail = params
+            .get("type")
+            .and_then(Value::as_str)
+            .map(|kind| format!("{method}:{kind}"))
+            .unwrap_or_else(|| method.to_owned());
         let result = self
             .client()
             .await?
@@ -452,7 +457,13 @@ impl BrowserBackend for ExtensionCdpBackend {
                 }),
                 timeout,
             )
-            .await?;
+            .await
+            .map_err(|error| match error {
+                CoreError::Timeout(operation) if operation == "cdp.send" => {
+                    CoreError::Timeout(format!("cdp.send ({timeout_detail})"))
+                }
+                error => error,
+            })?;
         result
             .get("result")
             .cloned()

@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use memory_engine_sdk::{ComposeContextPolicy, ComposeContextResponse, EngineRecord};
 use serde_json::Value;
 
+use super::MEMORY_CONTEXT_ITEM_PREFIX;
 use crate::input_transform::to_message_item;
 use crate::tool_call::{
     build_function_call_item, build_function_call_output_item, extract_message_tool_calls,
@@ -35,7 +36,11 @@ pub fn compose_response_to_input_items_with_budget(
             .collect::<Vec<_>>()
             .join("\n\n===\n\n");
         if !text.trim().is_empty() {
-            items.push(to_message_item("system", &Value::String(text), false));
+            items.push(to_message_item(
+                "system",
+                &Value::String(format!("{MEMORY_CONTEXT_ITEM_PREFIX}\n\n{text}")),
+                false,
+            ));
         }
     }
 
@@ -57,7 +62,7 @@ pub(super) fn standard_compose_policy() -> Option<ComposeContextPolicy> {
         include_recent_records: Some(true),
         include_thread_summary: Some(true),
         include_subject_memory: Some(true),
-        recent_record_limit: Some(64),
+        recent_record_limit: None,
         summary_limit: Some(2),
     })
 }

@@ -7,6 +7,7 @@ use sqlx::{Postgres, QueryBuilder};
 use crate::db::Db;
 use crate::models::EngineThread;
 use crate::repositories::postgres::decode;
+use crate::repositories::postgres::timestamp;
 
 use super::common::{decode_threads, normalize_optional_text};
 use super::ListThreadsQuery;
@@ -63,6 +64,43 @@ pub async fn list_threads_with_pending_records_by_token_threshold(
         .push(" ORDER BY updated_at ASC,created_at ASC LIMIT ")
         .push_bind(limit.clamp(1, 500));
     fetch_threads(db, query).await
+}
+
+pub async fn list_expired_summary_threads(
+    db: &Db,
+    limit: i64,
+) -> Result<Vec<EngineThread>, String> {
+    let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_threads WHERE summary_status='running' \
+         AND (summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now()) \
+         ORDER BY COALESCE(summary_lock_expires_at,summary_locked_at,updated_at),updated_at \
+         LIMIT $1",
+    )
+    .bind(limit.clamp(1, 10_000))
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    decode_threads(rows)
+}
+
+pub async fn list_idle_task_threads(
+    db: &Db,
+    idle_before: &str,
+    limit: i64,
+) -> Result<Vec<EngineThread>, String> {
+    let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_threads WHERE summary_status='pending' \
+         AND pending_record_count>0 AND data->'labels' ? 'memory-schema:v2' \
+         AND (data->'labels' ? 'thread-kind:agent_task' \
+              OR data->'labels' ? 'thread-kind:todo_execution') \
+         AND updated_at<=$1 ORDER BY updated_at ASC,created_at ASC LIMIT $2",
+    )
+    .bind(timestamp(idle_before)?)
+    .bind(limit.clamp(1, 500))
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    decode_threads(rows)
 }
 
 pub async fn list_threads_by_label(
@@ -128,22 +166,7 @@ pub async fn list_threads(
         ],
         false,
     );
-    append_json_aliases(
-        &mut query,
-        values.agent_id,
-        &[
-            "{metadata,legacy_session_mapping,agent_id}",
-            "{metadata,source_metadata,chat_runtime,contact_agent_id}",
-            "{metadata,source_metadata,chat_runtime,contactAgentId}",
-            "{metadata,source_metadata,contact,agent_id}",
-            "{metadata,source_metadata,contact,agentId}",
-            "{metadata,source_metadata,ui_contact,agent_id}",
-            "{metadata,source_metadata,ui_contact,agentId}",
-            "{metadata,source_metadata,ui_chat_selection,selected_agent_id}",
-            "{metadata,source_metadata,ui_chat_selection,selectedAgentId}",
-        ],
-        false,
-    );
+    append_agent_filter(&mut query, values.agent_id);
     append_json_aliases(
         &mut query,
         values.mapping_source,
@@ -212,6 +235,23 @@ fn append_json_aliases(
         query.push("=").push_bind(value);
     }
     query.push(")");
+}
+
+fn append_agent_filter(query: &mut QueryBuilder<Postgres>, value: Option<&str>) {
+    let Some(agent_id) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    let agent_subject_id = if agent_id.starts_with("agent:") {
+        agent_id.to_string()
+    } else {
+        format!("agent:{agent_id}")
+    };
+    query
+        .push(" AND subject_id=")
+        .push_bind(agent_subject_id.clone())
+        .push(" AND data->'labels' ? ")
+        .push_bind(agent_subject_id)
+        .push(" AND data->'labels' ? 'memory-schema:v2'");
 }
 
 async fn fetch_threads(

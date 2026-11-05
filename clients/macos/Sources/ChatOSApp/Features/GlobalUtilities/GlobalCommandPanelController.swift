@@ -72,8 +72,10 @@ class GlobalCommandPanelController: NSWindowController, NSWindowDelegate {
 
     func present(focusingFirstTextInput: Bool = false) {
         shouldFocusFirstTextInput = focusingFirstTextInput
-        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            != Bundle.main.bundleIdentifier {
+        // The main app and utility companion share a bundle identifier but own
+        // different windows. Preserve the main process as a restoration target.
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier
+            != ProcessInfo.processInfo.processIdentifier {
             previousApplication = NSWorkspace.shared.frontmostApplication
             previousKeyWindow = nil
         } else {

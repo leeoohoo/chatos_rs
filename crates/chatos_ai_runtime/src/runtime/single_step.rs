@@ -11,8 +11,8 @@ use crate::{RuntimeFinalResponseAction, RuntimeFinalResponseContext};
 use super::input_items::{input_item_count, json_value_size_bytes};
 use super::model_request::dispatch_model_request;
 use super::{
-    prepare_iteration_request, runtime_result_from_response, AiRuntime, AiRuntimeOptions,
-    AiRuntimeResult,
+    merge_record_metadata, prepare_iteration_request, runtime_result_from_response, AiRuntime,
+    AiRuntimeOptions, AiRuntimeResult,
 };
 
 #[derive(Clone)]
@@ -233,7 +233,13 @@ pub(super) async fn execute_once(
             &response,
             response.tool_calls.clone(),
             None,
-            lifecycle_metadata,
+            merge_record_metadata(
+                lifecycle_metadata,
+                runtime_options
+                    .record_options
+                    .request_summary_on_final_response
+                    .then(|| serde_json::json!({"memory_terminal_summary_requested": true})),
+            ),
         )
         .await?;
     let mut result = runtime_result_from_response(response);

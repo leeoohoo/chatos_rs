@@ -1,30 +1,16 @@
-import {BridgeProtocolError, LocalConnectorBridge} from './bridge.js';
+import {BridgeProtocolError, LocalConnectorBridge, discoverBridges} from './bridge.js';
 import {ExtensionController} from './controller.js';
 
-const bridge = new LocalConnectorBridge();
-const controller = new ExtensionController({bridge});
+const connections = new Map();
 const AUTO_RECONNECT_DELAY_MS = 2000;
 const ONBOARDING_PATH = 'onboarding/onboarding.html';
 
 let pairingEnabled = false;
 let reconnectTimer = null;
-
-controller.start();
-bridge.setRequestHandler((method, params) => controller.handleRequest(method, params));
-bridge.onStateChange(({connected}) => {
-  void updateActionBadge(connected);
-  if (connected) {
-    cancelReconnect();
-  } else {
-    void controller.revokeAll();
-    scheduleReconnect();
-  }
-});
+let synchronization = null;
 
 chrome.runtime.onInstalled.addListener(({reason}) => {
-  if (reason === 'install' || reason === 'update') {
-    void openOnboardingIfNeeded();
-  }
+  if (reason === 'install' || reason === 'update') void openOnboardingIfNeeded();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -49,26 +35,82 @@ void restorePairing();
 async function restorePairing() {
   const {paired = false} = await chrome.storage.local.get('paired');
   pairingEnabled = paired;
-  await updateActionBadge(bridge.connected);
-  if (!pairingEnabled) return;
-  await reconnectPairedBridge();
-}
-
-async function reconnectPairedBridge() {
-  if (!pairingEnabled || bridge.connected) return;
-  try {
-    await bridge.connect({pairingRequested: false});
-  } catch {
-    // The native host or MCP process may still be starting. Keep the pairing and retry.
-    scheduleReconnect();
+  await updateActionBadge();
+  if (pairingEnabled) {
+    try {
+      await synchronizeBridges();
+    } catch {
+      // The native host may not be available until a Browser task starts.
+    }
   }
 }
 
+async function synchronizeBridges({pairingRequested = false} = {}) {
+  if (!pairingEnabled && !pairingRequested) return;
+  if (synchronization) return synchronization;
+  synchronization = performSynchronization(pairingRequested).finally(() => {
+    synchronization = null;
+    scheduleReconnect();
+  });
+  return synchronization;
+}
+
+async function performSynchronization(pairingRequested) {
+  const discovered = await discoverBridges();
+  const activeIds = new Set(discovered.map(item => item.bridgeId));
+  for (const bootstrap of discovered) {
+    let connection = connections.get(bootstrap.bridgeId);
+    if (!connection) {
+      connection = createConnection(bootstrap.bridgeId);
+      connections.set(bootstrap.bridgeId, connection);
+    }
+    if (!connection.bridge.connected) {
+      try {
+        await connection.bridge.connect({pairingRequested, bridgeId: bootstrap.bridgeId});
+      } catch {
+        // Retry this bridge on the next discovery pass without disturbing healthy tasks.
+      }
+    }
+  }
+  for (const [bridgeId, connection] of connections) {
+    if (!activeIds.has(bridgeId)) {
+      await removeConnection(bridgeId, connection, 'bridge_stopped');
+    }
+  }
+  await updateActionBadge();
+}
+
+function createConnection(bridgeId) {
+  const bridge = new LocalConnectorBridge();
+  const controller = new ExtensionController({bridge});
+  const connection = {bridgeId, bridge, controller, removed: false};
+  controller.start();
+  bridge.setRequestHandler((method, params) => controller.handleRequest(method, params));
+  bridge.onStateChange(({connected}) => {
+    void updateActionBadge();
+    if (!connected && !connection.removed) {
+      void controller.revokeAll();
+      scheduleReconnect();
+    }
+  });
+  return connection;
+}
+
+async function removeConnection(bridgeId, connection, reason) {
+  connection.removed = true;
+  connections.delete(bridgeId);
+  await connection.bridge.disconnect(reason);
+  await connection.controller.revokeAll();
+  connection.controller.stop();
+}
+
 function scheduleReconnect() {
-  if (!pairingEnabled || bridge.connected || reconnectTimer !== null) return;
+  if (!pairingEnabled || reconnectTimer !== null) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    void reconnectPairedBridge();
+    void synchronizeBridges().catch(() => {
+      // Discovery is best-effort while no Browser task is running.
+    });
   }, AUTO_RECONNECT_DELAY_MS);
 }
 
@@ -78,42 +120,67 @@ function cancelReconnect() {
   reconnectTimer = null;
 }
 
+function connectedEntries() {
+  return [...connections.values()].filter(connection => connection.bridge.connected);
+}
+
+function aggregateStatus() {
+  const connected = connectedEntries();
+  const primary = connected.at(-1);
+  return {
+    connected: connected.length > 0,
+    paired: pairingEnabled,
+    connectionCount: connected.length,
+    ...(primary?.controller.status() ?? {
+      targets: [], attachedTargetIds: [], sessionName: null, groupId: null, ownedTabIds: []
+    })
+  };
+}
+
 async function handlePopupMessage(message) {
   switch (message?.action) {
     case 'status':
-      return {connected: bridge.connected, paired: pairingEnabled, ...controller.status()};
+      return aggregateStatus();
     case 'connect':
-      await bridge.connect({pairingRequested: true});
       pairingEnabled = true;
+      cancelReconnect();
+      await synchronizeBridges({pairingRequested: true});
       await chrome.storage.local.set({paired: true, onboarding_completed: true});
-      await updateActionBadge(true);
-      return {connected: true, paired: true, ...controller.status()};
+      await updateActionBadge();
+      return aggregateStatus();
     case 'open_onboarding':
       await openOnboarding();
-      return {connected: bridge.connected, paired: pairingEnabled, ...controller.status()};
+      return aggregateStatus();
     case 'share_current_tab': {
-      if (!bridge.connected) {
+      const connection = connectedEntries().at(-1);
+      if (!connection) {
         throw new BridgeProtocolError('extension_unavailable', 'Connect to Browser MCP first');
       }
       const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
       if (!Number.isSafeInteger(tab?.id)) {
         throw new BridgeProtocolError('not_found', 'No active tab is available');
       }
-      const target = await controller.shareTab(tab.id);
-      return {connected: bridge.connected, paired: pairingEnabled, target, ...controller.status()};
+      const target = await connection.controller.shareTab(tab.id);
+      return {...aggregateStatus(), target};
     }
     case 'revoke_target':
-      await controller.revokeTarget(message.target_id);
-      return {connected: bridge.connected, paired: pairingEnabled, ...controller.status()};
+      for (const connection of connectedEntries()) {
+        if (connection.controller.targets().some(target => target.id === message.target_id)) {
+          await connection.controller.revokeTarget(message.target_id);
+          return aggregateStatus();
+        }
+      }
+      throw new BridgeProtocolError('not_found', 'The selected target is not active');
     case 'disconnect':
       pairingEnabled = false;
       cancelReconnect();
       await chrome.storage.local.set({paired: false});
-      await updateActionBadge(false);
-      bridge.notify('extension.unpair', {});
-      await bridge.disconnect('user_disconnected');
-      await controller.revokeAll();
-      return {connected: false, paired: false, ...controller.status()};
+      for (const [bridgeId, connection] of [...connections]) {
+        connection.bridge.notify('extension.unpair', {});
+        await removeConnection(bridgeId, connection, 'user_disconnected');
+      }
+      await updateActionBadge();
+      return aggregateStatus();
     default:
       throw new BridgeProtocolError('invalid_request', 'Unknown popup action');
   }
@@ -144,9 +211,10 @@ async function openOnboarding() {
   await chrome.tabs.create({url, active: true});
 }
 
-async function updateActionBadge(connected = bridge.connected) {
-  const text = connected ? 'ON' : pairingEnabled ? '…' : '!';
-  const color = connected ? '#16A34A' : pairingEnabled ? '#D97706' : '#DC2626';
+async function updateActionBadge() {
+  const count = connectedEntries().length;
+  const text = count > 1 ? String(Math.min(count, 99)) : count === 1 ? 'ON' : pairingEnabled ? '…' : '!';
+  const color = count > 0 ? '#16A34A' : pairingEnabled ? '#D97706' : '#DC2626';
   await chrome.action.setBadgeText({text});
   await chrome.action.setBadgeBackgroundColor({color});
 }

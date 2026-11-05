@@ -35,6 +35,7 @@ use support::*;
 use crate::{BrowserBackend, BrowserBackendFactory};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+const INPUT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(2);
 const NAVIGATION_TIMEOUT: Duration = Duration::from_secs(15);
 const VIRTUAL_CURSOR_ID: &str = "__chatos_virtual_mouse__";
 const VIRTUAL_CURSOR_MOVE_MS: u64 = 280;
@@ -433,7 +434,7 @@ impl BrowserRuntime {
         let session = self.session(browser_session_id).await?;
         let mut session = session.lock().await;
         let (tab_id, backend_session_id) = session.tab_session(tab_id)?;
-        let value = evaluate_value(
+        let value = evaluate_read_only_with_retry(
             session.backend.as_ref(),
             &backend_session_id,
             SNAPSHOT_SCRIPT,
@@ -566,6 +567,7 @@ impl BrowserRuntime {
         let y = point.get("y").and_then(Value::as_f64).ok_or_else(|| {
             CoreError::Backend("click target did not return a y coordinate".into())
         })?;
+        let should_move_mouse = should_dispatch_mouse_move(mode, &point);
 
         // Register the last cursor position before dispatching the click so a
         // navigation caused by mouseReleased recreates the same cursor in the
@@ -581,10 +583,17 @@ impl BrowserRuntime {
             .await;
 
         self.session(browser_session_id).await?.lock().await.invalidate_refs();
-        backend
-            .send_command(
-                Some(&backend_session_id),
-                "Input.dispatchMouseEvent",
+        let mut timed_out_events = Vec::new();
+        let mut skipped_events = Vec::new();
+        if !should_move_mouse {
+            // chrome.debugger executes background-tab mouseMoved commands but
+            // can leave their response Promise pending forever. mousePressed
+            // carries the same coordinates, so avoid creating a leaked Bridge
+            // request when no user can observe the background hover animation.
+            skipped_events.push("mouseMoved:background_tab");
+        } else if !dispatch_mouse_event(
+                backend.as_ref(),
+                &backend_session_id,
                 json!({
                     "type": "mouseMoved",
                     "x": x,
@@ -593,25 +602,28 @@ impl BrowserRuntime {
                     "buttons": 0,
                     "pointerType": "mouse"
                 }),
-                COMMAND_TIMEOUT,
             )
-            .await?;
-        backend
-            .send_command(
-                Some(&backend_session_id),
-                "Input.dispatchMouseEvent",
-                json!({
-                    "type": "mousePressed",
-                    "x": x,
-                    "y": y,
-                    "button": "left",
-                    "buttons": 1,
-                    "clickCount": 1,
-                    "pointerType": "mouse"
-                }),
-                COMMAND_TIMEOUT,
-            )
-            .await?;
+            .await?
+        {
+            timed_out_events.push("mouseMoved");
+        }
+        if !dispatch_mouse_event(
+            backend.as_ref(),
+            &backend_session_id,
+            json!({
+                "type": "mousePressed",
+                "x": x,
+                "y": y,
+                "button": "left",
+                "buttons": 1,
+                "clickCount": 1,
+                "pointerType": "mouse"
+            }),
+        )
+        .await?
+        {
+            timed_out_events.push("mousePressed");
+        }
         let _ = evaluate_value(
             backend.as_ref(),
             &backend_session_id,
@@ -621,22 +633,23 @@ impl BrowserRuntime {
         // Keep the pressed cursor visible before mouseReleased triggers a
         // navigation and destroys the current page overlay.
         tokio::time::sleep(Duration::from_millis(VIRTUAL_CURSOR_CLICK_HOLD_MS)).await;
-        backend
-            .send_command(
-                Some(&backend_session_id),
-                "Input.dispatchMouseEvent",
-                json!({
-                    "type": "mouseReleased",
-                    "x": x,
-                    "y": y,
-                    "button": "left",
-                    "buttons": 0,
-                    "clickCount": 1,
-                    "pointerType": "mouse"
-                }),
-                COMMAND_TIMEOUT,
-            )
-            .await?;
+        if !dispatch_mouse_event(
+            backend.as_ref(),
+            &backend_session_id,
+            json!({
+                "type": "mouseReleased",
+                "x": x,
+                "y": y,
+                "button": "left",
+                "buttons": 0,
+                "clickCount": 1,
+                "pointerType": "mouse"
+            }),
+        )
+        .await?
+        {
+            timed_out_events.push("mouseReleased");
+        }
         // Allow asynchronous navigation/SPA changes to begin. Failure to observe
         // the result is not failure to dispatch: callers must not repeat a write.
         let deadline = Instant::now() + Duration::from_millis(1200);
@@ -659,7 +672,14 @@ impl BrowserRuntime {
             }
         }
         let navigated = after.as_ref().map(|page| page.url != before.url || page.document_id != before.document_id);
+        let dispatch_response = if timed_out_events.is_empty() {
+            "confirmed"
+        } else {
+            "timeout_recovered"
+        };
         Ok(json!({"clicked": true, "before": before, "after": after, "navigated": navigated,
+            "dispatch_response": dispatch_response, "timed_out_events": timed_out_events,
+            "skipped_events": skipped_events,
             "refs_invalidated": true, "next_action": "Take a fresh browser_snapshot; if the page is still loading, wait and snapshot again. Do not repeat a consequential click just because observation is pending."}))
     }
 

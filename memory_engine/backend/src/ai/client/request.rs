@@ -86,10 +86,6 @@ fn build_responses_body(
         "input": build_responses_input(wrapped_user_prompt.as_str(), input_as_list),
         "store": false,
         "prompt_cache_key": format!("memory-engine-summary:{model}"),
-        "context_management": [{
-            "type": "compaction",
-            "compact_threshold": 200_000,
-        }],
     });
     if let Some(requested_max_tokens) = requested_max_tokens {
         body["max_output_tokens"] = json!(requested_max_tokens);

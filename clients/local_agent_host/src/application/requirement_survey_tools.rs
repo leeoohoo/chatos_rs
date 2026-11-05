@@ -341,7 +341,11 @@ mod tests {
                         } else {
                             LocalConversationResourceKind::Contact
                         },
-                        resource_id: "project-1".to_string(),
+                        resource_id: if project_bound {
+                            "project-1".to_string()
+                        } else {
+                            "jiguli".to_string()
+                        },
                     }),
                 }),
             ))
@@ -359,7 +363,10 @@ mod tests {
                         message_id: "message-survey-flow".into(),
                         run_id: "run-survey-flow".into(),
                         message: "understand my goals first".into(),
-                        message_metadata: Value::Null,
+                        message_metadata: json!({
+                            "agent_id": "jiguli",
+                            "agent_name": "叽咕狸",
+                        }),
                         attachments: vec![],
                         model_config_ref: "model-1".into(),
                         model_config_revision: "revision-1".into(),

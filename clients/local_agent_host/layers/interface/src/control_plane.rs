@@ -73,6 +73,8 @@ pub struct LocalModelConfigSnapshot {
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<u64>,
     pub max_transient_retries: Option<u32>,
+    #[serde(default)]
+    pub responses_compaction_threshold: Option<u64>,
     pub output_format: Option<LocalJsonSchemaOutputFormat>,
 }
 
@@ -106,6 +108,14 @@ impl LocalModelConfigSnapshot {
         }
         if self.max_transient_retries.is_some_and(|value| value > 20) {
             return Err("max_transient_retries must be at most 20".to_string());
+        }
+        if self
+            .responses_compaction_threshold
+            .is_some_and(|value| !(2_048..=2_000_000).contains(&value))
+        {
+            return Err(
+                "responses_compaction_threshold must be between 2048 and 2000000".to_string(),
+            );
         }
         if let Some(format) = &self.output_format {
             validate_text("output_format.name", &format.name, 128)?;
@@ -251,6 +261,7 @@ mod tests {
             include_prompt_cache_retention: true,
             request_body_limit_bytes: Some(1024 * 1024),
             max_transient_retries: Some(5),
+            responses_compaction_threshold: Some(170_000),
             output_format: None,
         };
         snapshot.validate().expect("valid snapshot");

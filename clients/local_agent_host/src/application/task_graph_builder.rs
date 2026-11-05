@@ -4,9 +4,7 @@
 use super::super::{CreateTaskArgs, CreateTasksArgs};
 use crate::application::{
     task_model_policy::resolve_task_model,
-    task_tool_source_context::{
-        source_attachments, source_conversation_context, source_user_message,
-    },
+    task_tool_source_context::{source_conversation_context, source_user_message},
     task_tool_support::*,
 };
 use chatos_local_agent_protocol::{
@@ -31,6 +29,7 @@ pub(in crate::application::task_tools) fn create_single_graph(
     let prompt = task_prompt(
         &args.objective,
         &args.description,
+        &args.context_summary,
         &args.expected_outputs,
         &args.acceptance_criteria,
         &args.input_payload,
@@ -40,7 +39,7 @@ pub(in crate::application::task_tools) fn create_single_graph(
     let graph_id = format!("local-task-graph-{}", invocation.invocation_id);
     let source_context = source_conversation_context(parent);
     let source_user_message = source_user_message(parent);
-    let source_attachments = source_attachments(parent)?;
+    let (source_agent_id, source_agent_name, source_project_id) = source_memory_identity(parent)?;
     Ok(CreateTaskGraphCommand {
         graph_id,
         owner_user_id: parent.owner_user_id.clone(),
@@ -61,6 +60,7 @@ pub(in crate::application::task_tools) fn create_single_graph(
                 "acceptance_report_version": 1,
                 "final_response_max_chars": args.final_response_max_chars,
                 "description": args.description,
+                "context_summary": args.context_summary,
                 "input_payload": args.input_payload,
                 "priority": args.priority,
                 "tags": args.tags,
@@ -77,8 +77,11 @@ pub(in crate::application::task_tools) fn create_single_graph(
                 "source_user_message": source_user_message,
                 "remote_connection_id": source_context.remote_connection_id.clone(),
                 "source_run_id": parent.run_id,
+                "agent_id": source_agent_id,
+                "agent_name": source_agent_name,
+                "project_id": source_project_id,
                 "runtime_settings": runtime_settings,
-                "attachments": source_attachments,
+                "attachments": args.selected_attachments,
                 "prerequisite_task_ids": args.prerequisite_task_ids,
                 "supersedes_task_ids": args.supersedes_task_ids,
                 "followup_message_id": parent.input.pointer("/task_followup_review/review_message_id"),
@@ -145,7 +148,7 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
         .collect();
     let source_context = source_conversation_context(parent);
     let source_user_message = source_user_message(parent);
-    let source_attachments = source_attachments(parent)?;
+    let (source_agent_id, source_agent_name, source_project_id) = source_memory_identity(parent)?;
     let mut tasks = Vec::with_capacity(items.len());
     let mut dependencies = Vec::new();
     for item in items {
@@ -168,6 +171,7 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
         let prompt = task_prompt(
             &item.objective,
             &item.description,
+            &item.context_summary,
             &item.expected_outputs,
             &item.acceptance_criteria,
             &input_payload,
@@ -208,6 +212,7 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
                 "notification_milestone": item.notification_milestone,
                 "final_delivery": args.final_delivery_ref.as_deref().is_some_and(|value| value.trim() == item.client_ref.trim()),
                 "description": item.description,
+                "context_summary": item.context_summary,
                 "input_payload": input_payload,
                 "client_ref": item.client_ref,
                 "priority": item.priority,
@@ -225,8 +230,11 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
                 "source_user_message": source_user_message.clone(),
                 "remote_connection_id": source_context.remote_connection_id.clone(),
                 "source_run_id": parent.run_id,
+                "agent_id": source_agent_id.clone(),
+                "agent_name": source_agent_name.clone(),
+                "project_id": source_project_id.clone(),
                 "runtime_settings": runtime_settings,
-                "attachments": source_attachments.clone(),
+                "attachments": item.selected_attachments,
                 "prerequisite_task_ids": item.prerequisite_task_ids,
                 "supersedes_task_ids": args.supersedes_task_ids,
                 "followup_message_id": parent.input.pointer("/task_followup_review/review_message_id"),
@@ -247,6 +255,51 @@ pub(in crate::application::task_tools) async fn create_batch_graph(
         bindings,
         diagnostics,
     })
+}
+
+fn source_memory_identity(
+    parent: &LocalAgentRunRecord,
+) -> Result<(String, Option<String>, Option<String>), String> {
+    let input = &parent.input;
+    let agent_id = consistent_input_string(input, "agent_id")?
+        .ok_or_else(|| "Task source requires an explicit agent_id".to_string())?;
+    let agent_name = consistent_input_string(input, "agent_name")?;
+    let project_id = consistent_input_string(input, "project_id")?;
+    Ok((agent_id, agent_name, project_id))
+}
+
+fn consistent_input_string(input: &serde_json::Value, key: &str) -> Result<Option<String>, String> {
+    let values = [
+        nested_input_string(input, "agent_execution_context", key),
+        input_string(input, key),
+        nested_input_string(input, "agent_team_execution", key),
+        nested_input_string(input, "team_executor_context", key),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let Some(value) = values.first() else {
+        return Ok(None);
+    };
+    if values.iter().any(|candidate| candidate != value) {
+        return Err(format!("Task source has conflicting {key} values"));
+    }
+    Ok(Some(value.clone()))
+}
+
+fn nested_input_string(input: &serde_json::Value, container: &str, key: &str) -> Option<String> {
+    input
+        .get(container)
+        .and_then(|value| input_string(value, key))
+}
+
+fn input_string(input: &serde_json::Value, key: &str) -> Option<String> {
+    input
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 pub(in crate::application::task_tools) struct CreateBatchPlan {

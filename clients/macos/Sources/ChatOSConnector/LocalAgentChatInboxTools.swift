@@ -92,6 +92,7 @@ extension LocalAgentChatToolProvider {
                     name: profile?.draft.name ?? "Agent",
                     profession: profile?.draft.professionKey ?? LocalAgentSkillCatalog.legacyProfessionKey,
                     role: member.draft.role,
+                    responsibility: member.draft.responsibility,
                     isProjectManager: room.projectManagerAgentID == member.agentID
                 ))
             }
@@ -272,12 +273,12 @@ extension LocalAgentChatToolProvider {
     func readAllUnread(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
         let limit = try Self.optionalInteger(arguments, key: "limit").map(Int.init) ?? 200
-        let conversations = try await store.readAllUnreadMessagesAndMarkRead(
+        let conversations = try await store.listAllUnreadMessages(
             ownerUserID: context.ownerUserID,
             agentID: context.agentID,
-            limit: limit,
-            nowUnixMs: now()
+            limit: limit
         )
+        await managerInboxSession.record(conversations: conversations)
         let profiles = try await store.listAgents(
             ownerUserID: context.ownerUserID,
             includeArchived: true
@@ -327,8 +328,26 @@ extension LocalAgentChatToolProvider {
         return try Self.outcome(InboxResponse(
             conversations: response,
             messageCount: response.reduce(0) { $0 + $1.messages.count },
-            markedRead: true
+            markedRead: false
         ))
     }
 
+}
+
+actor LocalAgentManagerInboxSession {
+    private var didReadAllUnread = false
+    private var readThroughMessageIDsByRoom: [String: String] = [:]
+
+    func record(conversations: [LocalAgentUnreadConversation]) {
+        didReadAllUnread = true
+        for conversation in conversations {
+            if let messageID = conversation.messages.last?.id {
+                readThroughMessageIDsByRoom[conversation.room.id] = messageID
+            }
+        }
+    }
+
+    func completionReceipt() -> (didRead: Bool, readThrough: [String: String]) {
+        (didReadAllUnread, readThroughMessageIDsByRoom)
+    }
 }

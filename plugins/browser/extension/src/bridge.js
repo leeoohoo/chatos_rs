@@ -35,10 +35,47 @@ export function validateBootstrap(result, now = Date.now()) {
     throw new BridgeProtocolError('token_expired', 'Bootstrap credential is expired or too long-lived');
   }
   return {
+    bridgeId: validateBridgeId(result.bridge_id),
     endpoint,
     token: result.token,
     expiresAtUnixMs: result.expires_at_unix_ms
   };
+}
+
+export async function discoverBridges({
+  chromeApi = globalThis.chrome,
+} = {}) {
+  let port;
+  try {
+    port = chromeApi.runtime.connectNative(NATIVE_HOST_NAME);
+  } catch {
+    throw new BridgeProtocolError('extension_unavailable', 'Browser MCP native host is unavailable');
+  }
+  try {
+    const result = await nativeRequest(chromeApi, port, 'extension.discover', {
+      protocol_version: EXTENSION_PROTOCOL_VERSION
+    });
+    if (
+      !result ||
+      result.protocol_version !== EXTENSION_PROTOCOL_VERSION ||
+      !Array.isArray(result.bridges)
+    ) {
+      throw new BridgeProtocolError('unsupported_by_backend', 'Unsupported discovery protocol');
+    }
+    return result.bridges.map(bridge => {
+      const bridgeId = validateBridgeId(bridge?.bridge_id);
+      if (!bridgeId) {
+        throw new BridgeProtocolError('invalid_request', 'Discovered Browser Bridge omitted its identity');
+      }
+      return {bridgeId};
+    });
+  } finally {
+    try {
+      port.disconnect();
+    } catch {
+      // Native host may already have exited after returning discovery results.
+    }
+  }
 }
 
 export function validateLoopbackEndpoint(value) {
@@ -82,6 +119,7 @@ export class LocalConnectorBridge {
   #nextId = 1;
   #connected = false;
   #connecting = null;
+  #bridgeId = null;
 
   constructor({chromeApi = globalThis.chrome, WebSocketImpl = globalThis.WebSocket} = {}) {
     this.#chrome = chromeApi;
@@ -90,6 +128,10 @@ export class LocalConnectorBridge {
 
   get connected() {
     return this.#connected;
+  }
+
+  get bridgeId() {
+    return this.#bridgeId;
   }
 
   setRequestHandler(handler) {
@@ -101,10 +143,15 @@ export class LocalConnectorBridge {
     return () => this.#stateListeners.delete(listener);
   }
 
-  async connect({pairingRequested = false} = {}) {
-    if (this.#connected) return;
+  async connect({pairingRequested = false, bridgeId = null} = {}) {
+    if (this.#connected) {
+      if (bridgeId && bridgeId !== this.#bridgeId) {
+        throw new BridgeProtocolError('permission_denied', 'Bridge is already connected to another task');
+      }
+      return;
+    }
     if (this.#connecting) return this.#connecting;
-    this.#connecting = this.#connect(pairingRequested)
+    this.#connecting = this.#connect(pairingRequested, bridgeId)
       .catch(async error => {
         await this.disconnect('connection_failed');
         throw error;
@@ -115,7 +162,7 @@ export class LocalConnectorBridge {
     return this.#connecting;
   }
 
-  async #connect(pairingRequested) {
+  async #connect(pairingRequested, bridgeId) {
     await this.disconnect('reconnecting');
     let nativePort;
     try {
@@ -129,10 +176,18 @@ export class LocalConnectorBridge {
     });
     const bootstrapResult = await this.#nativeRequest(nativePort, 'extension.bootstrap', {
       protocol_version: EXTENSION_PROTOCOL_VERSION,
-      pairing_requested: Boolean(pairingRequested)
+      pairing_requested: Boolean(pairingRequested),
+      ...(bridgeId ? {bridge_id: bridgeId} : {})
     });
     const bootstrap = validateBootstrap(bootstrapResult);
+    if (bridgeId && bootstrap.bridgeId !== bridgeId) {
+      throw new BridgeProtocolError('permission_denied', 'Browser Bridge identity changed during bootstrap');
+    }
 
+    await this.#connectSocket(bootstrap);
+  }
+
+  async #connectSocket(bootstrap) {
     const socket = new this.#WebSocket(bootstrap.endpoint, EXTENSION_SUBPROTOCOL);
     this.#socket = socket;
     socket.onmessage = event => this.#handleSocketMessage(event.data);
@@ -151,6 +206,7 @@ export class LocalConnectorBridge {
     if (!hello || hello.protocol_version !== EXTENSION_PROTOCOL_VERSION) {
       throw new BridgeProtocolError('unsupported_by_backend', 'Browser Bridge protocol mismatch');
     }
+    this.#bridgeId = bootstrap.bridgeId;
     this.#connected = true;
     this.#emitState();
   }
@@ -160,6 +216,7 @@ export class LocalConnectorBridge {
     const nativePort = this.#nativePort;
     this.#socket = null;
     this.#nativePort = null;
+    this.#bridgeId = null;
     this.#connected = false;
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timeout);
@@ -182,50 +239,7 @@ export class LocalConnectorBridge {
   }
 
   async #nativeRequest(port, method, params) {
-    const id = `native_${crypto.randomUUID()}`;
-    return new Promise((resolve, reject) => {
-      const cleanup = () => {
-        clearTimeout(timeout);
-        port.onMessage.removeListener(messageListener);
-        port.onDisconnect.removeListener(disconnectListener);
-      };
-      const timeout = setTimeout(() => {
-        cleanup();
-        reject(new BridgeProtocolError('timeout', `${method} timed out`));
-      }, REQUEST_TIMEOUT_MS);
-      const messageListener = message => {
-        if (!message || message.type !== 'response' || message.id !== id) return;
-        cleanup();
-        if (message.error) {
-          reject(remoteError(message.error));
-        } else {
-          resolve(message.result);
-        }
-      };
-      const disconnectListener = () => {
-        const message = this.#chrome.runtime.lastError?.message;
-        cleanup();
-        reject(
-          new BridgeProtocolError(
-            'extension_unavailable',
-            message || 'Browser MCP native host disconnected'
-          )
-        );
-      };
-      port.onMessage.addListener(messageListener);
-      port.onDisconnect.addListener(disconnectListener);
-      try {
-        port.postMessage({type: 'request', id, method, params});
-      } catch {
-        cleanup();
-        reject(
-          new BridgeProtocolError(
-            'extension_unavailable',
-            'Could not send a request to the Browser MCP native host'
-          )
-        );
-      }
-    });
+    return nativeRequest(this.#chrome, port, method, params);
   }
 
   async #socketRequest(method, params) {
@@ -310,6 +324,54 @@ export class LocalConnectorBridge {
     const state = {connected: this.#connected, reason};
     for (const listener of this.#stateListeners) listener(state);
   }
+}
+
+function nativeRequest(chromeApi, port, method, params) {
+  const id = `native_${crypto.randomUUID()}`;
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timeout);
+      port.onMessage.removeListener(messageListener);
+      port.onDisconnect.removeListener(disconnectListener);
+    };
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new BridgeProtocolError('timeout', `${method} timed out`));
+    }, REQUEST_TIMEOUT_MS);
+    const messageListener = message => {
+      if (!message || message.type !== 'response' || message.id !== id) return;
+      cleanup();
+      if (message.error) reject(remoteError(message.error));
+      else resolve(message.result);
+    };
+    const disconnectListener = () => {
+      const message = chromeApi.runtime.lastError?.message;
+      cleanup();
+      reject(
+        new BridgeProtocolError(
+          'extension_unavailable',
+          message || 'Browser MCP native host disconnected'
+        )
+      );
+    };
+    port.onMessage.addListener(messageListener);
+    port.onDisconnect.addListener(disconnectListener);
+    try {
+      port.postMessage({type: 'request', id, method, params});
+    } catch {
+      cleanup();
+      reject(
+        new BridgeProtocolError(
+          'extension_unavailable',
+          'Could not send a request to the Browser MCP native host'
+        )
+      );
+    }
+  });
+}
+
+function validateBridgeId(value) {
+  return typeof value === 'string' && /^bridge_[A-Za-z0-9_-]{8,128}$/.test(value) ? value : null;
 }
 
 function waitForSocketOpen(socket) {

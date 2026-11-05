@@ -105,6 +105,8 @@ extension NativeLocalConnectorService {
         let catalog = ToolSkillCoverageCatalog.product
         let bindingKeys: [(String, String)] = [
             (ProductToolProviderID.capabilityBroker, ProductToolSkillBindingID.capabilityBroker),
+            (ProductToolProviderID.localAgentChat, ProductToolSkillBindingID.todoExecution),
+            (ProductToolProviderID.localAgentChat, ProductToolSkillBindingID.teamKnowledge),
             (ProductToolProviderID.projectRead, ProductToolSkillBindingID.projectRead),
             (ProductToolProviderID.projectWrite, ProductToolSkillBindingID.projectWrite),
             (ProductToolProviderID.terminal, ProductToolSkillBindingID.terminalCommandExecution),

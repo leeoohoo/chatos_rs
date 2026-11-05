@@ -119,6 +119,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let askUserPromptService: NativeLocalAgentAskUserPromptService?
     let requirementSurveyClient: NativeLocalAgentRequirementSurveyClient?
     let platformToolWorker: NativeLocalAgentPlatformToolWorker?
+    let localAgentTeamExecutor: NativeLocalAgentTeamExecutor?
     let workspaceService: NativeLocalAgentWorkspaceService?
     let localConnectorService: NativeLocalConnectorService
     let pluginApplicationListUseCase: PluginApplicationListUseCase
@@ -231,9 +232,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 deploymentIdentifier: RuntimeConfiguration.deployment.identifier
             ),
             ticketProvider: connectorTicketProvider,
-            approvalMemoryProviderFactory: { tenantID, workspaceID, runID, runtimeScope in
+            approvalMemoryProviderFactory: { tenantID, projectID, runID, runtimeScope in
                 let scope = try AgentMemoryScope(
-                    tenantID: tenantID, profile: "approval", projectID: workspaceID,
+                    tenantID: tenantID, profile: "approval", projectID: projectID,
                     runID: runID, runtimeScope: runtimeScope
                 )
                 let memory = try await ChatOSMemoryEngineService(client: apiClient, scope: scope)
@@ -275,18 +276,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             service: localConnectorService
         )
         let remoteAgentServices = ChatOSStoryPlanningService(client: apiClient)
-        let agentServices: any AgentServiceProviding
-        do {
-            agentServices = try OfflineCapableAgentServiceProvider(
-                upstream: remoteAgentServices,
-                databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
-                    .appendingPathComponent("AgentMemoryCache.sqlite3")
-            )
-        } catch {
-            // Storage initialization is validated again by the scheduler. Keep
-            // app startup recoverable if the local cache file needs repair.
-            agentServices = remoteAgentServices
-        }
+        let agentServices: any AgentServiceProviding = remoteAgentServices
         self.agentServices = agentServices
         self.mediaStudio = MediaStudioViewModel(
             service: ChatOSMediaGenerationService(client: apiClient),
@@ -299,6 +289,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         let localAgentRuntimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?
         let localAgentConversationService: NativeLocalAgentConversationService?
         let localAgentPlatformToolWorker: NativeLocalAgentPlatformToolWorker?
+        let localAgentTeamExecutor: NativeLocalAgentTeamExecutor?
         let localAgentEventHub: NativeLocalAgentEventHub?
         if let localAgentHost {
             let attachmentRootURL = RuntimeConfiguration.nativeConnectorStateURL
@@ -311,6 +302,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 attachmentRootURL: attachmentRootURL,
                 projects: localProjectsService,
                 connector: localConnectorService,
+                agentGroupChatService: agentGroupChatService,
                 remoteConnectionProvider: remoteConnectionService,
                 eventHub: eventHub,
                 maximumConcurrentClaims: RuntimeConfiguration
@@ -319,6 +311,11 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             localAgentRuntimeSettingsService = settings
             localAgentEventHub = eventHub
             localAgentPlatformToolWorker = worker
+            localAgentTeamExecutor = NativeLocalAgentTeamExecutor(
+                host: localAgentHost,
+                groupChatService: agentGroupChatService,
+                platformToolWorker: worker
+            )
             localAgentConversationService = NativeLocalAgentConversationService(
                 host: localAgentHost,
                 attachmentRootURL: attachmentRootURL,
@@ -331,6 +328,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             localAgentEventHub = nil
             localAgentConversationService = nil
             localAgentPlatformToolWorker = nil
+            localAgentTeamExecutor = nil
         }
         self.localAgentHost = localAgentHost
         self.localAgentEventHub = localAgentEventHub
@@ -369,6 +367,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             NativeLocalAgentRequirementSurveyClient(host: $0)
         }
         self.platformToolWorker = localAgentPlatformToolWorker
+        self.localAgentTeamExecutor = localAgentTeamExecutor
         let workspaceService = localAgentHost.map {
             NativeLocalAgentWorkspaceService(host: $0)
         }
@@ -399,6 +398,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             service: agentGroupChatService,
             services: agentServices,
             runtime: AgentWorkerProcessClient(),
+            nativeExecutor: localAgentTeamExecutor,
             maximumConcurrentExecutions: RuntimeConfiguration.swiftAgentMaximumConcurrentRuns,
             machineResourceGovernor: .shared,
             projectTypeKeyProvider: { ownerUserID, projectID in
@@ -424,7 +424,11 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                         pluginID: $0.pluginID,
                         componentKey: $0.componentKey,
                         displayName: $0.displayName,
-                        description: $0.description
+                        description: $0.description,
+                        pluginKey: $0.pluginKey,
+                        releaseID: $0.releaseID,
+                        version: $0.version,
+                        artifactSHA256: $0.artifactSHA256
                     )
                 }
             },
@@ -433,9 +437,34 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                     forKey: "ChatOS.internalContextLanguage"
                 ))
             },
+            teamHookContextProvider: { ownerUserID, projectID, roomID, runID, lane, prompt in
+                guard let localAgentHost else { return [] }
+                let projectContext = try await localProjectsService.pluginContext(
+                    ownerUserID: ownerUserID,
+                    projectID: projectID
+                )
+                guard let projectRoot = projectContext.projectRoot else {
+                    throw NativeConnectorError.workspaceUnavailable
+                }
+                let resolvedRoot = try await localConnectorService.conversationFileRoot(
+                    ownerUserID: ownerUserID,
+                    conversationID: roomID,
+                    projectRootPath: projectRoot
+                )
+                return try await NativeLocalAgentHookBundleClient(host: localAgentHost)
+                    .resolveAgentTeamContext(
+                        ownerUserID: ownerUserID,
+                        sessionID: roomID,
+                        runID: runID,
+                        prompt: prompt,
+                        lane: lane,
+                        workspaceRoot: resolvedRoot
+                    )
+            },
             additionalToolProviders: { profile, member, runContext, productSkillSession in
                 var providers: [any AgentToolProvider] = []
-                if LocalAgentPermission.canAccessLocalProjects(profile.draft.defaultSkillIDs) {
+                if runContext.lane == .manager,
+                   LocalAgentPermission.canAccessLocalProjects(profile.draft.defaultSkillIDs) {
                     let store = try await agentGroupChatService.store()
                     let registry = try await localProjectsService.registry()
                     let projects = try await registry.list(
@@ -450,7 +479,15 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                         ),
                         projectsService: localProjectsService,
                         context: runContext,
-                        productSkillSession: productSkillSession
+                        productSkillSession: productSkillSession,
+                        roomChangeHandler: { roomID in
+                            await agentGroupChatService.publishChange(.init(
+                                ownerUserID: runContext.ownerUserID,
+                                roomID: roomID,
+                                agentID: runContext.agentID,
+                                kind: .roomUpdated
+                            ))
+                        }
                     ))
                 }
                 if runContext.lane == .executor {

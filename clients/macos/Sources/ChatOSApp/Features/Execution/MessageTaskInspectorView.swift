@@ -4,6 +4,7 @@ import SwiftUI
 struct MessageTaskInspectorView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var viewModel: MessageTaskWorkspaceViewModel
+    var fillsAvailableWidth = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,6 +18,8 @@ struct MessageTaskInspectorView: View {
                             detail(task)
                         case .process:
                             process(task)
+                        case .capabilities:
+                            capabilities(task)
                         case .run:
                             run(task)
                         }
@@ -31,7 +34,11 @@ struct MessageTaskInspectorView: View {
                 )
             }
         }
-        .frame(minWidth: 320, idealWidth: 360, maxWidth: 420)
+        .frame(
+            minWidth: fillsAvailableWidth ? 0 : 380,
+            idealWidth: fillsAvailableWidth ? nil : 440,
+            maxWidth: fillsAvailableWidth ? .infinity : 520
+        )
         .frame(maxHeight: .infinity)
         .background(AppPalette.canvas)
         .conversationFileLinks(conversationID: viewModel.turn.sessionID)
@@ -43,7 +50,18 @@ struct MessageTaskInspectorView: View {
     private var inspectorHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("任务检查器").appFont(.headline)
+                HStack(spacing: 9) {
+                    Image(systemName: "sidebar.right")
+                        .foregroundStyle(AppPalette.ai)
+                        .frame(width: 28, height: 28)
+                        .background(AppPalette.aiSoft, in: RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("任务检查器").appFont(.headline)
+                        Text("选择节点后查看完整上下文")
+                            .appFont(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Spacer()
                 if viewModel.isLoadingInspector { ProgressView().controlSize(.small) }
                 if let task = viewModel.taskDetail ?? viewModel.selectedTask,
@@ -75,7 +93,9 @@ struct MessageTaskInspectorView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(AppPalette.surface)
     }
 
     @ViewBuilder
@@ -104,6 +124,20 @@ struct MessageTaskInspectorView: View {
             liveActivity: task.lastRun?.activity,
             taskStatus: task.status
         )
+    }
+
+    @ViewBuilder
+    private func capabilities(_ task: MessageTask) -> some View {
+        TaskInspectorTitle(task: task)
+        if let usage = TaskCapabilityUsageSummary.decode(task.taskToolStateJSON) {
+            TaskCapabilityUsageView(usage: usage)
+        } else {
+            ContentUnavailableView(
+                "暂无插件与工具记录",
+                systemImage: "puzzlepiece.extension",
+                description: Text("任务产生真实调用后，会在这里集中展示。")
+            )
+        }
     }
 
     @ViewBuilder

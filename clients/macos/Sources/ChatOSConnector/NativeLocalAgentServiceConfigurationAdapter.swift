@@ -13,6 +13,7 @@ public struct NativeLocalAgentServiceConfigurationFactory: Sendable {
     private let askUserPromptService: NativeLocalAgentAskUserPromptService?
     private let turnProcessService: NativeLocalAgentTurnProcessService?
     private let platformToolWorker: NativeLocalAgentPlatformToolWorker?
+    private let teamExecutor: NativeLocalAgentTeamExecutor?
 
     public init(
         localConnectorService: NativeLocalConnectorService,
@@ -22,7 +23,8 @@ public struct NativeLocalAgentServiceConfigurationFactory: Sendable {
         messageTaskGraphService: NativeLocalAgentMessageTaskGraphService?,
         askUserPromptService: NativeLocalAgentAskUserPromptService?,
         turnProcessService: NativeLocalAgentTurnProcessService?,
-        platformToolWorker: NativeLocalAgentPlatformToolWorker?
+        platformToolWorker: NativeLocalAgentPlatformToolWorker?,
+        teamExecutor: NativeLocalAgentTeamExecutor? = nil
     ) {
         self.localConnectorService = localConnectorService
         self.runtimeSettingsService = runtimeSettingsService
@@ -32,6 +34,7 @@ public struct NativeLocalAgentServiceConfigurationFactory: Sendable {
         self.askUserPromptService = askUserPromptService
         self.turnProcessService = turnProcessService
         self.platformToolWorker = platformToolWorker
+        self.teamExecutor = teamExecutor
     }
 
     public func makePort(
@@ -48,7 +51,8 @@ public struct NativeLocalAgentServiceConfigurationFactory: Sendable {
             messageTaskGraphService: messageTaskGraphService,
             askUserPromptService: askUserPromptService,
             turnProcessService: turnProcessService,
-            platformToolWorker: platformToolWorker
+            platformToolWorker: platformToolWorker,
+            teamExecutor: teamExecutor
         )
     }
 }
@@ -64,6 +68,7 @@ private struct NativeLocalAgentServiceConfigurationAdapter: LocalAgentServiceCon
     let askUserPromptService: NativeLocalAgentAskUserPromptService?
     let turnProcessService: NativeLocalAgentTurnProcessService?
     let platformToolWorker: NativeLocalAgentPlatformToolWorker?
+    let teamExecutor: NativeLocalAgentTeamExecutor?
 
     func configure(_ stage: LocalAgentServiceConfigurationStage) async throws {
         switch stage {
@@ -80,6 +85,7 @@ private struct NativeLocalAgentServiceConfigurationAdapter: LocalAgentServiceCon
         case .petActivity:
             await petActivityService?.configure(ownerUserID: ownerUserID)
         case .conversationCommand:
+            try await teamExecutor?.configure(ownerUserID: ownerUserID, bootstrap: bootstrap)
             try await commandService?.configure(
                 ownerUserID: ownerUserID,
                 bootstrap: bootstrap

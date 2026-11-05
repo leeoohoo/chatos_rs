@@ -335,9 +335,9 @@ extension AgentTodoRepository {
         ).first
     }
 
-    static let columns = "owner_user_id, id, agent_id, team_room_id, source_room_id, source_message_id, title, detail, priority, sort_order, request_key, status, blocked_reason, result, created_at_unix_ms, updated_at_unix_ms, execution_plan_json, execution_contract_json"
+    static let columns = "owner_user_id, id, agent_id, team_room_id, source_room_id, source_message_id, title, detail, priority, sort_order, request_key, status, blocked_reason, result, created_at_unix_ms, updated_at_unix_ms, execution_plan_json, execution_contract_json, acceptance_checks_json"
 
-    static let qualifiedColumns = "t.owner_user_id, t.id, t.agent_id, t.team_room_id, t.source_room_id, t.source_message_id, t.title, t.detail, t.priority, t.sort_order, t.request_key, t.status, t.blocked_reason, t.result, t.created_at_unix_ms, t.updated_at_unix_ms, t.execution_plan_json, t.execution_contract_json"
+    static let qualifiedColumns = "t.owner_user_id, t.id, t.agent_id, t.team_room_id, t.source_room_id, t.source_message_id, t.title, t.detail, t.priority, t.sort_order, t.request_key, t.status, t.blocked_reason, t.result, t.created_at_unix_ms, t.updated_at_unix_ms, t.execution_plan_json, t.execution_contract_json, t.acceptance_checks_json"
 
     static let todoDisplayOrderSQL = """
      ORDER BY CASE status

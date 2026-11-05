@@ -80,9 +80,16 @@ async fn list_internal(
     let mut q=QueryBuilder::<Postgres>::new("SELECT s.data FROM engine_summaries s JOIN engine_threads t ON t.tenant_id=s.tenant_id AND t.source_id=s.source_id AND t.id=s.thread_id WHERE s.tenant_id=");
     q.push_bind(tenant_id)
         .push(" AND s.source_id=")
-        .push_bind(source_id)
-        .push(" AND t.data->'labels' ? ")
-        .push_bind(label);
+        .push_bind(source_id);
+    if label.starts_with("project:") {
+        q.push(" AND (t.data->'labels' ? ")
+            .push_bind(label)
+            .push(" OR s.data->'metadata'->>'project_subject_id'=")
+            .push_bind(label)
+            .push(")");
+    } else {
+        q.push(" AND t.data->'labels' ? ").push_bind(label);
+    }
     append_prefixed(&mut q, "s.summary_type", summary_type);
     append_prefixed(&mut q, "s.status", status);
     if let Some(v) = level {

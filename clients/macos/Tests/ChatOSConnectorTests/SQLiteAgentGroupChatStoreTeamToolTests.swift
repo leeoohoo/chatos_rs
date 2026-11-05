@@ -105,6 +105,38 @@ extension SQLiteAgentGroupChatStoreTests {
             productSkillSession: productSkillSession,
             now: { post.message.createdAtUnixMs + 2 }
         )
+        let executorContext = try LocalAgentChatRunContext(
+            ownerUserID: context.ownerUserID,
+            projectID: context.projectID,
+            roomID: context.roomID,
+            agentID: context.agentID,
+            deliveryID: context.deliveryID,
+            triggerMessageID: context.triggerMessageID,
+            rootMessageID: context.rootMessageID,
+            runID: "team-tool-executor-run",
+            hopCount: context.hopCount,
+            lane: .executor
+        )
+        let executorProvider = LocalAgentProjectToolProvider(
+            store: store,
+            projects: [target],
+            projectsService: projectsService,
+            context: executorContext,
+            productSkillSession: productSkillSession,
+            now: { post.message.createdAtUnixMs + 2 }
+        )
+        let executorDefinitions = try await executorProvider.definitions()
+        XCTAssertTrue(executorDefinitions.isEmpty)
+        do {
+            _ = try await executorProvider.execute(.init(
+                id: "executor-must-not-manage-projects",
+                name: LocalAgentProjectToolProvider.catalogToolName,
+                arguments: "{}"
+            ))
+            XCTFail("executor lane must not receive project/team management authority")
+        } catch AgentGroupChatError.permissionDenied {
+            // Expected: the provider also enforces the lane if it is mounted accidentally.
+        }
         let definitions = try await provider.definitions()
         XCTAssertEqual(definitions.map(\.name), [
             "project_catalog",
@@ -185,103 +217,49 @@ extension SQLiteAgentGroupChatStoreTests {
         XCTAssertTrue(rejectedRepositoryURL.content.contains("不是本机路径"))
         XCTAssertTrue(rejectedRepositoryURL.content.contains("不得猜测或编造 /"))
 
-        let newProjectResult = try await provider.execute(.init(
-            id: "new-project-team-proposal-call",
-            name: "team_propose_new_project",
-            arguments: #"{"project_name":"新建调研项目","project_description":"独立新项目","project_type":"software_development","team_name":"新项目团队","team_goal":"完成调研"}"#
-        ))
-        XCTAssertFalse(newProjectResult.isError)
-        XCTAssertTrue(newProjectResult.content.contains(#""creates_new_project":true"#))
-
-        let importResult = try await provider.execute(.init(
-            id: "import-directory-team-proposal-call",
-            name: "team_propose_import_directory",
-            arguments: try toolArguments([
-                "absolute_path": importedDirectory.path,
-                "project_type": "software_development",
-                "team_name": "现有目录团队",
-                "team_goal": "在原目录工作",
-            ])
-        ))
-        XCTAssertFalse(importResult.isError)
-        XCTAssertTrue(importResult.content.contains(#""creates_new_project":true"#))
-
         let result = try await provider.execute(.init(
             id: "team-proposal-call",
             name: "team_propose_existing",
             arguments: #"{"project_option":"existing_1","team_name":"设计团队","team_goal":"完成产品设计"}"#
         ))
+        XCTAssertTrue(result.content.contains(#""status":"approved""#))
         XCTAssertFalse(result.content.contains(secretProjectID))
+        let replayedResult = try await provider.execute(.init(
+            id: "team-proposal-call",
+            name: "team_propose_existing",
+            arguments: #"{"project_option":"existing_1","team_name":"设计团队","team_goal":"完成产品设计"}"#
+        ))
+        XCTAssertEqual(replayedResult, result)
         let proposals = try await store.listTeamProposals(
             ownerUserID: "alice",
             sourceRoomID: room.id,
-            status: .pending
+            status: .approved
         )
         let proposal = try XCTUnwrap(proposals.first(where: {
             $0.requestKey == "team-proposal-call"
         }))
         XCTAssertEqual(proposal.draft.existingProjectID, secretProjectID)
-        let newProjectProposal = try XCTUnwrap(proposals.first(where: {
-            $0.requestKey == "new-project-team-proposal-call"
-        }))
-        XCTAssertEqual(newProjectProposal.draft.newProjectName, "新建调研项目")
-        XCTAssertNil(newProjectProposal.draft.importedProjectDraft)
-        let importedProposal = try XCTUnwrap(proposals.first(where: {
-            $0.requestKey == "import-directory-team-proposal-call"
-        }))
-        XCTAssertEqual(importedProposal.draft.importedProjectAbsolutePath, importedDirectory.path)
-        XCTAssertEqual(importedProposal.draft.importedProjectDraft?.relativeRoot, "import-target")
-        XCTAssertNil(importedProposal.draft.newProjectName)
-
-        // The proposal was submitted from a running communication cycle. Resolve that source
-        // delivery before the Human decision so the follow-up delivery can be claimed normally.
-        _ = try await store.failDelivery(
-            ownerUserID: "alice",
-            deliveryID: delivery.id,
-            error: "test source cycle finished",
-            nowUnixMs: post.message.createdAtUnixMs + 3
-        )
-
-        do {
-            _ = try await store.approveTeamProposal(
-                ownerUserID: "alice",
-                sourceRoomID: room.id,
-                proposalID: proposal.id,
-                resolvedProjectID: "wrong-project-id",
-                nowUnixMs: post.message.createdAtUnixMs + 3
-            )
-            XCTFail("Human approval changed the program-resolved project id")
-        } catch {
-            XCTAssertEqual(error as? AgentGroupChatError, .permissionDenied)
-        }
-        let approval = try await store.approveTeamProposal(
+        XCTAssertEqual(proposals.count, 1)
+        let pendingProposals = try await store.listTeamProposals(
             ownerUserID: "alice",
             sourceRoomID: room.id,
-            proposalID: proposal.id,
-            resolvedProjectID: secretProjectID,
-            nowUnixMs: post.message.createdAtUnixMs + 3
+            status: .pending
         )
-        XCTAssertEqual(approval.room.projectID, secretProjectID)
-        let claimedResolutionDelivery = try await store.claimNextDelivery(
+        XCTAssertTrue(pendingProposals.isEmpty)
+        let activeRoom = try await store.activeRoom(
             ownerUserID: "alice",
-            agentID: agent.id,
-            nowUnixMs: post.message.createdAtUnixMs + 4
+            projectID: secretProjectID
         )
-        let resolutionDelivery = try XCTUnwrap(claimedResolutionDelivery)
-        XCTAssertEqual(resolutionDelivery.roomID, room.id)
-        XCTAssertEqual(resolutionDelivery.targetAgentID, agent.id)
-        XCTAssertEqual(resolutionDelivery.triggerKind, .mention)
-        let loadedResolutionMessage = try await store.message(
+        let createdRoom = try XCTUnwrap(activeRoom)
+        XCTAssertEqual(createdRoom.id, proposal.createdRoomID)
+        XCTAssertEqual(createdRoom.draft.name, "设计团队")
+        let sourceMessages = try await store.pageRecentMessages(
             ownerUserID: "alice",
             roomID: room.id,
-            messageID: resolutionDelivery.messageID
-        )
-        let resolutionMessage = try XCTUnwrap(loadedResolutionMessage)
-        XCTAssertEqual(resolutionMessage.senderKind, .system)
-        XCTAssertEqual(resolutionMessage.causationID, proposal.id)
-        XCTAssertEqual(resolutionMessage.mentionedAgentIDs, [agent.id])
-        XCTAssertTrue(resolutionMessage.content.contains("Human 已批准"))
-        XCTAssertTrue(resolutionMessage.content.contains("不要等待 Human 再次提醒"))
+            beforeMessageID: nil,
+            limit: 50
+        ).messages
+        XCTAssertFalse(sourceMessages.contains { $0.causationID == proposal.id })
     }
 
     func testAgentCannotImpersonateHumanOrMentionNonMember() async throws {

@@ -5,11 +5,11 @@ use chatos_ai_runtime::{
     AiRuntime, ContextualTurnRunner, MemoryContextComposer, MemoryEngineRecordWriter,
     MemoryRecordScope, MemoryRecordWriter,
 };
-use chatos_local_agent_ports::{LocalMemoryContextCacheStore, LocalMemoryOutboxStore};
+use chatos_local_agent_ports::LocalMemoryOutboxStore;
 use memory_engine_sdk::MemoryEngineClient;
 use std::{sync::Arc, time::Duration};
 
-use crate::{LocalMemoryContextCache, LocalMemoryOutboxWriter, LocalMemorySyncWorker};
+use crate::{LocalMemoryOutboxWriter, LocalMemorySyncWorker};
 
 pub struct LocalMemoryRuntimeServices {
     pub runner: ContextualTurnRunner,
@@ -56,13 +56,11 @@ impl LocalMemoryRuntimeConfig {
         tenant_id: impl Into<String>,
     ) -> Result<LocalMemoryRuntimeServices, String>
     where
-        S: LocalMemoryOutboxStore + LocalMemoryContextCacheStore + 'static,
+        S: LocalMemoryOutboxStore + 'static,
     {
         let source_id = required("Memory source_id", &self.source_id)?;
         let client = self.build_client()?;
-        let cache_store: Arc<dyn LocalMemoryContextCacheStore> = store.clone();
-        let composer = MemoryContextComposer::from_client(client.clone())
-            .with_resilient_cache(LocalMemoryContextCache::new(cache_store));
+        let composer = MemoryContextComposer::from_client(client.clone());
         let remote_writer: Arc<dyn MemoryRecordWriter> =
             Arc::new(MemoryEngineRecordWriter::from_client(
                 client,

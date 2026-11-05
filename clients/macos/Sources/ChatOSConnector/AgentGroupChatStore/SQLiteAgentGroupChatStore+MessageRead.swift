@@ -356,4 +356,44 @@ extension SQLiteAgentGroupChatStore {
         }
     }
 
+    public func listAllUnreadMessages(
+        ownerUserID: String,
+        agentID: String,
+        limit: Int = 200
+    ) throws -> [LocalAgentUnreadConversation] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        guard (1...500).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        guard try readAgent(ownerUserID: ownerUserID, agentID: agentID)?.status == .active else {
+            throw AgentGroupChatError.notFound
+        }
+        let messages = try hydrateMessageRelations(AgentMessageRepository.listAllUnread(
+            database,
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            limit: limit,
+            preparedStatement: recordPreparedStatement,
+            row: readMessageBase
+        ), ownerUserID: ownerUserID)
+        guard !messages.isEmpty else { return [] }
+        let grouped = Dictionary(grouping: messages, by: \.roomID)
+        var seenRooms = Set<String>()
+        let roomOrder = messages.map(\.roomID).filter { seenRooms.insert($0).inserted }
+        let rooms = try AgentConversationRepository.rooms(
+            database,
+            ownerUserID: ownerUserID,
+            roomIDs: roomOrder,
+            preparedStatement: recordPreparedStatement
+        )
+        let roomsByID = Dictionary(uniqueKeysWithValues: rooms.map { ($0.id, $0) })
+        return try roomOrder.map { roomID in
+            guard let room = roomsByID[roomID] else {
+                throw AgentGroupChatError.storage("unread conversation is missing")
+            }
+            return .init(room: room, messages: grouped[roomID] ?? [])
+        }
+    }
+
 }

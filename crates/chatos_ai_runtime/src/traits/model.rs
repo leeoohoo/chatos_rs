@@ -62,6 +62,9 @@ pub struct ModelRuntimeConfig {
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<usize>,
     pub max_transient_retries: Option<usize>,
+    /// Provider-side Responses compaction threshold supplied by the managed
+    /// runtime policy. The AI runtime must not infer a model context window.
+    pub responses_compaction_threshold: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_format: Option<JsonSchemaOutputFormat>,
 }
@@ -126,6 +129,14 @@ macro_rules! impl_model_request_builders {
             self
         }
 
+        pub fn with_responses_compaction_threshold(
+            mut self,
+            responses_compaction_threshold: Option<usize>,
+        ) -> Self {
+            self.responses_compaction_threshold = responses_compaction_threshold;
+            self
+        }
+
         pub fn with_output_format(mut self, output_format: Option<JsonSchemaOutputFormat>) -> Self {
             self.output_format = output_format;
             self
@@ -180,6 +191,7 @@ impl ModelRuntimeConfig {
             include_prompt_cache_retention: self.include_prompt_cache_retention,
             request_body_limit_bytes: self.request_body_limit_bytes,
             max_transient_retries: self.max_transient_retries,
+            responses_compaction_threshold: self.responses_compaction_threshold,
             output_format: self.output_format.clone(),
         }
     }
@@ -226,6 +238,7 @@ pub struct ModelRequest {
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<usize>,
     pub max_transient_retries: Option<usize>,
+    pub responses_compaction_threshold: Option<usize>,
     pub output_format: Option<JsonSchemaOutputFormat>,
 }
 
@@ -265,6 +278,7 @@ impl ModelRequest {
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
             max_transient_retries: None,
+            responses_compaction_threshold: None,
             output_format: None,
         }
     }

@@ -1,25 +1,25 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:358e21bd-b4f1-4f1e-a0ff-f60e9a4c9660",
+  "serialNumber": "urn:uuid:f50812fe-71c0-4ee9-b0fc-37c635103aee",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-23T05:03:42.720Z",
+    "timestamp": "2026-11-03T05:18:51.300Z",
     "tools": {
       "components": [
         {
           "type": "application",
           "name": "browser-cdp-sbom-generator",
-          "version": "0.1.22"
+          "version": "0.1.26"
         }
       ]
     },
     "component": {
       "type": "application",
-      "bom-ref": "pkg:npm/chatos-browser-cdp@0.1.22",
+      "bom-ref": "pkg:npm/chatos-browser-cdp@0.1.26",
       "name": "chatos-browser-cdp",
-      "version": "0.1.22",
-      "purl": "pkg:npm/chatos-browser-cdp@0.1.22"
+      "version": "0.1.26",
+      "purl": "pkg:npm/chatos-browser-cdp@0.1.26"
     }
   },
   "components": [
@@ -277,10 +277,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-bridge@0.1.22",
+      "bom-ref": "pkg:cargo/browser-cdp-bridge@0.1.26",
       "name": "browser-cdp-bridge",
-      "version": "0.1.22",
-      "purl": "pkg:cargo/browser-cdp-bridge@0.1.22",
+      "version": "0.1.26",
+      "purl": "pkg:cargo/browser-cdp-bridge@0.1.26",
       "properties": [
         {
           "name": "cargo:source",
@@ -299,10 +299,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-cli@0.1.22",
+      "bom-ref": "pkg:cargo/browser-cdp-cli@0.1.26",
       "name": "browser-cdp-cli",
-      "version": "0.1.22",
-      "purl": "pkg:cargo/browser-cdp-cli@0.1.22",
+      "version": "0.1.26",
+      "purl": "pkg:cargo/browser-cdp-cli@0.1.26",
       "properties": [
         {
           "name": "cargo:source",
@@ -321,10 +321,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-core@0.1.22",
+      "bom-ref": "pkg:cargo/browser-cdp-core@0.1.26",
       "name": "browser-cdp-core",
-      "version": "0.1.22",
-      "purl": "pkg:cargo/browser-cdp-core@0.1.22",
+      "version": "0.1.26",
+      "purl": "pkg:cargo/browser-cdp-core@0.1.26",
       "properties": [
         {
           "name": "cargo:source",
@@ -343,10 +343,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-direct@0.1.22",
+      "bom-ref": "pkg:cargo/browser-cdp-direct@0.1.26",
       "name": "browser-cdp-direct",
-      "version": "0.1.22",
-      "purl": "pkg:cargo/browser-cdp-direct@0.1.22",
+      "version": "0.1.26",
+      "purl": "pkg:cargo/browser-cdp-direct@0.1.26",
       "properties": [
         {
           "name": "cargo:source",
@@ -365,10 +365,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-extension@0.1.22",
+      "bom-ref": "pkg:cargo/browser-cdp-extension@0.1.26",
       "name": "browser-cdp-extension",
-      "version": "0.1.22",
-      "purl": "pkg:cargo/browser-cdp-extension@0.1.22",
+      "version": "0.1.26",
+      "purl": "pkg:cargo/browser-cdp-extension@0.1.26",
       "properties": [
         {
           "name": "cargo:source",
@@ -387,10 +387,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-mcp@0.1.22",
+      "bom-ref": "pkg:cargo/browser-cdp-mcp@0.1.26",
       "name": "browser-cdp-mcp",
-      "version": "0.1.22",
-      "purl": "pkg:cargo/browser-cdp-mcp@0.1.22",
+      "version": "0.1.26",
+      "purl": "pkg:cargo/browser-cdp-mcp@0.1.26",
       "properties": [
         {
           "name": "cargo:source",
@@ -409,10 +409,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-policy@0.1.22",
+      "bom-ref": "pkg:cargo/browser-cdp-policy@0.1.26",
       "name": "browser-cdp-policy",
-      "version": "0.1.22",
-      "purl": "pkg:cargo/browser-cdp-policy@0.1.22",
+      "version": "0.1.26",
+      "purl": "pkg:cargo/browser-cdp-policy@0.1.26",
       "properties": [
         {
           "name": "cargo:source",
@@ -431,10 +431,10 @@
     },
     {
       "type": "application",
-      "bom-ref": "pkg:cargo/browser-cdp-protocol@0.1.22",
+      "bom-ref": "pkg:cargo/browser-cdp-protocol@0.1.26",
       "name": "browser-cdp-protocol",
-      "version": "0.1.22",
-      "purl": "pkg:cargo/browser-cdp-protocol@0.1.22",
+      "version": "0.1.26",
+      "purl": "pkg:cargo/browser-cdp-protocol@0.1.26",
       "properties": [
         {
           "name": "cargo:source",
@@ -1064,34 +1064,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/servo/rust-url"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:cargo/fs2@0.4.3",
-      "name": "fs2",
-      "version": "0.4.3",
-      "purl": "pkg:cargo/fs2@0.4.3",
-      "properties": [
-        {
-          "name": "cargo:source",
-          "value": "registry+https://github.com/rust-lang/crates.io-index"
-        },
-        {
-          "name": "cargo:manifest_path",
-          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fs2-0.4.3/Cargo.toml"
-        }
-      ],
-      "licenses": [
-        {
-          "expression": "MIT/Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/danburkert/fs2-rs"
         }
       ]
     },
@@ -4317,90 +4289,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:cargo/winapi-i686-pc-windows-gnu@0.4.0",
-      "name": "winapi-i686-pc-windows-gnu",
-      "version": "0.4.0",
-      "purl": "pkg:cargo/winapi-i686-pc-windows-gnu@0.4.0",
-      "properties": [
-        {
-          "name": "cargo:source",
-          "value": "registry+https://github.com/rust-lang/crates.io-index"
-        },
-        {
-          "name": "cargo:manifest_path",
-          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winapi-i686-pc-windows-gnu-0.4.0/Cargo.toml"
-        }
-      ],
-      "licenses": [
-        {
-          "expression": "MIT/Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/retep998/winapi-rs"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:cargo/winapi-x86_64-pc-windows-gnu@0.4.0",
-      "name": "winapi-x86_64-pc-windows-gnu",
-      "version": "0.4.0",
-      "purl": "pkg:cargo/winapi-x86_64-pc-windows-gnu@0.4.0",
-      "properties": [
-        {
-          "name": "cargo:source",
-          "value": "registry+https://github.com/rust-lang/crates.io-index"
-        },
-        {
-          "name": "cargo:manifest_path",
-          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winapi-x86_64-pc-windows-gnu-0.4.0/Cargo.toml"
-        }
-      ],
-      "licenses": [
-        {
-          "expression": "MIT/Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/retep998/winapi-rs"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:cargo/winapi@0.3.9",
-      "name": "winapi",
-      "version": "0.3.9",
-      "purl": "pkg:cargo/winapi@0.3.9",
-      "properties": [
-        {
-          "name": "cargo:source",
-          "value": "registry+https://github.com/rust-lang/crates.io-index"
-        },
-        {
-          "name": "cargo:manifest_path",
-          "value": "../../../../../../Users/lilei/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winapi-0.3.9/Cargo.toml"
-        }
-      ],
-      "licenses": [
-        {
-          "expression": "MIT/Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/retep998/winapi-rs"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:cargo/windows-core@0.62.2",
       "name": "windows-core",
       "version": "0.62.2",
@@ -5018,7 +4906,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-bridge@0.1.22",
+      "ref": "pkg:cargo/browser-cdp-bridge@0.1.26",
       "dependsOn": [
         "pkg:cargo/async-tungstenite@0.32.1",
         "pkg:cargo/futures@0.3.34",
@@ -5030,29 +4918,29 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-cli@0.1.22",
+      "ref": "pkg:cargo/browser-cdp-cli@0.1.26",
       "dependsOn": [
-        "pkg:cargo/browser-cdp-bridge@0.1.22",
-        "pkg:cargo/browser-cdp-core@0.1.22",
-        "pkg:cargo/browser-cdp-direct@0.1.22",
-        "pkg:cargo/browser-cdp-extension@0.1.22",
-        "pkg:cargo/browser-cdp-mcp@0.1.22",
-        "pkg:cargo/fs2@0.4.3",
+        "pkg:cargo/browser-cdp-bridge@0.1.26",
+        "pkg:cargo/browser-cdp-core@0.1.26",
+        "pkg:cargo/browser-cdp-direct@0.1.26",
+        "pkg:cargo/browser-cdp-extension@0.1.26",
+        "pkg:cargo/browser-cdp-mcp@0.1.26",
         "pkg:cargo/serde_json@1.0.151",
         "pkg:cargo/sha2@0.10.9",
         "pkg:cargo/tokio@1.53.1",
         "pkg:cargo/tracing-subscriber@0.3.23",
         "pkg:cargo/tracing@0.1.44",
-        "pkg:cargo/tungstenite@0.28.0"
+        "pkg:cargo/tungstenite@0.28.0",
+        "pkg:cargo/uuid@1.24.1"
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-core@0.1.22",
+      "ref": "pkg:cargo/browser-cdp-core@0.1.26",
       "dependsOn": [
         "pkg:cargo/async-trait@0.1.92",
         "pkg:cargo/base64@0.22.1",
-        "pkg:cargo/browser-cdp-policy@0.1.22",
-        "pkg:cargo/browser-cdp-protocol@0.1.22",
+        "pkg:cargo/browser-cdp-policy@0.1.26",
+        "pkg:cargo/browser-cdp-protocol@0.1.26",
         "pkg:cargo/chrono@0.4.45",
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151",
@@ -5063,13 +4951,13 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-direct@0.1.22",
+      "ref": "pkg:cargo/browser-cdp-direct@0.1.26",
       "dependsOn": [
         "pkg:cargo/async-trait@0.1.92",
         "pkg:cargo/base64@0.22.1",
-        "pkg:cargo/browser-cdp-core@0.1.22",
-        "pkg:cargo/browser-cdp-policy@0.1.22",
-        "pkg:cargo/browser-cdp-protocol@0.1.22",
+        "pkg:cargo/browser-cdp-core@0.1.26",
+        "pkg:cargo/browser-cdp-policy@0.1.26",
+        "pkg:cargo/browser-cdp-protocol@0.1.26",
         "pkg:cargo/chromiumoxide@0.9.1",
         "pkg:cargo/chromiumoxide_types@0.9.1",
         "pkg:cargo/futures@0.3.34",
@@ -5081,13 +4969,13 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-extension@0.1.22",
+      "ref": "pkg:cargo/browser-cdp-extension@0.1.26",
       "dependsOn": [
         "pkg:cargo/async-trait@0.1.92",
         "pkg:cargo/async-tungstenite@0.32.1",
-        "pkg:cargo/browser-cdp-core@0.1.22",
-        "pkg:cargo/browser-cdp-policy@0.1.22",
-        "pkg:cargo/browser-cdp-protocol@0.1.22",
+        "pkg:cargo/browser-cdp-core@0.1.26",
+        "pkg:cargo/browser-cdp-policy@0.1.26",
+        "pkg:cargo/browser-cdp-protocol@0.1.26",
         "pkg:cargo/futures@0.3.34",
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151",
@@ -5098,18 +4986,18 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-mcp@0.1.22",
+      "ref": "pkg:cargo/browser-cdp-mcp@0.1.26",
       "dependsOn": [
-        "pkg:cargo/browser-cdp-core@0.1.22",
-        "pkg:cargo/browser-cdp-policy@0.1.22",
-        "pkg:cargo/browser-cdp-protocol@0.1.22",
+        "pkg:cargo/browser-cdp-core@0.1.26",
+        "pkg:cargo/browser-cdp-policy@0.1.26",
+        "pkg:cargo/browser-cdp-protocol@0.1.26",
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151",
         "pkg:cargo/tokio@1.53.1"
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-policy@0.1.22",
+      "ref": "pkg:cargo/browser-cdp-policy@0.1.26",
       "dependsOn": [
         "pkg:cargo/regex@1.13.1",
         "pkg:cargo/serde@1.0.229",
@@ -5119,7 +5007,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/browser-cdp-protocol@0.1.22",
+      "ref": "pkg:cargo/browser-cdp-protocol@0.1.26",
       "dependsOn": [
         "pkg:cargo/serde@1.0.229",
         "pkg:cargo/serde_json@1.0.151"
@@ -5276,13 +5164,6 @@
       "ref": "pkg:cargo/form_urlencoded@1.2.2",
       "dependsOn": [
         "pkg:cargo/percent-encoding@2.3.2"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/fs2@0.4.3",
-      "dependsOn": [
-        "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/winapi@0.3.9"
       ]
     },
     {
@@ -6114,21 +5995,6 @@
       "ref": "pkg:cargo/which@8.0.5",
       "dependsOn": [
         "pkg:cargo/libc@0.2.189"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/winapi-i686-pc-windows-gnu@0.4.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:cargo/winapi-x86_64-pc-windows-gnu@0.4.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:cargo/winapi@0.3.9",
-      "dependsOn": [
-        "pkg:cargo/winapi-i686-pc-windows-gnu@0.4.0",
-        "pkg:cargo/winapi-x86_64-pc-windows-gnu@0.4.0"
       ]
     },
     {

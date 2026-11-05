@@ -267,7 +267,8 @@ mod tests {
     use chatos_local_agent_ports::LocalMemoryOutboxStore;
     use chatos_local_agent_protocol::{
         CreateConversationCommand, CreateRunCommand, CreateTaskGraphCommand, GetTaskGraphCommand,
-        GuideConversationTurnCommand, LocalAgentRunClaim, LocalAgentRunStatus, LocalTaskSpec,
+        GuideConversationTurnCommand, LocalAgentRunClaim, LocalAgentRunStatus,
+        LocalConversationResourceBinding, LocalConversationResourceKind, LocalTaskSpec,
         LocalTaskStatus, StartConversationTurnCommand,
     };
     use chatos_local_agent_runtime::LocalAgentProfile;
@@ -466,7 +467,10 @@ mod tests {
                     conversation_id: "conversation-guided-scheduler".to_string(),
                     owner_user_id: "user-1".to_string(),
                     title: "Guided scheduler".to_string(),
-                    resource: None,
+                    resource: Some(LocalConversationResourceBinding {
+                        kind: LocalConversationResourceKind::Contact,
+                        resource_id: "jiguli".to_string(),
+                    }),
                 }),
                 "create-guided-conversation",
             ))
@@ -482,7 +486,10 @@ mod tests {
                     message_id: "message-guided-scheduler-1".to_string(),
                     run_id: "run-guided-scheduler".to_string(),
                     message: "start".to_string(),
-                    message_metadata: serde_json::json!({}),
+                    message_metadata: serde_json::json!({
+                        "agent_id": "jiguli",
+                        "agent_name": "叽咕狸",
+                    }),
                     attachments: Vec::new(),
                     model_config_ref: "model-1".to_string(),
                     model_config_revision: "revision-1".to_string(),

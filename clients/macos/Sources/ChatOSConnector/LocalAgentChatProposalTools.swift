@@ -39,9 +39,19 @@ extension LocalAgentChatToolProvider {
             draft: draft,
             nowUnixMs: now()
         )
+        if proposal.status == .pending {
+            _ = try await store.approveAgentProposal(
+                ownerUserID: context.ownerUserID,
+                roomID: context.roomID,
+                proposalID: proposal.id,
+                nowUnixMs: now(),
+                sendResolutionNotification: false
+            )
+        }
+        await roomChangeHandler(context.roomID)
         return try Self.outcome(ProposalAcknowledgement(
             type: "agent_creation",
-            status: proposal.status.rawValue,
+            status: LocalAgentCreationProposalStatus.approved.rawValue,
             subject: proposal.draft.name
         ))
     }
@@ -72,10 +82,20 @@ extension LocalAgentChatToolProvider {
             ),
             nowUnixMs: now()
         )
+        if proposal.status == .pending {
+            _ = try await store.approveAgentRemovalProposal(
+                ownerUserID: context.ownerUserID,
+                roomID: context.roomID,
+                proposalID: proposal.id,
+                nowUnixMs: now(),
+                sendResolutionNotification: false
+            )
+        }
+        await roomChangeHandler(context.roomID)
         return try Self.outcome(ProposalAcknowledgement(
             type: "agent_removal",
-            status: proposal.status.rawValue,
-            subject: "团队成员移出提案"
+            status: LocalAgentRemovalProposalStatus.approved.rawValue,
+            subject: "团队成员已移出"
         ))
     }
 
@@ -120,10 +140,20 @@ extension LocalAgentChatToolProvider {
                 ),
                 nowUnixMs: now()
             )
+            if proposal.status == .pending {
+                _ = try await store.approveMembershipProposal(
+                    ownerUserID: context.ownerUserID,
+                    sourceRoomID: context.roomID,
+                    proposalID: proposal.id,
+                    nowUnixMs: now(),
+                    sendResolutionNotification: false
+                )
+            }
+            await roomChangeHandler(targetTeamRoomID)
             return try Self.outcome(ProposalAcknowledgement(
                 type: "existing_agent_membership",
-                status: proposal.status.rawValue,
-                subject: "现有 Agent 入队提案"
+                status: LocalAgentMembershipProposalStatus.approved.rawValue,
+                subject: "现有 Agent 已加入团队"
             ))
         } catch let error as AgentGroupChatError {
             let message = switch error {
@@ -142,6 +172,69 @@ extension LocalAgentChatToolProvider {
                 nextTool: error == .notFound ? Self.workspaceSnapshotToolName : nil
             )
         }
+    }
+
+    func deleteAgent(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        guard try await canManageStaff() else { throw AgentGroupChatError.permissionDenied }
+        let arguments = try Self.arguments(call)
+        let targetReference = try Self.requiredString(arguments, key: "target_agent_ref")
+        guard let targetAgentID = await references.agentID(reference: targetReference) else {
+            return Self.structuredFailure(
+                code: "invalid_agent_ref",
+                field: "target_agent_ref",
+                message: "Agent 引用无效或已经过期，请重新读取工作区快照。",
+                retryable: true,
+                nextTool: Self.workspaceSnapshotToolName
+            )
+        }
+        guard targetAgentID != context.agentID else {
+            return Self.structuredFailure(
+                code: "self_deletion_not_allowed",
+                field: "target_agent_ref",
+                message: "不能删除当前正在执行管理操作的 Agent。",
+                retryable: false,
+                nextTool: nil
+            )
+        }
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: true
+        )
+        guard let target = profiles.first(where: { $0.id == targetAgentID }) else {
+            throw AgentGroupChatError.notFound
+        }
+        let rooms = try await store.listRooms(
+            ownerUserID: context.ownerUserID,
+            includeArchived: false
+        )
+        var affectedRoomIDs: [String] = []
+        for room in rooms {
+            let members = try await store.listMembers(
+                ownerUserID: context.ownerUserID,
+                roomID: room.id
+            )
+            if members.contains(where: {
+                $0.agentID == targetAgentID && $0.status == .active
+            }) {
+                affectedRoomIDs.append(room.id)
+            }
+        }
+        let alreadyArchived = target.status == .archived
+        if !alreadyArchived {
+            _ = try await store.archiveAgent(
+                ownerUserID: context.ownerUserID,
+                agentID: targetAgentID,
+                nowUnixMs: now()
+            )
+        }
+        for roomID in affectedRoomIDs {
+            await roomChangeHandler(roomID)
+        }
+        return try Self.outcome(AgentDeletionResponse(
+            status: "archived",
+            subject: target.draft.name,
+            alreadyArchived: alreadyArchived
+        ))
     }
 
     func canManageStaff() async throws -> Bool {

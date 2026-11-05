@@ -6,7 +6,7 @@ pub(super) mod task_graph_builder;
 
 use super::{CreateTaskArgs, CreateTasksArgs};
 use crate::application::task_tool_support::validate_nonempty_text;
-use chatos_local_agent_protocol::LocalAgentRunRecord;
+use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalConversationAttachmentSpec};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -164,6 +164,12 @@ pub(in crate::application) struct CreateTaskItem {
     #[serde(default)]
     description: String,
     #[serde(default)]
+    pub(in crate::application) context_summary: String,
+    #[serde(default)]
+    pub(in crate::application) attachment_refs: Vec<String>,
+    #[serde(skip)]
+    pub(in crate::application) selected_attachments: Vec<LocalConversationAttachmentSpec>,
+    #[serde(default)]
     input_payload: Value,
     #[serde(default)]
     default_model_config_id: Option<String>,
@@ -197,6 +203,70 @@ pub(in crate::application) struct CreateTaskItem {
     schedule: Option<TaskScheduleArgs>,
 }
 
+pub(super) fn validate_task_context_package(
+    context_summary: &str,
+    attachment_refs: &[String],
+) -> Result<(), String> {
+    let summary = context_summary.trim();
+    let count = summary.chars().count();
+    if count == 0 || count > 16_000 {
+        return Err("context_summary must contain 1..=16000 characters".to_string());
+    }
+    let compact = summary.to_lowercase().replace(char::is_whitespace, "");
+    if compact.contains(";base64,") || compact.contains("data:image/") {
+        return Err(
+            "context_summary must reference attachments by authorized_local_ref; base64 and data URLs are forbidden"
+                .to_string(),
+        );
+    }
+    if compact.contains("authorization:bearer")
+        || compact.contains("authorization=bearer")
+        || compact.contains("\"api_key\":")
+        || compact.contains("apikey=")
+    {
+        return Err(
+            "context_summary must not contain raw credentials; pass only an approved opaque credential reference"
+                .to_string(),
+        );
+    }
+    if count < 200
+        && [
+            "seeabove",
+            "asdiscussed",
+            "previouschat",
+            "priorchat",
+            "readmemory",
+            "见上文",
+            "参考上文",
+            "之前的聊天",
+            "读取记忆",
+            "会话授权上下文",
+        ]
+        .into_iter()
+        .any(|marker| compact.contains(marker))
+    {
+        return Err(
+            "context_summary is referential instead of self-contained; rewrite the required facts explicitly"
+                .to_string(),
+        );
+    }
+    if attachment_refs.len() > 32 {
+        return Err("attachment_refs must contain at most 32 items".to_string());
+    }
+    let mut seen = HashSet::new();
+    for reference in attachment_refs {
+        if !seen.insert(reference) {
+            return Err(format!("attachment_refs contains a duplicate: {reference}"));
+        }
+        if !summary.contains(reference) {
+            return Err(format!(
+                "context_summary must name selected attachment reference {reference} and explain why the Task needs it"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::application) struct TaskScheduleArgs {
@@ -226,6 +296,12 @@ pub(super) struct TaskPluginReleaseSnapshot {
     pub(super) release_id: String,
     pub(super) version: String,
     pub(super) artifact_sha256: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(super) allows_parallel_task_execution: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn selected_plugin_release_snapshots(
@@ -269,7 +345,9 @@ fn selected_plugin_release_snapshots(
         let key = hint.plugin_key.trim();
         let component = hint.component_key.trim();
         let snapshot = by_key.get(&(key, component)).ok_or_else(|| {
-            format!("Plugin component is not frozen in the current capability policy: {key}/{component}")
+            format!(
+                "Plugin component is not frozen in the current capability policy: {key}/{component}"
+            )
         })?;
         selected.push((*snapshot).clone());
     }

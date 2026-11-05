@@ -380,6 +380,7 @@ private actor RejectingAgentWorkerAdmissionRuntime: AgentRuntimeExecuting {
         tools: [AgentToolDefinition],
         execute: @escaping AgentRuntime.Executor,
         completionCheck: @escaping AgentRuntime.CompletionCheck,
+        incompletionReminder: @escaping AgentRuntime.IncompletionReminder,
         contextProvider: (any AgentContextProviding)?,
         record: @escaping AgentRuntime.Recorder
     ) async throws -> AgentRunCheckpoint {
@@ -399,6 +400,7 @@ private struct InterruptedAgentWorkerRuntime: AgentRuntimeExecuting {
         tools: [AgentToolDefinition],
         execute: @escaping AgentRuntime.Executor,
         completionCheck: @escaping AgentRuntime.CompletionCheck,
+        incompletionReminder: @escaping AgentRuntime.IncompletionReminder,
         contextProvider: (any AgentContextProviding)?,
         record: @escaping AgentRuntime.Recorder
     ) async throws -> AgentRunCheckpoint {

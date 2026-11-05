@@ -7,11 +7,12 @@ use tracing::{info, warn};
 
 use crate::models::now_rfc3339;
 use crate::repositories::{control_plane, threads};
-use crate::services::summary;
+use crate::services::{control_plane as cp_service, summary};
 use crate::state::AppState;
 
 const SUMMARY_QUEUE_TRIGGER: &str = "database_worker";
 const SUMMARY_DISPATCH_CLAIM_LEASE_SECS: i64 = 300;
+const TASK_THREAD_IDLE_FLUSH_SECS: i64 = 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SummaryRequestedEnvelope {
@@ -19,6 +20,7 @@ struct SummaryRequestedEnvelope {
     source_id: String,
     thread_id: String,
     version: i64,
+    force_version: i64,
     attempt: u32,
     requested_at: String,
 }
@@ -30,6 +32,7 @@ impl SummaryRequestedEnvelope {
             source_id: event.source_id.clone(),
             thread_id: event.thread_id.clone(),
             version: event.summary_dispatch_version,
+            force_version: event.summary_dispatch_force_version,
             attempt: 0,
             requested_at: now_rfc3339(),
         }
@@ -43,6 +46,7 @@ impl SummaryRequestedEnvelope {
             summary_dispatch_version: self.version,
             summary_dispatch_published_version: self.version,
             summary_dispatch_consumed_version: 0,
+            summary_dispatch_force_version: self.force_version,
         }
     }
 }
@@ -219,7 +223,7 @@ async fn process_summary_event(
         threads::defer_summary_dispatch_until_unlock(&state.pool, &event).await?;
         return Ok(());
     }
-    if thread.pending_summary_tokens < token_threshold {
+    if !event.forced() && thread.pending_summary_tokens < token_threshold {
         threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
         return Ok(());
     }
@@ -251,14 +255,8 @@ async fn process_summary_event(
         .await?;
     }
     threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
-    let _ = threads::rearm_summary_dispatch_if_eligible(
-        &state.pool,
-        envelope.tenant_id.as_str(),
-        envelope.source_id.as_str(),
-        envelope.thread_id.as_str(),
-        token_threshold,
-    )
-    .await?;
+    let _ = threads::rearm_summary_dispatch_after_processing(&state.pool, &event, token_threshold)
+        .await?;
     Ok(())
 }
 
@@ -271,10 +269,29 @@ fn summary_slot_is_active(thread: &crate::models::EngineThread, now: &str) -> bo
 }
 
 async fn run_reconciler(state: Arc<AppState>) {
-    let mut interval = tokio::time::interval(state.config.summary_outbox_reconcile_interval);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        interval.tick().await;
+        let scan_interval = match control_plane::get_effective_job_policy(&state.pool, "summary")
+            .await
+            .and_then(|policy| cp_service::managed_policy_scan_interval(&policy))
+        {
+            Ok(value) => value,
+            Err(error) => {
+                warn!(error, "Memory Engine summary scan policy is invalid");
+                tokio::time::sleep(state.config.summary_outbox_reconcile_interval).await;
+                continue;
+            }
+        };
+        match release_expired_summary_slots(&state).await {
+            Ok(count) if count > 0 => info!(
+                recovered_count = count,
+                "Memory Engine released expired summary thread slots"
+            ),
+            Ok(_) => {}
+            Err(error) => warn!(
+                error,
+                "Memory Engine failed to release expired summary thread slots"
+            ),
+        }
         match recover_stale_claims(&state).await {
             Ok(count) if count > 0 => info!(
                 recovered_count = count,
@@ -298,7 +315,78 @@ async fn run_reconciler(state: Arc<AppState>) {
                 "Memory Engine failed to arm summary database dispatches"
             ),
         }
+        match flush_idle_identity_threads(&state).await {
+            Ok(count) if count > 0 => info!(
+                flushed_count = count,
+                idle_seconds = TASK_THREAD_IDLE_FLUSH_SECS,
+                "Memory Engine started idle task thread summaries"
+            ),
+            Ok(_) => {}
+            Err(error) => warn!(
+                error,
+                "Memory Engine failed to start idle task thread summaries"
+            ),
+        }
+        tokio::time::sleep(scan_interval).await;
     }
+}
+
+async fn release_expired_summary_slots(state: &AppState) -> Result<usize, String> {
+    let threads =
+        threads::list_expired_summary_threads(&state.pool, state.config.summary_outbox_batch_size)
+            .await?;
+    let mut recovered = 0usize;
+    for thread in threads {
+        if threads::release_expired_summary_slot(
+            &state.pool,
+            thread.tenant_id.as_str(),
+            thread.source_id.as_str(),
+            thread.id.as_str(),
+        )
+        .await?
+        .is_some()
+        {
+            recovered = recovered.saturating_add(1);
+        }
+    }
+    Ok(recovered)
+}
+
+async fn flush_idle_identity_threads(state: &AppState) -> Result<usize, String> {
+    let policy = control_plane::get_effective_job_policy(&state.pool, "summary").await?;
+    if !policy.enabled {
+        return Ok(0);
+    }
+    let concurrency = state
+        .pressure
+        .subscribe()
+        .borrow()
+        .active_summary_concurrency
+        .max(1);
+    let idle_before =
+        (chrono::Utc::now() - chrono::Duration::seconds(TASK_THREAD_IDLE_FLUSH_SECS)).to_rfc3339();
+    let candidates = threads::list_idle_task_threads(
+        &state.pool,
+        idle_before.as_str(),
+        i64::try_from(concurrency).unwrap_or(i64::MAX),
+    )
+    .await?;
+    let mut started = 0usize;
+    for thread in candidates {
+        let response = summary::run_thread_active_summary(
+            &state.config,
+            &state.pool,
+            thread.tenant_id.as_str(),
+            thread.source_id.as_str(),
+            thread.id.as_str(),
+            Some("identity_idle_flush"),
+        )
+        .await?;
+        if response.accepted {
+            started = started.saturating_add(1);
+        }
+    }
+    Ok(started)
 }
 
 async fn recover_stale_claims(state: &AppState) -> Result<usize, String> {
@@ -307,6 +395,8 @@ async fn recover_stale_claims(state: &AppState) -> Result<usize, String> {
         return Ok(0);
     }
     let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
+    let scan_limit =
+        cp_service::managed_policy_scan_limit(&policy, state.config.summary_outbox_batch_size)?;
     let stale_before = (chrono::Utc::now()
         - chrono::Duration::seconds(SUMMARY_DISPATCH_CLAIM_LEASE_SECS))
     .to_rfc3339();
@@ -314,7 +404,7 @@ async fn recover_stale_claims(state: &AppState) -> Result<usize, String> {
         &state.pool,
         token_threshold,
         stale_before.as_str(),
-        state.config.summary_outbox_batch_size,
+        scan_limit,
     )
     .await?;
     let mut recovered = 0usize;
@@ -340,12 +430,10 @@ async fn arm_automatic_summary_dispatches(state: &AppState) -> Result<usize, Str
         return Ok(0);
     }
     let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
-    let candidates = threads::list_eligible_summary_dispatches(
-        &state.pool,
-        token_threshold,
-        state.config.summary_outbox_batch_size,
-    )
-    .await?;
+    let scan_limit =
+        cp_service::managed_policy_scan_limit(&policy, state.config.summary_outbox_batch_size)?;
+    let candidates =
+        threads::list_eligible_summary_dispatches(&state.pool, token_threshold, scan_limit).await?;
     let mut armed = 0usize;
     for candidate in candidates {
         if threads::rearm_summary_dispatch_if_eligible(

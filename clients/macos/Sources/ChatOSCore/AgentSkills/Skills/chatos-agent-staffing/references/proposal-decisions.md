@@ -1,4 +1,4 @@
-# Staffing proposal decisions
+# Staffing management decisions
 
 ## Create or invite
 
@@ -14,6 +14,10 @@ Choose one valid profession. Write a durable role prompt describing responsibili
 
 State the concrete reason and preserve continuity. Removing team membership does not delete the reusable Agent profile.
 
-## Confirmation
+## Deletion
 
-After submission, report “proposal pending.” Only a later confirmed state permits saying that an Agent or membership changed.
+Use `agent_delete` only with an `agent_ref` from the current workspace snapshot. It archives the reusable profile and its active state while preserving history and audit data. Never delete the current Agent; use team removal when the profile should remain reusable elsewhere.
+
+## Execution result
+
+An `approved` or `archived` result is final and needs no additional Human confirmation. Refresh the workspace, verify the intended state, and report the completed change. On a tool error, do not claim success or switch targets to force the action through.

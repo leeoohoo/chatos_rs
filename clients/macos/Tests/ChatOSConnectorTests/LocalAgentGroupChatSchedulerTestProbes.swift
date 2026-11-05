@@ -96,6 +96,7 @@ actor CrossTeamExecutorIsolationProbe {
 
 actor CrossTeamExecutorIsolationModel: AgentModelClient {
     private let probe: CrossTeamExecutorIsolationProbe
+    private var acceptanceRecorded = false
 
     init(probe: CrossTeamExecutorIsolationProbe) {
         self.probe = probe
@@ -107,7 +108,15 @@ actor CrossTeamExecutorIsolationModel: AgentModelClient {
         timeout: TimeInterval
     ) async throws -> AgentMessage {
         XCTAssertTrue(tools.contains { $0.name == LocalAgentChatToolProvider.todoCompleteToolName })
-        await probe.beginExecution()
+        if !acceptanceRecorded {
+            await probe.beginExecution()
+            acceptanceRecorded = true
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "accept-isolated-executor",
+                name: LocalAgentChatToolProvider.todoAcceptanceUpdateToolName,
+                arguments: #"{"criterion_index":1,"status":"passed","evidence":"独立项目验证通过。","requires_human":false}"#
+            )])
+        }
         return .init(role: .assistant, toolCalls: [.init(
             id: "complete-isolated-executor",
             name: LocalAgentChatToolProvider.todoCompleteToolName,
@@ -193,6 +202,8 @@ actor CommunicationFastLaneProbe {
 actor CommunicationFastLaneModel: AgentModelClient {
     private let probe: CommunicationFastLaneProbe
     private var managerRequestCount = 0
+    private var managerInboxRead = false
+    private var executorAcceptanceRecorded = false
 
     init(probe: CommunicationFastLaneProbe) {
         self.probe = probe
@@ -204,8 +215,16 @@ actor CommunicationFastLaneModel: AgentModelClient {
         timeout: TimeInterval
     ) async throws -> AgentMessage {
         if tools.contains(where: { $0.name == LocalAgentChatToolProvider.todoCompleteToolName }) {
-            await probe.markExecutorStarted()
-            await probe.waitUntilExecutorReleased()
+            if !executorAcceptanceRecorded {
+                await probe.markExecutorStarted()
+                await probe.waitUntilExecutorReleased()
+                executorAcceptanceRecorded = true
+                return .init(role: .assistant, toolCalls: [.init(
+                    id: "accept-long-executor",
+                    name: LocalAgentChatToolProvider.todoAcceptanceUpdateToolName,
+                    arguments: #"{"criterion_index":1,"status":"passed","evidence":"长时间任务验证通过。","requires_human":false}"#
+                )])
+            }
             return .init(role: .assistant, toolCalls: [.init(
                 id: "complete-long-executor",
                 name: LocalAgentChatToolProvider.todoCompleteToolName,
@@ -213,6 +232,14 @@ actor CommunicationFastLaneModel: AgentModelClient {
             )])
         }
 
+        if !managerInboxRead {
+            managerInboxRead = true
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "read-all-fast-manager",
+                name: LocalAgentChatToolProvider.readAllUnreadToolName,
+                arguments: "{}"
+            )])
+        }
         managerRequestCount += 1
         await probe.beginManagerCall()
         if managerRequestCount == 1 {
@@ -233,6 +260,8 @@ actor CommunicationFastLaneModel: AgentModelClient {
 actor LaneSchedulerTestModel: AgentModelClient {
     private let probe: SchedulerConcurrencyProbe
     private var requestCount = 0
+    private var managerInboxRead = false
+    private var executorAcceptanceRecorded = false
 
     init(probe: SchedulerConcurrencyProbe) {
         self.probe = probe
@@ -247,6 +276,14 @@ actor LaneSchedulerTestModel: AgentModelClient {
         try await Task.sleep(for: .milliseconds(75))
         await probe.leave()
         if tools.contains(where: { $0.name == LocalAgentChatToolProvider.todoCompleteToolName }) {
+            if !executorAcceptanceRecorded {
+                executorAcceptanceRecorded = true
+                return .init(role: .assistant, toolCalls: [.init(
+                    id: "accept-todo",
+                    name: LocalAgentChatToolProvider.todoAcceptanceUpdateToolName,
+                    arguments: #"{"criterion_index":1,"status":"passed","evidence":"执行线程验证通过。","requires_human":false}"#
+                )])
+            }
             return .init(
                 role: .assistant,
                 toolCalls: [.init(
@@ -255,6 +292,14 @@ actor LaneSchedulerTestModel: AgentModelClient {
                     arguments: #"{"summary":"执行线程已完成。"}"#
                 )]
             )
+        }
+        if !managerInboxRead {
+            managerInboxRead = true
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "read-all-lane-manager",
+                name: LocalAgentChatToolProvider.readAllUnreadToolName,
+                arguments: "{}"
+            )])
         }
         requestCount += 1
         if requestCount > 1 {
@@ -349,6 +394,7 @@ struct ActiveCancellationSchedulerTestServices: AgentServiceProviding {
 
 actor ActiveCancellationSchedulerTestModel: AgentModelClient {
     private var requestCount = 0
+    private var managerInboxRead = false
 
     func complete(
         messages: [AgentMessage],
@@ -361,6 +407,14 @@ actor ActiveCancellationSchedulerTestModel: AgentModelClient {
         if isExecutorLane {
             try await Task.sleep(for: .seconds(30))
             return .init(role: .assistant, content: "不应自然结束")
+        }
+        if !managerInboxRead {
+            managerInboxRead = true
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "read-all-before-cancel",
+                name: LocalAgentChatToolProvider.readAllUnreadToolName,
+                arguments: "{}"
+            )])
         }
         requestCount += 1
         switch requestCount {

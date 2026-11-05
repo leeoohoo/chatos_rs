@@ -129,6 +129,33 @@ struct PetCompletedActivitySizingTests {
     }
 }
 
+@Suite("Pet waiting input sizing")
+@MainActor
+struct PetWaitingInputSizingTests {
+    @Test("keeps the inline reply form compact")
+    func waitingInputUsesCompactFormHeight() {
+        let store = PetOverlayStore()
+        let activity = PetActivity(
+            id: "waiting-input",
+            source: .taskExecution,
+            kind: .waitingForUser,
+            title: "任务",
+            route: .init(promptID: "local-ask:run-1")
+        )
+        store.apply(.upsert(activity))
+        let interactionState = PetOverlayInteractionState()
+        interactionState.selectedActivityID = activity.id
+
+        let size = PetOverlaySizing.expandedMessageSize(
+            scope: .primary,
+            store: store,
+            interactionState: interactionState
+        )
+
+        #expect(size.height == 380)
+    }
+}
+
 @Suite("Pet task inspector placement")
 struct PetTaskInspectorPlacementTests {
     @Test("places the inspector to the left and shifts the conversation when needed")

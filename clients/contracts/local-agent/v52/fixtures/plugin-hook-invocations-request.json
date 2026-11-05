@@ -1,5 +1,5 @@
 {
-  "protocol_version": 51,
+  "protocol_version": 52,
   "command_id": "contract-plugin-hook-invocations-1",
   "command": {
     "type": "list_plugin_hook_invocations",

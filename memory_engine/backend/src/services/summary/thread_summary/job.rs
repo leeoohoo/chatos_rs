@@ -16,6 +16,8 @@ pub(super) struct FrozenThreadSummarySelection {
     pub(super) oversized_record_ids: Vec<String>,
     pub(super) selected_token_count: i64,
     pub(super) oversized_token_count: i64,
+    #[serde(default)]
+    pub(super) project_subject_id: Option<String>,
 }
 
 impl FrozenThreadSummarySelection {
@@ -33,6 +35,7 @@ impl FrozenThreadSummarySelection {
                 .collect(),
             selected_token_count: selection.selected_token_count,
             oversized_token_count: selection.oversized_token_count,
+            project_subject_id: selection.project_subject_id.clone(),
         }
     }
 
@@ -54,7 +57,6 @@ pub(super) async fn create_thread_summary_job_run(
     subject_id: &str,
     pending_before_count: i64,
     policy_token_limit: i64,
-    policy_target_summary_tokens: i64,
     trigger_type: &str,
     selection: &PendingRecordSelection,
 ) -> Result<EngineJobRun, String> {
@@ -71,7 +73,6 @@ pub(super) async fn create_thread_summary_job_run(
             metadata: Some(start_metadata(
                 pending_before_count,
                 policy_token_limit,
-                policy_target_summary_tokens,
                 selection,
             )),
         },
@@ -90,7 +91,6 @@ pub(super) async fn finish_thread_summary_job_run(
 pub(super) fn start_metadata(
     pending_before_count: i64,
     policy_token_limit: i64,
-    policy_target_summary_tokens: i64,
     selection: &PendingRecordSelection,
 ) -> serde_json::Value {
     serde_json::json!({
@@ -98,7 +98,6 @@ pub(super) fn start_metadata(
         "compat_trigger_type": "manual_session",
         "pending_before_count": pending_before_count,
         "policy_token_limit": policy_token_limit,
-        "policy_target_summary_tokens": policy_target_summary_tokens,
         "frozen_selection": FrozenThreadSummarySelection::from_selection(selection),
     })
 }
@@ -204,8 +203,9 @@ mod tests {
             oversized: vec![record("oversized-1")],
             selected_token_count: 321,
             oversized_token_count: 654,
+            project_subject_id: Some("project:p-1".to_string()),
         };
-        let metadata = start_metadata(3, 6_000, 700, &selection);
+        let metadata = start_metadata(3, 12_345, &selection);
 
         let frozen = FrozenThreadSummarySelection::from_metadata(Some(&metadata))
             .expect("frozen selection should decode");
@@ -213,5 +213,6 @@ mod tests {
         assert_eq!(frozen.oversized_record_ids, ["oversized-1"]);
         assert_eq!(frozen.selected_token_count, 321);
         assert_eq!(frozen.oversized_token_count, 654);
+        assert_eq!(frozen.project_subject_id.as_deref(), Some("project:p-1"));
     }
 }

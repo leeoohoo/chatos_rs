@@ -3,10 +3,13 @@
 
 use super::blocks::{
     build_thread_summary_blocks_from_rows, build_thread_summary_level0_text, format_subject_memory,
-    subject_ids_for_context, subject_memory_subject_ids_for_context, thread_agent_subject_id,
+    thread_agent_subject_id, thread_allows_dynamic_project_recall,
 };
 use super::policy::ResolvedComposeContextPolicy;
+use super::validate_requested_subjects;
 use crate::models::{EngineSubjectMemory, EngineSummary, EngineThread};
+use serde_json::json;
+use uuid::Uuid;
 
 fn summary(id: &str, level: i64, created_at: &str, text: &str) -> EngineSummary {
     EngineSummary {
@@ -91,6 +94,207 @@ fn thread(
     }
 }
 
+#[tokio::test]
+async fn compose_context_includes_agent_memory_and_only_the_current_project_context() {
+    let Ok(database_url) = std::env::var("MEMORY_ENGINE_DATABASE_URL") else {
+        return;
+    };
+    let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&database_url)
+        .await
+    else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("client-agent:agent:{suffix}");
+    let agent_id = format!("agent:{suffix}");
+    let project_a = format!("project:a-{suffix}");
+    let project_b = format!("project:b-{suffix}");
+
+    crate::repositories::threads::upsert_thread(
+        &pool,
+        &thread_id,
+        crate::models::UpsertThreadRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            subject_id: agent_id.clone(),
+            thread_type: "client_agent".to_string(),
+            external_thread_id: Some(thread_id.clone()),
+            title: None,
+            labels: Some(vec![
+                "memory-schema:v2".to_string(),
+                agent_id.clone(),
+                "thread-kind:main_chat".to_string(),
+            ]),
+            metadata: None,
+            status: None,
+            created_at: None,
+            updated_at: None,
+            archived_at: None,
+        },
+    )
+    .await
+    .expect("upsert stable Agent thread");
+
+    let mut tx = pool.begin().await.expect("begin context records");
+    for (index, (content, project)) in [
+        ("pending-project-a", Some(project_a.as_str())),
+        ("pending-project-b", Some(project_b.as_str())),
+        ("pending-main-chat", None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        crate::repositories::records::upsert_record_row(
+            &mut tx,
+            &crate::models::EngineRecord {
+                id: format!("record-{index}-{suffix}"),
+                thread_id: thread_id.clone(),
+                tenant_id: tenant.clone(),
+                source_id: source.clone(),
+                external_record_id: None,
+                role: "user".to_string(),
+                record_type: "message".to_string(),
+                content: content.to_string(),
+                structured_payload: None,
+                metadata: project.map(|value| json!({"memory_project_id": value})),
+                summary_status: "pending".to_string(),
+                summary_id: None,
+                summarized_at: None,
+                created_at: format!("2026-11-05T00:00:0{index}Z"),
+            },
+        )
+        .await
+        .expect("insert context record");
+    }
+    tx.commit().await.expect("commit context records");
+
+    for (text, project) in [
+        ("thread-summary-a", Some(project_a.as_str())),
+        ("thread-summary-b", Some(project_b.as_str())),
+        ("thread-summary-main", None),
+    ] {
+        crate::repositories::summaries::create_thread_summary(
+            &pool, &tenant, &source, &thread_id, &agent_id, text, None, None, 1, project,
+        )
+        .await
+        .expect("create project-scoped summary");
+    }
+
+    for (subject, key, memory_type, text) in [
+        (
+            agent_id.as_str(),
+            "agent-memory",
+            "agent_memory",
+            "durable-agent-memory",
+        ),
+        (
+            project_a.as_str(),
+            "project-a-memory",
+            "project_summary",
+            "durable-project-a",
+        ),
+        (
+            project_b.as_str(),
+            "project-b-memory",
+            "project_summary",
+            "durable-project-b",
+        ),
+    ] {
+        crate::repositories::subject_memories::upsert_subject_memory(
+            &pool,
+            subject,
+            key,
+            crate::models::UpsertSubjectMemoryRequest {
+                id: None,
+                tenant_id: tenant.clone(),
+                source_id: source.clone(),
+                memory_type: memory_type.to_string(),
+                text: text.to_string(),
+                level: Some(0),
+                source_digest: None,
+                confidence: None,
+                last_seen_at: None,
+                metadata: Some(json!({"relation_subject_id": subject})),
+                rollup_status: None,
+                rollup_memory_key: None,
+                rolled_up_at: None,
+                status: None,
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("upsert context memory");
+    }
+
+    let compose = |project: Option<&str>| crate::models::ComposeContextRequest {
+        tenant_id: tenant.clone(),
+        source_id: source.clone(),
+        subject_id: Some(agent_id.clone()),
+        related_subject_ids: project.map(|value| vec![value.to_string()]),
+        thread_id: thread_id.clone(),
+        policy: Some(crate::models::ComposeContextPolicy {
+            include_recent_records: Some(true),
+            include_thread_summary: Some(true),
+            include_subject_memory: Some(true),
+            recent_record_limit: None,
+            summary_limit: Some(10),
+        }),
+    };
+
+    let project_context = super::compose_context(&pool, compose(Some(project_a.as_str())))
+        .await
+        .expect("compose project context");
+    assert_eq!(
+        project_context
+            .recent_records
+            .iter()
+            .map(|record| record.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["pending-project-a"]
+    );
+    let project_blocks = project_context
+        .blocks
+        .iter()
+        .map(|block| format!("{}\n{}", block.block_type, block.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(project_blocks.contains("durable-agent-memory"));
+    assert!(project_blocks.contains("durable-project-a"));
+    assert!(project_blocks.contains("thread-summary-a"));
+    assert!(!project_blocks.contains("durable-project-b"));
+    assert!(!project_blocks.contains("thread-summary-b"));
+    assert!(!project_blocks.contains("thread-summary-main"));
+
+    let main_context = super::compose_context(&pool, compose(None))
+        .await
+        .expect("compose projectless Main Chat context");
+    assert_eq!(
+        main_context
+            .recent_records
+            .iter()
+            .map(|record| record.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["pending-main-chat"]
+    );
+    let main_blocks = main_context
+        .blocks
+        .iter()
+        .map(|block| format!("{}\n{}", block.block_type, block.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(main_blocks.contains("durable-agent-memory"));
+    assert!(main_blocks.contains("thread-summary-main"));
+    assert!(!main_blocks.contains("durable-project-a"));
+    assert!(!main_blocks.contains("durable-project-b"));
+    assert!(!main_blocks.contains("thread-summary-a"));
+    assert!(!main_blocks.contains("thread-summary-b"));
+}
+
 #[test]
 fn level0_summaries_are_rendered_in_chronological_order() {
     let rows = vec![
@@ -128,28 +332,6 @@ fn thread_summary_blocks_keep_highest_level_before_recent_level0_summaries() {
 }
 
 #[test]
-fn collect_subject_ids_keeps_primary_and_deduplicates_related_items() {
-    let subject_ids = subject_ids_for_context(
-        "session:abc",
-        Some(&vec![
-            "contact:1".to_string(),
-            "contact:1".to_string(),
-            "project:9".to_string(),
-            "".to_string(),
-        ]),
-    );
-
-    assert_eq!(
-        subject_ids,
-        vec![
-            "session:abc".to_string(),
-            "contact:1".to_string(),
-            "project:9".to_string(),
-        ]
-    );
-}
-
-#[test]
 fn subject_memory_block_preserves_identity_fields() {
     let block = format_subject_memory(subject_memory(
         "agent:42",
@@ -167,10 +349,10 @@ fn subject_memory_block_preserves_identity_fields() {
 }
 
 #[test]
-fn thread_agent_subject_id_prefers_agent_scope_over_session_subject() {
+fn thread_agent_subject_id_accepts_only_matching_v2_subject_and_label() {
     let item = thread(
-        "session:abc",
-        Some(vec!["project:9", "agent:42"]),
+        "agent:42",
+        Some(vec!["memory-schema:v2", "project:9", "agent:42"]),
         Some(serde_json::json!({
             "legacy_session_mapping": {
                 "agent_id": "999"
@@ -182,41 +364,21 @@ fn thread_agent_subject_id_prefers_agent_scope_over_session_subject() {
 }
 
 #[test]
-fn thread_agent_subject_id_falls_back_to_legacy_mapping() {
-    let item = thread(
+fn thread_agent_subject_id_ignores_legacy_and_metadata_identity() {
+    let legacy = thread(
         "session:abc",
         None,
         Some(serde_json::json!({
             "legacy_session_mapping": {
                 "agent_id": "42"
-            }
+            },
+            "agent_id": "42"
         })),
     );
+    let mismatched_v2 = thread("agent:42", Some(vec!["memory-schema:v2", "agent:99"]), None);
 
-    assert_eq!(thread_agent_subject_id(&item).as_deref(), Some("agent:42"));
-}
-
-#[test]
-fn subject_memory_lookup_prefers_agent_scope_over_session_subject() {
-    let item = thread("session:abc", Some(vec!["agent:42"]), None);
-    let subject_ids = subject_memory_subject_ids_for_context(&item, Some("session:abc"), None);
-
-    assert_eq!(subject_ids, vec!["agent:42".to_string()]);
-}
-
-#[test]
-fn subject_memory_lookup_preserves_explicit_non_session_related_subjects() {
-    let item = thread("session:abc", Some(vec!["agent:42"]), None);
-    let subject_ids = subject_memory_subject_ids_for_context(
-        &item,
-        Some("contact:9"),
-        Some(&vec!["project:1".to_string(), "session:abc".to_string()]),
-    );
-
-    assert_eq!(subject_ids.first().map(String::as_str), Some("agent:42"));
-    assert!(subject_ids.iter().any(|item| item == "contact:9"));
-    assert!(subject_ids.iter().any(|item| item == "project:1"));
-    assert!(!subject_ids.iter().any(|item| item == "session:abc"));
+    assert_eq!(thread_agent_subject_id(&legacy), None);
+    assert_eq!(thread_agent_subject_id(&mismatched_v2), None);
 }
 
 #[test]
@@ -228,4 +390,52 @@ fn compose_context_policy_uses_standard_summary_rule_without_recent_record_cap()
     assert!(policy.include_subject_memory);
     assert_eq!(policy.summary_limit, 2);
     assert_eq!(policy.recent_limit, None);
+}
+
+#[test]
+fn compose_rejects_subjects_not_bound_to_the_thread() {
+    let bound = vec!["agent:a-1".to_string(), "project:p-1".to_string()];
+    assert!(validate_requested_subjects(
+        &bound,
+        Some("agent:a-1"),
+        Some(&vec!["project:p-1".to_string()]),
+        false,
+    )
+    .is_ok());
+    assert!(validate_requested_subjects(
+        &bound,
+        Some("agent:a-2"),
+        Some(&vec!["project:p-1".to_string()]),
+        false,
+    )
+    .is_err());
+}
+
+#[test]
+fn stable_agent_thread_allows_only_dynamic_project_recall() {
+    let item = thread(
+        "agent:a-1",
+        Some(vec![
+            "memory-schema:v2",
+            "agent:a-1",
+            "thread-kind:agent_conversation",
+        ]),
+        None,
+    );
+    assert!(thread_allows_dynamic_project_recall(&item));
+    let bound = vec!["agent:a-1".to_string()];
+    assert!(validate_requested_subjects(
+        &bound,
+        Some("agent:a-1"),
+        Some(&vec!["project:p-2".to_string()]),
+        true,
+    )
+    .is_ok());
+    assert!(validate_requested_subjects(
+        &bound,
+        Some("agent:a-1"),
+        Some(&vec!["agent:a-2".to_string()]),
+        true,
+    )
+    .is_err());
 }

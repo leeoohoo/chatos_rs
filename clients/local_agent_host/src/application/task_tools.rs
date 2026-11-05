@@ -6,7 +6,7 @@ mod task_creation;
 
 use self::task_creation::{
     task_graph_builder::{create_batch_graph, create_single_graph},
-    validate_optional_notepad_selection, TaskPluginReleaseSnapshot,
+    validate_optional_notepad_selection, validate_task_context_package, TaskPluginReleaseSnapshot,
 };
 pub(super) use self::task_creation::{
     CreateTaskItem, RequiredTaskPolicy, TaskPluginHint, TaskScheduleArgs,
@@ -21,8 +21,8 @@ use crate::LocalToolExecutor;
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     HostCommand, HostRequestEnvelope, LocalAgentRunRecord, LocalAgentToolInvocationRecord,
-    LocalAgentToolOutcome, LocalTaskGraphNotificationPolicy, LocalTaskRecord, LocalTaskStatus,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalAgentToolOutcome, LocalConversationAttachmentSpec, LocalTaskGraphNotificationPolicy,
+    LocalTaskRecord, LocalTaskStatus, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,62 @@ impl LocalTaskToolExecutor {
             runtime,
             owner_user_id,
         })
+    }
+
+    async fn resolve_context_attachments(
+        &self,
+        parent: &LocalAgentRunRecord,
+        conversation_id: &str,
+        attachment_refs: &[String],
+    ) -> Result<Vec<LocalConversationAttachmentSpec>, String> {
+        let current = parent
+            .input
+            .get("attachments")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|value| {
+                serde_json::from_value::<LocalConversationAttachmentSpec>(value.clone())
+                    .map_err(|error| format!("decode current attachment failed: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut selected = Vec::with_capacity(attachment_refs.len());
+        for reference in attachment_refs {
+            let attachment = if let Some(attachment) = current
+                .iter()
+                .find(|attachment| attachment.authorized_local_ref == *reference)
+                .cloned()
+            {
+                attachment
+            } else {
+                let record = self
+                    .runtime
+                    .conversation_attachment_by_ref(
+                        &parent.owner_user_id,
+                        conversation_id,
+                        reference,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| {
+                        format!(
+                            "attachment reference is unavailable in the source conversation: {reference}"
+                        )
+                    })?;
+                LocalConversationAttachmentSpec {
+                    attachment_id: record.attachment_id,
+                    display_name: record.display_name,
+                    media_type: record.media_type,
+                    byte_size: record.byte_size,
+                    sha256: record.sha256,
+                    authorized_local_ref: record.authorized_local_ref,
+                    metadata: record.metadata,
+                }
+            };
+            attachment.validate()?;
+            selected.push(attachment);
+        }
+        Ok(selected)
     }
 
     async fn replacement_chain(
@@ -242,6 +298,10 @@ impl LocalTaskToolExecutor {
             CREATE_TASK_TOOL => {
                 let mut args: CreateTaskArgs = serde_json::from_value(invocation.arguments.clone())
                     .map_err(|error| format!("invalid create_task input: {error}"))?;
+                validate_task_context_package(&args.context_summary, &args.attachment_refs)?;
+                args.selected_attachments = self
+                    .resolve_context_attachments(&parent, conversation_id, &args.attachment_refs)
+                    .await?;
                 validate_optional_notepad_selection(
                     &args.enabled_builtin_kinds,
                     args.notepad_user_request_quote.as_deref(),
@@ -310,7 +370,15 @@ impl LocalTaskToolExecutor {
                         format!("invalid create_tasks_with_prerequisites input: {error}")
                     })?;
                 let source_message = source_user_message(&parent);
-                for task in &args.tasks {
+                for task in &mut args.tasks {
+                    validate_task_context_package(&task.context_summary, &task.attachment_refs)?;
+                    task.selected_attachments = self
+                        .resolve_context_attachments(
+                            &parent,
+                            conversation_id,
+                            &task.attachment_refs,
+                        )
+                        .await?;
                     validate_optional_notepad_selection(
                         &task.enabled_builtin_kinds,
                         task.notepad_user_request_quote.as_deref(),
@@ -549,6 +617,12 @@ struct CreateTaskArgs {
     final_response_max_chars: Option<u64>,
     #[serde(default)]
     description: String,
+    #[serde(default)]
+    context_summary: String,
+    #[serde(default)]
+    attachment_refs: Vec<String>,
+    #[serde(skip)]
+    selected_attachments: Vec<LocalConversationAttachmentSpec>,
     #[serde(default)]
     input_payload: Value,
     #[serde(default)]

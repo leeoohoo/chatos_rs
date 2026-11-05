@@ -1,4 +1,8 @@
-use std::{env, path::Path, time::Duration};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use async_tungstenite::{
     tokio::connect_async,
@@ -13,7 +17,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
-    platform_data_dir, resolve_active_bridge_state,
+    platform_data_dir, resolve_active_bridge_state, resolve_active_bridge_states,
     server::BridgeStateFile,
     wire::{CONTROL_SUBPROTOCOL, PROTOCOL_VERSION, WireError, WireMessage},
 };
@@ -22,10 +26,8 @@ const NATIVE_MESSAGE_LIMIT: usize = 1024 * 1024;
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub async fn run_native_host(origin: String) -> Result<(), String> {
-    let state_path = match env::var_os("CHATOS_BROWSER_BRIDGE_STATE") {
-        Some(path) => path.into(),
-        None => resolve_active_bridge_state(platform_data_dir().as_path()).await?,
-    };
+    let state_override: Option<PathBuf> =
+        env::var_os("CHATOS_BROWSER_BRIDGE_STATE").map(Into::into);
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     loop {
@@ -34,54 +36,90 @@ pub async fn run_native_host(origin: String) -> Result<(), String> {
             None => return Ok(()),
         };
         let id = message.get("id").cloned().unwrap_or(Value::Null);
-        let response = match handle_bootstrap(&state_path, &origin, &message).await {
-            Ok(result) => json!({"type":"response", "id":id, "result":result}),
-            Err(error) => json!({"type":"response", "id":id, "error":error}),
-        };
+        let response =
+            match handle_native_request(state_override.as_deref(), &origin, &message).await {
+                Ok(result) => json!({"type":"response", "id":id, "result":result}),
+                Err(error) => json!({"type":"response", "id":id, "error":error}),
+            };
         write_native_message(&mut stdout, &response).await?;
     }
 }
 
-async fn handle_bootstrap(
-    state_path: &Path,
+async fn handle_native_request(
+    state_override: Option<&Path>,
     origin: &str,
     message: &Value,
 ) -> Result<Value, WireError> {
-    if message.get("type").and_then(Value::as_str) != Some("request")
-        || message.get("method").and_then(Value::as_str) != Some("extension.bootstrap")
-        || message
-            .pointer("/params/protocol_version")
-            .and_then(Value::as_str)
-            != Some(PROTOCOL_VERSION)
-    {
-        return Err(WireError::new(
-            "invalid_request",
-            "Native host accepts only extension.bootstrap",
-        ));
+    let method = message.get("method").and_then(Value::as_str);
+    if method == Some("extension.discover") {
+        validate_native_request(message, "extension.discover")?;
+        let state_paths = match state_override {
+            Some(path) => vec![path.to_path_buf()],
+            None => resolve_active_bridge_states(platform_data_dir().as_path())
+                .await
+                .map_err(|error| WireError::new("extension_unavailable", error))?,
+        };
+        let mut bridges = Vec::new();
+        for state_path in state_paths {
+            if let Ok(state) = read_bridge_state(&state_path, origin).await {
+                bridges.push(json!({"bridge_id": state.instance_id}));
+            }
+        }
+        return Ok(json!({
+            "protocol_version": PROTOCOL_VERSION,
+            "bridges": bridges
+        }));
     }
-    let bytes = tokio::fs::read(state_path)
-        .await
-        .map_err(|_| WireError::new("extension_unavailable", "Browser Bridge is not running"))?;
-    if bytes.len() > 64 * 1024 {
-        return Err(WireError::new(
-            "invalid_request",
-            "Browser Bridge state file is invalid",
-        ));
+    validate_native_request(message, "extension.bootstrap")?;
+    let requested_bridge_id = message.pointer("/params/bridge_id").and_then(Value::as_str);
+    let state_paths = match state_override {
+        Some(path) => vec![path.to_path_buf()],
+        None if requested_bridge_id.is_some() => {
+            resolve_active_bridge_states(platform_data_dir().as_path())
+                .await
+                .map_err(|error| WireError::new("extension_unavailable", error))?
+        }
+        None => vec![
+            resolve_active_bridge_state(platform_data_dir().as_path())
+                .await
+                .map_err(|error| WireError::new("extension_unavailable", error))?,
+        ],
+    };
+    for state_path in state_paths {
+        let Ok(state) = read_bridge_state(&state_path, origin).await else {
+            continue;
+        };
+        if requested_bridge_id.is_none_or(|bridge_id| bridge_id == state.instance_id) {
+            return handle_bootstrap(state, origin, message).await;
+        }
     }
-    let state: BridgeStateFile = serde_json::from_slice(&bytes)
-        .map_err(|_| WireError::new("invalid_request", "Browser Bridge state file is invalid"))?;
-    if state.protocol_version != PROTOCOL_VERSION || origin != state.allowed_extension_origin {
+    Err(WireError::new(
+        "extension_unavailable",
+        "Requested Browser Bridge is not running",
+    ))
+}
+
+async fn handle_bootstrap(
+    state: BridgeStateFile,
+    origin: &str,
+    message: &Value,
+) -> Result<Value, WireError> {
+    validate_native_request(message, "extension.bootstrap")?;
+    if origin != state.allowed_extension_origin {
         return Err(WireError::new(
             "permission_denied",
             "Chrome extension identity was rejected",
         ));
     }
+    let bridge_id = state.instance_id.clone();
+    let extension_endpoint = state.extension_endpoint.clone();
+    let control_endpoint = state.control_endpoint.clone();
+    let control_token = state.control_token.clone();
     let pairing_requested = message
         .pointer("/params/pairing_requested")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let mut request = state
-        .control_endpoint
+    let mut request = control_endpoint
         .as_str()
         .into_client_request()
         .map_err(|_| {
@@ -115,7 +153,7 @@ async fn handle_bootstrap(
             "type":"request",
             "id":1,
             "method":"control.authenticate",
-            "params":{"protocol_version":PROTOCOL_VERSION, "token":state.control_token}
+            "params":{"protocol_version":PROTOCOL_VERSION, "token":control_token}
         }),
     )
     .await?;
@@ -137,11 +175,47 @@ async fn handle_bootstrap(
             "Browser Bridge returned an invalid bootstrap response",
         ));
     };
-    object.insert(
-        "endpoint".into(),
-        Value::String(state.extension_endpoint.clone()),
-    );
+    object.insert("endpoint".into(), Value::String(extension_endpoint));
+    object.insert("bridge_id".into(), Value::String(bridge_id));
     Ok(bootstrap)
+}
+
+fn validate_native_request(message: &Value, method: &str) -> Result<(), WireError> {
+    if message.get("type").and_then(Value::as_str) == Some("request")
+        && message.get("method").and_then(Value::as_str) == Some(method)
+        && message
+            .pointer("/params/protocol_version")
+            .and_then(Value::as_str)
+            == Some(PROTOCOL_VERSION)
+    {
+        Ok(())
+    } else {
+        Err(WireError::new(
+            "invalid_request",
+            "Native host request is invalid",
+        ))
+    }
+}
+
+async fn read_bridge_state(state_path: &Path, origin: &str) -> Result<BridgeStateFile, WireError> {
+    let bytes = tokio::fs::read(state_path)
+        .await
+        .map_err(|_| WireError::new("extension_unavailable", "Browser Bridge is not running"))?;
+    if bytes.len() > 64 * 1024 {
+        return Err(WireError::new(
+            "invalid_request",
+            "Browser Bridge state file is invalid",
+        ));
+    }
+    let state: BridgeStateFile = serde_json::from_slice(&bytes)
+        .map_err(|_| WireError::new("invalid_request", "Browser Bridge state file is invalid"))?;
+    if state.protocol_version != PROTOCOL_VERSION || origin != state.allowed_extension_origin {
+        return Err(WireError::new(
+            "permission_denied",
+            "Chrome extension identity was rejected",
+        ));
+    }
+    Ok(state)
 }
 
 async fn send_control<S>(
@@ -240,7 +314,53 @@ where
 
 #[cfg(test)]
 mod tests {
+    use tempfile::tempdir;
+
     use super::*;
+
+    #[tokio::test]
+    async fn discovery_returns_identity_without_minting_bootstrap_credentials() {
+        let directory = tempdir().unwrap();
+        let state_path = directory.path().join("bridge-state.json");
+        let origin = "chrome-extension://jooaepjckiofmpldinopgdgddcoaofil/";
+        tokio::fs::write(
+            &state_path,
+            serde_json::to_vec(&BridgeStateFile {
+                instance_id: "bridge_discovery_test_12345678".into(),
+                protocol_version: PROTOCOL_VERSION.into(),
+                control_endpoint: "ws://127.0.0.1:39000/v1/control".into(),
+                extension_endpoint: "ws://127.0.0.1:39000/v1/extension".into(),
+                browser_endpoint: "ws://127.0.0.1:39000/v1/browser".into(),
+                control_token: "control-secret".into(),
+                mcp_credential_file: directory.path().join("credential.json"),
+                allowed_extension_origin: origin.into(),
+                expires_at_unix_ms: u64::MAX,
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let result = handle_native_request(
+            Some(&state_path),
+            origin,
+            &json!({
+                "type":"request",
+                "id":1,
+                "method":"extension.discover",
+                "params":{"protocol_version":PROTOCOL_VERSION}
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            result,
+            json!({
+                "protocol_version":PROTOCOL_VERSION,
+                "bridges":[{"bridge_id":"bridge_discovery_test_12345678"}]
+            })
+        );
+    }
 
     #[tokio::test]
     async fn native_messages_use_little_endian_length_framing() {

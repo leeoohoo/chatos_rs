@@ -14,6 +14,7 @@ public enum AgentWorkerModelTransportConfiguration: Codable, Equatable, Sendable
         public let maximumOutputTokens: Int?
         public let temperature: Double?
         public let promptCacheKey: String
+        public let compactionThreshold: Int?
 
         public init(
             baseURL: URL,
@@ -22,7 +23,8 @@ public enum AgentWorkerModelTransportConfiguration: Codable, Equatable, Sendable
             thinking: String?,
             maximumOutputTokens: Int?,
             temperature: Double?,
-            promptCacheKey: String
+            promptCacheKey: String,
+            compactionThreshold: Int? = nil
         ) throws {
             guard ["http", "https"].contains(baseURL.scheme?.lowercased() ?? ""),
                   baseURL.host != nil,
@@ -30,7 +32,8 @@ public enum AgentWorkerModelTransportConfiguration: Codable, Equatable, Sendable
                   baseURL.password == nil,
                   !model.isEmpty,
                   !apiKey.isEmpty,
-                  !promptCacheKey.isEmpty else {
+                  !promptCacheKey.isEmpty,
+                  compactionThreshold.map({ (2_048...2_000_000).contains($0) }) ?? true else {
                 throw AgentRuntimeError.invalidResponse
             }
             self.baseURL = baseURL
@@ -40,6 +43,7 @@ public enum AgentWorkerModelTransportConfiguration: Codable, Equatable, Sendable
             self.maximumOutputTokens = maximumOutputTokens
             self.temperature = temperature
             self.promptCacheKey = promptCacheKey
+            self.compactionThreshold = compactionThreshold
         }
     }
 
@@ -59,7 +63,8 @@ public enum AgentWorkerModelTransportConfiguration: Codable, Equatable, Sendable
                 thinking: configuration.thinking,
                 maximumOutputTokens: configuration.maximumOutputTokens,
                 temperature: configuration.temperature,
-                promptCacheKey: configuration.promptCacheKey
+                promptCacheKey: configuration.promptCacheKey,
+                compactionThreshold: configuration.compactionThreshold
             )
         }
     }

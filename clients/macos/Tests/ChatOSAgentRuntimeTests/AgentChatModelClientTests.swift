@@ -194,7 +194,8 @@ final class AgentChatModelClientTests: XCTestCase {
         let client = try AgentResponsesModelClient(
             baseURL: URL(string: "https://api.openai.com/v1/chat/completions")!,
             model: "gpt-test", apiKey: "secret", maximumOutputTokens: 1_200,
-            temperature: 0, transport: { request in try await recorder.send(request) }
+            temperature: 0, compactionThreshold: 170_000,
+            transport: { request in try await recorder.send(request) }
         )
         let initial: [AgentMessage] = [
             .init(role: .system, content: "Use tools"),
@@ -217,7 +218,7 @@ final class AgentChatModelClientTests: XCTestCase {
         XCTAssertNil(firstBody["max_tokens"])
         XCTAssertEqual(
             ((firstBody["context_management"] as? [[String: Any]])?.first?["compact_threshold"] as? Int),
-            200_000
+            170_000
         )
         XCTAssertEqual(
             ((firstBody["tools"] as? [[String: Any]])?.first?["name"] as? String),

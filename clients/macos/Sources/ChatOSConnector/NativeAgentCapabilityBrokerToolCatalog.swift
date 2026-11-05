@@ -3,10 +3,24 @@ import ChatOSCore
 import Foundation
 
 enum NativeAgentCapabilityBrokerToolCatalog {
+    struct SkillToolNames: Sendable, Equatable {
+        let activate: String
+        let readResource: String
+
+        static let localTask = Self(
+            activate: "agent_skill_activate",
+            readResource: "agent_skill_read_resource"
+        )
+        static let agentGroupChat = Self(
+            activate: "capability_skill_activate",
+            readResource: "capability_skill_read_resource"
+        )
+    }
+
     static let searchToolName = "capability_search"
     static let describeToolName = "capability_describe"
-    static let activateSkillToolName = "agent_skill_activate"
-    static let readSkillResourceToolName = "agent_skill_read_resource"
+    static let activateSkillToolName = SkillToolNames.localTask.activate
+    static let readSkillResourceToolName = SkillToolNames.localTask.readResource
     static let invokeToolName = "capability_invoke"
 
     static let readOnlyToolNames: Set<String> = [
@@ -65,6 +79,34 @@ enum NativeAgentCapabilityBrokerToolCatalog {
             skillBindingID: ProductToolSkillBindingID.capabilityBroker
         ),
     ]
+
+    static func definitions(skillToolNames: SkillToolNames) -> [AgentToolDefinition] {
+        definitions.map { definition in
+            let name = switch definition.name {
+            case activateSkillToolName: skillToolNames.activate
+            case readSkillResourceToolName: skillToolNames.readResource
+            default: definition.name
+            }
+            let description = definition.description
+                .replacingOccurrences(
+                    of: activateSkillToolName,
+                    with: skillToolNames.activate
+                )
+                .replacingOccurrences(
+                    of: readSkillResourceToolName,
+                    with: skillToolNames.readResource
+                )
+            return .init(
+                name: name,
+                description: description,
+                schema: definition.schema,
+                effect: definition.effect,
+                providerID: definition.providerID,
+                skillBindingID: definition.skillBindingID,
+                pluginSkillGate: definition.pluginSkillGate
+            )
+        }
+    }
 
     static let localAgentCapabilityTools: [LocalAgentJSONValue] = definitions.map { definition in
         guard let decoded = try? JSONDecoder().decode(

@@ -2,13 +2,40 @@ import ChatOSCore
 import SwiftUI
 
 struct TaskInspectorTitle: View {
+    @EnvironmentObject private var model: AppModel
     let task: MessageTask
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(task.title).appFont(.title3.weight(.semibold))
-            Text(task.id).appFont(.caption.monospaced()).foregroundStyle(.tertiary)
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: "checklist")
+                .appFont(.system(size: 14, weight: .semibold))
+                .foregroundStyle(statusColor)
+                .frame(width: 34, height: 34)
+                .background(statusColor.opacity(0.11), in: RoundedRectangle(cornerRadius: 9))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(task.title).appFont(.title3.weight(.semibold))
+                if let summary = task.objective ?? task.description {
+                    Text(summary)
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 8)
+            StatusCapsule(title: statusTitle, color: statusColor)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var statusTitle: String {
+        MessageTaskStatusPresentation.title(
+            for: task,
+            localized: { model.localized($0, english: $1) }
+        )
+    }
+
+    private var statusColor: Color {
+        MessageTaskStatusPresentation.color(for: task)
     }
 }
 

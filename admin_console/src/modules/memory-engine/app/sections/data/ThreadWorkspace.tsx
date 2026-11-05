@@ -373,11 +373,11 @@ export function ThreadWorkspace(props: ThreadWorkspaceProps) {
       label: `总结 (${props.threadSummaries.length})`,
       children: summariesTable(props),
     },
-    {
+    ...(props.showMemories === false ? [] : [{
       key: 'memories',
       label: `主题记忆 (${props.subjectMemories.length})`,
       children: memoriesTable(props),
-    },
+    }]),
   ];
 
   return (

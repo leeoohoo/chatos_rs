@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSProcessRuntime
 import Darwin
 import Foundation
 import OSLog
@@ -175,18 +176,29 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     /// make the replacement fail with `WouldBlock`. This method runs only from a detached
     /// lifecycle transition, so the short bounded wait never blocks the main actor.
     func terminateAndWait() {
+        let processIdentifier = process.processIdentifier
         terminate()
         let gracefulDeadline = ContinuousClock.now.advanced(by: .milliseconds(100))
         while process.isRunning, ContinuousClock.now < gracefulDeadline {
             usleep(10_000)
         }
         if process.isRunning {
-            _ = kill(process.processIdentifier, SIGKILL)
+            _ = kill(processIdentifier, SIGKILL)
         }
-        // `isRunning == false` does not guarantee that Foundation has finished reaping the child.
-        // Waiting here ensures process-owned file descriptors and advisory locks are gone before a
-        // successor transition is allowed to launch. Callers always run this method off-actor.
-        process.waitUntilExit()
+        // `Process.waitUntilExit()` can wait forever if Foundation's termination observer races a
+        // concurrent test or shutdown path. Reap non-blockingly instead, with a hard deadline. An
+        // ECHILD result means Foundation already reaped the child and is equally terminal.
+        let forcedDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < forcedDeadline {
+            var exitCode: Int32 = 0
+            var didExit: Int32 = 0
+            let result = chatos_try_reap_process(processIdentifier, &exitCode, &didExit)
+            if didExit == 1 || result == ESRCH || !process.isRunning { return }
+            usleep(10_000)
+        }
+        Self.logger.error(
+            "Timed out waiting for Local Agent Host process \(processIdentifier, privacy: .public) to exit"
+        )
     }
 
     func installTerminationHandler(

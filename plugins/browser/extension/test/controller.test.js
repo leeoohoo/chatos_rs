@@ -148,6 +148,40 @@ test('ending a session preserves and collapses owned tabs but removes them from 
   assert.deepEqual(controller.status().ownedTabIds, []);
 });
 
+test('concurrent controllers keep task tabs, groups, and debugger sessions isolated', async () => {
+  const harness = createHarness();
+  const first = new ExtensionController({
+    chromeApi: harness.chrome,
+    bridge: harness.bridge,
+    randomId: sequence('first-target', 'first-session')
+  });
+  const second = new ExtensionController({
+    chromeApi: harness.chrome,
+    bridge: harness.bridge,
+    randomId: sequence('second-target', 'second-session')
+  });
+  first.start();
+  second.start();
+  await first.configureSession('Task One');
+  await second.configureSession('Task Two');
+  const firstTarget = await first.createTarget('https://one.test/');
+  const secondTarget = await second.createTarget('https://two.test/');
+  const firstSession = await first.attachTarget(firstTarget.id);
+  const secondSession = await second.attachTarget(secondTarget.id);
+
+  assert.notEqual(first.status().groupId, second.status().groupId);
+  assert.deepEqual(first.targets().map(target => target.url), ['https://one.test/']);
+  assert.deepEqual(second.targets().map(target => target.url), ['https://two.test/']);
+  assert.notEqual(firstSession, secondSession);
+
+  await first.endSession();
+  assert.deepEqual(first.targets(), []);
+  assert.deepEqual(second.targets().map(target => target.url), ['https://two.test/']);
+  assert.deepEqual(second.status().ownedTabIds, [10]);
+  first.stop();
+  second.stop();
+});
+
 test('missing native tab-group APIs return a structured capability error', async () => {
   const harness = createHarness({nativeTabGroups: false});
   const controller = new ExtensionController({chromeApi: harness.chrome, bridge: harness.bridge});
@@ -189,6 +223,7 @@ function createHarness({nativeTabGroups = true} = {}) {
     [8, {id: 8, title: 'Settings', url: 'chrome://settings/'}]
   ]);
   let nextTabId = 9;
+  let nextGroupId = 101;
   const chrome = {
     debugger: {
       onEvent: debuggerEvents,
@@ -226,7 +261,7 @@ function createHarness({nativeTabGroups = true} = {}) {
   if (nativeTabGroups) {
     chrome.tabs.group = async options => {
       groupCalls.push({...options});
-      return options.groupId ?? 101;
+      return options.groupId ?? nextGroupId++;
     };
     chrome.tabGroups = {
       async update(groupId, update) {

@@ -384,8 +384,31 @@ async fn enqueue_on(
     if let Some(existing) = fetch_record(connection, source_id, record_id).await? {
         if existing.tenant_id == tenant_id
             && existing.thread_id == thread_id
-            && existing.payload == *payload
+            && (existing.payload == *payload
+                || memory_routing_upgrade_replay_is_compatible(&existing.payload, payload))
         {
+            if existing.payload != *payload
+                && matches!(
+                    existing.status,
+                    LocalMemoryOutboxStatus::Pending | LocalMemoryOutboxStatus::RetryScheduled
+                )
+            {
+                sqlx::query(
+                    "UPDATE local_memory_outbox SET payload_json = ?, version = version + 1, \
+                     updated_at_unix_ms = ? WHERE source_id = ? AND record_id = ? \
+                     AND status IN ('pending', 'retry_scheduled')",
+                )
+                .bind(serde_json::to_string(payload)?)
+                .bind(now_unix_ms)
+                .bind(source_id)
+                .bind(record_id)
+                .execute(&mut *connection)
+                .await
+                .db()?;
+                return fetch_record(connection, source_id, record_id)
+                    .await?
+                    .ok_or_else(|| ClientStorageError::NotFound(record_id.to_string()));
+            }
             return Ok(existing);
         }
         return Err(ClientStorageError::Conflict(format!(
@@ -411,6 +434,47 @@ async fn enqueue_on(
     fetch_record(connection, source_id, record_id)
         .await?
         .ok_or_else(|| ClientStorageError::NotFound(record_id.to_string()))
+}
+
+const MEMORY_ROUTING_METADATA_KEYS: [&str; 7] = [
+    "agent_id",
+    "project_id",
+    "project_name",
+    "memory_project_id",
+    "project_aggregation_id",
+    "thread_project_aggregation_id",
+    "thread_kind",
+];
+
+/// A Host upgrade can resume a committed tool-result continuation after the
+/// preceding binary already published that logical record. Memory routing
+/// metadata is additive across schema revisions, so an absent/null legacy
+/// value may be enriched without turning the replay into a content conflict.
+/// Concrete routing identities must still agree, and every non-routing field
+/// remains covered by the strict immutable-payload check.
+fn memory_routing_upgrade_replay_is_compatible(existing: &Value, replay: &Value) -> bool {
+    let (Value::Object(mut existing), Value::Object(mut replay)) =
+        (existing.clone(), replay.clone())
+    else {
+        return false;
+    };
+    let (Some(Value::Object(existing_metadata)), Some(Value::Object(replay_metadata))) =
+        (existing.get_mut("metadata"), replay.get_mut("metadata"))
+    else {
+        return false;
+    };
+    for key in MEMORY_ROUTING_METADATA_KEYS {
+        let existing_value = existing_metadata.get(key);
+        let replay_value = replay_metadata.get(key);
+        if let Some(existing_value) = existing_value.filter(|value| !value.is_null()) {
+            if replay_value != Some(existing_value) {
+                return false;
+            }
+        }
+        existing_metadata.remove(key);
+        replay_metadata.remove(key);
+    }
+    Value::Object(existing) == Value::Object(replay)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -617,6 +681,174 @@ mod tests {
             )
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn synced_legacy_record_accepts_additive_memory_routing_metadata_on_upgrade_replay() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        let legacy = json!({
+            "message_id": "run-1:tool:batch-1:0",
+            "content": "same tool result",
+            "metadata": {
+                "tenant_id": "user-1",
+                "run_id": "run-1",
+                "toolName": "read_file"
+            }
+        });
+        storage
+            .enqueue_memory_record(
+                "run-1:tool:batch-1:0",
+                "user-1",
+                "chatos",
+                "task-1",
+                &legacy,
+                1_000,
+            )
+            .await
+            .expect("legacy enqueue");
+        let claimed = storage
+            .claim_next_memory_record("user-1", "claim-1", 2_000, 12_000)
+            .await
+            .expect("claim")
+            .expect("record");
+        storage
+            .complete_memory_record(
+                "chatos",
+                "run-1:tool:batch-1:0",
+                "claim-1",
+                claimed.version,
+                3_000,
+            )
+            .await
+            .expect("complete");
+
+        let enriched = json!({
+            "message_id": "run-1:tool:batch-1:0",
+            "content": "same tool result",
+            "metadata": {
+                "tenant_id": "user-1",
+                "run_id": "run-1",
+                "toolName": "read_file",
+                "agent_id": "jiguli",
+                "project_id": null,
+                "memory_project_id": null,
+                "thread_project_aggregation_id": null,
+                "thread_kind": "agent_task"
+            }
+        });
+        let replay = storage
+            .enqueue_memory_record(
+                "run-1:tool:batch-1:0",
+                "user-1",
+                "chatos",
+                "task-1",
+                &enriched,
+                4_000,
+            )
+            .await
+            .expect("upgrade replay");
+
+        assert_eq!(replay.status, LocalMemoryOutboxStatus::Synced);
+        assert_eq!(replay.payload, legacy);
+
+        let concrete_identity = json!({
+            "message_id": "run-2:tool:batch-1:0",
+            "content": "same tool result",
+            "metadata": {
+                "tenant_id": "user-1",
+                "run_id": "run-2",
+                "toolName": "read_file",
+                "agent_id": "agent-1"
+            }
+        });
+        storage
+            .enqueue_memory_record(
+                "run-2:tool:batch-1:0",
+                "user-1",
+                "chatos",
+                "task-2",
+                &concrete_identity,
+                5_000,
+            )
+            .await
+            .expect("concrete identity enqueue");
+        let conflicting_identity = json!({
+            "message_id": "run-2:tool:batch-1:0",
+            "content": "same tool result",
+            "metadata": {
+                "tenant_id": "user-1",
+                "run_id": "run-2",
+                "toolName": "read_file",
+                "agent_id": "different-agent"
+            }
+        });
+        assert!(storage
+            .enqueue_memory_record(
+                "run-2:tool:batch-1:0",
+                "user-1",
+                "chatos",
+                "task-2",
+                &conflicting_identity,
+                6_000,
+            )
+            .await
+            .is_err());
+
+        let missing_identity = json!({
+            "message_id": "run-2:tool:batch-1:0",
+            "content": "same tool result",
+            "metadata": {
+                "tenant_id": "user-1",
+                "run_id": "run-2",
+                "toolName": "read_file"
+            }
+        });
+        assert!(storage
+            .enqueue_memory_record(
+                "run-2:tool:batch-1:0",
+                "user-1",
+                "chatos",
+                "task-2",
+                &missing_identity,
+                7_000,
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn pending_legacy_record_is_enriched_before_first_sync() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        let legacy = json!({
+            "message_id": "message-1",
+            "content": "same",
+            "metadata": {"tenant_id": "user-1"}
+        });
+        let enriched = json!({
+            "message_id": "message-1",
+            "content": "same",
+            "metadata": {
+                "tenant_id": "user-1",
+                "agent_id": "agent-1",
+                "memory_project_id": "project-1"
+            }
+        });
+        let queued = storage
+            .enqueue_memory_record("message-1", "user-1", "chatos", "task-1", &legacy, 1_000)
+            .await
+            .expect("legacy enqueue");
+        let upgraded = storage
+            .enqueue_memory_record("message-1", "user-1", "chatos", "task-1", &enriched, 2_000)
+            .await
+            .expect("upgrade replay");
+
+        assert_eq!(upgraded.status, LocalMemoryOutboxStatus::Pending);
+        assert_eq!(upgraded.payload, enriched);
+        assert!(upgraded.version > queued.version);
     }
 
     #[tokio::test]

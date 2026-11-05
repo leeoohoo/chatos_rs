@@ -167,6 +167,7 @@ enum AgentGroupChatSchema {
             updated_at_unix_ms INTEGER NOT NULL,
             execution_plan_json TEXT NOT NULL,
             execution_contract_json TEXT NOT NULL DEFAULT '{}',
+            acceptance_checks_json TEXT NOT NULL DEFAULT '[]',
             PRIMARY KEY(owner_user_id, id),
             UNIQUE(owner_user_id, agent_id, request_key),
             FOREIGN KEY(owner_user_id, agent_id)

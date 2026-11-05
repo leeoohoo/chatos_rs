@@ -33,7 +33,9 @@ mod task_write_scope;
 mod tool;
 
 pub use task_acceptance::{
-    completed_task_acceptance_report, task_acceptance_report_for_run,
+    completed_task_acceptance_report, incomplete_task_acceptance_checks,
+    task_acceptance_report_for_run, task_acceptance_report_is_blocked,
+    task_acceptance_report_is_complete, task_acceptance_report_is_terminal,
     validate_task_acceptance_report, validate_task_final_response_limit,
 };
 
@@ -67,6 +69,7 @@ pub use hook::{
     ListPluginHookInvocationsCommand, LocalPluginHookBundleRecord, LocalPluginHookBundleSpec,
     LocalPluginHookDefinition, LocalPluginHookInvocationDiagnostic, LocalPluginHookInvocationPage,
     PutPluginHookBundleCommand, SetActivePluginHookBundlesCommand,
+    ResolveAgentTeamHookContextCommand,
     LOCAL_PLUGIN_HOOK_HISTORY_MAX_PAGE_SIZE, LOCAL_PLUGIN_HOOK_MAX_BUNDLES,
     LOCAL_PLUGIN_HOOK_MAX_DEFINITIONS,
 };
@@ -136,7 +139,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 51;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 52;
 /// Maximum bytes in one physical IPC frame. The high bit of the frame prefix is reserved
 /// as the continuation flag, so this limit must stay below `i32::MAX`.
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
@@ -218,6 +221,7 @@ pub enum HostCommand {
     ListPluginHookBundleRecords(ListPluginHookBundleRecordsCommand),
     ListPluginHookInvocations(ListPluginHookInvocationsCommand),
     SetActivePluginHookBundles(SetActivePluginHookBundlesCommand),
+    ResolveAgentTeamHookContext(ResolveAgentTeamHookContextCommand),
     CreateConversation(CreateConversationCommand),
     GetConversation(GetConversationCommand),
     GetConversationContext(GetConversationCommand),
@@ -307,6 +311,7 @@ impl HostCommand {
             Self::ListPluginHookBundleRecords(command) => command.validate(),
             Self::ListPluginHookInvocations(command) => command.validate(),
             Self::SetActivePluginHookBundles(command) => command.validate(),
+            Self::ResolveAgentTeamHookContext(command) => command.validate(),
             Self::CreateConversation(command) => command.validate(),
             Self::GetConversation(command) => command.validate(),
             Self::GetConversationContext(command) => command.validate(),

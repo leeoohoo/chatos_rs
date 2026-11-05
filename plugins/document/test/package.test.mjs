@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -54,6 +54,10 @@ test('package and ChatOS manifest identities stay aligned', async () => {
   for (const lifecycle of ['preinstall', 'install', 'postinstall', 'prepare']) {
     assert.equal(packageJson.scripts?.[lifecycle], undefined);
   }
+  assert.deepEqual(
+    (await readdir(path.join(projectRoot, 'dist'))).sort(),
+    ['pdf.worker.mjs', 'pdfium.wasm', 'server.mjs']
+  );
   await access(path.join(projectRoot, 'dist', 'server.mjs'));
   await access(path.join(projectRoot, 'dist', 'pdfium.wasm'));
   await access(path.join(projectRoot, 'SBOM.cdx.json'));

@@ -18,6 +18,7 @@ pub use server::{BridgeReady, BridgeServer, BridgeServerConfig};
 
 pub const STATE_FILE_NAME: &str = "bridge-state.json";
 pub const STATE_LOCATOR_FILE_NAME: &str = "active-bridge.json";
+pub const STATE_LOCATOR_DIRECTORY_NAME: &str = "active-bridges";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct BridgeStateLocator {
@@ -34,11 +35,13 @@ pub async fn install_active_bridge_locator(
     tokio::fs::create_dir_all(locator_dir)
         .await
         .map_err(|error| format!("could not create Browser Bridge locator directory: {error}"))?;
-    let locator_file = locator_dir.join(STATE_LOCATOR_FILE_NAME);
-    let temporary = locator_dir.join(format!(
-        ".{STATE_LOCATOR_FILE_NAME}.{}.tmp",
-        Uuid::new_v4().simple()
-    ));
+    let registry_dir = locator_dir.join(STATE_LOCATOR_DIRECTORY_NAME);
+    tokio::fs::create_dir_all(&registry_dir)
+        .await
+        .map_err(|error| format!("could not create Browser Bridge registry: {error}"))?;
+    let locator_name = format!("bridge-{}.json", Uuid::new_v4().simple());
+    let locator_file = registry_dir.join(&locator_name);
+    let temporary = registry_dir.join(format!(".{locator_name}.tmp"));
     let mut bytes = serde_json::to_vec_pretty(&BridgeStateLocator {
         state_file: state_file.to_path_buf(),
     })
@@ -54,11 +57,6 @@ pub async fn install_active_bridge_locator(
             .await
             .map_err(|error| format!("could not secure Browser Bridge locator: {error}"))?;
     }
-    if tokio::fs::try_exists(&locator_file).await.unwrap_or(false) {
-        tokio::fs::remove_file(&locator_file)
-            .await
-            .map_err(|error| format!("could not replace Browser Bridge locator: {error}"))?;
-    }
     tokio::fs::rename(&temporary, &locator_file)
         .await
         .map_err(|error| format!("could not install Browser Bridge locator: {error}"))?;
@@ -66,7 +64,47 @@ pub async fn install_active_bridge_locator(
 }
 
 pub async fn resolve_active_bridge_state(locator_dir: &Path) -> Result<PathBuf, String> {
-    let locator_file = locator_dir.join(STATE_LOCATOR_FILE_NAME);
+    resolve_active_bridge_states(locator_dir)
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "Browser Bridge is not running".to_string())
+}
+
+pub async fn resolve_active_bridge_states(locator_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let registry_dir = locator_dir.join(STATE_LOCATOR_DIRECTORY_NAME);
+    let mut entries = match tokio::fs::read_dir(&registry_dir).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(format!("could not read Browser Bridge registry: {error}")),
+    };
+    let mut state_files = Vec::new();
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|error| format!("could not read Browser Bridge registry: {error}"))?
+    {
+        let locator_file = entry.path();
+        if locator_file.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(state_file) = read_bridge_locator(&locator_file).await else {
+            let _ = tokio::fs::remove_file(&locator_file).await;
+            continue;
+        };
+        if tokio::fs::try_exists(&state_file).await.unwrap_or(false) {
+            state_files.push(state_file);
+        } else {
+            let _ = tokio::fs::remove_file(&locator_file).await;
+        }
+    }
+    state_files.sort();
+    Ok(state_files)
+}
+
+async fn read_bridge_locator(locator_file: &Path) -> Result<PathBuf, String> {
     let bytes = tokio::fs::read(&locator_file)
         .await
         .map_err(|_| "Browser Bridge is not running".to_string())?;
@@ -130,42 +168,38 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn active_bridge_locator_points_to_user_scoped_state() {
+    async fn active_bridge_registry_points_to_every_running_instance() {
         let directory = tempdir().unwrap();
         let locator_dir = directory.path().join("locator");
-        let user_state = directory
+        let first_state = directory
             .path()
             .join("data/users/user-1/plugin-1/browser-bridge/bridge-state.json");
-        tokio::fs::create_dir_all(user_state.parent().unwrap())
+        let second_state = directory
+            .path()
+            .join("data/users/user-1/plugin-1/browser-bridge-2/bridge-state.json");
+        tokio::fs::create_dir_all(first_state.parent().unwrap())
             .await
             .unwrap();
-        let locator = install_active_bridge_locator(&locator_dir, &user_state)
+        tokio::fs::create_dir_all(second_state.parent().unwrap())
             .await
             .unwrap();
+        tokio::fs::write(&first_state, b"{}").await.unwrap();
+        tokio::fs::write(&second_state, b"{}").await.unwrap();
+        let first_locator = install_active_bridge_locator(&locator_dir, &first_state)
+            .await
+            .unwrap();
+        let second_locator = install_active_bridge_locator(&locator_dir, &second_state)
+            .await
+            .unwrap();
+        assert_ne!(first_locator, second_locator);
         assert_eq!(
-            resolve_active_bridge_state(&locator_dir).await.unwrap(),
-            user_state
+            resolve_active_bridge_states(&locator_dir).await.unwrap(),
+            vec![first_state.clone(), second_state.clone()]
         );
-        remove_active_bridge_locator_if_owned(&locator, &user_state).await;
-        assert!(!tokio::fs::try_exists(locator).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn stale_bridge_shutdown_does_not_remove_a_new_owner_locator() {
-        let directory = tempdir().unwrap();
-        let locator_dir = directory.path().join("locator");
-        let first = directory.path().join("users/first/bridge-state.json");
-        let second = directory.path().join("users/second/bridge-state.json");
-        let locator = install_active_bridge_locator(&locator_dir, &first)
-            .await
-            .unwrap();
-        install_active_bridge_locator(&locator_dir, &second)
-            .await
-            .unwrap();
-        remove_active_bridge_locator_if_owned(&locator, &first).await;
+        remove_active_bridge_locator_if_owned(&first_locator, &first_state).await;
         assert_eq!(
-            resolve_active_bridge_state(&locator_dir).await.unwrap(),
-            second
+            resolve_active_bridge_states(&locator_dir).await.unwrap(),
+            vec![second_state]
         );
     }
 }

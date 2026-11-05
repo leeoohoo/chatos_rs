@@ -13,13 +13,31 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
     }
 
     public func ensureThread() async throws {
+        var labels: [JSONValue] = [
+            .string("memory-schema:v2"),
+            .string(scope.subjectID),
+            .string("thread-kind:\(scope.threadKind ?? "client_agent")"),
+        ]
+        if let projectSubjectID = scope.projectAggregationSubjectID {
+            labels.append(.string(projectSubjectID))
+        }
+        var metadata: [String: JSONValue] = [
+            "agent_id": .string(String(scope.subjectID.dropFirst("agent:".count))),
+            "thread_kind": .string(scope.threadKind ?? "client_agent"),
+            "run_id": .string(scope.runID.uuidString),
+        ]
+        if let agentName = scope.agentName {
+            metadata["agent_name"] = .string(agentName)
+        }
+        if let projectSubjectID = scope.projectSubjectID {
+            metadata["project_id"] = .string(String(projectSubjectID.dropFirst("project:".count)))
+        }
         let body: [String: JSONValue] = [
             "tenant_id": .string(scope.tenantID), "source_id": .string(scope.sourceID),
             "subject_id": .string(scope.subjectID), "thread_type": .string("client_agent"),
-            // Local chat Agents intentionally reuse one Memory thread across every wake-up.
-            // Keep the external identity stable as well; runID only namespaces immutable records.
             "external_thread_id": .string(scope.threadID),
-            "labels": .array([.string("client_agent"), .string("memory_mapping:client_agent.v1")]),
+            "labels": .array(labels),
+            "metadata": .object(metadata),
         ]
         let result: MemoryThreadDTO = try await request(threadPath, method: "PUT", body: body)
         try validate(tenant: result.tenant_id, source: result.source_id, thread: result.id)
@@ -54,12 +72,15 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
     }
 
     public func compose() async throws -> AgentMemoryContext {
-        let body: [String: JSONValue] = [
+        var body: [String: JSONValue] = [
             "tenant_id": .string(scope.tenantID), "source_id": .string(scope.sourceID), "thread_id": .string(scope.threadID),
             "subject_id": .string(scope.subjectID),
             "policy": .object(["include_thread_summary": .bool(true), "include_recent_records": .bool(true),
                                "include_subject_memory": .bool(scope.includeSubjectMemory ?? true), "summary_limit": .number(2)]),
         ]
+        if let projectSubjectID = scope.projectSubjectID {
+            body["related_subject_ids"] = .array([.string(projectSubjectID)])
+        }
         let result: MemoryComposeDTO = try await request("/context/compose", method: "POST", body: body)
         guard result.thread_id == scope.threadID, result.meta.recent_record_count == result.recent_records.count else {
             throw AgentRuntimeError.scopeMismatch
@@ -71,6 +92,20 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             blocks: result.blocks.map { .init(blockType: $0.block_type, text: $0.text) },
             recentRecords: result.recent_records.map(contextRecord)
         )
+    }
+
+    public func flushSummary() async throws {
+        let body: [String: JSONValue] = [
+            "tenant_id": .string(scope.tenantID),
+            "source_id": .string(scope.sourceID),
+            "trigger_reason": .string("agent_run_terminal"),
+        ]
+        let result: MemorySummaryDTO = try await request(
+            threadPath + "/active-summary/run", method: "POST", body: body
+        )
+        guard result.thread_id == scope.threadID, result.accepted else {
+            throw AgentRuntimeError.scopeMismatch
+        }
     }
 
     private var threadPath: String { "/threads/" + encoded(scope.threadID) }
@@ -174,6 +209,11 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
         if let id = entry.message.toolCallID { payload["tool_call_id"] = .string(id) }
         var metadata: [String: JSONValue] = ["client_agent_run_id": .string(scope.runID.uuidString),
                                              "client_agent_message_index": .number(Double(entry.index))]
+        if let projectSubjectID = scope.projectSubjectID {
+            metadata["memory_project_id"] = .string(
+                String(projectSubjectID.dropFirst("project:".count))
+            )
+        }
         if let id = entry.message.toolCallID { metadata["tool_call_id"] = .string(id) }
         if let output = entry.message.responseOutputJSON {
             metadata["responses_output"] = try JSONDecoder().decode(JSONValue.self, from: output)

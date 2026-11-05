@@ -75,6 +75,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     private let productSkillBundle: LocalAgentSkillBundleSnapshot?
     private let selectedExternalMCPIDs: Set<String>
     private let restoredCapabilityDisclosures: Set<LocalRunCapabilityDisclosure>
+    private let skillToolNames: NativeAgentCapabilityBrokerToolCatalog.SkillToolNames
     private let options: [CapabilityOption]
     private var registries: [String: AgentToolProviderRegistry] = [:]
     private var toolNamesByOption: [String: [String: String]] = [:]
@@ -100,7 +101,8 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         productSkillBundle: LocalAgentSkillBundleSnapshot? = nil,
         selectedExternalMCPIDs: Set<String> = [],
         preactivatedSkillRefs: Set<String> = [],
-        restoredCapabilityDisclosures: Set<LocalRunCapabilityDisclosure> = []
+        restoredCapabilityDisclosures: Set<LocalRunCapabilityDisclosure> = [],
+        skillToolNames: NativeAgentCapabilityBrokerToolCatalog.SkillToolNames = .localTask
     ) {
         self.service = service
         self.ownerUserID = ownerUserID
@@ -116,6 +118,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         self.productSkillBundle = productSkillBundle
         self.selectedExternalMCPIDs = selectedExternalMCPIDs
         self.restoredCapabilityDisclosures = restoredCapabilityDisclosures
+        self.skillToolNames = skillToolNames
         let builtinOptions: [CapabilityOption] = builtinCapabilities.isEmpty && productSkillBundle == nil ? [] : [
             .init(
                 token: "builtin_1",
@@ -161,7 +164,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     }
 
     func definitions() async throws -> [AgentToolDefinition] {
-        NativeAgentCapabilityBrokerToolCatalog.definitions
+        NativeAgentCapabilityBrokerToolCatalog.definitions(skillToolNames: skillToolNames)
     }
 
     func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -276,7 +279,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             let rendered = try outcome(result)
             return .init(rendered.content, isError: result.jsonObject?["view"]?.jsonString == "error")
 
-        case Self.activateSkillToolName:
+        case skillToolNames.activate:
             let arguments = try decode(SkillActivationArguments.self, from: call.arguments)
             guard let requested = arguments.requestedSkillRefs else {
                 return .failure("skill_ref 与 skill_refs 必须且只能提供一个；批量激活最多 4 个 Skill。")
@@ -325,7 +328,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             }
             return try outcome(SkillActivationBatchResponse(skills: activated))
 
-        case Self.readSkillResourceToolName:
+        case skillToolNames.readResource:
             let arguments = try decode(SkillResourceArguments.self, from: call.arguments)
             let selection = try resolveSkillSelection(skillRef: arguments.skillRef)
             let option = selection.option
@@ -384,7 +387,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                     skillReference(named: $0, for: option)
                 }
                 return .failure(
-                    "调用此工具前必须先激活 Skill：\(missingRefs.joined(separator: ", "))。请优先用 agent_skill_activate 的 skill_refs 一次批量激活这些精确引用。"
+                    "调用此工具前必须先激活 Skill：\(missingRefs.joined(separator: ", "))。请优先用 \(skillToolNames.activate) 的 skill_refs 一次批量激活这些精确引用。"
                 )
             }
             let result = try await registry.execute(.init(

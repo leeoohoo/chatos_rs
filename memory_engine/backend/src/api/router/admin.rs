@@ -14,6 +14,14 @@ use crate::state::AppState;
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route(
+            "/api/memory-engine/v1/admin/agents",
+            get(admin_api::list_agents),
+        )
+        .route(
+            "/api/memory-engine/v1/admin/agents/{agent_subject_id}/projects",
+            get(admin_api::list_agent_projects),
+        )
+        .route(
             "/api/memory-engine/v1/admin/job-policies",
             get(admin_api::list_job_policies),
         )

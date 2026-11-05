@@ -193,11 +193,12 @@ extension LocalAgentChatToolProvider {
         let name: String
         let profession: String
         let role: String
+        let responsibility: String
         let isProjectManager: Bool
 
         enum CodingKeys: String, CodingKey {
             case agentReference = "agent_ref"
-            case name, profession, role
+            case name, profession, role, responsibility
             case isProjectManager = "is_project_manager"
         }
     }
@@ -213,6 +214,7 @@ extension LocalAgentChatToolProvider {
         let scope: String
         let expectedOutputs: [String]
         let acceptanceCriteria: [String]
+        let acceptanceChecks: [TodoAcceptanceCheckResponse]
         let constraints: [String]
         let priority: Int
         let status: String
@@ -231,6 +233,7 @@ extension LocalAgentChatToolProvider {
             case title, detail, objective, scope, constraints, priority, status
             case expectedOutputs = "expected_outputs"
             case acceptanceCriteria = "acceptance_criteria"
+            case acceptanceChecks = "acceptance_checks"
             case blockedReason = "blocked_reason"
             case result
             case builtinCapabilities = "builtin_capabilities"
@@ -329,11 +332,14 @@ extension LocalAgentChatToolProvider {
         let name: String
         let profession: String
         let role: String
+        let responsibility: String
+        let allowedPluginReferences: [String]
         let isProjectManager: Bool
 
         enum CodingKeys: String, CodingKey {
             case assigneeReference = "assignee_ref"
-            case name, profession, role
+            case name, profession, role, responsibility
+            case allowedPluginReferences = "allowed_plugin_refs"
             case isProjectManager = "is_project_manager"
         }
     }
@@ -380,12 +386,11 @@ extension LocalAgentChatToolProvider {
     struct TodoSourceMessageResponse: Encodable {
         let relation: String
         let content: String
-        let attachmentNames: [String]
+        let attachments: [AttachmentResponse]
         let createdAtUnixMs: Int64
 
         enum CodingKeys: String, CodingKey {
-            case relation, content
-            case attachmentNames = "attachment_names"
+            case relation, content, attachments
             case createdAtUnixMs = "created_at_unix_ms"
         }
     }
@@ -397,6 +402,7 @@ extension LocalAgentChatToolProvider {
         let scope: String
         let expectedOutputs: [String]
         let acceptanceCriteria: [String]
+        let acceptanceChecks: [TodoAcceptanceCheckResponse]
         let constraints: [String]
         let priority: Int
         let builtinCapabilities: [String]
@@ -410,11 +416,40 @@ extension LocalAgentChatToolProvider {
             case title, detail, objective, scope, constraints, priority
             case expectedOutputs = "expected_outputs"
             case acceptanceCriteria = "acceptance_criteria"
+            case acceptanceChecks = "acceptance_checks"
             case builtinCapabilities = "builtin_capabilities"
             case plugins, prerequisites
             case sourceMessages = "source_messages"
             case teamAssets = "team_assets"
             case progress
+        }
+    }
+
+    struct TodoAcceptanceCheckResponse: Encodable {
+        let criterionIndex: Int
+        let criterion: String
+        let status: String
+        let evidence: String
+        let blockedReason: String
+        let requiresHuman: Bool
+        let updatedAtUnixMs: Int64
+
+        init(check: LocalAgentTodoAcceptanceCheck) {
+            criterionIndex = check.position
+            criterion = check.criterion
+            status = check.status.rawValue
+            evidence = check.evidence
+            blockedReason = check.blockedReason
+            requiresHuman = check.requiresHuman
+            updatedAtUnixMs = check.updatedAtUnixMs
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case criterionIndex = "criterion_index"
+            case criterion, status, evidence
+            case blockedReason = "blocked_reason"
+            case requiresHuman = "requires_human"
+            case updatedAtUnixMs = "updated_at_unix_ms"
         }
     }
 
@@ -464,6 +499,17 @@ extension LocalAgentChatToolProvider {
         let type: String
         let status: String
         let subject: String
+    }
+
+    struct AgentDeletionResponse: Encodable {
+        let status: String
+        let subject: String
+        let alreadyArchived: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case status, subject
+            case alreadyArchived = "already_archived"
+        }
     }
 
     struct SendResponse: Encodable {

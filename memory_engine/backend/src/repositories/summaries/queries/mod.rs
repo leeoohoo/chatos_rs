@@ -13,6 +13,7 @@ pub use rollups::{
     list_threads_with_pending_rollups,
 };
 pub use thread::{
-    list_latest_thread_summaries, list_latest_thread_summaries_at_level,
-    list_latest_thread_summaries_by_type, list_thread_summaries,
+    get_summary_by_id, list_latest_thread_summaries, list_latest_thread_summaries_at_level,
+    list_latest_thread_summaries_at_level_for_project, list_latest_thread_summaries_by_type,
+    list_thread_summaries,
 };

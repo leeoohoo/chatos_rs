@@ -23,7 +23,6 @@ export type PolicyFormValues = {
   rollup_summary_prompt_en?: string;
   rollup_summary_prompt_language?: 'zh' | 'en';
   token_limit?: number | null;
-  target_summary_tokens?: number | null;
   interval_seconds?: number | null;
   max_threads_per_tick?: number | null;
   count_limit?: number | null;
@@ -60,8 +59,6 @@ export type PolicyMeta = {
   promptPlaceholder?: string;
   managedAgentKey?: string;
   tokenLimitLabel: string;
-  targetSummaryTokensLabel: string;
-  showTargetSummaryTokens?: boolean;
   intervalSecondsLabel: string;
   maxThreadsPerTickLabel?: string;
   showMaxThreadsPerTick?: boolean;

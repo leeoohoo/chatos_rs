@@ -422,7 +422,7 @@ enum PetOverlaySizing {
         case .reviewing:
             height = 300
         case .waitingForUser:
-            height = 470
+            height = 380
         case .succeeded, .cancelled:
             height = completedTaskCount > 1 ? 280 : 160
         }

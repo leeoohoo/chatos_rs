@@ -120,6 +120,10 @@ struct TeamTodoBoardView: View {
                 .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
             }
 
+            if todo.status == .inProgress || isExpanded {
+                acceptancePanel(todo.acceptanceChecks)
+            }
+
             HStack(spacing: 8) {
                 if !todo.executionContract.expectedOutputs.isEmpty {
                     metadataBadge(
@@ -197,11 +201,6 @@ struct TeamTodoBoardView: View {
                         "交付物",
                         systemImage: "shippingbox.fill",
                         values: todo.executionContract.expectedOutputs
-                    )
-                    contractList(
-                        "验收条件",
-                        systemImage: "checkmark.seal.fill",
-                        values: todo.executionContract.acceptanceCriteria
                     )
                     contractList(
                         "约束",
@@ -382,6 +381,81 @@ struct TeamTodoBoardView: View {
                 .foregroundStyle(.secondary)
         }
         .contractPanel(tint: AppPalette.ai.opacity(0.045))
+    }
+
+    private func acceptancePanel(
+        _ checks: [LocalAgentTodoAcceptanceCheck]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            sectionLabel("验收项目", systemImage: "checkmark.seal.fill")
+            ForEach(checks) { check in
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: acceptanceIcon(check.status))
+                        .foregroundStyle(acceptanceColor(check.status))
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("#\(check.position)")
+                                .appFont(.caption2.monospaced().weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text(check.criterion)
+                                .appFont(.caption)
+                                .textSelection(.enabled)
+                            Spacer(minLength: 6)
+                            Text(acceptanceLabel(check.status))
+                                .appFont(.caption2.weight(.semibold))
+                                .foregroundStyle(acceptanceColor(check.status))
+                        }
+                        if !check.evidence.isEmpty {
+                            Text("证据：\(check.evidence)")
+                                .appFont(.caption2)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        if !check.blockedReason.isEmpty {
+                            Text("阻塞：\(check.blockedReason)\(check.requiresHuman ? "（需要 Human）" : "")")
+                                .appFont(.caption2)
+                                .foregroundStyle(.orange)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }
+        .contractPanel(tint: AppPalette.ai.opacity(0.035))
+    }
+
+    private func acceptanceLabel(_ status: LocalAgentTodoAcceptanceStatus) -> String {
+        switch status {
+        case .pending: "待核验"
+        case .inProgress: "核验中"
+        case .passed: "已通过"
+        case .failed: "未通过"
+        case .notVerified: "未核验"
+        case .blocked: "阻塞"
+        }
+    }
+
+    private func acceptanceIcon(_ status: LocalAgentTodoAcceptanceStatus) -> String {
+        switch status {
+        case .pending: "circle.dotted"
+        case .inProgress: "ellipsis.circle.fill"
+        case .passed: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .notVerified: "questionmark.circle.fill"
+        case .blocked: "exclamationmark.octagon.fill"
+        }
+    }
+
+    private func acceptanceColor(_ status: LocalAgentTodoAcceptanceStatus) -> Color {
+        switch status {
+        case .pending: .secondary
+        case .inProgress: AppPalette.ai
+        case .passed: .green
+        case .failed: .red
+        case .notVerified: .orange
+        case .blocked: .orange
+        }
     }
 
     private func authorizationCapability(

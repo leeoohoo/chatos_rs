@@ -19,13 +19,31 @@ mod tests {
             summary_dispatch_version: 7,
             summary_dispatch_published_version: 6,
             summary_dispatch_consumed_version: 5,
+            summary_dispatch_force_version: 7,
         };
 
         let envelope = SummaryRequestedEnvelope::from_outbox(&event);
 
         assert_eq!(envelope.thread_id, "thread-1");
         assert_eq!(envelope.version, 7);
+        assert_eq!(envelope.force_version, 7);
+        assert!(envelope.as_outbox().forced());
         assert_eq!(envelope.attempt, 0);
+    }
+
+    #[test]
+    fn initial_zero_versions_are_not_a_forced_dispatch() {
+        let event = SummaryDispatchOutbox {
+            tenant_id: "tenant-1".to_string(),
+            source_id: "source-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            summary_dispatch_version: 0,
+            summary_dispatch_published_version: 0,
+            summary_dispatch_consumed_version: 0,
+            summary_dispatch_force_version: 0,
+        };
+
+        assert!(!event.forced());
     }
 
     fn thread_with_summary_lock(expires_at: Option<&str>) -> EngineThread {

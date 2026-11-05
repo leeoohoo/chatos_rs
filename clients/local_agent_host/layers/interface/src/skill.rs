@@ -38,6 +38,7 @@ impl GetRunCapabilityDisclosuresCommand {
 pub struct LocalRunCapabilityDisclosure {
     pub plugin_option: String,
     pub tool_option: String,
+    pub tool_name: String,
     pub provider_id: String,
     pub schema_sha256: String,
 }

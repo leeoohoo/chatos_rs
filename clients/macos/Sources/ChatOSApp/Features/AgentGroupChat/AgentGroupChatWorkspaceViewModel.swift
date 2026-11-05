@@ -53,6 +53,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     @Published private(set) var selectedAgentID: String?
     @Published private(set) var isLoadingTriggerRuns = false
     @Published private(set) var runActionDeliveryIDs: Set<String> = []
+    @Published private(set) var deletingAgentIDs: Set<String> = []
     @Published var selectedRoomID: String?
     @Published private(set) var isLoading = false
     @Published private(set) var isCreating = false
@@ -315,6 +316,28 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
             return nil
+        }
+    }
+
+    func deleteAgent(_ agent: LocalAgentProfile) async {
+        guard deletingAgentIDs.insert(agent.id).inserted else { return }
+        defer { deletingAgentIDs.remove(agent.id) }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.archiveAgent(
+                ownerUserID: ownerUserID,
+                agentID: agent.id,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            await load()
+            errorMessage = nil
+            NotificationCenter.default.post(
+                name: .agentHeartbeatConfigurationDidChange,
+                object: nil
+            )
+            NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

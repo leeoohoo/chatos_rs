@@ -137,6 +137,90 @@ async fn planner_resolves_control_plane_state_for_the_run_owner() {
 }
 
 #[tokio::test]
+async fn main_chat_receives_the_task_context_compilation_contract() {
+    let prepared = ControlPlaneLocalAiStepPlanner::main_chat(
+        OwnerCheckingModelResolver,
+        OwnerCheckingCapabilityResolver,
+    )
+    .prepare_ai_step(&claim(Value::Null, None))
+    .await
+    .expect("prepare Main Chat context contract");
+    let contract = prepared
+        .request
+        .prefixed_input_items
+        .iter()
+        .filter_map(|item| item["content"].as_str())
+        .filter_map(|content| serde_json::from_str::<Value>(content).ok())
+        .find(|content| content["type"] == "task_context_compilation_contract")
+        .expect("program-owned Task context compilation contract");
+
+    assert_eq!(contract["available_attachments"], json!([]));
+    let guidance = contract["guidance"].as_str().expect("contract guidance");
+    assert!(guidance.contains("context curator"));
+    assert!(guidance.contains("Do not dump the conversation or all retained Memory"));
+    assert!(guidance.contains("opaque authorized_local_ref"));
+    assert!(guidance.contains("Never copy attachment bytes, base64"));
+}
+
+#[tokio::test]
+async fn selected_remote_target_is_sent_on_initial_and_resumed_steps() {
+    for task in [false, true] {
+        let planner = if task {
+            ControlPlaneLocalAiStepPlanner::task_execution(
+                OwnerCheckingModelResolver,
+                OwnerCheckingCapabilityResolver,
+            )
+        } else {
+            ControlPlaneLocalAiStepPlanner::main_chat(
+                OwnerCheckingModelResolver,
+                OwnerCheckingCapabilityResolver,
+            )
+        };
+        for checkpoint in [
+            Value::Null,
+            json!({"request_input_items": [], "conversation_memory": []}),
+        ] {
+            let mut current = claim(checkpoint, None);
+            if task {
+                current.run.profile_key = TASK_EXECUTION_PROFILE_KEY.into();
+                current.run.input = json!({"prompt":"Inspect two services", "remote_connection_id":"selected-server", "tool_options":{"requires_execution":true,"enabled_builtin_kinds":["RemoteConnectionController"],"plugin_hints":[],"external_mcp_config_ids":[]}});
+            } else {
+                current.run.input = json!({"message":"Inspect two services", "runtime_settings":{"reasoning_enabled":false,"remote_connection_id":"selected-server"}, "remote_connection_id":"stale-server"});
+            }
+            let prepared = planner.prepare_ai_step(&current).await.unwrap();
+            let context = prepared
+                .request
+                .prefixed_input_items
+                .iter()
+                .filter_map(|item| {
+                    item["content"]
+                        .as_str()
+                        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                })
+                .find(|item| item["type"] == "bound_remote_connection_context")
+                .unwrap();
+            assert_eq!(context["remote_connection_id"], "selected-server");
+            assert_eq!(context["target_selected"], true);
+            assert!(context["guidance"].as_str().unwrap().contains("Do not ask"));
+        }
+    }
+}
+
+#[test]
+fn clearing_remote_selection_does_not_restore_a_historical_target() {
+    let context = bound_remote_connection_context(
+        &json!({
+            "runtime_settings":{"remote_connection_id":null},
+            "remote_connection_id":"stale-server"
+        }),
+        true,
+    );
+    let context: Value = serde_json::from_str(context["content"].as_str().unwrap()).unwrap();
+    assert_eq!(context["target_selected"], false);
+    assert_eq!(context["remote_connection_id"], Value::Null);
+}
+
+#[tokio::test]
 async fn requirement_plan_is_sent_each_step_outside_truncated_memory_for_main_and_task() {
     for task in [false, true] {
         let planner = if task {
@@ -514,6 +598,57 @@ fn task_tools_are_filtered_to_the_declared_minimum_capabilities() {
             "project_read",
             "capability_search",
             "task_run_process_record_process"
+        ]
+    );
+}
+
+#[test]
+fn team_executor_tools_require_the_normalized_team_execution_context() {
+    let tools = [
+        "todo_get_context",
+        "todo_progress_append",
+        "todo_acceptance_update",
+        "todo_complete",
+        "todo_block",
+        "team_asset_list",
+        "team_asset_get",
+        "task_run_process_record_process",
+    ]
+    .map(|name| json!({"name": name}))
+    .to_vec();
+    let base = json!({
+        "tool_options": {
+            "requires_execution": true,
+            "enabled_builtin_kinds": ["CodeMaintainerRead"],
+            "plugin_hints": []
+        },
+        "agent_execution_context": {"schema_version": 2}
+    });
+    assert_eq!(
+        task_scoped_tools(tools.clone(), &base)
+            .expect("filter ordinary Task")
+            .iter()
+            .filter_map(tool_name)
+            .collect::<Vec<_>>(),
+        vec!["task_run_process_record_process"]
+    );
+
+    let mut executor = base;
+    executor["team_executor_context"] = json!({"delivery_id": "delivery-1"});
+    assert_eq!(
+        task_scoped_tools(tools, &executor)
+            .expect("filter team Executor")
+            .iter()
+            .filter_map(tool_name)
+            .collect::<Vec<_>>(),
+        vec![
+            "todo_get_context",
+            "todo_progress_append",
+            "todo_acceptance_update",
+            "todo_complete",
+            "todo_block",
+            "team_asset_list",
+            "team_asset_get",
         ]
     );
 }
@@ -1046,6 +1181,76 @@ async fn successful_task_outcome_report_forces_a_tool_free_final_response() {
     assert!(guidance["content"]
         .as_str()
         .is_some_and(|text| text.contains("[Task Outcome Reported]")));
+}
+
+#[tokio::test]
+async fn blocked_task_outcome_disables_tools_only_after_other_checks_pass() {
+    let planner = ControlPlaneLocalAiStepPlanner::task_execution(
+        OwnerCheckingModelResolver,
+        OwnerCheckingCapabilityResolver,
+    )
+    .with_local_tools(vec![
+        json!({"type": "function", "name": "read_file", "parameters": {}}),
+        json!({
+            "type": "function",
+            "name": "task_run_process_report_outcome",
+            "parameters": {}
+        }),
+    ])
+    .expect("Task tools");
+    let mut reported = claim(
+        json!({"response": {
+            "request_input_items": [{"role": "user", "content": "do the work"}],
+            "response_output_items": []
+        }}),
+        Some(json!({
+            "type": "tool_results",
+            "invocations": [{
+                "call_id": "call-outcome",
+                "tool_name": "task_run_process_report_outcome",
+                "status": "succeeded",
+                "result": {
+                    "reported": true,
+                    "result_status": "blocked",
+                    "reason": "Waiting for credentials",
+                    "final_response": "Blocked pending credentials.",
+                    "acceptance_checks": [
+                        {"criterion_index":0,"status":"blocked","evidence":"User must provide credentials"},
+                        {"criterion_index":1,"status":"not_verified","evidence":"Local verification is still pending"}
+                    ]
+                }
+            }]
+        })),
+    );
+    reported.run.profile_key = TASK_EXECUTION_PROFILE_KEY.to_string();
+    reported.run.owner_entity_type = "task".to_string();
+    reported.run.owner_entity_id = "task-1".to_string();
+    reported.run.input = json!({
+        "prompt": "do the work",
+        "acceptance_report_version": 1,
+        "acceptance_criteria": ["Credentials available", "Local verification complete"],
+        "tool_options": {
+            "requires_execution": false,
+            "enabled_builtin_kinds": ["CodeMaintainerRead"],
+            "plugin_hints": []
+        }
+    });
+
+    let actionable = planner
+        .prepare_ai_step(&reported)
+        .await
+        .expect("prepare continued Task work");
+    assert!(!actionable.request.model_request.tools.is_empty());
+
+    reported.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
+        ["acceptance_checks"][1]["status"] = json!("passed");
+    reported.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
+        ["acceptance_checks"][1]["evidence"] = json!("Local verification passed");
+    let terminal = planner
+        .prepare_ai_step(&reported)
+        .await
+        .expect("prepare blocked Task final response");
+    assert!(terminal.request.model_request.tools.is_empty());
 }
 
 #[tokio::test]

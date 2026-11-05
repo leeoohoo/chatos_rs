@@ -5,7 +5,7 @@ import { App } from 'antd';
 import { useEffect, useState } from 'react';
 
 import { userServiceApi } from '../../api/userService';
-import { useThreadExplorer } from '../hooks/useThreadExplorer';
+import { useAgentExplorer } from '../hooks/useAgentExplorer';
 import { DataSection } from './DataSection';
 import type { UserLabelMap } from './data/types';
 
@@ -17,7 +17,7 @@ export function DataSectionContainer(props: DataSectionContainerProps) {
   const { refreshNonce = 0 } = props;
   const { message } = App.useApp();
   const [tenantLabelsById, setTenantLabelsById] = useState<UserLabelMap>({});
-  const threadExplorer = useThreadExplorer('data', {
+  const agentExplorer = useAgentExplorer({
     onError: (error) => {
       message.error(error);
     },
@@ -25,7 +25,7 @@ export function DataSectionContainer(props: DataSectionContainerProps) {
 
   useEffect(() => {
     if (refreshNonce > 0) {
-      void threadExplorer.loadThreads();
+      void agentExplorer.loadAgents();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshNonce]);
@@ -33,8 +33,8 @@ export function DataSectionContainer(props: DataSectionContainerProps) {
   useEffect(() => {
     const tenantIds = Array.from(
       new Set(
-        threadExplorer.threads
-          .map((thread) => thread.tenant_id?.trim())
+        agentExplorer.agents
+          .map((agent) => agent.tenant_id?.trim())
           .filter((tenantId): tenantId is string => Boolean(tenantId)),
       ),
     );
@@ -76,18 +76,32 @@ export function DataSectionContainer(props: DataSectionContainerProps) {
     return () => {
       cancelled = true;
     };
-  }, [threadExplorer.threads]);
+  }, [agentExplorer.agents]);
+
+  const threadExplorer = agentExplorer.threadExplorer;
 
   return (
     <DataSection
-      form={threadExplorer.threadFilterForm}
-      initialValues={threadExplorer.threadFilters}
+      form={agentExplorer.filterForm}
+      initialValues={agentExplorer.filters}
+      loading={agentExplorer.agentsLoading}
       threadsLoading={threadExplorer.threadsLoading}
       threadDetailLoading={threadExplorer.threadDetailLoading}
       threadRecordsLoading={threadExplorer.threadRecordsLoading}
-      onApplyFilters={() => void threadExplorer.handleApplyThreadFilters()}
-      onResetFilters={() => void threadExplorer.handleResetThreadFilters()}
-      onReload={() => void threadExplorer.loadThreads()}
+      onApplyFilters={() => void agentExplorer.applyFilters()}
+      onResetFilters={() => void agentExplorer.resetFilters()}
+      onReload={() => void agentExplorer.loadAgents()}
+      agents={agentExplorer.agents}
+      agentsLoading={agentExplorer.agentsLoading}
+      selectedAgent={agentExplorer.selectedAgent}
+      onSelectAgent={(agent) => void agentExplorer.selectAgent(agent)}
+      projects={agentExplorer.projects}
+      selectedProject={agentExplorer.selectedProject}
+      onSelectProject={(project) => void agentExplorer.selectProject(project)}
+      agentMemories={agentExplorer.agentMemories}
+      projectMemories={agentExplorer.projectMemories}
+      agentDetailLoading={agentExplorer.agentDetailLoading}
+      projectMemoriesLoading={agentExplorer.projectMemoriesLoading}
       threads={threadExplorer.threads}
       tenantLabelsById={tenantLabelsById}
       threadPage={threadExplorer.threadPage}

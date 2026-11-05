@@ -21,6 +21,10 @@ pub struct RuntimeRecordOptions {
     pub tool_message_mode: Option<String>,
     pub tool_message_source: Option<String>,
     pub tool_metadata: Option<Value>,
+    /// Marks only a final assistant response for a durable post-sync Thread Summary.
+    /// Tool-call and continuation records never receive the marker.
+    #[serde(default)]
+    pub request_summary_on_final_response: bool,
 }
 
 impl RuntimeRecordOptions {
@@ -79,6 +83,11 @@ impl RuntimeRecordOptions {
 
     pub fn with_tool_metadata(mut self, metadata: Value) -> Self {
         self.tool_metadata = Some(metadata);
+        self
+    }
+
+    pub fn with_summary_on_final_response(mut self, request: bool) -> Self {
+        self.request_summary_on_final_response = request;
         self
     }
 }

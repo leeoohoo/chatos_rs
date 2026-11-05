@@ -160,6 +160,8 @@ pub enum PluginMcpServer {
         env: BTreeMap<String, String>,
         #[serde(default, skip_serializing_if = "is_false")]
         requires_exclusive_execution: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        allows_parallel_task_execution: bool,
     },
     Http {
         component_key: String,
@@ -172,6 +174,8 @@ pub enum PluginMcpServer {
         connect_timeout_ms: Option<u64>,
         #[serde(default, skip_serializing_if = "is_false")]
         requires_exclusive_execution: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        allows_parallel_task_execution: bool,
     },
 }
 
@@ -196,6 +200,19 @@ impl PluginMcpServer {
                 requires_exclusive_execution,
                 ..
             } => *requires_exclusive_execution,
+        }
+    }
+
+    pub fn allows_parallel_task_execution(&self) -> bool {
+        match self {
+            Self::Stdio {
+                allows_parallel_task_execution,
+                ..
+            }
+            | Self::Http {
+                allows_parallel_task_execution,
+                ..
+            } => *allows_parallel_task_execution,
         }
     }
 }

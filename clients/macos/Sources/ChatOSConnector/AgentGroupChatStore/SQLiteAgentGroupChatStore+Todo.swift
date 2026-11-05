@@ -220,6 +220,13 @@ extension SQLiteAgentGroupChatStore {
                 sortOrder: nextOrder,
                 executionContract: executionContract,
                 executionPlan: draft.executionPlan,
+                acceptanceChecks: executionContract.acceptanceCriteria.enumerated().map {
+                    LocalAgentTodoAcceptanceCheck(
+                        position: $0.offset + 1,
+                        criterion: $0.element,
+                        updatedAtUnixMs: nowUnixMs
+                    )
+                },
                 createdAtUnixMs: nowUnixMs,
                 updatedAtUnixMs: nowUnixMs
             )
@@ -230,8 +237,8 @@ extension SQLiteAgentGroupChatStore {
                     owner_user_id, id, agent_id, team_room_id, source_room_id, source_message_id,
                     request_key, title, detail, priority, sort_order, status,
                     blocked_reason, result, created_at_unix_ms, updated_at_unix_ms,
-                    execution_plan_json, execution_contract_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', '', ?, ?, ?, ?)
+                    execution_plan_json, execution_contract_json, acceptance_checks_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', '', ?, ?, ?, ?, ?)
                 """,
                 [
                     .text(ownerUserID), .text(todo.id), .text(agentID),
@@ -243,6 +250,7 @@ extension SQLiteAgentGroupChatStore {
                     .integer(nowUnixMs), .integer(nowUnixMs),
                     .text(try encodeJSON(draft.executionPlan)),
                     .text(try encodeJSON(executionContract)),
+                    .text(try encodeJSON(todo.acceptanceChecks)),
                 ]
             )
             var sources = draft.additionalSources
@@ -350,6 +358,21 @@ extension SQLiteAgentGroupChatStore {
             let blockedReason = update.blockedReason ?? existing.blockedReason
             let result = update.result ?? existing.result
             let executionContract = update.executionContract ?? existing.executionContract
+            let acceptanceChecks: [LocalAgentTodoAcceptanceCheck]
+            if executionContract.acceptanceCriteria == existing.executionContract.acceptanceCriteria {
+                acceptanceChecks = existing.acceptanceChecks
+            } else {
+                guard [.pending, .blocked].contains(existing.status) else {
+                    throw AgentGroupChatError.conflict
+                }
+                acceptanceChecks = executionContract.acceptanceCriteria.enumerated().map {
+                    LocalAgentTodoAcceptanceCheck(
+                        position: $0.offset + 1,
+                        criterion: $0.element,
+                        updatedAtUnixMs: nowUnixMs
+                    )
+                }
+            }
             if existing.status == .blocked,
                status == .pending,
                !allowsInterruptedReviewRetry {
@@ -377,6 +400,7 @@ extension SQLiteAgentGroupChatStore {
                 result: result,
                 executionContract: executionContract,
                 executionPlan: existing.executionPlan,
+                acceptanceChecks: acceptanceChecks,
                 createdAtUnixMs: existing.createdAtUnixMs,
                 updatedAtUnixMs: max(nowUnixMs, existing.createdAtUnixMs)
             )
@@ -402,13 +426,15 @@ extension SQLiteAgentGroupChatStore {
                 """
                 UPDATE local_agent_todos
                 SET title = ?, detail = ?, priority = ?, status = ?, blocked_reason = ?,
-                    result = ?, execution_contract_json = ?, updated_at_unix_ms = ?
+                    result = ?, execution_contract_json = ?, acceptance_checks_json = ?,
+                    updated_at_unix_ms = ?
                 WHERE owner_user_id = ? AND agent_id = ? AND id = ? AND status = ?
                 """,
                 [
                     .text(title), .text(detail), .integer(Int64(priority)),
                     .text(status.rawValue), .text(blockedReason), .text(result),
-                    .text(try encodeJSON(executionContract)), .integer(revised.updatedAtUnixMs),
+                    .text(try encodeJSON(executionContract)),
+                    .text(try encodeJSON(acceptanceChecks)), .integer(revised.updatedAtUnixMs),
                     .text(ownerUserID), .text(agentID),
                     .text(todoID), .text(existing.status.rawValue),
                 ]
@@ -434,6 +460,83 @@ extension SQLiteAgentGroupChatStore {
                 )
             }
             return revised
+        }
+    }
+
+    public func updateAgentTodoAcceptanceCheck(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        position: Int,
+        status: LocalAgentTodoAcceptanceStatus,
+        evidence: String,
+        blockedReason: String,
+        requiresHuman: Bool,
+        nowUnixMs: Int64
+    ) throws -> LocalAgentTodo {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        guard position > 0, nowUnixMs >= 0,
+              !requiresHuman || status == .blocked else {
+            throw AgentGroupChatError.invalidField("todoAcceptanceCheck")
+        }
+        return try transaction {
+            guard let existing = try readTodo(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: todoID
+            ), existing.status == .inProgress,
+            existing.acceptanceChecks.indices.contains(position - 1) else {
+                throw AgentGroupChatError.conflict
+            }
+            var checks = existing.acceptanceChecks
+            let current = checks[position - 1]
+            let revisedCheck = LocalAgentTodoAcceptanceCheck(
+                position: current.position,
+                criterion: current.criterion,
+                status: status,
+                evidence: evidence,
+                blockedReason: blockedReason,
+                requiresHuman: requiresHuman,
+                updatedAtUnixMs: nowUnixMs
+            )
+            try revisedCheck.validate()
+            checks[position - 1] = revisedCheck
+            try execute(
+                """
+                UPDATE local_agent_todos
+                SET acceptance_checks_json = ?, updated_at_unix_ms = ?
+                WHERE owner_user_id = ? AND agent_id = ? AND id = ? AND status = 'in_progress'
+                """,
+                [
+                    .text(try encodeJSON(checks)), .integer(nowUnixMs),
+                    .text(ownerUserID), .text(agentID), .text(todoID),
+                ]
+            )
+            guard sqlite3_changes(database) == 1 else {
+                throw AgentGroupChatError.conflict
+            }
+            return LocalAgentTodo(
+                id: existing.id,
+                ownerUserID: existing.ownerUserID,
+                agentID: existing.agentID,
+                teamRoomID: existing.teamRoomID,
+                sourceRoomID: existing.sourceRoomID,
+                sourceMessageID: existing.sourceMessageID,
+                title: existing.title,
+                detail: existing.detail,
+                priority: existing.priority,
+                sortOrder: existing.sortOrder,
+                status: existing.status,
+                blockedReason: existing.blockedReason,
+                result: existing.result,
+                executionContract: existing.executionContract,
+                executionPlan: existing.executionPlan,
+                acceptanceChecks: checks,
+                createdAtUnixMs: existing.createdAtUnixMs,
+                updatedAtUnixMs: nowUnixMs
+            )
         }
     }
 

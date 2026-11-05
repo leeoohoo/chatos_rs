@@ -9,7 +9,7 @@ use crate::models::{
     UpsertThreadRequest,
 };
 use crate::repositories::postgres::{decode, json, optional_timestamp, timestamp};
-use crate::repositories::records;
+use crate::repositories::{records, subject_memory_scopes};
 
 const SUMMARY_LOCK_TIMEOUT_SECS: i64 = 300;
 
@@ -64,6 +64,22 @@ pub async fn upsert_thread(
             .archived_at
             .or_else(|| (status == "archived").then(|| updated_at.clone())),
     };
+    let identity_scopes = subject_memory_scopes::thread_identity_scope_requests(&thread)?;
+    if let Some(existing) = existing.as_ref() {
+        let existing_scopes = subject_memory_scopes::thread_identity_scope_requests(existing)?;
+        if !existing_scopes.is_empty()
+            && identity_scopes
+                .iter()
+                .map(|(_, request)| request.subject_id.as_str())
+                .collect::<Vec<_>>()
+                != existing_scopes
+                    .iter()
+                    .map(|(_, request)| request.subject_id.as_str())
+                    .collect::<Vec<_>>()
+        {
+            return Err("memory-schema:v2 thread identity is immutable".to_string());
+        }
+    }
     let result = sqlx::query(
         "INSERT INTO engine_threads \
          (id,tenant_id,source_id,subject_id,thread_type,external_thread_id,status,summary_status, \
@@ -96,6 +112,7 @@ pub async fn upsert_thread(
     .await
     .map_err(|error| error.to_string())?;
     debug_assert!(result.rows_affected() > 0);
+    subject_memory_scopes::ensure_thread_identity_scopes(db, &thread).await?;
     Ok(thread)
 }
 
@@ -355,6 +372,34 @@ pub async fn release_summary_slot(
     .await
 }
 
+pub async fn release_expired_summary_slot(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+) -> Result<Option<EngineThread>, String> {
+    conditional_summary_mutation(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        "AND summary_status='running' AND (summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now())",
+        None,
+        |thread| {
+            thread.summary_status = if thread.pending_record_count > 0 {
+                "pending"
+            } else {
+                "idle"
+            }
+            .to_string();
+            thread.summary_job_run_id = None;
+            thread.summary_locked_at = None;
+            thread.summary_lock_expires_at = None;
+        },
+    )
+    .await
+}
+
 pub async fn try_acquire_rollup_slot(
     db: &Db,
     tenant_id: &str,
@@ -369,7 +414,7 @@ pub async fn try_acquire_rollup_slot(
         "UPDATE engine_threads SET rollup_job_run_id=$4,rollup_locked_at=$5,rollup_lock_expires_at=$6, \
          updated_at=$5,data=jsonb_set(data,'{updated_at}',to_jsonb($7::text),true) \
          WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
-         AND (rollup_job_run_id IS NULL OR rollup_lock_expires_at IS NULL OR rollup_lock_expires_at<=now()) \
+         AND (rollup_job_run_id IS NULL OR rollup_job_run_id=$4 OR rollup_lock_expires_at IS NULL OR rollup_lock_expires_at<=now()) \
          RETURNING data",
     ).bind(tenant_id).bind(source_id).bind(thread_id).bind(job_run_id)
       .bind(timestamp(&now)?).bind(timestamp(&expires)?).bind(&now)

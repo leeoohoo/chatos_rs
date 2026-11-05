@@ -52,7 +52,6 @@ impl MemoryPolicyKind {
                 job_type: Self::Summary,
                 enabled: true,
                 token_limit: None,
-                target_summary_tokens: None,
                 interval_seconds: None,
                 max_threads_per_tick: None,
                 count_limit: None,
@@ -63,7 +62,6 @@ impl MemoryPolicyKind {
                 job_type: Self::Rollup,
                 enabled: true,
                 token_limit: None,
-                target_summary_tokens: None,
                 interval_seconds: None,
                 max_threads_per_tick: None,
                 count_limit: None,
@@ -74,7 +72,6 @@ impl MemoryPolicyKind {
                 job_type: Self::SubjectMemory,
                 enabled: true,
                 token_limit: None,
-                target_summary_tokens: None,
                 interval_seconds: None,
                 max_threads_per_tick: None,
                 count_limit: None,
@@ -85,7 +82,6 @@ impl MemoryPolicyKind {
                 job_type: Self::ThreadRepair,
                 enabled: true,
                 token_limit: None,
-                target_summary_tokens: None,
                 interval_seconds: None,
                 max_threads_per_tick: None,
                 count_limit: None,
@@ -101,7 +97,6 @@ pub struct ManagedMemoryPolicy {
     pub job_type: MemoryPolicyKind,
     pub enabled: bool,
     pub token_limit: Option<i64>,
-    pub target_summary_tokens: Option<i64>,
     pub interval_seconds: Option<i64>,
     pub max_threads_per_tick: Option<i64>,
     pub count_limit: Option<i64>,
@@ -118,12 +113,6 @@ impl ManagedMemoryPolicy {
         let mut policy = kind.defaults();
         policy.enabled = config_bool(values, kind, "enabled").unwrap_or(policy.enabled);
         policy.token_limit = config_optional_i64(values, kind, "token_limit", policy.token_limit);
-        policy.target_summary_tokens = config_optional_i64(
-            values,
-            kind,
-            "target_summary_tokens",
-            policy.target_summary_tokens,
-        );
         policy.interval_seconds =
             config_optional_i64(values, kind, "interval_seconds", policy.interval_seconds);
         policy.max_threads_per_tick = config_optional_i64(
@@ -147,7 +136,6 @@ impl ManagedMemoryPolicy {
     pub fn apply_to_engine_job_policy(&self, policy: &mut EngineJobPolicy) {
         policy.enabled = self.enabled;
         policy.token_limit = self.token_limit;
-        policy.target_summary_tokens = self.target_summary_tokens;
         policy.interval_seconds = self.interval_seconds;
         policy.max_threads_per_tick = self.max_threads_per_tick;
         policy.count_limit = self.count_limit;
@@ -157,7 +145,6 @@ impl ManagedMemoryPolicy {
 
     pub fn normalized(mut self) -> Self {
         self.token_limit = self.token_limit.map(|value| value.max(128));
-        self.target_summary_tokens = self.target_summary_tokens.map(|value| value.max(128));
         self.interval_seconds = self.interval_seconds.map(|value| value.max(3));
         self.max_threads_per_tick = self.max_threads_per_tick.map(|value| value.max(1));
         self.count_limit = self.count_limit.map(|value| value.max(0));
@@ -246,7 +233,6 @@ pub fn managed_memory_policy_env_available(kind: MemoryPolicyKind) -> bool {
     [
         "enabled",
         "token_limit",
-        "target_summary_tokens",
         "interval_seconds",
         "max_threads_per_tick",
         "count_limit",
@@ -262,7 +248,6 @@ fn memory_policy_env_values(kind: MemoryPolicyKind) -> BTreeMap<String, Value> {
     for field in [
         "enabled",
         "token_limit",
-        "target_summary_tokens",
         "interval_seconds",
         "max_threads_per_tick",
         "count_limit",

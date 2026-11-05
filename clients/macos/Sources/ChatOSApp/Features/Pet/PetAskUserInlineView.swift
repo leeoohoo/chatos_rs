@@ -59,7 +59,19 @@ struct PetAskUserInlineView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    ForEach(prompt.fields) { field in
+                    if hasUnsupportedSensitiveFields(prompt) {
+                        Label(
+                            model.localized(
+                                "此请求包含不能通过本机 IPC 提交的密码、令牌或凭据。请取消请求，并在目标页面中自行完成登录。",
+                                english: "This request contains a password, token, or credential that cannot cross local IPC. Cancel it and authenticate directly in the target UI."
+                            ),
+                            systemImage: "lock.shield.fill"
+                        )
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    }
+
+                    ForEach(safeFields(prompt)) { field in
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 3) {
                                 Text(field.label)
@@ -94,21 +106,23 @@ struct PetAskUserInlineView: View {
 
             Divider()
             HStack(spacing: 8) {
-                if prompt.allowsCancel {
+                if prompt.allowsCancel || hasUnsupportedSensitiveFields(prompt) {
                     Button("取消请求", role: .destructive) { cancel(prompt) }
                 }
                 Spacer()
-                Button {
-                    submit(prompt)
-                } label: {
-                    if isSubmitting {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("提交", systemImage: "checkmark")
+                if !hasUnsupportedSensitiveFields(prompt) {
+                    Button {
+                        submit(prompt)
+                    } label: {
+                        if isSubmitting {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("提交", systemImage: "checkmark")
+                        }
                     }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!isValid(prompt) || isSubmitting)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(!isValid(prompt) || isSubmitting)
             }
             .controlSize(.small)
         }
@@ -183,7 +197,7 @@ struct PetAskUserInlineView: View {
             let loaded = try await onLoadPrompt(activity)
             guard !Task.isCancelled else { return }
             prompt = loaded
-            values = Dictionary(uniqueKeysWithValues: loaded.fields.map { ($0.key, $0.defaultValue) })
+            values = Dictionary(uniqueKeysWithValues: safeFields(loaded).map { ($0.key, $0.defaultValue) })
             selection = Set(loaded.choice?.defaultSelection ?? [])
         } catch {
             guard !Task.isCancelled else { return }
@@ -235,10 +249,15 @@ struct PetAskUserInlineView: View {
         } else {
             answer = nil
         }
-        return AskUserSubmission(values: values, selection: answer)
+        let keys = Set(safeFields(prompt).map(\.key))
+        return AskUserSubmission(
+            values: values.filter { keys.contains($0.key) },
+            selection: answer
+        )
     }
 
     private func isValid(_ prompt: AskUserPrompt) -> Bool {
+        guard !hasUnsupportedSensitiveFields(prompt) else { return false }
         for field in prompt.fields where field.isRequired {
             if values[field.key, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return false
@@ -269,8 +288,16 @@ struct PetAskUserInlineView: View {
     }
 
     private func clearSecrets(_ prompt: AskUserPrompt) {
-        for field in prompt.fields where field.isSecret {
+        for field in prompt.fields where field.isSensitiveCredentialField {
             values[field.key] = ""
         }
+    }
+
+    private func safeFields(_ prompt: AskUserPrompt) -> [AskUserField] {
+        prompt.fields.filter { !$0.isSensitiveCredentialField }
+    }
+
+    private func hasUnsupportedSensitiveFields(_ prompt: AskUserPrompt) -> Bool {
+        safeFields(prompt).count != prompt.fields.count
     }
 }

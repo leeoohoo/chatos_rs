@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use memory_engine_sdk::{
-    MemoryEngineClient, SdkBatchSyncRecordsRequest, SdkUpsertThreadRequest, UpsertRecordInput,
-};
+use memory_engine_sdk::{MemoryEngineClient, SdkBatchSyncRecordsRequest, UpsertRecordInput};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -18,6 +16,7 @@ use crate::traits::{MemoryRecordWriter, SaveRecordInput, SaveToolRecordInput};
 
 use super::log_summary::summarize_record_batch;
 use super::normalized;
+use super::upsert_canonical_memory_thread;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRecordScope {
@@ -27,6 +26,12 @@ pub struct MemoryRecordScope {
     pub thread_id: Option<String>,
     pub record_type: String,
     pub default_summary_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_aggregation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_kind: Option<String>,
 }
 
 impl MemoryRecordScope {
@@ -37,6 +42,9 @@ impl MemoryRecordScope {
             thread_id: None,
             record_type: "message".to_string(),
             default_summary_status: Some("pending".to_string()),
+            agent_id: None,
+            project_aggregation_id: None,
+            thread_kind: None,
         }
     }
 
@@ -47,6 +55,9 @@ impl MemoryRecordScope {
             thread_id: Some(thread_id.into()),
             record_type: "message".to_string(),
             default_summary_status: Some("pending".to_string()),
+            agent_id: None,
+            project_aggregation_id: None,
+            thread_kind: None,
         }
     }
 
@@ -59,6 +70,9 @@ impl MemoryRecordScope {
             thread_id: None,
             record_type: "message".to_string(),
             default_summary_status: Some("pending".to_string()),
+            agent_id: None,
+            project_aggregation_id: None,
+            thread_kind: None,
         }
     }
 
@@ -76,6 +90,26 @@ impl MemoryRecordScope {
         self.default_summary_status = default_summary_status;
         self
     }
+
+    pub fn with_memory_identity(
+        mut self,
+        agent_id: impl Into<String>,
+        project_aggregation_id: Option<String>,
+        thread_kind: impl Into<String>,
+    ) -> Self {
+        self.agent_id = Some(agent_id.into());
+        self.project_aggregation_id = project_aggregation_id;
+        self.thread_kind = Some(thread_kind.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecordThreadIdentity {
+    agent_id: Option<String>,
+    agent_name: Option<String>,
+    project_aggregation_id: Option<String>,
+    thread_kind: String,
 }
 
 #[derive(Clone)]
@@ -83,7 +117,7 @@ pub struct MemoryEngineRecordWriter {
     client: MemoryEngineClient,
     scope: MemoryRecordScope,
     source_id: Option<String>,
-    ensured_threads: Arc<Mutex<HashSet<(String, String)>>>,
+    ensured_threads: Arc<Mutex<HashMap<(String, String), RecordThreadIdentity>>>,
 }
 
 impl MemoryEngineRecordWriter {
@@ -98,7 +132,7 @@ impl MemoryEngineRecordWriter {
             client: MemoryEngineClient::new_direct(base_url, timeout, source_id.clone())?,
             scope,
             source_id: Some(source_id),
-            ensured_threads: Arc::new(Mutex::new(HashSet::new())),
+            ensured_threads: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -107,7 +141,7 @@ impl MemoryEngineRecordWriter {
             client,
             scope,
             source_id: None,
-            ensured_threads: Arc::new(Mutex::new(HashSet::new())),
+            ensured_threads: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -121,7 +155,8 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
     async fn save_record(&self, input: SaveRecordInput) -> Result<(), String> {
         let tenant_id = self.tenant_id_for_record(&input)?;
         let thread_id = self.thread_id_for_record(&input)?;
-        self.ensure_thread(tenant_id.as_str(), thread_id.as_str())
+        let identity = self.thread_identity_for_record(&input);
+        self.ensure_thread(tenant_id.as_str(), thread_id.as_str(), &identity)
             .await?;
         let record = self.upsert_record_input(input)?;
         let records = vec![record];
@@ -189,6 +224,9 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
             let input: SaveRecordInput = input.into();
             let tenant_id = self.tenant_id_for_record(&input)?;
             let thread_id = self.thread_id_for_record(&input)?;
+            let identity = self.thread_identity_for_record(&input);
+            self.ensure_thread(tenant_id.as_str(), thread_id.as_str(), &identity)
+                .await?;
             let record = self.upsert_record_input(input)?;
             batches
                 .entry((tenant_id, thread_id))
@@ -197,8 +235,6 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
         }
 
         for ((tenant_id, thread_id), records) in batches {
-            self.ensure_thread(tenant_id.as_str(), thread_id.as_str())
-                .await?;
             let summary = summarize_record_batch(records.as_slice());
             let source_id = self.source_id.as_deref().unwrap_or("");
             info!(
@@ -260,31 +296,77 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
 }
 
 impl MemoryEngineRecordWriter {
-    async fn ensure_thread(&self, tenant_id: &str, thread_id: &str) -> Result<(), String> {
+    async fn ensure_thread(
+        &self,
+        tenant_id: &str,
+        thread_id: &str,
+        identity: &RecordThreadIdentity,
+    ) -> Result<(), String> {
         let key = (tenant_id.to_string(), thread_id.to_string());
-        if self.ensured_threads.lock().await.contains(&key) {
-            return Ok(());
+        let agent_id = identity
+            .agent_id
+            .as_deref()
+            .ok_or_else(|| "memory thread requires an explicit agent_id".to_string())?;
+        if let Some(ensured) = self.ensured_threads.lock().await.get(&key).cloned() {
+            if ensured.agent_id != identity.agent_id
+                || ensured.project_aggregation_id != identity.project_aggregation_id
+                || ensured.thread_kind != identity.thread_kind
+            {
+                return Err("memory thread identity changed after it was established".to_string());
+            }
+            if ensured.agent_name == identity.agent_name {
+                return Ok(());
+            }
         }
-        self.client
-            .upsert_thread(
-                thread_id,
-                &SdkUpsertThreadRequest {
-                    tenant_id: tenant_id.to_string(),
-                    subject_id: tenant_id.to_string(),
-                    thread_type: "conversation".to_string(),
-                    external_thread_id: Some(thread_id.to_string()),
-                    title: None,
-                    labels: None,
-                    metadata: None,
-                    status: Some("active".to_string()),
-                    created_at: None,
-                    updated_at: None,
-                    archived_at: None,
-                },
-            )
-            .await?;
-        self.ensured_threads.lock().await.insert(key);
+        upsert_canonical_memory_thread(
+            &self.client,
+            tenant_id,
+            thread_id,
+            agent_id,
+            identity.agent_name.as_deref(),
+            identity.project_aggregation_id.as_deref(),
+            identity.thread_kind.as_str(),
+        )
+        .await?;
+        self.ensured_threads
+            .lock()
+            .await
+            .insert(key, identity.clone());
         Ok(())
+    }
+
+    fn thread_identity_for_record(&self, input: &SaveRecordInput) -> RecordThreadIdentity {
+        let metadata = input.metadata.as_ref();
+        let value = |key: &str| {
+            metadata
+                .and_then(|item| item.get(key))
+                .and_then(serde_json::Value::as_str)
+                .and_then(normalized)
+        };
+        let agent_id = self
+            .scope
+            .agent_id
+            .as_deref()
+            .and_then(normalized)
+            .or_else(|| value("agent_id"));
+        RecordThreadIdentity {
+            agent_id,
+            agent_name: value("agent_name"),
+            project_aggregation_id: self
+                .scope
+                .project_aggregation_id
+                .as_deref()
+                .and_then(normalized)
+                .or_else(|| value("thread_project_aggregation_id")),
+            thread_kind: self
+                .scope
+                .thread_kind
+                .as_deref()
+                .and_then(normalized)
+                .or_else(|| value("thread_kind"))
+                .or_else(|| value("message_mode"))
+                .unwrap_or_else(|| "conversation".to_string()),
+        }
     }
 
     pub(crate) fn tenant_id_for_record(&self, input: &SaveRecordInput) -> Result<String, String> {

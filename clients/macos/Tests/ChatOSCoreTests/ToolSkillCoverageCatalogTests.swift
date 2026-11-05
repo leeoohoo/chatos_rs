@@ -183,8 +183,8 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             $0.providerID == ProductToolProviderID.localAgentChat
         }.flatMap(\.toolNames)
 
-        XCTAssertEqual(providerTools.count, 87)
-        XCTAssertEqual(Set(providerTools).count, 87)
+        XCTAssertEqual(providerTools.count, 91)
+        XCTAssertEqual(Set(providerTools).count, 91)
         // The two agent_skill_* names are intentionally shared by Main Chat and the
         // Task Execution capability broker; provider identity selects their source.
         for toolName in [
@@ -196,13 +196,13 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             )
         }
         XCTAssertEqual(nativeBuiltinTools.count, 27)
-        XCTAssertEqual(localAgentChatTools.count, 32)
-        XCTAssertEqual(Set(localAgentChatTools).count, 32)
+        XCTAssertEqual(localAgentChatTools.count, 34)
+        XCTAssertEqual(Set(localAgentChatTools).count, 34)
         XCTAssertEqual(
             bindings.filter {
                 $0.providerID == ProductToolProviderID.capabilityBroker
             }.flatMap(\.toolNames).count,
-            5
+            7
         )
         XCTAssertEqual(
             bindings.first {
@@ -283,8 +283,8 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(router.contains("# Agent communication context"))
         XCTAssertTrue(router.contains("# Remote connection"))
         XCTAssertTrue(router.contains("product-skill:chatos-agent-staffing"))
-        XCTAssertTrue(router.contains("Propose creating, inviting, or removing"))
-        XCTAssertFalse(router.contains("# Agent staffing proposals"))
+        XCTAssertTrue(router.contains("Create, invite, remove, or safely delete"))
+        XCTAssertFalse(router.contains("# Agent staffing management"))
     }
 
     func testAuditDiagnosesMissingUnknownAndMismatchedBindingsWithoutEnforcement() {

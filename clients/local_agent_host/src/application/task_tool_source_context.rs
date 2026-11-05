@@ -11,16 +11,6 @@ pub(super) struct SourceConversationContext {
     pub(super) remote_connection_id: Option<String>,
 }
 
-pub(super) fn source_attachments(parent: &LocalAgentRunRecord) -> Result<Vec<Value>, String> {
-    let Some(attachments) = parent.input.get("attachments") else {
-        return Ok(Vec::new());
-    };
-    attachments
-        .as_array()
-        .cloned()
-        .ok_or_else(|| "source conversation attachments must be an array".to_string())
-}
-
 pub(super) fn source_conversation_context(
     parent: &LocalAgentRunRecord,
 ) -> SourceConversationContext {

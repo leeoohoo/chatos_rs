@@ -66,6 +66,7 @@ struct NativeLocalHumanApprovalRequest: Sendable {
     let requestedPermissionsDescription: String
     let approvalScopeKey: String
     let workspaceID: String
+    let projectID: String?
     let evaluationArguments: [String]?
     let automaticApprovalEvidenceComplete: Bool
 }
@@ -93,7 +94,8 @@ extension NativeLocalConnectorService: NativeLocalHumanApprovalServicing {
             approvalScopeKey: request.approvalScopeKey,
             evaluationArguments: request.evaluationArguments,
             automaticApprovalEvidenceComplete: request.automaticApprovalEvidenceComplete,
-            workspaceID: request.workspaceID
+            workspaceID: request.workspaceID,
+            projectID: request.projectID
         )
     }
 }
@@ -245,6 +247,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             requestedPermissionsDescription: presentation.permission,
             approvalScopeKey: presentation.scope + ":\(context.conversationID)",
             workspaceID: approvalScope.workspaceID,
+            projectID: context.projectID,
             evaluationArguments: editEvidence.map { [$0.evaluationSummary] }
                 ?? presentation.evaluationArguments,
             automaticApprovalEvidenceComplete: editEvidence?.isComplete

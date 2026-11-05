@@ -8,14 +8,16 @@ struct AgentManagementCard: View, Equatable {
     let professionLabel: String
     let isSelected: Bool
     let isPreparingEditor: Bool
+    let isDeleting: Bool
     let onOpenDirect: @MainActor () -> Void
     let onEdit: @MainActor () -> Void
+    let onDelete: @MainActor () -> Void
     let onSelect: @MainActor () -> Void
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.agent == rhs.agent && lhs.modelAvailability == rhs.modelAvailability
             && lhs.professionLabel == rhs.professionLabel && lhs.isSelected == rhs.isSelected
-            && lhs.isPreparingEditor == rhs.isPreparingEditor
+            && lhs.isPreparingEditor == rhs.isPreparingEditor && lhs.isDeleting == rhs.isDeleting
     }
 
     var body: some View {
@@ -54,6 +56,21 @@ struct AgentManagementCard: View, Equatable {
                 .controlSize(.small)
                 .fixedSize()
                 Spacer(minLength: 0)
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("删除", systemImage: "trash")
+                        .opacity(isDeleting ? 0 : 1)
+                        .overlay {
+                            if isDeleting {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .fixedSize()
+                .disabled(isDeleting)
                 Button {
                     onEdit()
                 } label: {
@@ -68,7 +85,7 @@ struct AgentManagementCard: View, Equatable {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .fixedSize()
-                .disabled(isPreparingEditor)
+                .disabled(isPreparingEditor || isDeleting)
             }
             Divider()
             LabeledContent("模型") {

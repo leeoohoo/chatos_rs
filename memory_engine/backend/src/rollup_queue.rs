@@ -168,7 +168,7 @@ async fn process_rollup_event(
         return Ok(());
     }
 
-    let settings = cp_service::build_rollup_settings_from_policy(&policy);
+    let settings = cp_service::build_rollup_settings_from_policy(&policy)?;
     let Some(prepared) = summary::prepare_thread_rollup(
         &state.pool,
         envelope.tenant_id.as_str(),
@@ -218,10 +218,18 @@ async fn process_rollup_event(
 }
 
 async fn run_reconciler(state: Arc<AppState>) {
-    let mut interval = tokio::time::interval(state.config.rollup_outbox_reconcile_interval);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        interval.tick().await;
+        let scan_interval = match control_plane::get_effective_job_policy(&state.pool, "rollup")
+            .await
+            .and_then(|policy| cp_service::managed_policy_scan_interval(&policy))
+        {
+            Ok(value) => value,
+            Err(error) => {
+                warn!(error, "Memory Engine rollup scan policy is invalid");
+                tokio::time::sleep(state.config.rollup_outbox_reconcile_interval).await;
+                continue;
+            }
+        };
         let stale_before = (chrono::Utc::now()
             - chrono::Duration::seconds(ROLLUP_DISPATCH_CLAIM_LEASE_SECS))
         .to_rfc3339();
@@ -248,6 +256,7 @@ async fn run_reconciler(state: Arc<AppState>) {
                 "Memory Engine failed to arm rollup database dispatches"
             );
         }
+        tokio::time::sleep(scan_interval).await;
     }
 }
 
@@ -256,13 +265,15 @@ async fn arm_rollup_dispatches(state: &AppState) -> Result<usize, String> {
     if !policy.enabled {
         return Ok(0);
     }
-    let settings = cp_service::build_rollup_settings_from_policy(&policy);
+    let settings = cp_service::build_rollup_settings_from_policy(&policy)?;
+    let scan_limit =
+        cp_service::managed_policy_scan_limit(&policy, state.config.rollup_outbox_batch_size)?;
     let candidates = summaries::list_threads_with_pending_rollups(
         &state.pool,
         None,
         None,
         settings.max_level,
-        state.config.rollup_outbox_batch_size,
+        scan_limit,
     )
     .await?;
     let mut armed = 0usize;

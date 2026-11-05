@@ -18,6 +18,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let proposeMemberToolName = "agent_propose_member"
     public static let proposeExistingMemberToolName = "agent_propose_existing_member"
     public static let proposeMemberRemovalToolName = "agent_propose_member_removal"
+    public static let deleteAgentToolName = "agent_delete"
     public static let sendMessageToolName = "chat_send_message"
     public static let completeHeartbeatToolName = "chat_heartbeat_complete"
     public static let completeManagerCycleToolName = "agent_cycle_complete"
@@ -31,6 +32,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let todoDependencyOptionsToolName = "todo_dependency_options"
     public static let todoGetContextToolName = "todo_get_context"
     public static let todoProgressAppendToolName = "todo_progress_append"
+    public static let todoAcceptanceUpdateToolName = "todo_acceptance_update"
     public static let todoReadProgressToolName = "todo_read_progress"
     public static let todoCompleteToolName = "todo_complete"
     public static let todoBlockToolName = "todo_block"
@@ -54,6 +56,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     let roomChangeHandler: @Sendable (String) async -> Void
     let progressiveSkills: LocalAgentProgressiveSkillSession
     let productSkills: ProductToolSkillSession
+    let managerInboxSession: LocalAgentManagerInboxSession
 
     public init(
         store: any AgentGroupChatStore,
@@ -78,6 +81,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             snapshot: progressiveSkillSnapshot
         )
         self.productSkills = productSkillSession
+        self.managerInboxSession = LocalAgentManagerInboxSession()
         self.limits = limits
         self.now = now
         self.references = LocalAgentRunReferenceVault(
@@ -100,6 +104,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             let executorTools: Set<String> = [
                 Self.todoGetContextToolName,
                 Self.todoProgressAppendToolName,
+                Self.todoAcceptanceUpdateToolName,
                 Self.todoCompleteToolName,
                 Self.todoBlockToolName,
                 Self.teamAssetListToolName,
@@ -114,6 +119,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         let executorOnly: Set<String> = [
             Self.todoGetContextToolName,
             Self.todoProgressAppendToolName,
+            Self.todoAcceptanceUpdateToolName,
             Self.todoCompleteToolName,
             Self.todoBlockToolName,
         ]
@@ -126,6 +132,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 $0.name != Self.proposeMemberToolName
                     && $0.name != Self.proposeExistingMemberToolName
                     && $0.name != Self.proposeMemberRemovalToolName
+                    && $0.name != Self.deleteAgentToolName
             }
         } else {
             definitions.removeAll { $0.name == Self.proposeMemberToolName }
@@ -156,7 +163,10 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     public func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         do {
-            return try await executeValidated(call)
+            if let failure = try await productSkillGateFailure(for: call.name) {
+                return failure
+            }
+            return try await executeIdentityBound(call)
         } catch let error as AgentGroupChatError {
             // Validation, authorization and optimistic-concurrency failures are known to have
             // rolled back locally. Returning them as tool failures lets the model correct its
@@ -174,10 +184,34 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         }
     }
 
-    private func executeValidated(_ call: AgentToolCall) async throws -> AgentToolOutcome {
-        if let failure = try await productSkillGateFailure(for: call.name) {
-            return failure
+    /// Executes a team Executor tool after the Rust Host has already applied its immutable
+    /// run-bound Product Skill policy. The native bridge still applies every identity, Todo,
+    /// acceptance and optimistic-concurrency check owned by this provider.
+    func executeFromNativeTeamExecutor(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        guard NativeLocalAgentPlatformToolCatalog.teamExecutorToolNames.contains(call.name) else {
+            return Self.structuredFailure(
+                code: "team_executor_tool_not_allowed",
+                field: "tool",
+                message: "当前 Host Run 未授权这个团队执行工具。",
+                retryable: false
+            )
         }
+        do {
+            return try await executeIdentityBound(call)
+        } catch let error as AgentGroupChatError {
+            guard case .storage = error else {
+                return Self.structuredFailure(
+                    code: Self.errorCode(error),
+                    field: Self.errorField(error),
+                    message: error.localizedDescription,
+                    retryable: error != .permissionDenied
+                )
+            }
+            throw error
+        }
+    }
+
+    private func executeIdentityBound(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         switch call.name {
         case Self.bootstrapToolName:
             return try await bootstrap(call)
@@ -205,6 +239,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await proposeExistingMember(call)
         case Self.proposeMemberRemovalToolName:
             return try await proposeMemberRemoval(call)
+        case Self.deleteAgentToolName:
+            return try await deleteAgent(call)
         case Self.sendMessageToolName:
             return try await sendMessage(call)
         case Self.completeHeartbeatToolName:
@@ -231,6 +267,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await todoGetContext(call)
         case Self.todoProgressAppendToolName:
             return try await appendTodoProgress(call)
+        case Self.todoAcceptanceUpdateToolName:
+            return try await updateTodoAcceptance(call)
         case Self.todoReadProgressToolName:
             return try await readTodoProgress(call)
         case Self.todoCompleteToolName:
@@ -273,7 +311,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 "thinking_level": [
                     "type": "string",
                     "enum": LocalAgentThinkingLevelCatalog.allValues.sorted(),
-                    "description": "省略时继承当前 Agent 的思考等级；确认创建时会按实际模型能力重新校验。",
+                    "description": "省略时继承当前 Agent 的思考等级；创建时会按实际模型能力重新校验。",
                 ],
                 "profession_key": [
                     "type": "string",
@@ -287,7 +325,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         ]
         return .init(
             name: Self.proposeMemberToolName,
-            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。必须从客户端目录选择职业；模型配置由客户端继承并透传，AI 不填写模型 ID；thinking_level 省略时继承当前 Agent。该工具只持久化待确认提案，绝不会直接创建 Agent。",
+            description: "使用已授予的人员管理权限直接创建新 Agent，同时保留已批准的审计记录，不再等待 Human 逐项确认。必须从客户端目录选择职业；模型配置由客户端继承并透传，AI 不填写模型 ID；thinking_level 省略时继承当前 Agent。",
             schema: try JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]),
             effect: .write
         )
@@ -351,13 +389,14 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
              completeHeartbeatToolName, completeManagerCycleToolName:
             ProductToolSkillBindingID.collaborationMessaging
         case proposeMemberToolName, proposeExistingMemberToolName,
-             proposeMemberRemovalToolName:
+             proposeMemberRemovalToolName, deleteAgentToolName:
             ProductToolSkillBindingID.agentStaffing
         case todoListToolName, todoScheduleStateToolName, todoStartNextToolName,
              todoAddToolName, todoUpdateToolName, todoReorderToolName,
              todoExecutionOptionsToolName, todoDependencyOptionsToolName:
             ProductToolSkillBindingID.todoPlanning
-        case todoGetContextToolName, todoProgressAppendToolName, todoReadProgressToolName,
+        case todoGetContextToolName, todoProgressAppendToolName, todoAcceptanceUpdateToolName,
+             todoReadProgressToolName,
              todoCompleteToolName, todoBlockToolName:
             ProductToolSkillBindingID.todoExecution
         case teamAssetListToolName, teamAssetGetToolName, teamAssetCreateToolName,

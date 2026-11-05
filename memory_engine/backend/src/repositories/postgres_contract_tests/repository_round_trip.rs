@@ -74,6 +74,46 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
     .expect("release summary slot")
     .expect("owned slot");
 
+    assert!(crate::repositories::threads::try_acquire_summary_slot(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "expired-summary-job",
+    )
+    .await
+    .expect("claim expiring summary slot")
+    .is_some());
+    let expired_at = "2020-01-01T00:00:00Z";
+    sqlx::query(
+        "UPDATE engine_threads SET summary_lock_expires_at=$4, \
+         data=jsonb_set(data,'{summary_lock_expires_at}',to_jsonb($5::text),true) \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .bind(timestamp(expired_at).expect("expired summary time"))
+    .bind(expired_at)
+    .execute(&pool)
+    .await
+    .expect("expire summary slot");
+    assert!(
+        crate::repositories::threads::list_expired_summary_threads(&pool, 100)
+            .await
+            .expect("list expired summary slots")
+            .iter()
+            .any(|thread| thread.id == thread_id)
+    );
+    let recovered = crate::repositories::threads::release_expired_summary_slot(
+        &pool, &tenant, &source, &thread_id,
+    )
+    .await
+    .expect("release expired summary slot")
+    .expect("expired slot");
+    assert_eq!(recovered.summary_status, "idle");
+    assert!(recovered.summary_job_run_id.is_none());
+
     let record = EngineRecord {
         id: format!("record-{suffix}"),
         thread_id: thread_id.clone(),
@@ -119,6 +159,7 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
         None,
         None,
         0,
+        None,
     )
     .await
     .expect("create summary");
@@ -145,12 +186,13 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
         .expect("summarize records"),
         1
     );
-    let rollup_event = crate::repositories::summaries::claim_pending_rollup_dispatches(&pool, 10)
-        .await
-        .expect("claim rollup event")
-        .into_iter()
-        .find(|event| event.id == summary.id)
-        .expect("pending rollup event");
+    let rollup_event =
+        crate::repositories::summaries::claim_pending_rollup_dispatches(&pool, 10_000)
+            .await
+            .expect("claim rollup event")
+            .into_iter()
+            .find(|event| event.id == summary.id)
+            .expect("pending rollup event");
     assert!(
         crate::repositories::summaries::mark_rollup_dispatch_consumed(&pool, &rollup_event)
             .await

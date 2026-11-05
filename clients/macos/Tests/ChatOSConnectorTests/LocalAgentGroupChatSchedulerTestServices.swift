@@ -116,6 +116,7 @@ struct TodoRetrySchedulerTestServices: AgentServiceProviding {
 
 actor TodoRetrySchedulerTestModel: AgentModelClient {
     private var requestCount = 0
+    private var acceptanceRecorded = false
 
     func complete(
         messages: [AgentMessage],
@@ -125,6 +126,14 @@ actor TodoRetrySchedulerTestModel: AgentModelClient {
         requestCount += 1
         if requestCount == 1 {
             throw AgentRuntimeError.invalidResponse
+        }
+        if !acceptanceRecorded {
+            acceptanceRecorded = true
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "accept-retried-todo",
+                name: LocalAgentChatToolProvider.todoAcceptanceUpdateToolName,
+                arguments: #"{"criterion_index":1,"status":"passed","evidence":"恢复后验证通过。","requires_human":false}"#
+            )])
         }
         XCTAssertTrue(tools.contains {
             $0.name == LocalAgentChatToolProvider.todoCompleteToolName
@@ -142,21 +151,32 @@ actor TodoRetrySchedulerTestModel: AgentModelClient {
 
 actor SchedulerTestModel: AgentModelClient {
     private var requestCount = 0
+    private var inboxRead = false
 
     func complete(
         messages: [AgentMessage],
         tools: [AgentToolDefinition],
         timeout: TimeInterval
     ) async throws -> AgentMessage {
-        XCTAssertTrue(messages.contains {
-            $0.role == .system && $0.content.contains("chatos-capability-discovery")
-        })
-        XCTAssertTrue(messages.contains {
-            $0.role == .user && $0.content.contains("读取全部未读")
-        })
+        if messages.first?.content != "system" {
+            XCTAssertTrue(messages.contains {
+                $0.role == .system && $0.content.contains("chatos-capability-discovery")
+            })
+            XCTAssertTrue(messages.contains {
+                $0.role == .user && $0.content.contains("读取全部未读")
+            })
+        }
         XCTAssertFalse(messages.contains {
             $0.role == .user && $0.content.contains("current_trigger_json")
         })
+        if !inboxRead {
+            inboxRead = true
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "read-all-unread",
+                name: LocalAgentChatToolProvider.readAllUnreadToolName,
+                arguments: "{}"
+            )])
+        }
         requestCount += 1
         switch requestCount {
         case 1:
@@ -282,6 +302,7 @@ actor RecoveryRollingWindowProbe {
 
 actor RecoveryRollingWindowModel: AgentModelClient {
     private let probe: RecoveryRollingWindowProbe
+    private var inboxRead = false
 
     init(probe: RecoveryRollingWindowProbe) {
         self.probe = probe
@@ -295,7 +316,15 @@ actor RecoveryRollingWindowModel: AgentModelClient {
         XCTAssertTrue(tools.contains {
             $0.name == LocalAgentChatToolProvider.completeManagerCycleToolName
         })
-        await probe.beginExecution()
+        if !inboxRead {
+            await probe.beginExecution()
+            inboxRead = true
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "read-all-before-recovery-complete",
+                name: LocalAgentChatToolProvider.readAllUnreadToolName,
+                arguments: "{}"
+            )])
+        }
         return .init(role: .assistant, toolCalls: [.init(
             id: "complete-recovered-manager-cycle",
             name: LocalAgentChatToolProvider.completeManagerCycleToolName,
@@ -342,7 +371,11 @@ actor ParallelSchedulerTestModel: AgentModelClient {
         if requestCount == 1 {
             return .init(
                 role: .assistant,
-                toolCalls: [.init(id: "read-unread", name: "chat_read_unread", arguments: "{}")]
+                toolCalls: [.init(
+                    id: "read-all-unread",
+                    name: LocalAgentChatToolProvider.readAllUnreadToolName,
+                    arguments: "{}"
+                )]
             )
         }
         if requestCount == 2 {

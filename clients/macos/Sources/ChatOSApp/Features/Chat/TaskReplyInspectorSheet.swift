@@ -20,58 +20,33 @@ struct TaskReplyInlineInspectorView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                Label(viewModel.section.title(language: model.interfaceLanguage), systemImage: sectionIcon)
-                    .appFont(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppPalette.ai)
-                Spacer()
-                if viewModel.isLoading || viewModel.isLoadingModelOutput {
-                    ProgressView().controlSize(.small)
-                }
-                if viewModel.canRestartActiveTask || viewModel.canCancelActiveTask {
-                    Menu {
-                        if viewModel.canRestartActiveTask {
-                            Button {
-                                confirmsRestart = true
-                            } label: {
-                                Label("恢复执行", systemImage: "arrow.clockwise.circle")
-                            }
-                        }
-                        if viewModel.canCancelActiveTask {
-                            Button(role: .destructive) {
-                                confirmsCancellation = true
-                            } label: {
-                                Label("停止任务", systemImage: "stop.circle")
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .disabled(viewModel.isRestarting || viewModel.isCancelling)
-                    .help(model.localized("任务操作", english: "Task Actions"))
-                }
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            inspectorHeader
 
             if let error = viewModel.recoveryErrorMessage {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .appFont(.caption)
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 12)
             }
 
             Divider()
-            TaskReplyInspectorContent(viewModel: viewModel)
+            ScrollView {
+                TaskReplyInspectorContent(viewModel: viewModel)
+                    .padding(18)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+        .frame(maxHeight: 560)
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 14))
         .overlay {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 14)
                 .stroke(AppPalette.ai.opacity(0.16), lineWidth: 1)
         }
+        .shadow(color: .black.opacity(0.045), radius: 12, y: 4)
         .task {
             viewModel.update(selection: selection)
             viewModel.load()
@@ -111,10 +86,69 @@ struct TaskReplyInlineInspectorView: View {
         }
     }
 
+    private var inspectorHeader: some View {
+        HStack(spacing: 12) {
+            Image(systemName: sectionIcon)
+                .appFont(.system(size: 13, weight: .semibold))
+                .foregroundStyle(AppPalette.ai)
+                .frame(width: 30, height: 30)
+                .background(AppPalette.aiSoft, in: RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(viewModel.section.title(language: model.interfaceLanguage))
+                    .appFont(.subheadline.weight(.semibold))
+                Text(sectionSubtitle)
+                    .appFont(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if viewModel.isLoading || viewModel.isLoadingModelOutput {
+                ProgressView().controlSize(.small)
+            }
+            if viewModel.canRestartActiveTask || viewModel.canCancelActiveTask {
+                Menu {
+                    if viewModel.canRestartActiveTask {
+                        Button {
+                            confirmsRestart = true
+                        } label: {
+                            Label("恢复执行", systemImage: "arrow.clockwise.circle")
+                        }
+                    }
+                    if viewModel.canCancelActiveTask {
+                        Button(role: .destructive) {
+                            confirmsCancellation = true
+                        } label: {
+                            Label("停止任务", systemImage: "stop.circle")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: 28, height: 28)
+                        .background(AppPalette.inputSurface, in: Circle())
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(viewModel.isRestarting || viewModel.isCancelling)
+                .help(model.localized("任务操作", english: "Task Actions"))
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(AppPalette.surfaceSubtle.opacity(0.55))
+    }
+
     private var sectionIcon: String {
         switch viewModel.section {
         case .process: "waveform.path.ecg"
         case .detail: "doc.text.magnifyingglass"
+        case .capabilities: "puzzlepiece.extension"
+        }
+    }
+
+    private var sectionSubtitle: String {
+        switch viewModel.section {
+        case .process: "按时间查看任务的真实执行节点"
+        case .detail: "查看目标、结果与诊断信息"
+        case .capabilities: "集中查看本任务真正使用的插件与工具"
         }
     }
 }
@@ -149,6 +183,16 @@ struct TaskReplyInspectorContent: View {
                     )
                 case .detail:
                     taskDetail(task)
+                case .capabilities:
+                    if let usage = TaskCapabilityUsageSummary.decode(task.taskToolStateJSON) {
+                        TaskCapabilityUsageView(usage: usage)
+                    } else {
+                        ContentUnavailableView(
+                            "暂无插件与工具记录",
+                            systemImage: "puzzlepiece.extension",
+                            description: Text("任务产生真实调用后，会在这里集中展示。")
+                        )
+                    }
                 }
             }
         }

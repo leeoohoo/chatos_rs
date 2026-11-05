@@ -14,10 +14,7 @@ use super::super::selectors::{
     mark_oversized_records_as_summarized, select_pending_records_for_summary,
 };
 use super::super::settings::load_summary_job_settings;
-use super::super::{
-    PendingRecordSelection, SummaryJobSettings, DEFAULT_PENDING_RECORD_SCAN_LIMIT,
-    MAX_THREAD_SUMMARY_TARGET_TOKENS,
-};
+use super::super::{PendingRecordSelection, SummaryJobSettings, DEFAULT_PENDING_RECORD_SCAN_LIMIT};
 use super::job::{
     create_thread_summary_job_run, done_metadata, failed_metadata, finish_thread_summary_job_run,
     noop_metadata, FrozenThreadSummarySelection, THREAD_DIRECT_TRIGGER,
@@ -122,7 +119,8 @@ pub(crate) async fn run_thread_summary_with_thread(
     let source_id = thread.source_id.clone();
     let thread_id = thread.id.clone();
     let mut ctx = load_thread_summary_execution_context_for_thread(db, thread).await?;
-    ctx.settings.cloud_resume_kind = Some(trigger_type.to_string());
+    ctx.settings.cloud_resume_kind =
+        Some(crate::services::memory_cloud_agent::THREAD_SUMMARY_JOB_RESUME_KIND.to_string());
     if !ctx.should_run() {
         return Ok(noop_response(thread_id.as_str()));
     }
@@ -176,9 +174,6 @@ pub(crate) async fn start_thread_summary_job(
         ctx.thread.subject_id.as_str(),
         ctx.pending_before_count,
         ctx.settings.token_limit,
-        ctx.settings.target_summary_tokens.ok_or_else(|| {
-            "summary job policy target_summary_tokens is not configured".to_string()
-        })?,
         trigger_type,
         &ctx.selection,
     )
@@ -389,15 +384,10 @@ pub(crate) async fn resume_cloud_summary_job(
         settings: SummaryJobSettings {
             token_limit: metadata_i64(job_run.metadata.as_ref(), "policy_token_limit")
                 .ok_or_else(|| "summary job metadata policy_token_limit is missing".to_string())?,
-            target_summary_tokens: Some(
-                metadata_i64(job_run.metadata.as_ref(), "policy_target_summary_tokens")
-                    .ok_or_else(|| {
-                        "summary job metadata policy_target_summary_tokens is missing".to_string()
-                    })?
-                    .clamp(128, MAX_THREAD_SUMMARY_TARGET_TOKENS),
-            ),
             cloud_owner_entity_id: Some(job_run_id.to_string()),
-            cloud_resume_kind: Some(job_run.trigger_type.clone()),
+            cloud_resume_kind: Some(
+                crate::services::memory_cloud_agent::THREAD_SUMMARY_JOB_RESUME_KIND.to_string(),
+            ),
         },
         pending_before_count: metadata_i64(job_run.metadata.as_ref(), "pending_before_count")
             .unwrap_or_else(|| (selected.len() + oversized.len()) as i64),
@@ -406,6 +396,7 @@ pub(crate) async fn resume_cloud_summary_job(
             oversized,
             selected_token_count: frozen.selected_token_count,
             oversized_token_count: frozen.oversized_token_count,
+            project_subject_id: frozen.project_subject_id,
         },
     };
     execute_prepared_thread_summary_job(

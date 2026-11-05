@@ -30,6 +30,37 @@ describe('adminApi', () => {
     );
   });
 
+  it('loads the agent directory and encodes agent subjects in project paths', async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({ data: { items: [{ agent_id: 'jiguli' }] } } as never)
+      .mockResolvedValueOnce({ data: { items: [{ project_id: 'project-1' }] } } as never);
+
+    await expect(
+      adminApi.listAgents({ tenant_id: 'tenant-1', source_id: 'chatos', agent_id: 'jiguli' }),
+    ).resolves.toEqual([{ agent_id: 'jiguli' }]);
+    expect(client.get).toHaveBeenNthCalledWith(1, '/admin/agents', {
+      params: {
+        tenant_id: 'tenant-1',
+        source_id: 'chatos',
+        agent_id: 'jiguli',
+        limit: 100,
+        offset: 0,
+      },
+    });
+
+    await expect(
+      adminApi.listAgentProjects('agent:review/agent', {
+        tenant_id: 'tenant-1',
+        source_id: 'chatos',
+      }),
+    ).resolves.toEqual([{ project_id: 'project-1' }]);
+    expect(client.get).toHaveBeenNthCalledWith(
+      2,
+      '/admin/agents/agent%3Areview%2Fagent/projects',
+      { params: { tenant_id: 'tenant-1', source_id: 'chatos' } },
+    );
+  });
+
   it('normalizes source and policy responses with stable defaults', async () => {
     vi.mocked(client.get)
       .mockResolvedValueOnce({
@@ -88,7 +119,6 @@ describe('adminApi', () => {
         rollup_summary_prompt_en: null,
         rollup_summary_prompt_language: 'zh',
         token_limit: null,
-        target_summary_tokens: null,
         interval_seconds: null,
         max_threads_per_tick: null,
         count_limit: null,

@@ -4,7 +4,9 @@
 use crate::{memory::memory_plan, LocalAiStepPlanner, PreparedLocalAiStep};
 use async_trait::async_trait;
 use chatos_ai_runtime::{message_item, ContextualTurnRunner, ModelRuntimeConfig, RuntimeTurnSpec};
-use chatos_local_agent_protocol::{task_acceptance_report_for_run, LocalAgentRunClaim};
+use chatos_local_agent_protocol::{
+    task_acceptance_report_for_run, task_acceptance_report_is_terminal, LocalAgentRunClaim,
+};
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -38,6 +40,32 @@ fn runtime_clock_context() -> Value {
             .to_string(),
         ),
     )
+}
+
+fn bound_remote_connection_context(input: &Value, main_chat: bool) -> Value {
+    // A current conversation setting (including explicit null) supersedes legacy
+    // top-level data. Tasks use the connection frozen when their graph was made.
+    let connection = if main_chat {
+        input
+            .pointer("/runtime_settings/remote_connection_id")
+            .or_else(|| input.get("remote_connection_id"))
+    } else {
+        input.get("remote_connection_id")
+    }
+    .and_then(Value::as_str)
+    .map(str::trim)
+    .filter(|id| !id.is_empty());
+    message_item("system", Value::String(json!({
+        "type": "bound_remote_connection_context",
+        "context_authority": "current_run",
+        "remote_connection_id": connection,
+        "target_selected": connection.is_some(),
+        "guidance": if connection.is_some() {
+            "The user has already selected the target remote server in ChatOS. This program-owned connection id is the authoritative target for this Run; it is not a missing requirement. Do not ask the user to re-enter its hostname, IP, connection name, credentials, or connection id in a survey. For remote execution, select RemoteConnectionController for the Task; the Host inherits and binds this connection automatically. Use authorized read-only discovery to identify services and configuration paths; ask a focused question only when actual evidence leaves multiple plausible targets or essential intent is missing. A server selection alone does not require a Requirement Survey. Never infer authorization for unrelated changes or print secret values."
+        } else {
+            "No remote server is bound to this Run. Historical conversation text, plans and Memory do not establish a current connection. If remote access is needed, ask the user to select the target server in ChatOS; never guess a target or request credentials in a survey."
+        }
+    }).to_string()))
 }
 
 const TASK_EXECUTION_WORKSPACE_INSTRUCTIONS: &str = "[Local Workspace Boundary]\nWhen project tools are available, path `.` is the authoritative root currently bound to this conversation. Treat the entries returned by `list_dir` for `.` as the root contents. Never replace that root with a child directory merely because its name appears to match the task or project; descend into a child only when the user's request requires inspecting that child, and keep root-relative paths and the distinction between the bound root and nested directories explicit in the final answer.";
@@ -107,9 +135,14 @@ fn agent_direct_instructions(input: &Value) -> Result<Option<String>, String> {
 
 fn scope_agent_direct_tools(mut tools: Vec<Value>, input: &Value) -> Vec<Value> {
     let Some(context) = input.get("agent_execution_context") else {
-        tools.retain(|tool| tool_name(tool).is_none_or(|name| !name.starts_with("team_asset_")));
+        tools.retain(|tool| {
+            tool_name(tool).is_none_or(|name| {
+                !name.starts_with("team_asset_") && !TEAM_EXECUTOR_TOOLS.contains(&name)
+            })
+        });
         return tools;
     };
+    let is_team_executor = input.get("team_executor_context").is_some();
     let is_team_agent = context.get("schema_version").and_then(Value::as_u64) == Some(2);
     let is_project_manager = context
         .get("is_project_manager")
@@ -129,7 +162,9 @@ fn scope_agent_direct_tools(mut tools: Vec<Value>, input: &Value) -> Vec<Value> 
     }
     tools.retain(|tool| {
         tool_name(tool).is_none_or(|name| {
-            if matches!(name, "team_asset_list" | "team_asset_get") {
+            if TEAM_EXECUTOR_TOOLS.contains(&name) {
+                is_team_agent && is_team_executor
+            } else if matches!(name, "team_asset_list" | "team_asset_get") {
                 is_team_agent
             } else if matches!(
                 name,
@@ -143,6 +178,14 @@ fn scope_agent_direct_tools(mut tools: Vec<Value>, input: &Value) -> Vec<Value> 
     });
     tools
 }
+
+const TEAM_EXECUTOR_TOOLS: [&str; 5] = [
+    "todo_get_context",
+    "todo_progress_append",
+    "todo_acceptance_update",
+    "todo_complete",
+    "todo_block",
+];
 
 /// A model runtime resolved for one step. This type is deliberately neither
 /// serializable nor debuggable because `model_config` may contain credentials.
@@ -391,13 +434,21 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             capabilities.tools = main_chat_scoped_tools(capabilities.tools, &claim.run.input);
             capabilities.tools = scope_agent_direct_tools(capabilities.tools, &claim.run.input);
         }
-        capabilities
-            .prefixed_input_items
-            .extend(self.local_prefixed_input_items.clone());
+        if claim.run.input.get("team_executor_context").is_none() {
+            capabilities
+                .prefixed_input_items
+                .extend(self.local_prefixed_input_items.clone());
+        }
         // Refresh even for resumed Tasks; page text is not the runtime clock.
         capabilities
             .prefixed_input_items
             .push(runtime_clock_context());
+        capabilities
+            .prefixed_input_items
+            .push(bound_remote_connection_context(
+                &claim.run.input,
+                self.profile_key == MAIN_CHAT_PROFILE_KEY,
+            ));
         if let Some(provider) = self.hook_context_provider.as_ref() {
             capabilities
                 .prefixed_input_items
@@ -490,6 +541,46 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             }
         }
         if self.profile_key == MAIN_CHAT_PROFILE_KEY {
+            let attachment_catalog = if let (Some(runtime), Some(conversation_id)) = (
+                self.local_context_runtime.as_ref(),
+                claim
+                    .run
+                    .input
+                    .get("conversation_id")
+                    .and_then(Value::as_str),
+            ) {
+                runtime
+                    .recent_conversation_attachments(&claim.run.owner_user_id, conversation_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .into_iter()
+                    .map(|attachment| {
+                        json!({
+                            "attachment_id": attachment.attachment_id,
+                            "turn_id": attachment.turn_id,
+                            "display_name": attachment.display_name,
+                            "media_type": attachment.media_type,
+                            "byte_size": attachment.byte_size,
+                            "sha256": attachment.sha256,
+                            "authorized_local_ref": attachment.authorized_local_ref,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            capabilities.prefixed_input_items.push(message_item(
+                "system",
+                Value::String(
+                    json!({
+                        "type": "task_context_compilation_contract",
+                        "guidance": "Main Chat is the context curator for every Task. Before creating a Task, select only the prior facts, decisions, constraints, identifiers, paths, URLs, and verified results that the Task actually needs, then rewrite them as a self-contained context_summary. Never say 'see above', 'use prior chat', 'read Memory', or assume the Task can inspect Main Chat history. Do not dump the conversation or all retained Memory. Select only necessary attachments through attachment_refs using the opaque authorized_local_ref values in available_attachments; explain each selected attachment's purpose in context_summary. Never copy attachment bytes, base64, passwords, tokens, Authorization headers, or other secret values into Task arguments. If a required fact or safe reference is unavailable, resolve that gap before dispatch instead of creating an impossible Task.",
+                        "available_attachments": attachment_catalog,
+                        "attachment_catalog_scope": "recent_source_conversation_history",
+                    })
+                    .to_string(),
+                ),
+            ));
             capabilities.prefixed_input_items.push(message_item(
                 "system",
                 Value::String(
@@ -616,8 +707,12 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                     .is_some_and(|items| !items.is_empty())
             });
         let task_outcome_reported = self.profile_key == TASK_EXECUTION_PROFILE_KEY
-            && (completed_task_outcome_report(claim.run.continuation_input.as_ref())
-                || task_acceptance_report_for_run(&claim.run).is_some());
+            && (completed_task_outcome_report(
+                claim.run.continuation_input.as_ref(),
+                &claim.run.input,
+            ) || task_acceptance_report_for_run(&claim.run).is_some_and(|report| {
+                task_acceptance_report_is_terminal(&claim.run.input, report).unwrap_or(false)
+            }));
         if async_handoff_confirmed {
             // Preserve the former server Task Runner boundary exactly: after the
             // explicit handoff succeeds, Main Chat gets one tool-free response

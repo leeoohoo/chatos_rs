@@ -11,7 +11,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: readAllUnreadToolName,
-            description: "读取当前 Agent 账户在全部群聊和私聊中的未读消息。Agent 每次启动和重试都先调用本工具，不把触发群聊当作运行范围。返回内容即视为已读并自动推进各会话游标；回复时只把 message_ref 传给 chat_send_message，通讯层自行定位原会话。消息不一定需要行动，请自行判断是否回复、忽略或加入 TodoList。",
+            description: "读取当前 Agent 账户在全部群聊和私聊中的未读消息。Agent 每次启动和重试都先调用本工具，不把触发群聊当作运行范围。消息会在 agent_cycle_complete 成功时与通讯周期原子确认；中途崩溃或恢复会安全重读，不会丢消息。回复时只把 message_ref 传给 chat_send_message，通讯层自行定位原会话。消息不一定需要行动，请自行判断是否回复、忽略或加入 TodoList。",
             schema: Data(#"{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}"#.utf8)
         ),
         .init(
@@ -29,20 +29,26 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: Self.proposeMemberToolName,
-            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。该工具只持久化待确认提案，绝不会直接创建 Agent；私聊中确认后只创建独立 Agent，团队会话中确认后才加入当前团队。模型配置由客户端继承并透传，AI 不填写模型 ID；thinking_level 省略时继承当前 Agent。",
+            description: "使用已授予的人员管理权限直接创建新 Agent，同时保留已批准的审计记录，不再等待 Human 逐项确认。私聊中创建独立 Agent，团队会话中同时加入当前团队。模型配置由客户端继承并透传，AI 不填写模型 ID；thinking_level 省略时继承当前 Agent。",
             schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"thinking_level":{"type":"string","enum":["auto","none","minimal","low","medium","high","xhigh","max"]},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: proposeExistingMemberToolName,
-            description: "使用人员管理权限，把账户中已有 Agent 邀请进指定项目团队。先调用 agent_workspace_snapshot，使用其中同一轮返回的 team_ref 和 agent_ref；真实 ID 由客户端解析，不得猜测。该工具只生成待确认提案，Human 确认后才建立成员关系；一个 Agent 可以加入多个团队。",
+            description: "使用已授予的人员管理权限，直接把账户中已有 Agent 加入指定项目团队，同时保留已批准的审计记录。先调用 agent_workspace_snapshot，使用其中同一轮返回的 team_ref 和 agent_ref；真实 ID 由客户端解析，不得猜测。一个 Agent 可以加入多个团队。",
             schema: Data(#"{"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600},"target_agent_ref":{"type":"string","minLength":1,"maxLength":600},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000}},"required":["team_ref","target_agent_ref","role"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: proposeMemberRemovalToolName,
-            description: "使用已授予的人员管理权限，向 Human 提交把一个 Agent 移出当前项目团队的提案。必须提供事实理由和可选交接计划；该工具不会删除可复用的 Agent profile，也不会绕过 Human 确认。",
+            description: "使用已授予的人员管理权限，直接把一个 Agent 移出当前项目团队，同时保留已批准的审计记录。必须提供事实理由和可选交接计划；该工具不会删除可复用的 Agent profile。项目经理必须先完成显式交接才能被移出。",
             schema: Data(#"{"type":"object","properties":{"target_agent_ref":{"type":"string","minLength":1,"maxLength":600},"reason":{"type":"string","minLength":1,"maxLength":4000},"handoff_plan":{"type":"string","maxLength":8000}},"required":["target_agent_ref","reason"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: deleteAgentToolName,
+            description: "使用已授予的人员管理权限，直接安全删除另一个已有 Agent。先调用 agent_workspace_snapshot，并把其中同一轮返回的 agent_ref 作为 target_agent_ref。删除会停止其运行和心跳、取消未完成任务、移出全部团队并归档私聊，但保留历史与审计记录；不能删除自己。重复删除同一 Agent 按成功处理。",
+            schema: Data(#"{"type":"object","properties":{"target_agent_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["target_agent_ref"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
@@ -175,14 +181,20 @@ extension LocalAgentChatToolProvider {
             effect: .write
         ),
         .init(
+            name: todoAcceptanceUpdateToolName,
+            description: "仅用于 Todo 执行线程：逐项记录验收结果。criterion_index 使用 todo_get_context 返回的 1 起始序号；passed 必须提供可核验证据，failed 说明当前验证失败及后续动作，blocked 必须说明原因并明确是否确实需要 Human。某一项需要 Human 不代表其余项目可以跳过，仍须继续处理所有独立项目。",
+            schema: Data(#"{"type":"object","properties":{"criterion_index":{"type":"integer","minimum":1,"maximum":64},"status":{"type":"string","enum":["passed","failed","blocked"]},"evidence":{"type":"string","maxLength":16000},"blocked_reason":{"type":"string","maxLength":8000},"requires_human":{"type":"boolean","default":false}},"required":["criterion_index","status","evidence","requires_human"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
             name: todoCompleteToolName,
-            description: "仅用于 Todo 执行线程：当前任务负责人保存完成总结，把自己负责的任务置为 completed 并结束执行；不要求负责人是项目经理。负责人职责内的可核验交付已完成、后续需要不同角色继续时，应在总结中明确交接并正常完成，由项目经理另建后续 Todo；不要仅因项目存在下一步而把当前任务阻塞。发现应长期保留的项目背景、进度、技术栈、架构、规范、决策或参考资料时，通过 asset_update_suggestions 提交完整 Markdown 和事实理由。建议只进入完成事件，由项目经理审核后才能写入团队共享资产；不要为没有持久价值的过程信息提交建议。",
+            description: "仅用于 Todo 执行线程：只有 todo_get_context 中每个 acceptance_check 都已经通过 todo_acceptance_update 标记为 passed，才保存完成总结、置为 completed 并结束执行；自由文本总结不能代替逐项验收。不要求负责人是项目经理。负责人职责内的可核验交付已完成、后续需要不同角色继续时，应在总结中明确交接并正常完成，由项目经理另建后续 Todo。发现应长期保留的项目背景、进度、技术栈、架构、规范、决策或参考资料时，通过 asset_update_suggestions 提交完整 Markdown 和事实理由。",
             schema: Data(#"{"type":"object","properties":{"summary":{"type":"string","minLength":1,"maxLength":16000},"asset_update_suggestions":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"category":{"type":"string","enum":["overview","current_progress","tech_stack","architecture","conventions","decision","reference"]},"title":{"type":"string","minLength":1,"maxLength":240},"markdown":{"type":"string","minLength":1,"maxLength":128000},"rationale":{"type":"string","minLength":1,"maxLength":4000}},"required":["category","title","markdown","rationale"],"additionalProperties":false}}},"required":["summary"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: todoBlockToolName,
-            description: "仅用于 Todo 执行线程：只在当前负责人自己的职责内交付因缺少必要信息、权限、访问或安全恢复路径而无法继续时，保存精确原因和执行现场并置为 blocked。负责人已经完成自身可核验交付、剩余只是不同角色的后续工作时，必须改用 todo_complete 并在总结中写明交接，由项目经理拆单、重派或协调；不得把普通依赖直接要求 Human 处理。",
+            description: "仅用于 Todo 执行线程：只有至少一项 acceptance_check 已标记 blocked 且 requires_human=true，并且其他独立验收项均已 passed，才保存精确原因并置为 blocked。一个 Human 阻塞项不能跳过其他仍可执行的项目；普通失败或可由 Agent 继续处理的阻塞不会结束任务。",
             schema: Data(#"{"type":"object","properties":{"reason":{"type":"string","minLength":1,"maxLength":8000}},"required":["reason"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),

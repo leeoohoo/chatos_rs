@@ -7,12 +7,19 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     public let sourceID: String
     public let threadID: String
     public let subjectID: String
+    public let agentName: String?
+    public let projectSubjectID: String?
+    public let projectAggregationSubjectID: String?
+    public let threadKind: String?
     public let runID: UUID
     public let runtimeScope: String
-    /// `nil` preserves the original story behavior (subject recall enabled).
-    /// Approval runs are isolated so prior approval content cannot influence a
-    /// later security decision, while their complete records are still stored.
+    /// Kept optional for checkpoint compatibility. All v2 Agent identities enable
+    /// typed Agent Memory and, when project-bound, typed Project Summary recall.
     public let includeSubjectMemory: Bool?
+
+    private static func isCanonicalAgentID(_ value: String) -> Bool {
+        !["main-chat", "main_chat", "task-execution", "task_execution"].contains(value)
+    }
 
     public init(tenantID: String, profile: String, projectID: UUID, runID: UUID, runtimeScope: String) throws {
         try self.init(
@@ -21,25 +28,36 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         )
     }
 
-    public init(tenantID: String, profile: String, projectID: String, runID: UUID, runtimeScope: String) throws {
+    public init(tenantID: String, profile: String, projectID: String?, runID: UUID, runtimeScope: String) throws {
         guard !tenantID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !projectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               ["approval", "story"].contains(profile), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
+        let projectID = projectID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard projectID?.rangeOfCharacter(from: .controlCharacters) == nil else {
+            throw AgentRuntimeError.scopeMismatch
+        }
         self.tenantID = tenantID
         self.sourceID = "chatos"
-        self.threadID = "client-agent:\(profile):\(projectID):\(runID)"
-        self.subjectID = "client-agent:\(profile):\(projectID)"
+        let agentID = profile == "approval"
+            ? "local_connector_command_approval_agent"
+            : "builtin-\(profile)-agent"
+        self.threadID = "client-agent:agent:\(agentID)"
+        self.subjectID = "agent:\(agentID)"
+        self.agentName = profile == "approval" ? "本地审批" : "剧情规划 Agent"
+        self.projectSubjectID = projectID.flatMap { $0.isEmpty ? nil : "project:\($0)" }
+        self.projectAggregationSubjectID = nil
+        self.threadKind = profile == "approval" ? "approval_agent" : "story_agent"
         self.runID = runID
         self.runtimeScope = runtimeScope
-        self.includeSubjectMemory = profile == "approval" ? false : nil
+        self.includeSubjectMemory = true
     }
 
-    /// Local chat Agent manager runs own one continuous Memory identity across private chats,
-    /// teams and separate wake-ups. Todo execution deliberately uses the Todo-scoped initializer
-    /// below so execution records never enter the Agent's long-lived communications thread.
+    /// One user-scoped Agent keeps one raw Thread across conversations and projects. The current
+    /// Project is recalled dynamically, and each record carries its Project identity so Memory
+    /// Engine can feed the matching Project Summary without binding the Thread to one Project.
     public init(
         tenantID: String,
         agentID: String,
+        agentName: String? = nil,
         projectID: String,
         runID: UUID,
         runtimeScope: String
@@ -49,57 +67,73 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
             !value.isEmpty
                 && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
                 && value.rangeOfCharacter(from: .controlCharacters) == nil
-        }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
+        }), Self.isCanonicalAgentID(agentID), agentName.map({ name in
+            !name.isEmpty
+                && name == name.trimmingCharacters(in: .whitespacesAndNewlines)
+                && name.rangeOfCharacter(from: .controlCharacters) == nil
+        }) ?? true, !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
         self.tenantID = tenantID
         self.sourceID = "chatos"
-        self.threadID = "client-agent:manager:\(agentID)"
-        self.subjectID = "agent-manager:\(agentID)"
+        self.threadID = "client-agent:agent:\(agentID)"
+        self.subjectID = "agent:\(agentID)"
+        self.agentName = agentName
+        self.projectSubjectID = "project:\(projectID)"
+        self.projectAggregationSubjectID = nil
+        self.threadKind = "agent_conversation"
         self.runID = runID
         self.runtimeScope = runtimeScope
-        self.includeSubjectMemory = nil
+        self.includeSubjectMemory = true
     }
 
-    /// A Todo owns an isolated Memory identity. It may continue across retries of that same Todo,
-    /// but it never recalls the assignee's manager subject or another Todo's execution history.
+    /// A Todo keeps an isolated raw Thread across retries while recalling and contributing to
+    /// the assignee Agent Memory and current Project Summary.
     public init(
         tenantID: String,
         todoID: String,
+        agentID: String,
+        agentName: String? = nil,
+        projectID: String,
         runID: UUID,
         runtimeScope: String
     ) throws {
-        let identifiers = [tenantID, todoID]
+        let identifiers = [tenantID, todoID, agentID, projectID]
         guard identifiers.allSatisfy({ value in
             !value.isEmpty
                 && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
                 && value.rangeOfCharacter(from: .controlCharacters) == nil
-        }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
+        }), Self.isCanonicalAgentID(agentID), agentName.map({ name in
+            !name.isEmpty
+                && name == name.trimmingCharacters(in: .whitespacesAndNewlines)
+                && name.rangeOfCharacter(from: .controlCharacters) == nil
+        }) ?? true, !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
         self.tenantID = tenantID
         self.sourceID = "chatos"
         self.threadID = "client-agent:todo:\(todoID)"
-        self.subjectID = "todo:\(todoID)"
+        self.subjectID = "agent:\(agentID)"
+        self.agentName = agentName
+        self.projectSubjectID = "project:\(projectID)"
+        self.projectAggregationSubjectID = "project:\(projectID)"
+        self.threadKind = "todo_execution"
         self.runID = runID
         self.runtimeScope = runtimeScope
-        self.includeSubjectMemory = false
+        self.includeSubjectMemory = true
     }
 
     public func recordID(at index: Int) -> String { "client-agent:\(runID):message:\(index)" }
 
     /// Returns whether an immutable record can be written through a Memory service bound to this
-    /// thread. Manager and Todo identities intentionally reuse one thread across separate runs,
-    /// so their durable outbox may contain records created by an earlier run. Run-scoped story
-    /// and approval services must continue to reject those foreign records.
+    /// thread. Agent and Todo identities intentionally reuse one thread across separate runs, so
+    /// their durable outbox may contain records created by an earlier run.
     public func acceptsRecord(id: String, index: Int) -> Bool {
         guard let location = recordLocation(for: id), location.index == index else { return false }
         return location.runID == runID || allowsCrossRunHistory
     }
 
-    /// Story and approval threads belong to one run. Manager and Todo threads are stable for their
-    /// respective identity, so compose may return records written by earlier runs of that same
-    /// manager or Todo. The legacy group-chat prefix remains accepted for bound pre-migration runs.
+    /// Agent and Todo threads are stable for their respective identity, so compose may return
+    /// records written by earlier runs of that same Agent or Todo.
     public var allowsCrossRunHistory: Bool {
-        threadID.hasPrefix("client-agent:manager:")
+        threadID.hasPrefix("client-agent:agent:")
             || threadID.hasPrefix("client-agent:todo:")
-            || threadID.hasPrefix("client-agent:group-chat:")
     }
 
     /// Parses only record IDs emitted by `recordID(at:)`. Memory Engine has already verified the
@@ -162,6 +196,11 @@ public protocol AgentMemoryServicing: Sendable {
     func ensureThread() async throws
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws
     func compose() async throws -> AgentMemoryContext
+    func flushSummary() async throws
+}
+
+public extension AgentMemoryServicing {
+    func flushSummary() async throws {}
 }
 
 /// The full audit transcript stays in AgentRunCheckpoint.messages, not in each model request.
@@ -181,7 +220,7 @@ public struct AgentMemoryCheckpoint: Codable, Equatable, Sendable {
 public struct AgentContextPolicy: Codable, Equatable, Sendable {
     /// The first request in a run/resume must fit this local safety budget.
     /// Official OpenAI Responses owns subsequent in-run compaction.
-    public var windowTokens = 2_000_000
+    public var windowTokens = 200_000
     public var outputReserveTokens = 30_000
     public init() {}
     public var hardInputLimit: Int { windowTokens }

@@ -13,7 +13,6 @@ export interface EngineJobPolicy {
   rollup_summary_prompt_en?: string | null;
   rollup_summary_prompt_language?: 'zh' | 'en';
   token_limit?: number | null;
-  target_summary_tokens?: number | null;
   interval_seconds?: number | null;
   max_threads_per_tick?: number | null;
   count_limit?: number | null;
@@ -33,7 +32,6 @@ export interface UpsertEngineJobPolicyPayload {
   rollup_summary_prompt_en?: string | null;
   rollup_summary_prompt_language?: 'zh' | 'en';
   token_limit?: number | null;
-  target_summary_tokens?: number | null;
   interval_seconds?: number | null;
   max_threads_per_tick?: number | null;
   count_limit?: number | null;

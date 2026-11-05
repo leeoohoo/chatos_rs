@@ -106,6 +106,28 @@ enum AgentGroupChatRowMapper {
         guard let teamRoomID = optionalString(statement, 3) else {
             throw AgentGroupChatError.storage("Agent Todo is missing its team binding")
         }
+        let persistedAcceptanceChecks = (try? JSONDecoder().decode(
+            [LocalAgentTodoAcceptanceCheck].self,
+            from: Data(string(statement, 18).utf8)
+        )) ?? []
+        let acceptanceChecks: [LocalAgentTodoAcceptanceCheck]
+        if persistedAcceptanceChecks.count == executionContract.acceptanceCriteria.count,
+           persistedAcceptanceChecks.enumerated().allSatisfy({ offset, check in
+               check.position == offset + 1
+                   && check.criterion == executionContract.acceptanceCriteria[offset]
+           }) {
+            acceptanceChecks = persistedAcceptanceChecks
+        } else {
+            acceptanceChecks = executionContract.acceptanceCriteria.enumerated().map {
+                LocalAgentTodoAcceptanceCheck(
+                    position: $0.offset + 1,
+                    criterion: $0.element,
+                    status: status == .completed ? .passed : .pending,
+                    evidence: status == .completed ? "旧版本任务已完成，沿用原完成记录。" : "",
+                    updatedAtUnixMs: sqlite3_column_int64(statement, 15)
+                )
+            }
+        }
         let todo = LocalAgentTodo(
             id: string(statement, 1),
             ownerUserID: string(statement, 0),
@@ -122,6 +144,7 @@ enum AgentGroupChatRowMapper {
             result: string(statement, 13),
             executionContract: executionContract,
             executionPlan: executionPlan,
+            acceptanceChecks: acceptanceChecks,
             createdAtUnixMs: sqlite3_column_int64(statement, 14),
             updatedAtUnixMs: sqlite3_column_int64(statement, 15)
         )

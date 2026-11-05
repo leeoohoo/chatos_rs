@@ -48,6 +48,7 @@ struct MessageTaskGraphCanvas: View {
                     y: panOffset.height + dragTranslation.height
                 )
             }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             .contentShape(Rectangle())
             .clipped()
             .background(Color(nsColor: .textBackgroundColor))
@@ -62,6 +63,15 @@ struct MessageTaskGraphCanvas: View {
             }
             .simultaneousGesture(panGesture)
             .simultaneousGesture(magnifyGesture(container: proxy.size))
+            .overlay(alignment: .topLeading) {
+                Label("拖动画布 · 滚动缩放 · 点击节点查看详情", systemImage: "cursorarrow.motionlines")
+                    .appFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(12)
+            }
             .overlay(alignment: .bottomTrailing) {
                 zoomControls(container: proxy.size, content: layout.contentSize)
                     .padding(12)
@@ -180,12 +190,13 @@ struct MessageTaskGraphCanvas: View {
             Button("适应") {
                 fitGraph(container: container, content: content)
             }
+            .help("显示全部节点")
         }
         .controlSize(.small)
         .padding(7)
-        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 9))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9))
         .overlay { RoundedRectangle(cornerRadius: 9).stroke(AppPalette.border.opacity(0.8)) }
-        .overlay { RoundedRectangle(cornerRadius: 9).stroke(.separator) }
+        .shadow(color: .black.opacity(0.05), radius: 8, y: 3)
     }
 
     private func positionGraphIfNeeded(

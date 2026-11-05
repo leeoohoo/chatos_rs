@@ -3,8 +3,8 @@
 
 use super::{ClientStorageError, SqliteClientStorage, SqliteResultExt};
 use chatos_local_agent_protocol::{
-    local_task_runtime_write_scope, local_task_write_scope_overlap, LocalAgentRunRecord,
-    LocalAgentRunStatus,
+    local_task_runtime_write_scope, local_task_write_scope_overlap,
+    task_acceptance_report_is_blocked, LocalAgentRunRecord, LocalAgentRunStatus,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -167,6 +167,7 @@ WHERE status = 'pending'
 pub(super) struct ReportedTaskOutcome {
     pub result_status: String,
     pub reason: String,
+    report: Value,
 }
 
 pub(super) async fn start_next_task_run(
@@ -431,9 +432,9 @@ async fn task_input_with_prerequisites(
     let has_prerequisites = !rows.is_empty();
     let mut contexts = Vec::with_capacity(rows.len());
     let mut text = if english {
-        "[Prerequisite Task Results]\nPath reliability rule: prose summaries may contain inaccurate paths. Confirm every prerequisite file path through directory listing or search before reading it.".to_string()
+        "[Prerequisite Task Results]\nEvidence reuse rule: start from these delivered results and acceptance facts; do not repeat a broad audit already completed by the prerequisite. Re-read only a path you will modify, a claim that requires fresh current-Run evidence, or evidence whose version, hash, or path may have changed. When validation is needed, use one targeted list/search and batch independent read-only checks instead of rediscovering the whole project.".to_string()
     } else {
-        "[前置任务执行结果]\n文件路径可靠性规则：文字摘要中的路径可能不准确。读取前置任务提到的任何文件前，必须先通过目录列表或搜索确认路径存在。".to_string()
+        "[前置任务执行结果]\n证据复用规则：先复用以下已交付结果和验收事实，不要重复前置任务已经完成的大范围核查。仅在准备修改文件、验收必须取得本次运行的新证据，或版本、哈希、路径可能已变化时重新读取。确需确认时只做一次针对性目录/搜索，并把相互独立的只读检查合并批量执行，不要重新遍历整个项目。".to_string()
     };
     for (index, row) in rows.into_iter().enumerate() {
         let prerequisite_id: String = row.try_get("task_id").db()?;
@@ -667,10 +668,30 @@ pub(super) async fn reconcile_task_after_run(
     {
         return Ok(());
     }
+    // Read and validate the durable result gate before mutating the Task graph.
+    // A blocked acceptance report is terminal only after every other criterion
+    // has passed, and it intentionally leaves the Task blocked for explicit
+    // human or external intervention instead of presenting false success.
+    let reported_outcome = reported_task_outcome(connection, &run.run_id).await?;
+    let result_status = reported_outcome
+        .as_ref()
+        .map(|outcome| outcome.result_status.clone());
+    if result_status.as_deref() == Some("blocked")
+        && run
+            .input
+            .get("acceptance_report_version")
+            .and_then(Value::as_u64)
+            == Some(1)
+        && !reported_outcome.as_ref().is_some_and(|outcome| {
+            task_acceptance_report_is_blocked(&run.input, &outcome.report).unwrap_or(false)
+        })
+    {
+        return Err(ClientStorageError::InvalidState(
+            "Task cannot become blocked while actionable acceptance checks remain".to_string(),
+        ));
+    }
     let task_status = match run.status {
-        // Execution state belongs exclusively to the Host. A normally completed
-        // Run always means the Task execution succeeded; its internal result is
-        // stored in the outcome report and gates dependencies separately.
+        LocalAgentRunStatus::Succeeded if result_status.as_deref() == Some("blocked") => "blocked",
         LocalAgentRunStatus::Succeeded => "succeeded",
         LocalAgentRunStatus::Failed => "failed",
         LocalAgentRunStatus::Cancelled => "cancelled",
@@ -680,14 +701,6 @@ pub(super) async fn reconcile_task_after_run(
         LocalAgentRunStatus::NeedsReview => "blocked",
         _ => return Ok(()),
     };
-    // Read and validate the durable result gate before mutating the Task graph.
-    // This is a reconciliation input and an audit-event field, not the Task's
-    // execution status. Keeping the snapshot separate preserves that boundary,
-    // makes the event describe the exact input used for this reconciliation,
-    // and avoids trying to reborrow the connection while insert_event owns it.
-    let result_status = reported_task_outcome(connection, &run.run_id)
-        .await?
-        .map(|outcome| outcome.result_status);
     let updated = sqlx::query(
         "UPDATE local_tasks SET status = ?, active_run_id = NULL, version = version + 1, \
          updated_at_unix_ms = ? WHERE task_id = ? AND status IN ('ready','running') \
@@ -787,6 +800,7 @@ pub(super) async fn reported_task_outcome(
     Ok(Some(ReportedTaskOutcome {
         result_status: result_status.to_string(),
         reason: reason.to_string(),
+        report: value,
     }))
 }
 

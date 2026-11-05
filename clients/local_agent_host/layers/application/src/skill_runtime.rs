@@ -226,9 +226,13 @@ impl LocalAgentRuntime {
                     continue;
                 }
                 let schema_sha256 = tool["schema_sha256"].as_str().expect("validated digest");
+                let Some(tool_name) = tool.get("name").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
                 disclosures.insert(chatos_local_agent_protocol::LocalRunCapabilityDisclosure {
                     plugin_option: plugin_option.to_string(),
                     tool_option: tool_option.to_string(),
+                    tool_name: tool_name.to_string(),
                     provider_id: provider_id.to_string(),
                     schema_sha256: schema_sha256.to_ascii_lowercase(),
                 });
@@ -665,7 +669,7 @@ mod tests {
         let pdf = "plugin-skill:plugin_1:pdf";
         let word = "plugin-skill:plugin_1:word";
         let description = json!({"binding_schema_version":1, "disclosure_version":2, "view":"tool", "provider_id":"plugin:document", "plugin_option":"plugin_1",
-            "tools":[{"tool_option":"tool_1", "invocation_mode":"capability_invoke", "required_skill_refs":[router,pdf,word],
+            "tools":[{"tool_option":"tool_1", "name":"document_create", "invocation_mode":"capability_invoke", "required_skill_refs":[router,pdf,word],
                 "input_schema":{"type":"object"}, "schema_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "skill_gate":{"all_of":[router],"select_by_argument":{"pointer":"/format","map":{"pdf":pdf,"word":word}}}}]});
         let index = json!({"binding_schema_version":1,"disclosure_version":2,"view":"catalog",
@@ -731,6 +735,7 @@ mod tests {
             vec![LocalRunCapabilityDisclosure {
                 plugin_option: "plugin_1".into(),
                 tool_option: "tool_1".into(),
+                tool_name: "document_create".into(),
                 provider_id: "plugin:document".into(),
                 schema_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     .into(),

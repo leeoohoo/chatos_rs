@@ -28,10 +28,32 @@ public enum MessageTaskPresentationStatus: String, Sendable, Equatable, Hashable
 public struct MessageTaskAcceptanceReport: Decodable, Sendable, Equatable {
     public struct Check: Decodable, Sendable, Equatable {
         public let criterionIndex: Int
-        public let status: String
+        public let status: AgentExecutionAcceptanceStatus
         public let evidence: String
+
+        public init(
+            criterionIndex: Int,
+            status: AgentExecutionAcceptanceStatus,
+            evidence: String
+        ) {
+            self.criterionIndex = criterionIndex
+            self.status = status
+            self.evidence = evidence
+        }
+
         enum CodingKeys: String, CodingKey {
             case criterionIndex = "criterion_index", status, evidence
+        }
+
+        /// Ordinary Tasks do not yet persist a separate `requires_human` bit. A blocked
+        /// Task acceptance verdict therefore keeps its existing protocol meaning: external
+        /// intervention is required. The shared gate can consume it without changing storage.
+        public var gateCheck: AgentExecutionAcceptanceGateCheck {
+            .init(
+                criterionIndex: criterionIndex,
+                status: status,
+                requiresHuman: status == .blocked
+            )
         }
     }
     public let resultStatus: String
@@ -60,18 +82,39 @@ public struct MessageTaskAcceptanceReport: Decodable, Sendable, Equatable {
               !report.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               report.resultStatus != "succeeded" || !report.checks.isEmpty,
               Set(report.checks.map(\.criterionIndex)) == Set(0..<report.checks.count),
-              report.checks.allSatisfy({ ["passed", "failed", "not_verified"].contains($0.status)
+              report.checks.allSatisfy({ [.passed, .failed, .notVerified, .blocked].contains($0.status)
                   && !$0.evidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
         else { return nil }
         return report
     }
 
     public var disposition: MessageTaskResultDisposition {
-        if resultStatus == "blocked" { return .blocked }
-        if checks.contains(where: { $0.status == "failed" }) { return .acceptanceFailed }
-        if checks.contains(where: { $0.status == "not_verified" }) { return .evidenceIncomplete }
+        if resultStatus == "blocked" || checks.contains(where: { $0.status == .blocked }) {
+            return .blocked
+        }
+        if checks.contains(where: { $0.status == .failed }) { return .acceptanceFailed }
+        if checks.contains(where: { $0.status == .notVerified }) { return .evidenceIncomplete }
         if resultStatus == "failed" { return .acceptanceFailed }
         return .acceptancePassed
+    }
+
+    public var gateChecks: [AgentExecutionAcceptanceGateCheck] {
+        checks.map(\.gateCheck)
+    }
+
+    public var acceptanceCanComplete: Bool {
+        resultStatus == "succeeded" && AgentExecutionAcceptanceGate.canComplete(gateChecks)
+    }
+
+    public var acceptanceCanFinishBlocked: Bool {
+        resultStatus == "blocked" && AgentExecutionAcceptanceGate.canFinishBlocked(gateChecks)
+    }
+
+    public var actionableChecks: [Check] {
+        let actionableIndices = Set(
+            AgentExecutionAcceptanceGate.actionableChecks(gateChecks).map(\.criterionIndex)
+        )
+        return checks.filter { actionableIndices.contains($0.criterionIndex) }
     }
 }
 

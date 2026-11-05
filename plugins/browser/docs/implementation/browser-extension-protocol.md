@@ -5,12 +5,28 @@ high-volume CDP data plane then uses a loopback WebSocket. This keeps extension 
 inside Chrome's native messaging boundary while avoiding native messaging frame limits for CDP
 screenshots and other large results.
 
-## Bootstrap and pairing
+## Discovery, bootstrap, and pairing
 
-The extension connects to the fixed native host `ai.chatos.browser_bridge` and sends:
+The extension connects to the fixed native host `ai.chatos.browser_bridge`. Version 0.1.6 and later
+discovers every active Browser MCP Bridge in one Native Messaging request:
 
 ```json
-{"type":"request","id":"opaque","method":"extension.bootstrap","params":{"protocol_version":"1.0","pairing_requested":true}}
+{"type":"request","id":"opaque","method":"extension.discover","params":{"protocol_version":"1.0","pairing_requested":false}}
+```
+
+The response contains only the opaque identity of each active Browser MCP process. Discovery does
+not create credentials or open a control connection:
+
+```json
+{"type":"response","id":"opaque","result":{"protocol_version":"1.0","bridges":[{"bridge_id":"bridge_<opaque>"}]}}
+```
+
+For each newly discovered identity, the extension opens a dedicated Native Messaging port and
+requests credentials for that exact Bridge. The port remains open for that task's WebSocket
+lifetime:
+
+```json
+{"type":"request","id":"opaque","method":"extension.bootstrap","params":{"protocol_version":"1.0","bridge_id":"bridge_<opaque>","pairing_requested":true}}
 ```
 
 Browser MCP's Native Messaging Host receives the calling Chrome extension origin from Chrome and
@@ -19,7 +35,7 @@ Connect action. A successful
 response contains a numeric-loopback `ws://` endpoint, a short-lived token, and its expiration:
 
 ```json
-{"type":"response","id":"opaque","result":{"protocol_version":"1.0","endpoint":"ws://127.0.0.1:39001/v1/extension","token":"<secret>","expires_at_unix_ms":1787280000000}}
+{"type":"response","id":"opaque","result":{"bridge_id":"bridge_<opaque>","protocol_version":"1.0","endpoint":"ws://127.0.0.1:39001/v1/extension","token":"<secret>","expires_at_unix_ms":1787280000000}}
 ```
 
 The endpoint cannot contain userinfo, a query, or a fragment. The extension never persists or logs
@@ -29,6 +45,14 @@ closing invalidates the browser connection.
 Previously paired extensions may bootstrap with `pairing_requested:false`. An unpaired request must
 fail closed without silently creating a pairing. The popup's Connect action is the only operation
 that sends `pairing_requested:true`.
+
+Each discovered Bridge receives its own `LocalConnectorBridge` and `ExtensionController`. Their
+target IDs, Chrome tab groups, debugger sessions, event subscriptions, and cleanup lifecycles are
+isolated. Disconnecting or ending one task cannot revoke another task's targets. The popup badge
+shows `ON` for one connection and a connection count for two or more.
+
+Extension 0.1.5 and earlier may omit `bridge_id`; the Native Messaging Host then bootstraps one
+active Bridge for backward compatibility.
 
 ## WebSocket data plane
 
@@ -57,8 +81,8 @@ Browser MCP Bridge requests:
 | `extension.getCapabilities` | Return current protocol and capability information. |
 
 Browser MCP Bridge translates these methods to the MCP-facing methods documented in
-`browser-bridge-protocol.md`; the two sockets are separately authenticated and identifiers are
-scoped to one Browser MCP process.
+`browser-bridge-protocol.md`; every task's two sockets are separately authenticated and identifiers
+are scoped to one Browser MCP process.
 
 Extension notifications:
 

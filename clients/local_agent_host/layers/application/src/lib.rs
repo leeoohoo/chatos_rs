@@ -415,6 +415,17 @@ impl LocalAgentRuntime {
                             report,
                         )
                         .map_err(LocalAgentRuntimeError::InvalidRequest)?;
+                        if !chatos_local_agent_protocol::task_acceptance_report_is_terminal(
+                            &current.input,
+                            report,
+                        )
+                        .map_err(LocalAgentRuntimeError::InvalidRequest)?
+                        {
+                            return Err(LocalAgentRuntimeError::InvalidRequest(
+                                "Task cannot finish until every actionable acceptance check has passed"
+                                    .into(),
+                            ));
+                        }
                         if output.get("content") != report.get("final_response") {
                             return Err(LocalAgentRuntimeError::InvalidRequest(
                                 "Task final response must match its checked outcome report".into(),
@@ -648,6 +659,9 @@ impl LocalAgentRuntime {
             | HostCommand::ListPluginHookInvocations(_)
             | HostCommand::SetActivePluginHookBundles(_)) => {
                 self.handle_plugin_command(&idempotency, command).await
+            }
+            HostCommand::ResolveAgentTeamHookContext(_) => {
+                unreachable!("Agent team Hook context is resolved by the Host coordinator")
             }
             command @ (HostCommand::CreateConversation(_)
             | HostCommand::GetConversation(_)

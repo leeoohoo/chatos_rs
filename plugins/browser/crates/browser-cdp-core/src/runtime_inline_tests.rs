@@ -110,6 +110,9 @@ mod tests {
     struct ObservedLinkBackend {
         page: StdMutex<PageState>,
         methods: StdMutex<Vec<String>>,
+        snapshot_href: Option<String>,
+        visibility_state: &'static str,
+        mouse_events: StdMutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -165,15 +168,31 @@ mod tests {
                             "text": "Official article",
                             "text_truncated": false,
                             "nodes": [{
-                                "role": "link", "name": "MiniMax H3", "value": null,
-                                "href": "https://www.minimax.io/news/h3", "tag": "a",
-                                "selector": "body > a:nth-of-type(1)", "disabled": false
+                                "role": if self.snapshot_href.is_some() { "link" } else { "button" },
+                                "name": if self.snapshot_href.is_some() { "MiniMax H3" } else { "Save" },
+                                "value": null, "href": self.snapshot_href, "tag": if self.snapshot_href.is_some() { "a" } else { "button" },
+                                "selector": if self.snapshot_href.is_some() { "body > a:nth-of-type(1)" } else { "body > button:nth-of-type(1)" },
+                                "disabled": false
                             }]
                         })
+                    } else if expression.contains("visibility_state: document.visibilityState") {
+                        json!({"x": 120.0, "y": 80.0, "visibility_state": self.visibility_state})
+                    } else if expression.contains("animation='none'") {
+                        json!(true)
                     } else {
                         serde_json::to_value(page).unwrap()
                     };
                     Ok(json!({"result": {"value": value}}))
+                }
+                "Page.addScriptToEvaluateOnNewDocument" => {
+                    Ok(json!({"identifier": "cursor-script"}))
+                }
+                "Page.removeScriptToEvaluateOnNewDocument" => Ok(json!({})),
+                "Input.dispatchMouseEvent" => {
+                    self.mouse_events.lock().unwrap().push(
+                        params["type"].as_str().unwrap_or_default().to_owned(),
+                    );
+                    Ok(json!({}))
                 }
                 "Page.navigate" => {
                     let mut page = self.page.lock().unwrap();
@@ -275,6 +294,9 @@ mod tests {
                 document_id: "doc-1".into(),
             }),
             methods: StdMutex::new(Vec::new()),
+            snapshot_href: Some("https://www.minimax.io/news/h3".into()),
+            visibility_state: "visible",
+            mouse_events: StdMutex::new(Vec::new()),
         });
         let runtime = BrowserRuntime::new(
             vec![Arc::new(ObservedLinkBackendFactory { backend: backend.clone() })],
@@ -301,5 +323,45 @@ mod tests {
         assert!(!methods.contains(&"Input.dispatchMouseEvent".to_string()));
         let stale = runtime.click(&session.browser_session_id, &link.reference).await;
         assert!(matches!(stale, Err(CoreError::InvalidRequest(_)) | Err(CoreError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn background_chrome_extension_click_does_not_send_mouse_moved() {
+        let backend = Arc::new(ObservedLinkBackend {
+            page: StdMutex::new(PageState {
+                url: "https://app.test/".into(),
+                title: "Background app".into(),
+                ready_state: "complete".into(),
+                document_id: "doc-background".into(),
+            }),
+            methods: StdMutex::new(Vec::new()),
+            snapshot_href: None,
+            visibility_state: "hidden",
+            mouse_events: StdMutex::new(Vec::new()),
+        });
+        let runtime = BrowserRuntime::new(
+            vec![Arc::new(ObservedLinkBackendFactory { backend: backend.clone() })],
+            std::env::temp_dir(),
+        );
+        let session = runtime.open_session(OpenBrowserRequest {
+            mode: BrowserMode::ChromeExtension,
+            headless: false,
+            persistent_profile: false,
+            session_name: Some("background task".into()),
+        }).await.expect("open paired Chrome session");
+        let snapshot = runtime.snapshot(&session.browser_session_id, None)
+            .await.expect("snapshot background tab");
+        let button = snapshot.nodes.first().expect("observed button");
+
+        let result = runtime.click(&session.browser_session_id, &button.reference)
+            .await.expect("click background button");
+
+        assert_eq!(result["dispatch_response"], "confirmed");
+        assert_eq!(result["timed_out_events"], json!([]));
+        assert_eq!(result["skipped_events"], json!(["mouseMoved:background_tab"]));
+        assert_eq!(
+            *backend.mouse_events.lock().unwrap(),
+            vec!["mousePressed".to_string(), "mouseReleased".to_string()],
+        );
     }
 }

@@ -15,10 +15,18 @@ pub struct SummaryDispatchOutbox {
     pub summary_dispatch_version: i64,
     pub summary_dispatch_published_version: i64,
     pub summary_dispatch_consumed_version: i64,
+    pub summary_dispatch_force_version: i64,
 }
 
-const COLUMNS: &str = "tenant_id,source_id,id AS thread_id,summary_dispatch_version,summary_dispatch_published_version,summary_dispatch_consumed_version";
-const RETURNING_COLUMNS: &str = "t.tenant_id,t.source_id,t.id AS thread_id,t.summary_dispatch_version,t.summary_dispatch_published_version,t.summary_dispatch_consumed_version";
+impl SummaryDispatchOutbox {
+    pub fn forced(&self) -> bool {
+        self.summary_dispatch_force_version > 0
+            && self.summary_dispatch_force_version >= self.summary_dispatch_version
+    }
+}
+
+const COLUMNS: &str = "tenant_id,source_id,id AS thread_id,summary_dispatch_version,summary_dispatch_published_version,summary_dispatch_consumed_version,summary_dispatch_force_version";
+const RETURNING_COLUMNS: &str = "t.tenant_id,t.source_id,t.id AS thread_id,t.summary_dispatch_version,t.summary_dispatch_published_version,t.summary_dispatch_consumed_version,t.summary_dispatch_force_version";
 
 pub async fn get_summary_dispatch_state(
     db: &Db,
@@ -65,11 +73,18 @@ pub async fn list_eligible_summary_dispatches(
     limit: i64,
 ) -> Result<Vec<SummaryDispatchOutbox>, String> {
     sqlx::query_as::<_, SummaryDispatchOutbox>(sqlx::AssertSqlSafe(format!(
-        "SELECT {COLUMNS} FROM engine_threads WHERE summary_status='pending' AND pending_summary_tokens>=$1 \
+        "SELECT {COLUMNS} FROM engine_threads WHERE summary_status='pending' \
+         AND (pending_summary_tokens>=$1 OR (summary_dispatch_force_version>0 \
+              AND summary_dispatch_force_version>=summary_dispatch_version)) \
          AND summary_dispatch_consumed_version>=summary_dispatch_version \
          AND COALESCE(summary_dispatch_dead_letter_version,-1)<summary_dispatch_version \
          ORDER BY updated_at LIMIT $2"
-    ))).bind(token_threshold.max(1)).bind(limit.clamp(1,10_000)).fetch_all(db).await.map_err(|error| error.to_string())
+    )))
+    .bind(token_threshold.max(1))
+    .bind(limit.clamp(1, 10_000))
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())
 }
 
 pub async fn list_stale_published_summary_dispatches(
@@ -79,7 +94,9 @@ pub async fn list_stale_published_summary_dispatches(
     limit: i64,
 ) -> Result<Vec<SummaryDispatchOutbox>, String> {
     sqlx::query_as::<_, SummaryDispatchOutbox>(sqlx::AssertSqlSafe(format!(
-        "SELECT {COLUMNS} FROM engine_threads WHERE summary_status='pending' AND pending_summary_tokens>=$1 \
+        "SELECT {COLUMNS} FROM engine_threads WHERE summary_status='pending' \
+         AND (pending_summary_tokens>=$1 OR (summary_dispatch_force_version>0 \
+              AND summary_dispatch_force_version>=summary_dispatch_version)) \
          AND NOT summary_dispatch_pending AND summary_dispatch_published_at<=$2 AND summary_dispatch_version>0 \
          AND summary_dispatch_published_version>=summary_dispatch_version \
          AND summary_dispatch_consumed_version<summary_dispatch_version \
@@ -150,12 +167,62 @@ pub async fn rearm_summary_dispatch_if_eligible(
 ) -> Result<Option<SummaryDispatchOutbox>, String> {
     sqlx::query_as::<_, SummaryDispatchOutbox>(sqlx::AssertSqlSafe(format!(
         "UPDATE engine_threads SET summary_dispatch_version=summary_dispatch_version+1, \
+         summary_dispatch_force_version=CASE \
+           WHEN summary_dispatch_version>0 \
+             AND summary_dispatch_force_version>=summary_dispatch_version THEN summary_dispatch_version+1 \
+           ELSE summary_dispatch_force_version END, \
          summary_dispatch_requested_at=now(),summary_dispatch_last_error=NULL,summary_dispatch_pending=true \
          WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND summary_status='pending' AND pending_summary_tokens>=$4 \
          AND summary_dispatch_consumed_version>=summary_dispatch_version \
          AND COALESCE(summary_dispatch_dead_letter_version,-1)<summary_dispatch_version RETURNING {COLUMNS}"
     ))).bind(tenant_id).bind(source_id).bind(thread_id).bind(token_threshold.max(1))
       .fetch_optional(db).await.map_err(|error| error.to_string())
+}
+
+pub async fn request_forced_summary_dispatch(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+) -> Result<Option<SummaryDispatchOutbox>, String> {
+    sqlx::query_as::<_, SummaryDispatchOutbox>(sqlx::AssertSqlSafe(format!(
+        "UPDATE engine_threads SET summary_dispatch_version=summary_dispatch_version+1, \
+         summary_dispatch_force_version=summary_dispatch_version+1, \
+         summary_dispatch_requested_at=now(),summary_dispatch_last_error=NULL,summary_dispatch_pending=true \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND pending_record_count>0 \
+         RETURNING {COLUMNS}"
+    )))
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|error| error.to_string())
+}
+
+pub async fn rearm_summary_dispatch_after_processing(
+    db: &Db,
+    event: &SummaryDispatchOutbox,
+    token_threshold: i64,
+) -> Result<Option<SummaryDispatchOutbox>, String> {
+    let force_remaining = event.forced();
+    sqlx::query_as::<_, SummaryDispatchOutbox>(sqlx::AssertSqlSafe(format!(
+        "UPDATE engine_threads SET summary_dispatch_version=summary_dispatch_version+1, \
+         summary_dispatch_force_version=CASE WHEN $5 THEN summary_dispatch_version+1 ELSE summary_dispatch_force_version END, \
+         summary_dispatch_requested_at=now(),summary_dispatch_last_error=NULL,summary_dispatch_pending=true \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND summary_status='pending' \
+         AND (pending_summary_tokens>=$4 OR ($5 AND pending_record_count>0)) \
+         AND summary_dispatch_consumed_version>=summary_dispatch_version \
+         AND COALESCE(summary_dispatch_dead_letter_version,-1)<summary_dispatch_version RETURNING {COLUMNS}"
+    )))
+    .bind(&event.tenant_id)
+    .bind(&event.source_id)
+    .bind(&event.thread_id)
+    .bind(token_threshold.max(1))
+    .bind(force_remaining)
+    .fetch_optional(db)
+    .await
+    .map_err(|error| error.to_string())
 }
 
 pub async fn rearm_stale_published_summary_dispatch(
@@ -166,10 +233,17 @@ pub async fn rearm_stale_published_summary_dispatch(
 ) -> Result<Option<SummaryDispatchOutbox>, String> {
     sqlx::query_as::<_, SummaryDispatchOutbox>(sqlx::AssertSqlSafe(format!(
         "UPDATE engine_threads SET summary_dispatch_version=summary_dispatch_version+1, \
+         summary_dispatch_force_version=CASE \
+           WHEN summary_dispatch_version>0 \
+             AND summary_dispatch_force_version>=summary_dispatch_version THEN summary_dispatch_version+1 \
+           ELSE summary_dispatch_force_version END, \
          summary_dispatch_recovery_count=summary_dispatch_recovery_count+1,summary_dispatch_requested_at=now(), \
          summary_dispatch_recovered_at=now(),summary_dispatch_last_error=NULL,summary_dispatch_pending=true \
          WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND summary_dispatch_version=$4 \
-         AND summary_status='pending' AND pending_summary_tokens>=$5 AND NOT summary_dispatch_pending \
+         AND summary_status='pending' \
+         AND (pending_summary_tokens>=$5 OR (summary_dispatch_force_version>0 \
+              AND summary_dispatch_force_version>=summary_dispatch_version)) \
+         AND NOT summary_dispatch_pending \
          AND summary_dispatch_published_at<=$6 AND summary_dispatch_version>0 \
          AND summary_dispatch_published_version>=summary_dispatch_version \
          AND summary_dispatch_consumed_version<summary_dispatch_version \

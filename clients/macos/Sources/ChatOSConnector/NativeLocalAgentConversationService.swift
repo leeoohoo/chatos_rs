@@ -80,6 +80,9 @@ public actor NativeLocalAgentConversationService:
         let isPluginInstallerConversation = Self.usesPluginInstallerCapability(
             for: conversation.conversation.resource
         )
+        let agentIdentity = try Self.conversationAgentIdentity(
+            for: conversation.conversation.resource
+        )
         let capabilityMap = isPluginInstallerConversation
             ? context.pluginInstallerCapabilitiesByModelConfigRef
             : context.capabilitiesByModelConfigRef
@@ -99,7 +102,19 @@ public actor NativeLocalAgentConversationService:
                     : "native_main_chat"
             ),
             "reasoning_enabled": .bool(command.reasoningEnabled ?? false),
+            "agent_id": .string(agentIdentity.id),
         ]
+        if let name = agentIdentity.name {
+            messageMetadata["agent_name"] = .string(name)
+        }
+        if conversation.conversation.resource?.kind == .project {
+            let projectName = conversation.conversation.title.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            if !projectName.isEmpty {
+                messageMetadata["project_name"] = .string(projectName)
+            }
+        }
         if let selection = command.explicitCapabilitySelection {
             var explicitSelection: [String: LocalAgentJSONValue] = [
                 "kind": .string(selection.kind.rawValue),
@@ -142,6 +157,35 @@ public actor NativeLocalAgentConversationService:
             kind: .contact,
             resourceID: WorkspaceSystemContact.pluginInstallerID
         )
+    }
+
+    static func conversationAgentIdentity(
+        for resource: LocalAgentConversationResourceBinding?
+    ) throws -> (id: String, name: String?) {
+        guard let resource else {
+            throw NativeLocalAgentConversationServiceError.missingAgentIdentity
+        }
+        switch resource.kind {
+        case .project:
+            return (
+                NativeLocalAgentWorkspaceService.mainContact.agentID,
+                NativeLocalAgentWorkspaceService.mainContact.name
+            )
+        case .contact:
+            if resource.resourceID == NativeLocalAgentWorkspaceService.mainContact.id {
+                return (
+                    NativeLocalAgentWorkspaceService.mainContact.agentID,
+                    NativeLocalAgentWorkspaceService.mainContact.name
+                )
+            }
+            if resource.resourceID == NativeLocalAgentWorkspaceService.pluginInstallerContact.id {
+                return (
+                    NativeLocalAgentWorkspaceService.pluginInstallerContact.agentID,
+                    NativeLocalAgentWorkspaceService.pluginInstallerContact.name
+                )
+            }
+            throw NativeLocalAgentConversationServiceError.missingAgentIdentity
+        }
     }
 
     public func sendGuidance(
@@ -628,12 +672,14 @@ public actor NativeLocalAgentConversationService:
 
 public enum NativeLocalAgentConversationServiceError: LocalizedError {
     case notConfigured
+    case missingAgentIdentity
     case invalidCursor
     case realtimeUnavailable
 
     public var errorDescription: String? {
         switch self {
         case .notConfigured: "Local Agent conversation service is not configured."
+        case .missingAgentIdentity: "Local Agent conversation is missing its Agent identity."
         case .invalidCursor: "Local Agent conversation history cursor is invalid."
         case .realtimeUnavailable: "Local Agent realtime uses local refresh, not WebSocket tickets."
         }

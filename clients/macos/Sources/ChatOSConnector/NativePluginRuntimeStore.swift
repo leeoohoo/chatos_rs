@@ -95,6 +95,11 @@ actor NativePluginRuntimeStore {
     }
 
     private var sessions: [String: Session] = [:]
+    /// Exclusive browser processes must acquire the desktop lease before they start.
+    /// Otherwise a second Browser MCP can lose the Browser Bridge file lock during
+    /// bootstrap, permanently omit its ChromeExtension backend, and later report
+    /// `unsupported: browser mode ChromeExtension` even after the first run exits.
+    private var pendingExclusiveSessionIDs: Set<String> = []
     private var visualSessionChangeContinuations: [
         UUID: AsyncStream<Void>.Continuation
     ] = [:]
@@ -132,9 +137,10 @@ actor NativePluginRuntimeStore {
         workspaceID: String?
     ) async {
         if let previous = sessions.removeValue(forKey: identity.adapterSessionID) {
-            releaseComputerUseLease(adapterSessionID: identity.adapterSessionID)
             await previous.client.terminate()
+            releaseComputerUseLease(adapterSessionID: identity.adapterSessionID)
         }
+        pendingExclusiveSessionIDs.remove(identity.adapterSessionID)
         sessions[identity.adapterSessionID] = Session(
             identity: identity,
             client: client,
@@ -148,6 +154,23 @@ actor NativePluginRuntimeStore {
             workspaceID: workspaceID
         )
         notifyVisualSessionChanged()
+    }
+
+    /// Reserves exclusive desktop/browser ownership before an MCP process is spawned.
+    /// The reservation becomes the normal session lease when `insert` succeeds.
+    func reserveExclusiveExecution(adapterSessionID: String) async -> Bool {
+        pendingExclusiveSessionIDs.insert(adapterSessionID)
+        let acquired = await acquireComputerUseLease(adapterSessionID: adapterSessionID)
+        if !acquired {
+            pendingExclusiveSessionIDs.remove(adapterSessionID)
+        }
+        return acquired
+    }
+
+    /// Releases a bootstrap reservation when process startup or initialization fails.
+    func releaseExclusiveExecutionReservation(adapterSessionID: String) {
+        pendingExclusiveSessionIDs.remove(adapterSessionID)
+        releaseComputerUseLease(adapterSessionID: adapterSessionID)
     }
 
     func validate(
@@ -313,7 +336,12 @@ actor NativePluginRuntimeStore {
             }
             return result
         } catch {
+            // Browser CDP owns the Browser Bridge file lock for the entire MCP process
+            // lifetime. Releasing its lease after one failed invocation would let a
+            // second Browser MCP start while that lock is still held and permanently
+            // omit the ChromeExtension backend during bootstrap.
             if requiresExclusiveExecution,
+               componentKey != NativeBrowserPluginIdentity.componentKey,
                sessions[adapterSessionID]?.activeInvocationIDs == [invocationID] {
                 releaseComputerUseLease(adapterSessionID: adapterSessionID)
             }
@@ -382,16 +410,16 @@ actor NativePluginRuntimeStore {
                 return "invocation_not_found"
             }
             sessions.removeValue(forKey: adapterSessionID)
-            releaseComputerUseLease(adapterSessionID: adapterSessionID)
             notifyVisualSessionChanged()
             await session.client.terminate()
+            releaseComputerUseLease(adapterSessionID: adapterSessionID)
             try? FileManager.default.removeItem(at: session.visualSessionURL)
             return "cancelled"
         }
         sessions.removeValue(forKey: adapterSessionID)
-        releaseComputerUseLease(adapterSessionID: adapterSessionID)
         notifyVisualSessionChanged()
         await session.client.terminate()
+        releaseComputerUseLease(adapterSessionID: adapterSessionID)
         try? FileManager.default.removeItem(at: session.visualSessionURL)
         return "cancelled"
     }
@@ -402,12 +430,10 @@ actor NativePluginRuntimeStore {
         for adapterSessionID in matching.keys {
             sessions.removeValue(forKey: adapterSessionID)
         }
-        for adapterSessionID in matching.keys {
-            releaseComputerUseLease(adapterSessionID: adapterSessionID)
-        }
         notifyVisualSessionChanged()
-        for session in matching.values {
+        for (adapterSessionID, session) in matching {
             await session.client.terminate()
+            releaseComputerUseLease(adapterSessionID: adapterSessionID)
             try? FileManager.default.removeItem(at: session.visualSessionURL)
         }
     }
@@ -441,14 +467,15 @@ actor NativePluginRuntimeStore {
         if !active.isEmpty {
             notifyVisualSessionChanged()
         }
+        for session in active {
+            await session.client.terminate()
+        }
+        pendingExclusiveSessionIDs.removeAll()
         computerUseLeaseOwner = nil
         let waiters = computerUseLeaseWaiters
         computerUseLeaseWaiters.removeAll()
         for waiter in waiters {
             waiter.continuation.resume(returning: false)
-        }
-        for session in active {
-            await session.client.terminate()
         }
     }
 
@@ -541,7 +568,10 @@ actor NativePluginRuntimeStore {
     }
 
     private func acquireComputerUseLease(adapterSessionID: String) async -> Bool {
-        guard sessions[adapterSessionID] != nil else { return false }
+        guard sessions[adapterSessionID] != nil
+                || pendingExclusiveSessionIDs.contains(adapterSessionID) else {
+            return false
+        }
         if computerUseLeaseOwner == nil {
             computerUseLeaseOwner = adapterSessionID
             return true
@@ -594,7 +624,8 @@ actor NativePluginRuntimeStore {
             computerUseLeaseWaiters.removeAll {
                 $0.adapterSessionID == nextAdapterSessionID
             }
-            guard sessions[nextAdapterSessionID] != nil else {
+            guard sessions[nextAdapterSessionID] != nil
+                    || pendingExclusiveSessionIDs.contains(nextAdapterSessionID) else {
                 for waiter in matchingWaiters {
                     waiter.continuation.resume(returning: false)
                 }

@@ -7,8 +7,9 @@ use chatos_mcp_runtime::ToolResult;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::MAIN_CHAT_PROFILE_KEY;
+use crate::{MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY};
 
+const JIGULI_AGENT_ID: &str = "jiguli";
 const INLINE_TOOL_RESULT_MAX_BYTES: usize = 160_000;
 const INLINE_TOOL_RESULTS_TOTAL_MAX_BYTES: usize = 800_000;
 const TOOL_RESULT_READ_MAX_CHARS: usize = 8_000;
@@ -28,17 +29,19 @@ pub(super) fn memory_plan(
     initial_text_field: &str,
 ) -> Result<LocalMemoryPlan, String> {
     let is_main_chat = claim.run.profile_key == MAIN_CHAT_PROFILE_KEY;
-    let thread_id = if is_main_chat {
-        optional_input_string(&claim.run.input, "conversation_id")
-            .unwrap_or_else(|| claim.run.owner_entity_id.clone())
+    let is_task_execution = claim.run.profile_key == TASK_EXECUTION_PROFILE_KEY;
+    let agent_id = memory_agent_id(claim)?;
+    let agent_name = memory_agent_name(claim, agent_id.as_str())?;
+    let project_id = memory_project_id(claim)?;
+    let project_name = memory_project_name(claim)?;
+    if project_name.is_some() && project_id.is_none() {
+        return Err("Memory project_name requires project_id".to_string());
+    }
+    let thread_id = if !is_task_execution {
+        format!("client-agent:agent:{agent_id}")
     } else {
-        optional_input_string(&claim.run.input, "memory_thread_id").unwrap_or_else(|| {
-            if task_retry_instructions(&claim.run.input).is_some() {
-                claim.run.run_id.clone()
-            } else {
-                claim.run.owner_entity_id.clone()
-            }
-        })
+        optional_input_string(&claim.run.input, "memory_thread_id")
+            .unwrap_or_else(|| claim.run.owner_entity_id.clone())
     };
     let turn_id = if is_main_chat {
         optional_input_string(&claim.run.input, "turn_id")
@@ -49,6 +52,13 @@ pub(super) fn memory_plan(
     let metadata = json!({
         "tenant_id": claim.run.owner_user_id,
         "profile_key": claim.run.profile_key,
+        "agent_id": agent_id,
+        "agent_name": agent_name,
+        "project_id": project_id,
+        "project_name": project_name,
+        "memory_project_id": project_id,
+        "thread_project_aggregation_id": if is_task_execution { project_id.clone() } else { None },
+        "thread_kind": if is_task_execution && memory_context_string(claim, "todo_id").is_some() { "todo_execution" } else if is_task_execution { "agent_task" } else if is_main_chat && agent_id == JIGULI_AGENT_ID { "main_chat" } else { "agent_conversation" },
         "run_id": claim.run.run_id,
         "owner_entity_type": claim.run.owner_entity_type,
         "owner_entity_id": claim.run.owner_entity_id,
@@ -82,7 +92,8 @@ pub(super) fn memory_plan(
         .with_assistant_metadata(assistant_metadata)
         .with_tool_message_mode(message_mode)
         .with_tool_message_source(claim.run.profile_key.clone())
-        .with_tool_metadata(metadata.clone());
+        .with_tool_metadata(metadata.clone())
+        .with_summary_on_final_response(terminal_memory_summary_requested(claim));
     let user_record = initial_user_record(
         claim,
         initial_text_field,
@@ -91,18 +102,145 @@ pub(super) fn memory_plan(
         message_mode,
         metadata,
     );
+    let agent_subject_id = format!("agent:{agent_id}");
+    let mut scope = MemoryScope::thread(
+        claim.run.owner_user_id.clone(),
+        source_id,
+        thread_id.clone(),
+    )
+    .with_subject_id(agent_subject_id);
+    if let Some(project_id) = project_id {
+        scope = scope.with_related_subject_ids([format!("project:{project_id}")]);
+    }
     Ok(LocalMemoryPlan {
-        scope: MemoryScope::thread(
-            claim.run.owner_user_id.clone(),
-            source_id,
-            thread_id.clone(),
-        ),
+        scope,
         thread_id,
         turn_id,
         record_options,
         user_record,
         external_tool_results: external_tool_results(claim)?,
     })
+}
+
+pub(super) fn terminal_memory_summary_requested(claim: &LocalAgentRunClaim) -> bool {
+    if claim.run.profile_key != TASK_EXECUTION_PROFILE_KEY {
+        return false;
+    }
+    if claim.run.owner_entity_type == "task" {
+        return task_outcome_reported(claim.run.continuation_input.as_ref());
+    }
+    successful_tool_result(
+        claim.run.continuation_input.as_ref(),
+        &["todo_complete", "todo_block"],
+    )
+}
+
+fn task_outcome_reported(continuation: Option<&Value>) -> bool {
+    successful_tool_result(continuation, &["task_run_process_report_outcome"])
+        && continuation
+            .and_then(|value| value.get("invocations"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|invocation| {
+                invocation.get("tool_name").and_then(Value::as_str)
+                    == Some("task_run_process_report_outcome")
+                    && invocation
+                        .get("result")
+                        .and_then(|result| result.get("reported"))
+                        .and_then(Value::as_bool)
+                        == Some(true)
+            })
+}
+
+fn successful_tool_result(continuation: Option<&Value>, tool_names: &[&str]) -> bool {
+    continuation
+        .and_then(|value| value.get("invocations"))
+        .and_then(Value::as_array)
+        .is_some_and(|invocations| {
+            invocations.iter().any(|invocation| {
+                invocation.get("status").and_then(Value::as_str) == Some("succeeded")
+                    && invocation
+                        .get("tool_name")
+                        .and_then(Value::as_str)
+                        .is_some_and(|name| tool_names.contains(&name))
+            })
+        })
+}
+
+fn memory_agent_id(claim: &LocalAgentRunClaim) -> Result<String, String> {
+    let agent_id = consistent_memory_context_string(claim, "agent_id")?
+        .ok_or_else(|| "Memory identity requires an explicit agent_id".to_string())?;
+    if matches!(
+        agent_id.as_str(),
+        "main-chat" | "main_chat" | "task-execution" | "task_execution"
+    ) {
+        return Err("Memory identity must not use a runtime profile key as agent_id".to_string());
+    }
+    Ok(agent_id)
+}
+
+fn memory_project_id(claim: &LocalAgentRunClaim) -> Result<Option<String>, String> {
+    consistent_memory_context_string(claim, "project_id")
+}
+
+fn memory_project_name(claim: &LocalAgentRunClaim) -> Result<Option<String>, String> {
+    consistent_memory_context_string(claim, "project_name")
+}
+
+fn memory_agent_name(claim: &LocalAgentRunClaim, agent_id: &str) -> Result<Option<String>, String> {
+    Ok(consistent_memory_context_string(claim, "agent_name")?
+        .or_else(|| (agent_id == JIGULI_AGENT_ID).then(|| "叽咕狸".to_string())))
+}
+
+fn memory_context_string(claim: &LocalAgentRunClaim, key: &str) -> Option<String> {
+    optional_input_string(&claim.run.input, key).or_else(|| {
+        [
+            "agent_execution_context",
+            "agent_team_execution",
+            "team_executor_context",
+        ]
+        .into_iter()
+        .find_map(|container| nested_memory_context_string(claim, container, key))
+    })
+}
+
+fn consistent_memory_context_string(
+    claim: &LocalAgentRunClaim,
+    key: &str,
+) -> Result<Option<String>, String> {
+    let values = [
+        nested_memory_context_string(claim, "agent_execution_context", key),
+        optional_input_string(&claim.run.input, key),
+        nested_memory_context_string(claim, "agent_team_execution", key),
+        nested_memory_context_string(claim, "team_executor_context", key),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let Some(value) = values.first() else {
+        return Ok(None);
+    };
+    if values.iter().any(|candidate| candidate != value) {
+        return Err(format!("Memory identity has conflicting {key} values"));
+    }
+    Ok(Some(value.clone()))
+}
+
+fn nested_memory_context_string(
+    claim: &LocalAgentRunClaim,
+    container: &str,
+    key: &str,
+) -> Option<String> {
+    claim
+        .run
+        .input
+        .get(container)
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn initial_user_record(
@@ -144,13 +282,6 @@ fn optional_input_string(input: &Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-fn task_retry_instructions(input: &Value) -> Option<&Vec<Value>> {
-    input
-        .get("retry_instructions")
-        .and_then(Value::as_array)
-        .filter(|instructions| !instructions.is_empty())
 }
 
 pub(super) fn external_tool_results(claim: &LocalAgentRunClaim) -> Result<Vec<ToolResult>, String> {
@@ -278,7 +409,17 @@ mod tests {
     use super::*;
     use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalAgentRunStatus};
 
-    fn claim(profile_key: &str, input: Value) -> LocalAgentRunClaim {
+    fn claim(profile_key: &str, mut input: Value) -> LocalAgentRunClaim {
+        let has_nested_agent = ["agent_execution_context", "agent_team_execution"]
+            .into_iter()
+            .any(|container| input.pointer(&format!("/{container}/agent_id")).is_some());
+        if !has_nested_agent {
+            input
+                .as_object_mut()
+                .expect("test Run input is an object")
+                .entry("agent_id")
+                .or_insert_with(|| json!(JIGULI_AGENT_ID));
+        }
         LocalAgentRunClaim {
             worker_id: "worker-1".to_string(),
             claim_token: "claim-1".to_string(),
@@ -319,33 +460,42 @@ mod tests {
     }
 
     #[test]
-    fn main_chat_memory_uses_conversation_thread_and_stable_message_ids() {
+    fn main_chat_memory_uses_stable_agent_thread_and_stable_message_ids() {
         let claim = claim(
             MAIN_CHAT_PROFILE_KEY,
             json!({
                 "conversation_id": "conversation-1",
                 "turn_id": "turn-1",
                 "message_id": "message-1",
-                "message": "hello"
+                "message": "hello",
+                "project_id": "project-1",
+                "project_name": "红果逆向"
             }),
         );
         let plan = memory_plan(&claim, "local_agent", "message").expect("plan");
 
-        assert_eq!(plan.thread_id, "conversation-1");
+        assert_eq!(plan.thread_id, "client-agent:agent:jiguli");
         assert_eq!(plan.turn_id, "turn-1");
         assert_eq!(plan.scope.tenant_id, "user-1");
         assert_eq!(plan.scope.source_id, "local_agent");
-        assert_eq!(plan.scope.thread_id, "conversation-1");
+        assert_eq!(plan.scope.thread_id, "client-agent:agent:jiguli");
+        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:jiguli"));
+        assert_eq!(plan.scope.related_subject_ids, vec!["project:project-1"]);
         let user = plan.user_record.expect("user record");
         assert_eq!(user.message_id.as_deref(), Some("message-1"));
-        assert_eq!(user.conversation_id, "conversation-1");
+        assert_eq!(user.conversation_id, "client-agent:agent:jiguli");
         assert_eq!(
             plan.record_options.assistant_message_id.as_deref(),
             Some("run-1:assistant:1")
         );
         assert_eq!(user.metadata.expect("metadata")["tenant_id"], "user-1");
+        let metadata = plan.record_options.assistant_metadata.as_ref().unwrap();
+        assert_eq!(metadata["project_id"], "project-1");
+        assert_eq!(metadata["project_name"], "红果逆向");
+        assert_eq!(metadata["memory_project_id"], "project-1");
+        assert!(metadata["thread_project_aggregation_id"].is_null());
         assert_eq!(
-            plan.record_options.assistant_metadata.as_ref().unwrap()["local_agent_step_claim"],
+            metadata["local_agent_step_claim"],
             json!({"run_id": "run-1", "claim_token": "claim-1", "version": 2})
         );
         assert!(plan
@@ -355,6 +505,121 @@ mod tests {
             .unwrap()
             .get("local_agent_step_claim")
             .is_none());
+    }
+
+    #[test]
+    fn memory_plan_rejects_runs_without_an_explicit_agent_identity() {
+        let mut claim = claim(MAIN_CHAT_PROFILE_KEY, json!({"message": "hello"}));
+        claim
+            .run
+            .input
+            .as_object_mut()
+            .expect("test Run input is an object")
+            .remove("agent_id");
+
+        match memory_plan(&claim, "local_agent", "message") {
+            Ok(_) => panic!("missing Agent identity must be rejected"),
+            Err(error) => assert_eq!(error, "Memory identity requires an explicit agent_id"),
+        }
+    }
+
+    #[test]
+    fn memory_plan_rejects_runtime_profiles_as_agent_identities() {
+        for agent_id in ["main-chat", "main_chat", "task-execution", "task_execution"] {
+            let claim = claim(
+                MAIN_CHAT_PROFILE_KEY,
+                json!({"message": "hello", "agent_id": agent_id}),
+            );
+
+            match memory_plan(&claim, "local_agent", "message") {
+                Ok(_) => panic!("runtime profile {agent_id} must not become an Agent identity"),
+                Err(error) => assert_eq!(
+                    error,
+                    "Memory identity must not use a runtime profile key as agent_id"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn memory_plan_rejects_conflicting_explicit_identity() {
+        let claim = claim(
+            MAIN_CHAT_PROFILE_KEY,
+            json!({
+                "message": "hello",
+                "agent_id": "wrong-agent",
+                "project_id": "wrong-project",
+                "agent_execution_context": {
+                    "agent_id": "agent-1",
+                    "agent_name": "工程 Agent",
+                    "project_id": "project-1"
+                }
+            }),
+        );
+
+        match memory_plan(&claim, "local_agent", "message") {
+            Ok(_) => panic!("conflicting Agent identity must be rejected"),
+            Err(error) => assert_eq!(error, "Memory identity has conflicting agent_id values"),
+        }
+    }
+
+    #[test]
+    fn team_todo_memory_uses_executor_agent_and_project_subjects_not_room() {
+        let claim = claim(
+            "task_execution",
+            json!({
+                "prompt": "implement the todo",
+                "agent_execution_context": {
+                    "agent_id": "agent-1",
+                    "agent_name": "工程 Agent",
+                    "project_id": "project-1",
+                    "room_id": "room-1"
+                },
+                "agent_team_execution": {
+                    "agent_id": "agent-1",
+                    "project_id": "project-1",
+                    "team_id": "room-1",
+                    "todo_id": "todo-1"
+                }
+            }),
+        );
+
+        let plan = memory_plan(&claim, "local_agent", "prompt").expect("plan");
+
+        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:agent-1"));
+        assert_eq!(plan.scope.related_subject_ids, vec!["project:project-1"]);
+        let metadata = plan.record_options.assistant_metadata.expect("metadata");
+        assert_eq!(metadata["thread_kind"], "todo_execution");
+        assert_eq!(metadata["agent_name"], "工程 Agent");
+        assert_eq!(metadata["project_id"], "project-1");
+        assert_eq!(metadata["memory_project_id"], "project-1");
+        assert_eq!(metadata["thread_project_aggregation_id"], "project-1");
+        assert_ne!(plan.scope.subject_id.as_deref(), Some("room:room-1"));
+    }
+
+    #[test]
+    fn agent_conversation_uses_real_agent_identity_even_on_main_chat_profile() {
+        let claim = claim(
+            MAIN_CHAT_PROFILE_KEY,
+            json!({
+                "message": "continue the project",
+                "agent_execution_context": {
+                    "agent_id": "agent-1",
+                    "project_id": "project-1",
+                    "room_id": "room-1"
+                }
+            }),
+        );
+
+        let plan = memory_plan(&claim, "local_agent", "message").expect("plan");
+
+        assert_eq!(plan.thread_id, "client-agent:agent:agent-1");
+        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:agent-1"));
+        assert_eq!(plan.scope.related_subject_ids, vec!["project:project-1"]);
+        let metadata = plan.record_options.assistant_metadata.expect("metadata");
+        assert_eq!(metadata["thread_kind"], "agent_conversation");
+        assert_eq!(metadata["memory_project_id"], "project-1");
+        assert!(metadata["thread_project_aggregation_id"].is_null());
     }
 
     #[test]
@@ -393,6 +658,7 @@ mod tests {
 
         assert_eq!(plan.thread_id, "task-1");
         assert_eq!(plan.turn_id, "run-1");
+        assert_eq!(plan.scope.subject_id.as_deref(), Some("agent:jiguli"));
         assert!(plan.user_record.is_none());
         assert_eq!(plan.external_tool_results.len(), 1);
         assert_eq!(plan.external_tool_results[0].tool_call_id, "call-1");
@@ -405,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn retried_task_uses_a_fresh_run_memory_thread() {
+    fn retried_task_reuses_the_logical_task_memory_thread() {
         let claim = claim(
             "task_execution",
             json!({
@@ -416,9 +682,38 @@ mod tests {
 
         let plan = memory_plan(&claim, "local_agent", "prompt").expect("retry plan");
 
-        assert_eq!(plan.thread_id, "run-1");
-        assert_eq!(plan.scope.thread_id, "run-1");
+        assert_eq!(plan.thread_id, "task-1");
+        assert_eq!(plan.scope.thread_id, "task-1");
         assert_eq!(plan.turn_id, "run-1");
+    }
+
+    #[test]
+    fn native_team_executor_uses_the_stable_todo_thread() {
+        let claim = claim(
+            "task_execution",
+            json!({
+                "prompt": "continue the todo",
+                "memory_thread_id": "client-agent:todo:todo-1",
+                "agent_execution_context": {
+                    "agent_id": "agent-1",
+                    "project_id": "project-1"
+                },
+                "team_executor_context": {
+                    "todo_id": "todo-1",
+                    "agent_id": "agent-1",
+                    "project_id": "project-1"
+                }
+            }),
+        );
+
+        let plan = memory_plan(&claim, "local_agent", "prompt").expect("todo plan");
+
+        assert_eq!(plan.thread_id, "client-agent:todo:todo-1");
+        assert_eq!(plan.scope.thread_id, "client-agent:todo:todo-1");
+        assert_eq!(
+            plan.record_options.assistant_metadata.as_ref().unwrap()["thread_kind"],
+            "todo_execution"
+        );
     }
 
     #[test]

@@ -431,7 +431,8 @@ final class StoryAgentTests: XCTestCase {
         XCTAssertEqual(scopes.first?.tenantID, "alice")
         XCTAssertEqual(scopes.first?.sourceID, "chatos")
         XCTAssertEqual(scopes.first?.runID, completedSnapshot.id)
-        XCTAssertTrue(scopes.first?.subjectID.contains(project.id.uuidString) == true)
+        XCTAssertEqual(scopes.first?.subjectID, "agent:builtin-story-agent")
+        XCTAssertEqual(scopes.first?.projectSubjectID, "project:\(project.id.uuidString)")
         let synced = await service.memory.entries
         XCTAssertTrue(synced.contains { $0.message.content.contains("没有生成图片") })
         var completed = try await store.loadRun(

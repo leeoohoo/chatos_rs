@@ -29,10 +29,24 @@ extension LocalAgentChatToolProvider {
         for source in sources {
             guard let message = sourceMessagesByID[source.messageID],
                   message.roomID == source.conversationID else { continue }
+            var attachmentResponses: [AttachmentResponse] = []
+            for attachment in message.attachmentItems {
+                attachmentResponses.append(.init(
+                    attachmentReference: await references.attachmentReference(
+                        roomID: message.roomID,
+                        messageID: message.id,
+                        attachmentID: attachment.id
+                    ),
+                    name: attachment.name,
+                    mimeType: attachment.mimeType,
+                    size: attachment.size,
+                    kind: attachment.kind.rawValue
+                ))
+            }
             sourceMessages.append(.init(
                 relation: source.relation.rawValue,
                 content: message.content,
-                attachmentNames: message.attachmentItems.map(\.name),
+                attachments: attachmentResponses,
                 createdAtUnixMs: message.createdAtUnixMs
             ))
         }
@@ -96,6 +110,7 @@ extension LocalAgentChatToolProvider {
             scope: todo.executionContract.scope,
             expectedOutputs: todo.executionContract.expectedOutputs,
             acceptanceCriteria: todo.executionContract.acceptanceCriteria,
+            acceptanceChecks: todo.acceptanceChecks.map(TodoAcceptanceCheckResponse.init(check:)),
             constraints: todo.executionContract.constraints,
             priority: todo.priority,
             builtinCapabilities: todo.executionPlan.builtinCapabilities.map(\.rawValue),
@@ -131,6 +146,82 @@ extension LocalAgentChatToolProvider {
         return try Self.outcome(TodoProgressResponse(progress: progress))
     }
 
+    func updateTodoAcceptance(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        guard let todo = try await currentExecutionTodo() else {
+            return Self.structuredFailure(
+                code: "todo_execution_context_mismatch",
+                field: "delivery",
+                message: "当前线程不是有效的 Todo 执行线程。",
+                retryable: false
+            )
+        }
+        guard let rawPosition = try Self.optionalInteger(arguments, key: "criterion_index") else {
+            throw AgentGroupChatError.invalidField("criterion_index")
+        }
+        let position = Int(rawPosition)
+        guard let status = LocalAgentTodoAcceptanceStatus(
+            rawValue: try Self.requiredString(arguments, key: "status")
+        ), [.passed, .failed, .blocked].contains(status) else {
+            throw AgentGroupChatError.invalidField("status")
+        }
+        let evidence = try Self.requiredString(arguments, key: "evidence")
+        let blockedReason = try Self.optionalString(arguments, key: "blocked_reason") ?? ""
+        let requiresHuman = try Self.optionalBoolean(arguments, key: "requires_human") ?? false
+        if status == .blocked && blockedReason.isEmpty {
+            return Self.structuredFailure(
+                code: "acceptance_block_reason_required",
+                field: "blocked_reason",
+                message: "blocked 验收项必须说明无法继续的具体原因。",
+                retryable: true,
+                nextTool: Self.todoAcceptanceUpdateToolName
+            )
+        }
+        let timestamp = now()
+        let updated = try await store.updateAgentTodoAcceptanceCheck(
+            ownerUserID: context.ownerUserID,
+            agentID: context.agentID,
+            todoID: todo.id,
+            position: position,
+            status: status,
+            evidence: evidence,
+            blockedReason: blockedReason,
+            requiresHuman: requiresHuman,
+            nowUnixMs: timestamp
+        )
+        let check = updated.acceptanceChecks[position - 1]
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: context.ownerUserID,
+            agentID: context.agentID,
+            todoID: todo.id,
+            kind: .progress,
+            runID: context.runID,
+            stage: "acceptance.\(position).\(status.rawValue)",
+            detail: status == .blocked ? blockedReason : evidence,
+            assetUpdateSuggestions: [],
+            nowUnixMs: timestamp
+        )
+        let gateChecks = updated.acceptanceChecks.map(\.gateCheck)
+        if AgentExecutionAcceptanceGate.canFinishBlocked(gateChecks) {
+            let humanBlocks = updated.acceptanceChecks.filter {
+                $0.status == .blocked && $0.requiresHuman
+            }
+            let reason = humanBlocks.compactMap { check -> String? in
+                let value = check.blockedReason.trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : "#\(check.position) \(value)"
+            }.joined(separator: "；")
+            return try await finishExecutionTodo(
+                status: .blocked,
+                progressKind: .blocked,
+                detail: reason.isEmpty ? "剩余验收项需要 Human 介入。" : reason,
+                blockedReason: reason.isEmpty ? "剩余验收项需要 Human 介入。" : reason,
+                result: "",
+                assetUpdateSuggestions: []
+            )
+        }
+        return try Self.outcome(TodoAcceptanceCheckResponse(check: check))
+    }
+
     func readTodoProgress(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
         let reference = try Self.requiredString(arguments, key: "todo_ref")
@@ -158,6 +249,24 @@ extension LocalAgentChatToolProvider {
         let arguments = try Self.arguments(call)
         let summary = try Self.requiredString(arguments, key: "summary")
         let suggestions = try Self.assetUpdateSuggestions(arguments)
+        guard let todo = try await currentExecutionTodo() else {
+            return Self.structuredFailure(
+                code: "todo_execution_context_mismatch",
+                field: "delivery",
+                message: "当前线程不是有效的 Todo 执行线程。",
+                retryable: false
+            )
+        }
+        guard AgentExecutionAcceptanceGate.canComplete(todo.acceptanceChecks.map(\.gateCheck)) else {
+            let notPassed = todo.acceptanceChecks.filter { $0.status != .passed }
+            return Self.structuredFailure(
+                code: "acceptance_checks_incomplete",
+                field: "acceptance_checks",
+                message: "Todo 不能完成，以下验收项尚未通过：\(Self.acceptanceCheckSummary(notPassed))。继续处理并逐项调用 todo_acceptance_update；确实需要 Human 的项目标记 blocked + requires_human=true 后，仍须完成其他独立项目。",
+                retryable: true,
+                nextTool: Self.todoAcceptanceUpdateToolName
+            )
+        }
         if let evidenceFailure = try await projectWriteCompletionEvidenceFailure() {
             return evidenceFailure
         }
@@ -211,6 +320,42 @@ extension LocalAgentChatToolProvider {
     func blockTodo(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
         let reason = try Self.requiredString(arguments, key: "reason")
+        guard let todo = try await currentExecutionTodo() else {
+            return Self.structuredFailure(
+                code: "todo_execution_context_mismatch",
+                field: "delivery",
+                message: "当前线程不是有效的 Todo 执行线程。",
+                retryable: false
+            )
+        }
+        let gateChecks = todo.acceptanceChecks.map(\.gateCheck)
+        let humanBlocks = todo.acceptanceChecks.filter {
+            $0.status == .blocked && $0.requiresHuman
+        }
+        guard !humanBlocks.isEmpty else {
+            return Self.structuredFailure(
+                code: "human_acceptance_block_required",
+                field: "acceptance_checks",
+                message: "结束为 blocked 前，必须先用 todo_acceptance_update 把确实需要 Human 的验收项标记为 blocked 且 requires_human=true。",
+                retryable: true,
+                nextTool: Self.todoAcceptanceUpdateToolName
+            )
+        }
+        guard AgentExecutionAcceptanceGate.canFinishBlocked(gateChecks) else {
+            let actionablePositions = Set(
+                AgentExecutionAcceptanceGate.actionableChecks(gateChecks).map(\.criterionIndex)
+            )
+            let stillActionable = todo.acceptanceChecks.filter {
+                actionablePositions.contains($0.position - 1)
+            }
+            return Self.structuredFailure(
+                code: "actionable_acceptance_checks_remaining",
+                field: "acceptance_checks",
+                message: "存在 Human 阻塞项，但以下独立项目仍须继续处理，不能一起跳过：\(Self.acceptanceCheckSummary(stillActionable))。",
+                retryable: true,
+                nextTool: Self.todoAcceptanceUpdateToolName
+            )
+        }
         return try await finishExecutionTodo(
             status: .blocked,
             progressKind: .blocked,
@@ -219,6 +364,14 @@ extension LocalAgentChatToolProvider {
             result: "",
             assetUpdateSuggestions: []
         )
+    }
+
+    static func acceptanceCheckSummary(
+        _ checks: [LocalAgentTodoAcceptanceCheck]
+    ) -> String {
+        checks.map {
+            "#\($0.position) [\($0.status.rawValue)] \($0.criterion)"
+        }.joined(separator: "；")
     }
 
     func finishExecutionTodo(
@@ -466,6 +619,7 @@ extension LocalAgentChatToolProvider {
             scope: todo.executionContract.scope,
             expectedOutputs: todo.executionContract.expectedOutputs,
             acceptanceCriteria: todo.executionContract.acceptanceCriteria,
+            acceptanceChecks: todo.acceptanceChecks.map(TodoAcceptanceCheckResponse.init(check:)),
             constraints: todo.executionContract.constraints,
             priority: todo.priority,
             status: todo.status.rawValue,

@@ -10,6 +10,7 @@ extension NativeLocalAgentPlatformToolCatalog {
     externalMCPConfigs: [NativeLocalAgentExternalMCPConfig]
   ) -> [LocalAgentJSONValue] {
     [attachmentReadTool]
+    + teamExecutorTools
     + NativeMCPCodeReadTools.toolDefinitions.compactMap { value in
       guard case .object(let tool) = value,
         case .string(let name)? = tool["name"],
@@ -50,6 +51,33 @@ extension NativeLocalAgentPlatformToolCatalog {
         else { return nil }
         return name
       })
+  }
+
+  static let teamExecutorToolNames: Set<String> = [
+    LocalAgentChatToolProvider.todoGetContextToolName,
+    LocalAgentChatToolProvider.todoProgressAppendToolName,
+    LocalAgentChatToolProvider.todoAcceptanceUpdateToolName,
+    LocalAgentChatToolProvider.todoCompleteToolName,
+    LocalAgentChatToolProvider.todoBlockToolName,
+    LocalAgentChatToolProvider.teamAssetListToolName,
+    LocalAgentChatToolProvider.teamAssetGetToolName,
+  ]
+
+  private static var teamExecutorTools: [LocalAgentJSONValue] {
+    LocalAgentChatToolProvider.toolDefinitions.compactMap { definition in
+      guard teamExecutorToolNames.contains(definition.name),
+        let parameters = try? JSONDecoder().decode(
+          LocalAgentJSONValue.self,
+          from: definition.schema
+        )
+      else { return nil }
+      return .object([
+        "type": .string("function"),
+        "name": .string(definition.name),
+        "description": .string(definition.description),
+        "parameters": parameters,
+      ])
+    }
   }
 
   private static func capabilityTool(_ value: NativeJSONValue) -> LocalAgentJSONValue {

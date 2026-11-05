@@ -189,7 +189,7 @@ if missing:
     raise SystemExit(f"missing selected Compose services: {missing}")
 images = {services[name].get("image") for name in selected}
 for name, service in services.items():
-    if service.get("image") in images:
+    if service.get("image") in images and service.get("restart") != "no":
         print(name)
 ' "$@"
 }
@@ -400,6 +400,9 @@ rollback() {
     mv -Tf "$deploy_root/current.rollback" "$current_link"
     if [[ ${#selected_runtime_services[@]} -gt 0 ]]; then
       restart_selected_release_with_retries "$previous_release" "${selected_runtime_services[@]}" || true
+      if (( deploy_gateway_config == 0 && ${#deploy_services[@]} > 0 )); then
+        restart_selected_release_with_retries "$previous_release" apisix-gateway || true
+      fi
     else
       start_release_with_retries "$previous_release" || true
     fi
@@ -564,6 +567,30 @@ write_deploy_status running build "Building selected production images"
   fi
 )
 
+if (( deploy_all == 0 )); then
+  selected_migration_services=()
+  if service_is_selected configuration-center-backend; then
+    selected_migration_services+=(configuration-center-migrate)
+  fi
+  if service_is_selected memory-engine-backend; then
+    selected_migration_services+=(memory-engine-migrate)
+  fi
+  if [[ ${#selected_migration_services[@]} -gt 0 ]]; then
+    echo "[INFO] applying selected PostgreSQL migrations before release cutover: ${selected_migration_services[*]}"
+    write_deploy_status running migrate "Applying selected PostgreSQL migrations"
+    for migration_service in "${selected_migration_services[@]}"; do
+      (
+        cd "$release_dir"
+        docker compose \
+          -f docker/compose.yml \
+          -f docker/compose.platform.yml \
+          --env-file docker/bootstrap.conf \
+          run --rm --no-deps "$migration_service"
+      )
+    done
+  fi
+fi
+
 if [[ ${#deploy_services[@]} -gt 0 ]]; then
   while IFS= read -r service; do
     [[ -n "$service" ]] || continue
@@ -594,6 +621,10 @@ echo "[INFO] switching containers to the new release"
 write_deploy_status running switch "Switching containers to the new release"
 if (( deploy_all == 0 )); then
   restart_selected_release_with_retries "$release_dir" "${selected_runtime_services[@]}"
+  if (( deploy_gateway_config == 0 && ${#deploy_services[@]} > 0 )); then
+    echo "[INFO] refreshing APISIX after selected service containers changed addresses"
+    restart_selected_release_with_retries "$release_dir" apisix-gateway
+  fi
 else
   start_release_with_retries "$release_dir"
 fi

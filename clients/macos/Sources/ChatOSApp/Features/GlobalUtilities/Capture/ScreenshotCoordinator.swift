@@ -56,10 +56,9 @@ final class ScreenshotCoordinator {
     func start() {
         guard Self.workflowGate.acquire(self) else { return }
 
-        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            != Bundle.main.bundleIdentifier {
-            previousApplication = NSWorkspace.shared.frontmostApplication
-        }
+        let frontmostApplication = NSWorkspace.shared.frontmostApplication
+        previousApplication = frontmostApplication?.processIdentifier
+            != ProcessInfo.processInfo.processIdentifier ? frontmostApplication : nil
 
         guard ensureScreenCapturePermission() else {
             Self.workflowGate.release(self)

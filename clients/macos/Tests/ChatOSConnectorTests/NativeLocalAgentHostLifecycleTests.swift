@@ -357,7 +357,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let created = try await conversations.create(
             ownerUserID: "user-1",
             conversationID: "conversation-1",
-            title: "Local conversation"
+            title: "Local conversation",
+            resource: .init(kind: .contact, resourceID: WorkspaceSystemContact.mainID)
         )
         XCTAssertEqual(created.conversation.conversationID, "conversation-1")
         XCTAssertEqual(created.conversation.version, 1)
@@ -475,6 +476,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         }
         XCTAssertEqual(runtimeInput["selected_thinking_level"], .string("medium"))
         XCTAssertEqual(runtimeInput["reasoning_enabled"], .bool(true))
+        XCTAssertEqual(runInput["agent_id"], .string(WorkspaceSystemContact.mainID))
+        XCTAssertEqual(runInput["agent_name"], .string("叽咕狸"))
         XCTAssertEqual(
             runInput["explicit_capability_selection"],
             .object([

@@ -4,6 +4,32 @@ import Testing
 
 struct PetActivityRecoveryMapperTests {
     @Test
+    func taskExecutionPromptCanBeAnsweredInline() {
+        let activity = PetActivity(
+            id: "task-prompt",
+            source: .taskExecution,
+            kind: .waitingForUser,
+            title: "任务",
+            route: .init(promptID: "local-ask:run-1")
+        )
+
+        #expect(activity.canReplyInline)
+    }
+
+    @Test
+    func waitingActivityWithoutPromptDoesNotOpenEmptyInlineForm() {
+        let activity = PetActivity(
+            id: "survey",
+            source: .taskExecution,
+            kind: .waitingForUser,
+            title: "需求调研",
+            route: .init(requirementSurveyID: "survey-1")
+        )
+
+        #expect(!activity.canReplyInline)
+    }
+
+    @Test
     func restoresLatestRunningTaskWithRunRoute() throws {
         let now = Date()
         var turn = makeTurn(status: .completed, startedAt: now.addingTimeInterval(-60))

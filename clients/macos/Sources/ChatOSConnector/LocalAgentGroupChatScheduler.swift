@@ -288,11 +288,20 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     public typealias ContextLanguageProvider = @Sendable (
         _ ownerUserID: String
     ) async -> ChatOSLanguage
+    public typealias TeamHookContextProvider = @Sendable (
+        _ ownerUserID: String,
+        _ projectID: String,
+        _ roomID: String,
+        _ runID: String,
+        _ lane: LocalAgentRunLane,
+        _ prompt: String
+    ) async throws -> [String]
 
     let service: NativeAgentGroupChatService
     let services: any AgentServiceProviding
     let settings: AgentSettingsStore
     let runtime: any AgentRuntimeExecuting
+    let nativeExecutor: NativeLocalAgentTeamExecutor?
     let limits: AgentGroupChatRoutingLimits
     let relayMCP: LocalAgentRelayMCPServer
     let executorTaskRegistry: LocalAgentExecutorTaskRegistry
@@ -305,6 +314,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     let professionCatalogProvider: ProfessionCatalogProvider
     let todoPluginCatalogProvider: TodoPluginCatalogProvider
     let contextLanguageProvider: ContextLanguageProvider
+    let teamHookContextProvider: TeamHookContextProvider
     let now: @Sendable () -> Int64
 
     public init(
@@ -312,6 +322,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         services: any AgentServiceProviding,
         settings: AgentSettingsStore = .init(),
         runtime: any AgentRuntimeExecuting = AgentRuntime(),
+        nativeExecutor: NativeLocalAgentTeamExecutor? = nil,
         limits: AgentGroupChatRoutingLimits = .init(),
         maximumConcurrentExecutions: Int = NativeClientResourceBudgetPolicy.adaptiveDefault.swiftAgentRuns,
         machineResourceGovernor: ClientMachineResourceGovernor? = nil,
@@ -327,6 +338,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         },
         todoPluginCatalogProvider: @escaping TodoPluginCatalogProvider = { _ in [] },
         contextLanguageProvider: @escaping ContextLanguageProvider = { _ in .simplifiedChinese },
+        teamHookContextProvider: @escaping TeamHookContextProvider = { _, _, _, _, _, _ in [] },
         additionalToolProviders: @escaping AdditionalToolProviderFactory = { _, _, _, _ in [] },
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
@@ -336,6 +348,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.services = services
         self.settings = settings
         self.runtime = runtime
+        self.nativeExecutor = nativeExecutor
         self.limits = limits
         let executorTaskRegistry = LocalAgentExecutorTaskRegistry()
         self.executorTaskRegistry = executorTaskRegistry
@@ -358,6 +371,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.professionCatalogProvider = professionCatalogProvider
         self.todoPluginCatalogProvider = todoPluginCatalogProvider
         self.contextLanguageProvider = contextLanguageProvider
+        self.teamHookContextProvider = teamHookContextProvider
         self.additionalToolProviders = additionalToolProviders
         self.now = now
     }

@@ -53,6 +53,7 @@ impl CommandReceiptPolicy {
             | HostCommand::ListPluginHookBundles(_)
             | HostCommand::ListPluginHookBundleRecords(_)
             | HostCommand::ListPluginHookInvocations(_)
+            | HostCommand::ResolveAgentTeamHookContext(_)
             | HostCommand::GetConversation(_)
             | HostCommand::GetConversationContext(_)
             | HostCommand::GetConversationAttachment(_)

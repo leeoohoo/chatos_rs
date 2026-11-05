@@ -8,15 +8,6 @@ use uuid::Uuid;
 use crate::models::{now_rfc3339, EngineSubjectMemory, UpsertSubjectMemoryRequest};
 use crate::repositories::postgres::decode;
 
-pub(crate) fn normalized_subject_ids(subject_ids: &[String]) -> Vec<String> {
-    subject_ids
-        .iter()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .collect()
-}
-
 pub(crate) fn build_subject_memory_query<'a>(
     tenant_id: &'a str,
     source_id: &'a str,

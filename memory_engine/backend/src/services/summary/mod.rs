@@ -4,7 +4,6 @@
 use crate::models::{EngineRecord, EngineSummary};
 
 pub(crate) const DEFAULT_PENDING_RECORD_SCAN_LIMIT: i64 = 5000;
-pub(crate) const MAX_THREAD_SUMMARY_TARGET_TOKENS: i64 = 8_000;
 
 pub(crate) fn required_thread_summary_token_limit(configured: Option<i64>) -> Result<i64, String> {
     configured
@@ -15,7 +14,6 @@ pub(crate) fn required_thread_summary_token_limit(configured: Option<i64>) -> Re
 #[derive(Debug, Clone)]
 pub struct RollupSettings {
     pub token_limit: i64,
-    pub target_summary_tokens: i64,
     pub count_limit: i64,
     pub keep_level0_count: i64,
     pub max_level: i64,
@@ -51,7 +49,6 @@ pub(crate) struct PreparedThreadRollup {
 #[derive(Debug, Clone)]
 pub(crate) struct SummaryJobSettings {
     pub(crate) token_limit: i64,
-    pub(crate) target_summary_tokens: Option<i64>,
     pub(crate) cloud_owner_entity_id: Option<String>,
     pub(crate) cloud_resume_kind: Option<String>,
 }
@@ -62,6 +59,7 @@ pub(crate) struct PendingRecordSelection {
     pub(crate) oversized: Vec<EngineRecord>,
     pub(crate) selected_token_count: i64,
     pub(crate) oversized_token_count: i64,
+    pub(crate) project_subject_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -10,10 +10,7 @@ use crate::ai::{AiClient, AiGenerateTextError};
 use super::chunking::split_chunks_by_token_limit;
 use super::input::build_ai_input;
 use super::overflow::is_context_overflow_error;
-use super::{
-    SummaryBuildResult, MAX_MERGE_ROUNDS, MAX_OVERFLOW_RETRIES, MIN_MERGE_TARGET_TOKENS,
-    MIN_TOKEN_LIMIT,
-};
+use super::{SummaryBuildResult, MAX_MERGE_ROUNDS, MAX_OVERFLOW_RETRIES, MIN_TOKEN_LIMIT};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct CloudSummaryPipelineSpec {
@@ -22,7 +19,6 @@ pub(crate) struct CloudSummaryPipelineSpec {
     pub leaf_directive: String,
     pub merge_directive: String,
     pub token_limit: i64,
-    pub target_tokens: Option<i64>,
     pub initial_token_limit_floor: i64,
     pub split_oversized_items: bool,
     pub log_label: String,
@@ -125,18 +121,11 @@ impl CloudSummaryPipelineState {
             directive,
             group.as_slice(),
         );
-        let target_tokens = match self.phase {
-            PipelinePhase::Leaf => self.spec.target_tokens,
-            PipelinePhase::Merge => self
-                .spec
-                .target_tokens
-                .map(|value| value.max(MIN_MERGE_TARGET_TOKENS)),
-        };
         match ai
             .generate_text_once(
                 crate::ai::SUMMARY_SYSTEM_PROMPT,
                 input.as_str(),
-                target_tokens,
+                None,
                 Some(input.chars().count()),
                 true,
             )
@@ -388,7 +377,6 @@ mod tests {
             leaf_directive: "leaf".to_string(),
             merge_directive: "merge".to_string(),
             token_limit,
-            target_tokens: Some(256),
             initial_token_limit_floor: MIN_TOKEN_LIMIT,
             split_oversized_items: true,
             log_label: "test".to_string(),

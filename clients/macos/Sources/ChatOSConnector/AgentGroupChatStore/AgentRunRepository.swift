@@ -115,6 +115,32 @@ enum AgentRunRepository {
         return try values.map(AgentGroupChatRowMapper.run)
     }
 
+    /// Loads every durable Run which still owns a queued or running Delivery for one Agent.
+    /// Agent archival uses this to close only that Agent's work without interrupting teammates.
+    static func listForOutstandingDeliveries(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        preparedStatement: () -> Void
+    ) throws -> [LocalAgentGroupChatRun] {
+        preparedStatement()
+        let values: [String] = try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT run.run_json
+            FROM local_agent_group_chat_runs run
+            JOIN project_agent_deliveries delivery
+              ON delivery.owner_user_id = run.owner_user_id
+             AND delivery.id = run.delivery_id
+            WHERE run.owner_user_id = ? AND delivery.target_agent_id = ?
+              AND delivery.status IN ('pending', 'running')
+            ORDER BY run.id
+            """,
+            [.text(ownerUserID), .text(agentID)]
+        ) { string($0, 0) }
+        return try values.map(AgentGroupChatRowMapper.run)
+    }
+
     static func listUnfinished(
         _ handle: OpaquePointer?,
         ownerUserID: String,

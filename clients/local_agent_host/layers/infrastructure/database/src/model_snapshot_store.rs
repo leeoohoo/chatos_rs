@@ -12,14 +12,14 @@ const SNAPSHOT_SELECT: &str =
     "SELECT owner_user_id, model_config_ref, model_config_revision, credential_ref, base_url, model, provider, \
      supports_responses, supports_images, instructions, temperature, max_output_tokens, \
      thinking_level, include_prompt_cache_retention, request_body_limit_bytes, \
-     max_transient_retries, output_format_json FROM local_model_config_snapshots \
+     max_transient_retries, responses_compaction_threshold, output_format_json FROM local_model_config_snapshots \
      WHERE owner_user_id = ? AND model_config_ref = ? AND model_config_revision = ?";
 
 const LATEST_SNAPSHOT_SELECT: &str =
     "SELECT owner_user_id, model_config_ref, model_config_revision, credential_ref, base_url, model, provider, \
      supports_responses, supports_images, instructions, temperature, max_output_tokens, \
      thinking_level, include_prompt_cache_retention, request_body_limit_bytes, \
-     max_transient_retries, output_format_json FROM local_model_config_snapshots \
+     max_transient_retries, responses_compaction_threshold, output_format_json FROM local_model_config_snapshots \
      WHERE owner_user_id = ? AND model_config_ref = ? \
      ORDER BY created_at_unix_ms DESC, rowid DESC LIMIT 1";
 
@@ -129,7 +129,7 @@ impl LocalModelConfigSnapshotStore for SqliteClientStorage {
              s.credential_ref, s.base_url, s.model, s.provider, s.supports_responses, \
              s.supports_images, s.instructions, s.temperature, s.max_output_tokens, \
              s.thinking_level, s.include_prompt_cache_retention, s.request_body_limit_bytes, \
-             s.max_transient_retries, s.output_format_json \
+             s.max_transient_retries, s.responses_compaction_threshold, s.output_format_json \
              FROM local_model_config_snapshots s \
              WHERE s.owner_user_id = ? AND NOT EXISTS ( \
                SELECT 1 FROM local_model_config_snapshots newer \
@@ -158,8 +158,8 @@ async fn insert_snapshot(
          owner_user_id, model_config_ref, model_config_revision, credential_ref, base_url, model, provider, \
          supports_responses, supports_images, instructions, temperature, max_output_tokens, \
          thinking_level, include_prompt_cache_retention, request_body_limit_bytes, \
-         max_transient_retries, output_format_json, created_at_unix_ms) \
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         max_transient_retries, responses_compaction_threshold, output_format_json, created_at_unix_ms) \
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&snapshot.owner_user_id)
     .bind(&snapshot.model_config_ref)
@@ -177,6 +177,7 @@ async fn insert_snapshot(
     .bind(i64::from(snapshot.include_prompt_cache_retention))
     .bind(snapshot.request_body_limit_bytes.map(|value| value as i64))
     .bind(snapshot.max_transient_retries.map(i64::from))
+    .bind(snapshot.responses_compaction_threshold.map(|value| value as i64))
     .bind(
         snapshot
             .output_format
@@ -215,6 +216,7 @@ fn decode_snapshot(
     let retention: i64 = row.try_get("include_prompt_cache_retention").db()?;
     let request_limit: Option<i64> = row.try_get("request_body_limit_bytes").db()?;
     let retries: Option<i64> = row.try_get("max_transient_retries").db()?;
+    let compaction_threshold: Option<i64> = row.try_get("responses_compaction_threshold").db()?;
     let output_format: Option<String> = row.try_get("output_format_json").db()?;
     let snapshot = LocalModelConfigSnapshot {
         owner_user_id: row.try_get("owner_user_id").db()?,
@@ -247,6 +249,15 @@ fn decode_snapshot(
                 u32::try_from(value).map_err(|_| {
                     ClientStorageError::InvalidState(
                         "max_transient_retries is outside u32 range".to_string(),
+                    )
+                })
+            })
+            .transpose()?,
+        responses_compaction_threshold: compaction_threshold
+            .map(|value| {
+                u64::try_from(value).map_err(|_| {
+                    ClientStorageError::InvalidState(
+                        "responses_compaction_threshold is negative".to_string(),
                     )
                 })
             })
@@ -302,6 +313,7 @@ mod tests {
             include_prompt_cache_retention: true,
             request_body_limit_bytes: Some(1024 * 1024),
             max_transient_retries: Some(5),
+            responses_compaction_threshold: Some(170_000),
             output_format: None,
         }
     }

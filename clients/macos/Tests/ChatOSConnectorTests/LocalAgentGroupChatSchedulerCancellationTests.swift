@@ -83,6 +83,8 @@ extension LocalAgentGroupChatSchedulerTests {
         let memoryScope = try AgentMemoryScope(
             tenantID: "alice",
             todoID: todo.id,
+            agentID: agent.id,
+            projectID: room.projectID,
             runID: runID,
             runtimeScope: checkpoint.scope
         )
@@ -232,6 +234,8 @@ extension LocalAgentGroupChatSchedulerTests {
         let memoryScope = try AgentMemoryScope(
             tenantID: "alice",
             todoID: todo.id,
+            agentID: agent.id,
+            projectID: room.projectID,
             runID: runID,
             runtimeScope: checkpoint.scope
         )
