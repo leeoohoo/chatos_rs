@@ -25,6 +25,24 @@ fn responses_request_is_text_generation_only() {
     assert_pure_generation_request(&body);
     assert_eq!(body["stream"], true);
     assert_eq!(body["instructions"], "system");
+    assert_eq!(body["max_output_tokens"], 800);
+    assert!(body.get("context_management").is_none());
+}
+
+#[test]
+fn responses_request_preserves_managed_output_target_above_four_thousand() {
+    let body = build_responses_body(
+        "model",
+        "system",
+        "user",
+        Some(8_000),
+        0.2,
+        false,
+        true,
+        false,
+    );
+
+    assert_eq!(body["max_output_tokens"], 8_000);
 }
 
 #[test]

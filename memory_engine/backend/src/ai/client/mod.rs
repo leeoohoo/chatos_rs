@@ -126,7 +126,7 @@ impl AiClient {
                 )
             })?;
         let started_at = Instant::now();
-        let requested_max_tokens = max_tokens.map(|value| value.clamp(128, 4000));
+        let requested_max_tokens = managed_output_target(max_tokens);
         let requested_max_tokens_label = requested_max_tokens
             .map(|value| value.to_string())
             .unwrap_or_else(|| "provider_default".to_string());
@@ -184,6 +184,10 @@ impl AiClient {
     }
 }
 
+fn managed_output_target(max_tokens: Option<i64>) -> Option<i64> {
+    max_tokens.map(|value| value.max(128))
+}
+
 fn classify_generate_text_error(err: String, max_transient_retries: usize) -> AiGenerateTextError {
     if max_transient_retries > 0 && is_transient_summary_error(err.as_str()) {
         return AiGenerateTextError::Retryable {
@@ -217,5 +221,12 @@ mod tests {
             }
             other => panic!("expected retryable error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn managed_output_target_is_not_silently_capped_at_four_thousand() {
+        assert_eq!(managed_output_target(Some(8_000)), Some(8_000));
+        assert_eq!(managed_output_target(Some(64)), Some(128));
+        assert_eq!(managed_output_target(None), None);
     }
 }
