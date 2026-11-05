@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const LOCAL_AGENT_PROTOCOL_VERSION = 51 as const;
+export const LOCAL_AGENT_PROTOCOL_VERSION = 52 as const;
 export const LOCAL_AGENT_MAX_FRAME_BYTES = 4 * 1024 * 1024;
 export const LOCAL_AGENT_MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
 
@@ -18,6 +18,9 @@ const healthResultSchema = z.object({
     active_work_items: z.number().int().nonnegative(),
     idle_workers: z.number().int().nonnegative(),
     queued_ready_work_items: z.number().int().nonnegative(),
+    accepting_new_work: z.boolean().optional(),
+    active_memory_sync_items: z.number().int().nonnegative().optional(),
+    admission_in_flight_work_items: z.number().int().nonnegative().optional(),
   }),
 });
 

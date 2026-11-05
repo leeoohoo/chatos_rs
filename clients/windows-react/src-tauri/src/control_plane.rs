@@ -452,6 +452,7 @@ fn resolved_snapshot(
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
             max_transient_retries: None,
+            responses_compaction_threshold: None,
             output_format: None,
         },
         credential,

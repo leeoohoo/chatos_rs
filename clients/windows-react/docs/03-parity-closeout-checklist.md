@@ -29,7 +29,7 @@ Windows 产品版本：`3.0.9`
 ## A. 本轮已关闭
 
 - [x] 已拉取并合并 `origin/3.0.9.4`（远端头 `fa8a80477`，合并提交 `1a2bede43`）；Local Agent 协议升级到 v49，Windows React 的共享契约、Tauri transport 与打包 sidecar 已同步。
-- [x] Windows 机器资源压力已接入 Host durable-claim 准入：原生层每 5 秒读取 `GlobalMemoryStatusEx`、供电、电池与系统节能状态，映射 `normal/elevated/serious/critical`；升级立即生效，恢复需持续稳定 30 秒。当前等级在 Host 未运行时保留，新 worker Host 完成 v51 握手后必须先应用压力；压力 IPC 异常按 Host transport 故障回收，不让未知调度状态继续领取任务。真实 sidecar 已验证 `serious` 把有效 worker 降到配置并发的一半，`critical` 仍保留一个交互 worker。
+- [x] Windows 机器资源压力已接入 Host durable-claim 准入：原生层每 5 秒读取 `GlobalMemoryStatusEx`、供电、电池与系统节能状态，映射 `normal/elevated/serious/critical`；升级立即生效，恢复需持续稳定 30 秒。当前等级在 Host 未运行时保留，新 worker Host 完成 v52 握手后必须先应用压力；压力 IPC 异常按 Host transport 故障回收，不让未知调度状态继续领取任务。真实 sidecar 已验证 `serious` 把有效 worker 降到配置并发的一半，`critical` 仍保留一个交互 worker。
 - [x] Windows App 现在通过 `machine_resource_snapshot` 暴露共享资源池和 Host scheduler 诊断：App 的配置/有效容量、后台上限、已用/排队数量、压力级别、Media/Code Read 分域活动数，以及 Host 的有效并发、活动/空闲/排队、内存同步和 admission 状态；快照只读、字段有界并由 React schema 复验。
 - [x] Windows App 共享资源准入基础已完成：CPU/物理内存/Host 保留共同计算预算，Media 与 Code Read 共享 permit、各 kind 保留容量、交互优先但每 4 次强制给后台公平机会、队列有界且取消安全；同一稳定系统压力会同步缩减 App 与 Host。用户附件、Artifact 导出、Media/Story 导入、项目文件任务、项目创建事务和记事本图片读取已在磁盘/worker 工作前取得 permit，附件阻塞 I/O 不再占用 async executor；已被 Host durable claim 领取的 tool work 不重复排队。
 - [x] 快速搜索的文件/应用索引构建现在在进入 `spawn_blocking` 前取得 `CodeReadWorker + Interactive` permit；容量不足时受控失败，不再绕过共享资源池启动重型本地扫描。
@@ -50,8 +50,8 @@ Windows 产品版本：`3.0.9`
 - [x] Plugin `.backups` 已完成基于 Host 当前 `release_digest` 的崩溃恢复：设置页加载与所有安装来源共享串行事务锁；Host 仍指向旧 digest 时恢复完整性精确匹配的唯一备份，Host 已提交新 digest 时保留新目录。被替换的新目录或已失效旧备份只移动到 canonical `.staging/<UUID>` 隔离，随后复用受限的 24 小时树清理；无法唯一匹配、链接、越界或损坏的备份保持不动。
 - [x] `NativeConnector/state.json` 与 `approval-activity.json` 已迁移到公共 AppData 原子替换边界：同目录 canonical UUID 临时文件完整写入、flush/fsync、复验普通非 reparse 文件及长度后，以 Windows write-through replace 提交；启动清理只识别 `.connector-state-<小写 UUID>.tmp` 与 `.approval-history-<小写 UUID>.tmp`，超过 24 小时才回收。
 - [x] 31 个 macOS 一级页面均有 Windows React 路由和对应业务入口；默认登录后进入用户消息，而不是设置页。
-- [x] Local Agent Host 打包资源完成真实 v51 健康握手，并通过账号隔离业务请求测试；此前两个 ignored 集成测试已实际运行通过。
-- [x] 重新同步 `origin/3.0.9.4` 最新远端头 `5095fb146` 并合并到本分支；Windows React 的协议常量、共享 v51 fixtures、Tauri transport 和诊断分类已同步。NSIS 安装包 `%TEMP%\\chatos-windows-v51-nsis.json` 通过：安装 `3,191 ms`、原生窗口启动 `3,227 ms`、窗口标题 `ChatOS`、卸载 `1,171 ms`，退出码均为 `0`，sidecar SHA-256 为 `78a611c08eb7c26db118e39889144198aa7d33bcdbf39bb7f40ecc98f5428697`。
+- [x] Local Agent Host 打包资源完成真实 v52 健康握手，并通过账号隔离业务请求测试；此前两个 ignored 集成测试已实际运行通过。
+- [x] 重新同步 `origin/3.0.9.4` 最新远端头 `5095fb146` 并合并到本分支；Windows React 的协议常量、共享 v52 fixtures、Tauri transport 和诊断分类已同步。NSIS 安装包 `%TEMP%\\chatos-windows-v52-nsis.json` 通过：安装 `3,191 ms`、原生窗口启动 `3,227 ms`、窗口标题 `ChatOS`、卸载 `1,171 ms`，退出码均为 `0`，sidecar SHA-256 为 `78a611c08eb7c26db118e39889144198aa7d33bcdbf39bb7f40ecc98f5428697`。
 - [x] Story H.264 实际尾帧回归修复。旧 `16×16` 夹具低于 Windows Media Foundation H.264 有效尺寸，已替换为 `64×64` Baseline/YUV420P 红到蓝视频，继续断言最后一帧为蓝色。
 - [x] Windows Rust 条件编译警告收口，避免发布测试输出掩盖新问题。
 - [x] Windows 客户端、Cargo、Tauri 和 npm 产品版本从占位的 `0.1.0` 统一为 `3.0.9`。

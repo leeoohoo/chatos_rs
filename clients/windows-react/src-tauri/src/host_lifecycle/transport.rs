@@ -95,7 +95,7 @@ pub(super) async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
             host.scheduler = Some(scheduler);
             Ok(())
         }
-        _ => Err("Host health response does not match protocol v51.".to_string()),
+        _ => Err("Host health response does not match protocol v52.".to_string()),
     }
 }
 
