@@ -17,7 +17,7 @@ Windows 产品版本：`3.0.9`
 - 安装包原生启动 smoke 已增加硬门禁：每次启动都必须观察到安装目录中的 `chatos-windows-react.exe` 自己创建的非零窗口句柄，且窗口标题必须精确为 `ChatOS`，不能只靠进程退出码把浏览器、空进程或错误壳层误判为客户端。最新报告 `%TEMP%\\chatos-windows-native-title-smoke.json` 通过（安装版启动 `3,172 ms`、窗口标题 `ChatOS`、卸载成功、隔离用户数据已清理）。这仍不替代 31 张 macOS 截图的逐页视觉走查。
 - 插件应用 Bridge 当前与 macOS 的真实实现一致：两端只实现 `host.context.read`；`artifact.*` 等尚未闭环的能力不会在 Windows 中伪装成可调用能力。
 - 静态 Plugin 页面当前补齐 `navigate-to 'self'` CSP，页面不能自行导航到外部地址；`local_http` 后端仍保持现有 loopback/origin 门禁，未把尚未解决的 AppContainer loopback 代理问题伪装成完成。
-- Windows Local Agent Host 当前已读取并应用 `/api/local-connectors/config/runtime` 的受管运行时配置：模型重试次数、上下文压缩阈值、Task 最大迭代次数均写入 Host 的模型/能力快照；请求/运行超时和无进展轮数也会做范围校验，网络失败时继续使用已持久化快照进行离线恢复。代码提交 `6de98e76f`，Windows Tauri Rust 全量测试 `539 passed, 6 ignored`。
+- Windows Local Agent Host 当前已读取并应用 `/api/local-connectors/config/runtime` 的受管运行时配置：模型重试次数、上下文压缩阈值、Task 最大迭代次数均写入 Host 的模型/能力快照；请求/运行超时和无进展轮数也会做范围校验，网络失败时继续使用已持久化快照进行离线恢复。代码提交 `6de98e76f`，Windows Tauri Rust 全量测试 `541 passed, 6 ignored`。
 - 任务终端已接入独立 AppContainer profile、项目目录读写租约、默认禁网、交互式 stdin/stdout/stderr、超时与进程树回收；绝对路径读写和租约恢复已有真实 Windows 测试。租约现在会在运行期间为工作目录父级临时授予仅 `FILE_TRAVERSE`，并在正常释放、启动失败和 journal 恢复时按 AppContainer SID 撤销，父级不获得列举、读写权限。
 - Plugin 应用后端的生产启动路径已接入独立 AppContainer：安装目录只读、数据与缓存目录读写，并按 manifest 的 `network.client` 选择 `loopback`/`controlled` capability；本机实测 `CheckNetIsolation LoopbackExempt` 返回 Win32 5（需要管理员权限），不能放进普通用户启动路径，Windows loopback exemption/proxy 尚未闭环，健康检查仍可能超时，测试构建继续使用 Host runtime 以保留既有健康检查覆盖。
 - Agent Plugin invocation journal 现在在每次校验私有 journal 根目录时，额外有界清理超过 24 小时的 canonical `.<小写 UUID>.tmp` 残留；清理复用普通非 reparse/单硬链接所有权检查，最多扫描 2,000 项，未知名称和近期临时文件保留。定向 journal 测试覆盖 stale、fresh、malformed 和扫描上限。
