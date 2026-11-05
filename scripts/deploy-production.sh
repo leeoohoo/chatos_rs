@@ -567,6 +567,30 @@ write_deploy_status running build "Building selected production images"
   fi
 )
 
+if (( deploy_all == 0 )); then
+  selected_migration_services=()
+  if service_is_selected configuration-center-backend; then
+    selected_migration_services+=(configuration-center-migrate)
+  fi
+  if service_is_selected memory-engine-backend; then
+    selected_migration_services+=(memory-engine-migrate)
+  fi
+  if [[ ${#selected_migration_services[@]} -gt 0 ]]; then
+    echo "[INFO] applying selected PostgreSQL migrations before release cutover: ${selected_migration_services[*]}"
+    write_deploy_status running migrate "Applying selected PostgreSQL migrations"
+    for migration_service in "${selected_migration_services[@]}"; do
+      (
+        cd "$release_dir"
+        docker compose \
+          -f docker/compose.yml \
+          -f docker/compose.platform.yml \
+          --env-file docker/bootstrap.conf \
+          run --rm --no-deps "$migration_service"
+      )
+    done
+  fi
+fi
+
 if [[ ${#deploy_services[@]} -gt 0 ]]; then
   while IFS= read -r service; do
     [[ -n "$service" ]] || continue
