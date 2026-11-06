@@ -5691,14 +5691,37 @@ fn open_database(path: &Path, read_only: bool) -> Result<Connection, String> {
 
 fn confined_connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(app_data_directory).map_err(|_| store_error())?;
+    reject_link_or_non_directory(app_data_directory)?;
     let app_data = fs::canonicalize(app_data_directory).map_err(|_| store_error())?;
     let requested = app_data.join("NativeConnector");
     fs::create_dir_all(&requested).map_err(|_| store_error())?;
+    reject_link_or_non_directory(&requested)?;
     let connector = fs::canonicalize(requested).map_err(|_| store_error())?;
     if !connector.starts_with(&app_data) {
         return Err(store_error());
     }
     Ok(connector)
+}
+
+fn reject_link_or_non_directory(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| store_error())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        Err(store_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_: &fs::Metadata) -> bool {
+    false
 }
 
 fn reject_link_or_non_file(path: &Path) -> Result<(), String> {
@@ -9966,5 +9989,33 @@ mod tests {
         assert_eq!(historical_attachment["multimodal_on_trigger"], false);
         assert_eq!(current_attachment["content"], serde_json::Value::Null);
         assert_eq!(current_attachment["multimodal_on_trigger"], true);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confined_connector_directory_rejects_symlinked_roots() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let actual = directory.path().join("actual");
+        fs::create_dir(&actual).unwrap();
+        let linked_root = directory.path().join("linked-root");
+        symlink(&actual, &linked_root).unwrap();
+        assert!(confined_connector_directory(&linked_root).is_err());
+
+        let root = directory.path().join("root");
+        fs::create_dir(&root).unwrap();
+        let target = root.join("target");
+        fs::create_dir(&target).unwrap();
+        symlink(&target, root.join("NativeConnector")).unwrap();
+        assert!(confined_connector_directory(&root).is_err());
+    }
+
+    #[test]
+    fn confined_connector_directory_rejects_non_directory_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("not-a-directory");
+        fs::write(&file, b"file").unwrap();
+        assert!(reject_link_or_non_directory(&file).is_err());
     }
 }
