@@ -2084,6 +2084,13 @@ async fn multi_task_graph_defaults_to_one_sanitized_terminal_summary() {
         projected_payload["metadata"]["conversation_id"],
         "conversation-summary"
     );
+    assert_eq!(projected_payload["metadata"]["agent_id"], "jiguli");
+    assert_eq!(projected_payload["metadata"]["thread_kind"], "main_chat");
+    assert!(projected_payload["metadata"]["thread_project_aggregation_id"].is_null());
+    assert_eq!(
+        projected_payload["metadata"]["run_id"],
+        "conversation-run-summary"
+    );
     assert_eq!(projected_payload["metadata"]["ui_structured_content"], true);
     assert_eq!(projected_payload["summary_status"], "ignored");
     let events = storage

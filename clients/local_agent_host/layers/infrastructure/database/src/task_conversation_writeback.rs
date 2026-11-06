@@ -730,15 +730,26 @@ async fn project_program_message_to_memory(
             "program conversation Memory projection requires agent_id".to_string(),
         )
     })?;
+    let agent_name = memory_identity_value(source_run_input, "agent_name");
     let project_id = memory_identity_value(source_run_input, "project_id");
+    let project_name = memory_identity_value(source_run_input, "project_name");
+    let thread_kind = if agent_id == "jiguli" {
+        "main_chat"
+    } else {
+        "agent_conversation"
+    };
     let thread_id = format!("client-agent:agent:{agent_id}");
     let mut remote_metadata = metadata.as_object().cloned().unwrap_or_default();
     remote_metadata.insert("tenant_id".to_string(), json!(owner_user_id));
     remote_metadata.insert("conversation_id".to_string(), json!(conversation_id));
     remote_metadata.insert("run_id".to_string(), json!(source_run_id));
     remote_metadata.insert("agent_id".to_string(), json!(agent_id));
+    remote_metadata.insert("agent_name".to_string(), json!(agent_name));
     remote_metadata.insert("project_id".to_string(), json!(project_id));
+    remote_metadata.insert("project_name".to_string(), json!(project_name));
     remote_metadata.insert("memory_project_id".to_string(), json!(project_id));
+    remote_metadata.insert("thread_project_aggregation_id".to_string(), Value::Null);
+    remote_metadata.insert("thread_kind".to_string(), json!(thread_kind));
     remote_metadata.insert("ui_message_id".to_string(), json!(message_id));
     remote_metadata.insert("ui_structured_content".to_string(), json!(true));
     remote_metadata.insert("memory_projection_mutable".to_string(), json!(true));

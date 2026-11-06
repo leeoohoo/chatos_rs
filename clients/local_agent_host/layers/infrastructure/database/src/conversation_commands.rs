@@ -538,7 +538,22 @@ pub(crate) async fn project_conversation_message_to_memory(
             "conversation Memory projection requires agent_id".to_string(),
         )
     })?;
+    let agent_name = consistent_run_identity(&run.input, "agent_name")?;
     let project_id = consistent_run_identity(&run.input, "project_id")?;
+    let project_name = consistent_run_identity(&run.input, "project_name")?;
+    let is_task_execution = run.profile_key == "task_execution";
+    let thread_kind = if is_task_execution {
+        if consistent_run_identity(&run.input, "todo_id")?.is_some() {
+            "todo_execution"
+        } else {
+            "agent_task"
+        }
+    } else if run.profile_key == "main_chat" && agent_id == "jiguli" {
+        "main_chat"
+    } else {
+        "agent_conversation"
+    };
+    let thread_project_aggregation_id = is_task_execution.then(|| project_id.clone()).flatten();
     let thread_id = if run.profile_key == "task_execution" {
         run.input
             .get("memory_thread_id")
@@ -576,8 +591,15 @@ pub(crate) async fn project_conversation_message_to_memory(
     );
     metadata.insert("profile_key".to_string(), json!(run.profile_key));
     metadata.insert("agent_id".to_string(), json!(agent_id));
+    metadata.insert("agent_name".to_string(), json!(agent_name));
     metadata.insert("project_id".to_string(), json!(project_id));
+    metadata.insert("project_name".to_string(), json!(project_name));
     metadata.insert("memory_project_id".to_string(), json!(project_id));
+    metadata.insert(
+        "thread_project_aggregation_id".to_string(),
+        json!(thread_project_aggregation_id),
+    );
+    metadata.insert("thread_kind".to_string(), json!(thread_kind));
     metadata.insert("run_id".to_string(), json!(run.run_id));
     metadata.insert(
         "owner_entity_type".to_string(),
