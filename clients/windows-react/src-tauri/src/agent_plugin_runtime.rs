@@ -2285,6 +2285,13 @@ async fn write_journal_record(path: &Path, record: &JournalRecord) -> Result<(),
     let temporary = parent.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
     let mut options = tokio::fs::OpenOptions::new();
     options.create_new(true).write(true);
+    #[cfg(windows)]
+    {
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     #[cfg(unix)]
     {
         options.mode(0o600);

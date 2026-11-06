@@ -1722,9 +1722,17 @@ fn npm_access_permissions(profile: &str, component_key: &str) -> Result<Vec<Valu
 fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
     let bytes =
         serde_json::to_vec_pretty(value).map_err(|_| install_error("无法生成 npm MCP 安装清单"))?;
-    let mut file = fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
+    let mut options = fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let mut file = options
         .open(path)
         .map_err(|_| install_error("无法保存 npm MCP 安装清单"))?;
     file.write_all(&bytes)
@@ -2404,9 +2412,16 @@ async fn download_npm_source_artifact(
     {
         return Err(install_error("npm Plugin 下载失败或大小超过限制"));
     }
-    let mut file = tokio::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(windows)]
+    {
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let mut file = options
         .open(destination)
         .await
         .map_err(|_| install_error("无法保存 npm Plugin"))?;
@@ -2652,11 +2667,16 @@ async fn run_plugin_git_archive(directory: &Path, destination: &Path) -> Result<
         terminate_git_process(&mut child, &termination).await;
         return Err(install_error("无法读取 Git Plugin 快照"));
     };
-    let output = tokio::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(destination)
-        .await;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(windows)]
+    {
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let output = options.open(destination).await;
     let mut output = match output {
         Ok(output) => output,
         Err(_) => {
@@ -3290,9 +3310,16 @@ async fn download_verified_artifact(
         return Err(install_error("Plugin 安装包大小超过限制"));
     }
     let expected_sha512 = parse_npm_integrity(npm_integrity)?;
-    let mut file = tokio::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(windows)]
+    {
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let mut file = options
         .open(destination)
         .await
         .map_err(|_| install_error("无法保存 Plugin 安装包"))?;
