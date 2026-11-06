@@ -290,7 +290,7 @@ pub(crate) async fn finalize_terminal(
     }
 
     match resume_kind {
-        THREAD_SUMMARY_JOB_RESUME_KIND | "database_worker" => {
+        THREAD_SUMMARY_JOB_RESUME_KIND => {
             let job_run_id = terminal_context
                 .get("job_run_id")
                 .and_then(Value::as_str)
@@ -408,10 +408,7 @@ pub(crate) async fn finalize_terminal(
 }
 
 fn is_thread_summary_resume_kind(resume_kind: &str) -> bool {
-    matches!(
-        resume_kind,
-        THREAD_SUMMARY_JOB_RESUME_KIND | "database_worker"
-    )
+    resume_kind == THREAD_SUMMARY_JOB_RESUME_KIND
 }
 
 #[cfg(test)]
@@ -423,7 +420,7 @@ mod tests {
         assert!(is_thread_summary_resume_kind(
             THREAD_SUMMARY_JOB_RESUME_KIND
         ));
-        assert!(is_thread_summary_resume_kind("database_worker"));
+        assert!(!is_thread_summary_resume_kind("database_worker"));
         assert!(!is_thread_summary_resume_kind("scheduler"));
         assert!(!is_thread_summary_resume_kind("thread_direct"));
     }

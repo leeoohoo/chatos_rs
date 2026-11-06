@@ -123,14 +123,6 @@ pub(crate) async fn execute_prepared_thread_summary_job(
         };
         let summary_text =
             decorate_generated_text(summary_build, Some(skipped_count), "message summary");
-        let terminal_memory_merge_requested = selection.selected.iter().any(|record| {
-            record
-                .metadata
-                .as_ref()
-                .and_then(|metadata| metadata.get("memory_terminal_summary_requested"))
-                .and_then(serde_json::Value::as_bool)
-                == Some(true)
-        });
         let summary = summaries::create_thread_summary(
             db,
             tenant_id,
@@ -142,7 +134,6 @@ pub(crate) async fn execute_prepared_thread_summary_job(
             selection.selected.last().map(|item| item.id.clone()),
             selection.selected.len(),
             selection.project_subject_id.as_deref(),
-            terminal_memory_merge_requested,
         )
         .await?;
         processed_count = selection.selected.len() as i64 + skipped_count as i64;

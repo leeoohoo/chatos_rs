@@ -94,7 +94,7 @@ async fn refresh_domain_slots(state: &AppState, terminal_context: &Value) -> Res
 async fn refresh_summary_slot(state: &AppState, terminal_context: &Value) -> Result<(), String> {
     let is_summary = matches!(
         terminal_context.get("resume_kind").and_then(Value::as_str),
-        Some("queue" | "summary_direct" | "scheduler" | "thread_direct")
+        Some(crate::services::memory_cloud_agent::THREAD_SUMMARY_JOB_RESUME_KIND)
     );
     if !is_summary {
         return Ok(());

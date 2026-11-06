@@ -35,6 +35,12 @@ pub(crate) async fn build_summary_text(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "summary Cloud Agent job_run_id is required".to_string())?;
+    let resume_kind = settings
+        .cloud_resume_kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "summary Cloud Agent resume_kind is required".to_string())?;
     crate::services::memory_cloud_agent::generate_or_defer_from_config(
         config,
         db,
@@ -56,7 +62,7 @@ pub(crate) async fn build_summary_text(
             resume: serde_json::Value::Null,
         },
         serde_json::json!({
-            "resume_kind": settings.cloud_resume_kind.as_deref().unwrap_or("summary_direct"),
+            "resume_kind": resume_kind,
             "tenant_id": first.tenant_id,
             "source_id": first.source_id,
             "thread_id": first.thread_id,

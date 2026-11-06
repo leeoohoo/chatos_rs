@@ -94,7 +94,6 @@ async fn stable_agent_context_is_isolated_by_current_project() {
             None,
             1,
             project,
-            false,
         )
         .await
         .expect("create scoped level-0 summary");
