@@ -31,6 +31,7 @@ Windows 产品版本：`3.0.9`
 - 当前嵌入前端的 Windows Release 原生窗口已完成登录首屏取证：窗口标题为 `ChatOS`，未出现 `localhost` 错误页；登录表单的键盘焦点顺序已实测为密码 → 登录 → 创建账号，`Shift+Tab` 可反向回到登录按钮。未使用或自动填写账号凭据，已登录后的 31 页逐态视觉走查仍待真实测试账号/环境。
 - 登录/注册表单现在为邮箱、邀请码、邮箱验证码、密码和确认密码提供显式 `id`/`label` 关联；新增的 React 测试固定登录与注册两种模式的焦点和 Tab 顺序。重新执行正式 Tauri Release 构建后，原生 accessibility tree 已观察到 `auth-username` 与 `auth-password` ID；当前 Computer Use 对 WebView 控件点击仍返回 `coordinate input geometry unavailable`，因此不把注册页原生逐态切换记为已完成。
 - 同一 Release 原生窗口的创建账号路径也已完成无凭据取证：邮箱、邀请码、邮箱验证码/发送验证码、密码、确认密码、创建账号和返回登录控件均可见，布局与登录页保持一致；未填写邮箱、密码、邀请码或验证码，也未发送任何请求。
+- Controlled Network 服务端定向回归已完成：readiness 先验证设备存在、归属和未撤销状态，再返回签名器/受管策略状态；policy 只允许绑定到当前设备且状态为 active 的 workspace，禁止已禁用 workspace 继续获得出站策略。服务端全量测试 `55 passed, 0 failed`，Clippy `-D warnings` 通过；这不替代 Windows 目标级/目的地级 WFP 规则和 Plugin loopback 代理的外部平台闭环。
 
 ## A. 本轮已关闭
 
