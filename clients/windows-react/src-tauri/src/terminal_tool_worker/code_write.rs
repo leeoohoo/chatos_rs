@@ -677,10 +677,17 @@ fn apply_transaction(states: &[FileState], root: &Path) -> Result<(), CodeWriteE
         let temporary = match &state.working {
             FileSnapshot::File(content) => {
                 let temporary = unique_sibling(&target, "chatos-edit");
-                let file = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&temporary);
+                let mut options = OpenOptions::new();
+                options.write(true).create_new(true);
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::OpenOptionsExt;
+                    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+                    options
+                        .share_mode(0)
+                        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+                }
+                let file = options.open(&temporary);
                 let Ok(mut file) = file else {
                     cleanup_prepared(&prepared, &created_directories);
                     return Err(CodeWriteError::commit_failed());

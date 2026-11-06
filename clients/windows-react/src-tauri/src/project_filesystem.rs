@@ -525,9 +525,17 @@ fn create_entry(
     let target = parent.join(name);
     match kind {
         MutationKind::File => {
-            OpenOptions::new()
-                .write(true)
-                .create_new(true)
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+                options
+                    .share_mode(0)
+                    .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            }
+            options
                 .open(&target)
                 .map_err(|_| "同名文件或目录已存在。".to_owned())?;
         }
