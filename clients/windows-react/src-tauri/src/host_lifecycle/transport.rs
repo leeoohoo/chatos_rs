@@ -1,7 +1,7 @@
 use chatos_local_agent_protocol::{
     HostCommand, HostRequestEnvelope, HostResponseEnvelope, HostResult,
-    LocalAgentHostSchedulerSnapshot,
-    LOCAL_AGENT_MAX_FRAME_BYTES, LOCAL_AGENT_MAX_MESSAGE_BYTES, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalAgentHostSchedulerSnapshot, LOCAL_AGENT_MAX_FRAME_BYTES, LOCAL_AGENT_MAX_MESSAGE_BYTES,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use std::time::Duration;
 use tokio::{

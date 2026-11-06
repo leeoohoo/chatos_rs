@@ -17,8 +17,11 @@ use tokio::{
 };
 
 use crate::{
-    host_lifecycle::validate_owner, platform_execution_context::resolve_project_root,
-    machine_resource_governor::{MachineResourceGovernor, MachineResourceKind, MachineResourcePriority},
+    host_lifecycle::validate_owner,
+    machine_resource_governor::{
+        MachineResourceGovernor, MachineResourceKind, MachineResourcePriority,
+    },
+    platform_execution_context::resolve_project_root,
     terminal_runtime::process::ProcessTermination,
 };
 

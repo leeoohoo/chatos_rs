@@ -15,8 +15,8 @@ use crate::{
     tool_approval::session::ApprovalSessionAllowlist,
 };
 use chatos_local_agent_protocol::{
-    HostCommand, HostResult, LocalAgentResourcePressureLevel, SetSchedulerPressureCommand,
-    LocalAgentHostSchedulerSnapshot, LOCAL_AGENT_PROTOCOL_VERSION,
+    HostCommand, HostResult, LocalAgentHostSchedulerSnapshot, LocalAgentResourcePressureLevel,
+    SetSchedulerPressureCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
 use process::spawn;

@@ -592,10 +592,9 @@ fn normalize_compatible_mcp_package(package_root: &Path) -> Result<(), String> {
                 .and_then(Value::as_object)
             {
                 Some(servers) if !servers.is_empty() && servers.len() <= 64 => Some(servers),
-                None
-                    if configuration_name.as_deref() == Some("opencode.json")
-                        && document.len() == 1
-                        && document.get("$schema").and_then(Value::as_str).is_some() =>
+                None if configuration_name.as_deref() == Some("opencode.json")
+                    && document.len() == 1
+                    && document.get("$schema").and_then(Value::as_str).is_some() =>
                 {
                     None
                 }
@@ -1049,7 +1048,8 @@ fn copy_compatible_skill_tree_bounded(
         return Err(install_error("兼容 Skill 资源目录无效"));
     }
     fs::create_dir_all(destination).map_err(|_| install_error("无法创建兼容 Skill 资源目录"))?;
-    for entry in fs::read_dir(source).map_err(|_| install_error("无法读取兼容 Skill 资源"))? {
+    for entry in fs::read_dir(source).map_err(|_| install_error("无法读取兼容 Skill 资源"))?
+    {
         *visited = visited.saturating_add(1);
         if *visited > MAXIMUM_ARCHIVE_ENTRIES {
             return Err(install_error("兼容 Skill 资源条目超过限制"));

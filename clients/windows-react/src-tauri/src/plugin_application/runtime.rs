@@ -1416,10 +1416,7 @@ fn prepare_runtime_process(
             resolved.record.spec.release_digest.clone(),
         ),
         ("CHATOS_PLUGIN_FILE_WATCH_MODE".into(), "polling".into()),
-        (
-            "CHATOS_PLUGIN_SANDBOX".into(),
-            sandbox_label.into(),
-        ),
+        ("CHATOS_PLUGIN_SANDBOX".into(), sandbox_label.into()),
     ]);
     let arguments = prefix_arguments
         .into_iter()

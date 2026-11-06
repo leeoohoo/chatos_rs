@@ -354,7 +354,9 @@ pub fn run() {
                 let _ = attachment_manager.cleanup_stale_temporaries().await;
                 let _ = media_studio_manager.cleanup_stale_temporaries().await;
                 let _ = story_studio_manager.cleanup_stale_temporaries().await;
-                let _ = agent_conversation_store.cleanup_stale_attachment_files().await;
+                let _ = agent_conversation_store
+                    .cleanup_stale_attachment_files()
+                    .await;
                 let _ = app_data_maintenance::cleanup_stale_temporaries(app_data_maintenance_root)
                     .await;
                 let _ =

@@ -7,8 +7,8 @@ use std::{
         Arc, Mutex, MutexGuard,
     },
 };
-use tokio::sync::oneshot;
 use tauri::State;
+use tokio::sync::oneshot;
 
 use crate::host_lifecycle::HostManager;
 
@@ -418,8 +418,10 @@ pub(crate) async fn machine_resource_snapshot(
     host: State<'_, HostManager>,
 ) -> Result<MachineResourceSnapshot, String> {
     let mut snapshot = resources.snapshot();
-    snapshot.host = host.scheduler_snapshot().await.map(|host| {
-        MachineResourceHostSnapshot {
+    snapshot.host = host
+        .scheduler_snapshot()
+        .await
+        .map(|host| MachineResourceHostSnapshot {
             maximum_concurrent_work_items: host.maximum_concurrent_work_items,
             effective_maximum_concurrent_work_items: host.effective_maximum_concurrent_work_items,
             pressure_level: host.pressure_level,
@@ -429,8 +431,7 @@ pub(crate) async fn machine_resource_snapshot(
             accepting_new_work: host.accepting_new_work,
             active_memory_sync_items: host.active_memory_sync_items,
             admission_in_flight_work_items: host.admission_in_flight_work_items,
-        }
-    });
+        });
     Ok(snapshot)
 }
 

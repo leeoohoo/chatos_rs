@@ -4,10 +4,7 @@ use crate::app_owned_export::try_remove_stale_owned_file;
 use crate::conversation_attachments::VerifiedAttachmentPayload;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::{
-    collections::HashSet,
-    time::SystemTime,
-};
+use std::{collections::HashSet, time::SystemTime};
 
 pub(super) const MAXIMUM_DOCUMENTS_PER_MESSAGE: usize = 5;
 const MAXIMUM_DOCUMENTS_PER_RUN: i64 = 20;
@@ -1030,8 +1027,8 @@ fn document_store_error() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use std::time::Duration;
+    use tempfile::tempdir;
 
     #[test]
     fn stale_cleanup_removes_only_unreferenced_canonical_files() {
