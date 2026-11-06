@@ -249,6 +249,7 @@ pub(super) async fn write_back_graph(
     project_program_message_to_memory(
         connection,
         &owner_user_id,
+        &source_run_id,
         &source_run_input,
         &conversation_id,
         &turn_id,
@@ -650,6 +651,7 @@ async fn write_callback(
     project_program_message_to_memory(
         connection,
         &source.owner_user_id,
+        &source.source_run_id,
         &source.source_run_input,
         &source.conversation_id,
         &source.turn_id,
@@ -704,6 +706,7 @@ async fn write_callback(
 async fn project_program_message_to_memory(
     connection: &mut SqliteConnection,
     owner_user_id: &str,
+    source_run_id: &str,
     source_run_input: &Value,
     conversation_id: &str,
     turn_id: &str,
@@ -732,6 +735,7 @@ async fn project_program_message_to_memory(
     let mut remote_metadata = metadata.as_object().cloned().unwrap_or_default();
     remote_metadata.insert("tenant_id".to_string(), json!(owner_user_id));
     remote_metadata.insert("conversation_id".to_string(), json!(conversation_id));
+    remote_metadata.insert("run_id".to_string(), json!(source_run_id));
     remote_metadata.insert("agent_id".to_string(), json!(agent_id));
     remote_metadata.insert("project_id".to_string(), json!(project_id));
     remote_metadata.insert("memory_project_id".to_string(), json!(project_id));

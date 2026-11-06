@@ -10,6 +10,7 @@ use chatos_local_agent_ports::LocalMemoryRunClaim;
 use serde_json::Value;
 use sqlx::{Row, SqliteConnection};
 use std::str::FromStr;
+use uuid::Uuid;
 
 const SELECT_RECORD: &str =
     "SELECT record_id, tenant_id, source_id, thread_id, payload_json, status, attempt_count, \
@@ -579,12 +580,66 @@ async fn transition_claim(
         .execute(&mut *connection)
         .await
         .db()?;
-        fetch_record(&mut connection, &stored_source_id, record_id)
+        let record = fetch_record(&mut connection, &stored_source_id, record_id)
             .await?
-            .ok_or_else(|| ClientStorageError::NotFound(record_id.to_string()))
+            .ok_or_else(|| ClientStorageError::NotFound(record_id.to_string()))?;
+        if status == "synced" {
+            insert_memory_transcript_synced_event(&mut connection, &record, now_unix_ms).await?;
+        }
+        Ok(record)
     }
     .await;
     SqliteClientStorage::finish_write(&mut connection, result).await
+}
+
+async fn insert_memory_transcript_synced_event(
+    connection: &mut SqliteConnection,
+    record: &LocalMemoryOutboxRecord,
+    now_unix_ms: i64,
+) -> Result<(), ClientStorageError> {
+    if !matches!(
+        record.payload.get("role").and_then(Value::as_str),
+        Some("user" | "assistant")
+    ) {
+        return Ok(());
+    }
+    let metadata = record.payload.get("metadata").and_then(Value::as_object);
+    let Some(conversation_id) = metadata
+        .and_then(|value| value.get("conversation_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let Some(run_id) = metadata
+        .and_then(|value| value.get("run_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let payload = serde_json::json!({
+        "conversation_id": conversation_id,
+        "memory_record_id": record.record_id,
+        "memory_thread_id": record.thread_id,
+    });
+    sqlx::query(
+        "INSERT INTO local_agent_events(\
+         event_id, run_id, event_type, payload_json, created_at_unix_ms) \
+         SELECT ?, run_id, 'memory_transcript_record_synced', ?, ? \
+         FROM local_agent_runs WHERE run_id = ? AND owner_user_id = ?",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(serde_json::to_string(&payload)?)
+    .bind(now_unix_ms)
+    .bind(run_id)
+    .bind(&record.tenant_id)
+    .execute(&mut *connection)
+    .await
+    .db()?;
+    Ok(())
 }
 
 async fn fetch_record(
@@ -661,6 +716,7 @@ fn bounded_error(error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chatos_local_agent_ports::LocalAgentRunStore;
     use serde_json::json;
 
     #[tokio::test]
@@ -734,6 +790,78 @@ mod tests {
             )
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn completing_conversation_record_publishes_exact_memory_transcript_event() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        sqlx::query(
+            "INSERT INTO local_agent_runs(\
+             run_id, owner_user_id, owner_entity_type, owner_entity_id, profile_key, \
+             model_config_ref, model_config_revision, capability_policy_revision, input_json, \
+             status, iteration, max_iterations, version, created_at_unix_ms, updated_at_unix_ms) \
+             VALUES('run-1', 'user-1', 'conversation', 'conversation-1', 'main_chat', \
+             'model-1', 'revision-1', 'capability-1', '{}', 'succeeded', 1, 12, 1, 1, 1)",
+        )
+        .execute(&storage.pool)
+        .await
+        .expect("insert run");
+        let payload = json!({
+            "message_id": "assistant-1",
+            "role": "assistant",
+            "content": "done",
+            "metadata": {
+                "conversation_id": "conversation-1",
+                "run_id": "run-1"
+            }
+        });
+        storage
+            .enqueue_memory_record(
+                "assistant-1",
+                "user-1",
+                "local_agent",
+                "client-agent:agent:jiguli",
+                &payload,
+                1_000,
+            )
+            .await
+            .expect("enqueue");
+        let claimed = storage
+            .claim_next_memory_record("user-1", "claim-1", 2_000, 12_000)
+            .await
+            .expect("claim")
+            .expect("record");
+        storage
+            .complete_memory_record(
+                "local_agent",
+                "assistant-1",
+                "claim-1",
+                claimed.version,
+                3_000,
+            )
+            .await
+            .expect("complete");
+
+        let events = storage
+            .list_events_for_owner(
+                "user-1",
+                0,
+                10,
+                None,
+                None,
+                false,
+                chatos_local_agent_protocol::LocalAgentEventPayloadMode::Routing,
+            )
+            .await
+            .expect("events");
+        let event = events
+            .iter()
+            .find(|event| event.event_type == "memory_transcript_record_synced")
+            .expect("Memory transcript event");
+        assert_eq!(event.run_id, "run-1");
+        assert_eq!(event.payload["conversation_id"], "conversation-1");
     }
 
     #[tokio::test]

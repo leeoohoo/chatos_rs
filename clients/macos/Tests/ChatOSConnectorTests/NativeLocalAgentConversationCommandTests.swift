@@ -212,6 +212,36 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         ).isEmpty)
     }
 
+    func testMemoryTranscriptSyncEventForcesExactConversationReconcile() throws {
+        let event = LocalAgentEventRecord(
+            cursor: 9,
+            eventID: "event-memory-synced",
+            runID: "run-1",
+            eventType: "memory_transcript_record_synced",
+            payload: .object([
+                "conversation_id": .string("conversation-1"),
+                "memory_record_id": .string("assistant-1"),
+            ]),
+            createdAtUnixMs: 2_000
+        )
+
+        let signal = try XCTUnwrap(
+            NativeLocalAgentConversationService.memoryTranscriptSyncSignal(
+                [event],
+                conversationID: "conversation-1"
+            )
+        )
+        XCTAssertEqual(signal.eventID, "event-memory-synced")
+        XCTAssertEqual(signal.eventSequence, 9)
+        XCTAssertEqual(signal.sessionID, "conversation-1")
+        XCTAssertEqual(signal.kind, .reconcile)
+        XCTAssertEqual(signal.eventName, "memory_transcript_record_synced")
+        XCTAssertNil(NativeLocalAgentConversationService.memoryTranscriptSyncSignal(
+            [event],
+            conversationID: "conversation-other"
+        ))
+    }
+
     func testTaskGraphTerminalDisplaysTheTaskExecutionFinalContent() {
         let value = LocalAgentJSONValue.object([
             "type": .string("task_graph_terminal"),

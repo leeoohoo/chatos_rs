@@ -365,18 +365,29 @@ public actor NativeLocalAgentConversationService:
                             }
                         }
 
+                        var memoryTranscriptSignal: ConversationRealtimeSignal? = nil
+                        if case let .events(events) = update.kind {
+                            memoryTranscriptSignal = Self.memoryTranscriptSyncSignal(
+                                events,
+                                conversationID: sessionID
+                            )
+                        }
+
                         let detail = try await client.context(
                             ownerUserID: context.ownerUserID,
                             conversationID: sessionID
                         )
                         let version = detail.conversation.version
                         observedRunIDs = Set(detail.turns.map(\.runID))
-                        guard observedVersion != version else { continue }
-                        observedVersion = version
-                        continuation.yield(Self.reconcileSignal(
-                            detail: detail,
-                            sessionID: sessionID
-                        ))
+                        if observedVersion != version {
+                            observedVersion = version
+                            continuation.yield(Self.reconcileSignal(
+                                detail: detail,
+                                sessionID: sessionID
+                            ))
+                        } else if let memoryTranscriptSignal {
+                            continuation.yield(memoryTranscriptSignal)
+                        }
                     } catch let error as NativeLocalAgentHostError {
                         guard Self.isNotFound(error) else {
                             continuation.finish(throwing: error)
@@ -495,6 +506,29 @@ public actor NativeLocalAgentConversationService:
                 )
             )
         }
+    }
+
+    static func memoryTranscriptSyncSignal(
+        _ events: [LocalAgentEventRecord],
+        conversationID: String
+    ) -> ConversationRealtimeSignal? {
+        guard let event = events.last(where: { event in
+            guard event.eventType == "memory_transcript_record_synced",
+                  case let .object(payload)? = event.payload,
+                  case let .string(eventConversationID)? = payload["conversation_id"] else {
+                return false
+            }
+            return eventConversationID == conversationID
+        }) else { return nil }
+        return ConversationRealtimeSignal(
+            eventID: event.eventID,
+            eventSequence: event.cursor,
+            sessionID: conversationID,
+            turnID: nil,
+            kind: .reconcile,
+            eventName: event.eventType,
+            timestamp: timestamp(unixMilliseconds: event.createdAtUnixMs)
+        )
     }
 
     private static func timestamp(unixMilliseconds: Int64) -> String {
