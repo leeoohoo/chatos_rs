@@ -1065,15 +1065,9 @@ fn revalidate_upload_file(selection: &PendingLocalSelection) -> Result<(PathBuf,
 
 fn prepare_download_destination(path: &Path) -> Result<(PathBuf, String), String> {
     let parent = path.parent().ok_or_else(local_selection_error)?;
+    validate_download_parent(parent)?;
     let canonical_parent = fs::canonicalize(parent).map_err(|_| local_selection_error())?;
-    let parent_metadata =
-        fs::symlink_metadata(&canonical_parent).map_err(|_| local_selection_error())?;
-    if !parent_metadata.is_dir()
-        || parent_metadata.file_type().is_symlink()
-        || is_reparse_point(&parent_metadata)
-    {
-        return Err(local_selection_error());
-    }
+    validate_download_parent(&canonical_parent)?;
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -1099,6 +1093,8 @@ fn revalidate_download_destination(
 }
 
 fn revalidate_download_path(destination: &Path, overwrite: bool) -> Result<(), String> {
+    let parent = destination.parent().ok_or_else(local_selection_error)?;
+    validate_download_parent(parent)?;
     match fs::symlink_metadata(destination) {
         Ok(metadata) => {
             validate_regular_local_file(&metadata)?;
@@ -1110,6 +1106,15 @@ fn revalidate_download_path(destination: &Path, overwrite: bool) -> Result<(), S
         Err(_) => return Err(local_selection_error()),
     }
     Ok(())
+}
+
+fn validate_download_parent(parent: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(parent).map_err(|_| local_selection_error())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        Err(local_selection_error())
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_regular_local_file(metadata: &fs::Metadata) -> Result<(), String> {
@@ -1169,6 +1174,7 @@ fn canonical_download_temporary_name(name: &std::ffi::OsStr) -> bool {
 }
 
 fn persist_download(source: &Path, destination: &Path, overwrite: bool) -> Result<(), String> {
+    validate_download_commit_paths(source, destination, overwrite)?;
     if overwrite {
         replace_file(source, destination).map_err(|_| "无法保存下载文件。".to_owned())
     } else {
@@ -1182,6 +1188,28 @@ fn persist_download(source: &Path, destination: &Path, overwrite: bool) -> Resul
         let _ = fs::remove_file(source);
         Ok(())
     }
+}
+
+fn validate_download_commit_paths(
+    source: &Path,
+    destination: &Path,
+    overwrite: bool,
+) -> Result<(), String> {
+    let destination_parent = destination.parent().ok_or_else(local_selection_error)?;
+    validate_download_parent(destination_parent)?;
+
+    let source_parent = source.parent().ok_or_else(local_selection_error)?;
+    validate_download_parent(source_parent)?;
+    let source_parent = fs::canonicalize(source_parent).map_err(|_| local_selection_error())?;
+    let destination_parent =
+        fs::canonicalize(destination_parent).map_err(|_| local_selection_error())?;
+    if source_parent != destination_parent {
+        return Err(local_selection_error());
+    }
+
+    let source_metadata = fs::symlink_metadata(source).map_err(|_| local_selection_error())?;
+    validate_regular_local_file(&source_metadata)?;
+    revalidate_download_path(destination, overwrite)
 }
 
 #[cfg(not(windows))]
@@ -1697,6 +1725,47 @@ mod tests {
         assert!(finish_download(&mut second_outcome, &destination, false).is_err());
         assert_eq!(fs::read(&destination).unwrap(), b"new content");
         assert!(!second.exists());
+    }
+
+    #[test]
+    fn download_commit_rejects_a_non_directory_parent_and_cleans_the_temporary() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent_file = directory.path().join("parent");
+        fs::write(&parent_file, b"not a directory").unwrap();
+        let temporary = directory.path().join("download.tmp");
+        fs::write(&temporary, b"new content").unwrap();
+        let destination = parent_file.join("download.txt");
+        let created = Arc::new(AtomicBool::new(true));
+        let mut outcome = ProcessOutcome {
+            exit_code: 0,
+            stdout: Vec::new(),
+            stdout_bytes: 11,
+            stderr: format!("\0{DOWNLOAD_SIZE_MARKER}\011\0").into_bytes(),
+            prompts: String::new(),
+            timed_out: false,
+            output_truncated: false,
+            output_file: Some(super::super::ssh::ProcessOutputFile::new(
+                temporary.clone(),
+                created,
+            )),
+        };
+
+        assert!(finish_download(&mut outcome, &destination, false).is_err());
+        assert!(!temporary.exists());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn download_commit_rejects_a_temporary_from_another_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let source_directory = tempfile::tempdir().unwrap();
+        let source = source_directory.path().join("download.tmp");
+        let destination = directory.path().join("download.txt");
+        fs::write(&source, b"new content").unwrap();
+
+        assert!(persist_download(&source, &destination, false).is_err());
+        assert!(source.exists());
+        assert!(!destination.exists());
     }
 
     #[cfg(unix)]
