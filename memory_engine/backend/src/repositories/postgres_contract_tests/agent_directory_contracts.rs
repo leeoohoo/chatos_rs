@@ -358,3 +358,86 @@ async fn postgres_agent_directory_groups_memory_projects_and_threads() {
         .expect("second project-scoped stable Agent conversation");
     assert_eq!(record_project_conversation.record_count, 1);
 }
+
+#[tokio::test]
+async fn agent_communication_is_one_thread_across_message_routes_and_projects() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let agent_subject = format!("agent:team-agent-{suffix}");
+    let thread_id = format!("client-agent:agent:team-agent-{suffix}");
+
+    crate::repositories::threads::upsert_thread(
+        &pool,
+        &thread_id,
+        UpsertThreadRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            subject_id: agent_subject.clone(),
+            thread_type: "client_agent".to_string(),
+            external_thread_id: Some(thread_id.clone()),
+            title: None,
+            labels: Some(vec![
+                "memory-schema:v2".to_string(),
+                agent_subject.clone(),
+                "thread-kind:agent_conversation".to_string(),
+            ]),
+            metadata: Some(json!({"thread_kind": "agent_conversation"})),
+            status: None,
+            created_at: None,
+            updated_at: None,
+            archived_at: None,
+        },
+    )
+    .await
+    .expect("upsert Agent communication thread");
+
+    let mut tx = pool.begin().await.expect("begin communication records");
+    for (index, project_id, route) in [(1, "project-a", "private"), (2, "project-b", "group")] {
+        crate::repositories::records::upsert_record_row(
+            &mut tx,
+            &EngineRecord {
+                id: format!("communication-record-{index}-{suffix}"),
+                thread_id: thread_id.clone(),
+                tenant_id: tenant.clone(),
+                source_id: source.clone(),
+                external_record_id: None,
+                role: "user".to_string(),
+                record_type: "message".to_string(),
+                content: format!("Message delivered through {route} tooling"),
+                structured_payload: None,
+                metadata: Some(json!({
+                    "memory_project_id": project_id,
+                    "message_route": route,
+                    "thread_kind": "agent_conversation",
+                })),
+                summary_status: "pending".to_string(),
+                summary_id: None,
+                summarized_at: None,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            },
+        )
+        .await
+        .expect("upsert Agent communication record");
+    }
+    tx.commit().await.expect("commit communication records");
+
+    let threads = crate::repositories::agent_directory::list_agent_conversations(
+        &pool,
+        &tenant,
+        &source,
+        &agent_subject,
+    )
+    .await
+    .expect("list Agent communication thread");
+
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].thread_id, thread_id);
+    assert_eq!(threads[0].thread_kind, "agent_conversation");
+    assert_eq!(threads[0].record_count, 2);
+    assert_eq!(threads[0].project_subject_id, None);
+    assert_eq!(threads[0].conversation_id, None);
+}

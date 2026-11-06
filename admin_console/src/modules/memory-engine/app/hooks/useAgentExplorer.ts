@@ -91,21 +91,25 @@ export function useAgentExplorer(options?: AgentExplorerOptions) {
         return;
       }
       threadExplorer.setDetailTab('records');
-      const usesConversationScope = ![
+      const isExecutionThread = [
         'agent_task',
         'todo_execution',
         'agent_team_run',
       ].includes(conversation.thread_kind);
+      const isCommunicationThread = conversation.thread_kind === 'agent_conversation';
+      const usesConversationScope = !isExecutionThread && !isCommunicationThread;
       await threadExplorer.loadThreadDetails(thread, {
         resetPage: true,
-        recordScope: {
-          projectId: conversation.project_subject_id ?? undefined,
-          projectIdMissing: !conversation.project_subject_id,
-          conversationId: usesConversationScope
-            ? conversation.conversation_id ?? undefined
-            : undefined,
-          conversationIdMissing: usesConversationScope && !conversation.conversation_id,
-        },
+        recordScope: isCommunicationThread
+          ? {}
+          : {
+              projectId: conversation.project_subject_id ?? undefined,
+              projectIdMissing: !conversation.project_subject_id,
+              conversationId: usesConversationScope
+                ? conversation.conversation_id ?? undefined
+                : undefined,
+              conversationIdMissing: usesConversationScope && !conversation.conversation_id,
+            },
       });
     } catch (error) {
       if (conversationRequestRef.current === requestId) {

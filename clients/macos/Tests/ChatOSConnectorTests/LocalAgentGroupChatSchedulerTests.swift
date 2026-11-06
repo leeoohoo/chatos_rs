@@ -173,6 +173,11 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         _ = try await scheduler.drainConversation(ownerUserID: "alice", roomID: room.id)
         let storedRun = try await store.run(ownerUserID: "alice", deliveryID: delivery.id)
         let run = try XCTUnwrap(storedRun)
+        let memoryScope = try XCTUnwrap(run.checkpoint.memory?.scope)
+        XCTAssertEqual(memoryScope.threadID, "client-agent:agent:\(agent.id)")
+        XCTAssertEqual(memoryScope.subjectID, "agent:\(agent.id)")
+        XCTAssertNil(memoryScope.projectSubjectID)
+        XCTAssertNil(memoryScope.projectAggregationSubjectID)
         let system = run.checkpoint.messages.first?.content ?? ""
         XCTAssertTrue(system.contains(#"name="chatos-profession-research-specialist""#))
         XCTAssertFalse(system.contains("Account-specific research role"))

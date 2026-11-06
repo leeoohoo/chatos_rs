@@ -67,6 +67,28 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(first.includeSubjectMemory, true)
     }
 
+    func testDirectMessageToolDoesNotCreateAProjectOrAnotherAgentThread() throws {
+        let projectScope = try AgentMemoryScope(
+            tenantID: "user-a",
+            agentID: "agent-a",
+            projectID: "project-1",
+            runID: UUID(),
+            runtimeScope: "project-communication"
+        )
+        let directScope = try AgentMemoryScope(
+            tenantID: "user-a",
+            agentID: "agent-a",
+            projectID: nil,
+            runID: UUID(),
+            runtimeScope: "direct-message-tool"
+        )
+
+        XCTAssertEqual(directScope.threadID, projectScope.threadID)
+        XCTAssertEqual(directScope.subjectID, projectScope.subjectID)
+        XCTAssertNil(directScope.projectSubjectID)
+        XCTAssertNil(directScope.projectAggregationSubjectID)
+    }
+
     func testTodoMemoryIsStableForOneTodoAndIsolatedFromManagerAndOtherTodos() throws {
         let manager = try AgentMemoryScope(
             tenantID: "user-a", agentID: "agent-a", projectID: "project-1",

@@ -338,7 +338,7 @@ extension LocalAgentGroupChatScheduler {
                         tenantID: ownerUserID,
                         agentID: profile.id,
                         agentName: profile.draft.name,
-                        projectID: projectID,
+                        projectID: room.conversationKind == .projectTeam ? projectID : nil,
                         runID: runID,
                         runtimeScope: scope
                     )

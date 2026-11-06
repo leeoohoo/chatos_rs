@@ -176,6 +176,36 @@ describe('useAgentExplorer', () => {
     );
   });
 
+  it('loads the Agent communication thread without private, group or project routing filters', async () => {
+    const { result } = renderHook(() => useAgentExplorer());
+    await waitFor(() => expect(result.current.agentDetailLoading).toBe(false));
+    vi.mocked(api.getThread).mockResolvedValueOnce({
+      ...thread,
+      id: 'client-agent:agent:team-agent',
+    });
+
+    await act(async () => {
+      await result.current.selectConversation({
+        ...conversation,
+        thread_id: 'client-agent:agent:team-agent',
+        thread_kind: 'agent_conversation',
+        project_subject_id: null,
+        project_display_name: null,
+        conversation_id: null,
+      });
+    });
+
+    expect(api.listThreadRecords).toHaveBeenLastCalledWith(
+      'client-agent:agent:team-agent',
+      expect.objectContaining({
+        project_id: undefined,
+        project_id_missing: undefined,
+        conversation_id: undefined,
+        conversation_id_missing: undefined,
+      }),
+    );
+  });
+
   it('builds empty filters without leaking whitespace', () => {
     expect(buildAgentFilters({ tenant_id: ' ', source_id: '', agent_id: ' ', limit: 10 }))
       .toEqual({

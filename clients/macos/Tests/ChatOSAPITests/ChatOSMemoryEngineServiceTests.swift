@@ -46,6 +46,9 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
             firstMetadata["memory_project_id"] as? String,
             try XCTUnwrap(scope.projectSubjectID).replacingOccurrences(of: "project:", with: "")
         )
+        XCTAssertNil(firstMetadata["conversation_id"])
+        XCTAssertEqual(firstMetadata["thread_kind"] as? String, scope.threadKind)
+        XCTAssertEqual(firstMetadata["agent_name"] as? String, scope.agentName)
         XCTAssertEqual((firstMetadata["responses_output"] as? [[String: Any]])?.first?["type"] as? String, "compaction")
         XCTAssertEqual((firstMetadata["provider_usage"] as? [String: Any])?["cached_tokens"] as? Int, 7)
         XCTAssertNil(records[0]["summary_status"])

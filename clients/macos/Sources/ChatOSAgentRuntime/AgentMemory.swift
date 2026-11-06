@@ -58,16 +58,20 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         tenantID: String,
         agentID: String,
         agentName: String? = nil,
-        projectID: String,
+        projectID: String?,
         runID: UUID,
         runtimeScope: String
     ) throws {
-        let identifiers = [tenantID, agentID, projectID]
+        let identifiers = [tenantID, agentID]
         guard identifiers.allSatisfy({ value in
             !value.isEmpty
                 && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
                 && value.rangeOfCharacter(from: .controlCharacters) == nil
-        }), Self.isCanonicalAgentID(agentID), agentName.map({ name in
+        }), projectID.map({ value in
+            !value.isEmpty
+                && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+                && value.rangeOfCharacter(from: .controlCharacters) == nil
+        }) ?? true, Self.isCanonicalAgentID(agentID), agentName.map({ name in
             !name.isEmpty
                 && name == name.trimmingCharacters(in: .whitespacesAndNewlines)
                 && name.rangeOfCharacter(from: .controlCharacters) == nil
@@ -77,7 +81,7 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         self.threadID = "client-agent:agent:\(agentID)"
         self.subjectID = "agent:\(agentID)"
         self.agentName = agentName
-        self.projectSubjectID = "project:\(projectID)"
+        self.projectSubjectID = projectID.map { "project:\($0)" }
         self.projectAggregationSubjectID = nil
         self.threadKind = "agent_conversation"
         self.runID = runID

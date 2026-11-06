@@ -286,6 +286,7 @@ pub async fn list_agent_conversations(
            SELECT thread.tenant_id,thread.source_id,thread.agent_subject_id,thread.id AS thread_id, \
                   CASE WHEN thread.thread_kind IN ('agent_task','todo_execution','agent_team_run') \
                        THEN thread.project_subject_id \
+                       WHEN thread.thread_kind='agent_conversation' THEN NULL \
                        ELSE COALESCE( \
                     CASE WHEN BTRIM(record.data #>> '{metadata,memory_project_id}') LIKE 'project:%' \
                          THEN BTRIM(record.data #>> '{metadata,memory_project_id}') \
@@ -293,7 +294,7 @@ pub async fn list_agent_conversations(
                          THEN 'project:' || BTRIM(record.data #>> '{metadata,memory_project_id}') END, \
                     thread.project_subject_id \
                   ) END AS project_subject_id, \
-                  CASE WHEN thread.thread_kind IN ('agent_task','todo_execution','agent_team_run') THEN NULL \
+                  CASE WHEN thread.thread_kind IN ('agent_task','todo_execution','agent_team_run','agent_conversation') THEN NULL \
                        ELSE NULLIF(BTRIM(COALESCE(record.data #>> '{metadata,conversation_id}','')),'') END AS conversation_id, \
                   thread.thread_kind,COUNT(record.id)::bigint AS record_count,thread.status,thread.summary_status, \
                   GREATEST(thread.updated_at,COALESCE(MAX(record.created_at),thread.updated_at)) AS updated_at \
@@ -305,6 +306,7 @@ pub async fn list_agent_conversations(
                      thread.project_subject_id,thread.thread_kind,thread.status,thread.summary_status,thread.updated_at, \
                      CASE WHEN thread.thread_kind IN ('agent_task','todo_execution','agent_team_run') \
                           THEN thread.project_subject_id \
+                          WHEN thread.thread_kind='agent_conversation' THEN NULL \
                           ELSE COALESCE( \
                        CASE WHEN BTRIM(record.data #>> '{metadata,memory_project_id}') LIKE 'project:%' \
                             THEN BTRIM(record.data #>> '{metadata,memory_project_id}') \
@@ -312,7 +314,7 @@ pub async fn list_agent_conversations(
                             THEN 'project:' || BTRIM(record.data #>> '{metadata,memory_project_id}') END, \
                        thread.project_subject_id \
                      ) END, \
-                     CASE WHEN thread.thread_kind IN ('agent_task','todo_execution','agent_team_run') THEN NULL \
+                     CASE WHEN thread.thread_kind IN ('agent_task','todo_execution','agent_team_run','agent_conversation') THEN NULL \
                           ELSE NULLIF(BTRIM(COALESCE(record.data #>> '{metadata,conversation_id}','')),'') END \
          ) \
          SELECT grouped.tenant_id,grouped.source_id,grouped.agent_subject_id,grouped.thread_id, \
