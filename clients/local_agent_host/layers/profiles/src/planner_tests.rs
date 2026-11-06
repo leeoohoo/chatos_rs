@@ -202,8 +202,49 @@ async fn selected_remote_target_is_sent_on_initial_and_resumed_steps() {
             assert_eq!(context["remote_connection_id"], "selected-server");
             assert_eq!(context["target_selected"], true);
             assert!(context["guidance"].as_str().unwrap().contains("Do not ask"));
+            assert!(context["guidance"]
+                .as_str()
+                .unwrap()
+                .contains("does not replace, relocate, or invalidate the current ChatOS project"));
         }
     }
+}
+
+#[tokio::test]
+async fn bound_project_is_authoritative_even_when_a_remote_server_is_selected() {
+    let planner = ControlPlaneLocalAiStepPlanner::main_chat(
+        OwnerCheckingModelResolver,
+        OwnerCheckingCapabilityResolver,
+    );
+    let mut current = claim(Value::Null, None);
+    current.run.input = json!({
+        "message": "Inspect this project's recent commits",
+        "agent_id": "jiguli",
+        "project_id": "project-1",
+        "project_name": "wms",
+        "runtime_settings": {
+            "reasoning_enabled": false,
+            "remote_connection_id": "selected-server"
+        }
+    });
+
+    let prepared = planner.prepare_ai_step(&current).await.unwrap();
+    let context = prepared
+        .request
+        .prefixed_input_items
+        .iter()
+        .filter_map(|item| item["content"].as_str())
+        .filter_map(|text| serde_json::from_str::<Value>(text).ok())
+        .find(|item| item["type"] == "bound_project_context")
+        .expect("program-owned bound project context");
+
+    assert_eq!(context["project_id"], "project-1");
+    assert_eq!(context["project_name"], "wms");
+    assert_eq!(context["project_bound"], true);
+    let guidance = context["guidance"].as_str().unwrap();
+    assert!(guidance.contains("path `.` is that root"));
+    assert!(guidance.contains("do not scan unrelated directories"));
+    assert!(guidance.contains("remote server does not change this project binding"));
 }
 
 #[test]

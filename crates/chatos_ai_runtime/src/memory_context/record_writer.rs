@@ -364,7 +364,7 @@ impl MemoryEngineRecordWriter {
                 .as_deref()
                 .and_then(normalized)
                 .or_else(|| value("thread_kind"))
-                .or_else(|| value("message_mode"))
+                .or_else(|| input.message_mode.as_deref().and_then(normalized))
                 .unwrap_or_else(|| "conversation".to_string()),
         }
     }
