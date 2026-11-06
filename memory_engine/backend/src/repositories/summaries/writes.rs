@@ -58,6 +58,7 @@ pub async fn create_thread_summary(
     source_record_end_id: Option<String>,
     source_record_count: usize,
     project_subject_id: Option<&str>,
+    terminal_memory_merge_requested: bool,
 ) -> Result<EngineSummary, String> {
     let mut metadata = serde_json::json!({"generator":"memory_engine_summary_v1"});
     if let Some(project_subject_id) = project_subject_id
@@ -65,6 +66,9 @@ pub async fn create_thread_summary(
         .filter(|value| value.starts_with("project:") && value.len() > "project:".len())
     {
         metadata["project_subject_id"] = serde_json::json!(project_subject_id);
+    }
+    if terminal_memory_merge_requested {
+        metadata["terminal_memory_merge_requested"] = serde_json::json!(true);
     }
     create_thread_summary_with_type(
         db,

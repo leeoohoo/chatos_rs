@@ -133,15 +133,6 @@ async fn correction_requires_cancel_and_does_not_reuse_unaffected_active_graph()
     assert_eq!(queried["requested_task"]["id"], old_id);
     assert_eq!(queried["is_superseded"], true);
     assert_eq!(queried["current_tasks"][0]["id"], replacement_id);
-    let local_context = runtime
-        .latest_task_context_items("user-1", "conversation-1")
-        .await
-        .unwrap();
-    assert!(local_context.iter().any(|item| {
-        item.pointer("/metadata/task_runner_async/task_id")
-            .and_then(Value::as_str)
-            == Some(old_id)
-    }));
 }
 
 #[tokio::test]

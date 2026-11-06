@@ -115,6 +115,7 @@ async fn thread_summary_dispatches_rollup_and_both_identity_memories() {
         None,
         1,
         Some(&project_subject_id),
+        false,
     )
     .await
     .expect("create thread summary");
@@ -244,6 +245,7 @@ async fn stable_agent_thread_routes_each_summary_to_its_dynamic_project() {
         None,
         1,
         Some(&project_subject_id),
+        false,
     )
     .await
     .expect("create project-scoped Agent summary");

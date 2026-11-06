@@ -23,7 +23,55 @@ pub(crate) fn select_summary_batch(
         .map(summary_to_subject_memory_block)
         .map(|text| estimate_tokens_text(text.as_str()))
         .collect::<Vec<_>>();
+    if candidates.iter().any(terminal_memory_merge_requested) {
+        return select_bounded_batch_without_threshold(
+            candidates,
+            token_sizes.as_slice(),
+            token_limit,
+            count_limit,
+        );
+    }
     select_bounded_batch(candidates, token_sizes.as_slice(), token_limit, count_limit)
+}
+
+fn terminal_memory_merge_requested(summary: &PendingSourceSummary) -> bool {
+    summary
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("terminal_memory_merge_requested"))
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+}
+
+fn select_bounded_batch_without_threshold<T: Clone>(
+    candidates: &[T],
+    token_sizes: &[i64],
+    token_limit: i64,
+    count_limit: i64,
+) -> Option<Vec<T>> {
+    if candidates.is_empty() || candidates.len() != token_sizes.len() {
+        return None;
+    }
+    let token_limit = token_limit.max(MIN_TOKEN_LIMIT);
+    let candidate_limit = if count_limit > 0 {
+        candidates.len().min(count_limit as usize)
+    } else {
+        candidates.len()
+    };
+    let mut selected = Vec::new();
+    let mut selected_tokens = 0_i64;
+    for (candidate, candidate_tokens) in candidates
+        .iter()
+        .zip(token_sizes.iter().copied())
+        .take(candidate_limit)
+    {
+        if !selected.is_empty() && selected_tokens.saturating_add(candidate_tokens) > token_limit {
+            break;
+        }
+        selected_tokens = selected_tokens.saturating_add(candidate_tokens);
+        selected.push(candidate.clone());
+    }
+    (!selected.is_empty()).then_some(selected)
 }
 
 pub(crate) async fn select_rollup_batch(
@@ -233,6 +281,25 @@ mod tests {
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[0].level, 0);
         assert_eq!(selected[1].level, 1);
+    }
+
+    #[test]
+    fn terminal_task_summary_merges_into_subject_memory_below_policy_threshold() {
+        let mut terminal = pending_source_summary(1);
+        terminal.metadata = Some(serde_json::json!({
+            "terminal_memory_merge_requested": true,
+        }));
+
+        let selected = select_summary_batch(&[terminal], 170_000, 0)
+            .expect("terminal Task summary must merge immediately");
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, "sum-1");
+    }
+
+    #[test]
+    fn ordinary_summary_still_waits_for_subject_memory_policy_threshold() {
+        assert!(select_summary_batch(&[pending_source_summary(1)], 170_000, 0).is_none());
     }
 
     #[test]

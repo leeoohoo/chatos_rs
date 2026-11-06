@@ -160,6 +160,7 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
         None,
         0,
         None,
+        false,
     )
     .await
     .expect("create summary");

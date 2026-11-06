@@ -178,7 +178,7 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
         ("thread-summary-main", None),
     ] {
         crate::repositories::summaries::create_thread_summary(
-            &pool, &tenant, &source, &thread_id, &agent_id, text, None, None, 1, project,
+            &pool, &tenant, &source, &thread_id, &agent_id, text, None, None, 1, project, false,
         )
         .await
         .expect("create project-scoped summary");
