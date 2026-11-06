@@ -182,7 +182,7 @@ async fn postgres_record_cursor_preserves_both_orders_and_offset_compatibility()
     let ids = (0..6)
         .map(|index| format!("record-cursor-{suffix}-{index}"))
         .collect::<Vec<_>>();
-    for id in &ids {
+    for (index, id) in ids.iter().enumerate() {
         let record = EngineRecord {
             id: id.clone(),
             thread_id: thread_id.clone(),
@@ -193,7 +193,9 @@ async fn postgres_record_cursor_preserves_both_orders_and_offset_compatibility()
             record_type: "message".to_string(),
             content: id.clone(),
             structured_payload: None,
-            metadata: None,
+            metadata: Some(serde_json::json!({
+                "conversation_id": if index % 2 == 0 { "conversation-a" } else { "conversation-b" },
+            })),
             summary_status: "pending".to_string(),
             summary_id: None,
             summarized_at: None,
@@ -222,6 +224,29 @@ async fn postgres_record_cursor_preserves_both_orders_and_offset_compatibility()
     .expect("list first ascending record page");
     assert_eq!(first.total, 6);
     assert!(first.has_more);
+    let conversation_a = crate::repositories::records::list_records_page(
+        &pool,
+        crate::repositories::records::ListRecordsQuery {
+            thread_id: &thread_id,
+            tenant_id: Some(&tenant),
+            source_id: Some(&source),
+            conversation_id: Some("conversation-a"),
+            limit: 10,
+            asc: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("filter the stable Agent thread by authoritative conversation id");
+    assert_eq!(conversation_a.total, 3);
+    assert_eq!(
+        conversation_a
+            .items
+            .iter()
+            .map(|record| record.id.as_str())
+            .collect::<Vec<_>>(),
+        [&ids[0], &ids[2], &ids[4]]
+    );
 
     let earlier_id = format!("record-cursor-{suffix}-earlier");
     let earlier = EngineRecord {

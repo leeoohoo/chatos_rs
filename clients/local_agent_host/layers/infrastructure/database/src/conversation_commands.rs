@@ -5,13 +5,16 @@ use super::{
     conversation_store::{
         fetch_conversation, fetch_conversation_record_for_owner, insert_user_message_on,
     },
-    run_commands, ClientStorageError, IdempotentCommand, SqliteClientStorage, SqliteResultExt,
+    memory_outbox_store, run_commands, ClientStorageError, IdempotentCommand, SqliteClientStorage,
+    SqliteResultExt,
 };
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, GuideConversationTurnCommand, LocalAgentRunRecord,
-    LocalConversationTurnUpdate, ResumeConversationTurnCommand, LOCAL_AGENT_MAX_INPUT_BYTES,
+    LocalConversationAttachmentSpec, LocalConversationTurnUpdate, ResumeConversationTurnCommand,
+    LOCAL_AGENT_MAX_INPUT_BYTES,
 };
-use serde_json::Value;
+use chrono::{DateTime, Utc};
+use serde_json::{json, Value};
 use sqlx::{Row, SqliteConnection};
 
 #[allow(clippy::too_many_arguments)]
@@ -74,6 +77,18 @@ pub(super) async fn resume_conversation_turn(
         }
         insert_user_message_on(
             &mut connection,
+            &turn.conversation_id,
+            &turn.turn_id,
+            &turn.message_id,
+            &turn.message,
+            &turn.message_metadata,
+            &turn.attachments,
+            now_unix_ms,
+        )
+        .await?;
+        project_user_message_to_memory(
+            &mut connection,
+            &current,
             &turn.conversation_id,
             &turn.turn_id,
             &turn.message_id,
@@ -226,6 +241,18 @@ pub(super) async fn guide_conversation_turn(
             .await?;
         insert_user_message_on(
             &mut connection,
+            &turn.conversation_id,
+            &turn.turn_id,
+            &turn.message_id,
+            &turn.message,
+            &turn.message_metadata,
+            &turn.attachments,
+            now_unix_ms,
+        )
+        .await?;
+        project_user_message_to_memory(
+            &mut connection,
+            &current,
             &turn.conversation_id,
             &turn.turn_id,
             &turn.message_id,
@@ -446,6 +473,193 @@ async fn fetch_owned_turn_run_for_review_action(
         )));
     }
     Ok(run)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn project_user_message_to_memory(
+    connection: &mut SqliteConnection,
+    run: &LocalAgentRunRecord,
+    conversation_id: &str,
+    turn_id: &str,
+    message_id: &str,
+    message: &str,
+    message_metadata: &Value,
+    attachments: &[LocalConversationAttachmentSpec],
+    created_at_unix_ms: i64,
+) -> Result<(), ClientStorageError> {
+    project_conversation_message_to_memory(
+        connection,
+        run,
+        conversation_id,
+        turn_id,
+        message_id,
+        "user",
+        &Value::String(message.to_string()),
+        message_metadata,
+        attachments,
+        "conversation_continuation",
+        "pending",
+        false,
+        false,
+        created_at_unix_ms,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn project_conversation_message_to_memory(
+    connection: &mut SqliteConnection,
+    run: &LocalAgentRunRecord,
+    conversation_id: &str,
+    turn_id: &str,
+    message_id: &str,
+    role: &str,
+    content: &Value,
+    message_metadata: &Value,
+    attachments: &[LocalConversationAttachmentSpec],
+    message_source: &str,
+    summary_status: &str,
+    structured_content: bool,
+    mutable: bool,
+    created_at_unix_ms: i64,
+) -> Result<(), ClientStorageError> {
+    let source_id = sqlx::query_scalar::<_, String>(
+        "SELECT source_id FROM local_memory_projection_config WHERE owner_user_id = ?",
+    )
+    .bind(&run.owner_user_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?;
+    let Some(source_id) = source_id else {
+        return Ok(());
+    };
+    let agent_id = consistent_run_identity(&run.input, "agent_id")?.ok_or_else(|| {
+        ClientStorageError::InvalidState(
+            "conversation Memory projection requires agent_id".to_string(),
+        )
+    })?;
+    let project_id = consistent_run_identity(&run.input, "project_id")?;
+    let thread_id = if run.profile_key == "task_execution" {
+        run.input
+            .get("memory_thread_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(run.owner_entity_id.as_str())
+            .to_string()
+    } else {
+        format!("client-agent:agent:{agent_id}")
+    };
+    let created_at = DateTime::<Utc>::from_timestamp_millis(created_at_unix_ms)
+        .ok_or_else(|| {
+            ClientStorageError::InvalidState(
+                "conversation Memory projection timestamp is invalid".to_string(),
+            )
+        })?
+        .to_rfc3339();
+    let mut metadata = message_metadata.as_object().cloned().unwrap_or_default();
+    metadata.insert("tenant_id".to_string(), json!(run.owner_user_id));
+    metadata.insert("conversation_id".to_string(), json!(conversation_id));
+    metadata.insert(
+        "conversation_title".to_string(),
+        run.input
+            .get("conversation_title")
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
+    metadata.insert(
+        "conversation_resource".to_string(),
+        run.input
+            .get("conversation_resource")
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
+    metadata.insert("profile_key".to_string(), json!(run.profile_key));
+    metadata.insert("agent_id".to_string(), json!(agent_id));
+    metadata.insert("project_id".to_string(), json!(project_id));
+    metadata.insert("memory_project_id".to_string(), json!(project_id));
+    metadata.insert("run_id".to_string(), json!(run.run_id));
+    metadata.insert(
+        "owner_entity_type".to_string(),
+        json!(run.owner_entity_type),
+    );
+    metadata.insert("owner_entity_id".to_string(), json!(run.owner_entity_id));
+    metadata.insert("ui_message_id".to_string(), json!(message_id));
+    metadata.insert("ui_message_metadata".to_string(), message_metadata.clone());
+    metadata.insert("ui_attachments".to_string(), json!(attachments));
+    if structured_content {
+        metadata.insert("ui_structured_content".to_string(), json!(true));
+    }
+    if mutable {
+        metadata.insert("memory_projection_mutable".to_string(), json!(true));
+    }
+    let display_content = content
+        .as_str()
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            content
+                .get("text")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| content.to_string());
+    let payload = json!({
+        "conversation_id": thread_id,
+        "conversation_turn_id": turn_id,
+        "message_id": message_id,
+        "role": role,
+        "content": display_content,
+        "structured_payload": if structured_content { Some(content.clone()) } else { None },
+        "metadata": metadata,
+        "message_mode": if run.profile_key == "task_execution" { "task_run" } else { "main_chat" },
+        "message_source": message_source,
+        "summary_status": summary_status,
+        "created_at": created_at,
+    });
+    memory_outbox_store::enqueue_on(
+        connection,
+        message_id,
+        &run.owner_user_id,
+        &source_id,
+        payload
+            .get("conversation_id")
+            .and_then(Value::as_str)
+            .expect("projection thread id"),
+        &payload,
+        created_at_unix_ms,
+    )
+    .await?;
+    Ok(())
+}
+
+fn consistent_run_identity(input: &Value, key: &str) -> Result<Option<String>, ClientStorageError> {
+    let values = [
+        input.get(key),
+        input
+            .get("agent_execution_context")
+            .and_then(|value| value.get(key)),
+        input
+            .get("agent_team_execution")
+            .and_then(|value| value.get(key)),
+        input
+            .get("team_executor_context")
+            .and_then(|value| value.get(key)),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_str)
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .collect::<Vec<_>>();
+    let Some(value) = values.first() else {
+        return Ok(None);
+    };
+    if values.iter().any(|candidate| candidate != value) {
+        return Err(ClientStorageError::InvalidState(format!(
+            "conversation Memory projection has conflicting {key} values"
+        )));
+    }
+    Ok(Some((*value).to_string()))
 }
 
 async fn increment_conversation_version(

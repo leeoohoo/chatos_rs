@@ -384,11 +384,11 @@ public struct LocalAgentConversationHistoryPage: Decodable, Sendable, Equatable 
     public let turns: [LocalAgentConversationTurnRecord]
     public let messages: [LocalAgentConversationMessageRecord]
     public let attachments: [LocalAgentConversationAttachmentRecord]
-    public let nextBeforeOrdinal: UInt64?
+    public let nextBeforeCursor: String?
 
     private enum CodingKeys: String, CodingKey {
         case conversation, turns, messages, attachments
-        case nextBeforeOrdinal = "next_before_ordinal"
+        case nextBeforeCursor = "next_before_cursor"
     }
 }
 
@@ -479,14 +479,14 @@ public struct NativeLocalAgentConversationClient: Sendable {
     public func history(
         ownerUserID: String,
         conversationID: String,
-        beforeOrdinal: UInt64? = nil,
+        beforeCursor: String? = nil,
         limit: UInt32 = 100
     ) async throws -> LocalAgentConversationHistoryPage {
         let response: HistoryResult = try await host.request(HistoryCommand(
             type: "get_conversation_history",
             ownerUserID: ownerUserID,
             conversationID: conversationID,
-            beforeOrdinal: beforeOrdinal,
+            beforeCursor: beforeCursor,
             limit: limit
         ))
         try Self.require(response.type, expected: "conversation_history")
@@ -557,14 +557,14 @@ private struct HistoryCommand: Encodable, Sendable {
     let type: String
     let ownerUserID: String
     let conversationID: String
-    let beforeOrdinal: UInt64?
+    let beforeCursor: String?
     let limit: UInt32
 
     private enum CodingKeys: String, CodingKey {
         case type, limit
         case ownerUserID = "owner_user_id"
         case conversationID = "conversation_id"
-        case beforeOrdinal = "before_ordinal"
+        case beforeCursor = "before_cursor"
     }
 }
 

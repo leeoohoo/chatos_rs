@@ -73,24 +73,48 @@ pub(super) async fn reconcile_conversation_after_run(
                 }),
                 _ => serde_json::Value::Null,
             });
+        let message_id = format!("assistant:{}", run.run_id);
+        let metadata = json!({
+            "run_id": run.run_id,
+            "terminal_status": run.status.as_str(),
+        });
         sqlx::query(
             "INSERT INTO local_conversation_messages(\
              message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json, \
              created_at_unix_ms) VALUES(?, ?, ?, ?, 'assistant', ?, ?, ?)",
         )
-        .bind(format!("assistant:{}", run.run_id))
+        .bind(&message_id)
         .bind(&conversation_id)
         .bind(&turn_id)
         .bind(ordinal)
         .bind(serde_json::to_string(&content)?)
-        .bind(serde_json::to_string(&json!({
-            "run_id": run.run_id,
-            "terminal_status": run.status.as_str(),
-        }))?)
+        .bind(serde_json::to_string(&metadata)?)
         .bind(now_unix_ms)
         .execute(&mut *connection)
         .await
         .db()?;
+        if matches!(
+            run.status,
+            LocalAgentRunStatus::Failed | LocalAgentRunStatus::NeedsReview
+        ) {
+            super::conversation_commands::project_conversation_message_to_memory(
+                connection,
+                run,
+                &conversation_id,
+                &turn_id,
+                &message_id,
+                "assistant",
+                &content,
+                &metadata,
+                &[],
+                "conversation_terminal_projection",
+                "pending",
+                true,
+                false,
+                now_unix_ms,
+            )
+            .await?;
+        }
     }
     sqlx::query(
         "UPDATE local_conversations SET version = version + 1, updated_at_unix_ms = ? \

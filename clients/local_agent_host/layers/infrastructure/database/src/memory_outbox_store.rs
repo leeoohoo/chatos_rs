@@ -313,6 +313,30 @@ impl LocalMemoryOutboxStore for SqliteClientStorage {
     }
 }
 
+impl SqliteClientStorage {
+    pub async fn configure_memory_projection(
+        &self,
+        owner_user_id: &str,
+        source_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<(), ClientStorageError> {
+        validate_scope(owner_user_id, source_id)?;
+        let mut connection = self.acquire_write().await.db()?;
+        sqlx::query(
+            "INSERT INTO local_memory_projection_config(owner_user_id,source_id,updated_at_unix_ms) \
+             VALUES(?,?,?) ON CONFLICT(owner_user_id) DO UPDATE SET \
+             source_id=EXCLUDED.source_id,updated_at_unix_ms=EXCLUDED.updated_at_unix_ms",
+        )
+        .bind(owner_user_id)
+        .bind(source_id)
+        .bind(now_unix_ms)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        Ok(())
+    }
+}
+
 fn non_negative_count(
     row: &sqlx::sqlite::SqliteRow,
     field: &str,
@@ -372,7 +396,7 @@ pub(super) async fn publish_step_records(
     Ok(())
 }
 
-async fn enqueue_on(
+pub(super) async fn enqueue_on(
     connection: &mut SqliteConnection,
     record_id: &str,
     tenant_id: &str,
@@ -411,6 +435,28 @@ async fn enqueue_on(
             }
             return Ok(existing);
         }
+        if existing.tenant_id == tenant_id
+            && existing.thread_id == thread_id
+            && mutable_projection_payload(&existing.payload)
+            && mutable_projection_payload(payload)
+        {
+            sqlx::query(
+                "UPDATE local_memory_outbox SET payload_json = ?, status = 'pending', \
+                 attempt_count = 0, version = version + 1, claim_token = NULL, \
+                 claim_until_unix_ms = NULL, next_attempt_at_unix_ms = NULL, last_error = NULL, \
+                 updated_at_unix_ms = ? WHERE source_id = ? AND record_id = ?",
+            )
+            .bind(serde_json::to_string(payload)?)
+            .bind(now_unix_ms)
+            .bind(source_id)
+            .bind(record_id)
+            .execute(&mut *connection)
+            .await
+            .db()?;
+            return fetch_record(connection, source_id, record_id)
+                .await?
+                .ok_or_else(|| ClientStorageError::NotFound(record_id.to_string()));
+        }
         return Err(ClientStorageError::Conflict(format!(
             "Memory record id was reused with different content: {source_id}/{record_id}"
         )));
@@ -434,6 +480,13 @@ async fn enqueue_on(
     fetch_record(connection, source_id, record_id)
         .await?
         .ok_or_else(|| ClientStorageError::NotFound(record_id.to_string()))
+}
+
+fn mutable_projection_payload(payload: &Value) -> bool {
+    payload
+        .pointer("/metadata/memory_projection_mutable")
+        .and_then(Value::as_bool)
+        == Some(true)
 }
 
 const MEMORY_ROUTING_METADATA_KEYS: [&str; 7] = [
@@ -1030,5 +1083,62 @@ mod tests {
         assert_eq!(other.pending_count, 1);
         assert_eq!(other.synced_count, 0);
         assert_eq!(other.last_error, None);
+    }
+
+    #[tokio::test]
+    async fn mutable_program_projection_rearms_a_synced_record_with_new_content() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        let first = json!({
+            "conversation_id": "client-agent:agent:jiguli",
+            "message_id": "callback-1",
+            "role": "assistant",
+            "content": "running",
+            "metadata": {"memory_projection_mutable": true},
+        });
+        storage
+            .enqueue_memory_record(
+                "callback-1",
+                "user-1",
+                "chatos",
+                "client-agent:agent:jiguli",
+                &first,
+                1_000,
+            )
+            .await
+            .expect("enqueue running projection");
+        let claimed = storage
+            .claim_next_memory_record("user-1", "claim-1", 2_000, 3_000)
+            .await
+            .unwrap()
+            .unwrap();
+        storage
+            .complete_memory_record("chatos", "callback-1", "claim-1", claimed.version, 2_500)
+            .await
+            .expect("complete first projection");
+
+        let terminal = json!({
+            "conversation_id": "client-agent:agent:jiguli",
+            "message_id": "callback-1",
+            "role": "assistant",
+            "content": "completed",
+            "metadata": {"memory_projection_mutable": true},
+        });
+        let updated = storage
+            .enqueue_memory_record(
+                "callback-1",
+                "user-1",
+                "chatos",
+                "client-agent:agent:jiguli",
+                &terminal,
+                4_000,
+            )
+            .await
+            .expect("rearm terminal projection");
+        assert_eq!(updated.status, LocalMemoryOutboxStatus::Pending);
+        assert_eq!(updated.payload["content"], "completed");
+        assert_eq!(updated.attempt_count, 0);
+        assert!(updated.version > claimed.version);
     }
 }

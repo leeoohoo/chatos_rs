@@ -690,7 +690,7 @@ async fn history_pages_are_bounded_chronological_and_cursor_stable() {
             .collect::<Vec<_>>(),
         vec![2, 3]
     );
-    assert_eq!(latest.next_before_ordinal, Some(2));
+    assert_eq!(latest.next_before_cursor.as_deref(), Some("2"));
     assert_eq!(latest.turns.len(), 2);
     assert_eq!(latest.attachments.len(), 1);
     assert_eq!(latest.attachments[0].message_id, "message-two");
@@ -699,14 +699,19 @@ async fn history_pages_are_bounded_chronological_and_cursor_stable() {
         .get_conversation_history(
             "user-1",
             "conversation-history",
-            latest.next_before_ordinal,
+            latest
+                .next_before_cursor
+                .as_deref()
+                .map(str::parse)
+                .transpose()
+                .unwrap(),
             2,
         )
         .await
         .expect("older history page");
     assert_eq!(older.messages.len(), 1);
     assert_eq!(older.messages[0].ordinal, 1);
-    assert_eq!(older.next_before_ordinal, None);
+    assert_eq!(older.next_before_cursor, None);
     assert!(older.attachments.is_empty());
 }
 
@@ -804,13 +809,18 @@ async fn history_pages_never_split_a_turn_from_its_user_message() {
             .collect::<Vec<_>>(),
         vec![5, 6]
     );
-    assert_eq!(latest.next_before_ordinal, Some(5));
+    assert_eq!(latest.next_before_cursor.as_deref(), Some("5"));
 
     let older = storage
         .get_conversation_history(
             "user-1",
             "conversation-complete-turn-history",
-            latest.next_before_ordinal,
+            latest
+                .next_before_cursor
+                .as_deref()
+                .map(str::parse)
+                .transpose()
+                .unwrap(),
             2,
         )
         .await
@@ -823,7 +833,7 @@ async fn history_pages_never_split_a_turn_from_its_user_message() {
             .collect::<Vec<_>>(),
         vec![1, 2, 3, 4]
     );
-    assert_eq!(older.next_before_ordinal, None);
+    assert_eq!(older.next_before_cursor, None);
     assert_eq!(older.turns.len(), 1);
     let returned_turn = &older.turns[0];
     assert!(older.messages.iter().any(|message| {

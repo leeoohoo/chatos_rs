@@ -42,25 +42,33 @@ pub async fn list_records_page(
     db: &Db,
     values: ListRecordsQuery<'_>,
 ) -> Result<ThreadRecordsPageResponse, String> {
-    let total = count_records(
-        db,
-        values.thread_id,
-        values.tenant_id,
-        values.source_id,
-        values.role,
-        values.record_type,
-        values.summary_status,
-    )
-    .await?;
-    let mut query = build_record_query(
-        "SELECT data FROM engine_records",
-        values.thread_id,
-        values.tenant_id,
-        values.source_id,
-        values.role,
-        values.record_type,
-        values.summary_status,
-    );
+    let base_query = |select| {
+        let mut query = build_record_query(
+            select,
+            values.thread_id,
+            values.tenant_id,
+            values.source_id,
+            values.role,
+            values.record_type,
+            values.summary_status,
+        );
+        if let Some(conversation_id) = values
+            .conversation_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            query
+                .push(" AND data->'metadata'->>'conversation_id'=")
+                .push_bind(conversation_id);
+        }
+        query
+    };
+    let total = base_query("SELECT count(*) FROM engine_records")
+        .build_query_scalar::<i64>()
+        .fetch_one(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut query = base_query("SELECT data FROM engine_records");
     if let Some(cursor) = values.cursor()? {
         query
             .push(" AND (created_at,id)")

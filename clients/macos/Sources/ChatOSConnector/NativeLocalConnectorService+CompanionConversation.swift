@@ -27,7 +27,7 @@ extension NativeLocalConnectorService {
         let page = try await requireCompanionConversationClient().history(
             ownerUserID: ownerUserID,
             conversationID: request.conversationID,
-            beforeOrdinal: request.beforeOrdinal,
+            beforeCursor: request.beforeCursor,
             limit: UInt32(min(100, max(1, request.limit ?? 40)))
         )
         let items = page.messages.sorted { $0.ordinal < $1.ordinal }.map { message in
@@ -50,11 +50,11 @@ extension NativeLocalConnectorService {
         }
         var response: [String: NativeJSONValue] = [
             "items": .array(items),
-            "has_more": .bool(page.nextBeforeOrdinal != nil),
+            "has_more": .bool(page.nextBeforeCursor != nil),
             "snapshot_revision": .number(Double(page.conversation.version)),
         ]
-        if let next = page.nextBeforeOrdinal {
-            response["next_before"] = .string(String(next))
+        if let next = page.nextBeforeCursor {
+            response["next_before"] = .string(next)
         }
         return .object(response)
     }
@@ -113,20 +113,20 @@ extension NativeLocalConnectorService {
             throw NativeCompanionRelayError.localAgentRuntimeUnavailable
         }
         let client = try requireCompanionConversationClient()
-        var before: UInt64?
+        var before: String?
         var turnID: String?
         for _ in 0..<20 {
             let page = try await client.history(
                 ownerUserID: ownerUserID,
                 conversationID: request.conversationID,
-                beforeOrdinal: before,
+                beforeCursor: before,
                 limit: 100
             )
             if let message = page.messages.first(where: { $0.messageID == request.messageID }) {
                 turnID = message.turnID
                 break
             }
-            guard let next = page.nextBeforeOrdinal, next != before else { break }
+            guard let next = page.nextBeforeCursor, next != before else { break }
             before = next
         }
         guard let turnID else { throw NativeCompanionRelayError.conversationResourceNotFound }

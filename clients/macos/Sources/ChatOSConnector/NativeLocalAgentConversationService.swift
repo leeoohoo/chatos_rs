@@ -268,18 +268,13 @@ public actor NativeLocalAgentConversationService:
 
     public func fetchHistory(_ query: ConversationHistoryQuery) async throws -> HistoryPage {
         let context = try requireContext()
-        let before = try query.before.map { cursor in
-            guard let value = UInt64(cursor), value > 0 else {
-                throw NativeLocalAgentConversationServiceError.invalidCursor
-            }
-            return value
-        }
+        let before = query.before
         let page: LocalAgentConversationHistoryPage
         do {
             page = try await client.history(
                 ownerUserID: context.ownerUserID,
                 conversationID: query.sessionID,
-                beforeOrdinal: before,
+                beforeCursor: before,
                 limit: UInt32(max(1, min(100, query.limit)))
             )
         } catch let error as NativeLocalAgentHostError {
@@ -292,7 +287,7 @@ public actor NativeLocalAgentConversationService:
                 page = try await client.history(
                     ownerUserID: context.ownerUserID,
                     conversationID: query.sessionID,
-                    beforeOrdinal: before,
+                    beforeCursor: before,
                     limit: UInt32(max(1, min(100, query.limit)))
                 )
             } else {
@@ -301,8 +296,8 @@ public actor NativeLocalAgentConversationService:
         }
         return HistoryPage(
             turns: mapTurns(page),
-            olderCursor: page.nextBeforeOrdinal.map(String.init),
-            hasOlder: page.nextBeforeOrdinal != nil,
+            olderCursor: page.nextBeforeCursor,
+            hasOlder: page.nextBeforeCursor != nil,
             snapshotRevision: Int64(clamping: page.conversation.version),
             requestGeneration: query.requestGeneration
         )

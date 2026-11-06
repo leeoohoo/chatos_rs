@@ -25,6 +25,7 @@ use thiserror::Error;
 mod command;
 mod memory_cache;
 mod memory_outbox;
+mod memory_transcript;
 pub use chatos_local_agent_protocol::{
     LocalCapabilityPolicySnapshot, LocalJsonSchemaOutputFormat, LocalMemorySyncStatus,
     LocalModelConfigSnapshot, MAX_CAPABILITY_INSTRUCTIONS_BYTES, MAX_CAPABILITY_ITEMS,
@@ -34,6 +35,10 @@ pub use command::{IdempotentCommand, LocalAgentArtifactWrite, RunTransition};
 pub use memory_cache::{LocalMemoryContextCacheEntry, LocalMemoryContextCacheStore};
 pub use memory_outbox::{
     LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore, LocalMemoryRunClaim,
+};
+pub use memory_transcript::{
+    AuthoritativeConversationPage, AuthoritativeConversationRecord,
+    LocalConversationTranscriptSource,
 };
 
 #[derive(Debug, Error)]

@@ -41,15 +41,22 @@ pub(crate) async fn reject_resume_with_open_survey(
 pub(crate) async fn delete_open_surveys_for_cancelled_run(
     database: &mut SqliteConnection,
     run_id: &str,
+    now_unix_ms: i64,
 ) -> Result<u64, ClientStorageError> {
     // Cancellation removes open forms; don't leave their Main Chat notice asking
     // for an answer that can no longer be submitted. Run reconciliation updates
     // the source conversation version in this same cancellation transaction.
-    sqlx::query(
-        "UPDATE local_conversation_messages SET content_json = json_set(content_json, '$.status', 'cancelled') \
-         WHERE message_id IN (SELECT 'survey-status:' || survey_id FROM local_requirement_surveys \
-           WHERE source_run_id = ? AND status = 'open')"
-    ).bind(run_id).execute(&mut *database).await.db()?;
+    let survey_ids = sqlx::query_scalar::<_, String>(
+        "SELECT survey_id FROM local_requirement_surveys \
+         WHERE source_run_id = ? AND status = 'open' ORDER BY survey_id",
+    )
+    .bind(run_id)
+    .fetch_all(&mut *database)
+    .await
+    .db()?;
+    for survey_id in survey_ids {
+        write_back_main_chat_survey_status(database, &survey_id, "cancelled", now_unix_ms).await?;
+    }
     Ok(sqlx::query(
         "DELETE FROM local_requirement_surveys WHERE source_run_id = ? AND status = 'open'",
     )
@@ -256,7 +263,7 @@ impl LocalRequirementSurveyStore for SqliteClientStorage {
             write_back_main_chat_survey_status(
                 &mut database,
                 &survey.survey_id,
-                true,
+                "resolved",
                 survey.updated_at_unix_ms,
             )
             .await?;
@@ -299,11 +306,16 @@ impl LocalRequirementSurveyStore for SqliteClientStorage {
 pub(crate) async fn write_back_main_chat_survey_status(
     database: &mut SqliteConnection,
     survey_id: &str,
-    resolved: bool,
+    status: &str,
     now_unix_ms: i64,
 ) -> Result<(), ClientStorageError> {
+    if !matches!(status, "open" | "resolved" | "cancelled") {
+        return Err(ClientStorageError::InvalidState(
+            "requirement survey UI status is invalid".to_string(),
+        ));
+    }
     let row = sqlx::query(
-        "SELECT turn.turn_id, turn.conversation_id, survey.title \
+        "SELECT turn.turn_id, turn.conversation_id, survey.title, run.run_id \
          FROM local_requirement_surveys survey \
          JOIN local_agent_runs run ON run.run_id = survey.source_run_id \
          JOIN local_conversation_turns turn ON turn.run_id = run.run_id \
@@ -320,11 +332,16 @@ pub(crate) async fn write_back_main_chat_survey_status(
     let conversation_id: String = row.try_get("conversation_id").db()?;
     let turn_id: String = row.try_get("turn_id").db()?;
     let title: String = row.try_get("title").db()?;
+    let run_id: String = row.try_get("run_id").db()?;
     let content = serde_json::json!({
         "type": "requirement_survey_status", "survey_title": title,
-        "status": if resolved { "resolved" } else { "open" }
+        "status": status
     });
     let message_id = format!("survey-status:{survey_id}");
+    let metadata = serde_json::json!({
+        "kind": "requirement_survey_status",
+        "survey_id": survey_id,
+    });
     let ordinal =
         super::conversation_store::next_message_ordinal(database, &conversation_id).await?;
     sqlx::query(
@@ -332,12 +349,37 @@ pub(crate) async fn write_back_main_chat_survey_status(
          message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json, created_at_unix_ms) \
          VALUES(?, ?, ?, ?, 'assistant', ?, ?, ?) \
          ON CONFLICT(message_id) DO UPDATE SET content_json = excluded.content_json"
-    ).bind(message_id).bind(&conversation_id).bind(turn_id).bind(ordinal)
+    ).bind(&message_id).bind(&conversation_id).bind(&turn_id).bind(ordinal)
         .bind(serde_json::to_string(&content)?)
-        .bind(serde_json::json!({"kind": "requirement_survey_status", "survey_id": survey_id}).to_string())
+        .bind(metadata.to_string())
         .bind(now_unix_ms).execute(&mut *database).await.db()?;
-    sqlx::query("UPDATE local_conversations SET version = version + 1, updated_at_unix_ms = ? WHERE conversation_id = ?")
-        .bind(now_unix_ms).bind(conversation_id).execute(&mut *database).await.db()?;
+    let run = sqlx::query(super::schema::RUN_SELECT)
+        .bind(&run_id)
+        .fetch_one(&mut *database)
+        .await
+        .db()
+        .and_then(decode_run)?;
+    super::conversation_commands::project_conversation_message_to_memory(
+        database,
+        &run,
+        &conversation_id,
+        &turn_id,
+        &message_id,
+        "assistant",
+        &content,
+        &metadata,
+        &[],
+        "requirement_survey_projection",
+        "ignored",
+        true,
+        true,
+        now_unix_ms,
+    )
+    .await?;
+    if status != "cancelled" {
+        sqlx::query("UPDATE local_conversations SET version = version + 1, updated_at_unix_ms = ? WHERE conversation_id = ?")
+            .bind(now_unix_ms).bind(conversation_id).execute(&mut *database).await.db()?;
+    }
     Ok(())
 }
 

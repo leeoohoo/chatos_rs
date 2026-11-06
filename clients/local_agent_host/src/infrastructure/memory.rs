@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use async_trait::async_trait;
 use chatos_ai_runtime::{
     AiRuntime, ContextualTurnRunner, MemoryContextComposer, MemoryEngineRecordWriter,
     MemoryRecordScope, MemoryRecordWriter,
 };
-use chatos_local_agent_ports::LocalMemoryOutboxStore;
-use memory_engine_sdk::MemoryEngineClient;
+use chatos_local_agent_ports::{
+    AuthoritativeConversationPage, AuthoritativeConversationRecord,
+    LocalConversationTranscriptSource, LocalMemoryOutboxStore,
+};
+use memory_engine_sdk::{MemoryEngineClient, SdkListThreadRecordsRequest};
+use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 
 use crate::{LocalMemoryOutboxWriter, LocalMemorySyncWorker};
@@ -14,7 +19,135 @@ use crate::{LocalMemoryOutboxWriter, LocalMemorySyncWorker};
 pub struct LocalMemoryRuntimeServices {
     pub runner: ContextualTurnRunner,
     pub sync_worker: LocalMemorySyncWorker,
+    pub transcript_source: Arc<dyn LocalConversationTranscriptSource>,
     pub source_id: String,
+}
+
+#[derive(Clone)]
+struct MemoryConversationTranscriptSource {
+    client: MemoryEngineClient,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TranscriptCursor {
+    created_at: String,
+    record_id: String,
+}
+
+#[async_trait]
+impl LocalConversationTranscriptSource for MemoryConversationTranscriptSource {
+    async fn list_conversation_records(
+        &self,
+        tenant_id: &str,
+        thread_id: &str,
+        conversation_id: &str,
+        before_cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<AuthoritativeConversationPage, String> {
+        let cursor = before_cursor
+            .map(serde_json::from_str::<TranscriptCursor>)
+            .transpose()
+            .map_err(|error| format!("Memory transcript cursor is invalid: {error}"))?;
+        let page = self
+            .client
+            .list_thread_records_page(
+                thread_id,
+                &SdkListThreadRecordsRequest {
+                    tenant_id: tenant_id.to_string(),
+                    conversation_id: Some(conversation_id.to_string()),
+                    role: None,
+                    record_type: Some("message".to_string()),
+                    summary_status: None,
+                    after_created_at: cursor.as_ref().map(|value| value.created_at.clone()),
+                    after_id: cursor.as_ref().map(|value| value.record_id.clone()),
+                    limit: Some(i64::from(limit.clamp(1, 100))),
+                    offset: None,
+                    order: Some("desc".to_string()),
+                },
+            )
+            .await?;
+        let mut items = page.items;
+        let mut has_more = page.has_more;
+        let boundary_turn_id = items
+            .last()
+            .and_then(|record| record.metadata.as_ref())
+            .and_then(|metadata| metadata.get("conversation_turn_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        while has_more {
+            let Some(boundary_turn_id) = boundary_turn_id.as_deref() else {
+                break;
+            };
+            let Some(last) = items.last() else { break };
+            let continuation = self
+                .client
+                .list_thread_records_page(
+                    thread_id,
+                    &SdkListThreadRecordsRequest {
+                        tenant_id: tenant_id.to_string(),
+                        conversation_id: Some(conversation_id.to_string()),
+                        role: None,
+                        record_type: Some("message".to_string()),
+                        summary_status: None,
+                        after_created_at: Some(last.created_at.clone()),
+                        after_id: Some(last.id.clone()),
+                        limit: Some(100),
+                        offset: None,
+                        order: Some("desc".to_string()),
+                    },
+                )
+                .await?;
+            let same_turn_count = continuation
+                .items
+                .iter()
+                .take_while(|record| {
+                    record
+                        .metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.get("conversation_turn_id"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some(boundary_turn_id)
+                })
+                .count();
+            if same_turn_count == 0 {
+                has_more = !continuation.items.is_empty() || continuation.has_more;
+                break;
+            }
+            let continuation_len = continuation.items.len();
+            items.extend(continuation.items.into_iter().take(same_turn_count));
+            if same_turn_count < continuation_len {
+                break;
+            }
+            has_more = continuation.has_more;
+        }
+        let next_before_cursor = if has_more {
+            items
+                .last()
+                .map(|record| TranscriptCursor {
+                    created_at: record.created_at.clone(),
+                    record_id: record.id.clone(),
+                })
+                .map(|cursor| serde_json::to_string(&cursor))
+                .transpose()
+                .map_err(|error| format!("encode Memory transcript cursor failed: {error}"))?
+        } else {
+            None
+        };
+        Ok(AuthoritativeConversationPage {
+            records: items
+                .into_iter()
+                .map(|record| AuthoritativeConversationRecord {
+                    record_id: record.id,
+                    role: record.role,
+                    content: record.content,
+                    structured_payload: record.structured_payload,
+                    metadata: record.metadata,
+                    created_at: record.created_at,
+                })
+                .collect(),
+            next_before_cursor,
+        })
+    }
 }
 
 /// Process-local retained Memory adapter. Authentication values are accepted
@@ -63,7 +196,7 @@ impl LocalMemoryRuntimeConfig {
         let composer = MemoryContextComposer::from_client(client.clone());
         let remote_writer: Arc<dyn MemoryRecordWriter> =
             Arc::new(MemoryEngineRecordWriter::from_client(
-                client,
+                client.clone(),
                 MemoryRecordScope::per_record_tenant("tenant_id"),
             ));
         let outbox_store: Arc<dyn LocalMemoryOutboxStore> = store;
@@ -80,6 +213,9 @@ impl LocalMemoryRuntimeConfig {
                         .saturating_add(Duration::from_secs(5))
                         .max(Duration::from_secs(30)),
                 )?,
+            transcript_source: Arc::new(MemoryConversationTranscriptSource {
+                client: client.clone(),
+            }),
             source_id,
         })
     }

@@ -800,3 +800,12 @@ pub(super) const SCHEMA_V45: &[&str] = &[
        CHECK(responses_compaction_threshold IS NULL OR \
          responses_compaction_threshold BETWEEN 2048 AND 2000000)",
 ];
+
+/// Non-secret routing for program-owned conversation records. Task callbacks and
+/// terminal cards are enqueued in the same transaction as their local display
+/// projection, then Memory Engine becomes their authoritative transcript source.
+pub(super) const SCHEMA_V46: &[&str] = &["CREATE TABLE local_memory_projection_config (\
+       owner_user_id TEXT PRIMARY KEY NOT NULL,\
+       source_id TEXT NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL\
+     )"];

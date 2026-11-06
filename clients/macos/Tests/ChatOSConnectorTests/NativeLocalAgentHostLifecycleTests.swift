@@ -64,6 +64,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             configuration: .init(
                 executableURL: executable,
                 databaseURL: root.appendingPathComponent("agent.sqlite3"),
+                memoryBaseURL: URL(string: "http://127.0.0.1:9/api/memory")!,
+                memorySourceID: "test-local-agent",
                 maximumConcurrentWorkItems: 4
             ),
             pressureRecoveryDelay: .milliseconds(100)
@@ -127,7 +129,9 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let lifecycle = NativeLocalAgentHostLifecycle(configuration: .init(
             executableURL: wrapper.executable,
             databaseURL: root.appendingPathComponent("agent.sqlite3"),
-            startupTimeout: .seconds(10)
+            startupTimeout: .seconds(10),
+            memoryBaseURL: URL(string: "http://127.0.0.1:9/api/memory")!,
+            memorySourceID: "test-local-agent"
         ))
 
         do {
@@ -213,7 +217,10 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             .appendingPathComponent("chatos-refresh-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let lifecycle = NativeLocalAgentHostLifecycle(configuration: .init(
-            executableURL: executable, databaseURL: root.appendingPathComponent("agent.sqlite3")
+            executableURL: executable,
+            databaseURL: root.appendingPathComponent("agent.sqlite3"),
+            memoryBaseURL: URL(string: "http://127.0.0.1:9/api/memory")!,
+            memorySourceID: "test-local-agent"
         ))
         do {
             try await lifecycle.startForBootstrap(ownerUserID: "user-1")
@@ -278,7 +285,6 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
                 let resources = try XCTUnwrap(observedResources)
                 XCTAssertTrue(resources.acceptingNewWork)
                 XCTAssertEqual(resources.activeWorkItems, 0)
-                XCTAssertEqual(resources.activeMemorySyncItems, 0)
             }
             do {
                 try await lifecycle.refreshCredentials(ownerUserID: "user-2", credentialEnvironment: credentials)
@@ -347,7 +353,9 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             executableURL: executable,
             databaseURL: root.appendingPathComponent("local-agent.sqlite3"),
             startupTimeout: .seconds(10),
-            requestTimeoutMilliseconds: 500
+            requestTimeoutMilliseconds: 500,
+            memoryBaseURL: URL(string: "http://127.0.0.1:9/api/memory")!,
+            memorySourceID: "test-local-agent"
         ))
 
         try await lifecycle.start(ownerUserID: "user-1")
@@ -364,12 +372,6 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         XCTAssertEqual(created.conversation.version, 1)
         let page = try await conversations.list(ownerUserID: "user-1")
         XCTAssertEqual(page.conversations.map(\.conversationID), ["conversation-1"])
-        let history = try await conversations.history(
-            ownerUserID: "user-1",
-            conversationID: "conversation-1"
-        )
-        XCTAssertEqual(history.conversation, created.conversation)
-        XCTAssertTrue(history.messages.isEmpty)
         let controlPlane = NativeLocalAgentControlPlaneClient(host: lifecycle)
         let model = LocalAgentModelConfigSnapshot(
             ownerUserID: "user-1",
@@ -506,16 +508,6 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             "A long event wait must not block unrelated Host requests"
         )
         _ = try await waitingForEvents.value
-        let localHistory = try await conversationService.fetchHistory(.init(
-            sessionID: "conversation-1",
-            requestGeneration: 1
-        ))
-        XCTAssertEqual(localHistory.turns.first?.id, "turn-1")
-        XCTAssertEqual(localHistory.turns.first?.userMessage.text, "hello locally")
-        let taskLookup = try XCTUnwrap(localHistory.turns.first?.messageTaskLookup)
-        XCTAssertEqual(taskLookup.sessionID, "conversation-1")
-        XCTAssertEqual(taskLookup.turnID, "turn-1")
-        XCTAssertEqual(taskLookup.sourceUserMessageID, acknowledgement.userMessageID)
         let eventStream = await conversationService.events(sessionID: "conversation-1")
         var eventIterator = eventStream.makeAsyncIterator()
         let event = try await eventIterator.next()

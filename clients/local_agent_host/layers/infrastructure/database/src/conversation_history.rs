@@ -58,7 +58,7 @@ pub(super) async fn get_conversation_history(
     turn_ids.sort_unstable();
     turn_ids.dedup();
     let messages = fetch_messages_for_turns(&mut connection, conversation_id, &turn_ids).await?;
-    let next_before_ordinal = if let Some(oldest) = messages.first() {
+    let next_before_cursor = if let Some(oldest) = messages.first() {
         let oldest_ordinal = i64::try_from(oldest.ordinal).map_err(|_| {
             ClientStorageError::InvalidState("message ordinal exceeds i64".to_string())
         })?;
@@ -81,7 +81,7 @@ pub(super) async fn get_conversation_history(
         turns,
         messages,
         attachments,
-        next_before_ordinal,
+        next_before_cursor: next_before_cursor.map(|value| value.to_string()),
     })
 }
 

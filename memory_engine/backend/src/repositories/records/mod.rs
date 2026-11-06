@@ -14,6 +14,7 @@ pub struct ListRecordsQuery<'a> {
     pub thread_id: &'a str,
     pub tenant_id: Option<&'a str>,
     pub source_id: Option<&'a str>,
+    pub conversation_id: Option<&'a str>,
     pub role: Option<&'a str>,
     pub record_type: Option<&'a str>,
     pub summary_status: Option<&'a str>,

@@ -76,6 +76,7 @@ pub async fn list_thread_records(
         thread_id: thread_id.as_str(),
         tenant_id: Some(req.tenant_id.as_str()),
         source_id: Some(auth.source_id()),
+        conversation_id: req.conversation_id.as_deref(),
         role: req.role.as_deref(),
         record_type: req.record_type.as_deref(),
         summary_status: req.summary_status.as_deref(),

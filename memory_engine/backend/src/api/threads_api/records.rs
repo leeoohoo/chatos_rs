@@ -54,6 +54,7 @@ pub async fn list_records(
         thread_id: thread_id.as_str(),
         tenant_id: tenant_id.as_deref(),
         source_id: query.source_id.as_deref(),
+        conversation_id: query.conversation_id.as_deref(),
         role: query.role.as_deref(),
         record_type: query.record_type.as_deref(),
         summary_status: query.summary_status.as_deref(),

@@ -30,7 +30,12 @@ fn conversation_run(turn: &StartConversationTurnCommand) -> LocalAgentRunRecord 
         model_config_ref: turn.model_config_ref.clone(),
         model_config_revision: turn.model_config_revision.clone(),
         capability_policy_revision: turn.capability_policy_revision.clone(),
-        input: json!({"message": turn.message, "attachments": []}),
+        input: json!({
+            "conversation_id": turn.conversation_id,
+            "agent_id": "jiguli",
+            "message": turn.message,
+            "attachments": []
+        }),
         status: LocalAgentRunStatus::Queued,
         iteration: 0,
         model_attempt: 1,
@@ -1933,6 +1938,10 @@ async fn multi_task_graph_defaults_to_one_sanitized_terminal_summary() {
         .await
         .expect("storage");
     storage
+        .configure_memory_projection("user-1", "chatos", 500)
+        .await
+        .expect("configure Memory projection");
+    storage
         .create_conversation(
             &command("create-summary-conversation"),
             &CreateConversationCommand {
@@ -2060,6 +2069,23 @@ async fn multi_task_graph_defaults_to_one_sanitized_terminal_summary() {
     .await
     .expect("count graph summaries");
     assert_eq!(writebacks, 1);
+    let projected: (String, String, String, String) = sqlx::query_as(
+        "SELECT source_id,thread_id,status,payload_json FROM local_memory_outbox \
+         WHERE record_id='task-graph:graph-summary:1'",
+    )
+    .fetch_one(&storage.pool)
+    .await
+    .expect("project terminal graph message to Memory outbox");
+    assert_eq!(projected.0, "chatos");
+    assert_eq!(projected.1, "client-agent:agent:jiguli");
+    assert_eq!(projected.2, "pending");
+    let projected_payload: Value = serde_json::from_str(&projected.3).unwrap();
+    assert_eq!(
+        projected_payload["metadata"]["conversation_id"],
+        "conversation-summary"
+    );
+    assert_eq!(projected_payload["metadata"]["ui_structured_content"], true);
+    assert_eq!(projected_payload["summary_status"], "ignored");
     let events = storage
         .list_events(0, 100, None)
         .await

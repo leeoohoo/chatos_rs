@@ -77,7 +77,7 @@ fn shared_conversation_run_fixtures_preserve_cross_platform_links() {
         history.attachments[0].authorized_local_ref,
         "local-attachment:authority-1"
     );
-    assert_eq!(history.next_before_ordinal, None);
+    assert_eq!(history.next_before_cursor, None);
 
     let graph: HostResponseEnvelope =
         serde_json::from_slice(&shared_fixture("message-task-graph-success.json"))

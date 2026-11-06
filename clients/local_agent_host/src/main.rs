@@ -72,11 +72,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "database has no parent"))?
         .join("HookData");
-    let runtime = Arc::new(LocalAgentRuntime::new(storage.clone()));
-    let recovered = runtime.initialize(&options.owner_user_id).await?;
-    if recovered > 0 {
-        eprintln!("Local Agent Host recovered {recovered} expired claim(s) for the active owner");
-    }
     let (runner, memory_services) = match options.memory.as_ref() {
         Some(memory) => {
             let config = LocalMemoryRuntimeConfig::new(
@@ -88,7 +83,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let services = config.build_services(storage.clone(), options.owner_user_id.clone())?;
             (
                 Arc::new(services.runner),
-                Some((services.source_id, services.sync_worker)),
+                Some((
+                    services.source_id,
+                    services.sync_worker,
+                    services.transcript_source,
+                )),
             )
         }
         None => (
@@ -96,6 +95,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
             None,
         ),
     };
+    if let Some((source_id, _, _)) = memory_services.as_ref() {
+        storage
+            .configure_memory_projection(
+                &options.owner_user_id,
+                source_id,
+                chrono::Utc::now().timestamp_millis(),
+            )
+            .await?;
+    }
+    let runtime = Arc::new(match memory_services.as_ref() {
+        Some((_, _, transcript_source)) => LocalAgentRuntime::new(storage.clone())
+            .with_conversation_transcript_source(Arc::clone(transcript_source)),
+        None => LocalAgentRuntime::new(storage.clone()),
+    });
+    let recovered = runtime.initialize(&options.owner_user_id).await?;
+    if recovered > 0 {
+        eprintln!("Local Agent Host recovered {recovered} expired claim(s) for the active owner");
+    }
     let control_plane = Arc::new(
         LocalControlPlaneSnapshot::new()
             .with_capability_store(storage.clone())
@@ -106,7 +123,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ),
     );
     let assembly = (match memory_services {
-        Some((source_id, sync_worker)) => {
+        Some((source_id, sync_worker, _)) => {
             LocalAgentHostAssembly::with_external_tool_worker_and_memory_and_hooks(
                 runtime,
                 options.owner_user_id,
@@ -293,6 +310,12 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
             )
         }
     };
+    if workers_enabled && memory.is_none() {
+        return Err(
+            "--memory-base-url and --memory-source-id are required when workers are enabled"
+                .to_string(),
+        );
+    }
     Ok(Options {
         database: database.ok_or_else(|| "--database is required".to_string())?,
         owner_user_id: owner_user_id.ok_or_else(|| "--owner-user-id is required".to_string())?,
@@ -482,6 +505,7 @@ mod tests {
                 "stage_edit_batch",
                 "--max-concurrent-work-items",
                 "7",
+                "--disable-workers",
                 "--stdio",
             ]
             .into_iter()
