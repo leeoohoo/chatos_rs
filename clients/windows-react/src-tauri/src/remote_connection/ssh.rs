@@ -868,11 +868,40 @@ async fn read_process_output(
             path,
             maximum_bytes,
         } => {
-            let mut file = tokio_fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)
-                .await?;
+            let parent = path
+                .parent()
+                .ok_or_else(|| std::io::Error::other("stream output parent is missing"))?;
+            let parent_metadata = tokio_fs::symlink_metadata(parent).await?;
+            if !parent_metadata.is_dir()
+                || parent_metadata.file_type().is_symlink()
+                || is_reparse_point(&parent_metadata)
+            {
+                return Err(std::io::Error::other(
+                    "stream output parent is not a regular directory",
+                ));
+            }
+            if path.file_name().is_none() {
+                return Err(std::io::Error::other("stream output file name is missing"));
+            }
+            let mut options = tokio_fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(windows)]
+            {
+                const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+                options
+                    .share_mode(0)
+                    .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            }
+            let mut file = options.open(path).await?;
+            let metadata = file.metadata().await?;
+            if !metadata.is_file()
+                || metadata.file_type().is_symlink()
+                || is_reparse_point(&metadata)
+            {
+                return Err(std::io::Error::other(
+                    "stream output file is not a regular file",
+                ));
+            }
             output_created.store(true, Ordering::SeqCst);
             let count = copy_bounded(reader, &mut file, maximum_bytes, exceeded).await?;
             file.flush().await?;
@@ -2232,6 +2261,35 @@ mod tests {
         assert_eq!(fs::read(&output).unwrap(), b"payload");
         drop(outcome);
         assert!(!output.exists());
+    }
+
+    #[tokio::test]
+    async fn streamed_output_is_created_under_a_verified_parent() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent = directory.path().canonicalize().unwrap();
+        let output = parent.join("download.tmp");
+        let (mut writer, reader) = tokio::io::duplex(64);
+        let writer_task = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            writer.write_all(b"payload").await.unwrap();
+            writer.shutdown().await.unwrap();
+        });
+        let exceeded = Arc::new(AtomicBool::new(false));
+        let created = Arc::new(AtomicBool::new(false));
+        let _ = read_process_output(
+            reader,
+            SshProcessOutput::File {
+                path: output.clone(),
+                maximum_bytes: 1_024,
+            },
+            exceeded,
+            created,
+        )
+        .await
+        .unwrap();
+        writer_task.await.unwrap();
+
+        assert_eq!(fs::read(&output).unwrap(), b"payload");
     }
 
     #[cfg(unix)]
