@@ -15,7 +15,7 @@ use chatos_sandbox_contract::{
 use crate::controlled_network::{
     allowed_hosts_from_managed_requirements, ControlledNetworkPolicyRequest,
 };
-use crate::models::CurrentUser;
+use crate::models::{CurrentUser, LocalConnectorWorkspace, WORKSPACE_STATUS_DISABLED};
 use crate::state::AppState;
 
 use super::ApiError;
@@ -97,11 +97,7 @@ pub(super) async fn issue_controlled_network_policy(
             "Local Connector workspace does not belong to current user",
         ));
     }
-    if workspace.device_id != device_id {
-        return Err(ApiError::bad_request(
-            "Local Connector workspace is not attached to this device",
-        ));
-    }
+    ensure_workspace_can_receive_policy(&workspace, device_id.as_str())?;
     let request = ControlledNetworkPolicyRequest {
         permission_profile: query.permission_profile,
     };
@@ -209,5 +205,65 @@ fn unavailable(state: &'static str) -> ControlledNetworkPolicyResolution {
     ControlledNetworkPolicyResolution {
         state,
         source: None,
+    }
+}
+
+fn ensure_workspace_can_receive_policy(
+    workspace: &LocalConnectorWorkspace,
+    device_id: &str,
+) -> Result<(), ApiError> {
+    if workspace.device_id != device_id {
+        return Err(ApiError::bad_request(
+            "Local Connector workspace is not attached to this device",
+        ));
+    }
+    if workspace.status == WORKSPACE_STATUS_DISABLED {
+        return Err(ApiError::bad_request(
+            "Local Connector workspace is disabled",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn workspace(device_id: &str, status: &str) -> LocalConnectorWorkspace {
+        LocalConnectorWorkspace {
+            id: "workspace-1".into(),
+            owner_user_id: "owner-1".into(),
+            device_id: device_id.into(),
+            display_name: "Workspace".into(),
+            local_path_alias: "workspace".into(),
+            local_path_fingerprint: "fingerprint".into(),
+            capabilities: vec![],
+            status: status.into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn only_active_workspace_attached_to_the_selected_device_can_receive_policy() {
+        assert!(
+            ensure_workspace_can_receive_policy(&workspace("device-1", "active"), "device-1")
+                .is_ok()
+        );
+        assert_eq!(
+            ensure_workspace_can_receive_policy(&workspace("device-2", "active"), "device-1")
+                .unwrap_err()
+                .message(),
+            "Local Connector workspace is not attached to this device"
+        );
+        assert_eq!(
+            ensure_workspace_can_receive_policy(
+                &workspace("device-1", WORKSPACE_STATUS_DISABLED),
+                "device-1"
+            )
+            .unwrap_err()
+            .message(),
+            "Local Connector workspace is disabled"
+        );
     }
 }
