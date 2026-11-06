@@ -137,19 +137,12 @@ async fn resolve_controlled_network_policy_source(
     device_id: &str,
     request: &ControlledNetworkPolicyRequest,
 ) -> Result<ControlledNetworkPolicyResolution, ApiError> {
+    // Always authenticate and validate the device before exposing any readiness
+    // state. In particular, a missing signer must not turn an unknown, foreign,
+    // or revoked device into a successful readiness response.
+    let device = super::load_owned_device(state, user, device_id, true).await?;
     if state.controlled_network_signer.is_none() {
         return Ok(unavailable("signer_not_configured"));
-    }
-    let device = state
-        .store
-        .get_device(device_id)
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| ApiError::not_found("Local Connector device not found"))?;
-    if device.owner_user_id != user.effective_owner_user_id() {
-        return Err(ApiError::forbidden(
-            "Local Connector device does not belong to current user",
-        ));
     }
     if device.windows_user_sid.is_none() {
         return Ok(unavailable("windows_sid_not_registered"));
