@@ -15,6 +15,8 @@ pub struct ListSummariesQuery<'a> {
     pub thread_id: &'a str,
     pub tenant_id: Option<&'a str>,
     pub source_id: Option<&'a str>,
+    pub project_id: Option<&'a str>,
+    pub project_id_missing: bool,
     pub summary_type: Option<&'a str>,
     pub status: Option<&'a str>,
     pub level: Option<i64>,

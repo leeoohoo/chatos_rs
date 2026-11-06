@@ -218,7 +218,14 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
                 source_digest: None,
                 confidence: None,
                 last_seen_at: None,
-                metadata: Some(json!({"relation_subject_id": subject})),
+                metadata: Some(if memory_type == "agent_memory" {
+                    json!({
+                        "relation_subject_id": subject,
+                        "generation_profile": crate::repositories::subject_memory_scopes::AGENT_STABLE_MEMORY_PROFILE,
+                    })
+                } else {
+                    json!({"relation_subject_id": subject})
+                }),
                 rollup_status: None,
                 rollup_memory_key: None,
                 rolled_up_at: None,
@@ -230,6 +237,31 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
         .await
         .expect("upsert context memory");
     }
+    crate::repositories::subject_memories::upsert_subject_memory(
+        &pool,
+        agent_id.as_str(),
+        "legacy-agent-memory",
+        crate::models::UpsertSubjectMemoryRequest {
+            id: None,
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            memory_type: "agent_memory".to_string(),
+            text: "legacy-project-specific-agent-memory".to_string(),
+            level: Some(0),
+            source_digest: None,
+            confidence: None,
+            last_seen_at: None,
+            metadata: Some(json!({"relation_subject_id": agent_id})),
+            rollup_status: None,
+            rollup_memory_key: None,
+            rolled_up_at: None,
+            status: None,
+            created_at: None,
+            updated_at: None,
+        },
+    )
+    .await
+    .expect("upsert legacy agent memory");
 
     let compose = |project: Option<&str>| crate::models::ComposeContextRequest {
         tenant_id: tenant.clone(),
@@ -264,6 +296,7 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
         .collect::<Vec<_>>()
         .join("\n");
     assert!(project_blocks.contains("durable-agent-memory"));
+    assert!(!project_blocks.contains("legacy-project-specific-agent-memory"));
     assert!(project_blocks.contains("durable-project-a"));
     assert!(project_blocks.contains("thread-summary-a"));
     assert!(!project_blocks.contains("durable-project-b"));

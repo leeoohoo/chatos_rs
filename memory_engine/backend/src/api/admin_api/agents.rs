@@ -65,6 +65,30 @@ pub async fn list_agent_projects(
     Ok(Json(json!({ "items": items })))
 }
 
+pub async fn list_agent_conversations(
+    State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
+    Path(agent_subject_id): Path<String>,
+    Query(query): Query<AgentProjectsQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let tenant_id = auth
+        .resolve_tenant_scope(query.tenant_id.as_deref())?
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "tenant_id is required".to_string()))?;
+    let source_id = normalized(query.source_id.as_deref())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "source_id is required".to_string()))?;
+    let agent_subject_id = normalize_agent_subject_id(agent_subject_id.as_str())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "agent_id is required".to_string()))?;
+    let items = agent_directory::list_agent_conversations(
+        &state.pool,
+        tenant_id.as_str(),
+        source_id,
+        agent_subject_id.as_str(),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(json!({ "items": items })))
+}
+
 fn normalize_agent_subject_id(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() || value.chars().any(char::is_control) {

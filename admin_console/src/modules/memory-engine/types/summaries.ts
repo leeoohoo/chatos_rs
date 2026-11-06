@@ -49,6 +49,8 @@ export interface EngineSubjectMemory {
 export interface ThreadSummariesQuery {
   tenant_id?: string;
   source_id?: string;
+  project_id?: string;
+  project_id_missing?: boolean;
   summary_type?: string;
   status?: string;
   level?: number;

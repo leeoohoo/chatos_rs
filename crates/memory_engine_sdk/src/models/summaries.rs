@@ -7,6 +7,9 @@ use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkListThreadSummariesRequest {
     pub tenant_id: String,
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub project_id_missing: bool,
     pub summary_type: Option<String>,
     pub status: Option<String>,
     pub level: Option<i64>,

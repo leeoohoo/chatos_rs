@@ -37,6 +37,8 @@ pub async fn list_thread_summaries(
         thread_id: thread_id.as_str(),
         tenant_id: Some(req.tenant_id.as_str()),
         source_id: Some(auth.source_id()),
+        project_id: req.project_id.as_deref(),
+        project_id_missing: req.project_id_missing,
         summary_type: req.summary_type.as_deref(),
         status: req.status.as_deref(),
         level: req.level,

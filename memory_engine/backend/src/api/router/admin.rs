@@ -22,6 +22,10 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(admin_api::list_agent_projects),
         )
         .route(
+            "/api/memory-engine/v1/admin/agents/{agent_subject_id}/conversations",
+            get(admin_api::list_agent_conversations),
+        )
+        .route(
             "/api/memory-engine/v1/admin/job-policies",
             get(admin_api::list_job_policies),
         )

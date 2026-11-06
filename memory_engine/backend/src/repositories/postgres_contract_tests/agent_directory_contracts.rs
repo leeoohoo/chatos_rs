@@ -61,6 +61,7 @@ async fn postgres_agent_directory_groups_memory_projects_and_threads() {
                 "memory-schema:v2".to_string(),
                 agent_subject.clone(),
                 project_subject.clone(),
+                "thread-kind:agent_task".to_string(),
             ]),
             metadata: None,
             status: None,
@@ -135,7 +136,7 @@ async fn postgres_agent_directory_groups_memory_projects_and_threads() {
         &mut tx,
         &EngineRecord {
             id: format!("record-project-message-{suffix}"),
-            thread_id: shared_thread_id,
+            thread_id: shared_thread_id.clone(),
             tenant_id: tenant.clone(),
             source_id: source.clone(),
             external_record_id: None,
@@ -143,7 +144,10 @@ async fn postgres_agent_directory_groups_memory_projects_and_threads() {
             record_type: "message".to_string(),
             content: "Project-scoped main chat message".to_string(),
             structured_payload: None,
-            metadata: Some(json!({"memory_project_id": record_project_id.clone()})),
+            metadata: Some(json!({
+                "memory_project_id": record_project_id.clone(),
+                "conversation_id": format!("conversation-record-project-{suffix}"),
+            })),
             summary_status: "pending".to_string(),
             summary_id: None,
             summarized_at: None,
@@ -155,6 +159,65 @@ async fn postgres_agent_directory_groups_memory_projects_and_threads() {
     tx.commit()
         .await
         .expect("commit project record transaction");
+
+    let mut tx = pool
+        .begin()
+        .await
+        .expect("begin second project transaction");
+    crate::repositories::records::upsert_record_row(
+        &mut tx,
+        &EngineRecord {
+            id: format!("project-message-{suffix}"),
+            thread_id: shared_thread_id.clone(),
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            external_record_id: None,
+            role: "user".to_string(),
+            record_type: "message".to_string(),
+            content: "Second project-scoped main chat message".to_string(),
+            structured_payload: None,
+            metadata: Some(json!({
+                "memory_project_id": project_id.clone(),
+                "conversation_id": format!("conversation-project-{suffix}"),
+            })),
+            summary_status: "pending".to_string(),
+            summary_id: None,
+            summarized_at: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        },
+    )
+    .await
+    .expect("upsert second project-scoped main chat record");
+    tx.commit()
+        .await
+        .expect("commit second project transaction");
+
+    let mut tx = pool.begin().await.expect("begin Task record transaction");
+    crate::repositories::records::upsert_record_row(
+        &mut tx,
+        &EngineRecord {
+            id: format!("task-message-{suffix}"),
+            thread_id: thread_id.clone(),
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            external_record_id: None,
+            role: "user".to_string(),
+            record_type: "message".to_string(),
+            content: "Independent Task message".to_string(),
+            structured_payload: None,
+            metadata: Some(json!({
+                "memory_project_id": project_id.clone(),
+                "conversation_id": format!("source-conversation-{suffix}"),
+            })),
+            summary_status: "pending".to_string(),
+            summary_id: None,
+            summarized_at: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        },
+    )
+    .await
+    .expect("upsert independent Task record");
+    tx.commit().await.expect("commit Task record transaction");
 
     for (subject_id, memory_key, memory_type, text) in [
         (
@@ -243,7 +306,7 @@ async fn postgres_agent_directory_groups_memory_projects_and_threads() {
         .expect("thread-scoped project");
     assert_eq!(project.project_id, project_id);
     assert_eq!(project.display_name.as_deref(), Some("Contract Project"));
-    assert_eq!(project.thread_count, 1);
+    assert_eq!(project.thread_count, 2);
     assert_eq!(project.memory_count, 1);
     let record_project = projects
         .iter()
@@ -255,4 +318,43 @@ async fn postgres_agent_directory_groups_memory_projects_and_threads() {
     );
     assert_eq!(record_project.thread_count, 1);
     assert_eq!(record_project.memory_count, 0);
+
+    let conversations = crate::repositories::agent_directory::list_agent_conversations(
+        &pool,
+        &tenant,
+        &source,
+        &agent_subject,
+    )
+    .await
+    .expect("list Agent conversations");
+    assert_eq!(conversations.len(), 3);
+    let task = conversations
+        .iter()
+        .find(|item| item.thread_id == thread_id)
+        .expect("independent Task thread");
+    assert_eq!(
+        task.project_subject_id.as_deref(),
+        Some(project_subject.as_str())
+    );
+    assert_eq!(task.thread_kind, "agent_task");
+    assert_eq!(task.record_count, 1);
+    assert_eq!(task.conversation_id, None);
+    let project_conversation = conversations
+        .iter()
+        .find(|item| {
+            item.project_subject_id.as_deref() == Some(project_subject.as_str())
+                && item.thread_id == shared_thread_id
+        })
+        .expect("project-scoped stable Agent conversation");
+    assert_eq!(
+        project_conversation.conversation_id.as_deref(),
+        Some(format!("conversation-project-{suffix}").as_str())
+    );
+    assert_eq!(project_conversation.thread_kind, "main_chat");
+    assert_eq!(project_conversation.record_count, 1);
+    let record_project_conversation = conversations
+        .iter()
+        .find(|item| item.project_subject_id.as_deref() == Some(record_project_subject.as_str()))
+        .expect("second project-scoped stable Agent conversation");
+    assert_eq!(record_project_conversation.record_count, 1);
 }

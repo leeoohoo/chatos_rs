@@ -310,6 +310,14 @@ body,
   box-shadow: none;
 }
 
+.engine-agent-conversation-workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(440px, 1.1fr);
+  gap: 16px;
+}
+
 .engine-data-column {
   min-height: 0;
   display: flex;

@@ -41,7 +41,7 @@ async fn postgres_summary_cursor_preserves_mixed_sort_and_offset_compatibility()
         .enumerate()
         .map(|(index, _)| format!("summary-cursor-{suffix}-{index}"))
         .collect::<Vec<_>>();
-    for (id, level) in ids.iter().zip(levels) {
+    for (index, (id, level)) in ids.iter().zip(levels).enumerate() {
         let summary = EngineSummary {
             id: id.clone(),
             tenant_id: tenant.clone(),
@@ -61,7 +61,7 @@ async fn postgres_summary_cursor_preserves_mixed_sort_and_offset_compatibility()
             rolled_up_at: None,
             subject_memory_summarized: 0,
             subject_memory_summarized_at: None,
-            metadata: None,
+            metadata: (index % 2 == 0).then(|| json!({"project_subject_id": "project:project-a"})),
             created_at: created_at.to_string(),
             updated_at: created_at.to_string(),
         };
@@ -88,6 +88,37 @@ async fn postgres_summary_cursor_preserves_mixed_sort_and_offset_compatibility()
     .await
     .expect("list first summary cursor page");
     assert!(first_has_more);
+
+    let (project_summaries, project_has_more) =
+        crate::repositories::summaries::list_thread_summaries(
+            &pool,
+            crate::repositories::summaries::ListSummariesQuery {
+                thread_id: &thread_id,
+                tenant_id: Some(&tenant),
+                source_id: Some(&source),
+                project_id: Some("project-a"),
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("filter summaries by project identity");
+    assert!(!project_has_more);
+    assert_eq!(project_summaries.len(), 3);
+    let (projectless_summaries, _) = crate::repositories::summaries::list_thread_summaries(
+        &pool,
+        crate::repositories::summaries::ListSummariesQuery {
+            thread_id: &thread_id,
+            tenant_id: Some(&tenant),
+            source_id: Some(&source),
+            project_id_missing: true,
+            limit: 10,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("filter projectless summaries");
+    assert_eq!(projectless_summaries.len(), 3);
 
     let inserted_id = format!("summary-cursor-{suffix}-newer");
     let inserted = EngineSummary {

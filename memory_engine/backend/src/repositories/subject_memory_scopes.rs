@@ -25,6 +25,7 @@ pub struct SubjectMemoryScopeDispatchOutbox {
 }
 
 const MEMORY_SCHEMA_V2_LABEL: &str = "memory-schema:v2";
+pub(crate) const AGENT_STABLE_MEMORY_PROFILE: &str = "agent_stable_cross_project_v1";
 
 pub(crate) fn is_canonical_agent_subject_id(value: &str) -> bool {
     let value = value.trim();
@@ -94,6 +95,7 @@ fn identity_scope_is_current(
         && existing.source_thread_label == request.source_thread_label
         && existing.relation_subject_id == request.relation_subject_id
         && existing.source_summary_type == request.source_summary_type
+        && existing.memory_metadata == request.memory_metadata
         && existing.status == "active"
 }
 
@@ -169,6 +171,18 @@ fn identity_scope_request(
     memory_type: &str,
     prompt_title: &str,
 ) -> UpsertSubjectMemoryScopeRequest {
+    let memory_metadata = if memory_type == "agent_memory" {
+        serde_json::json!({
+            "managed_by": "thread_identity_v2",
+            "identity_subject_id": subject_id,
+            "generation_profile": AGENT_STABLE_MEMORY_PROFILE,
+        })
+    } else {
+        serde_json::json!({
+            "managed_by": "thread_identity_v2",
+            "identity_subject_id": subject_id,
+        })
+    };
     UpsertSubjectMemoryScopeRequest {
         tenant_id: tenant_id.to_string(),
         source_id: source_id.to_string(),
@@ -178,10 +192,7 @@ fn identity_scope_request(
         relation_subject_id: Some(subject_id.to_string()),
         source_summary_type: Some("thread_incremental".to_string()),
         prompt_title: Some(format!("{prompt_title} for {subject_id}")),
-        memory_metadata: Some(serde_json::json!({
-            "managed_by": "thread_identity_v2",
-            "identity_subject_id": subject_id,
-        })),
+        memory_metadata: Some(memory_metadata),
         status: Some("active".to_string()),
     }
 }
@@ -663,7 +674,9 @@ fn normalized(value: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod identity_tests {
-    use super::{is_canonical_agent_subject_id, thread_identity_scope_requests};
+    use super::{
+        is_canonical_agent_subject_id, thread_identity_scope_requests, AGENT_STABLE_MEMORY_PROFILE,
+    };
     use crate::models::EngineThread;
 
     fn thread(subject_id: &str, labels: Vec<&str>) -> EngineThread {
@@ -701,8 +714,23 @@ mod identity_tests {
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].1.memory_type, "agent_memory");
         assert_eq!(requests[0].1.subject_id, "agent:a-1");
+        assert_eq!(
+            requests[0]
+                .1
+                .memory_metadata
+                .as_ref()
+                .and_then(|value| value.get("generation_profile"))
+                .and_then(serde_json::Value::as_str),
+            Some(AGENT_STABLE_MEMORY_PROFILE)
+        );
         assert_eq!(requests[1].1.memory_type, "project_summary");
         assert_eq!(requests[1].1.subject_id, "project:p-1");
+        assert!(requests[1]
+            .1
+            .memory_metadata
+            .as_ref()
+            .and_then(|value| value.get("generation_profile"))
+            .is_none());
         assert!(requests
             .iter()
             .all(|(_, request)| !request.subject_id.starts_with("room:")));

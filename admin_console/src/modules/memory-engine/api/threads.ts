@@ -62,6 +62,10 @@ export const threadsApi = {
       params: {
         tenant_id: params?.tenant_id,
         source_id: params?.source_id,
+        project_id: params?.project_id,
+        project_id_missing: params?.project_id_missing || undefined,
+        conversation_id: params?.conversation_id,
+        conversation_id_missing: params?.conversation_id_missing || undefined,
         role: params?.role,
         record_type: params?.record_type,
         summary_status: params?.summary_status,
@@ -87,6 +91,8 @@ export const threadsApi = {
       params: {
         tenant_id: params?.tenant_id,
         source_id: params?.source_id,
+        project_id: params?.project_id,
+        project_id_missing: params?.project_id_missing || undefined,
         summary_type: params?.summary_type,
         status: params?.status,
         level: params?.level,

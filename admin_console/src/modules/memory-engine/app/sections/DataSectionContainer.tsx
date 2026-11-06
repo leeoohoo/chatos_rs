@@ -96,6 +96,9 @@ export function DataSectionContainer(props: DataSectionContainerProps) {
       selectedAgent={agentExplorer.selectedAgent}
       onSelectAgent={(agent) => void agentExplorer.selectAgent(agent)}
       projects={agentExplorer.projects}
+      conversations={agentExplorer.conversations}
+      selectedConversation={agentExplorer.selectedConversation}
+      onSelectConversation={(conversation) => void agentExplorer.selectConversation(conversation)}
       selectedProject={agentExplorer.selectedProject}
       onSelectProject={(project) => void agentExplorer.selectProject(project)}
       agentMemories={agentExplorer.agentMemories}

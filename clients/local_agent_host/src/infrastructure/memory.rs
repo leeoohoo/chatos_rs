@@ -54,7 +54,10 @@ impl LocalConversationTranscriptSource for MemoryConversationTranscriptSource {
                 thread_id,
                 &SdkListThreadRecordsRequest {
                     tenant_id: tenant_id.to_string(),
+                    project_id: None,
+                    project_id_missing: false,
                     conversation_id: Some(conversation_id.to_string()),
+                    conversation_id_missing: false,
                     role: None,
                     record_type: Some("message".to_string()),
                     summary_status: None,
@@ -85,7 +88,10 @@ impl LocalConversationTranscriptSource for MemoryConversationTranscriptSource {
                     thread_id,
                     &SdkListThreadRecordsRequest {
                         tenant_id: tenant_id.to_string(),
+                        project_id: None,
+                        project_id_missing: false,
                         conversation_id: Some(conversation_id.to_string()),
+                        conversation_id_missing: false,
                         role: None,
                         record_type: Some("message".to_string()),
                         summary_status: None,

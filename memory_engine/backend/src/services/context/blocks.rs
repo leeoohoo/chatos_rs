@@ -214,16 +214,21 @@ async fn load_subject_memory_blocks(
             } else {
                 continue;
             };
+        let required_generation_profile = subject_id
+            .starts_with("agent:")
+            .then_some(subject_memory_scopes::AGENT_STABLE_MEMORY_PROFILE);
 
-        let rollup = subject_memories::list_subject_memories(
+        let rollup = subject_memories::list_subject_memories_for_context(
             db,
             tenant_id,
             source_id,
             subject_id,
-            Some(memory_type),
+            memory_type,
             None,
+            None,
+            None,
+            required_generation_profile,
             1,
-            0,
         )
         .await?
         .into_iter()
@@ -236,31 +241,31 @@ async fn load_subject_memory_blocks(
             });
         }
 
-        let mut recent = subject_memories::query_subject_memories(
+        let mut recent = subject_memories::list_subject_memories_for_context(
             db,
             tenant_id,
             source_id,
             subject_id,
-            Some(memory_type),
+            memory_type,
             Some(0),
-            None,
             Some("pending"),
             Some(subject_id),
-            None,
+            required_generation_profile,
             RECENT_SUBJECT_MEMORY_LIMIT,
-            0,
         )
         .await?;
         if recent.is_empty() && !has_rollup {
-            recent = subject_memories::list_subject_memories(
+            recent = subject_memories::list_subject_memories_for_context(
                 db,
                 tenant_id,
                 source_id,
                 subject_id,
-                Some(memory_type),
+                memory_type,
                 Some(0),
+                None,
+                None,
+                required_generation_profile,
                 1,
-                0,
             )
             .await?;
         }

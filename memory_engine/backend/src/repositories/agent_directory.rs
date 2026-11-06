@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 
 use crate::db::Db;
-use crate::models::{AgentDirectoryItem, AgentProjectItem};
+use crate::models::{AgentConversationItem, AgentDirectoryItem, AgentProjectItem};
 
 #[derive(Debug, FromRow)]
 struct AgentDirectoryRow {
@@ -27,6 +27,22 @@ struct AgentProjectRow {
     display_name: Option<String>,
     thread_count: i64,
     memory_count: i64,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, FromRow)]
+struct AgentConversationRow {
+    tenant_id: String,
+    source_id: String,
+    agent_subject_id: String,
+    thread_id: String,
+    project_subject_id: Option<String>,
+    project_display_name: Option<String>,
+    conversation_id: Option<String>,
+    thread_kind: String,
+    record_count: i64,
+    status: String,
+    summary_status: String,
     updated_at: DateTime<Utc>,
 }
 
@@ -233,6 +249,104 @@ pub async fn list_agent_projects(
             display_name: row.display_name,
             thread_count: row.thread_count,
             memory_count: row.memory_count,
+            updated_at: row.updated_at.to_rfc3339(),
+        })
+        .collect())
+}
+
+pub async fn list_agent_conversations(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    agent_subject_id: &str,
+) -> Result<Vec<AgentConversationItem>, String> {
+    let rows = sqlx::query_as::<_, AgentConversationRow>(
+        "WITH matching_threads AS ( \
+           SELECT thread.id,thread.tenant_id,thread.source_id,thread.subject_id AS agent_subject_id, \
+                  thread.status,thread.summary_status,thread.updated_at, \
+                  labels.project_subject_id,labels.thread_kind \
+             FROM engine_threads thread \
+             LEFT JOIN LATERAL ( \
+               SELECT MAX(label) FILTER (WHERE label LIKE 'project:%') AS project_subject_id, \
+                      COALESCE( \
+                        MAX(SUBSTRING(label FROM 13)) FILTER (WHERE label LIKE 'thread-kind:%'), \
+                        NULLIF(BTRIM(COALESCE(thread.data #>> '{metadata,thread_kind}','')),''), \
+                        NULLIF(BTRIM(thread.thread_type),''), \
+                        'client_agent' \
+                      ) AS thread_kind \
+                 FROM jsonb_array_elements_text( \
+                   CASE WHEN jsonb_typeof(thread.data->'labels')='array' \
+                        THEN thread.data->'labels' ELSE '[]'::jsonb END \
+                 ) AS labels(label) \
+             ) labels ON TRUE \
+            WHERE thread.tenant_id=$1 AND thread.source_id=$2 AND thread.subject_id=$3 \
+              AND thread.data->'labels' ? 'memory-schema:v2' \
+              AND thread.data->'labels' ? thread.subject_id \
+         ), grouped AS ( \
+           SELECT thread.tenant_id,thread.source_id,thread.agent_subject_id,thread.id AS thread_id, \
+                  CASE WHEN thread.thread_kind IN ('agent_task','todo_execution','agent_team_run') \
+                       THEN thread.project_subject_id \
+                       ELSE COALESCE( \
+                    CASE WHEN BTRIM(record.data #>> '{metadata,memory_project_id}') LIKE 'project:%' \
+                         THEN BTRIM(record.data #>> '{metadata,memory_project_id}') \
+                         WHEN NULLIF(BTRIM(COALESCE(record.data #>> '{metadata,memory_project_id}','')),'') IS NOT NULL \
+                         THEN 'project:' || BTRIM(record.data #>> '{metadata,memory_project_id}') END, \
+                    thread.project_subject_id \
+                  ) END AS project_subject_id, \
+                  CASE WHEN thread.thread_kind IN ('agent_task','todo_execution','agent_team_run') THEN NULL \
+                       ELSE NULLIF(BTRIM(COALESCE(record.data #>> '{metadata,conversation_id}','')),'') END AS conversation_id, \
+                  thread.thread_kind,COUNT(record.id)::bigint AS record_count,thread.status,thread.summary_status, \
+                  GREATEST(thread.updated_at,COALESCE(MAX(record.created_at),thread.updated_at)) AS updated_at \
+             FROM matching_threads thread \
+             LEFT JOIN engine_records record \
+               ON record.tenant_id=thread.tenant_id AND record.source_id=thread.source_id \
+              AND record.thread_id=thread.id \
+            GROUP BY thread.tenant_id,thread.source_id,thread.agent_subject_id,thread.id, \
+                     thread.project_subject_id,thread.thread_kind,thread.status,thread.summary_status,thread.updated_at, \
+                     CASE WHEN thread.thread_kind IN ('agent_task','todo_execution','agent_team_run') \
+                          THEN thread.project_subject_id \
+                          ELSE COALESCE( \
+                       CASE WHEN BTRIM(record.data #>> '{metadata,memory_project_id}') LIKE 'project:%' \
+                            THEN BTRIM(record.data #>> '{metadata,memory_project_id}') \
+                            WHEN NULLIF(BTRIM(COALESCE(record.data #>> '{metadata,memory_project_id}','')),'') IS NOT NULL \
+                            THEN 'project:' || BTRIM(record.data #>> '{metadata,memory_project_id}') END, \
+                       thread.project_subject_id \
+                     ) END, \
+                     CASE WHEN thread.thread_kind IN ('agent_task','todo_execution','agent_team_run') THEN NULL \
+                          ELSE NULLIF(BTRIM(COALESCE(record.data #>> '{metadata,conversation_id}','')),'') END \
+         ) \
+         SELECT grouped.tenant_id,grouped.source_id,grouped.agent_subject_id,grouped.thread_id, \
+                grouped.project_subject_id,NULLIF(BTRIM(subject.data->>'display_name'),'') AS project_display_name, \
+                grouped.conversation_id,grouped.thread_kind,grouped.record_count,grouped.status, \
+                grouped.summary_status,grouped.updated_at \
+           FROM grouped \
+           LEFT JOIN engine_subjects subject \
+             ON subject.tenant_id=grouped.tenant_id AND subject.source_id=grouped.source_id \
+            AND subject.subject_id=grouped.project_subject_id \
+          ORDER BY grouped.project_subject_id NULLS FIRST,grouped.updated_at DESC, \
+                   grouped.thread_id ASC,grouped.conversation_id ASC",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(agent_subject_id)
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| AgentConversationItem {
+            tenant_id: row.tenant_id,
+            source_id: row.source_id,
+            agent_subject_id: row.agent_subject_id,
+            thread_id: row.thread_id,
+            project_subject_id: row.project_subject_id,
+            project_display_name: row.project_display_name,
+            conversation_id: row.conversation_id,
+            thread_kind: row.thread_kind,
+            record_count: row.record_count,
+            status: row.status,
+            summary_status: row.summary_status,
             updated_at: row.updated_at.to_rfc3339(),
         })
         .collect())

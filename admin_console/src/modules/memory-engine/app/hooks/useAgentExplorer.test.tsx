@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { waitFor } from '@testing-library/react';
+import { act, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { api } from '../../api';
@@ -12,7 +12,9 @@ vi.mock('../../api', () => ({
   api: {
     listAgents: vi.fn(),
     listAgentProjects: vi.fn(),
+    listAgentConversations: vi.fn(),
     listSubjectMemories: vi.fn(),
+    getThread: vi.fn(),
     listThreads: vi.fn(),
     listThreadRecords: vi.fn(),
     listThreadSummaries: vi.fn(),
@@ -57,6 +59,21 @@ const thread = {
   updated_at: '2026-11-04T00:00:00Z',
 };
 
+const conversation = {
+  tenant_id: 'tenant-1',
+  source_id: 'chatos',
+  agent_subject_id: 'agent:jiguli',
+  thread_id: 'thread-1',
+  project_subject_id: 'project:project-1',
+  project_display_name: 'Memory Engine',
+  conversation_id: 'conversation-1',
+  thread_kind: 'client_agent',
+  record_count: 2,
+  status: 'active',
+  summary_status: 'idle',
+  updated_at: '2026-11-04T00:00:00Z',
+};
+
 const agentMemory = {
   id: 'memory-agent',
   tenant_id: 'tenant-1',
@@ -86,6 +103,8 @@ describe('useAgentExplorer', () => {
     vi.clearAllMocks();
     vi.mocked(api.listAgents).mockResolvedValue([agent]);
     vi.mocked(api.listAgentProjects).mockResolvedValue([project]);
+    vi.mocked(api.listAgentConversations).mockResolvedValue([conversation]);
+    vi.mocked(api.getThread).mockResolvedValue(thread);
     vi.mocked(api.listSubjectMemories).mockImplementation(async (subjectId: string) =>
       subjectId.startsWith('project:') ? [projectMemory] : [agentMemory],
     );
@@ -104,13 +123,16 @@ describe('useAgentExplorer', () => {
 
     expect(result.current.agentMemories).toEqual([agentMemory]);
     expect(result.current.projects).toEqual([project]);
-    expect(result.current.threadExplorer.threads).toEqual([thread]);
-    expect(api.listThreads).toHaveBeenCalledWith(
+    expect(result.current.conversations).toEqual([conversation]);
+    expect(result.current.selectedConversation).toEqual(conversation);
+    expect(api.listThreads).not.toHaveBeenCalled();
+    expect(api.listThreadRecords).toHaveBeenCalledWith(
+      'thread-1',
       expect.objectContaining({
         tenant_id: 'tenant-1',
         source_id: 'chatos',
-        agent_id: 'jiguli',
-        status: '',
+        project_id: 'project:project-1',
+        conversation_id: 'conversation-1',
       }),
     );
   });
@@ -128,6 +150,30 @@ describe('useAgentExplorer', () => {
       limit: 25,
       offset: 0,
     });
+  });
+
+  it('loads an independent Task thread without applying its source conversation id', async () => {
+    const { result } = renderHook(() => useAgentExplorer());
+    await waitFor(() => expect(result.current.agentDetailLoading).toBe(false));
+    vi.mocked(api.getThread).mockResolvedValueOnce({ ...thread, id: 'task-thread-1' });
+
+    await act(async () => {
+      await result.current.selectConversation({
+        ...conversation,
+        thread_id: 'task-thread-1',
+        thread_kind: 'agent_task',
+        conversation_id: null,
+      });
+    });
+
+    expect(api.listThreadRecords).toHaveBeenLastCalledWith(
+      'task-thread-1',
+      expect.objectContaining({
+        project_id: 'project:project-1',
+        conversation_id: undefined,
+        conversation_id_missing: false,
+      }),
+    );
   });
 
   it('builds empty filters without leaking whitespace', () => {

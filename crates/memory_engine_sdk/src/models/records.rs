@@ -70,7 +70,12 @@ pub struct SdkCountThreadRecordsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkListThreadRecordsRequest {
     pub tenant_id: String,
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub project_id_missing: bool,
     pub conversation_id: Option<String>,
+    #[serde(default)]
+    pub conversation_id_missing: bool,
     pub role: Option<String>,
     pub record_type: Option<String>,
     pub summary_status: Option<String>,

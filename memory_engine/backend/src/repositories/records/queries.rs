@@ -58,8 +58,27 @@ pub async fn list_records_page(
             .filter(|value| !value.is_empty())
         {
             query
-                .push(" AND data->'metadata'->>'conversation_id'=")
+                .push(" AND BTRIM(COALESCE(data #>> '{metadata,conversation_id}',''))=")
                 .push_bind(conversation_id);
+        }
+        if values.conversation_id_missing {
+            query.push(" AND BTRIM(COALESCE(data->'metadata'->>'conversation_id',''))=''");
+        }
+        if let Some(project_id) = values
+            .project_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let raw_project_id = project_id.strip_prefix("project:").unwrap_or(project_id);
+            query
+                .push(" AND (BTRIM(COALESCE(data->'metadata'->>'memory_project_id',''))=")
+                .push_bind(project_id)
+                .push(" OR BTRIM(COALESCE(data->'metadata'->>'memory_project_id',''))=")
+                .push_bind(raw_project_id)
+                .push(")");
+        }
+        if values.project_id_missing {
+            query.push(" AND BTRIM(COALESCE(data->'metadata'->>'memory_project_id',''))=''");
         }
         query
     };

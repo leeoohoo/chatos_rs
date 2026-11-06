@@ -195,6 +195,7 @@ async fn postgres_record_cursor_preserves_both_orders_and_offset_compatibility()
             structured_payload: None,
             metadata: Some(serde_json::json!({
                 "conversation_id": if index % 2 == 0 { "conversation-a" } else { "conversation-b" },
+                "memory_project_id": if index % 2 == 0 { Some("project-a") } else { None },
             })),
             summary_status: "pending".to_string(),
             summary_id: None,
@@ -247,6 +248,36 @@ async fn postgres_record_cursor_preserves_both_orders_and_offset_compatibility()
             .collect::<Vec<_>>(),
         [&ids[0], &ids[2], &ids[4]]
     );
+    let project_a = crate::repositories::records::list_records_page(
+        &pool,
+        crate::repositories::records::ListRecordsQuery {
+            thread_id: &thread_id,
+            tenant_id: Some(&tenant),
+            source_id: Some(&source),
+            project_id: Some("project:project-a"),
+            limit: 10,
+            asc: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("filter records by project identity");
+    assert_eq!(project_a.total, 3);
+    let projectless = crate::repositories::records::list_records_page(
+        &pool,
+        crate::repositories::records::ListRecordsQuery {
+            thread_id: &thread_id,
+            tenant_id: Some(&tenant),
+            source_id: Some(&source),
+            project_id_missing: true,
+            limit: 10,
+            asc: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("filter projectless records");
+    assert_eq!(projectless.total, 3);
 
     let earlier_id = format!("record-cursor-{suffix}-earlier");
     let earlier = EngineRecord {
