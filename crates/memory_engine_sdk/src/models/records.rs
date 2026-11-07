@@ -89,6 +89,7 @@ pub struct SdkListThreadRecordsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkListCompactTurnsRequest {
     pub tenant_id: String,
+    pub conversation_id: Option<String>,
     pub record_type: Option<String>,
     pub limit: Option<i64>,
     pub before_turn_id: Option<String>,

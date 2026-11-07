@@ -141,6 +141,7 @@ pub async fn list_compact_turns(
         thread_id.as_str(),
         tenant_id.as_deref(),
         query.source_id.as_deref(),
+        query.conversation_id.as_deref(),
         query.record_type.as_deref(),
         query.limit.unwrap_or(2),
         query.before_turn_id.as_deref(),

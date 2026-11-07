@@ -206,6 +206,11 @@ impl MemoryEngineClient {
                     "source_id",
                     optional_direct_source_id(source_id),
                 );
+                append_optional_query(
+                    &mut query,
+                    "conversation_id",
+                    req.conversation_id.as_deref(),
+                );
                 append_optional_query(&mut query, "record_type", req.record_type.as_deref());
                 append_optional_i64_query(&mut query, "limit", req.limit);
                 append_optional_query(&mut query, "before_turn_id", req.before_turn_id.as_deref());

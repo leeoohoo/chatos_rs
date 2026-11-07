@@ -69,6 +69,41 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         XCTAssertEqual(refreshed, mapped)
     }
 
+    func testHistoryOmitsIncompleteTurnInsteadOfRenderingBlankUserMessage() async throws {
+        let host = ConversationCommandHostStub()
+        let service = NativeLocalAgentConversationService(
+            host: host,
+            attachmentRootURL: URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent(UUID().uuidString),
+            runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService(host: host)
+        )
+        let data = try JSONSerialization.data(withJSONObject: [
+            "conversation": [
+                "conversation_id": "conversation-1", "owner_user_id": "user-1",
+                "title": "Test", "version": 1,
+                "created_at_unix_ms": 1, "updated_at_unix_ms": 2,
+            ],
+            "turns": [[
+                "turn_id": "turn-1", "conversation_id": "conversation-1",
+                "user_message_id": "missing-user", "run_id": "run-1",
+                "status": "succeeded", "created_at_unix_ms": 1,
+                "updated_at_unix_ms": 2,
+            ]],
+            "messages": [[
+                "message_id": "assistant-1", "conversation_id": "conversation-1",
+                "turn_id": "turn-1", "ordinal": 2, "role": "assistant",
+                "content": "orphaned reply", "metadata": [:],
+                "created_at_unix_ms": 2,
+            ]],
+            "attachments": [],
+        ])
+        let page = try JSONDecoder().decode(LocalAgentConversationHistoryPage.self, from: data)
+
+        let mapped = await service.mapTurns(page)
+
+        XCTAssertTrue(mapped.isEmpty)
+    }
+
     func testCreateConversationPersistsTypedProjectBinding() async throws {
         let host = ConversationCommandHostStub()
         let client = NativeLocalAgentConversationClient(host: host)

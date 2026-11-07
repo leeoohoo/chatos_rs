@@ -10,9 +10,13 @@ use chatos_local_agent_ports::{
     AuthoritativeConversationPage, AuthoritativeConversationRecord,
     LocalConversationTranscriptSource, LocalMemoryOutboxStore,
 };
-use memory_engine_sdk::{MemoryEngineClient, SdkListThreadRecordsRequest};
+use futures::future::try_join_all;
+use memory_engine_sdk::{
+    CompactTurnsResponse, MemoryEngineClient, SdkGetTurnProcessRecordsRequest,
+    SdkListCompactTurnsRequest, TurnProcessRecordsResponse,
+};
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{LocalMemoryOutboxWriter, LocalMemorySyncWorker};
 
@@ -25,13 +29,49 @@ pub struct LocalMemoryRuntimeServices {
 
 #[derive(Clone)]
 struct MemoryConversationTranscriptSource {
-    client: MemoryEngineClient,
+    client: Arc<dyn MemoryTranscriptClient>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TranscriptCursor {
-    created_at: String,
-    record_id: String,
+    before_turn_id: String,
+}
+
+#[async_trait]
+trait MemoryTranscriptClient: Send + Sync {
+    async fn list_compact_turns(
+        &self,
+        thread_id: &str,
+        request: SdkListCompactTurnsRequest,
+    ) -> Result<CompactTurnsResponse, String>;
+
+    async fn get_turn_process_records(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        request: SdkGetTurnProcessRecordsRequest,
+    ) -> Result<TurnProcessRecordsResponse, String>;
+}
+
+#[async_trait]
+impl MemoryTranscriptClient for MemoryEngineClient {
+    async fn list_compact_turns(
+        &self,
+        thread_id: &str,
+        request: SdkListCompactTurnsRequest,
+    ) -> Result<CompactTurnsResponse, String> {
+        self.list_compact_turns(thread_id, &request).await
+    }
+
+    async fn get_turn_process_records(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        request: SdkGetTurnProcessRecordsRequest,
+    ) -> Result<TurnProcessRecordsResponse, String> {
+        self.get_turn_process_records(thread_id, turn_id, &request)
+            .await
+    }
 }
 
 #[async_trait]
@@ -50,97 +90,51 @@ impl LocalConversationTranscriptSource for MemoryConversationTranscriptSource {
             .map_err(|error| format!("Memory transcript cursor is invalid: {error}"))?;
         let page = self
             .client
-            .list_thread_records_page(
+            .list_compact_turns(
                 thread_id,
-                &SdkListThreadRecordsRequest {
+                SdkListCompactTurnsRequest {
                     tenant_id: tenant_id.to_string(),
-                    project_id: None,
-                    project_id_missing: false,
                     conversation_id: Some(conversation_id.to_string()),
-                    conversation_id_missing: false,
-                    role: None,
                     record_type: Some("message".to_string()),
-                    summary_status: None,
-                    after_created_at: cursor.as_ref().map(|value| value.created_at.clone()),
-                    after_id: cursor.as_ref().map(|value| value.record_id.clone()),
                     limit: Some(i64::from(limit.clamp(1, 100))),
-                    offset: None,
-                    order: Some("desc".to_string()),
+                    before_turn_id: cursor.map(|value| value.before_turn_id),
                 },
             )
             .await?;
-        let mut items = page.items;
-        let mut has_more = page.has_more;
-        let boundary_turn_id = items
-            .last()
-            .and_then(|record| record.metadata.as_ref())
-            .and_then(|metadata| metadata.get("conversation_turn_id"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
-        while has_more {
-            let Some(boundary_turn_id) = boundary_turn_id.as_deref() else {
-                break;
-            };
-            let Some(last) = items.last() else { break };
-            let continuation = self
-                .client
-                .list_thread_records_page(
-                    thread_id,
-                    &SdkListThreadRecordsRequest {
-                        tenant_id: tenant_id.to_string(),
-                        project_id: None,
-                        project_id_missing: false,
-                        conversation_id: Some(conversation_id.to_string()),
-                        conversation_id_missing: false,
-                        role: None,
-                        record_type: Some("message".to_string()),
-                        summary_status: None,
-                        after_created_at: Some(last.created_at.clone()),
-                        after_id: Some(last.id.clone()),
-                        limit: Some(100),
-                        offset: None,
-                        order: Some("desc".to_string()),
-                    },
-                )
-                .await?;
-            let same_turn_count = continuation
-                .items
-                .iter()
-                .take_while(|record| {
-                    record
-                        .metadata
-                        .as_ref()
-                        .and_then(|metadata| metadata.get("conversation_turn_id"))
-                        .and_then(serde_json::Value::as_str)
-                        == Some(boundary_turn_id)
-                })
-                .count();
-            if same_turn_count == 0 {
-                has_more = !continuation.items.is_empty() || continuation.has_more;
-                break;
+        let process_pages = try_join_all(page.items.iter().filter(|item| item.has_process).map(
+            |item| async move {
+                self.client
+                    .get_turn_process_records(
+                        thread_id,
+                        item.turn_id.as_str(),
+                        SdkGetTurnProcessRecordsRequest {
+                            tenant_id: tenant_id.to_string(),
+                            record_type: Some("message".to_string()),
+                        },
+                    )
+                    .await
+            },
+        ))
+        .await?;
+        let mut process_by_turn = process_pages
+            .into_iter()
+            .map(|page| (page.turn_id, page.items))
+            .collect::<HashMap<_, _>>();
+        let mut records = Vec::new();
+        for item in page.items {
+            records.push(item.user_record);
+            records.extend(process_by_turn.remove(&item.turn_id).unwrap_or_default());
+            if let Some(final_assistant) = item.final_assistant_record {
+                records.push(final_assistant);
             }
-            let continuation_len = continuation.items.len();
-            items.extend(continuation.items.into_iter().take(same_turn_count));
-            if same_turn_count < continuation_len {
-                break;
-            }
-            has_more = continuation.has_more;
         }
-        let next_before_cursor = if has_more {
-            items
-                .last()
-                .map(|record| TranscriptCursor {
-                    created_at: record.created_at.clone(),
-                    record_id: record.id.clone(),
-                })
-                .map(|cursor| serde_json::to_string(&cursor))
-                .transpose()
-                .map_err(|error| format!("encode Memory transcript cursor failed: {error}"))?
-        } else {
-            None
-        };
+        let next_before_cursor = page
+            .next_before
+            .map(|before_turn_id| serde_json::to_string(&TranscriptCursor { before_turn_id }))
+            .transpose()
+            .map_err(|error| format!("encode Memory transcript cursor failed: {error}"))?;
         Ok(AuthoritativeConversationPage {
-            records: items
+            records: records
                 .into_iter()
                 .map(|record| AuthoritativeConversationRecord {
                     record_id: record.id,
@@ -220,7 +214,7 @@ impl LocalMemoryRuntimeConfig {
                         .max(Duration::from_secs(30)),
                 )?,
             transcript_source: Arc::new(MemoryConversationTranscriptSource {
-                client: client.clone(),
+                client: Arc::new(client.clone()),
             }),
             source_id,
         })
@@ -279,6 +273,73 @@ fn normalized(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use memory_engine_sdk::{EngineRecord, TurnRecordSlice};
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct TranscriptClientFixture {
+        compact_page: Mutex<Option<CompactTurnsResponse>>,
+        process_pages: Mutex<HashMap<String, TurnProcessRecordsResponse>>,
+        compact_requests: Mutex<Vec<SdkListCompactTurnsRequest>>,
+    }
+
+    #[async_trait]
+    impl MemoryTranscriptClient for TranscriptClientFixture {
+        async fn list_compact_turns(
+            &self,
+            _thread_id: &str,
+            request: SdkListCompactTurnsRequest,
+        ) -> Result<CompactTurnsResponse, String> {
+            self.compact_requests.lock().unwrap().push(request);
+            self.compact_page
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or_else(|| "compact page already consumed".to_string())
+        }
+
+        async fn get_turn_process_records(
+            &self,
+            _thread_id: &str,
+            turn_id: &str,
+            _request: SdkGetTurnProcessRecordsRequest,
+        ) -> Result<TurnProcessRecordsResponse, String> {
+            self.process_pages
+                .lock()
+                .unwrap()
+                .remove(turn_id)
+                .ok_or_else(|| format!("missing process page for {turn_id}"))
+        }
+    }
+
+    fn record(
+        id: &str,
+        turn_id: &str,
+        conversation_id: &str,
+        role: &str,
+        content: &str,
+        created_at: &str,
+    ) -> EngineRecord {
+        EngineRecord {
+            id: id.to_string(),
+            thread_id: "client-agent:agent:jiguli".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            source_id: "chatos".to_string(),
+            external_record_id: None,
+            role: role.to_string(),
+            record_type: "message".to_string(),
+            content: content.to_string(),
+            structured_payload: None,
+            metadata: Some(json!({
+                "conversation_id": conversation_id,
+                "conversation_turn_id": turn_id,
+            })),
+            summary_status: "pending".to_string(),
+            summary_id: None,
+            summarized_at: None,
+            created_at: created_at.to_string(),
+        }
+    }
 
     #[test]
     fn validates_non_secret_memory_configuration() {
@@ -305,5 +366,113 @@ mod tests {
                 .expect("url"),
             "https://gateway.example/prefix/api/user/auth/refresh"
         );
+    }
+
+    #[tokio::test]
+    async fn transcript_pages_complete_interleaved_turns_with_their_user_messages() {
+        let conversation_id = "conversation-1";
+        let older_user = record(
+            "older-user",
+            "older-turn",
+            conversation_id,
+            "user",
+            "older request",
+            "2026-11-07T01:00:00Z",
+        );
+        let older_callback = record(
+            "older-task-callback",
+            "older-turn",
+            conversation_id,
+            "assistant",
+            "older task cancelled",
+            "2026-11-07T09:16:38Z",
+        );
+        let current_user = record(
+            "current-user",
+            "current-turn",
+            conversation_id,
+            "user",
+            "current request",
+            "2026-11-07T09:14:44Z",
+        );
+        let current_final = record(
+            "current-final",
+            "current-turn",
+            conversation_id,
+            "assistant",
+            "current answer",
+            "2026-11-07T09:17:16Z",
+        );
+        let fixture = Arc::new(TranscriptClientFixture {
+            compact_page: Mutex::new(Some(CompactTurnsResponse {
+                items: vec![
+                    TurnRecordSlice {
+                        turn_id: "older-turn".to_string(),
+                        user_record: older_user,
+                        final_assistant_record: None,
+                        has_process: true,
+                        tool_call_count: 0,
+                        thinking_count: 0,
+                        process_message_count: 1,
+                    },
+                    TurnRecordSlice {
+                        turn_id: "current-turn".to_string(),
+                        user_record: current_user,
+                        final_assistant_record: Some(current_final),
+                        has_process: false,
+                        tool_call_count: 0,
+                        thinking_count: 0,
+                        process_message_count: 0,
+                    },
+                ],
+                has_more: true,
+                next_before: Some("older-turn".to_string()),
+            })),
+            process_pages: Mutex::new(HashMap::from([(
+                "older-turn".to_string(),
+                TurnProcessRecordsResponse {
+                    turn_id: "older-turn".to_string(),
+                    items: vec![older_callback],
+                },
+            )])),
+            compact_requests: Mutex::new(Vec::new()),
+        });
+        let source = MemoryConversationTranscriptSource {
+            client: fixture.clone(),
+        };
+
+        let page = source
+            .list_conversation_records(
+                "tenant-1",
+                "client-agent:agent:jiguli",
+                conversation_id,
+                None,
+                10,
+            )
+            .await
+            .expect("complete transcript page");
+
+        assert_eq!(
+            page.records
+                .iter()
+                .filter(|record| record.role == "user")
+                .map(|record| record.record_id.as_str())
+                .collect::<Vec<_>>(),
+            ["older-user", "current-user"]
+        );
+        assert!(page
+            .records
+            .iter()
+            .any(|record| record.record_id == "older-task-callback"));
+        let cursor: TranscriptCursor =
+            serde_json::from_str(page.next_before_cursor.as_deref().expect("next cursor"))
+                .expect("decode cursor");
+        assert_eq!(cursor.before_turn_id, "older-turn");
+        let requests = fixture.compact_requests.lock().unwrap();
+        assert_eq!(
+            requests[0].conversation_id.as_deref(),
+            Some(conversation_id)
+        );
+        assert_eq!(requests[0].limit, Some(10));
     }
 }

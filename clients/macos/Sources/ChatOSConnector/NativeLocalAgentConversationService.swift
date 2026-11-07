@@ -540,9 +540,11 @@ public actor NativeLocalAgentConversationService:
     func mapTurns(_ page: LocalAgentConversationHistoryPage) -> [ConversationTurn] {
         let messagesByTurn = Dictionary(grouping: page.messages, by: \.turnID)
         let attachmentsByMessage = Dictionary(grouping: page.attachments, by: \.messageID)
-        return page.turns.map { turn in
+        return page.turns.compactMap { turn in
             let messages = (messagesByTurn[turn.turnID] ?? []).sorted { $0.ordinal < $1.ordinal }
-            let user = messages.first(where: { $0.role == "user" })
+            guard let user = messages.first(where: { $0.role == "user" }) else {
+                return nil
+            }
             let additionalUsers = messages.filter { $0.role == "user" }.dropFirst().map { message in
                 mapMessage(
                     message,
@@ -586,7 +588,7 @@ public actor NativeLocalAgentConversationService:
             return ConversationTurn(
                 id: turn.turnID,
                 sessionID: turn.conversationID,
-                sequence: Int64(clamping: user?.ordinal ?? 0),
+                sequence: Int64(clamping: user.ordinal),
                 revision: Int64(clamping: page.conversation.version),
                 userMessage: userMessage,
                 additionalUserMessages: additionalUsers,

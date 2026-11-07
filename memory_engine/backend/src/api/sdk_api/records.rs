@@ -110,6 +110,7 @@ pub async fn list_compact_turns(
         thread_id.as_str(),
         Some(req.tenant_id.as_str()),
         Some(auth.source_id()),
+        req.conversation_id.as_deref(),
         req.record_type.as_deref(),
         req.limit.unwrap_or(2),
         req.before_turn_id.as_deref(),

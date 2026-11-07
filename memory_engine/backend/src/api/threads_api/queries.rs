@@ -43,6 +43,7 @@ pub struct CountThreadRecordsQuery {
 pub struct CompactTurnsQuery {
     pub tenant_id: Option<String>,
     pub source_id: Option<String>,
+    pub conversation_id: Option<String>,
     pub record_type: Option<String>,
     pub limit: Option<i64>,
     pub before_turn_id: Option<String>,

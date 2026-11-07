@@ -63,6 +63,7 @@ fn test_config(database_url: String) -> crate::config::AppConfig {
 }
 
 mod agent_directory_contracts;
+mod compact_turn_contracts;
 mod context_scope_contracts;
 mod cursor_contracts;
 mod forced_summary_contracts;
