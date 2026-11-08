@@ -163,7 +163,7 @@ Windows 产品版本：`3.0.9`
 - [x] Windows Hook AppContainer runner 并发 lease 安全版本的新 NSIS 已通过 `%TEMP%\chatos-windows-hook-runner-final-nsis.json`：全新目录安装 `2,263 ms`、安装版隔离 AppData 原生启动并由应用自身退出 `9,055 ms`、卸载 `629 ms`，全部退出码为 `0`；Host 真实测试覆盖 Hook stdout、超时、进程树回收和重叠安装目录的串行 lease。Bundle 仍保持 inactive，尚未开放安全启用。当前产物 SHA-256：EXE `37a6aabddf17e596fc10b006953e5f5571d799929d7fd6131c2faf9224f5df57`、Sidecar `4159ed68b438a3d5e28dbd342138e4476011efb1e69f7dc38f73c828a5671ecb`、MSI `9160225c79b52e155d79dac342c2f034c6a0310ab8b8c0ac96bc9ff4031c857a`、NSIS `b0687915d458f95d2ce49efd4fc7aa1489dccdff090375fcb4140893d9fd942d`。
 - [x] 启动新 Release 原生 EXE，并从 Windows 进程信息确认运行目标为 `target-shared\release\chatos-windows-react.exe`，不是 Vite 或浏览器进程。
 - [x] 在新 Release 原生窗口中确认登录后的默认页仍为用户消息：最新 NSIS 安装版原生启动已进入 `chatos` 项目的“用户消息”工作区，未落入设置页；报告为 `%TEMP%\\chatos-windows-workspace-entry-nsis.json`，本机窗口观察记录已归档在临时目录。
-- [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。当前 Computer Use 原生管道不可用，需在工具恢复后补验；不能用浏览器截图替代。
+- [ ] 按 31 张 macOS 截图完成原生窗口逐页视觉走查。本机 Computer Use 原生管道现已可用，并已在真实 Release `ChatOS` 窗口观察到项目消息页和任务工作区的任务详情、执行过程、运行详情三页签、完成状态、进度计数、运行事件、焦点恢复与键盘 Tab 结构；这只证明当前可用页面的原生取证链路，不能替代剩余 31 页逐页截图对照，也不能用浏览器截图替代。
 
 ## C. 仍存在的真实功能差距
 
