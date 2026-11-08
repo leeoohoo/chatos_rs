@@ -10,7 +10,7 @@ use std::{
 use uuid::Uuid;
 
 use super::provider::{GeneratedImageAsset, ImageGenerationResult};
-use crate::app_data_transaction::replace_owned_file;
+use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file};
 
 const MANIFEST_VERSION: u32 = 1;
 const MAXIMUM_IMAGE_BYTES: usize = 20 * 1_024 * 1_024;
@@ -564,7 +564,7 @@ fn commit_manifest(directory: &Path, manifest: &HistoryManifest) -> Result<(), S
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path).map_err(|_| history_error())?;
+    ensure_owned_directory(path).map_err(|_| history_error())?;
     let metadata = fs::symlink_metadata(path).map_err(|_| history_error())?;
     if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
         return Err(history_error());

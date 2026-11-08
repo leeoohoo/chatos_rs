@@ -9,6 +9,8 @@ use std::{
 };
 use uuid::Uuid;
 
+use crate::app_data_transaction::ensure_owned_directory;
+
 use super::video_provider::VideoInput;
 
 const MAXIMUM_AUDIO_BYTES: usize = 20 * 1_024 * 1_024;
@@ -388,7 +390,7 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path).map_err(|_| input_error())?;
+    ensure_owned_directory(path).map_err(|_| input_error())?;
     let metadata = fs::symlink_metadata(path).map_err(|_| input_error())?;
     if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
         return Err(input_error());

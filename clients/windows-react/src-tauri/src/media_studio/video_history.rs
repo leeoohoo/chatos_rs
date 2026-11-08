@@ -7,7 +7,7 @@ use std::{
 };
 use uuid::Uuid;
 
-use crate::app_data_transaction::replace_owned_file_cancellable;
+use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file_cancellable};
 
 use super::{
     history::owner_hash,
@@ -465,7 +465,7 @@ fn read_private_file(path: &Path, maximum_bytes: usize) -> Result<Vec<u8>, Strin
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path).map_err(|_| video_history_error())?;
+    ensure_owned_directory(path).map_err(|_| video_history_error())?;
     let metadata = fs::symlink_metadata(path).map_err(|_| video_history_error())?;
     if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
         return Err(video_history_error());

@@ -10,6 +10,8 @@ use std::{
 };
 use uuid::Uuid;
 
+use crate::app_data_transaction::ensure_owned_directory;
+
 use super::provider::ImageGenerationInput;
 
 const MAXIMUM_REFERENCE_IMAGES: usize = 8;
@@ -678,7 +680,7 @@ fn validate_directory_beneath(root: &Path, directory: &Path) -> Result<(), Strin
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path).map_err(|_| reference_error())?;
+    ensure_owned_directory(path).map_err(|_| reference_error())?;
     let metadata = fs::symlink_metadata(path).map_err(|_| reference_error())?;
     if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
         return Err(reference_error());
