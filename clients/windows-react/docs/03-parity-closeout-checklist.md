@@ -1,6 +1,6 @@
 # Windows React 与 macOS 功能拉齐关闭清单
 
-更新时间：2026-11-08
+更新时间：2026-11-09
 
 分支：`3.0.9.3.1`
 
@@ -54,6 +54,7 @@ Windows 产品版本：`3.0.9`
 - 共享 `chatos_windows_appcontainer` crate 的 profile/workspace journal 写入也已补齐同一安全边界：逐级 `ensure_owned_directory` 拒绝普通文件、symlink 和 Windows reparse point，临时文件使用独占 `FILE_FLAG_OPEN_REPARSE_POINT` 句柄，并通过显式 `MoveFileExW`（create-only + `MOVEFILE_WRITE_THROUGH`）提交；目标冲突不会覆盖，RAII 临时文件清理确保失败时不留下 `.tmp`。此前独立编译 `chatos_local_agent_host` 会因共享 crate 缺少 `ensure_owned_directory` 直接失败，现已修复；提交 `56568ba80`、`33f81f3ce` 已推送。共享 crate 定向回归 `17 passed`，Local Agent Host `157 passed`，Windows Tauri 全量回归 `550 passed, 0 failed, 6 ignored`，Clippy `-D warnings` 通过。
 - Computer Use Windows worker 本机验证已重新通过：`npm run test:packaging` 为 `8 passed`，`npm run audit:skill-gates` 通过，x64/arm64 `build:windows` 成功，`smoke:windows` 和 `smoke:windows:screen` 均通过（包含真实 `observe_screen`）。跨平台 `.tgz` 生成在 Windows 主机按工具链约束拒绝，Marketplace 签名发布和客户端安装仍是外部依赖。
 - 本机 Computer Use 已真实打开 Release `ChatOS` 原生窗口并观察到窗口标题、已登录会话、资源导航、Agent/项目工作区、AI 创作图片/视频/剧情/记录页、插件目录、AI 模型、设备与网关、项目目录搜索和项目设置；当前会话仍显示本地 Host 未连接，Agent 私聊实测返回“暂时无法打开”，因此不把 Host 依赖功能或登录后的 31 页逐页视觉走查标记为完成。认证对话框未由自动化代填。
+- 2026-11-09 Media Studio 视频真实 Release 回归：修复 `tauri.conf.json` 的 `media-src` 允许列表，补齐 `chatos-media` 协议的 CORS/OPTIONS 响应，并重新生成最终 EXE/MSI/NSIS。使用已登录测试账号打开“AI 创作 → 视频”后，历史 MP4 实际加载出画面；播放按钮可用且进度从 `0:00` 推进到 `0:02`，静音后音量为 `0`，进度条跳转到 `3` 秒生效；同一视频在“记录”页也能加载并播放。Rust 全量为 `555 passed, 0 failed, 6 ignored`，Vitest 为 `141` 个文件 / `522` 项通过，提交 `57024565e` 已推送。该证据关闭 Windows 视频媒体预览的实际功能缺口，但不改变 Host 依赖功能、31 页逐页视觉走查和正式发布验收仍未完成的结论。
 
 ## A. 本轮已关闭
 
