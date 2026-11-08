@@ -99,6 +99,7 @@ mod app_data_transaction {
             ));
         }
         let temporary = directory.join(format!("{temporary_prefix}{}.tmp", uuid::Uuid::new_v4()));
+        let mut cleanup = TemporaryFile::new(temporary.clone());
         let mut options = OpenOptions::new();
         options.create_new(true).write(true);
         use std::os::windows::fs::OpenOptionsExt;
@@ -111,11 +112,57 @@ mod app_data_transaction {
         file.flush()?;
         file.sync_all()?;
         drop(file);
-        if let Err(error) = fs::rename(&temporary, destination) {
-            let _ = fs::remove_file(&temporary);
-            return Err(error);
-        }
+        commit_new_file(&temporary, destination)?;
+        cleanup.committed = true;
         Ok(())
+    }
+
+    struct TemporaryFile {
+        path: std::path::PathBuf,
+        committed: bool,
+    }
+
+    impl TemporaryFile {
+        fn new(path: std::path::PathBuf) -> Self {
+            Self {
+                path,
+                committed: false,
+            }
+        }
+    }
+
+    impl Drop for TemporaryFile {
+        fn drop(&mut self) {
+            if !self.committed {
+                let _ = fs::remove_file(&self.path);
+            }
+        }
+    }
+
+    fn commit_new_file(source: &Path, destination: &Path) -> io::Result<()> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
+        let source = source
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let destination = destination
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        if unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_WRITE_THROUGH,
+            )
+        } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 
     fn validate_directory(path: &Path) -> io::Result<()> {
