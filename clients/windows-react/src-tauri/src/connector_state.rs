@@ -103,14 +103,37 @@ fn new_device_id() -> String {
 
 fn confined_connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(app_data_directory).map_err(|_| state_error())?;
+    validate_private_directory(app_data_directory)?;
     let canonical_data = fs::canonicalize(app_data_directory).map_err(|_| state_error())?;
     let requested = canonical_data.join("NativeConnector");
     fs::create_dir_all(&requested).map_err(|_| state_error())?;
+    validate_private_directory(&requested)?;
     let canonical_connector = fs::canonicalize(requested).map_err(|_| state_error())?;
     if !canonical_connector.starts_with(&canonical_data) {
         return Err(state_error());
     }
     Ok(canonical_connector)
+}
+
+fn validate_private_directory(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| state_error())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        Err(state_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_: &fs::Metadata) -> bool {
+    false
 }
 
 fn reject_symbolic_link(path: &Path) -> Result<(), String> {
@@ -291,5 +314,13 @@ mod tests {
         assert!(restored.get("deviceID").is_some());
         assert!(restored.get("workspaces").is_some());
         assert!(read_owner_state(directory.path(), "owner-2").is_err());
+    }
+
+    #[test]
+    fn connector_directory_rejects_non_directory_app_data() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("not-a-directory");
+        fs::write(&file, b"file").unwrap();
+        assert!(confined_connector_directory(&file).is_err());
     }
 }
