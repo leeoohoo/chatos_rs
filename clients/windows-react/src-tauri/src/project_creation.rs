@@ -14,7 +14,7 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    fs::{self, File},
+    fs::{self, OpenOptions},
     io::Read,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -715,7 +715,18 @@ fn load_journals(directory: &Path) -> Result<Vec<(PathBuf, CreationJournal)>, St
                 return Err(creation_error());
             }
             let mut bytes = Vec::with_capacity(metadata.len() as usize);
-            File::open(&path)
+            let mut options = OpenOptions::new();
+            options.read(true);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+                options
+                    .share_mode(0)
+                    .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            }
+            options
+                .open(&path)
                 .and_then(|file| file.take(MAXIMUM_JOURNAL_BYTES + 1).read_to_end(&mut bytes))
                 .map_err(|_| creation_error())?;
             if bytes.len() as u64 > MAXIMUM_JOURNAL_BYTES {
