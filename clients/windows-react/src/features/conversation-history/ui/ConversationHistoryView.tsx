@@ -127,7 +127,7 @@ export function ConversationHistoryView({
         onAffected={reconcile}
       />
       <div className="conversation-history" aria-label="会话记录">
-        {phase.snapshot.next_before_ordinal != null && (
+        {phase.snapshot.next_before_cursor != null && (
           <button className="history-more" type="button" disabled={phase.isLoadingOlder} onClick={() => void loadOlder(port)}>
             {phase.isLoadingOlder ? "正在加载…" : "加载更早消息"}
           </button>

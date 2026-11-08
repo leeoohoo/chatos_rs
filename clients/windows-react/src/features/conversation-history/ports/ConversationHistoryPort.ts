@@ -4,6 +4,6 @@ export interface ConversationHistoryPort {
   loadHistory(
     ownerUserId: string,
     conversationId: string,
-    beforeOrdinal?: number,
+    beforeCursor?: string,
   ): Promise<ConversationHistorySnapshot>;
 }

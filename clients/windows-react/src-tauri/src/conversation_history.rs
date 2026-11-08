@@ -12,7 +12,7 @@ pub async fn load_conversation_history(
     manager: State<'_, HostManager>,
     owner_user_id: String,
     conversation_id: String,
-    before_ordinal: Option<u64>,
+    before_cursor: Option<String>,
 ) -> Result<LocalConversationHistoryPage, String> {
     let owner_user_id = required("owner_user_id", owner_user_id)?;
     let conversation_id = required("conversation_id", conversation_id)?;
@@ -21,7 +21,7 @@ pub async fn load_conversation_history(
             GetConversationHistoryCommand {
                 owner_user_id: owner_user_id.clone(),
                 conversation_id: conversation_id.clone(),
-                before_ordinal,
+                before_cursor,
                 limit: CONVERSATION_HISTORY_PAGE_SIZE,
             },
         ))

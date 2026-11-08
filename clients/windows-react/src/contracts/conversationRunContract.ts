@@ -66,7 +66,7 @@ export const conversationHistoryPageSchema = z.object({
   turns: z.array(turnSchema),
   messages: z.array(messageSchema),
   attachments: z.array(attachmentSchema),
-  next_before_ordinal: z.number().int().positive().nullable(),
+  next_before_cursor: z.string().min(1).nullable(),
 });
 
 export const conversationHistoryResponseSchema = successEnvelope(

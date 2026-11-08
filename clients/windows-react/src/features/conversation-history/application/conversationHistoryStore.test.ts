@@ -23,7 +23,7 @@ describe("conversationHistoryStore", () => {
         "message-assistant-1",
       ]);
     }
-    expect(port.requests).toEqual([{ ownerUserId: "user-1", conversationId: "conversation-1", beforeOrdinal: undefined }]);
+    expect(port.requests).toEqual([{ ownerUserId: "user-1", conversationId: "conversation-1", beforeCursor: undefined }]);
   });
 
   it("rejects a late page after the owner changes", async () => {
@@ -53,12 +53,12 @@ describe("conversationHistoryStore", () => {
   });
 
   it("merges older messages by identity and ordinal", async () => {
-    const latest = { ...fixture, next_before_ordinal: 1 };
+    const latest = { ...fixture, next_before_cursor: "cursor-1" };
     const older = {
       ...fixture,
       messages: [{ ...fixture.messages[0]!, message_id: "message-older", ordinal: 0 }],
       attachments: [],
-      next_before_ordinal: null,
+      next_before_cursor: null,
     };
     const port = new HistoryPortStub([latest, older]);
 
@@ -69,14 +69,14 @@ describe("conversationHistoryStore", () => {
     expect(phase.kind).toBe("ready");
     if (phase.kind === "ready") {
       expect(phase.snapshot.messages.map((message) => message.ordinal)).toEqual([0, 1, 2]);
-      expect(phase.snapshot.next_before_ordinal).toBeNull();
+      expect(phase.snapshot.next_before_cursor).toBeNull();
     }
   });
 
   it("refreshes the latest page without discarding older history", async () => {
-    const latest = { ...fixture, next_before_ordinal: 1 };
+    const latest = { ...fixture, next_before_cursor: "cursor-1" };
     const olderMessage = { ...fixture.messages[0]!, message_id: "message-older", ordinal: 0 };
-    const older = { ...fixture, messages: [olderMessage], attachments: [], next_before_ordinal: null };
+    const older = { ...fixture, messages: [olderMessage], attachments: [], next_before_cursor: null };
     const refreshed = {
       ...fixture,
       conversation: { ...fixture.conversation, version: fixture.conversation.version + 1 },
@@ -95,19 +95,19 @@ describe("conversationHistoryStore", () => {
     expect(phase.kind).toBe("ready");
     if (phase.kind === "ready") {
       expect(phase.snapshot.messages.map((message) => message.ordinal)).toEqual([0, 1, 2, 3]);
-      expect(phase.snapshot.next_before_ordinal).toBeNull();
+      expect(phase.snapshot.next_before_cursor).toBeNull();
       expect(phase.isRefreshing).toBe(false);
     }
   });
 });
 
 class HistoryPortStub implements ConversationHistoryPort {
-  readonly requests: Array<{ ownerUserId: string; conversationId: string; beforeOrdinal?: number }> = [];
+  readonly requests: Array<{ ownerUserId: string; conversationId: string; beforeCursor?: string }> = [];
 
   constructor(private readonly responses: Array<ConversationHistorySnapshot | Error>) {}
 
-  async loadHistory(ownerUserId: string, conversationId: string, beforeOrdinal?: number) {
-    this.requests.push({ ownerUserId, conversationId, beforeOrdinal });
+  async loadHistory(ownerUserId: string, conversationId: string, beforeCursor?: string) {
+    this.requests.push({ ownerUserId, conversationId, beforeCursor });
     const response = this.responses.shift();
     if (response instanceof Error) throw response;
     if (!response) throw new Error("missing test response");

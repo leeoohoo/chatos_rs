@@ -31,7 +31,7 @@ export function mergeOlderHistory(
       older.attachments,
       (attachment) => attachment.attachment_id,
     ).sort((left, right) => left.ordinal - right.ordinal),
-    next_before_ordinal: older.next_before_ordinal,
+    next_before_cursor: older.next_before_cursor,
   };
 }
 
@@ -49,7 +49,7 @@ export function mergeLatestHistory(
       latest.attachments,
       (attachment) => attachment.attachment_id,
     ).sort((left, right) => left.ordinal - right.ordinal),
-    next_before_ordinal: current.next_before_ordinal,
+    next_before_cursor: current.next_before_cursor,
   };
 }
 
