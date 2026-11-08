@@ -26,7 +26,7 @@ Windows 产品版本：`3.0.9`
 - Computer Use Windows worker 现在与 macOS 一样为 11 个 MCP 工具发布 `_meta.chatos/skillGate`，并由跨平台 `npm run audit:skill-gates` 在 Windows 走本机 wrapper、在 macOS 走 Swift worker；Windows 本机 Skill gate 审计、双架构构建与屏幕 smoke 均通过。跨平台 `.tgz` 与 Marketplace 签名发布仍未完成。
 - 任务审查窗口与桌面宠物状态已补齐键盘/无障碍语义：打开审查窗口后焦点落到关闭按钮，Tab 焦点保持在 modal 内，页签使用 roving focus 并支持方向键/Home/End，`Escape` 关闭并还原触发控件焦点，任务与检查页声明当前项及关联面板，宠物状态使用有界的 `polite` live region；这改善了键盘导航和屏幕阅读器投影，但不替代原生窗口逐态视觉取证。
 - 当前仍未完全拉齐的基础差异有三类：细粒度目标/目的地出站规则仍未完成；Plugin 应用后端的 Windows loopback 健康代理/exemption 尚未闭环；任务审查的原生窗口逐态视觉取证尚未完成。这些差异继续保持为不可编辑/不可用状态，不对用户虚报为已支持。
-- 当前 Windows React 前端复核通过：Vitest `138` 个测试文件、`516` 项测试全部通过；TypeScript 类型检查和 Vite 生产构建均通过。构建产物仅用于本地验证，不作为签名发布证据。
+- 当前 Windows React 前端复核通过：Vitest `139` 个测试文件、`518` 项测试全部通过（Run Inspector 定向 `5` 个文件、`15` 项通过）；TypeScript 类型检查和 Vite 生产构建均通过。构建产物仅用于本地验证，不作为签名发布证据。
 - Windows Tauri Rust 全量回归默认 `541 passed, 6 ignored`；本轮将 `CHATOS_LOCAL_AGENT_HOST_TEST_PATH` 指向仓库构建的真实 `chatos_local_agent_host.exe` 后，6 个环境测试全部实际通过（v52 health/account scope、Git/npm 来源获取、兼容 Node MCP 与 npm MCP 隔离预检），结果为 `6 passed, 0 failed`。默认构建仍保留 ignored 标记，因为该 sidecar 路径不是发布环境固定输入。
 - 当前嵌入前端的 Windows Release 原生窗口已完成登录首屏取证：窗口标题为 `ChatOS`，未出现 `localhost` 错误页；登录表单的键盘焦点顺序已实测为密码 → 登录 → 创建账号，`Shift+Tab` 可反向回到登录按钮。未使用或自动填写账号凭据，已登录后的 31 页逐态视觉走查仍待真实测试账号/环境。
 - 登录/注册表单现在为邮箱、邀请码、邮箱验证码、密码和确认密码提供显式 `id`/`label` 关联；新增的 React 测试固定登录与注册两种模式的焦点和 Tab 顺序。重新执行正式 Tauri Release 构建后，原生 accessibility tree 已观察到 `auth-username` 与 `auth-password` ID；当前 Computer Use 对 WebView 控件点击仍返回 `coordinate input geometry unavailable`，因此不把注册页原生逐态切换记为已完成。
