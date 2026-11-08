@@ -44,9 +44,9 @@ use video_job::{
     MediaStudioVideoJobRegistry, MediaStudioVideoJobSnapshot, VideoPollStart, VideoPollWork,
 };
 use video_provider::{
-    make_video_create_request, make_video_result, parse_video_job, resolve_video_model,
-    video_content_endpoint, video_job_endpoint, VideoGenerationRequest, VideoInput,
-    VideoReferencePurpose, MAXIMUM_VIDEO_BYTES, MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
+    make_video_create_request, make_video_result, parse_video_job, parse_video_job_with_fallback,
+    resolve_video_model, video_content_endpoint, video_job_endpoint, VideoGenerationRequest,
+    VideoInput, VideoReferencePurpose, MAXIMUM_VIDEO_BYTES, MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
 };
 
 const MAXIMUM_PROVIDER_RESPONSE_BYTES: usize = 48 * 1_024 * 1_024;
@@ -1768,7 +1768,7 @@ async fn advance_video_job(
         if work.cancelled.load(Ordering::Acquire) {
             return Err("视频生成已取消。".into());
         }
-        parse_video_job(&body, &work.runtime.api_key)?
+        parse_video_job_with_fallback(&body, &work.runtime.api_key, Some(&work.provider_job.id))?
     } else {
         work.provider_job.clone()
     };

@@ -178,36 +178,58 @@ pub(super) fn video_content_endpoint(
 }
 
 pub(super) fn parse_video_job(body: &[u8], api_key: &str) -> Result<ProviderVideoJob, String> {
+    parse_video_job_with_fallback(body, api_key, None)
+}
+
+pub(super) fn parse_video_job_with_fallback(
+    body: &[u8],
+    api_key: &str,
+    fallback_id: Option<&str>,
+) -> Result<ProviderVideoJob, String> {
     if body.is_empty() || body.len() > MAXIMUM_VIDEO_JOB_RESPONSE_BYTES {
-        return Err("模型返回的视频任务数据无效。".into());
+        return Err("模型返回的视频任务数据无效（响应为空或超过大小限制）。".into());
     }
-    let root: Value =
-        serde_json::from_slice(body).map_err(|_| "模型返回的视频任务数据无效。".to_owned())?;
-    let id = root
+    let root: Value = serde_json::from_slice(body)
+        .map_err(|_| "模型返回的视频任务数据无效（响应不是有效 JSON）。".to_owned())?;
+    let payload = video_job_payload(&root);
+    let id = payload
         .get("task_id")
-        .or_else(|| root.get("id"))
+        .or_else(|| payload.get("taskId"))
+        .or_else(|| payload.get("job_id"))
+        .or_else(|| payload.get("jobId"))
+        .or_else(|| payload.get("id"))
         .and_then(Value::as_str)
         .and_then(non_empty_ref)
         .filter(|value| value.len() <= 1_024)
-        .ok_or_else(|| "模型返回的视频任务数据无效。".to_owned())?
-        .to_owned();
-    let raw_status = root
+        .map(str::to_owned)
+        .or_else(|| {
+            fallback_id
+                .and_then(non_empty_ref)
+                .filter(|value| value.len() <= 1_024)
+                .map(str::to_owned)
+        })
+        .ok_or_else(|| video_job_shape_error(&root))?;
+    // MiniMax creation responses commonly contain only task_id. Treat that as
+    // queued; the subsequent GET supplies the authoritative status.
+    let raw_status = payload
         .get("status")
+        .or_else(|| payload.get("state"))
         .and_then(Value::as_str)
         .and_then(non_empty_ref)
         .filter(|value| value.len() <= 128)
-        .ok_or_else(|| "模型返回的视频任务数据无效。".to_owned())?
-        .to_ascii_lowercase();
-    let status = match raw_status.as_str() {
-        "queued" | "in_progress" | "unknown" | "completed" | "failed" => raw_status,
-        _ => "unknown".into(),
-    };
-    let progress = root
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_else(|| "queued".into());
+    let status = normalized_video_status(&raw_status);
+    let progress = payload
         .get("progress")
+        .or_else(|| payload.get("percent"))
         .and_then(Value::as_f64)
         .filter(|value| value.is_finite())
         .map(|value| value.clamp(0.0, 100.0));
-    let explicit_error = root.get("error").filter(|value| !value.is_null());
+    let explicit_error = payload
+        .get("error")
+        .or_else(|| payload.get("failure"))
+        .filter(|value| !value.is_null());
     let error_message = explicit_error
         .and_then(|value| {
             value
@@ -218,18 +240,22 @@ pub(super) fn parse_video_job(body: &[u8], api_key: &str) -> Result<ProviderVide
         .and_then(non_empty_ref)
         .map(|value| sanitized_error(value, api_key))
         .or_else(|| explicit_error.map(|_| "模型未提供失败原因".to_owned()));
-    let model_name = root
+    let model_name = payload
         .get("model")
         .and_then(Value::as_str)
         .and_then(non_empty_ref)
         .filter(|value| value.len() <= 1_024)
         .map(str::to_owned);
-    let content_url = root
+    let content_url = payload
         .get("metadata")
         .and_then(|value| value.get("url"))
+        .or_else(|| payload.get("video_url"))
+        .or_else(|| payload.get("download_url"))
         .and_then(Value::as_str)
-        .map(trusted_content_url)
-        .transpose()?;
+        // A provider may return a relative or HTTP result URL. Never follow
+        // it; falling back to the authenticated canonical content endpoint
+        // keeps the job usable without weakening the URL trust boundary.
+        .and_then(|value| trusted_content_url(value).ok());
     Ok(ProviderVideoJob {
         id,
         status,
@@ -238,6 +264,55 @@ pub(super) fn parse_video_job(body: &[u8], api_key: &str) -> Result<ProviderVide
         error_message,
         content_url,
     })
+}
+
+pub(super) fn video_job_shape_error(root: &Value) -> String {
+    let Some(object) = root.as_object() else {
+        return "模型返回的视频任务数据无效（响应不是 JSON 对象）。".into();
+    };
+    let mut keys = object.keys().map(String::as_str).collect::<Vec<_>>();
+    keys.sort_unstable();
+    let nested = ["data", "result", "task", "job"]
+        .iter()
+        .filter_map(|key| object.get(*key).and_then(Value::as_object))
+        .flat_map(|value| value.keys().map(String::as_str))
+        .collect::<Vec<_>>();
+    let mut fields = keys;
+    fields.extend(nested);
+    fields.sort_unstable();
+    fields.dedup();
+    fields.truncate(20);
+    let summary = if fields.is_empty() {
+        "无".to_owned()
+    } else {
+        fields.join("、")
+    };
+    format!("模型返回的视频任务数据无效（响应字段：{summary}）。")
+}
+
+fn video_job_payload(root: &Value) -> &serde_json::Map<String, Value> {
+    let Some(object) = root.as_object() else {
+        return EMPTY_VIDEO_JOB_OBJECT.get_or_init(serde_json::Map::new);
+    };
+    for key in ["data", "result", "task", "job"] {
+        if let Some(nested) = object.get(key).and_then(Value::as_object) {
+            return nested;
+        }
+    }
+    object
+}
+
+static EMPTY_VIDEO_JOB_OBJECT: std::sync::OnceLock<serde_json::Map<String, Value>> =
+    std::sync::OnceLock::new();
+
+fn normalized_video_status(raw: &str) -> String {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "queued" | "created" | "submitted" | "pending" => "queued".into(),
+        "in_progress" | "in-progress" | "processing" | "running" => "in_progress".into(),
+        "success" | "succeeded" | "complete" | "completed" | "done" => "completed".into(),
+        "failed" | "failure" | "fail" | "error" | "cancelled" | "canceled" => "failed".into(),
+        _ => "unknown".into(),
+    }
 }
 
 pub(super) fn make_video_result(
@@ -435,13 +510,13 @@ fn video_endpoint_with_job(
 }
 
 fn trusted_content_url(raw: &str) -> Result<Url, String> {
-    let url = Url::parse(raw).map_err(|_| "模型返回的视频任务数据无效。")?;
+    let url = Url::parse(raw).map_err(|_| "模型返回的视频内容地址无效。")?;
     if url.scheme() != "https"
         || url.host_str().is_none()
         || !url.username().is_empty()
         || url.password().is_some()
     {
-        return Err("模型返回的视频任务数据无效。".into());
+        return Err("模型返回的视频内容地址无效。".into());
     }
     Ok(url)
 }
@@ -712,11 +787,56 @@ mod tests {
             .as_str(),
             "https://relay.example/route/v1/videos/job%2F1"
         );
-        assert!(parse_video_job(
+        let untrusted = parse_video_job(
             br#"{"id":"job","status":"completed","metadata":{"url":"http://cdn.example/a.mp4"}}"#,
             "secret",
         )
-        .is_err());
+        .unwrap();
+        assert!(untrusted.content_url.is_none());
+    }
+
+    #[test]
+    fn minimax_creation_response_without_status_is_queued() {
+        let job = parse_video_job(br#"{"task_id":"task-123"}"#, "secret").unwrap();
+        assert_eq!(job.id, "task-123");
+        assert_eq!(job.status, "queued");
+        assert!(job.should_poll());
+    }
+
+    #[test]
+    fn nested_minimax_payload_and_status_aliases_are_normalized() {
+        let job = parse_video_job(
+            br#"{"data":{"taskId":"task-123","status":"Success","progress":100,"model":"MiniMax-H3","download_url":"https://cdn.example/video.mp4"}}"#,
+            "secret",
+        )
+        .unwrap();
+        assert_eq!(job.id, "task-123");
+        assert_eq!(job.status, "completed");
+        assert_eq!(job.progress, Some(100.0));
+        assert_eq!(
+            job.content_url.unwrap().as_str(),
+            "https://cdn.example/video.mp4"
+        );
+
+        let failed = parse_video_job(
+            br#"{"task_id":"task-123","status":"Fail","error":"provider rejected request"}"#,
+            "secret",
+        )
+        .unwrap();
+        assert_eq!(failed.status, "failed");
+        assert!(failed.is_failed());
+    }
+
+    #[test]
+    fn polling_response_may_reuse_submitted_task_id() {
+        let job = parse_video_job_with_fallback(
+            br#"{"status":"Success","file_id":"file-123"}"#,
+            "secret",
+            Some("submitted-task"),
+        )
+        .unwrap();
+        assert_eq!(job.id, "submitted-task");
+        assert_eq!(job.status, "completed");
     }
 
     #[test]
