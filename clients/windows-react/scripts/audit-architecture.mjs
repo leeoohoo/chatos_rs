@@ -29,6 +29,8 @@ for (const file of sourceFiles(sourceRoot)) {
   if (!isTest && path.includes("/features/authentication/") && /access_?token|accessToken|localStorage|sessionStorage|indexedDB/i.test(source)) {
     violations.push(`${path}: authentication tokens and browser credential storage are forbidden in React`);
   }
+
+  auditModalAccessibleNames(source, path, violations);
 }
 
 if (violations.length > 0) {
@@ -46,5 +48,18 @@ function* sourceFiles(directory) {
     } else if ([".ts", ".tsx"].includes(extname(entry.name))) {
       yield path;
     }
+  }
+}
+
+function auditModalAccessibleNames(source, path, violations) {
+  const modalOpeningTags = source.matchAll(/<[^>]*\baria-modal\s*=\s*["']true["'][^>]*>/gms);
+  for (const match of modalOpeningTags) {
+    const openingTag = match[0];
+    if (/\baria-label\s*=|\baria-labelledby\s*=/.test(openingTag)) {
+      continue;
+    }
+
+    const line = source.slice(0, match.index ?? 0).split("\n").length;
+    violations.push(`${path}:${line}: modal elements must provide aria-label or aria-labelledby`);
   }
 }
