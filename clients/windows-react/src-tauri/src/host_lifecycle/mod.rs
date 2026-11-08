@@ -19,7 +19,9 @@ use chatos_local_agent_protocol::{
     HostCommand, HostResult, LocalAgentHostSchedulerSnapshot, LocalAgentResourcePressureLevel,
     SetSchedulerPressureCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
-use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
+use diagnostics::{
+    classify_authentication_error, classify_error, HostDiagnostics, HostDiagnosticsSnapshot,
+};
 use process::spawn;
 use serde::Serialize;
 use std::{collections::BTreeMap, path::PathBuf};
@@ -326,9 +328,13 @@ pub async fn start_local_agent_host(
             .await;
         return Err(error);
     }
-    authentication
-        .access_token_for_owner(&owner_user_id)
-        .await?;
+    if let Err(error) = authentication.access_token_for_owner(&owner_user_id).await {
+        manager
+            .diagnostics
+            .record("host_authentication", classify_authentication_error(&error))
+            .await;
+        return Err(error);
+    }
     manager.diagnostics.record("host_start", "requested").await;
     let mut process = manager.process.lock().await;
     if let Some(host) = process.as_mut() {

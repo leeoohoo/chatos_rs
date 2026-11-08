@@ -82,6 +82,10 @@ const messages = {
     localServiceUnavailable: "本地服务尚未就绪",
     checkAgain: "重新检查",
     diagnostics: "诊断记录",
+    hostAuthUnavailable: "登录会话尚未准备好，请重新登录后重试本地服务。",
+    hostAuthOwnerMismatch: "登录账号与本地服务账号不一致，请重新登录后重试。",
+    hostAuthSessionChanged: "登录会话已变化，请重新登录后重试本地服务。",
+    hostDiagnosticFailed: "本地服务启动失败，请稍后重试。",
   },
   "en-US": {
     mainNavigation: "Main navigation",
@@ -164,6 +168,10 @@ const messages = {
     localServiceUnavailable: "Local service is not ready",
     checkAgain: "Check again",
     diagnostics: "Diagnostics",
+    hostAuthUnavailable: "The sign-in session is not ready. Sign in again and retry the local service.",
+    hostAuthOwnerMismatch: "The signed-in account does not match the local service account. Sign in again and retry.",
+    hostAuthSessionChanged: "The sign-in session changed. Sign in again and retry the local service.",
+    hostDiagnosticFailed: "The local service failed to start. Try again later.",
   },
 } as const;
 
