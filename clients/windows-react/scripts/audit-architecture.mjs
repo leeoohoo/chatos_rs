@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { auditIconOnlyButtonAccessibleNames as auditIconOnlyButtonAccessibleNamesRules } from "./audit-architecture-rules.mjs";
 
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const sourceRoot = join(projectRoot, "src");
@@ -32,7 +33,7 @@ for (const file of sourceFiles(sourceRoot)) {
 
   auditModalAccessibleNames(source, path, violations);
   if (!isTest) {
-    auditIconOnlyButtonAccessibleNames(source, path, violations);
+    auditIconOnlyButtonAccessibleNamesRules(source, path, violations);
   }
 }
 
@@ -64,18 +65,5 @@ function auditModalAccessibleNames(source, path, violations) {
 
     const line = source.slice(0, match.index ?? 0).split("\n").length;
     violations.push(`${path}:${line}: modal elements must provide aria-label or aria-labelledby`);
-  }
-}
-
-function auditIconOnlyButtonAccessibleNames(source, path, violations) {
-  const iconOnlyButtons = source.matchAll(/<button\b([^>]*)>\s*[×x]\s*<\/button>/gms);
-  for (const match of iconOnlyButtons) {
-    const openingTag = match[1];
-    if (/\baria-label\s*=|\baria-labelledby\s*=/.test(openingTag)) {
-      continue;
-    }
-
-    const line = source.slice(0, match.index ?? 0).split("\n").length;
-    violations.push(`${path}:${line}: icon-only buttons must provide aria-label or aria-labelledby`);
   }
 }
