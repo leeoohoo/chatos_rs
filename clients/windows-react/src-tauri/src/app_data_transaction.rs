@@ -55,6 +55,26 @@ pub(crate) fn create_owned_file(
     )
 }
 
+/// Creates an application-owned directory tree without ever following a
+/// symbolic link or Windows reparse point in an existing component.
+pub(crate) fn ensure_owned_directory(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => validate_directory(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let parent = path.parent().ok_or_else(invalid_input)?;
+            ensure_owned_directory(parent)?;
+            match fs::create_dir(path) {
+                Ok(()) => validate_directory(path),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    validate_directory(path)
+                }
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
 enum CommitMode {
     Replace,
     CreateNew,
@@ -259,6 +279,18 @@ mod tests {
             b"invalid",
         )
         .is_err());
+    }
+
+    #[test]
+    fn owned_directory_creation_is_nested_and_rejects_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let nested = directory.path().join("one").join("two");
+        ensure_owned_directory(&nested).unwrap();
+        assert!(nested.is_dir());
+
+        let file = directory.path().join("file");
+        fs::write(&file, b"not a directory").unwrap();
+        assert!(ensure_owned_directory(&file).is_err());
     }
 
     #[test]

@@ -15,7 +15,8 @@ use tauri::{http, AppHandle, LogicalSize, Manager, State, WebviewUrl, WebviewWin
 use uuid::Uuid;
 
 use crate::{
-    app_data_transaction::create_owned_file, general_settings::GeneralSettingsStore,
+    app_data_transaction::{create_owned_file, ensure_owned_directory},
+    general_settings::GeneralSettingsStore,
     global_utilities::GlobalUtilityPreferencesStore,
 };
 
@@ -261,9 +262,17 @@ impl Drop for ClipboardMonitor {
 impl ClipboardHistoryStore {
     fn open(root: PathBuf) -> Result<Self, String> {
         let payloads = root.join("Payloads");
-        fs::create_dir_all(&payloads).map_err(|_| clipboard_error())?;
-        let connection =
-            Connection::open(root.join("clipboard.sqlite3")).map_err(|_| clipboard_error())?;
+        ensure_owned_directory(&payloads).map_err(|_| clipboard_error())?;
+        let database = root.join("clipboard.sqlite3");
+        if let Ok(metadata) = fs::symlink_metadata(&database) {
+            if !metadata.is_file()
+                || metadata.file_type().is_symlink()
+                || is_windows_reparse_point(&metadata)
+            {
+                return Err(clipboard_error());
+            }
+        }
+        let connection = Connection::open(database).map_err(|_| clipboard_error())?;
         connection
             .execute_batch(
                 "PRAGMA journal_mode=WAL;
@@ -852,8 +861,20 @@ fn encode_rgba_png(width: usize, height: usize, rgba: &[u8]) -> Result<Vec<u8>, 
 #[cfg(any(target_os = "windows", test))]
 fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or_else(clipboard_error)?;
-    fs::create_dir_all(parent).map_err(|_| clipboard_error())?;
+    ensure_owned_directory(parent).map_err(|_| clipboard_error())?;
     create_owned_file(parent, path, ".clipboard-", bytes).map_err(|_| clipboard_error())
+}
+
+#[cfg(windows)]
+fn is_windows_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_windows_reparse_point(_: &fs::Metadata) -> bool {
+    false
 }
 
 fn clipboard_error() -> String {
@@ -879,6 +900,24 @@ mod tests {
         assert!(payload.is_file());
         store.delete(first.id).unwrap();
         assert!(!payload.exists());
+    }
+
+    #[test]
+    fn store_rejects_a_non_file_database_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir(directory.path().join("clipboard.sqlite3")).unwrap();
+        assert!(ClipboardHistoryStore::open(directory.path().into()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn store_rejects_a_database_symlink() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target.sqlite3");
+        fs::write(&target, b"not a database").unwrap();
+        std::os::unix::fs::symlink(&target, directory.path().join("clipboard.sqlite3"))
+            .unwrap();
+        assert!(ClipboardHistoryStore::open(directory.path().into()).is_err());
     }
 
     #[test]
