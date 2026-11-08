@@ -1,5 +1,5 @@
 use super::models::{PresentedRemoteConnectionTestResult, RemoteCredentialBundle};
-use crate::app_data_transaction::replace_owned_file;
+use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file};
 use crate::machine_resource_governor::{
     MachineResourceGovernor, MachineResourceKind, MachineResourcePermit, MachineResourcePriority,
 };
@@ -615,7 +615,7 @@ struct PreparedSshSession {
 
 impl PreparedSshSession {
     fn create(root: &Path, material: &SshConnectionMaterial) -> Result<Self, String> {
-        fs::create_dir_all(root).map_err(|_| runtime_error())?;
+        ensure_owned_directory(root).map_err(|_| runtime_error())?;
         reject_reparse_point(root)?;
         let directory = root.join(format!("connection-test-{}", Uuid::new_v4()));
         fs::create_dir(&directory).map_err(|_| runtime_error())?;

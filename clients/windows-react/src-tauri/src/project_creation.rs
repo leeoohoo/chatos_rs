@@ -1,5 +1,5 @@
 use crate::{
-    app_data_transaction::create_owned_file,
+    app_data_transaction::{create_owned_file, ensure_owned_directory},
     authentication::AuthenticationManager,
     connector_state,
     host_lifecycle::validate_owner,
@@ -743,11 +743,11 @@ fn remove_journal(path: &Path) -> Result<(), String> {
 }
 
 fn connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(app_data_directory).map_err(|_| creation_error())?;
+    ensure_owned_directory(app_data_directory).map_err(|_| creation_error())?;
     validate_private_directory(app_data_directory)?;
     let app_data = fs::canonicalize(app_data_directory).map_err(|_| creation_error())?;
     let connector = app_data.join("NativeConnector");
-    fs::create_dir_all(&connector).map_err(|_| creation_error())?;
+    ensure_owned_directory(&connector).map_err(|_| creation_error())?;
     validate_private_directory(&connector)?;
     let connector = fs::canonicalize(connector).map_err(|_| creation_error())?;
     if !connector.starts_with(app_data) {
@@ -760,7 +760,7 @@ fn journal_directory(connector_directory: &Path) -> Result<PathBuf, String> {
     let canonical_connector =
         fs::canonicalize(connector_directory).map_err(|_| creation_error())?;
     let requested = canonical_connector.join("ProjectCreationJournal");
-    fs::create_dir_all(&requested).map_err(|_| creation_error())?;
+    ensure_owned_directory(&requested).map_err(|_| creation_error())?;
     validate_private_directory(&requested)?;
     let canonical = fs::canonicalize(requested).map_err(|_| creation_error())?;
     if !canonical.starts_with(canonical_connector) {

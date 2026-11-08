@@ -7,7 +7,7 @@ use std::{
     sync::Mutex,
 };
 
-use crate::app_data_transaction::create_owned_file;
+use crate::app_data_transaction::{create_owned_file, ensure_owned_directory};
 
 use super::models::{ToolApprovalDecision, ToolApprovalMode};
 
@@ -234,7 +234,7 @@ fn validate_identifier(field: &str, value: &str) -> Result<(), String> {
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path)
+    ensure_owned_directory(path)
         .map_err(|error| format!("failed to create approval journal directory: {error}"))?;
     #[cfg(unix)]
     {

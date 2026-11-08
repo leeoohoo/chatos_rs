@@ -6,7 +6,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use crate::app_data_transaction::replace_owned_file;
+use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file};
 
 const MAXIMUM_STATE_BYTES: u64 = 16 * 1_024 * 1_024;
 static STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -102,11 +102,11 @@ fn new_device_id() -> String {
 }
 
 fn confined_connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(app_data_directory).map_err(|_| state_error())?;
+    ensure_owned_directory(app_data_directory).map_err(|_| state_error())?;
     validate_private_directory(app_data_directory)?;
     let canonical_data = fs::canonicalize(app_data_directory).map_err(|_| state_error())?;
     let requested = canonical_data.join("NativeConnector");
-    fs::create_dir_all(&requested).map_err(|_| state_error())?;
+    ensure_owned_directory(&requested).map_err(|_| state_error())?;
     validate_private_directory(&requested)?;
     let canonical_connector = fs::canonicalize(requested).map_err(|_| state_error())?;
     if !canonical_connector.starts_with(&canonical_data) {

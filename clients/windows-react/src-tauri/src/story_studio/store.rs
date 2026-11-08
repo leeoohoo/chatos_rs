@@ -15,7 +15,8 @@ use std::{
 use uuid::Uuid;
 
 use crate::{
-    app_data_transaction::replace_owned_file, app_owned_export::try_remove_stale_owned_file,
+    app_data_transaction::{ensure_owned_directory, replace_owned_file},
+    app_owned_export::try_remove_stale_owned_file,
 };
 
 use super::{
@@ -75,7 +76,7 @@ pub(super) struct StoryProjectStore {
 impl StoryProjectStore {
     pub(super) fn new(app_data_directory: PathBuf) -> Result<Self, String> {
         if !app_data_directory.exists() {
-            fs::create_dir_all(&app_data_directory).map_err(|_| store_error())?;
+            ensure_owned_directory(&app_data_directory).map_err(|_| store_error())?;
         }
         validate_private_directory(&app_data_directory)?;
         let root = private_child_directory(&app_data_directory, "StoryStudio")?;

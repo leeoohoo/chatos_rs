@@ -9,6 +9,7 @@ use std::{
 use tauri::{http, State};
 
 use crate::{
+    app_data_transaction::ensure_owned_directory,
     authentication::{AuthenticationManager, GatewayModelConfig},
     host_lifecycle::validate_owner,
     media_studio::MediaStudioManager,
@@ -1086,11 +1087,11 @@ fn open_database(path: &Path, read_only: bool) -> Result<Connection, String> {
 }
 
 fn confined_connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(app_data_directory).map_err(|_| store_error())?;
+    ensure_owned_directory(app_data_directory).map_err(|_| store_error())?;
     reject_link_or_non_directory(app_data_directory)?;
     let app_data = fs::canonicalize(app_data_directory).map_err(|_| store_error())?;
     let requested = app_data.join("NativeConnector");
-    fs::create_dir_all(&requested).map_err(|_| store_error())?;
+    ensure_owned_directory(&requested).map_err(|_| store_error())?;
     reject_link_or_non_directory(&requested)?;
     let connector = fs::canonicalize(requested).map_err(|_| store_error())?;
     if !connector.starts_with(&app_data) {
