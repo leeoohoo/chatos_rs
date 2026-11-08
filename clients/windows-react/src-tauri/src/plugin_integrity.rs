@@ -7,7 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use crate::app_data_transaction::replace_owned_file;
+use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file};
 
 const INTEGRITY_SCHEMA_VERSION: u32 = 1;
 const INTEGRITY_DIRECTORY: &str = ".integrity";
@@ -142,7 +142,7 @@ pub(crate) fn write_installation_integrity(
         return Err(integrity_error());
     }
     let directory = plugin_root.join(INTEGRITY_DIRECTORY);
-    fs::create_dir_all(&directory).map_err(|_| integrity_error())?;
+    ensure_owned_directory(&directory).map_err(|_| integrity_error())?;
     let directory = canonical_directory(&directory)?;
     if !directory.starts_with(&plugin_root) {
         return Err(integrity_error());
@@ -425,7 +425,7 @@ fn quarantine_backup(plugin_root: &Path, backup: &Path, name: &str) -> Result<()
 
 fn quarantine_tree(plugin_root: &Path, source: &Path, name: &str) -> Result<PathBuf, String> {
     let staging = plugin_root.join(".staging");
-    fs::create_dir_all(&staging).map_err(|_| integrity_error())?;
+    ensure_owned_directory(&staging).map_err(|_| integrity_error())?;
     let staging = canonical_confined_directory(plugin_root, &staging)?;
     let container = staging.join(uuid::Uuid::new_v4().to_string());
     fs::create_dir(&container).map_err(|_| integrity_error())?;

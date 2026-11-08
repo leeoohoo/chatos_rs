@@ -25,6 +25,7 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
+    app_data_transaction::ensure_owned_directory,
     authentication::AuthenticationManager,
     computer_use_worker::TrustedComputerUseLaunch,
     connector_state,
@@ -2362,7 +2363,7 @@ fn installation_manifest_path(
 }
 
 fn confined_plugin_root(plugin_root: &Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(plugin_root).map_err(|_| plugin_catalog_error())?;
+    ensure_owned_directory(plugin_root).map_err(|_| plugin_catalog_error())?;
     let root = plugin_root
         .canonicalize()
         .map_err(|_| plugin_catalog_error())?;

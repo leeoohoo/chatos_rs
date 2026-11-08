@@ -5,6 +5,7 @@ use super::{
 #[cfg(windows)]
 use crate::windows_appcontainer::{WorkspaceAccess, WorkspaceLeaseManager};
 use crate::{
+    app_data_transaction::ensure_owned_directory,
     machine_resource_governor::{
         MachineResourceGovernor, MachineResourceKind, MachineResourcePermit,
         MachineResourcePriority,
@@ -1803,7 +1804,7 @@ fn create_confined_directory(root: &Path, relative: &Path) -> Result<PathBuf, St
     {
         return Err(plugin_runtime_error());
     }
-    fs::create_dir_all(root).map_err(|_| plugin_runtime_error())?;
+    ensure_owned_directory(root).map_err(|_| plugin_runtime_error())?;
     let requested_root_metadata = fs::symlink_metadata(root).map_err(|_| plugin_runtime_error())?;
     if !requested_root_metadata.is_dir() || is_link_or_reparse_point(&requested_root_metadata) {
         return Err(plugin_runtime_error());

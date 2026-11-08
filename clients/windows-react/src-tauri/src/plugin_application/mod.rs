@@ -20,6 +20,7 @@ mod runtime;
 use crate::agent_plugin_runtime::{
     load_agent_plugin_skill_snapshot, AgentPluginRuntime, AgentPluginSkillSnapshot,
 };
+use crate::app_data_transaction::ensure_owned_directory;
 use crate::machine_resource_governor::MachineResourceGovernor;
 use crate::plugin_credentials::{
     environment_secret_references, platform_plugin_credential_store, secret_name, secret_reference,
@@ -924,7 +925,7 @@ fn validate_record(
 }
 
 fn confined_plugin_root(requested: &Path) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(requested).map_err(|_| plugin_catalog_error())?;
+    ensure_owned_directory(requested).map_err(|_| plugin_catalog_error())?;
     let root = requested
         .canonicalize()
         .map_err(|_| plugin_catalog_error())?;
