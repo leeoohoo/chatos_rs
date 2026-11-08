@@ -18,6 +18,7 @@ Windows 产品版本：`3.0.9`
 - 插件应用 Bridge 当前与 macOS 的真实实现一致：两端只实现 `host.context.read`；`artifact.*` 等尚未闭环的能力不会在 Windows 中伪装成可调用能力。
 - 静态 Plugin 页面当前补齐 `navigate-to 'self'` CSP，页面不能自行导航到外部地址；`local_http` 后端仍保持现有 loopback/origin 门禁，未把尚未解决的 AppContainer loopback 代理问题伪装成完成。
 - Windows Local Agent Host 当前已读取并应用 `/api/local-connectors/config/runtime` 的受管运行时配置：模型重试次数、上下文压缩阈值、Task 最大迭代次数均写入 Host 的模型/能力快照；请求/运行超时和无进展轮数也会做范围校验，网络失败时继续使用已持久化快照进行离线恢复。代码提交 `6de98e76f`，Windows Tauri Rust 全量测试 `541 passed, 6 ignored`。
+- Host 启动的认证前置失败现在会写入安全分类 `host_authentication` 诊断（只记录 `unavailable`、`owner_mismatch`、`session_changed` 或 `failed`，不记录 token、邮箱或其他会话内容），HostReadyGate 会显示对应的重登录提示。提交 `204c87156`；定向 Rust 诊断 `3 passed`、HostReadyGate `2 passed`，完整 Windows React `522 passed`、Tauri Rust `551 passed, 6 ignored`。真实 Release 窗口仍显示本地 Host 未连接，因此认证依赖功能没有被伪造为完成。
 - 任务终端已接入独立 AppContainer profile、项目目录读写租约、默认禁网、交互式 stdin/stdout/stderr、超时与进程树回收；绝对路径读写和租约恢复已有真实 Windows 测试。租约现在会在运行期间为工作目录父级临时授予仅 `FILE_TRAVERSE`，并在正常释放、启动失败和 journal 恢复时按 AppContainer SID 撤销，父级不获得列举、读写权限。
 - Plugin 应用后端的生产启动路径已接入独立 AppContainer：安装目录只读、数据与缓存目录读写，并按 manifest 的 `network.client` 选择 `loopback`/`controlled` capability；本机实测 `CheckNetIsolation LoopbackExempt` 返回 Win32 5（需要管理员权限），不能放进普通用户启动路径，Windows loopback exemption/proxy 尚未闭环，健康检查仍可能超时，测试构建继续使用 Host runtime 以保留既有健康检查覆盖。
 - Agent Plugin invocation journal 现在在每次校验私有 journal 根目录时，额外有界清理超过 24 小时的 canonical `.<小写 UUID>.tmp` 残留；清理复用普通非 reparse/单硬链接所有权检查，最多扫描 2,000 项，未知名称和近期临时文件保留。定向 journal 测试覆盖 stale、fresh、malformed 和扫描上限。
@@ -26,8 +27,8 @@ Windows 产品版本：`3.0.9`
 - Computer Use Windows worker 现在与 macOS 一样为 11 个 MCP 工具发布 `_meta.chatos/skillGate`，并由跨平台 `npm run audit:skill-gates` 在 Windows 走本机 wrapper、在 macOS 走 Swift worker；Windows 本机 Skill gate 审计、双架构构建与屏幕 smoke 均通过。跨平台 `.tgz` 与 Marketplace 签名发布仍未完成。
 - 任务审查窗口与桌面宠物状态已补齐键盘/无障碍语义：打开审查窗口后焦点落到关闭按钮，Tab 焦点保持在 modal 内，页签使用 roving focus 并支持方向键/Home/End，`Escape` 关闭并还原触发控件焦点，任务与检查页声明当前项及关联面板，宠物状态使用有界的 `polite` live region；这改善了键盘导航和屏幕阅读器投影，但不替代原生窗口逐态视觉取证。
 - 当前仍未完全拉齐的基础差异有三类：细粒度目标/目的地出站规则仍未完成；Plugin 应用后端的 Windows loopback 健康代理/exemption 尚未闭环；任务审查的原生窗口逐态视觉取证尚未完成。这些差异继续保持为不可编辑/不可用状态，不对用户虚报为已支持。
-- 当前 Windows React 前端复核通过：Vitest `139` 个测试文件、`518` 项测试全部通过（Run Inspector 定向 `5` 个文件、`15` 项通过）；TypeScript 类型检查和 Vite 生产构建均通过。构建产物仅用于本地验证，不作为签名发布证据。
-- Windows Tauri Rust 全量回归默认 `541 passed, 6 ignored`；本轮将 `CHATOS_LOCAL_AGENT_HOST_TEST_PATH` 指向仓库构建的真实 `chatos_local_agent_host.exe` 后，6 个环境测试全部实际通过（v52 health/account scope、Git/npm 来源获取、兼容 Node MCP 与 npm MCP 隔离预检），结果为 `6 passed, 0 failed`。默认构建仍保留 ignored 标记，因为该 sidecar 路径不是发布环境固定输入。
+- 当前 Windows React 前端复核通过：Vitest `141` 个测试文件、`522` 项测试全部通过（Run Inspector 定向回归仍通过）；TypeScript 类型检查和 Vite 生产构建均通过。构建产物仅用于本地验证，不作为签名发布证据。
+- Windows Tauri Rust 全量回归默认 `551 passed, 6 ignored`；本轮将 `CHATOS_LOCAL_AGENT_HOST_TEST_PATH` 指向仓库构建的真实 `chatos_local_agent_host.exe` 后，6 个环境测试全部实际通过（v52 health/account scope、Git/npm 来源获取、兼容 Node MCP 与 npm MCP 隔离预检），结果为 `6 passed, 0 failed`。默认构建仍保留 ignored 标记，因为该 sidecar 路径不是发布环境固定输入。
 - 当前嵌入前端的 Windows Release 原生窗口已完成登录首屏取证：窗口标题为 `ChatOS`，未出现 `localhost` 错误页；登录表单的键盘焦点顺序已实测为密码 → 登录 → 创建账号，`Shift+Tab` 可反向回到登录按钮。未使用或自动填写账号凭据，已登录后的 31 页逐态视觉走查仍待真实测试账号/环境。
 - 登录/注册表单现在为邮箱、邀请码、邮箱验证码、密码和确认密码提供显式 `id`/`label` 关联；新增的 React 测试固定登录与注册两种模式的焦点和 Tab 顺序。重新执行正式 Tauri Release 构建后，原生 accessibility tree 已观察到 `auth-username` 与 `auth-password` ID；本轮真实 Release 窗口在未输入任何凭据的前提下又实测了账号 → 密码 → 登录按钮的 Tab 顺序，以及 Shift+Tab 返回密码的焦点环；当前 Computer Use 对 WebView 控件点击仍返回 `coordinate input geometry unavailable`，因此不把注册页原生逐态切换记为已完成。
 - 同一 Release 原生窗口的创建账号路径也已完成无凭据取证：邮箱、邀请码、邮箱验证码/发送验证码、密码、确认密码、创建账号和返回登录控件均可见，布局与登录页保持一致；未填写邮箱、密码、邀请码或验证码，也未发送任何请求。
@@ -51,7 +52,7 @@ Windows 产品版本：`3.0.9`
 - Agent Plugin invocation journal 根和 AppContainer workspace/profile journal 根、写入父目录现在也统一使用 `ensure_owned_directory`；保留既有 stale cleanup、journal recovery、ACL lease 和 profile recovery 语义，避免 journal 根的父项在创建竞态中跟随 symlink/reparse point。提交 `e64ccb49c` 已推送；Agent Plugin 定向 `9 passed`、AppContainer 定向 `15 passed`（含真实 Windows lease/runtime 测试），Clippy `-D warnings` 通过；Windows Tauri 全量回归最新为 `550 passed, 0 failed, 6 ignored`。
 - 共享 `chatos_windows_appcontainer` crate 的 profile/workspace journal 写入也已补齐同一安全边界：逐级 `ensure_owned_directory` 拒绝普通文件、symlink 和 Windows reparse point，临时文件使用独占 `FILE_FLAG_OPEN_REPARSE_POINT` 句柄，并通过显式 `MoveFileExW`（create-only + `MOVEFILE_WRITE_THROUGH`）提交；目标冲突不会覆盖，RAII 临时文件清理确保失败时不留下 `.tmp`。此前独立编译 `chatos_local_agent_host` 会因共享 crate 缺少 `ensure_owned_directory` 直接失败，现已修复；提交 `56568ba80`、`33f81f3ce` 已推送。共享 crate 定向回归 `17 passed`，Local Agent Host `157 passed`，Windows Tauri 全量回归 `550 passed, 0 failed, 6 ignored`，Clippy `-D warnings` 通过。
 - Computer Use Windows worker 本机验证已重新通过：`npm run test:packaging` 为 `8 passed`，`npm run audit:skill-gates` 通过，x64/arm64 `build:windows` 成功，`smoke:windows` 和 `smoke:windows:screen` 均通过（包含真实 `observe_screen`）。跨平台 `.tgz` 生成在 Windows 主机按工具链约束拒绝，Marketplace 签名发布和客户端安装仍是外部依赖。
-- 本机 Computer Use 已真实打开 Release `ChatOS` 原生窗口并观察到窗口标题、登录页、`auth-username`/`auth-password` accessibility ID、登录/注册入口；没有合法测试账号，因此不进入登录后的 31 页，也不把原生逐页视觉走查标记为完成。
+- 本机 Computer Use 已真实打开 Release `ChatOS` 原生窗口并观察到窗口标题、已登录会话、资源导航、Agent/项目工作区、AI 创作图片/视频/剧情/记录页、插件目录、AI 模型、设备与网关、项目目录搜索和项目设置；当前会话仍显示本地 Host 未连接，Agent 私聊实测返回“暂时无法打开”，因此不把 Host 依赖功能或登录后的 31 页逐页视觉走查标记为完成。认证对话框未由自动化代填。
 
 ## A. 本轮已关闭
 
