@@ -682,13 +682,7 @@ impl MediaStudioManager {
 
     fn protocol_response(&self, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
         match self.protocol_body(request.uri().path()) {
-            Ok((mime_type, body)) => http::Response::builder()
-                .status(http::StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, mime_type)
-                .header("X-Content-Type-Options", "nosniff")
-                .header("Cache-Control", "no-store")
-                .body(body)
-                .expect("valid media preview response"),
+            Ok((mime_type, body)) => media_preview_response(&request, &mime_type, body),
             Err(status) => http::Response::builder()
                 .status(status)
                 .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
@@ -740,6 +734,99 @@ impl MediaStudioManager {
             }
             _ => Err(http::StatusCode::BAD_REQUEST),
         }
+    }
+}
+
+fn media_preview_response(
+    request: &http::Request<Vec<u8>>,
+    mime_type: &str,
+    body: Vec<u8>,
+) -> http::Response<Vec<u8>> {
+    let total_length = body.len() as u64;
+    let range_header = request
+        .headers()
+        .get(http::header::RANGE)
+        .and_then(|value| value.to_str().ok());
+    let range = match range_header {
+        Some(value) => match parse_single_byte_range(value, total_length) {
+            Ok(range) => range,
+            Err(()) => {
+                return http::Response::builder()
+                    .status(http::StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(
+                        http::header::CONTENT_RANGE,
+                        format!("bytes */{total_length}"),
+                    )
+                    .header(http::header::CONTENT_LENGTH, 0)
+                    .header("Cache-Control", "no-store")
+                    .body(Vec::new())
+                    .expect("valid media range error response");
+            }
+        },
+        None => None,
+    };
+
+    let (status, content_range, body) = match range {
+        Some((start, end)) => (
+            http::StatusCode::PARTIAL_CONTENT,
+            Some(format!("bytes {start}-{end}/{total_length}")),
+            body[start as usize..=end as usize].to_vec(),
+        ),
+        None => (http::StatusCode::OK, None, body),
+    };
+    let mut builder = http::Response::builder()
+        .status(status)
+        .header(http::header::CONTENT_TYPE, mime_type)
+        .header(http::header::CONTENT_LENGTH, body.len())
+        .header(http::header::ACCEPT_RANGES, "bytes")
+        .header("X-Content-Type-Options", "nosniff")
+        .header("Cache-Control", "no-store");
+    if let Some(content_range) = content_range {
+        builder = builder.header(http::header::CONTENT_RANGE, content_range);
+    }
+    builder.body(body).expect("valid media preview response")
+}
+
+fn parse_single_byte_range(value: &str, total_length: u64) -> Result<Option<(u64, u64)>, ()> {
+    if total_length == 0 {
+        return Err(());
+    }
+    let value = value.trim();
+    let Some(value) = value.strip_prefix("bytes=").map(str::trim) else {
+        return Err(());
+    };
+    if value.contains(',') {
+        return Err(());
+    }
+    let Some((start, end)) = value.split_once('-') else {
+        return Err(());
+    };
+    let start = start.trim();
+    let end = end.trim();
+    let (start, end) = if start.is_empty() {
+        let suffix_length = end.parse::<u64>().map_err(|_| ())?;
+        if suffix_length == 0 {
+            return Err(());
+        }
+        (
+            total_length.saturating_sub(suffix_length),
+            total_length.saturating_sub(1),
+        )
+    } else {
+        let start = start.parse::<u64>().map_err(|_| ())?;
+        let end = if end.is_empty() {
+            total_length.saturating_sub(1)
+        } else {
+            end.parse::<u64>()
+                .map_err(|_| ())?
+                .min(total_length.saturating_sub(1))
+        };
+        (start, end)
+    };
+    if start > end || start >= total_length {
+        Err(())
+    } else {
+        Ok(Some((start, end)))
     }
 }
 
@@ -2416,6 +2503,55 @@ mod tests {
         assert_eq!(
             manager.protocol_body(&path).unwrap_err(),
             http::StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[test]
+    fn media_preview_protocol_supports_bounded_video_ranges() {
+        let request = http::Request::builder()
+            .uri("/session/record/token")
+            .header(http::header::RANGE, "bytes=2-5")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&request, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[http::header::CONTENT_TYPE], "video/mp4");
+        assert_eq!(response.headers()[http::header::CONTENT_LENGTH], "4");
+        assert_eq!(
+            response.headers()[http::header::CONTENT_RANGE],
+            "bytes 2-5/10"
+        );
+        assert_eq!(response.headers()[http::header::ACCEPT_RANGES], "bytes");
+        assert_eq!(response.body(), b"2345");
+
+        let suffix = http::Request::builder()
+            .uri("/session/record/token")
+            .header(http::header::RANGE, "bytes=6-")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&suffix, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.body(), b"6789");
+
+        let tail = http::Request::builder()
+            .uri("/session/record/token")
+            .header(http::header::RANGE, "bytes=-3")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&tail, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.body(), b"789");
+
+        let invalid = http::Request::builder()
+            .uri("/session/record/token")
+            .header(http::header::RANGE, "bytes=20-30")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&invalid, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            response.headers()[http::header::CONTENT_RANGE],
+            "bytes */10"
         );
     }
 
