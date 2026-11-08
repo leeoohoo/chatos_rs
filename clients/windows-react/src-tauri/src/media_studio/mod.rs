@@ -746,10 +746,27 @@ fn media_preview_response(
     let base_headers = |builder: http::response::Builder| {
         builder
             .header(http::header::ACCEPT_RANGES, "bytes")
+            // Media previews are served from `chatos-media.localhost`, while the
+            // application document runs on `tauri.localhost`.  WebView2 treats
+            // range-backed media requests as cross-origin, so expose the
+            // protocol's CORS contract explicitly instead of relying on the
+            // custom-scheme defaults.
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+            .header("Access-Control-Allow-Headers", "Range, Content-Type")
             .header("Access-Control-Expose-Headers", "Content-Range")
             .header("X-Content-Type-Options", "nosniff")
             .header("Cache-Control", "no-store")
     };
+    if request.method() == http::Method::OPTIONS {
+        return base_headers(
+            http::Response::builder()
+                .status(http::StatusCode::NO_CONTENT)
+                .header(http::header::CONTENT_LENGTH, 0),
+        )
+        .body(Vec::new())
+        .expect("valid media options response");
+    }
     if request.method() == http::Method::HEAD {
         return base_headers(
             http::Response::builder()
@@ -2634,6 +2651,20 @@ mod tests {
         let response = media_preview_response(&head, "video/mp4", b"0123456789".to_vec());
         assert_eq!(response.status(), http::StatusCode::OK);
         assert_eq!(response.headers()[http::header::CONTENT_LENGTH], "10");
+        assert!(response.body().is_empty());
+
+        let options = http::Request::builder()
+            .method(http::Method::OPTIONS)
+            .uri("/session/record/token")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&options, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::NO_CONTENT);
+        assert_eq!(response.headers()["Access-Control-Allow-Origin"], "*");
+        assert_eq!(
+            response.headers()["Access-Control-Allow-Headers"],
+            "Range, Content-Type"
+        );
         assert!(response.body().is_empty());
     }
 
