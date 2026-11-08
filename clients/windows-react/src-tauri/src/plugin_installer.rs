@@ -27,6 +27,7 @@ use uuid::Uuid;
 
 use crate::{
     agent_plugin_runtime::load_agent_plugin_skill_snapshot,
+    app_data_transaction::ensure_owned_directory,
     plugin_integrity::{remove_installation_integrity, write_installation_integrity},
     terminal_runtime::process::ProcessTermination,
 };
@@ -154,7 +155,7 @@ impl CommittedPluginPackage {
         let _ = remove_confined_directory(&self.plugin_root, &self.installation_root);
         if let Some(backup) = self.backup_root.take() {
             if let Some(parent) = self.installation_root.parent() {
-                let _ = fs::create_dir_all(parent);
+                let _ = ensure_owned_directory(parent);
             }
             let _ = fs::rename(backup, &self.installation_root);
         }
@@ -167,10 +168,9 @@ pub(crate) async fn install_marketplace_package(
     response: Response,
 ) -> Result<CommittedPluginPackage, String> {
     validate_install_source(&source)?;
-    fs::create_dir_all(&plugin_root).map_err(|_| install_error("无法创建 Plugin 安装目录"))?;
+    ensure_owned_directory(&plugin_root).map_err(|_| install_error("无法创建 Plugin 安装目录"))?;
     let download_directory = plugin_root.join(".downloads");
-    tokio::fs::create_dir_all(&download_directory)
-        .await
+    ensure_owned_directory(&download_directory)
         .map_err(|_| install_error("无法创建 Plugin 下载目录"))?;
     let archive_path = download_directory.join(format!("{}.tgz", Uuid::new_v4()));
     let download = download_verified_artifact(
@@ -501,7 +501,7 @@ fn acquire_local_package(
         .join(".source-staging")
         .join(Uuid::new_v4().to_string());
     let package_root = staging_root.join("package");
-    fs::create_dir_all(&package_root).map_err(|_| install_error("无法创建 Plugin 临时目录"))?;
+    ensure_owned_directory(&package_root).map_err(|_| install_error("无法创建 Plugin 临时目录"))?;
     let acquired = AcquiredPluginSource {
         plugin_root,
         staging_root,
@@ -615,7 +615,8 @@ fn normalize_compatible_mcp_package(package_root: &Path) -> Result<(), String> {
     let mut normalized_servers = BTreeMap::new();
     if let Some(servers) = servers {
         let bin_root = package_root.join("bin");
-        fs::create_dir_all(&bin_root).map_err(|_| install_error("无法创建兼容 MCP 启动目录"))?;
+        ensure_owned_directory(&bin_root)
+            .map_err(|_| install_error("无法创建兼容 MCP 启动目录"))?;
         let mut frozen_node_prepared = false;
         for (server_name, server) in servers {
             let server = server
@@ -938,7 +939,7 @@ fn normalize_compatible_skills(package_root: &Path) -> Result<Vec<String>, Strin
                 "根目录 SKILL.md 与 skills/{name} 冲突"
             )));
         }
-        fs::create_dir_all(&target).map_err(|_| install_error("无法创建兼容 Skill 目录"))?;
+        ensure_owned_directory(&target).map_err(|_| install_error("无法创建兼容 Skill 目录"))?;
         fs::copy(&root_skill, target.join("SKILL.md"))
             .map_err(|_| install_error("无法复制兼容 SKILL.md"))?;
         for resource in ["scripts", "references", "assets"] {
@@ -1047,7 +1048,8 @@ fn copy_compatible_skill_tree_bounded(
     if !metadata.is_dir() || is_symlink_or_reparse(&metadata) {
         return Err(install_error("兼容 Skill 资源目录无效"));
     }
-    fs::create_dir_all(destination).map_err(|_| install_error("无法创建兼容 Skill 资源目录"))?;
+    ensure_owned_directory(destination)
+        .map_err(|_| install_error("无法创建兼容 Skill 资源目录"))?;
     for entry in fs::read_dir(source).map_err(|_| install_error("无法读取兼容 Skill 资源"))?
     {
         *visited = visited.saturating_add(1);
@@ -1245,7 +1247,8 @@ fn install_copied_package(
         .join(".staging")
         .join(Uuid::new_v4().to_string());
     let package_root = staging_container.join("package");
-    fs::create_dir_all(&package_root).map_err(|_| install_error("无法创建 Plugin 临时安装目录"))?;
+    ensure_owned_directory(&package_root)
+        .map_err(|_| install_error("无法创建 Plugin 临时安装目录"))?;
     let staged = (|| {
         let fingerprint = snapshot_local_tree(source_root, Some(&package_root))?;
         if fingerprint != expected_fingerprint {
@@ -1262,11 +1265,12 @@ fn install_copied_package(
         }
     };
     let plugin_directory = plugin_root.join(sha256_text(&format!("local:{}", manifest.name)));
-    fs::create_dir_all(&plugin_directory).map_err(|_| install_error("无法创建 Plugin 版本目录"))?;
+    ensure_owned_directory(&plugin_directory)
+        .map_err(|_| install_error("无法创建 Plugin 版本目录"))?;
     let final_root = plugin_directory.join(sha256_text(&manifest.version));
     let backup_root = if final_root.exists() {
         let backup_directory = plugin_root.join(".backups");
-        fs::create_dir_all(&backup_directory)
+        ensure_owned_directory(&backup_directory)
             .map_err(|_| install_error("无法创建 Plugin 回滚目录"))?;
         let backup = backup_directory.join(Uuid::new_v4().to_string());
         fs::rename(&final_root, &backup).map_err(|_| install_error("无法准备 Plugin 安装回滚"))?;
@@ -1312,7 +1316,7 @@ async fn acquire_git_package(
     let git_root = staging_root.join("repository.git");
     let archive_path = staging_root.join("repository.tar");
     let package_root = staging_root.join("package");
-    fs::create_dir_all(&git_root).map_err(|_| install_error("无法创建 Git Plugin 临时目录"))?;
+    ensure_owned_directory(&git_root).map_err(|_| install_error("无法创建 Git Plugin 临时目录"))?;
     let acquired = AcquiredPluginSource {
         plugin_root,
         staging_root,
@@ -1384,7 +1388,8 @@ async fn acquire_npm_package(
     let staging_root = plugin_root
         .join(".source-staging")
         .join(Uuid::new_v4().to_string());
-    fs::create_dir_all(&staging_root).map_err(|_| install_error("无法创建 npm Plugin 临时目录"))?;
+    ensure_owned_directory(&staging_root)
+        .map_err(|_| install_error("无法创建 npm Plugin 临时目录"))?;
     let acquired = AcquiredPluginSource {
         plugin_root,
         package_root: staging_root.join("package"),
@@ -1427,7 +1432,8 @@ async fn prepare_npm_mcp_package(
         .join(".source-staging")
         .join(Uuid::new_v4().to_string());
     let package_root = staging_root.join("package");
-    fs::create_dir_all(&package_root).map_err(|_| install_error("无法创建 npm MCP 临时目录"))?;
+    ensure_owned_directory(&package_root)
+        .map_err(|_| install_error("无法创建 npm MCP 临时目录"))?;
     let acquired = AcquiredPluginSource {
         plugin_root,
         staging_root,
@@ -1449,7 +1455,8 @@ async fn prepare_npm_mcp_package(
         .ok_or_else(|| install_error("npm MCP 需要本机 Node.js 运行时"))?;
     let npm_cli = resolve_npm_cli(&node)?;
     let npm_config_root = acquired.staging_root.join("npm-config");
-    fs::create_dir_all(&npm_config_root).map_err(|_| install_error("无法创建隔离 npm 配置目录"))?;
+    ensure_owned_directory(&npm_config_root)
+        .map_err(|_| install_error("无法创建隔离 npm 配置目录"))?;
     let user_config = npm_config_root.join("user.npmrc");
     let global_config = npm_config_root.join("global.npmrc");
     create_private_file(&user_config).map_err(|_| install_error("无法创建隔离 npm 配置"))?;
@@ -1540,7 +1547,7 @@ async fn prepare_npm_mcp_package(
         .replace('\\', "/");
 
     let bin_root = acquired.package_root.join("bin");
-    fs::create_dir_all(&bin_root).map_err(|_| install_error("无法创建 npm MCP 启动目录"))?;
+    ensure_owned_directory(&bin_root).map_err(|_| install_error("无法创建 npm MCP 启动目录"))?;
     let launcher = bin_root.join(format!("{}.exe", draft.component_key));
     fs::copy(&node, &launcher).map_err(|_| install_error("无法冻结 npm MCP Node.js 运行时"))?;
     let mut launch_arguments = vec![relative_entry];
@@ -1832,7 +1839,7 @@ async fn run_isolated_npm(
         .parent()
         .ok_or_else(|| install_error("Node.js 安装目录无效"))?;
     let cache = staging_root.join("npm-cache");
-    fs::create_dir_all(&cache).map_err(|_| install_error("无法创建隔离 npm 缓存"))?;
+    ensure_owned_directory(&cache).map_err(|_| install_error("无法创建隔离 npm 缓存"))?;
     let mut command = Command::new(node);
     command
         .arg(npm_cli)
@@ -2808,7 +2815,8 @@ fn git_null_device() -> &'static str {
 }
 
 fn extract_git_archive(archive_path: &Path, package_root: &Path) -> Result<(), String> {
-    fs::create_dir_all(package_root).map_err(|_| install_error("无法创建 Git Plugin 解包目录"))?;
+    ensure_owned_directory(package_root)
+        .map_err(|_| install_error("无法创建 Git Plugin 解包目录"))?;
     let file = File::open(archive_path).map_err(|_| install_error("无法读取 Git Plugin 快照"))?;
     let mut archive = Archive::new(file);
     let mut observed = BTreeSet::new();
@@ -2857,11 +2865,11 @@ fn extract_git_archive(archive_path: &Path, package_root: &Path) -> Result<(), S
         }
         let destination = package_root.join(&relative);
         if kind.is_dir() {
-            fs::create_dir_all(&destination)
+            ensure_owned_directory(&destination)
                 .map_err(|_| install_error("无法创建 Git Plugin 目录"))?;
         } else {
             if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent)
+                ensure_owned_directory(parent)
                     .map_err(|_| install_error("无法创建 Git Plugin 目录"))?;
             }
             entry
@@ -3172,7 +3180,7 @@ fn snapshot_local_tree(source: &Path, destination: Option<&Path>) -> Result<Stri
                 let relative = path
                     .strip_prefix(source)
                     .map_err(|_| install_error("Plugin 路径越界"))?;
-                fs::create_dir_all(destination.join(relative))
+                ensure_owned_directory(&destination.join(relative))
                     .map_err(|_| install_error("无法复制 Plugin 目录"))?;
             }
             continue;
@@ -3197,7 +3205,8 @@ fn snapshot_local_tree(source: &Path, destination: Option<&Path>) -> Result<Stri
                 .map_err(|_| install_error("Plugin 路径越界"))?;
             let target = destination.join(relative);
             if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|_| install_error("无法复制 Plugin 目录"))?;
+                ensure_owned_directory(parent)
+                    .map_err(|_| install_error("无法复制 Plugin 目录"))?;
             }
             Some(create_private_file(&target).map_err(|_| install_error("无法复制 Plugin 文件"))?)
         } else {
@@ -3382,7 +3391,7 @@ fn extract_and_commit(
     let staging_container = plugin_root
         .join(".staging")
         .join(Uuid::new_v4().to_string());
-    fs::create_dir_all(&staging_container)
+    ensure_owned_directory(&staging_container)
         .map_err(|_| install_error("无法创建 Plugin 临时安装目录"))?;
     let staged = (|| {
         extract_archive(archive_path, &staging_container)?;
@@ -3399,11 +3408,12 @@ fn extract_and_commit(
     };
 
     let plugin_directory = plugin_root.join(sha256_text(&source.catalog.id));
-    fs::create_dir_all(&plugin_directory).map_err(|_| install_error("无法创建 Plugin 版本目录"))?;
+    ensure_owned_directory(&plugin_directory)
+        .map_err(|_| install_error("无法创建 Plugin 版本目录"))?;
     let final_root = plugin_directory.join(sha256_text(&source.release.version));
     let backup_root = if final_root.exists() {
         let backup_directory = plugin_root.join(".backups");
-        fs::create_dir_all(&backup_directory)
+        ensure_owned_directory(&backup_directory)
             .map_err(|_| install_error("无法创建 Plugin 回滚目录"))?;
         let backup = backup_directory.join(Uuid::new_v4().to_string());
         fs::rename(&final_root, &backup).map_err(|_| install_error("无法准备 Plugin 安装回滚"))?;
@@ -3754,7 +3764,7 @@ fn parse_npm_integrity(value: &str) -> Result<Vec<u8>, String> {
 }
 
 fn canonical_plugin_root(path: &Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(path).map_err(|_| install_error("无法创建 Plugin 安装目录"))?;
+    ensure_owned_directory(path).map_err(|_| install_error("无法创建 Plugin 安装目录"))?;
     let metadata = fs::symlink_metadata(path).map_err(|_| install_error("Plugin 安装目录无效"))?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err(install_error("Plugin 安装目录无效"));
@@ -3914,6 +3924,35 @@ mod tests {
         fs::create_dir_all(&source).unwrap();
         fs::write(source.join("chatos.plugin.json"), b"{}").unwrap();
         assert!(inspect_local_package(&source, Some("../escape")).is_err());
+    }
+
+    #[test]
+    fn installer_rejects_a_non_directory_staging_parent() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_root = directory.path().join("installed");
+        let source = directory.path().join("source");
+        ensure_owned_directory(&plugin_root).unwrap();
+        ensure_owned_directory(&source).unwrap();
+        fs::write(plugin_root.join(".source-staging"), b"not a directory").unwrap();
+
+        assert!(acquire_local_package(&plugin_root, &source).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installer_rejects_a_symlink_staging_parent() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let plugin_root = directory.path().join("installed");
+        let source = directory.path().join("source");
+        let outside = directory.path().join("outside");
+        ensure_owned_directory(&plugin_root).unwrap();
+        ensure_owned_directory(&source).unwrap();
+        ensure_owned_directory(&outside).unwrap();
+        symlink(&outside, plugin_root.join(".source-staging")).unwrap();
+
+        assert!(acquire_local_package(&plugin_root, &source).is_err());
     }
 
     #[test]
