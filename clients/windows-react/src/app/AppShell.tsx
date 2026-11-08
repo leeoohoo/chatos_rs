@@ -33,6 +33,7 @@ import type { WorkspaceIndexPort } from "../features/workspace-index/ports/Works
 import type { QuickSearchNavigationPort } from "../features/quick-search/ports/QuickSearchPort";
 import { WorkspaceSidebar } from "../features/workspace-index/ui/WorkspaceSidebar";
 import { interfaceText } from "../shared/interfaceLocale";
+import { getSettingsFocusableElements } from "./settingsAccessibility";
 
 const LocalTerminalWorkspace = lazy(async () => {
   const [adapterModule, viewModule] = await Promise.all([
@@ -388,7 +389,68 @@ export function AppShell({
   const sessionStartedAt = useRef(Date.now());
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [remoteEditorTarget, setRemoteEditorTarget] = useState<"create" | string | null>(null);
+  const settingsSurfaceRef = useRef<HTMLElement | null>(null);
+  const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
+  const settingsOpenRef = useRef(false);
   const text = (key: Parameters<typeof interfaceText>[1]) => interfaceText(interfaceLanguage, key);
+  const settingsOpen = activeSurface !== "workspace";
+
+  useEffect(() => {
+    if (!settingsOpen) {
+      if (settingsOpenRef.current) {
+        settingsOpenRef.current = false;
+        const returnFocus = settingsReturnFocusRef.current;
+        settingsReturnFocusRef.current = null;
+        if (returnFocus?.isConnected) {
+          window.requestAnimationFrame(() => returnFocus.focus({ preventScroll: true }));
+        }
+      }
+      return undefined;
+    }
+
+    const surface = settingsSurfaceRef.current;
+    if (!surface) return undefined;
+    if (!settingsOpenRef.current) {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement && !surface.contains(activeElement)) {
+        settingsReturnFocusRef.current = activeElement;
+      }
+      settingsOpenRef.current = true;
+    }
+
+    const focusable = getSettingsFocusableElements(surface);
+    const initialFocus = focusable.find((element) => element.getAttribute("aria-current") === "page")
+      ?? focusable[0];
+    (initialFocus ?? surface).focus({ preventScroll: true });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setActiveSurface("workspace");
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const currentFocusable = getSettingsFocusableElements(surface);
+      if (currentFocusable.length === 0) {
+        event.preventDefault();
+        surface.focus({ preventScroll: true });
+        return;
+      }
+      const first = currentFocusable[0];
+      const last = currentFocusable[currentFocusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    };
+
+    surface.addEventListener("keydown", handleKeyDown);
+    return () => surface.removeEventListener("keydown", handleKeyDown);
+  }, [activeSurface, settingsOpen]);
 
   useEffect(() => {
     void start(hostLifecycle, session.user.id);
@@ -576,7 +638,7 @@ export function AppShell({
 
   return (
     <>
-      <aside className="sidebar" aria-label={text("mainNavigation")}>
+      <aside aria-hidden={settingsOpen} className="sidebar" aria-label={text("mainNavigation")}>
         <div className="brand">
           <span className="brand-mark">C</span>
           <span>ChatOS</span>
@@ -638,7 +700,14 @@ export function AppShell({
           </button>
         </div>
       </aside>
-      <section className={`content-surface ${activeSurface === "workspace" ? "content-surface--resource-workspace" : "content-surface--settings"}`}>
+      <section
+        ref={settingsSurfaceRef}
+        aria-labelledby={settingsOpen ? "settings-overlay-title" : undefined}
+        aria-modal={settingsOpen ? "true" : undefined}
+        className={`content-surface ${activeSurface === "workspace" ? "content-surface--resource-workspace" : "content-surface--settings"}`}
+        role={settingsOpen ? "dialog" : undefined}
+        tabIndex={settingsOpen ? -1 : undefined}
+      >
         <header className="workspace-header">
           <div>
             <p className="eyebrow">{
@@ -679,7 +748,7 @@ export function AppShell({
         {activeSurface !== "workspace" && (
           <aside className="settings-overlay-navigation" aria-label={text("settings")}>
             <header>
-              <div><strong>{text("settings")}</strong><small>ChatOS</small></div>
+              <div><strong id="settings-overlay-title">{text("settings")}</strong><small>ChatOS</small></div>
               <button aria-label={interfaceLanguage === "en-US" ? "Close settings" : "关闭设置"} onClick={() => setActiveSurface("workspace")} type="button">×</button>
             </header>
             <nav>
