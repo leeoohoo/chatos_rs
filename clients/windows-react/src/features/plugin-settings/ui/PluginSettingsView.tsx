@@ -66,7 +66,7 @@ export function PluginSettingsView({ ownerUserId, port, onOpenInstallationAssist
       <h2>{english ? "Plugins & Skills" : "插件与 Skills"}</h2>
       {isLoading && <div><span className="mini-spinner" />{english ? "Checking…" : "检查中…"}</div>}
     </header>
-    {(error || notice) && <div className={`plugin-settings-banner ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}><span>{error ? "!" : "✓"}</span><p>{error ?? notice}</p><button onClick={clearMessage} type="button">×</button></div>}
+    {(error || notice) && <div className={`plugin-settings-banner ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}><span>{error ? "!" : "✓"}</span><p>{error ?? notice}</p><button aria-label={english ? "Dismiss message" : "关闭提示"} onClick={clearMessage} type="button">×</button></div>}
 
     <section className="plugin-settings-finder">
       <header><span aria-hidden="true">⌕</span><h3>{english ? "Find Plugins" : "查找 Plugin"}</h3></header>

@@ -37,7 +37,7 @@ export function ClipboardHistorySurface({ port }: { port: ClipboardHistoryPort }
       <button aria-label={english ? "Clear history" : "清空历史"} disabled={state.entries.length === 0 || state.isMutating} onClick={() => void state.clear(port)} type="button">⌫</button>
       <button aria-label={english ? "Close" : "关闭"} onClick={() => void port.close()} type="button">×</button>
     </header>
-    {state.error && <div className="clipboard-surface__error" role="alert"><span>!</span><p>{state.error}</p><button onClick={state.clearError} type="button">×</button></div>}
+    {state.error && <div className="clipboard-surface__error" role="alert"><span>!</span><p>{state.error}</p><button aria-label={english ? "Dismiss error" : "关闭错误"} onClick={state.clearError} type="button">×</button></div>}
     <section className="clipboard-surface__content">
       {state.isLoading && state.entries.length === 0 ? <div className="clipboard-surface__empty"><span className="mini-spinner" /><strong>{english ? "Loading clipboard history…" : "正在读取剪贴板历史…"}</strong></div>
         : entries.length === 0 ? <div className="clipboard-surface__empty"><span>▤</span><strong>{state.entries.length ? (english ? "No Matching Clipboard Items" : "没有匹配的剪贴板内容") : (english ? "Clipboard History Is Empty" : "剪贴板历史还是空的")}</strong><p>{state.entries.length ? (english ? "Try another keyword." : "换一个关键词再试试。") : (english ? "Copy text, images, files, or links and they will appear here. Sensitive clipboard types are skipped." : "复制文字、图片、文件或链接后会显示在这里；密码等敏感剪贴板内容不会记录。")}</p></div>

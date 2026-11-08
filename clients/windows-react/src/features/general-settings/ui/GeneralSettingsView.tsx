@@ -34,7 +34,7 @@ export function GeneralSettingsView({ ownerUserId, username, displayName, role, 
         <h2>{english ? "General & Account" : "常规与账号"}</h2>
         {(state.isLoading || state.isSaving) && <div className="general-settings__progress"><span className="mini-spinner" />{state.isLoading ? (english ? "Loading…" : "正在读取…") : (english ? "Saving…" : "正在保存…")}</div>}
       </header>
-      {state.error && <div className="general-settings__error" role="alert"><span>!</span><p>{state.error}</p><button onClick={clearError} type="button">×</button></div>}
+      {state.error && <div className="general-settings__error" role="alert"><span>!</span><p>{state.error}</p><button aria-label={english ? "Dismiss error" : "关闭错误"} onClick={clearError} type="button">×</button></div>}
       <SettingsCard icon="◎" title={english ? "Language" : "语言"} subtitle={english ? "Control the client interface and AI internal context independently." : "分别控制客户端界面和 AI 内部上下文。"}>
         <PreferenceRow detail={english ? "The client shell switches immediately." : "客户端外壳会立即切换。"} title={english ? "Interface language" : "界面语言"}>
           <LanguagePicker disabled={state.isLoading} value={state.settings.interfaceLanguage} onChange={(interfaceLanguage) => updateDraft({ interfaceLanguage })} />
