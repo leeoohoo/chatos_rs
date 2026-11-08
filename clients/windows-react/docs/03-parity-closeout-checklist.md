@@ -41,6 +41,7 @@ Windows 产品版本：`3.0.9`
 - Plugin 安装器的隔离 npm 配置文件和已验证归档复制目标也改为 `create_new` + Windows 独占 `FILE_FLAG_OPEN_REPARSE_POINT` 句柄，避免 `File::create` 覆盖或跟随 staging 中的异常目标；归档路径、完整性和回滚规则保持不变。Plugin Installer 定向回归 `25 passed, 4 ignored`，全量 Rust 回归 `546 passed, 0 failed, 6 ignored`。
 - 公共 `app_data_transaction` 原子事务临时文件现在也使用 Windows 独占 `FILE_FLAG_OPEN_REPARSE_POINT` 句柄，继续保留 create-new、长度复验、刷盘、取消清理和替换/不覆盖提交语义；事务定向 3 项通过，全量 Rust 回归 `546 passed, 0 failed, 6 ignored`。
 - OpenSSH 私有配置、MFA 响应和 prompt log 写入现在也使用 Windows 独占 `FILE_FLAG_OPEN_REPARSE_POINT` 句柄；追加日志不再通过无保护的 `OpenOptions::append` 打开，既有同目录原子替换和会话清理语义保持不变。SSH 定向回归 16 项，全量 Rust 回归 `546 passed, 0 failed, 6 ignored`。
+- Connector state 与 Project Creation journal 的 `NativeConnector` / `ProjectCreationJournal` 目录创建现在也会复验普通目录并拒绝 symlink/reparse 根，避免 canonicalize 后把状态或恢复 journal 写到链接目标；Connector state 定向 4 项、Project Creation 定向 7 项，全量 Rust 回归 `547 passed, 0 failed, 6 ignored`。
 
 ## A. 本轮已关闭
 
@@ -166,7 +167,7 @@ Windows 产品版本：`3.0.9`
 ### P2：平台/发布质量
 
 - [x] Windows App 的统一容量治理已完成基础共享 permit、机器资源诊断 snapshot、快速搜索、项目 Git、远程文件、本机终端、Plugin 应用 runtime、Agent Plugin MCP、Computer Use、项目运行 runtime 和 Plugin 安装器接入；已完成剩余 process-spawn/重型 in-process 入口审计。Host v49 与 App pool 已响应同一系统压力；已经领取 durable claim 的附件/终端 tool work 继续排除在外层等待之外。
-- [ ] `3.0.9.4` 的文件 worker 隔离和临时文件生命周期仍需 Windows 继续拉齐：公共原子导出与安全的 24 小时残留回收已覆盖 Agent Artifact、记事本 Markdown、项目文件保存、Agent 对话附件、Media Studio 历史记录、Story Studio 生成媒体和远程下载目标目录的按需残留；附件 vault、Media History、Story manifest/尾帧临时媒体、固定 AppData 元数据、Connector state/审批历史、Project Creation journal、Agent Skill overrides、AppContainer workspace/profile journal 与隔离自检目录、Plugin 安装完整性事务、Agent Plugin per-run journal、Plugin source/install staging 树，以及 `.backups` 的 Host-authoritative 崩溃恢复已完成，远程下载已有独立原子提交，且提交阶段已复验父目录、源文件身份和覆盖语义；Agent 资料与对话数据库的 `NativeConnector` 根目录已拒绝 symlink/reparse，Agent 文档、Media Studio 私有素材、Story Studio JSON、用户工作区项目文件/批量编辑临时文件、Plugin journal/Git/npm staging 文件、公共 AppData 事务以及 OpenSSH 私有文件创建均已使用独占 reparse-safe 句柄，隔离 npm 配置和归档复制目标也已拒绝覆盖式创建。运行路径中的无归属 `NamedTempFile` 与匿名 `tempdir` 已清零；其余用户目录及 App-owned 直接写入点仍需按实际提交语义逐项审计，禁止用全盘后缀清理冒充统一治理。
+- [ ] `3.0.9.4` 的文件 worker 隔离和临时文件生命周期仍需 Windows 继续拉齐：公共原子导出与安全的 24 小时残留回收已覆盖 Agent Artifact、记事本 Markdown、项目文件保存、Agent 对话附件、Media Studio 历史记录、Story Studio 生成媒体和远程下载目标目录的按需残留；附件 vault、Media History、Story manifest/尾帧临时媒体、固定 AppData 元数据、Connector state/审批历史、Project Creation journal、Agent Skill overrides、AppContainer workspace/profile journal 与隔离自检目录、Plugin 安装完整性事务、Agent Plugin per-run journal、Plugin source/install staging 树，以及 `.backups` 的 Host-authoritative 崩溃恢复已完成，远程下载已有独立原子提交，且提交阶段已复验父目录、源文件身份和覆盖语义；Agent 资料与对话数据库的 `NativeConnector` 根目录、Connector state 和 Project Creation journal 根目录均已拒绝 symlink/reparse，Agent 文档、Media Studio 私有素材、Story Studio JSON、用户工作区项目文件/批量编辑临时文件、Plugin journal/Git/npm staging 文件、公共 AppData 事务以及 OpenSSH 私有文件创建均已使用独占 reparse-safe 句柄，隔离 npm 配置和归档复制目标也已拒绝覆盖式创建。运行路径中的无归属 `NamedTempFile` 与匿名 `tempdir` 已清零；其余用户目录及 App-owned 直接写入点仍需按实际提交语义逐项审计，禁止用全盘后缀清理冒充统一治理。
 - [ ] Windows 安装包代码签名、发布证书、签名校验和 SmartScreen 信誉验证。仓库可生成安装包，但本机未配置正式签名身份。
 - [ ] Windows Installer 无法由 Restart Manager 正常关闭的强制文件锁及需重启场景仍需在一次性 Windows VM 中补验；客户端正常运行造成的文件占用、事务中途故障回滚均已关闭。本机已有其他软件留下的待重启文件操作，不能为了测试篡改系统队列。历史 `0.1.0` 安装包自身允许降级，已发布二进制无法由新版本追溯修改。
 - [ ] 固定分辨率与 100%/125%/150% 缩放的原生截图对照、键盘导航、焦点顺序、屏幕阅读器标签和对比度验收。
