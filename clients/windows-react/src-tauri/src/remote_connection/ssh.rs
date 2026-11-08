@@ -1576,6 +1576,14 @@ fn set_private_directory_permissions(path: &Path) -> Result<(), String> {
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -1684,7 +1692,17 @@ fn append_prompt_log(prompt: &str) {
         })
         .take(4_096)
         .collect::<String>();
-    if let Ok(mut file) = OpenOptions::new().append(true).open(path) {
+    let mut options = OpenOptions::new();
+    options.append(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    if let Ok(mut file) = options.open(path) {
         let _ = writeln!(file, "{sanitized}");
     }
 }
