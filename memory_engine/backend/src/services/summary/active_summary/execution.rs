@@ -42,7 +42,10 @@ pub async fn run_thread_active_summary(
         ));
     }
 
-    let ctx = load_thread_summary_execution_context(db, tenant_id, source_id, thread_id).await?;
+    let mut ctx =
+        load_thread_summary_execution_context(db, tenant_id, source_id, thread_id).await?;
+    ctx.settings.cloud_resume_kind =
+        Some(crate::services::memory_cloud_agent::THREAD_SUMMARY_JOB_RESUME_KIND.to_string());
     if !ctx.should_run() {
         return Ok(RunThreadActiveSummaryResponse {
             thread_id: thread_id.to_string(),

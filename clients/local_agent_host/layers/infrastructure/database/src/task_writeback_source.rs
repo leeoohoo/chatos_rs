@@ -18,6 +18,8 @@ pub(super) struct CallbackSource {
     pub(super) turn_id: String,
     pub(super) source_user_message_id: String,
     pub(super) source_run_id: String,
+    pub(super) owner_user_id: String,
+    pub(super) source_run_input: Value,
     pub(super) prefers_english: bool,
     pub(super) cancel_reason: Option<String>,
     pub(super) replacement_task_ids: Vec<String>,
@@ -36,6 +38,7 @@ pub(super) async fn callback_source(
          t.updated_at_unix_ms AS task_updated_at_unix_ms, \
          t.cancel_reason, t.replacement_task_ids_json, t.cancelled_because_task_id, \
          turn.conversation_id, turn.turn_id, turn.user_message_id, turn.run_id AS source_run_id, \
+         conversation.owner_user_id, source_run.input_json AS source_run_input_json, \
          message.content_json AS source_message_content, \
          (SELECT COUNT(*) FROM local_tasks graph_task WHERE graph_task.graph_id = g.graph_id) \
            AS graph_task_count, \
@@ -51,6 +54,7 @@ pub(super) async fn callback_source(
          JOIN local_conversations conversation \
            ON conversation.conversation_id = turn.conversation_id \
           AND conversation.owner_user_id = g.owner_user_id \
+         JOIN local_agent_runs source_run ON source_run.run_id = turn.run_id \
          JOIN local_conversation_messages message \
            ON message.message_id = turn.user_message_id \
          WHERE t.task_id = ?",
@@ -65,6 +69,7 @@ pub(super) async fn callback_source(
         let task_input_json: String = row.try_get("input_json").db()?;
         let task_input: Value = serde_json::from_str(&task_input_json)?;
         let task_title: String = row.try_get("title").db()?;
+        let source_run_input_json: String = row.try_get("source_run_input_json").db()?;
         let task_objective = task_input
             .get("objective")
             .and_then(Value::as_str)
@@ -99,6 +104,8 @@ pub(super) async fn callback_source(
             turn_id: row.try_get("turn_id").db()?,
             source_user_message_id: row.try_get("user_message_id").db()?,
             source_run_id: row.try_get("source_run_id").db()?,
+            owner_user_id: row.try_get("owner_user_id").db()?,
+            source_run_input: serde_json::from_str(&source_run_input_json)?,
             prefers_english: callback_prefers_english(
                 &source_message_content,
                 &task_title,

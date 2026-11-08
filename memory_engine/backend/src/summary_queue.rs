@@ -12,7 +12,6 @@ use crate::state::AppState;
 
 const SUMMARY_QUEUE_TRIGGER: &str = "database_worker";
 const SUMMARY_DISPATCH_CLAIM_LEASE_SECS: i64 = 300;
-const TASK_THREAD_IDLE_FLUSH_SECS: i64 = 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SummaryRequestedEnvelope {
@@ -315,18 +314,6 @@ async fn run_reconciler(state: Arc<AppState>) {
                 "Memory Engine failed to arm summary database dispatches"
             ),
         }
-        match flush_idle_identity_threads(&state).await {
-            Ok(count) if count > 0 => info!(
-                flushed_count = count,
-                idle_seconds = TASK_THREAD_IDLE_FLUSH_SECS,
-                "Memory Engine started idle task thread summaries"
-            ),
-            Ok(_) => {}
-            Err(error) => warn!(
-                error,
-                "Memory Engine failed to start idle task thread summaries"
-            ),
-        }
         tokio::time::sleep(scan_interval).await;
     }
 }
@@ -350,43 +337,6 @@ async fn release_expired_summary_slots(state: &AppState) -> Result<usize, String
         }
     }
     Ok(recovered)
-}
-
-async fn flush_idle_identity_threads(state: &AppState) -> Result<usize, String> {
-    let policy = control_plane::get_effective_job_policy(&state.pool, "summary").await?;
-    if !policy.enabled {
-        return Ok(0);
-    }
-    let concurrency = state
-        .pressure
-        .subscribe()
-        .borrow()
-        .active_summary_concurrency
-        .max(1);
-    let idle_before =
-        (chrono::Utc::now() - chrono::Duration::seconds(TASK_THREAD_IDLE_FLUSH_SECS)).to_rfc3339();
-    let candidates = threads::list_idle_task_threads(
-        &state.pool,
-        idle_before.as_str(),
-        i64::try_from(concurrency).unwrap_or(i64::MAX),
-    )
-    .await?;
-    let mut started = 0usize;
-    for thread in candidates {
-        let response = summary::run_thread_active_summary(
-            &state.config,
-            &state.pool,
-            thread.tenant_id.as_str(),
-            thread.source_id.as_str(),
-            thread.id.as_str(),
-            Some("identity_idle_flush"),
-        )
-        .await?;
-        if response.accepted {
-            started = started.saturating_add(1);
-        }
-    }
-    Ok(started)
 }
 
 async fn recover_stale_claims(state: &AppState) -> Result<usize, String> {

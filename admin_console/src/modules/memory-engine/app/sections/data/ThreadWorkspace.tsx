@@ -348,21 +348,8 @@ function memoriesTable(props: ThreadWorkspaceProps) {
   );
 }
 
-export function ThreadWorkspace(props: ThreadWorkspaceProps) {
-  const {
-    threads,
-    threadsLoading,
-    selectedThread,
-    onSelectThread,
-    detailTab,
-    onDetailTabChange,
-  } = props;
-  const threadTotal =
-    (props.threadPage - 1) * props.threadPageSize +
-    threads.length +
-    (props.threadHasMore ? 1 : 0);
-
-  const detailItems: TabsProps['items'] = [
+function detailItems(props: ThreadWorkspaceProps): TabsProps['items'] {
+  return [
     {
       key: 'records',
       label: `记录 (${props.threadRecordTotal})`,
@@ -379,6 +366,21 @@ export function ThreadWorkspace(props: ThreadWorkspaceProps) {
       children: memoriesTable(props),
     }]),
   ];
+}
+
+export function ThreadWorkspace(props: ThreadWorkspaceProps) {
+  const {
+    threads,
+    threadsLoading,
+    selectedThread,
+    onSelectThread,
+    detailTab,
+    onDetailTabChange,
+  } = props;
+  const threadTotal =
+    (props.threadPage - 1) * props.threadPageSize +
+    threads.length +
+    (props.threadHasMore ? 1 : 0);
 
   return (
     <div className="engine-data-workspace">
@@ -433,7 +435,7 @@ export function ThreadWorkspace(props: ThreadWorkspaceProps) {
               className="engine-data-detail-tabs"
               activeKey={detailTab}
               onChange={(key) => onDetailTabChange(key as DataDetailTab)}
-              items={detailItems}
+              items={detailItems(props)}
             />
           </Card>
         ) : (
@@ -445,5 +447,36 @@ export function ThreadWorkspace(props: ThreadWorkspaceProps) {
         )}
       </div>
     </div>
+  );
+}
+
+export function ThreadDetailWorkspace(props: ThreadWorkspaceProps & {
+  title?: string;
+  extra?: string;
+  emptyText?: string;
+}) {
+  if (!props.selectedThread) {
+    return (
+      <Card className="engine-data-card engine-data-card--empty">
+        <div className="engine-data-empty">
+          <Empty description={props.emptyText ?? '选择一个会话查看详情'} />
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card
+      className="engine-data-card"
+      title={props.title ?? threadDisplayName(props.selectedThread)}
+      extra={<Text type="secondary" copyable>{props.extra ?? props.selectedThread.id}</Text>}
+    >
+      <Tabs
+        className="engine-data-detail-tabs"
+        activeKey={props.detailTab}
+        onChange={(key) => props.onDetailTabChange(key as DataDetailTab)}
+        items={detailItems(props)}
+      />
+    </Card>
   );
 }

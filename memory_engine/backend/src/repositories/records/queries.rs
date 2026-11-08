@@ -42,25 +42,52 @@ pub async fn list_records_page(
     db: &Db,
     values: ListRecordsQuery<'_>,
 ) -> Result<ThreadRecordsPageResponse, String> {
-    let total = count_records(
-        db,
-        values.thread_id,
-        values.tenant_id,
-        values.source_id,
-        values.role,
-        values.record_type,
-        values.summary_status,
-    )
-    .await?;
-    let mut query = build_record_query(
-        "SELECT data FROM engine_records",
-        values.thread_id,
-        values.tenant_id,
-        values.source_id,
-        values.role,
-        values.record_type,
-        values.summary_status,
-    );
+    let base_query = |select| {
+        let mut query = build_record_query(
+            select,
+            values.thread_id,
+            values.tenant_id,
+            values.source_id,
+            values.role,
+            values.record_type,
+            values.summary_status,
+        );
+        if let Some(conversation_id) = values
+            .conversation_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            query
+                .push(" AND BTRIM(COALESCE(data #>> '{metadata,conversation_id}',''))=")
+                .push_bind(conversation_id);
+        }
+        if values.conversation_id_missing {
+            query.push(" AND BTRIM(COALESCE(data->'metadata'->>'conversation_id',''))=''");
+        }
+        if let Some(project_id) = values
+            .project_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let raw_project_id = project_id.strip_prefix("project:").unwrap_or(project_id);
+            query
+                .push(" AND (BTRIM(COALESCE(data->'metadata'->>'memory_project_id',''))=")
+                .push_bind(project_id)
+                .push(" OR BTRIM(COALESCE(data->'metadata'->>'memory_project_id',''))=")
+                .push_bind(raw_project_id)
+                .push(")");
+        }
+        if values.project_id_missing {
+            query.push(" AND BTRIM(COALESCE(data->'metadata'->>'memory_project_id',''))=''");
+        }
+        query
+    };
+    let total = base_query("SELECT count(*) FROM engine_records")
+        .build_query_scalar::<i64>()
+        .fetch_one(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut query = base_query("SELECT data FROM engine_records");
     if let Some(cursor) = values.cursor()? {
         query
             .push(" AND (created_at,id)")
@@ -265,6 +292,7 @@ pub async fn list_compact_turn_slices(
     thread_id: &str,
     tenant_id: Option<&str>,
     source_id: Option<&str>,
+    conversation_id: Option<&str>,
     record_type: Option<&str>,
     limit: i64,
     before_turn_id: Option<&str>,
@@ -274,6 +302,7 @@ pub async fn list_compact_turn_slices(
         thread_id,
         tenant_id,
         source_id,
+        conversation_id,
         record_type,
         limit,
         before_turn_id,

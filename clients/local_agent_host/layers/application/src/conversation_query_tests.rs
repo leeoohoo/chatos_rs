@@ -177,7 +177,7 @@ async fn pages_owner_conversations_and_rejects_cross_account_access() {
             HostCommand::GetConversationHistory(GetConversationHistoryCommand {
                 owner_user_id: "user-2".to_string(),
                 conversation_id: "conversation-a".to_string(),
-                before_ordinal: None,
+                before_cursor: None,
                 limit: 10,
             }),
         ))

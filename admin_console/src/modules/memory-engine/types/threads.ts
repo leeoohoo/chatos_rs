@@ -63,6 +63,10 @@ export interface ThreadQuery {
 export interface ThreadRecordsQuery {
   tenant_id?: string;
   source_id?: string;
+  project_id?: string;
+  project_id_missing?: boolean;
+  conversation_id?: string;
+  conversation_id_missing?: boolean;
   role?: string;
   record_type?: string;
   summary_status?: string;

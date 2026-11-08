@@ -211,20 +211,30 @@ async fn memory_record_writer_creates_each_thread_before_syncing_records() {
         client,
         MemoryRecordScope::per_record_tenant("tenant_id"),
     );
-    for (message_id, content) in [("message-1", "hello"), ("message-2", "continue")] {
-        writer
-            .save_record(
-                SaveRecordInput::user_message("conversation-1", content)
-                    .with_message_id(message_id)
-                    .with_metadata(json!({
-                        "tenant_id": "user-1",
-                        "agent_id": "agent-1",
-                        "thread_kind": "agent_conversation"
-                    })),
-            )
-            .await
-            .expect("record sync");
-    }
+    writer
+        .save_record(
+            SaveRecordInput::user_message("conversation-1", "hello")
+                .with_message_id("message-1")
+                .with_message_mode("agent_conversation")
+                .with_metadata(json!({
+                    "tenant_id": "user-1",
+                    "agent_id": "agent-1"
+                })),
+        )
+        .await
+        .expect("top-level message mode establishes the thread kind");
+    writer
+        .save_record(
+            SaveRecordInput::user_message("conversation-1", "continue")
+                .with_message_id("message-2")
+                .with_metadata(json!({
+                    "tenant_id": "user-1",
+                    "agent_id": "agent-1",
+                    "thread_kind": "agent_conversation"
+                })),
+        )
+        .await
+        .expect("explicit thread kind matches the established message mode");
 
     assert_eq!(state.thread_upserts.load(Ordering::SeqCst), 1);
     assert_eq!(state.record_syncs.load(Ordering::SeqCst), 2);

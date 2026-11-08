@@ -286,7 +286,10 @@ impl LocalHookCoordinator {
                 .execute_event_at(event, Some(workspace_root.clone()))
                 .await?;
             if outcome.failed {
-                return Err(format!("trusted {} Hook execution failed", outcome.event_type));
+                return Err(format!(
+                    "trusted {} Hook execution failed",
+                    outcome.event_type
+                ));
             }
             if outcome.blocked && outcome.event_type == "UserPromptSubmit" {
                 return Err(outcome.block_reason.unwrap_or_else(|| {
@@ -337,17 +340,16 @@ impl LocalHookCoordinator {
         let LocalAgentStepOutcome::Succeed { output } = outcome else {
             return Ok(outcome);
         };
-        let event_type = if self.is_delegated_task(&claim.run).await?
-            || is_team_executor_run(&claim.run)
-        {
-            "SubagentStop"
-        } else if claim.run.owner_entity_type == "conversation_turn"
-            && claim.run.profile_key == MAIN_CHAT_PROFILE_KEY
-        {
-            "Stop"
-        } else {
-            return Ok(LocalAgentStepOutcome::Succeed { output });
-        };
+        let event_type =
+            if self.is_delegated_task(&claim.run).await? || is_team_executor_run(&claim.run) {
+                "SubagentStop"
+            } else if claim.run.owner_entity_type == "conversation_turn"
+                && claim.run.profile_key == MAIN_CHAT_PROFILE_KEY
+            {
+                "Stop"
+            } else {
+                return Ok(LocalAgentStepOutcome::Succeed { output });
+            };
         let previous = stop_block_state(&claim.run.checkpoint);
         let session_id = claim
             .run
@@ -974,7 +976,8 @@ impl LocalHookCoordinator {
     }
 
     async fn execute_event(&self, event: HookEvent) -> Result<PersistedEventOutcome, String> {
-        self.execute_event_at(event, self.workspace_root.clone()).await
+        self.execute_event_at(event, self.workspace_root.clone())
+            .await
     }
 
     async fn execute_event_at(
@@ -2013,7 +2016,7 @@ mod tests {
     };
     use chatos_local_agent_protocol::{
         CancelRunCommand, ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand,
-        CreateConversationCommand, CreateRunCommand, GetConversationHistoryCommand, HostCommand,
+        CreateConversationCommand, CreateRunCommand, GetConversationCommand, HostCommand,
         HostRequestEnvelope, HostResult, LocalAgentRunStatus, LocalAgentStepOutcome,
         LocalAgentToolApprovalStatus, LocalAgentToolExecutionRoute, LocalAgentToolStatus,
         LocalPluginHookBundleSpec, LOCAL_AGENT_PROTOCOL_VERSION,
@@ -4347,16 +4350,14 @@ mod tests {
         let history = runtime
             .try_handle(envelope(
                 "history-after-block",
-                HostCommand::GetConversationHistory(GetConversationHistoryCommand {
+                HostCommand::GetConversation(GetConversationCommand {
                     owner_user_id: "user-1".to_string(),
                     conversation_id: "conversation-1".to_string(),
-                    before_ordinal: None,
-                    limit: 20,
                 }),
             ))
             .await
             .expect("history");
-        let HostResult::ConversationHistory { page } = history else {
+        let HostResult::Conversation { conversation: page } = history else {
             panic!("unexpected history result")
         };
         assert!(page.turns.is_empty());

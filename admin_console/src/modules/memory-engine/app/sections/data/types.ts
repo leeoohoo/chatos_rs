@@ -5,6 +5,7 @@ import type { FormInstance } from 'antd';
 
 import type {
   AgentDirectoryQuery,
+  EngineAgentConversation,
   EngineAgentDirectoryItem,
   EngineAgentProject,
   EngineRecord,
@@ -80,6 +81,9 @@ export type AgentWorkspaceProps = ThreadWorkspaceProps & {
   selectedAgent: EngineAgentDirectoryItem | null;
   onSelectAgent: (agent: EngineAgentDirectoryItem) => void;
   projects: EngineAgentProject[];
+  conversations: EngineAgentConversation[];
+  selectedConversation: EngineAgentConversation | null;
+  onSelectConversation: (conversation: EngineAgentConversation) => void;
   selectedProject: EngineAgentProject | null;
   onSelectProject: (project: EngineAgentProject) => void;
   agentMemories: EngineSubjectMemory[];

@@ -84,6 +84,9 @@ pub(crate) async fn finish_subject_memory_build(
 ) -> Result<SummaryBuildResult, String> {
     match result {
         Ok(build) => Ok(build),
+        Err(error) if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED => {
+            Err(error)
+        }
         Err(error) => {
             record_subject_memory_selection_failure(
                 db,

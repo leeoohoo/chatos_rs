@@ -137,6 +137,18 @@ impl MemoryEngineClient {
                     "source_id",
                     optional_direct_source_id(source_id),
                 );
+                append_optional_query(&mut query, "project_id", req.project_id.as_deref());
+                if req.project_id_missing {
+                    append_optional_query(&mut query, "project_id_missing", Some("true"));
+                }
+                append_optional_query(
+                    &mut query,
+                    "conversation_id",
+                    req.conversation_id.as_deref(),
+                );
+                if req.conversation_id_missing {
+                    append_optional_query(&mut query, "conversation_id_missing", Some("true"));
+                }
                 append_optional_query(&mut query, "role", req.role.as_deref());
                 append_optional_query(&mut query, "record_type", req.record_type.as_deref());
                 append_optional_query(&mut query, "summary_status", req.summary_status.as_deref());
@@ -193,6 +205,11 @@ impl MemoryEngineClient {
                     &mut query,
                     "source_id",
                     optional_direct_source_id(source_id),
+                );
+                append_optional_query(
+                    &mut query,
+                    "conversation_id",
+                    req.conversation_id.as_deref(),
                 );
                 append_optional_query(&mut query, "record_type", req.record_type.as_deref());
                 append_optional_i64_query(&mut query, "limit", req.limit);

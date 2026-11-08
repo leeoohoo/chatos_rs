@@ -421,7 +421,7 @@ impl GetConversationAttachmentCommand {
 pub struct GetConversationHistoryCommand {
     pub owner_user_id: String,
     pub conversation_id: String,
-    pub before_ordinal: Option<u64>,
+    pub before_cursor: Option<String>,
     pub limit: u32,
 }
 
@@ -429,8 +429,13 @@ impl GetConversationHistoryCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("conversation_id", &self.conversation_id)?;
-        if self.before_ordinal == Some(0) {
-            return Err("before_ordinal must be greater than zero".to_string());
+        if let Some(cursor) = self.before_cursor.as_deref() {
+            if cursor.trim().is_empty()
+                || cursor.len() > 4_096
+                || cursor.chars().any(char::is_control)
+            {
+                return Err("before_cursor is invalid".to_string());
+            }
         }
         if self.limit == 0 || self.limit > LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE {
             return Err(format!(
@@ -610,7 +615,7 @@ pub struct LocalConversationHistoryPage {
     pub turns: Vec<LocalConversationTurnRecord>,
     pub messages: Vec<LocalConversationMessageRecord>,
     pub attachments: Vec<LocalConversationAttachmentRecord>,
-    pub next_before_ordinal: Option<u64>,
+    pub next_before_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -736,7 +741,7 @@ mod tests {
         assert!(GetConversationHistoryCommand {
             owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
-            before_ordinal: None,
+            before_cursor: None,
             limit: LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
         }
         .validate()
@@ -744,7 +749,7 @@ mod tests {
         assert!(GetConversationHistoryCommand {
             owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
-            before_ordinal: Some(0),
+            before_cursor: Some("".to_string()),
             limit: 10,
         }
         .validate()

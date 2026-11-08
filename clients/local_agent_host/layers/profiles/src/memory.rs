@@ -51,6 +51,11 @@ pub(super) fn memory_plan(
     };
     let metadata = json!({
         "tenant_id": claim.run.owner_user_id,
+        "conversation_id": optional_input_string(&claim.run.input, "conversation_id"),
+        "conversation_title": optional_input_string(&claim.run.input, "conversation_title"),
+        "conversation_resource": claim.run.input.get("conversation_resource").cloned(),
+        "ui_message_metadata": claim.run.input.get("ui_message_metadata").cloned(),
+        "ui_attachments": claim.run.input.get("attachments").cloned(),
         "profile_key": claim.run.profile_key,
         "agent_id": agent_id,
         "agent_name": agent_name,
@@ -468,6 +473,18 @@ mod tests {
                 "turn_id": "turn-1",
                 "message_id": "message-1",
                 "message": "hello",
+                "conversation_title": "红果会话",
+                "conversation_resource": {"kind": "project", "resource_id": "project-1"},
+                "ui_message_metadata": {"composer": "main_chat"},
+                "attachments": [{
+                    "attachment_id": "attachment-1",
+                    "display_name": "brief.pdf",
+                    "media_type": "application/pdf",
+                    "byte_size": 128,
+                    "sha256": "a".repeat(64),
+                    "authorized_local_ref": "local-attachment:brief.pdf",
+                    "metadata": {}
+                }],
                 "project_id": "project-1",
                 "project_name": "红果逆向"
             }),
@@ -489,7 +506,17 @@ mod tests {
             Some("run-1:assistant:1")
         );
         assert_eq!(user.metadata.expect("metadata")["tenant_id"], "user-1");
+        assert_eq!(
+            plan.record_options.assistant_metadata.as_ref().unwrap()["conversation_title"],
+            "红果会话"
+        );
+        assert_eq!(
+            plan.record_options.assistant_metadata.as_ref().unwrap()["ui_attachments"][0]
+                ["attachment_id"],
+            "attachment-1"
+        );
         let metadata = plan.record_options.assistant_metadata.as_ref().unwrap();
+        assert_eq!(metadata["conversation_id"], "conversation-1");
         assert_eq!(metadata["project_id"], "project-1");
         assert_eq!(metadata["project_name"], "红果逆向");
         assert_eq!(metadata["memory_project_id"], "project-1");

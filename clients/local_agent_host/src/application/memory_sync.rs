@@ -226,6 +226,20 @@ impl LocalMemorySyncWorker {
         &self.tenant_id
     }
 
+    pub(crate) fn outbox_revision(&self) -> u64 {
+        self.store.memory_outbox_revision()
+    }
+
+    pub(crate) async fn wait_for_outbox_revision(
+        &self,
+        observed_revision: u64,
+    ) -> Result<u64, LocalMemorySyncError> {
+        Ok(self
+            .store
+            .wait_for_memory_outbox_revision(observed_revision)
+            .await?)
+    }
+
     pub async fn run_once(&self) -> Result<MemorySyncTick, LocalMemorySyncError> {
         let now = (self.clock)().map_err(LocalMemorySyncError::Clock)?;
         let lease_ms = i64::try_from(self.lease_duration.as_millis()).unwrap_or(i64::MAX);

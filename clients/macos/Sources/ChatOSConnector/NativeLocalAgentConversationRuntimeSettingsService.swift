@@ -211,11 +211,28 @@ public actor NativeLocalAgentConversationRuntimeSettingsService:
     private func reconcileModelReasoning(
         _ stored: LocalAgentConversationRuntimeSettings
     ) async throws -> LocalAgentConversationRuntimeSettings {
-        let snapshot = try snapshot(for: stored)
-        guard let capability = ModelReasoningCapabilities.forModel(snapshot.model) else { return stored }
+        let context = try requireContext()
+        guard let snapshot = context.modelSnapshots.first(where: {
+            $0.modelConfigRef == stored.selectedModelConfigRef
+        }) else {
+            throw NativeLocalAgentConversationRuntimeSettingsError.staleModelRevision
+        }
+        let revisionChanged = snapshot.modelConfigRevision != stored.selectedModelConfigRevision
+        guard let capability = ModelReasoningCapabilities.forModel(snapshot.model) else {
+            guard revisionChanged else { return stored }
+            return try await put(
+                current: stored,
+                snapshot: snapshot,
+                selectedThinkingLevel: stored.selectedThinkingLevel,
+                remoteConnectionID: stored.remoteConnectionID,
+                reasoningEnabled: stored.reasoningEnabled
+            )
+        }
         let level = capability.normalized(stored.reasoningEnabled ? stored.selectedThinkingLevel : "none")
             ?? capability.defaultLevel
-        guard stored.selectedThinkingLevel != level || !stored.reasoningEnabled else { return stored }
+        guard revisionChanged || stored.selectedThinkingLevel != level || !stored.reasoningEnabled else {
+            return stored
+        }
         return try await put(current: stored, snapshot: snapshot, selectedThinkingLevel: level,
                              remoteConnectionID: stored.remoteConnectionID, reasoningEnabled: true)
     }

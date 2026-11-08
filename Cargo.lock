@@ -558,6 +558,7 @@ dependencies = [
  "chatos_client_storage",
  "chatos_local_agent_ports",
  "chatos_local_agent_protocol",
+ "chrono",
  "serde_json",
  "sha2 0.10.9",
  "thiserror",

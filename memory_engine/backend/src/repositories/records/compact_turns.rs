@@ -360,6 +360,7 @@ pub async fn list_compact_turn_slices(
     thread_id: &str,
     tenant_id: Option<&str>,
     source_id: Option<&str>,
+    conversation_id: Option<&str>,
     record_type: Option<&str>,
     limit: i64,
     before_turn_id: Option<&str>,
@@ -374,17 +375,38 @@ pub async fn list_compact_turn_slices(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("message");
+    let conversation_id = conversation_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
 
     let page_limit = limit.clamp(1, 200);
     let anchor = if let Some(anchor_turn_id) = before_turn_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        let anchor = sqlx::query_as::<_, (chrono::DateTime<chrono::Utc>, String)>(
-            "SELECT user_created_at,user_record_id FROM engine_compact_turns \
-             WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND record_type=$4 AND turn_id=$5",
-        ).bind(tenant_id).bind(source_id).bind(thread_id).bind(record_type).bind(anchor_turn_id)
-          .fetch_optional(db).await.map_err(|error|error.to_string())?;
+        let mut query = QueryBuilder::<Postgres>::new(
+            "SELECT user_created_at,user_record_id FROM engine_compact_turns WHERE tenant_id=",
+        );
+        query
+            .push_bind(tenant_id)
+            .push(" AND source_id=")
+            .push_bind(source_id)
+            .push(" AND thread_id=")
+            .push_bind(thread_id)
+            .push(" AND record_type=")
+            .push_bind(record_type)
+            .push(" AND turn_id=")
+            .push_bind(anchor_turn_id);
+        if let Some(conversation_id) = conversation_id {
+            query
+                .push(" AND data #>> '{user_record,metadata,conversation_id}'=")
+                .push_bind(conversation_id);
+        }
+        let anchor = query
+            .build_query_as::<(chrono::DateTime<chrono::Utc>, String)>()
+            .fetch_optional(db)
+            .await
+            .map_err(|error| error.to_string())?;
         let Some(anchor) = anchor else {
             return Ok((Vec::new(), false, None));
         };
@@ -403,6 +425,11 @@ pub async fn list_compact_turn_slices(
         .push_bind(thread_id)
         .push(" AND record_type=")
         .push_bind(record_type);
+    if let Some(conversation_id) = conversation_id {
+        query
+            .push(" AND data #>> '{user_record,metadata,conversation_id}'=")
+            .push_bind(conversation_id);
+    }
     if let Some((created_at, record_id)) = anchor {
         query
             .push(" AND (user_created_at<")

@@ -69,6 +69,41 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         XCTAssertEqual(refreshed, mapped)
     }
 
+    func testHistoryOmitsIncompleteTurnInsteadOfRenderingBlankUserMessage() async throws {
+        let host = ConversationCommandHostStub()
+        let service = NativeLocalAgentConversationService(
+            host: host,
+            attachmentRootURL: URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent(UUID().uuidString),
+            runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService(host: host)
+        )
+        let data = try JSONSerialization.data(withJSONObject: [
+            "conversation": [
+                "conversation_id": "conversation-1", "owner_user_id": "user-1",
+                "title": "Test", "version": 1,
+                "created_at_unix_ms": 1, "updated_at_unix_ms": 2,
+            ],
+            "turns": [[
+                "turn_id": "turn-1", "conversation_id": "conversation-1",
+                "user_message_id": "missing-user", "run_id": "run-1",
+                "status": "succeeded", "created_at_unix_ms": 1,
+                "updated_at_unix_ms": 2,
+            ]],
+            "messages": [[
+                "message_id": "assistant-1", "conversation_id": "conversation-1",
+                "turn_id": "turn-1", "ordinal": 2, "role": "assistant",
+                "content": "orphaned reply", "metadata": [:],
+                "created_at_unix_ms": 2,
+            ]],
+            "attachments": [],
+        ])
+        let page = try JSONDecoder().decode(LocalAgentConversationHistoryPage.self, from: data)
+
+        let mapped = await service.mapTurns(page)
+
+        XCTAssertTrue(mapped.isEmpty)
+    }
+
     func testCreateConversationPersistsTypedProjectBinding() async throws {
         let host = ConversationCommandHostStub()
         let client = NativeLocalAgentConversationClient(host: host)
@@ -210,6 +245,36 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
             [event],
             conversationID: "conversation-other"
         ).isEmpty)
+    }
+
+    func testMemoryTranscriptSyncEventForcesExactConversationReconcile() throws {
+        let event = LocalAgentEventRecord(
+            cursor: 9,
+            eventID: "event-memory-synced",
+            runID: "run-1",
+            eventType: "memory_transcript_record_synced",
+            payload: .object([
+                "conversation_id": .string("conversation-1"),
+                "memory_record_id": .string("assistant-1"),
+            ]),
+            createdAtUnixMs: 2_000
+        )
+
+        let signal = try XCTUnwrap(
+            NativeLocalAgentConversationService.memoryTranscriptSyncSignal(
+                [event],
+                conversationID: "conversation-1"
+            )
+        )
+        XCTAssertEqual(signal.eventID, "event-memory-synced")
+        XCTAssertEqual(signal.eventSequence, 9)
+        XCTAssertEqual(signal.sessionID, "conversation-1")
+        XCTAssertEqual(signal.kind, .reconcile)
+        XCTAssertEqual(signal.eventName, "memory_transcript_record_synced")
+        XCTAssertNil(NativeLocalAgentConversationService.memoryTranscriptSyncSignal(
+            [event],
+            conversationID: "conversation-other"
+        ))
     }
 
     func testTaskGraphTerminalDisplaysTheTaskExecutionFinalContent() {

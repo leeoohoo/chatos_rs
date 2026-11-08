@@ -129,6 +129,22 @@ pub async fn list_thread_summaries(
         values.status,
         values.level,
     );
+    if let Some(project_id) = values
+        .project_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let project_subject_id = if project_id.starts_with("project:") {
+            project_id.to_string()
+        } else {
+            format!("project:{project_id}")
+        };
+        q.push(" AND BTRIM(COALESCE(data #>> '{metadata,project_subject_id}',''))=")
+            .push_bind(project_subject_id);
+    }
+    if values.project_id_missing {
+        q.push(" AND BTRIM(COALESCE(data #>> '{metadata,project_subject_id}',''))=''");
+    }
     if let Some(cursor) = values.cursor()? {
         q.push(" AND (-level,created_at,id)>(-")
             .push_bind(cursor.level)

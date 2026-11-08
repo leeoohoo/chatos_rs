@@ -268,18 +268,13 @@ public actor NativeLocalAgentConversationService:
 
     public func fetchHistory(_ query: ConversationHistoryQuery) async throws -> HistoryPage {
         let context = try requireContext()
-        let before = try query.before.map { cursor in
-            guard let value = UInt64(cursor), value > 0 else {
-                throw NativeLocalAgentConversationServiceError.invalidCursor
-            }
-            return value
-        }
+        let before = query.before
         let page: LocalAgentConversationHistoryPage
         do {
             page = try await client.history(
                 ownerUserID: context.ownerUserID,
                 conversationID: query.sessionID,
-                beforeOrdinal: before,
+                beforeCursor: before,
                 limit: UInt32(max(1, min(100, query.limit)))
             )
         } catch let error as NativeLocalAgentHostError {
@@ -292,7 +287,7 @@ public actor NativeLocalAgentConversationService:
                 page = try await client.history(
                     ownerUserID: context.ownerUserID,
                     conversationID: query.sessionID,
-                    beforeOrdinal: before,
+                    beforeCursor: before,
                     limit: UInt32(max(1, min(100, query.limit)))
                 )
             } else {
@@ -301,8 +296,8 @@ public actor NativeLocalAgentConversationService:
         }
         return HistoryPage(
             turns: mapTurns(page),
-            olderCursor: page.nextBeforeOrdinal.map(String.init),
-            hasOlder: page.nextBeforeOrdinal != nil,
+            olderCursor: page.nextBeforeCursor,
+            hasOlder: page.nextBeforeCursor != nil,
             snapshotRevision: Int64(clamping: page.conversation.version),
             requestGeneration: query.requestGeneration
         )
@@ -370,18 +365,29 @@ public actor NativeLocalAgentConversationService:
                             }
                         }
 
+                        var memoryTranscriptSignal: ConversationRealtimeSignal? = nil
+                        if case let .events(events) = update.kind {
+                            memoryTranscriptSignal = Self.memoryTranscriptSyncSignal(
+                                events,
+                                conversationID: sessionID
+                            )
+                        }
+
                         let detail = try await client.context(
                             ownerUserID: context.ownerUserID,
                             conversationID: sessionID
                         )
                         let version = detail.conversation.version
                         observedRunIDs = Set(detail.turns.map(\.runID))
-                        guard observedVersion != version else { continue }
-                        observedVersion = version
-                        continuation.yield(Self.reconcileSignal(
-                            detail: detail,
-                            sessionID: sessionID
-                        ))
+                        if observedVersion != version {
+                            observedVersion = version
+                            continuation.yield(Self.reconcileSignal(
+                                detail: detail,
+                                sessionID: sessionID
+                            ))
+                        } else if let memoryTranscriptSignal {
+                            continuation.yield(memoryTranscriptSignal)
+                        }
                     } catch let error as NativeLocalAgentHostError {
                         guard Self.isNotFound(error) else {
                             continuation.finish(throwing: error)
@@ -502,6 +508,29 @@ public actor NativeLocalAgentConversationService:
         }
     }
 
+    static func memoryTranscriptSyncSignal(
+        _ events: [LocalAgentEventRecord],
+        conversationID: String
+    ) -> ConversationRealtimeSignal? {
+        guard let event = events.last(where: { event in
+            guard event.eventType == "memory_transcript_record_synced",
+                  case let .object(payload)? = event.payload,
+                  case let .string(eventConversationID)? = payload["conversation_id"] else {
+                return false
+            }
+            return eventConversationID == conversationID
+        }) else { return nil }
+        return ConversationRealtimeSignal(
+            eventID: event.eventID,
+            eventSequence: event.cursor,
+            sessionID: conversationID,
+            turnID: nil,
+            kind: .reconcile,
+            eventName: event.eventType,
+            timestamp: timestamp(unixMilliseconds: event.createdAtUnixMs)
+        )
+    }
+
     private static func timestamp(unixMilliseconds: Int64) -> String {
         ISO8601DateFormatter().string(
             from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000)
@@ -511,9 +540,11 @@ public actor NativeLocalAgentConversationService:
     func mapTurns(_ page: LocalAgentConversationHistoryPage) -> [ConversationTurn] {
         let messagesByTurn = Dictionary(grouping: page.messages, by: \.turnID)
         let attachmentsByMessage = Dictionary(grouping: page.attachments, by: \.messageID)
-        return page.turns.map { turn in
+        return page.turns.compactMap { turn in
             let messages = (messagesByTurn[turn.turnID] ?? []).sorted { $0.ordinal < $1.ordinal }
-            let user = messages.first(where: { $0.role == "user" })
+            guard let user = messages.first(where: { $0.role == "user" }) else {
+                return nil
+            }
             let additionalUsers = messages.filter { $0.role == "user" }.dropFirst().map { message in
                 mapMessage(
                     message,
@@ -557,7 +588,7 @@ public actor NativeLocalAgentConversationService:
             return ConversationTurn(
                 id: turn.turnID,
                 sessionID: turn.conversationID,
-                sequence: Int64(clamping: user?.ordinal ?? 0),
+                sequence: Int64(clamping: user.ordinal),
                 revision: Int64(clamping: page.conversation.version),
                 userMessage: userMessage,
                 additionalUserMessages: additionalUsers,

@@ -6,12 +6,13 @@ import type { TableColumnsType, TabsProps } from 'antd';
 import { useEffect, useState } from 'react';
 
 import type {
+  EngineAgentConversation,
   EngineAgentDirectoryItem,
   EngineAgentProject,
   EngineSubjectMemory,
 } from '../../../types';
 import { formatStructuredText, statusColor, toLocal } from '../../utils';
-import { ThreadWorkspace } from './ThreadWorkspace';
+import { ThreadDetailWorkspace } from './ThreadWorkspace';
 import type { AgentWorkspaceProps, UserLabelMap } from './types';
 
 const { Paragraph, Text, Title } = Typography;
@@ -122,7 +123,7 @@ function agentColumns(
       ),
     },
     {
-      title: '记忆 / 项目 / 会话',
+      title: '记忆 / 项目 / 原始线程',
       key: 'counts',
       width: 160,
       render: (_value, agent) => (
@@ -164,8 +165,95 @@ function projectColumns(): TableColumnsType<EngineAgentProject> {
         </div>
       ),
     },
-    { title: '会话', dataIndex: 'thread_count', key: 'thread_count', width: 90 },
+    { title: '原始线程', dataIndex: 'thread_count', key: 'thread_count', width: 100 },
     { title: '总结', dataIndex: 'memory_count', key: 'memory_count', width: 90 },
+    {
+      title: '更新',
+      dataIndex: 'updated_at',
+      key: 'updated_at',
+      width: 180,
+      render: toLocal,
+    },
+  ];
+}
+
+function conversationProjectName(conversation: EngineAgentConversation): string {
+  if (conversation.thread_kind === 'agent_conversation') return '沟通层';
+  if (!conversation.project_subject_id) return 'Main Chat（无项目）';
+  return displayName(
+    conversation.project_subject_id.replace(/^project:/, ''),
+    conversation.project_display_name,
+  );
+}
+
+function conversationKindLabel(kind: string): string {
+  switch (kind) {
+    case 'agent_task':
+      return 'Task';
+    case 'todo_execution':
+      return 'Todo';
+    case 'main_chat':
+      return 'Main Chat';
+    case 'agent_conversation':
+      return '沟通层';
+    case 'approval_agent':
+      return '审批会话';
+    case 'agent_team_run':
+      return 'Agent 团队任务';
+    default:
+      return kind;
+  }
+}
+
+function conversationIdentity(conversation: EngineAgentConversation): string {
+  if (conversation.thread_kind === 'agent_conversation') return conversation.thread_id;
+  const conversationId = conversation.conversation_id?.trim();
+  if (conversationId) return conversationId;
+  if (conversation.thread_kind === 'main_chat' || conversation.thread_kind === 'agent_conversation') {
+    return '历史记录（无会话 ID）';
+  }
+  return conversation.thread_id;
+}
+
+function conversationColumns(): TableColumnsType<EngineAgentConversation> {
+  return [
+    {
+      title: '范围 / Thread',
+      key: 'conversation',
+      render: (_value, conversation) => (
+        <div className="engine-thread-cell">
+          <Text strong>{conversationProjectName(conversation)}</Text>
+          <Text type="secondary" copyable>
+            {conversationIdentity(conversation)}
+          </Text>
+        </div>
+      ),
+    },
+    {
+      title: '类型',
+      dataIndex: 'thread_kind',
+      key: 'thread_kind',
+      width: 110,
+      render: (value: string) => <Tag>{conversationKindLabel(value)}</Tag>,
+    },
+    {
+      title: '记录',
+      dataIndex: 'record_count',
+      key: 'record_count',
+      width: 80,
+      align: 'right',
+    },
+    {
+      title: '状态',
+      key: 'status',
+      width: 120,
+      render: (_value, conversation) => (
+        <Space direction="vertical" size={2}>
+          <Tag color={statusColor(conversation.status)}>{conversation.status}</Tag>
+          <Tag>{conversation.summary_status}</Tag>
+        </Space>
+      ),
+    },
     {
       title: '更新',
       dataIndex: 'updated_at',
@@ -235,10 +323,46 @@ export function AgentWorkspace(props: AgentWorkspaceProps) {
         },
         {
           key: 'threads',
-          label: `会话 (${agent.thread_count})`,
+          label: `线程 (${props.conversations.length})`,
           children: (
             <div className="engine-agent-thread-pane">
-              <ThreadWorkspace {...props} showMemories={false} />
+              <div className="engine-agent-conversation-workspace">
+                <Card className="engine-data-card" title="沟通层与执行层">
+                  <Table<EngineAgentConversation>
+                    className="engine-fill-table"
+                    rowKey={(conversation) => [
+                      conversation.thread_id,
+                      conversation.project_subject_id ?? '',
+                      conversation.conversation_id ?? '',
+                    ].join('::')}
+                    dataSource={props.conversations}
+                    loading={props.agentDetailLoading}
+                    columns={conversationColumns()}
+                    pagination={{ pageSize: 20, showSizeChanger: true }}
+                    scroll={{ x: 820, y: 'calc(100vh - 470px)' }}
+                    rowClassName={(conversation) =>
+                      conversation.thread_id === props.selectedConversation?.thread_id &&
+                      conversation.project_subject_id === props.selectedConversation?.project_subject_id &&
+                      conversation.conversation_id === props.selectedConversation?.conversation_id
+                        ? 'engine-thread-row engine-thread-row--selected'
+                        : 'engine-thread-row'
+                    }
+                    onRow={(conversation) => ({
+                      onClick: () => props.onSelectConversation(conversation),
+                    })}
+                    locale={{ emptyText: '该 Agent 尚无线程记录' }}
+                  />
+                </Card>
+                <ThreadDetailWorkspace
+                  {...props}
+                  showMemories={false}
+                  title={props.selectedConversation
+                    ? `${conversationProjectName(props.selectedConversation)} · ${conversationKindLabel(props.selectedConversation.thread_kind)}`
+                    : undefined}
+                  extra={props.selectedConversation?.conversation_id ?? props.selectedConversation?.thread_id}
+                  emptyText="选择一个 Thread 查看记录和总结"
+                />
+              </div>
             </div>
           ),
         },
@@ -275,7 +399,7 @@ export function AgentWorkspace(props: AgentWorkspaceProps) {
           <div className="engine-agent-statistics">
             <Statistic title="长期记忆" value={agent.memory_count} />
             <Statistic title="参与项目" value={agent.project_count} />
-            <Statistic title="会话记录" value={agent.thread_count} />
+            <Statistic title="原始线程" value={props.conversations.length} />
             <Statistic title="最近活动" value={toLocal(agent.updated_at)} />
           </div>
           <Tabs

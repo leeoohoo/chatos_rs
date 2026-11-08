@@ -236,6 +236,32 @@ mod tests {
     }
 
     #[test]
+    fn terminal_task_summary_waits_for_subject_memory_policy_threshold() {
+        let mut terminal = pending_source_summary(1);
+        terminal.metadata = Some(serde_json::json!({
+            "terminal_memory_merge_requested": true,
+        }));
+
+        assert!(select_summary_batch(&[terminal], 170_000, 0).is_none());
+    }
+
+    #[test]
+    fn terminal_task_summary_does_not_sweep_older_pending_summary_below_threshold() {
+        let ordinary = pending_source_summary(0);
+        let mut terminal = pending_source_summary(1);
+        terminal.metadata = Some(serde_json::json!({
+            "terminal_memory_merge_requested": true,
+        }));
+
+        assert!(select_summary_batch(&[ordinary, terminal], 170_000, 12).is_none());
+    }
+
+    #[test]
+    fn ordinary_summary_still_waits_for_subject_memory_policy_threshold() {
+        assert!(select_summary_batch(&[pending_source_summary(1)], 170_000, 0).is_none());
+    }
+
+    #[test]
     fn token_limit_caps_subject_memory_batch_instead_of_only_triggering_it() {
         let candidates = vec!["one", "two", "three", "four"];
         let selected = select_bounded_batch(&candidates, &[1_000, 1_000, 1_000, 1_000], 1_500, 0)

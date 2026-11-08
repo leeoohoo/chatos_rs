@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import type {
   AgentDirectoryQuery,
+  EngineAgentConversation,
   EngineAgentDirectoryItem,
   EngineAgentProject,
   EngineSubjectMemory,
@@ -47,6 +48,8 @@ export function useAgentExplorer(options?: AgentExplorerOptions) {
   const [agents, setAgents] = useState<EngineAgentDirectoryItem[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<EngineAgentDirectoryItem | null>(null);
   const [projects, setProjects] = useState<EngineAgentProject[]>([]);
+  const [conversations, setConversations] = useState<EngineAgentConversation[]>([]);
+  const [selectedConversation, setSelectedConversation] = useState<EngineAgentConversation | null>(null);
   const [selectedProject, setSelectedProject] = useState<EngineAgentProject | null>(null);
   const [agentMemories, setAgentMemories] = useState<EngineSubjectMemory[]>([]);
   const [projectMemories, setProjectMemories] = useState<EngineSubjectMemory[]>([]);
@@ -56,6 +59,7 @@ export function useAgentExplorer(options?: AgentExplorerOptions) {
   const directoryRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
   const projectRequestRef = useRef(0);
+  const conversationRequestRef = useRef(0);
   const selectedAgentKeyRef = useRef('');
   const threadExplorer = useThreadExplorer('data', {
     autoLoad: false,
@@ -63,6 +67,56 @@ export function useAgentExplorer(options?: AgentExplorerOptions) {
   });
 
   const reportError = (message: string) => options?.onError?.(message);
+
+  const selectConversation = async (
+    conversation: EngineAgentConversation,
+    ownerAgentKey = selectedAgentKeyRef.current,
+  ) => {
+    const requestId = conversationRequestRef.current + 1;
+    conversationRequestRef.current = requestId;
+    setSelectedConversation(conversation);
+    try {
+      const thread = await api.getThread(conversation.thread_id, {
+        tenant_id: conversation.tenant_id,
+        source_id: conversation.source_id,
+      });
+      if (
+        conversationRequestRef.current !== requestId ||
+        selectedAgentKeyRef.current !== ownerAgentKey
+      ) {
+        return;
+      }
+      if (!thread) {
+        reportError('该会话对应的原始线程不存在');
+        return;
+      }
+      threadExplorer.setDetailTab('records');
+      const isExecutionThread = [
+        'agent_task',
+        'todo_execution',
+        'agent_team_run',
+      ].includes(conversation.thread_kind);
+      const isCommunicationThread = conversation.thread_kind === 'agent_conversation';
+      const usesConversationScope = !isExecutionThread && !isCommunicationThread;
+      await threadExplorer.loadThreadDetails(thread, {
+        resetPage: true,
+        recordScope: isCommunicationThread
+          ? {}
+          : {
+              projectId: conversation.project_subject_id ?? undefined,
+              projectIdMissing: !conversation.project_subject_id,
+              conversationId: usesConversationScope
+                ? conversation.conversation_id ?? undefined
+                : undefined,
+              conversationIdMissing: usesConversationScope && !conversation.conversation_id,
+            },
+      });
+    } catch (error) {
+      if (conversationRequestRef.current === requestId) {
+        reportError(`加载会话详情失败：${String(error)}`);
+      }
+    }
+  };
 
   const loadProjectMemories = async (
     project: EngineAgentProject,
@@ -104,14 +158,18 @@ export function useAgentExplorer(options?: AgentExplorerOptions) {
     const key = agentScopeKey(agent);
     selectedAgentKeyRef.current = key;
     projectRequestRef.current += 1;
+    conversationRequestRef.current += 1;
+    threadExplorer.clearThreadDetails();
     setSelectedAgent(agent);
     setProjects([]);
+    setConversations([]);
+    setSelectedConversation(null);
     setSelectedProject(null);
     setAgentMemories([]);
     setProjectMemories([]);
     setAgentDetailLoading(true);
     try {
-      const [nextProjects, memories] = await Promise.all([
+      const [nextProjects, memories, nextConversations] = await Promise.all([
         api.listAgentProjects(agent.agent_subject_id, {
           tenant_id: agent.tenant_id,
           source_id: agent.source_id,
@@ -123,23 +181,25 @@ export function useAgentExplorer(options?: AgentExplorerOptions) {
           limit: 100,
           offset: 0,
         }),
-        threadExplorer.applyThreadFilters({
+        api.listAgentConversations(agent.agent_subject_id, {
           tenant_id: agent.tenant_id,
           source_id: agent.source_id,
-          agent_id: agent.agent_id,
-          status: '',
-          limit: 50,
-          offset: 0,
         }),
       ]);
       if (detailRequestRef.current !== requestId || selectedAgentKeyRef.current !== key) {
         return;
       }
       setProjects(nextProjects);
+      setConversations(nextConversations);
       setAgentMemories(memories);
-      if (nextProjects[0]) {
-        await loadProjectMemories(nextProjects[0], key);
-      }
+      await Promise.all([
+        nextConversations[0]
+          ? selectConversation(nextConversations[0], key)
+          : Promise.resolve(),
+        nextProjects[0]
+          ? loadProjectMemories(nextProjects[0], key)
+          : Promise.resolve(),
+      ]);
     } catch (error) {
       if (detailRequestRef.current === requestId) {
         reportError(`加载 Agent 记忆详情失败：${String(error)}`);
@@ -166,9 +226,13 @@ export function useAgentExplorer(options?: AgentExplorerOptions) {
       } else {
         detailRequestRef.current += 1;
         projectRequestRef.current += 1;
+        conversationRequestRef.current += 1;
         selectedAgentKeyRef.current = '';
+        threadExplorer.clearThreadDetails();
         setSelectedAgent(null);
         setProjects([]);
+        setConversations([]);
+        setSelectedConversation(null);
         setSelectedProject(null);
         setAgentMemories([]);
         setProjectMemories([]);
@@ -212,6 +276,8 @@ export function useAgentExplorer(options?: AgentExplorerOptions) {
     agents,
     selectedAgent,
     projects,
+    conversations,
+    selectedConversation,
     selectedProject,
     agentMemories,
     projectMemories,
@@ -221,6 +287,7 @@ export function useAgentExplorer(options?: AgentExplorerOptions) {
     loadAgents,
     selectAgent,
     selectProject: loadProjectMemories,
+    selectConversation,
     applyFilters,
     resetFilters,
     threadExplorer,

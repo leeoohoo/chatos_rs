@@ -410,12 +410,12 @@ struct CompanionConversationRequest: Decodable {
 
 struct CompanionConversationHistoryRequest: Decodable {
     var conversationID: String
-    var beforeOrdinal: UInt64?
+    var beforeCursor: String?
     var limit: Int?
 
     enum CodingKeys: String, CodingKey {
         case conversationID = "conversation_id"
-        case beforeOrdinal = "before_ordinal"
+        case beforeCursor = "before_cursor"
         case limit
     }
 }

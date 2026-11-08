@@ -317,7 +317,7 @@ pub(super) async fn advance_run_after_tool(
             super::requirement_survey_store::write_back_main_chat_survey_status(
                 connection,
                 &survey_id,
-                false,
+                "open",
                 now_unix_ms,
             )
             .await?;

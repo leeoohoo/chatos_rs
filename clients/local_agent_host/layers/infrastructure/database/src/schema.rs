@@ -800,3 +800,34 @@ pub(super) const SCHEMA_V45: &[&str] = &[
        CHECK(responses_compaction_threshold IS NULL OR \
          responses_compaction_threshold BETWEEN 2048 AND 2000000)",
 ];
+
+/// Non-secret routing for program-owned conversation records. Task callbacks and
+/// terminal cards are enqueued in the same transaction as their local display
+/// projection, then Memory Engine becomes their authoritative transcript source.
+pub(super) const SCHEMA_V46: &[&str] = &["CREATE TABLE local_memory_projection_config (\
+       owner_user_id TEXT PRIMARY KEY NOT NULL,\
+       source_id TEXT NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL\
+     )"];
+
+/// Durable revision increments in the same transaction that publishes new
+/// Memory outbox work. The process-local watcher is notified only after that
+/// transaction commits successfully.
+pub(super) const SCHEMA_V47: &[&str] = &[
+    "CREATE TABLE local_memory_outbox_activity (\
+       singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton = 1),\
+       revision INTEGER NOT NULL CHECK(revision >= 0)\
+     )",
+    "INSERT INTO local_memory_outbox_activity(singleton, revision) VALUES(1, 0)",
+    "CREATE TRIGGER local_memory_outbox_activity_insert AFTER INSERT ON local_memory_outbox \
+       WHEN NEW.status = 'pending' BEGIN \
+         UPDATE local_memory_outbox_activity SET revision = revision + 1 WHERE singleton = 1; \
+       END",
+    "CREATE TRIGGER local_memory_outbox_activity_update \
+       AFTER UPDATE OF status, payload_json ON local_memory_outbox \
+       WHEN NEW.status = 'pending' AND (\
+         OLD.status <> 'pending' OR OLD.payload_json <> NEW.payload_json\
+       ) BEGIN \
+         UPDATE local_memory_outbox_activity SET revision = revision + 1 WHERE singleton = 1; \
+       END",
+];

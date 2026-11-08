@@ -27,6 +27,9 @@ use crate::state::AppState;
 pub struct ListSummariesQuery {
     tenant_id: Option<String>,
     source_id: Option<String>,
+    project_id: Option<String>,
+    #[serde(default)]
+    project_id_missing: bool,
     summary_type: Option<String>,
     status: Option<String>,
     level: Option<i64>,
@@ -94,6 +97,8 @@ pub async fn list_thread_summaries(
         thread_id: thread_id.as_str(),
         tenant_id: tenant_id.as_deref(),
         source_id: query.source_id.as_deref(),
+        project_id: query.project_id.as_deref(),
+        project_id_missing: query.project_id_missing,
         summary_type: query.summary_type.as_deref(),
         status: query.status.as_deref(),
         level: query.level,

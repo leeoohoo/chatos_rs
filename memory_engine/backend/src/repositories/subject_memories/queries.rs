@@ -36,6 +36,44 @@ pub async fn list_subject_memories(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub async fn list_subject_memories_for_context(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    subject_id: &str,
+    memory_type: &str,
+    level: Option<i64>,
+    rollup_status: Option<&str>,
+    relation_subject_id: Option<&str>,
+    required_generation_profile: Option<&str>,
+    limit: i64,
+) -> Result<Vec<EngineSubjectMemory>, String> {
+    let mut query =
+        build_subject_memory_query(tenant_id, source_id, subject_id, Some(memory_type), level);
+    if let Some(value) = normalized(rollup_status) {
+        query.push(" AND rollup_status=").push_bind(value);
+    }
+    if let Some(value) = normalized(relation_subject_id) {
+        query.push(" AND relation_subject_id=").push_bind(value);
+    }
+    if let Some(value) = normalized(required_generation_profile) {
+        query
+            .push(" AND BTRIM(COALESCE(data #>> '{metadata,generation_profile}',''))=")
+            .push_bind(value);
+    }
+    query
+        .push(" ORDER BY level DESC,updated_at DESC LIMIT ")
+        .push_bind(limit.clamp(1, 1000));
+    decode_many(
+        query
+            .build_query_scalar::<Json<serde_json::Value>>()
+            .fetch_all(db)
+            .await
+            .map_err(|error| error.to_string())?,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn query_subject_memories(
     db: &Db,
     tenant_id: &str,

@@ -519,17 +519,13 @@ mod tests {
         assert_eq!(result.run.status, LocalAgentRunStatus::WaitingUser);
         assert_eq!(result.run.checkpoint, json!({"phase": "requirements"}));
         if main_chat {
-            let HostResult::ConversationHistory { page: conversation } = runtime
+            let HostResult::Conversation { conversation } = runtime
                 .try_handle(envelope(
                     "get-waiting-chat",
-                    HostCommand::GetConversationHistory(
-                        chatos_local_agent_protocol::GetConversationHistoryCommand {
-                            owner_user_id: "user-1".into(),
-                            conversation_id: "conversation-survey-flow".into(),
-                            before_ordinal: None,
-                            limit: 100,
-                        },
-                    ),
+                    HostCommand::GetConversation(GetConversationCommand {
+                        owner_user_id: "user-1".into(),
+                        conversation_id: "conversation-survey-flow".into(),
+                    }),
                 ))
                 .await
                 .unwrap()
@@ -566,17 +562,13 @@ mod tests {
                     && survey.source_task_id.as_deref() == if main_chat { None } else { Some("task-1") }
         ));
         if cancel {
-            let HostResult::ConversationHistory { page: conversation } = runtime
+            let HostResult::Conversation { conversation } = runtime
                 .try_handle(envelope(
                     "get-chat-before-cancel",
-                    HostCommand::GetConversationHistory(
-                        chatos_local_agent_protocol::GetConversationHistoryCommand {
-                            owner_user_id: "user-1".into(),
-                            conversation_id: "conversation-survey-flow".into(),
-                            before_ordinal: None,
-                            limit: 100,
-                        },
-                    ),
+                    HostCommand::GetConversation(GetConversationCommand {
+                        owner_user_id: "user-1".into(),
+                        conversation_id: "conversation-survey-flow".into(),
+                    }),
                 ))
                 .await
                 .unwrap()
@@ -602,17 +594,13 @@ mod tests {
                 matches!(cancelled, HostResult::ConversationTurnUpdated { result }
                 if result.run.status == LocalAgentRunStatus::Cancelled)
             );
-            let HostResult::ConversationHistory { page: conversation } = runtime
+            let HostResult::Conversation { conversation } = runtime
                 .try_handle(envelope(
                     "get-chat-after-cancel",
-                    HostCommand::GetConversationHistory(
-                        chatos_local_agent_protocol::GetConversationHistoryCommand {
-                            owner_user_id: "user-1".into(),
-                            conversation_id: "conversation-survey-flow".into(),
-                            before_ordinal: None,
-                            limit: 100,
-                        },
-                    ),
+                    HostCommand::GetConversation(GetConversationCommand {
+                        owner_user_id: "user-1".into(),
+                        conversation_id: "conversation-survey-flow".into(),
+                    }),
                 ))
                 .await
                 .unwrap()
@@ -791,17 +779,13 @@ mod tests {
         if main_chat {
             assert_eq!(resolution.resumed_run.run_id, "run-survey-flow");
             assert_eq!(resolution.resumed_run.profile_key, "main_chat");
-            let HostResult::ConversationHistory { page: conversation } = runtime
+            let HostResult::Conversation { conversation } = runtime
                 .try_handle(envelope(
                     "get-resolved-chat",
-                    HostCommand::GetConversationHistory(
-                        chatos_local_agent_protocol::GetConversationHistoryCommand {
-                            owner_user_id: "user-1".into(),
-                            conversation_id: "conversation-survey-flow".into(),
-                            before_ordinal: None,
-                            limit: 100,
-                        },
-                    ),
+                    HostCommand::GetConversation(GetConversationCommand {
+                        owner_user_id: "user-1".into(),
+                        conversation_id: "conversation-survey-flow".into(),
+                    }),
                 ))
                 .await
                 .unwrap()

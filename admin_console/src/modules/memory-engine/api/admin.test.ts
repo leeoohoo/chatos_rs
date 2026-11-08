@@ -33,7 +33,8 @@ describe('adminApi', () => {
   it('loads the agent directory and encodes agent subjects in project paths', async () => {
     vi.mocked(client.get)
       .mockResolvedValueOnce({ data: { items: [{ agent_id: 'jiguli' }] } } as never)
-      .mockResolvedValueOnce({ data: { items: [{ project_id: 'project-1' }] } } as never);
+      .mockResolvedValueOnce({ data: { items: [{ project_id: 'project-1' }] } } as never)
+      .mockResolvedValueOnce({ data: { items: [{ conversation_id: 'conversation-1' }] } } as never);
 
     await expect(
       adminApi.listAgents({ tenant_id: 'tenant-1', source_id: 'chatos', agent_id: 'jiguli' }),
@@ -57,6 +58,18 @@ describe('adminApi', () => {
     expect(client.get).toHaveBeenNthCalledWith(
       2,
       '/admin/agents/agent%3Areview%2Fagent/projects',
+      { params: { tenant_id: 'tenant-1', source_id: 'chatos' } },
+    );
+
+    await expect(
+      adminApi.listAgentConversations('agent:review/agent', {
+        tenant_id: 'tenant-1',
+        source_id: 'chatos',
+      }),
+    ).resolves.toEqual([{ conversation_id: 'conversation-1' }]);
+    expect(client.get).toHaveBeenNthCalledWith(
+      3,
+      '/admin/agents/agent%3Areview%2Fagent/conversations',
       { params: { tenant_id: 'tenant-1', source_id: 'chatos' } },
     );
   });

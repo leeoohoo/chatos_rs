@@ -652,6 +652,12 @@ async fn version_forty_two_accepts_legacy_hook_events_without_recovery_payloads(
     .expect("legacy Hook invocation");
     let mut connection = storage.pool.acquire().await.expect("connection");
     for statement in [
+        "DROP TRIGGER local_memory_outbox_activity_update",
+        "DROP TRIGGER local_memory_outbox_activity_insert",
+        "DROP TABLE local_memory_outbox_activity",
+        "DELETE FROM client_schema_migrations WHERE version = 47",
+        "DROP TABLE local_memory_projection_config",
+        "DELETE FROM client_schema_migrations WHERE version = 46",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN responses_compaction_threshold",
         "DELETE FROM client_schema_migrations WHERE version = 45",
         "ALTER TABLE local_task_followup_reviews DROP COLUMN decision_action",
@@ -729,6 +735,12 @@ pub(super) async fn rewind_receipt_v36(connection: &mut SqliteConnection) {
 
 pub(super) async fn rewind_receipt_v37(connection: &mut SqliteConnection) {
     for statement in [
+        "DROP TRIGGER local_memory_outbox_activity_update",
+        "DROP TRIGGER local_memory_outbox_activity_insert",
+        "DROP TABLE local_memory_outbox_activity",
+        "DELETE FROM client_schema_migrations WHERE version = 47",
+        "DROP TABLE local_memory_projection_config",
+        "DELETE FROM client_schema_migrations WHERE version = 46",
         "ALTER TABLE local_model_config_snapshots DROP COLUMN responses_compaction_threshold",
         "DELETE FROM client_schema_migrations WHERE version = 45",
         "ALTER TABLE local_task_followup_reviews DROP COLUMN decision_action",

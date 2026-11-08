@@ -5,6 +5,7 @@ import type {
   AgentDirectoryQuery,
   DashboardOverview,
   EngineAgentDirectoryItem,
+  EngineAgentConversation,
   EngineAgentProject,
   EngineJobPolicy,
   EngineSource,
@@ -80,6 +81,17 @@ export const adminApi = {
   ): Promise<EngineAgentProject[]> {
     const { data } = await client.get(
       `/admin/agents/${encodeURIComponent(agentSubjectId)}/projects`,
+      { params },
+    );
+    return data.items ?? [];
+  },
+
+  async listAgentConversations(
+    agentSubjectId: string,
+    params: { tenant_id: string; source_id: string },
+  ): Promise<EngineAgentConversation[]> {
+    const { data } = await client.get(
+      `/admin/agents/${encodeURIComponent(agentSubjectId)}/conversations`,
       { params },
     );
     return data.items ?? [];

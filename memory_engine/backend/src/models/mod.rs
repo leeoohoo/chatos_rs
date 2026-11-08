@@ -15,7 +15,7 @@ mod system;
 mod thread_snapshots;
 mod threads;
 
-pub use self::agent_directory::{AgentDirectoryItem, AgentProjectItem};
+pub use self::agent_directory::{AgentConversationItem, AgentDirectoryItem, AgentProjectItem};
 pub use self::common::{default_active, now_plus_seconds_rfc3339, now_rfc3339};
 pub use self::compose::{
     ComposeContextBlock, ComposeContextMeta, ComposeContextPolicy, ComposeContextRequest,

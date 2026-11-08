@@ -61,9 +61,34 @@ fn bound_remote_connection_context(input: &Value, main_chat: bool) -> Value {
         "remote_connection_id": connection,
         "target_selected": connection.is_some(),
         "guidance": if connection.is_some() {
-            "The user has already selected the target remote server in ChatOS. This program-owned connection id is the authoritative target for this Run; it is not a missing requirement. Do not ask the user to re-enter its hostname, IP, connection name, credentials, or connection id in a survey. For remote execution, select RemoteConnectionController for the Task; the Host inherits and binds this connection automatically. Use authorized read-only discovery to identify services and configuration paths; ask a focused question only when actual evidence leaves multiple plausible targets or essential intent is missing. A server selection alone does not require a Requirement Survey. Never infer authorization for unrelated changes or print secret values."
+            "The user has already selected a remote server in ChatOS. This program-owned connection id is the authoritative remote target for this Run; it is not a missing requirement. Do not ask the user to re-enter its hostname, IP, connection name, credentials, or connection id in a survey. The selection makes RemoteConnectionController available but does not replace, relocate, or invalidate the current ChatOS project and its program-bound local root. Use project tools for requests about the current project's files, Git history, build, or tests. Select RemoteConnectionController only when the user's request actually requires operating on or inspecting the selected remote host; the Host inherits and binds the connection automatically. Use authorized read-only discovery to identify remote services and configuration paths only for such remote work. A server selection alone does not require a Requirement Survey. Never infer authorization for unrelated changes or print secret values."
         } else {
             "No remote server is bound to this Run. Historical conversation text, plans and Memory do not establish a current connection. If remote access is needed, ask the user to select the target server in ChatOS; never guess a target or request credentials in a survey."
+        }
+    }).to_string()))
+}
+
+fn bound_project_context(input: &Value) -> Value {
+    let project_id = input
+        .get("project_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let project_name = input
+        .get("project_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    message_item("system", Value::String(json!({
+        "type": "bound_project_context",
+        "context_authority": "current_run",
+        "project_id": project_id,
+        "project_name": project_name,
+        "project_bound": project_id.is_some(),
+        "guidance": if project_id.is_some() {
+            "This Run is bound to the current ChatOS project. Tasks using project tools resolve that exact project's local root programmatically, and path `.` is that root. Do not claim that the project path or repository is unknown, do not scan unrelated directories to guess the project, and do not ask the user to identify the project again. A separately selected remote server does not change this project binding."
+        } else {
+            "No ChatOS project is bound to this Run. Do not infer a current project from historical conversation text or Memory."
         }
     }).to_string()))
 }
@@ -445,6 +470,9 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             .push(runtime_clock_context());
         capabilities
             .prefixed_input_items
+            .push(bound_project_context(&claim.run.input));
+        capabilities
+            .prefixed_input_items
             .push(bound_remote_connection_context(
                 &claim.run.input,
                 self.profile_key == MAIN_CHAT_PROFILE_KEY,
@@ -591,34 +619,6 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                     .to_string(),
                 ),
             ));
-            if let (Some(runtime), Some(conversation_id)) = (
-                self.local_context_runtime.as_ref(),
-                claim
-                    .run
-                    .input
-                    .get("conversation_id")
-                    .and_then(Value::as_str),
-            ) {
-                let task_updates = runtime
-                    .latest_task_context_items(&claim.run.owner_user_id, conversation_id)
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if !task_updates.is_empty() {
-                    capabilities.prefixed_input_items.push(message_item(
-                        "system",
-                        Value::String(
-                            json!({
-                                "type": "local_conversation_fresh_context",
-                                "conversation_id": conversation_id,
-                                "authority": "local_committed_task_writebacks",
-                                "guidance": "These are the newest committed local Task lifecycle facts. They override older conversation prose or retained Memory when discussing current Task status. For a status question, still call get_task or list_tasks so replacement chains and the current leaf are resolved before answering.",
-                                "task_updates": task_updates,
-                            })
-                            .to_string(),
-                        ),
-                    ));
-                }
-            }
             if let Some(selection) = claim.run.input.get("explicit_capability_selection") {
                 let kind = selection.get("kind").and_then(Value::as_str);
                 let contract = match kind {

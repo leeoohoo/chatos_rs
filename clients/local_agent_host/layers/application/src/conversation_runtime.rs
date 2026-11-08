@@ -2,18 +2,20 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{new_event_id, LocalAgentRuntime, LocalAgentRuntimeError};
-use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand};
+use chatos_local_agent_ports::{
+    AuthoritativeConversationRecord, ClientStorageError, IdempotentCommand,
+};
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, HostCommand, HostResult,
     LocalAgentRunRecord, LocalAgentRunStatus, LocalConversationAttachmentRecord,
-    LocalConversationResourceBinding, LocalConversationResourceKind, ResumeConversationTurnCommand,
+    LocalConversationAttachmentSpec, LocalConversationHistoryPage, LocalConversationMessageRecord,
+    LocalConversationMessageRole, LocalConversationResourceBinding, LocalConversationResourceKind,
+    LocalConversationTurnRecord, LocalConversationTurnStatus, ResumeConversationTurnCommand,
     StartConversationTurnCommand,
 };
+use chrono::{DateTime, Utc};
 use serde_json::json;
-use std::collections::HashSet;
-
-const LOCAL_TASK_CONTEXT_MAX_ITEMS: usize = 16;
-const LOCAL_TASK_CONTEXT_MAX_BYTES: usize = 64 * 1024;
+use std::collections::{HashMap, HashSet};
 const JIGULI_AGENT_ID: &str = "jiguli";
 
 impl LocalAgentRuntime {
@@ -26,8 +28,14 @@ impl LocalAgentRuntime {
         conversation_id: &str,
     ) -> Result<Vec<LocalConversationAttachmentRecord>, LocalAgentRuntimeError> {
         Ok(self
-            .store
-            .get_conversation_history(owner_user_id, conversation_id, None, 100)
+            .authoritative_conversation_history(
+                chatos_local_agent_protocol::GetConversationHistoryCommand {
+                    owner_user_id: owner_user_id.to_string(),
+                    conversation_id: conversation_id.to_string(),
+                    before_cursor: None,
+                    limit: 100,
+                },
+            )
             .await?
             .attachments)
     }
@@ -43,66 +51,6 @@ impl LocalAgentRuntime {
             .store
             .get_conversation_attachment(owner_user_id, conversation_id, authorized_local_ref)
             .await?)
-    }
-
-    /// Returns the newest program-owned Task writebacks from the authoritative
-    /// local conversation log. This deliberately does not depend on retained
-    /// Memory, which may be offline or behind the local commit watermark.
-    pub async fn latest_task_context_items(
-        &self,
-        owner_user_id: &str,
-        conversation_id: &str,
-    ) -> Result<Vec<serde_json::Value>, LocalAgentRuntimeError> {
-        let page = self
-            .store
-            .get_conversation_history(owner_user_id, conversation_id, None, 100)
-            .await?;
-        let mut seen = HashSet::new();
-        let mut bytes = 0usize;
-        let mut items = Vec::new();
-        for message in page.messages.into_iter().rev() {
-            let kind = message
-                .metadata
-                .get("kind")
-                .and_then(serde_json::Value::as_str);
-            if !matches!(
-                kind,
-                Some("task_execution_callback" | "task_graph_terminal")
-            ) {
-                continue;
-            }
-            let identity = message
-                .metadata
-                .pointer("/task_runner_async/task_id")
-                .or_else(|| message.metadata.get("graph_id"))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or(&message.message_id)
-                .to_string();
-            if !seen.insert((kind.unwrap_or_default().to_string(), identity)) {
-                continue;
-            }
-            let item = json!({
-                "message_id": message.message_id,
-                "ordinal": message.ordinal,
-                "content": message.content,
-                "metadata": message.metadata,
-                "created_at_unix_ms": message.created_at_unix_ms,
-            });
-            let item_bytes = serde_json::to_vec(&item)
-                .map_err(|error| LocalAgentRuntimeError::InvalidRunState(error.to_string()))?
-                .len();
-            if !items.is_empty() && bytes.saturating_add(item_bytes) > LOCAL_TASK_CONTEXT_MAX_BYTES
-            {
-                break;
-            }
-            bytes = bytes.saturating_add(item_bytes);
-            items.push(item);
-            if items.len() >= LOCAL_TASK_CONTEXT_MAX_ITEMS {
-                break;
-            }
-        }
-        items.reverse();
-        Ok(items)
     }
 
     pub(super) async fn handle_conversation_command(
@@ -141,16 +89,7 @@ impl LocalAgentRuntime {
                 })
             }
             HostCommand::GetConversationHistory(command) => Ok(HostResult::ConversationHistory {
-                page: Box::new(
-                    self.store
-                        .get_conversation_history(
-                            &command.owner_user_id,
-                            &command.conversation_id,
-                            command.before_ordinal,
-                            command.limit,
-                        )
-                        .await?,
-                ),
+                page: Box::new(self.authoritative_conversation_history(command).await?),
             }),
             HostCommand::ListConversations(command) => Ok(HostResult::Conversations {
                 page: self
@@ -260,9 +199,12 @@ impl LocalAgentRuntime {
             };
         let mut input = json!({
             "conversation_id": &command.conversation_id,
+            "conversation_title": &conversation.conversation.title,
+            "conversation_resource": &conversation.conversation.resource,
             "turn_id": &command.turn_id,
             "message_id": &command.message_id,
             "message": &command.message,
+            "ui_message_metadata": &command.message_metadata,
             "attachments": &command.attachments,
             "runtime_settings": runtime_settings.as_ref().map(|settings| json!({
                 "version": settings.version,
@@ -407,6 +349,318 @@ impl LocalAgentRuntime {
             .cancel_conversation_turn(idempotency, &command, &new_event_id(), self.now()?)
             .await?)
     }
+}
+
+impl LocalAgentRuntime {
+    async fn authoritative_conversation_history(
+        &self,
+        command: chatos_local_agent_protocol::GetConversationHistoryCommand,
+    ) -> Result<LocalConversationHistoryPage, LocalAgentRuntimeError> {
+        let source = self
+            .conversation_transcript_source
+            .as_ref()
+            .ok_or_else(|| {
+                LocalAgentRuntimeError::InvalidRunState(
+                    "Memory transcript source is required for conversation history".to_string(),
+                )
+            })?;
+        let local = self
+            .store
+            .get_conversation_context(&command.owner_user_id, &command.conversation_id)
+            .await?
+            .ok_or_else(|| ClientStorageError::NotFound(command.conversation_id.clone()))?;
+        let agent_id = match local.conversation.resource.as_ref() {
+            Some(LocalConversationResourceBinding {
+                kind: LocalConversationResourceKind::Project,
+                ..
+            }) => JIGULI_AGENT_ID,
+            Some(LocalConversationResourceBinding {
+                kind: LocalConversationResourceKind::Contact,
+                resource_id,
+            }) => resource_id.as_str(),
+            None => {
+                return Err(LocalAgentRuntimeError::InvalidRunState(
+                    "Conversation transcript requires an Agent-bound resource".to_string(),
+                ))
+            }
+        };
+        let thread_id = format!("client-agent:agent:{agent_id}");
+        let remote = source
+            .list_conversation_records(
+                &command.owner_user_id,
+                &thread_id,
+                &command.conversation_id,
+                command.before_cursor.as_deref(),
+                command.limit,
+            )
+            .await
+            .map_err(LocalAgentRuntimeError::InvalidRunState)?;
+        let mut messages =
+            authoritative_messages(&command.conversation_id, remote.records.as_slice())?;
+        let mut attachments = authoritative_attachments(&command.conversation_id, &messages)?;
+        if command.before_cursor.is_none() {
+            let local_page = self
+                .store
+                .get_conversation_history(
+                    &command.owner_user_id,
+                    &command.conversation_id,
+                    None,
+                    command.limit,
+                )
+                .await?;
+            merge_current_optimistic_input(
+                &mut messages,
+                &mut attachments,
+                local_page,
+                local.turns.as_slice(),
+            );
+        }
+        let turns = authoritative_turns(
+            &command.conversation_id,
+            local.turns.as_slice(),
+            messages.as_slice(),
+        );
+        Ok(LocalConversationHistoryPage {
+            conversation: local.conversation,
+            turns,
+            messages,
+            attachments,
+            next_before_cursor: remote.next_before_cursor,
+        })
+    }
+}
+
+fn authoritative_attachments(
+    conversation_id: &str,
+    messages: &[LocalConversationMessageRecord],
+) -> Result<Vec<LocalConversationAttachmentRecord>, LocalAgentRuntimeError> {
+    let mut attachments = Vec::new();
+    for message in messages {
+        let Some(value) = message.metadata.get("ui_attachments") else {
+            continue;
+        };
+        let specs = serde_json::from_value::<Vec<LocalConversationAttachmentSpec>>(value.clone())
+            .map_err(|error| {
+            LocalAgentRuntimeError::InvalidRunState(format!(
+                "Memory transcript attachment metadata is invalid for {}: {error}",
+                message.message_id
+            ))
+        })?;
+        for (index, spec) in specs.into_iter().enumerate() {
+            attachments.push(LocalConversationAttachmentRecord {
+                attachment_id: spec.attachment_id,
+                conversation_id: conversation_id.to_string(),
+                turn_id: message.turn_id.clone(),
+                message_id: message.message_id.clone(),
+                ordinal: u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1),
+                display_name: spec.display_name,
+                media_type: spec.media_type,
+                byte_size: spec.byte_size,
+                sha256: spec.sha256,
+                authorized_local_ref: spec.authorized_local_ref,
+                metadata: spec.metadata,
+                created_at_unix_ms: message.created_at_unix_ms,
+            });
+        }
+    }
+    Ok(attachments)
+}
+
+fn merge_current_optimistic_input(
+    messages: &mut Vec<LocalConversationMessageRecord>,
+    attachments: &mut Vec<LocalConversationAttachmentRecord>,
+    local_page: LocalConversationHistoryPage,
+    local_turns: &[LocalConversationTurnRecord],
+) {
+    let running_turn_ids = local_turns
+        .iter()
+        .filter(|turn| turn.status == LocalConversationTurnStatus::Running)
+        .map(|turn| turn.turn_id.clone())
+        .collect::<HashSet<_>>();
+    let mut known_message_ids = messages
+        .iter()
+        .map(|message| message.message_id.clone())
+        .collect::<HashSet<_>>();
+    let optimistic = local_page
+        .messages
+        .into_iter()
+        .filter(|message| {
+            message.role == LocalConversationMessageRole::User
+                && running_turn_ids.contains(&message.turn_id)
+                && known_message_ids.insert(message.message_id.clone())
+        })
+        .collect::<Vec<_>>();
+    let optimistic_ids = optimistic
+        .iter()
+        .map(|message| message.message_id.clone())
+        .collect::<HashSet<_>>();
+    attachments.extend(
+        local_page
+            .attachments
+            .into_iter()
+            .filter(|attachment| optimistic_ids.contains(&attachment.message_id)),
+    );
+    messages.extend(optimistic);
+    messages.sort_by(|left, right| {
+        left.created_at_unix_ms
+            .cmp(&right.created_at_unix_ms)
+            .then_with(|| left.message_id.cmp(&right.message_id))
+    });
+}
+
+fn authoritative_messages(
+    conversation_id: &str,
+    records: &[AuthoritativeConversationRecord],
+) -> Result<Vec<LocalConversationMessageRecord>, LocalAgentRuntimeError> {
+    let mut seen_message_ids = HashSet::new();
+    let mut messages = Vec::new();
+    for record in records {
+        let mut metadata = record.metadata.clone().unwrap_or_else(|| json!({}));
+        if let Some(ui_metadata) = metadata
+            .get("ui_message_metadata")
+            .and_then(serde_json::Value::as_object)
+            .cloned()
+        {
+            let metadata_object = metadata.as_object_mut().ok_or_else(|| {
+                LocalAgentRuntimeError::InvalidRunState(format!(
+                    "Memory transcript metadata is invalid for {}",
+                    record.record_id
+                ))
+            })?;
+            metadata_object.extend(ui_metadata);
+        }
+        if metadata
+            .get("response_status")
+            .and_then(serde_json::Value::as_str)
+            == Some("tool_calls")
+            || !matches!(record.role.as_str(), "user" | "assistant")
+        {
+            continue;
+        }
+        let Some(turn_id) = metadata
+            .get("conversation_turn_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let message_id = metadata
+            .get("ui_message_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(record.record_id.as_str())
+            .to_string();
+        if !seen_message_ids.insert(message_id.clone()) {
+            continue;
+        }
+        let created_at = DateTime::parse_from_rfc3339(record.created_at.trim())
+            .map_err(|_| {
+                LocalAgentRuntimeError::InvalidRunState(format!(
+                    "Memory transcript record has invalid created_at: {}",
+                    record.record_id
+                ))
+            })?
+            .with_timezone(&Utc);
+        let created_at_unix_ms = created_at.timestamp_millis();
+        let ordinal = authoritative_ordinal(created_at_unix_ms, record.record_id.as_str());
+        let content = match record.role.as_str() {
+            "user" => json!({"text": record.content}),
+            _ => record
+                .structured_payload
+                .clone()
+                .filter(|_| {
+                    metadata
+                        .get("ui_structured_content")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true)
+                })
+                .unwrap_or_else(|| serde_json::Value::String(record.content.clone())),
+        };
+        messages.push(LocalConversationMessageRecord {
+            message_id,
+            conversation_id: conversation_id.to_string(),
+            turn_id: turn_id.to_string(),
+            ordinal,
+            role: if record.role == "assistant" {
+                LocalConversationMessageRole::Assistant
+            } else {
+                LocalConversationMessageRole::User
+            },
+            content,
+            metadata,
+            created_at_unix_ms,
+        });
+    }
+    messages.sort_by(|left, right| {
+        left.created_at_unix_ms
+            .cmp(&right.created_at_unix_ms)
+            .then_with(|| left.message_id.cmp(&right.message_id))
+    });
+    Ok(messages)
+}
+
+fn authoritative_ordinal(created_at_unix_ms: i64, record_id: &str) -> u64 {
+    let millis = u64::try_from(created_at_unix_ms.max(1)).unwrap_or(1);
+    let suffix = record_id.bytes().fold(0_u64, |value, byte| {
+        value.wrapping_mul(31).wrapping_add(u64::from(byte))
+    }) % 1_000;
+    millis.saturating_mul(1_000).saturating_add(suffix)
+}
+
+fn authoritative_turns(
+    conversation_id: &str,
+    local_turns: &[LocalConversationTurnRecord],
+    messages: &[LocalConversationMessageRecord],
+) -> Vec<LocalConversationTurnRecord> {
+    let local_by_id = local_turns
+        .iter()
+        .map(|turn| (turn.turn_id.as_str(), turn))
+        .collect::<HashMap<_, _>>();
+    let mut messages_by_turn: HashMap<&str, Vec<&LocalConversationMessageRecord>> = HashMap::new();
+    for message in messages {
+        messages_by_turn
+            .entry(message.turn_id.as_str())
+            .or_default()
+            .push(message);
+    }
+    let mut turns = messages_by_turn
+        .into_iter()
+        .filter_map(|(turn_id, turn_messages)| {
+            if let Some(local) = local_by_id.get(turn_id) {
+                return Some((*local).clone());
+            }
+            let user = turn_messages
+                .iter()
+                .find(|message| message.role == LocalConversationMessageRole::User)?;
+            let created_at_unix_ms = turn_messages
+                .iter()
+                .map(|message| message.created_at_unix_ms)
+                .min()
+                .unwrap_or(user.created_at_unix_ms);
+            let updated_at_unix_ms = turn_messages
+                .iter()
+                .map(|message| message.created_at_unix_ms)
+                .max()
+                .unwrap_or(created_at_unix_ms);
+            Some(LocalConversationTurnRecord {
+                turn_id: turn_id.to_string(),
+                conversation_id: conversation_id.to_string(),
+                user_message_id: user.message_id.clone(),
+                run_id: format!("memory:{turn_id}"),
+                status: LocalConversationTurnStatus::Succeeded,
+                created_at_unix_ms,
+                updated_at_unix_ms,
+            })
+        })
+        .collect::<Vec<_>>();
+    turns.sort_by(|left, right| {
+        left.created_at_unix_ms
+            .cmp(&right.created_at_unix_ms)
+            .then_with(|| left.turn_id.cmp(&right.turn_id))
+    });
+    turns
 }
 
 fn normalized_conversation_agent_identity(
@@ -981,7 +1235,11 @@ fn normalized_explicit_capability_selection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use chatos_client_storage::SqliteClientStorage;
+    use chatos_local_agent_ports::{
+        AuthoritativeConversationPage, LocalConversationTranscriptSource, LocalMemoryOutboxStore,
+    };
     use chatos_local_agent_protocol::{
         CancelConversationTurnCommand, ClaimNextRunCommand, CommitStepCommand,
         GetConversationCommand, GetConversationHistoryCommand, GuideConversationTurnCommand,
@@ -990,6 +1248,66 @@ mod tests {
         ResumeConversationTurnCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use std::sync::Arc;
+
+    struct TranscriptFixture;
+
+    #[async_trait]
+    impl LocalConversationTranscriptSource for TranscriptFixture {
+        async fn list_conversation_records(
+            &self,
+            tenant_id: &str,
+            thread_id: &str,
+            conversation_id: &str,
+            before_cursor: Option<&str>,
+            limit: u32,
+        ) -> Result<AuthoritativeConversationPage, String> {
+            assert_eq!(tenant_id, "user-1");
+            assert_eq!(thread_id, "client-agent:agent:jiguli");
+            assert_eq!(conversation_id, "conversation-1");
+            assert_eq!(before_cursor, None);
+            assert_eq!(limit, 10);
+            Ok(AuthoritativeConversationPage {
+                records: vec![
+                    AuthoritativeConversationRecord {
+                        record_id: "remote-assistant".to_string(),
+                        role: "assistant".to_string(),
+                        content: "remote answer".to_string(),
+                        structured_payload: None,
+                        metadata: Some(json!({
+                            "conversation_id": "conversation-1",
+                            "conversation_turn_id": "turn-1"
+                        })),
+                        created_at: "2026-11-06T10:00:01Z".to_string(),
+                    },
+                    AuthoritativeConversationRecord {
+                        record_id: "message-1".to_string(),
+                        role: "user".to_string(),
+                        content: "remote hello".to_string(),
+                        structured_payload: None,
+                        metadata: Some(json!({
+                            "conversation_id": "conversation-1",
+                            "conversation_turn_id": "turn-1",
+                            "ui_message_metadata": {
+                                "composer": "main_chat",
+                                "client_marker": "authoritative"
+                            },
+                            "ui_attachments": [{
+                                "attachment_id": "attachment-1",
+                                "display_name": "brief.pdf",
+                                "media_type": "application/pdf",
+                                "byte_size": 128,
+                                "sha256": "a".repeat(64),
+                                "authorized_local_ref": "local-attachment:brief.pdf",
+                                "metadata": {"origin": "memory"}
+                            }]
+                        })),
+                        created_at: "2026-11-06T10:00:00Z".to_string(),
+                    },
+                ],
+                next_before_cursor: Some("cursor-2".to_string()),
+            })
+        }
+    }
 
     fn request(command_id: &str, command: HostCommand) -> HostRequestEnvelope {
         HostRequestEnvelope {
@@ -1170,11 +1488,9 @@ mod tests {
             Some(&project_resource()),
         )
         .is_err());
-        assert!(normalized_conversation_agent_identity(
-            &json!({"agent_id": "jiguli"}),
-            None,
-        )
-        .is_err());
+        assert!(
+            normalized_conversation_agent_identity(&json!({"agent_id": "jiguli"}), None,).is_err()
+        );
     }
 
     #[test]
@@ -1507,23 +1823,66 @@ mod tests {
             HostResult::Conversations { page } if page.conversations.len() == 1
         ));
 
-        let history = runtime
+        let history_error = runtime
             .try_handle(request(
                 "get-conversation-history-1",
                 HostCommand::GetConversationHistory(GetConversationHistoryCommand {
                     owner_user_id: "user-1".to_string(),
                     conversation_id: "conversation-1".to_string(),
-                    before_ordinal: None,
+                    before_cursor: None,
                     limit: 10,
                 }),
             ))
             .await
-            .expect("get conversation history");
-        assert!(matches!(
-            history,
-            HostResult::ConversationHistory { page }
-                if page.messages.len() == 1 && page.attachments.len() == 1
-        ));
+            .expect_err("conversation history must not fall back to local SQLite");
+        assert!(history_error
+            .to_string()
+            .contains("Memory transcript source is required"));
+    }
+
+    #[tokio::test]
+    async fn configured_history_uses_memory_transcript_instead_of_local_messages() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)))
+            .with_conversation_transcript_source(Arc::new(TranscriptFixture));
+        runtime.initialize("user-1").await.expect("initialize");
+        runtime
+            .try_handle(request(
+                "create-memory-authoritative-conversation",
+                HostCommand::CreateConversation(create_conversation()),
+            ))
+            .await
+            .expect("create conversation");
+        let history = runtime
+            .try_handle(request(
+                "read-memory-authoritative-history",
+                HostCommand::GetConversationHistory(GetConversationHistoryCommand {
+                    owner_user_id: "user-1".to_string(),
+                    conversation_id: "conversation-1".to_string(),
+                    before_cursor: None,
+                    limit: 10,
+                }),
+            ))
+            .await
+            .expect("read Memory transcript");
+        let HostResult::ConversationHistory { page } = history else {
+            panic!("unexpected result")
+        };
+        assert_eq!(page.messages.len(), 2);
+        assert_eq!(page.messages[0].content, json!({"text": "remote hello"}));
+        assert_eq!(page.messages[0].metadata["composer"], "main_chat");
+        assert_eq!(page.messages[0].metadata["client_marker"], "authoritative");
+        assert_eq!(page.messages[1].content, json!("remote answer"));
+        assert_eq!(page.turns.len(), 1);
+        assert_eq!(page.turns[0].turn_id, "turn-1");
+        assert_eq!(page.turns[0].user_message_id, "message-1");
+        assert_eq!(page.next_before_cursor.as_deref(), Some("cursor-2"));
+        assert_eq!(page.attachments.len(), 1);
+        assert_eq!(page.attachments[0].metadata, json!({"origin": "memory"}));
     }
 
     #[tokio::test]
@@ -1649,7 +2008,11 @@ mod tests {
                 .await
                 .expect("storage"),
         );
-        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        storage
+            .configure_memory_projection("user-1", "chatos", 9_000)
+            .await
+            .expect("configure Memory projection");
+        let runtime = LocalAgentRuntime::with_clock(storage.clone(), Arc::new(|| Ok(10_000)));
         runtime.initialize("user-1").await.expect("initialize");
         runtime
             .try_handle(request(
@@ -1677,7 +2040,15 @@ mod tests {
                     message_id: "message-guidance".to_string(),
                     message: "include tests".to_string(),
                     message_metadata: json!({}),
-                    attachments: Vec::new(),
+                    attachments: vec![LocalConversationAttachmentSpec {
+                        attachment_id: "attachment-guidance".to_string(),
+                        display_name: "guidance.txt".to_string(),
+                        media_type: "text/plain".to_string(),
+                        byte_size: 14,
+                        sha256: "b".repeat(64),
+                        authorized_local_ref: "local-attachment:guidance.txt".to_string(),
+                        metadata: json!({"purpose": "guidance"}),
+                    }],
                 }),
             ))
             .await
@@ -1706,5 +2077,17 @@ mod tests {
                     .and_then(serde_json::Value::as_array)
                     .is_some_and(|guidance| guidance.len() == 1)
         ));
+        let projected = storage
+            .claim_next_memory_record("user-1", "memory-claim", 10_001, 20_000)
+            .await
+            .expect("claim projected guidance")
+            .expect("guidance Memory record");
+        assert_eq!(projected.record_id, "message-guidance");
+        assert_eq!(projected.thread_id, "client-agent:agent:jiguli");
+        assert_eq!(projected.payload["content"], "include tests");
+        assert_eq!(
+            projected.payload["metadata"]["ui_attachments"][0]["attachment_id"],
+            "attachment-guidance"
+        );
     }
 }

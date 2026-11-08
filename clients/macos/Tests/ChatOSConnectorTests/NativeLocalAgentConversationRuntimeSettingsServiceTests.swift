@@ -89,6 +89,33 @@ final class NativeLocalAgentConversationRuntimeSettingsServiceTests: XCTestCase 
         }
     }
 
+    func testAdvancesPersistedModelRevisionWithoutLosingConversationSettings() async throws {
+        let host = RuntimeSettingsHostStub()
+        await host.seedLegacySettings(
+            level: "high",
+            enabled: true,
+            modelConfigRevision: "retired-revision"
+        )
+        let service = NativeLocalAgentConversationRuntimeSettingsService(host: host)
+        try await service.configure(
+            ownerUserID: "user-1",
+            bootstrap: bootstrapResult(firstModel: "gpt-6.1-sol")
+        )
+
+        let settings = try await service.fetchSettings(sessionID: "conversation-1")
+        XCTAssertEqual(settings.selectedModelID, "model-1")
+        XCTAssertEqual(settings.selectedThinkingLevel, "high")
+        XCTAssertTrue(settings.reasoningEnabled)
+        XCTAssertEqual(settings.remoteConnectionID, "remote-1")
+
+        let selection = try await service.resolveSelection(sessionID: "conversation-1")
+        XCTAssertEqual(selection.modelSnapshot.modelConfigRevision, "revision-1")
+        XCTAssertEqual(selection.settings.selectedModelConfigRevision, "revision-1")
+        XCTAssertEqual(selection.settings.version, 9)
+        let count = await host.putCount()
+        XCTAssertEqual(count, 1)
+    }
+
     func testMandatoryReasoningModelDefaultsAndDisableRequestStayValid() async throws {
         let host = RuntimeSettingsHostStub()
         let service = NativeLocalAgentConversationRuntimeSettingsService(host: host)
@@ -175,9 +202,14 @@ private actor RuntimeSettingsHostStub: LocalAgentHostClientServicing {
     private var settings: [String: Any]?
     private var puts = 0
 
-    func seedLegacySettings(level: String, enabled: Bool) {
+    func seedLegacySettings(
+        level: String,
+        enabled: Bool,
+        modelConfigRevision: String = "revision-1"
+    ) {
         settings = ["owner_user_id": "user-1", "conversation_id": "conversation-1",
-                    "selected_model_config_ref": "model-1", "selected_model_config_revision": "revision-1",
+                    "selected_model_config_ref": "model-1",
+                    "selected_model_config_revision": modelConfigRevision,
                     "selected_thinking_level": level, "reasoning_enabled": enabled,
                     "remote_connection_id": "remote-1", "version": UInt64(8), "updated_at_unix_ms": Int64(8_000)]
     }

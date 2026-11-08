@@ -27,6 +27,10 @@ impl MemoryEngineClient {
                     "source_id",
                     optional_direct_source_id(source_id),
                 );
+                append_optional_query(&mut query, "project_id", req.project_id.as_deref());
+                if req.project_id_missing {
+                    append_optional_query(&mut query, "project_id_missing", Some("true"));
+                }
                 append_optional_query(&mut query, "summary_type", req.summary_type.as_deref());
                 append_optional_query(&mut query, "status", req.status.as_deref());
                 append_optional_i64_query(&mut query, "level", req.level);

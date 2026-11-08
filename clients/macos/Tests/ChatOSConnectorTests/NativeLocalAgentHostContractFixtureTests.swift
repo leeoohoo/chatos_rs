@@ -60,7 +60,7 @@ final class NativeLocalAgentHostContractFixtureTests: XCTestCase {
             history.attachments.first?.authorizedLocalRef,
             "local-attachment:authority-1"
         )
-        XCTAssertNil(history.nextBeforeOrdinal)
+        XCTAssertNil(history.nextBeforeCursor)
 
         let graphEnvelope = try JSONDecoder().decode(
             ContractEnvelope<MessageTaskGraphFixtureResult>.self,

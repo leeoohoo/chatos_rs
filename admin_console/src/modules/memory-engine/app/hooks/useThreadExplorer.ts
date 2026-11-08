@@ -52,6 +52,13 @@ type SummaryListCursor = {
   id: string;
 };
 
+export type ThreadRecordScope = {
+  projectId?: string;
+  projectIdMissing?: boolean;
+  conversationId?: string;
+  conversationIdMissing?: boolean;
+};
+
 export function buildThreadFilters(values: ThreadFilterFormValues): ThreadQuery {
   return {
     source_id: textOrUndefined(values.source_id),
@@ -94,6 +101,7 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
   const [threadRecordPageSize, setThreadRecordPageSize] = useState(DEFAULT_RECORD_PAGE_SIZE);
   const [threadRecordTotal, setThreadRecordTotal] = useState(0);
   const [threadRecordHasMore, setThreadRecordHasMore] = useState(false);
+  const [threadRecordScope, setThreadRecordScope] = useState<ThreadRecordScope>({});
   const [threadRecordPageCursors, setThreadRecordPageCursors] =
     useState<Array<RecordListCursor | null>>([null]);
   const [threadSummaries, setThreadSummaries] = useState<EngineSummary[]>([]);
@@ -111,6 +119,7 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
   const threadRecordsRequestIdRef = useRef(0);
   const threadDetailRequestIdRef = useRef(0);
   const selectedThreadKeyRef = useRef(selectedThreadKey);
+  const threadRecordScopeRef = useRef<ThreadRecordScope>({});
   const detailTabRef = useRef(detailTab);
 
   useEffect(() => {
@@ -125,15 +134,41 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
     options?.onError?.(message);
   };
 
+  const clearThreadDetails = () => {
+    threadRecordsRequestIdRef.current += 1;
+    threadDetailRequestIdRef.current += 1;
+    selectedThreadKeyRef.current = '';
+    threadRecordScopeRef.current = {};
+    setSelectedThread(null);
+    setThreadRecords([]);
+    setThreadRecordsLoading(false);
+    setThreadRecordPage(1);
+    setThreadRecordTotal(0);
+    setThreadRecordHasMore(false);
+    setThreadRecordScope({});
+    setThreadRecordPageCursors([null]);
+    setThreadSummaries([]);
+    setThreadDetailLoading(false);
+    setThreadSummaryPage(1);
+    setThreadSummaryHasMore(false);
+    setThreadSummaryPageCursors([null]);
+    setSubjectMemories([]);
+  };
+
   const fetchThreadRecordsPage = async (
     thread: EngineThread,
     requestedPage: number,
     requestedPageSize: number,
     cursor: RecordListCursor | null,
+    recordScope: ThreadRecordScope = threadRecordScopeRef.current,
   ) => {
     const recordQueryBase: ThreadRecordsQuery = {
       tenant_id: thread.tenant_id,
       source_id: thread.source_id,
+      project_id: recordScope.projectId,
+      project_id_missing: recordScope.projectIdMissing,
+      conversation_id: recordScope.conversationId,
+      conversation_id_missing: recordScope.conversationIdMissing,
       order: 'asc',
     };
     const pageSize = Math.max(1, requestedPageSize);
@@ -216,6 +251,8 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
         const summaryQuery: ThreadSummariesQuery = {
           tenant_id: thread.tenant_id,
           source_id: thread.source_id,
+          project_id: threadRecordScopeRef.current.projectId,
+          project_id_missing: threadRecordScopeRef.current.projectIdMissing,
           limit: pageSize,
           offset: 0,
           ...(cursor
@@ -277,14 +314,22 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
 
   const loadThreadDetails = async (
     thread: EngineThread,
-    options?: { page?: number; pageSize?: number; resetPage?: boolean },
+    options?: {
+      page?: number;
+      pageSize?: number;
+      resetPage?: boolean;
+      recordScope?: ThreadRecordScope;
+    },
   ) => {
     const requestId = threadRecordsRequestIdRef.current + 1;
     threadRecordsRequestIdRef.current = requestId;
     setThreadRecordsLoading(true);
     try {
       const nextThreadKey = threadScopeKey(thread) ?? '';
-      const resetPage = options?.resetPage ?? nextThreadKey !== selectedThreadKey;
+      const nextRecordScope = options?.recordScope ?? {};
+      const scopeChanged =
+        JSON.stringify(nextRecordScope) !== JSON.stringify(threadRecordScopeRef.current);
+      const resetPage = options?.resetPage ?? (nextThreadKey !== selectedThreadKey || scopeChanged);
       const requestedPageSize = options?.pageSize ?? threadRecordPageSize;
       const requestedPage = options?.page ?? (resetPage ? 1 : threadRecordPage);
       const cursor = resetPage
@@ -298,18 +343,21 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
         requestedPage,
         requestedPageSize,
         cursor,
+        nextRecordScope,
       );
       if (threadRecordsRequestIdRef.current !== requestId) {
         return;
       }
       selectedThreadKeyRef.current = nextThreadKey;
       setSelectedThread(thread);
+      threadRecordScopeRef.current = nextRecordScope;
+      setThreadRecordScope(nextRecordScope);
       setThreadRecords(recordResult.records);
       setThreadRecordTotal(recordResult.total);
       setThreadRecordHasMore(recordResult.hasMore);
       setThreadRecordPage(recordResult.page);
       setThreadRecordPageSize(recordResult.pageSize);
-      if (nextThreadKey !== selectedThreadKey) {
+      if (nextThreadKey !== selectedThreadKey || scopeChanged) {
         setThreadSummaries([]);
         setThreadSummaryPage(1);
         setThreadSummaryHasMore(false);
@@ -371,6 +419,8 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
         setThreadRecords([]);
         setThreadRecordTotal(0);
         setThreadRecordHasMore(false);
+        setThreadRecordScope({});
+        threadRecordScopeRef.current = {};
         setThreadRecordPageCursors([null]);
         setThreadRecordPage(1);
         setThreadSummaries([]);
@@ -640,6 +690,7 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
     threadRecordPage,
     threadRecordPageSize,
     threadRecordTotal,
+    threadRecordScope,
     threadRecordMaxReachablePage: Math.max(
       threadRecordPageCursors.length,
       threadRecordPage === threadRecordPageCursors.length && threadRecordHasMore
@@ -660,6 +711,7 @@ export function useThreadExplorer(tab: TabKey, options?: ThreadExplorerOptions) 
     detailTab,
     setDetailTab,
     threadFilterForm,
+    clearThreadDetails,
     loadThreadDetails,
     loadThreads,
     applyThreadFilters,

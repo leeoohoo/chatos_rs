@@ -26,7 +26,7 @@ use super::work_activity::HostWorkActivity;
 
 const MIN_CONCURRENT_WORK_ITEMS: usize = 1;
 const MAX_CONCURRENT_WORK_ITEMS: usize = 16;
-const IDLE_RECOVERY_INTERVAL: Duration = Duration::from_secs(30);
+const RUN_IDLE_RECOVERY_INTERVAL: Duration = Duration::from_secs(30);
 const HOOK_SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const HOOK_SESSION_REAPER_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -52,7 +52,6 @@ pub struct LocalAgentHostCoordinator {
     memory_sync_worker: Option<LocalMemorySyncWorker>,
     hook_coordinator: Option<Arc<LocalHookCoordinator>>,
     wakeup: Arc<Notify>,
-    memory_wakeup: Arc<Notify>,
     activity: watch::Sender<u64>,
     work_activity: HostWorkActivity,
     admission_activity: HostWorkActivity,
@@ -105,7 +104,6 @@ impl LocalAgentHostCoordinator {
             memory_sync_worker: None,
             hook_coordinator: None,
             wakeup: Arc::new(Notify::new()),
-            memory_wakeup: Arc::new(Notify::new()),
             activity,
             work_activity,
             admission_activity: HostWorkActivity::default(),
@@ -179,7 +177,6 @@ impl LocalAgentHostCoordinator {
         // for the case where all slots are currently busy.
         self.wakeup.notify_waiters();
         self.wakeup.notify_one();
-        self.memory_wakeup.notify_one();
     }
 
     pub async fn run_until_shutdown(
@@ -475,13 +472,13 @@ impl LocalAgentHostCoordinator {
     async fn next_run_retry_delay(&self) -> Result<Duration, LocalAgentCoordinatorError> {
         let next_retry_at = self.runtime.next_retry_at(&self.owner_user_id).await?;
         let Some(next_retry_at) = next_retry_at else {
-            return Ok(IDLE_RECOVERY_INTERVAL);
+            return Ok(RUN_IDLE_RECOVERY_INTERVAL);
         };
         let now = system_now_unix_ms()?;
         Ok(Duration::from_millis(
             u64::try_from(next_retry_at.saturating_sub(now).max(0)).unwrap_or(0),
         )
-        .min(IDLE_RECOVERY_INTERVAL))
+        .min(RUN_IDLE_RECOVERY_INTERVAL))
     }
 
     async fn run_memory_until_shutdown(
@@ -511,6 +508,7 @@ impl LocalAgentHostCoordinator {
                     }
                 }
             }
+            let observed_revision = worker.outbox_revision();
             let tick = {
                 let Some(_activity) = self.begin_admitted_work(&self.memory_work_activity).await
                 else {
@@ -533,7 +531,6 @@ impl LocalAgentHostCoordinator {
                 }
                 Err(_) => {
                     tokio::select! {
-                        _ = self.memory_wakeup.notified() => {}
                         _ = tokio::time::sleep(failure_backoff) => {}
                         changed = shutdown.changed() => {
                             if changed.is_err() || *shutdown.borrow() {
@@ -545,23 +542,47 @@ impl LocalAgentHostCoordinator {
                     continue;
                 }
             }
-            let delay = match worker.next_retry_at().await {
-                Ok(Some(next_retry_at)) => {
+            if worker.outbox_revision() != observed_revision {
+                continue;
+            }
+            match worker.next_retry_at().await? {
+                Some(next_retry_at) => {
                     let now = system_now_unix_ms()?;
-                    Duration::from_millis(
+                    let delay = Duration::from_millis(
                         u64::try_from(next_retry_at.saturating_sub(now).max(0)).unwrap_or(0),
-                    )
-                    .min(IDLE_RECOVERY_INTERVAL)
+                    );
+                    tokio::select! {
+                        changed = worker.wait_for_outbox_revision(observed_revision) => {
+                            changed?;
+                        }
+                        _ = tokio::time::sleep(delay) => {}
+                        changed = accepting_new_work.changed() => {
+                            if changed.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        changed = shutdown.changed() => {
+                            if changed.is_err() || *shutdown.borrow() {
+                                return Ok(());
+                            }
+                        }
+                    }
                 }
-                Ok(None) => IDLE_RECOVERY_INTERVAL,
-                Err(_) => Duration::from_secs(1),
-            };
-            tokio::select! {
-                _ = self.memory_wakeup.notified() => {}
-                _ = tokio::time::sleep(delay) => {}
-                changed = shutdown.changed() => {
-                    if changed.is_err() || *shutdown.borrow() {
-                        return Ok(());
+                None => {
+                    tokio::select! {
+                        changed = worker.wait_for_outbox_revision(observed_revision) => {
+                            changed?;
+                        }
+                        changed = accepting_new_work.changed() => {
+                            if changed.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        changed = shutdown.changed() => {
+                            if changed.is_err() || *shutdown.borrow() {
+                                return Ok(());
+                            }
+                        }
                     }
                 }
             }

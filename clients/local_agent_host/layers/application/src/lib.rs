@@ -3,7 +3,9 @@
 
 //! Durable, client-owned Local Agent state machine for runs, leases, transitions, and events.
 
-use chatos_local_agent_ports::{ClientStorageError, LocalAgentStore};
+use chatos_local_agent_ports::{
+    ClientStorageError, LocalAgentStore, LocalConversationTranscriptSource,
+};
 #[cfg(test)]
 use chatos_local_agent_protocol::LocalAgentRunStatus;
 use chatos_local_agent_protocol::{
@@ -91,6 +93,7 @@ type RuntimeClock = Arc<dyn Fn() -> Result<i64, LocalAgentRuntimeError> + Send +
 
 pub struct LocalAgentRuntime {
     store: Arc<dyn LocalAgentStore>,
+    conversation_transcript_source: Option<Arc<dyn LocalConversationTranscriptSource>>,
     clock: RuntimeClock,
     recovered_claims: AtomicU64,
 }
@@ -103,9 +106,18 @@ impl LocalAgentRuntime {
     pub fn with_clock(store: Arc<dyn LocalAgentStore>, clock: RuntimeClock) -> Self {
         Self {
             store,
+            conversation_transcript_source: None,
             clock,
             recovered_claims: AtomicU64::new(0),
         }
+    }
+
+    pub fn with_conversation_transcript_source(
+        mut self,
+        source: Arc<dyn LocalConversationTranscriptSource>,
+    ) -> Self {
+        self.conversation_transcript_source = Some(source);
+        self
     }
 
     pub async fn initialize(&self, owner_user_id: &str) -> Result<u64, LocalAgentRuntimeError> {
