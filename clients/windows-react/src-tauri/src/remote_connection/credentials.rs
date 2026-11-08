@@ -1,5 +1,5 @@
 use super::models::RemoteCredentialBundle;
-use crate::app_data_transaction::replace_owned_file;
+use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -121,7 +121,7 @@ impl PlatformRemoteCredentialVault {
             return Err(index_error());
         }
         let parent = self.path.parent().ok_or_else(index_error)?;
-        fs::create_dir_all(parent).map_err(|_| index_error())?;
+        ensure_owned_directory(parent).map_err(|_| index_error())?;
         reject_symbolic_link(&self.path)?;
         replace_owned_file(parent, &self.path, ".credential-index-", &bytes)
             .map_err(|_| index_error())?;

@@ -18,7 +18,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 use crate::{
-    app_data_transaction::{create_owned_file, replace_owned_file},
+    app_data_transaction::{create_owned_file, ensure_owned_directory, replace_owned_file},
     app_owned_export::try_remove_stale_owned_file,
     host_lifecycle::HostManager,
     machine_resource_governor::{
@@ -246,7 +246,8 @@ impl AttachmentManager {
 
     pub fn new(root: PathBuf) -> Result<Self, String> {
         if let Some(parent) = root.parent() {
-            fs::create_dir_all(parent).map_err(|error| format!("无法创建应用数据目录：{error}"))?;
+            ensure_owned_directory(parent)
+                .map_err(|error| format!("无法创建应用数据目录：{error}"))?;
         }
         ensure_private_directory(&root)?;
         let root =

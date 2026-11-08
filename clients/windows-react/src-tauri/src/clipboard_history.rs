@@ -915,8 +915,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let target = directory.path().join("target.sqlite3");
         fs::write(&target, b"not a database").unwrap();
-        std::os::unix::fs::symlink(&target, directory.path().join("clipboard.sqlite3"))
-            .unwrap();
+        std::os::unix::fs::symlink(&target, directory.path().join("clipboard.sqlite3")).unwrap();
         assert!(ClipboardHistoryStore::open(directory.path().into()).is_err());
     }
 

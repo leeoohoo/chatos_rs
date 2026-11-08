@@ -6,6 +6,7 @@ use crate::{
     agent_conversation::{
         team_todo::recover_agent_team_run_control_journal, AgentConversationStore,
     },
+    app_data_transaction::ensure_owned_directory,
     attachment_tool_worker::AttachmentToolWorker,
     authentication::AuthenticationManager,
     connector_state, control_plane,
@@ -380,7 +381,7 @@ pub async fn start_local_agent_host(
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
-    std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
+    ensure_owned_directory(&data_dir).map_err(|error| error.to_string())?;
     let state_data_dir = data_dir.clone();
     let state_owner = owner_user_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -390,7 +391,7 @@ pub async fn start_local_agent_host(
     .map_err(|_| "本地工作区状态准备任务异常退出。".to_owned())??;
     let database = data_dir.join("local-agent").join("agent.sqlite3");
     if let Some(parent) = database.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        ensure_owned_directory(parent).map_err(|error| error.to_string())?;
     }
     let empty_environment = BTreeMap::new();
     let mut bootstrap_host = match spawn(

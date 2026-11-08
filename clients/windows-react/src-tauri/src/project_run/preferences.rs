@@ -1,11 +1,11 @@
 use super::models::ProjectRunEnvironmentVariable;
-use crate::app_data_transaction::replace_owned_file;
+use crate::app_data_transaction::{ensure_owned_directory, replace_owned_file};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
-    fs::{self, File},
+    fs::File,
     io::Read,
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
@@ -354,7 +354,7 @@ impl ProjectRunPreferencesStore {
             return Err(preferences_error());
         }
         let parent = self.path.parent().ok_or_else(preferences_error)?;
-        fs::create_dir_all(parent).map_err(|_| preferences_error())?;
+        ensure_owned_directory(parent).map_err(|_| preferences_error())?;
         replace_owned_file(parent, &self.path, ".preferences-", &bytes)
             .map_err(|_| preferences_error())?;
         if let Ok(directory) = File::open(parent) {

@@ -14,7 +14,7 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 use crate::{
-    app_data_transaction::replace_owned_file,
+    app_data_transaction::{ensure_owned_directory, replace_owned_file},
     authentication::AuthenticationManager,
     general_settings::GeneralSettingsStore,
     global_utilities::{dispatch_action, GlobalUtilityAction, GlobalUtilityPreferencesStore},
@@ -1326,7 +1326,7 @@ fn save_usage(path: &Path, records: &BTreeMap<String, UsageRecord>) -> Result<()
         return Err(search_error());
     }
     let parent = path.parent().ok_or_else(search_error)?;
-    fs::create_dir_all(parent).map_err(|_| search_error())?;
+    ensure_owned_directory(parent).map_err(|_| search_error())?;
     replace_owned_file(parent, path, ".quick-search-", &bytes).map_err(|_| search_error())?;
     if let Ok(directory) = File::open(parent) {
         let _ = directory.sync_all();

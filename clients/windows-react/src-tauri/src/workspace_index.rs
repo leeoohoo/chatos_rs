@@ -8,6 +8,7 @@ use std::path::Path;
 use tauri::{AppHandle, Manager, State};
 
 use crate::{
+    app_data_transaction::ensure_owned_directory,
     host_lifecycle::{validate_owner, HostManager},
     project_creation::{recover_project_creations, ProjectCreationManager},
 };
@@ -222,7 +223,7 @@ fn load_local_projects(
 
 pub(super) fn open_project_registry(database_path: &Path) -> Result<Connection, String> {
     if let Some(parent) = database_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| "无法创建项目目录。".to_owned())?;
+        ensure_owned_directory(parent).map_err(|_| "无法创建项目目录。".to_owned())?;
     }
     let connection = Connection::open_with_flags(
         database_path,

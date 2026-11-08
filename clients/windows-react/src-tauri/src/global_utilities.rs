@@ -1,5 +1,5 @@
 use crate::{
-    app_data_transaction::replace_owned_file,
+    app_data_transaction::{ensure_owned_directory, replace_owned_file},
     authentication::AuthenticationManager,
     clipboard_history::{show_clipboard_history, ClipboardHistoryManager},
     host_lifecycle::validate_owner,
@@ -8,7 +8,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, File},
+    fs::File,
     io::Read,
     path::PathBuf,
     str::FromStr,
@@ -283,7 +283,7 @@ impl GlobalUtilityPreferencesStore {
             return Err(utility_error());
         }
         let parent = self.path.parent().ok_or_else(utility_error)?;
-        fs::create_dir_all(parent).map_err(|_| utility_error())?;
+        ensure_owned_directory(parent).map_err(|_| utility_error())?;
         replace_owned_file(parent, &self.path, ".global-utilities-", &bytes)
             .map_err(|_| utility_error())?;
         if let Ok(directory) = File::open(parent) {

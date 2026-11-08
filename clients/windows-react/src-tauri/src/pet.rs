@@ -1,5 +1,5 @@
 use crate::{
-    app_data_transaction::replace_owned_file,
+    app_data_transaction::{ensure_owned_directory, replace_owned_file},
     authentication::AuthenticationManager,
     general_settings::GeneralSettingsStore,
     host_lifecycle::{validate_owner, HostManager},
@@ -12,7 +12,7 @@ use image::{ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, File},
+    fs::File,
     io::{Cursor, Read},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -223,7 +223,7 @@ impl PetPreferencesStore {
             return Err(pet_error());
         }
         let parent = self.path.parent().ok_or_else(pet_error)?;
-        fs::create_dir_all(parent).map_err(|_| pet_error())?;
+        ensure_owned_directory(parent).map_err(|_| pet_error())?;
         replace_owned_file(parent, &self.path, ".preferences-", &bytes).map_err(|_| pet_error())?;
         if let Ok(directory) = File::open(parent) {
             let _ = directory.sync_all();

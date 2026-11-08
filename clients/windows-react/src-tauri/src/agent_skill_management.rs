@@ -11,7 +11,8 @@ use tauri::State;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    app_data_transaction::replace_owned_file, authentication::AuthenticationManager,
+    app_data_transaction::{ensure_owned_directory, replace_owned_file},
+    authentication::AuthenticationManager,
     host_lifecycle::validate_owner,
 };
 
@@ -948,7 +949,7 @@ fn load_payload(file: &Path) -> Result<OverridePayload, String> {
 
 fn persist_payload(file: &Path, payload: &OverridePayload) -> Result<(), String> {
     let parent = file.parent().ok_or_else(storage_error)?;
-    fs::create_dir_all(parent).map_err(|_| storage_error())?;
+    ensure_owned_directory(parent).map_err(|_| storage_error())?;
     reject_symlink(parent)?;
     if symlink_safe_metadata(file)?.is_some() {
         reject_symlink(file)?;
