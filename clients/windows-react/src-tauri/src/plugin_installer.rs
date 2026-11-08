@@ -1452,8 +1452,8 @@ async fn prepare_npm_mcp_package(
     fs::create_dir_all(&npm_config_root).map_err(|_| install_error("无法创建隔离 npm 配置目录"))?;
     let user_config = npm_config_root.join("user.npmrc");
     let global_config = npm_config_root.join("global.npmrc");
-    File::create(&user_config).map_err(|_| install_error("无法创建隔离 npm 配置"))?;
-    File::create(&global_config).map_err(|_| install_error("无法创建隔离 npm 配置"))?;
+    create_private_file(&user_config).map_err(|_| install_error("无法创建隔离 npm 配置"))?;
+    create_private_file(&global_config).map_err(|_| install_error("无法创建隔离 npm 配置"))?;
     run_isolated_npm(
         &node,
         &npm_cli,
@@ -1739,6 +1739,20 @@ fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
         .map_err(|_| install_error("无法保存 npm MCP 安装清单"))?;
     file.sync_all()
         .map_err(|_| install_error("无法保存 npm MCP 安装清单"))
+}
+
+fn create_private_file(path: &Path) -> std::io::Result<File> {
+    let mut options = fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(path)
 }
 
 fn find_system_executable(name: &str) -> Option<PathBuf> {
@@ -3185,7 +3199,7 @@ fn snapshot_local_tree(source: &Path, destination: Option<&Path>) -> Result<Stri
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent).map_err(|_| install_error("无法复制 Plugin 目录"))?;
             }
-            Some(File::create(target).map_err(|_| install_error("无法复制 Plugin 文件"))?)
+            Some(create_private_file(&target).map_err(|_| install_error("无法复制 Plugin 文件"))?)
         } else {
             None
         };
