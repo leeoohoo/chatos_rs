@@ -1,6 +1,6 @@
 # Windows React 与 macOS 功能拉齐关闭清单
 
-更新时间：2026-11-06
+更新时间：2026-11-08
 
 分支：`3.0.9.3.1`
 
@@ -42,6 +42,10 @@ Windows 产品版本：`3.0.9`
 - 公共 `app_data_transaction` 原子事务临时文件现在也使用 Windows 独占 `FILE_FLAG_OPEN_REPARSE_POINT` 句柄，继续保留 create-new、长度复验、刷盘、取消清理和替换/不覆盖提交语义；事务定向 3 项通过，全量 Rust 回归 `546 passed, 0 failed, 6 ignored`。
 - OpenSSH 私有配置、MFA 响应和 prompt log 写入现在也使用 Windows 独占 `FILE_FLAG_OPEN_REPARSE_POINT` 句柄；追加日志不再通过无保护的 `OpenOptions::append` 打开，既有同目录原子替换和会话清理语义保持不变。SSH 定向回归 16 项，全量 Rust 回归 `546 passed, 0 failed, 6 ignored`。
 - Connector state 与 Project Creation journal 的 `NativeConnector` / `ProjectCreationJournal` 目录创建现在也会复验普通目录并拒绝 symlink/reparse 根，避免 canonicalize 后把状态或恢复 journal 写到链接目标；Connector state 定向 4 项、Project Creation 定向 7 项，全量 Rust 回归 `547 passed, 0 failed, 6 ignored`。
+- 已拉取并合并 `origin/3.0.9.6` 最新提交 `48638ab4a`（合并提交 `659a0e2e5`）。3.0.9.6 的 Memory Engine/Local Agent Host 变更已通过 Local Agent Host 全量测试；Windows 端同步修复了会话历史分页从 `before_ordinal` 到 `before_cursor` 的 Host v52 协议迁移，提交 `3b8b3ad88` 已推送。
+- 剪贴板历史与固定 AppData scope 的目录创建已统一使用逐级 reparse-safe `ensure_owned_directory`；剪贴板数据库目标会拒绝目录、symlink 和 Windows reparse 文件，payload 继续使用独占 create-new 原子事务。对应提交 `a4e25085b` 与 `45eb57c10` 已推送；Windows Tauri 全量回归最新为 `549 passed, 0 failed, 6 ignored`，Clippy `-D warnings` 通过。
+- Computer Use Windows worker 本机验证已重新通过：`npm run test:packaging` 为 `8 passed`，`npm run audit:skill-gates` 通过，x64/arm64 `build:windows` 成功，`smoke:windows` 和 `smoke:windows:screen` 均通过（包含真实 `observe_screen`）。跨平台 `.tgz` 生成在 Windows 主机按工具链约束拒绝，Marketplace 签名发布和客户端安装仍是外部依赖。
+- 本机 Computer Use 已真实打开 Release `ChatOS` 原生窗口并观察到窗口标题、登录页、`auth-username`/`auth-password` accessibility ID、登录/注册入口；没有合法测试账号，因此不进入登录后的 31 页，也不把原生逐页视觉走查标记为完成。
 
 ## A. 本轮已关闭
 
