@@ -117,7 +117,7 @@ export function AccessControlView({
           ))}
         </div>
       </SettingsCard>
-      {pendingApproval && <div className="access-control-confirm"><section aria-modal="true" role="alertdialog"><span aria-hidden="true">!</span><h3>{pendingApproval.title}</h3><p>{pendingApproval.detail}</p>{error && <p className="is-error" role="alert">{error}</p>}<footer><button onClick={() => setPendingApproval(null)} type="button">取消</button><button className="is-primary" disabled={isLoading} onClick={async () => { const pending = pendingApproval; if (await updateApproval(port, pending.policy, pending.reviewer, true)) setPendingApproval(null); }} type="button">确认更改</button></footer></section></div>}
+      {pendingApproval && <div className="access-control-confirm"><section aria-label={pendingApproval.title} aria-modal="true" role="alertdialog"><span aria-hidden="true">!</span><h3>{pendingApproval.title}</h3><p>{pendingApproval.detail}</p>{error && <p className="is-error" role="alert">{error}</p>}<footer><button onClick={() => setPendingApproval(null)} type="button">取消</button><button className="is-primary" disabled={isLoading} onClick={async () => { const pending = pendingApproval; if (await updateApproval(port, pending.policy, pending.reviewer, true)) setPendingApproval(null); }} type="button">确认更改</button></footer></section></div>}
     </div>
   );
 }

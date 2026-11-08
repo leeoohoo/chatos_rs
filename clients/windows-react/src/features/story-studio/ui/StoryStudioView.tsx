@@ -352,7 +352,7 @@ function StoryMediaBatchPreviewSheet({ port, project, onClose }: {
 
   return (
     <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section aria-modal="true" className="story-sheet story-batch-sheet" role="dialog">
+      <section aria-label="按已保存描述批量制作" aria-modal="true" className="story-sheet story-batch-sheet" role="dialog">
         <header><div><span>▦</span><div><h2>按已保存描述批量制作</h2><p>预览由原生层按 macOS 的同一套规则生成；此步骤不会提交 AI 任务。</p></div></div><button aria-label="关闭" onClick={onClose} type="button">×</button></header>
         <div className="story-batch-sheet__body">
           <div className="story-batch-kinds" role="tablist" aria-label="批量制作环节">
@@ -412,7 +412,7 @@ function StoryMediaBatchPanel({ port, projectId }: { port: StoryStudioPort; proj
       </div>
     </section>
     {showHistory && <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowHistory(false); }}>
-      <section aria-modal="true" className="story-sheet story-batch-history-sheet" role="dialog">
+      <section aria-label="制作历史" aria-modal="true" className="story-sheet story-batch-history-sheet" role="dialog">
         <header><div><span>▦</span><div><h2>制作历史</h2><p>查看每个原生批次的检查点、最近事件与恢复状态。</p></div></div><button aria-label="关闭" onClick={() => setShowHistory(false)} type="button">×</button></header>
         <div className="story-batch-history-list">
           {batches.map((batch) => {
@@ -685,7 +685,7 @@ function StoryImageHistorySheet({ mediaPort, port, target, onClose }: { mediaPor
   };
   return (
     <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section aria-modal="true" className="story-sheet story-history-sheet" role="dialog">
+      <section aria-label="从 AI 创作历史选择" aria-modal="true" className="story-sheet story-history-sheet" role="dialog">
         <header><div><span>▧</span><div><h2>从 AI 创作历史选择</h2><p>图片会复制到当前剧情项目并立即确认使用。</p></div></div><button aria-label="关闭" onClick={onClose} type="button">×</button></header>
         <div className="story-history-grid">
           {state.storyImageHistoryLoading ? <div className="story-studio__loading"><span className="mini-spinner" />正在读取创作历史…</div> : state.storyImageHistory.length === 0 ? <p>还没有可用的图片创作记录。</p> : state.storyImageHistory.flatMap((item) => item.images.map((asset) => (
@@ -751,7 +751,7 @@ function StoryPlanningHistoryPanel({ port, projectId }: { port: StoryStudioPort;
       <button onClick={() => setShowHistory(true)} type="button">查看规划历史</button>
     </section>
     {showHistory && <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowHistory(false); }}>
-      <section aria-modal="true" className="story-sheet story-planning-history-sheet" role="dialog">
+      <section aria-label="规划草稿与运行记录" aria-modal="true" className="story-sheet story-planning-history-sheet" role="dialog">
         <header><div><span>◷</span><div><h2>规划草稿与运行记录</h2><p>草稿逐步保存在本机；完整校验通过后才会应用，不会覆盖已修改的项目。</p></div></div><button aria-label="关闭" onClick={() => setShowHistory(false)} type="button">×</button></header>
         <div className="story-planning-history-list">
           {runs.map((run) => {
