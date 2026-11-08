@@ -743,51 +743,100 @@ fn media_preview_response(
     body: Vec<u8>,
 ) -> http::Response<Vec<u8>> {
     let total_length = body.len() as u64;
+    let base_headers = |builder: http::response::Builder| {
+        builder
+            .header(http::header::ACCEPT_RANGES, "bytes")
+            .header("Access-Control-Expose-Headers", "Content-Range")
+            .header("X-Content-Type-Options", "nosniff")
+            .header("Cache-Control", "no-store")
+    };
+    if request.method() == http::Method::HEAD {
+        return base_headers(
+            http::Response::builder()
+                .status(http::StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, mime_type)
+                .header(http::header::CONTENT_LENGTH, total_length),
+        )
+        .body(Vec::new())
+        .expect("valid media head response");
+    }
     let range_header = request
         .headers()
         .get(http::header::RANGE)
         .and_then(|value| value.to_str().ok());
-    let range = match range_header {
-        Some(value) => match parse_single_byte_range(value, total_length) {
-            Ok(range) => range,
+    let ranges = match range_header {
+        Some(value) => match parse_byte_ranges(value, total_length) {
+            Ok(ranges) => Some(ranges),
             Err(()) => {
-                return http::Response::builder()
-                    .status(http::StatusCode::RANGE_NOT_SATISFIABLE)
-                    .header(
-                        http::header::CONTENT_RANGE,
-                        format!("bytes */{total_length}"),
-                    )
-                    .header(http::header::CONTENT_LENGTH, 0)
-                    .header("Cache-Control", "no-store")
-                    .body(Vec::new())
-                    .expect("valid media range error response");
+                return base_headers(
+                    http::Response::builder()
+                        .status(http::StatusCode::RANGE_NOT_SATISFIABLE)
+                        .header(
+                            http::header::CONTENT_RANGE,
+                            format!("bytes */{total_length}"),
+                        )
+                        .header(http::header::CONTENT_LENGTH, 0),
+                )
+                .header("Cache-Control", "no-store")
+                .body(Vec::new())
+                .expect("valid media range error response");
             }
         },
         None => None,
     };
 
-    let (status, content_range, body) = match range {
-        Some((start, end)) => (
-            http::StatusCode::PARTIAL_CONTENT,
-            Some(format!("bytes {start}-{end}/{total_length}")),
-            body[start as usize..=end as usize].to_vec(),
-        ),
-        None => (http::StatusCode::OK, None, body),
+    let Some(ranges) = ranges else {
+        return base_headers(
+            http::Response::builder()
+                .status(http::StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, mime_type)
+                .header(http::header::CONTENT_LENGTH, body.len()),
+        )
+        .body(body)
+        .expect("valid media preview response");
     };
-    let mut builder = http::Response::builder()
-        .status(status)
-        .header(http::header::CONTENT_TYPE, mime_type)
-        .header(http::header::CONTENT_LENGTH, body.len())
-        .header(http::header::ACCEPT_RANGES, "bytes")
-        .header("X-Content-Type-Options", "nosniff")
-        .header("Cache-Control", "no-store");
-    if let Some(content_range) = content_range {
-        builder = builder.header(http::header::CONTENT_RANGE, content_range);
+    if ranges.len() == 1 {
+        let (start, end) = ranges[0];
+        let body = body[start as usize..=end as usize].to_vec();
+        return base_headers(
+            http::Response::builder()
+                .status(http::StatusCode::PARTIAL_CONTENT)
+                .header(http::header::CONTENT_TYPE, mime_type)
+                .header(http::header::CONTENT_LENGTH, body.len())
+                .header(
+                    http::header::CONTENT_RANGE,
+                    format!("bytes {start}-{end}/{total_length}"),
+                ),
+        )
+        .body(body)
+        .expect("valid media range response");
     }
-    builder.body(body).expect("valid media preview response")
+
+    let boundary = "chatos-media-range";
+    let mut multipart = Vec::new();
+    for (start, end) in ranges {
+        multipart.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
+        multipart.extend_from_slice(format!("Content-Type: {mime_type}\r\n").as_bytes());
+        multipart.extend_from_slice(
+            format!("Content-Range: bytes {start}-{end}/{total_length}\r\n\r\n").as_bytes(),
+        );
+        multipart.extend_from_slice(&body[start as usize..=end as usize]);
+    }
+    multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    base_headers(
+        http::Response::builder()
+            .status(http::StatusCode::PARTIAL_CONTENT)
+            .header(
+                http::header::CONTENT_TYPE,
+                format!("multipart/byteranges; boundary={boundary}"),
+            )
+            .header(http::header::CONTENT_LENGTH, multipart.len()),
+    )
+    .body(multipart)
+    .expect("valid multipart media range response")
 }
 
-fn parse_single_byte_range(value: &str, total_length: u64) -> Result<Option<(u64, u64)>, ()> {
+fn parse_byte_ranges(value: &str, total_length: u64) -> Result<Vec<(u64, u64)>, ()> {
     if total_length == 0 {
         return Err(());
     }
@@ -795,39 +844,45 @@ fn parse_single_byte_range(value: &str, total_length: u64) -> Result<Option<(u64
     let Some(value) = value.strip_prefix("bytes=").map(str::trim) else {
         return Err(());
     };
-    if value.contains(',') {
+    let values = value.split(',').map(str::trim).collect::<Vec<_>>();
+    if values.is_empty() || values.len() > 16 || values.iter().any(|value| value.is_empty()) {
         return Err(());
     }
-    let Some((start, end)) = value.split_once('-') else {
-        return Err(());
-    };
-    let start = start.trim();
-    let end = end.trim();
-    let (start, end) = if start.is_empty() {
-        let suffix_length = end.parse::<u64>().map_err(|_| ())?;
-        if suffix_length == 0 {
-            return Err(());
-        }
-        (
-            total_length.saturating_sub(suffix_length),
-            total_length.saturating_sub(1),
-        )
-    } else {
-        let start = start.parse::<u64>().map_err(|_| ())?;
-        let end = if end.is_empty() {
-            total_length.saturating_sub(1)
-        } else {
-            end.parse::<u64>()
-                .map_err(|_| ())?
-                .min(total_length.saturating_sub(1))
-        };
-        (start, end)
-    };
-    if start > end || start >= total_length {
-        Err(())
-    } else {
-        Ok(Some((start, end)))
-    }
+    values
+        .into_iter()
+        .map(|value| {
+            let Some((start, end)) = value.split_once('-') else {
+                return Err(());
+            };
+            let start = start.trim();
+            let end = end.trim();
+            let (start, end) = if start.is_empty() {
+                let suffix_length = end.parse::<u64>().map_err(|_| ())?;
+                if suffix_length == 0 {
+                    return Err(());
+                }
+                (
+                    total_length.saturating_sub(suffix_length),
+                    total_length.saturating_sub(1),
+                )
+            } else {
+                let start = start.parse::<u64>().map_err(|_| ())?;
+                let end = if end.is_empty() {
+                    total_length.saturating_sub(1)
+                } else {
+                    end.parse::<u64>()
+                        .map_err(|_| ())?
+                        .min(total_length.saturating_sub(1))
+                };
+                (start, end)
+            };
+            if start > end || start >= total_length {
+                return Err(());
+            }
+            let end = start.saturating_add((end - start).min(1024 * 1024 - 1));
+            Ok((start, end))
+        })
+        .collect()
 }
 
 fn cleanup_history_temporaries(
@@ -2553,6 +2608,33 @@ mod tests {
             response.headers()[http::header::CONTENT_RANGE],
             "bytes */10"
         );
+
+        let multiple = http::Request::builder()
+            .uri("/session/record/token")
+            .header(http::header::RANGE, "bytes=0-1,8-9")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&multiple, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response.headers()[http::header::CONTENT_TYPE],
+            "multipart/byteranges; boundary=chatos-media-range"
+        );
+        let body = String::from_utf8(response.body().clone()).unwrap();
+        assert!(body.contains("Content-Range: bytes 0-1/10"));
+        assert!(body.contains("Content-Range: bytes 8-9/10"));
+        assert!(body.contains("01"));
+        assert!(body.contains("89"));
+
+        let head = http::Request::builder()
+            .method(http::Method::HEAD)
+            .uri("/session/record/token")
+            .body(Vec::new())
+            .unwrap();
+        let response = media_preview_response(&head, "video/mp4", b"0123456789".to_vec());
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert_eq!(response.headers()[http::header::CONTENT_LENGTH], "10");
+        assert!(response.body().is_empty());
     }
 
     #[test]
