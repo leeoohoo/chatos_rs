@@ -65,24 +65,48 @@ mod app_data_transaction {
         path::Path,
     };
 
+    /// Creates an application-owned directory tree without ever following a
+    /// symbolic link or Windows reparse point in an existing component.
+    pub fn ensure_owned_directory(path: &Path) -> io::Result<()> {
+        match fs::symlink_metadata(path) {
+            Ok(_) => validate_directory(path),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let parent = path.parent().ok_or_else(invalid_input)?;
+                ensure_owned_directory(parent)?;
+                match fs::create_dir(path) {
+                    Ok(()) => validate_directory(path),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        validate_directory(path)
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn create_owned_file(
         directory: &Path,
         destination: &Path,
         temporary_prefix: &str,
         bytes: &[u8],
     ) -> io::Result<()> {
-        fs::create_dir_all(directory)?;
-        if destination.parent() != Some(directory) || destination.exists() {
+        ensure_owned_directory(directory)?;
+        if destination.parent() != Some(directory) || fs::symlink_metadata(destination).is_ok() {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "destination is not new",
             ));
         }
         let temporary = directory.join(format!("{temporary_prefix}{}.tmp", uuid::Uuid::new_v4()));
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)?;
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options
+            .share_mode(0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        let mut file = options.open(&temporary)?;
         file.write_all(bytes)?;
         file.flush()?;
         file.sync_all()?;
@@ -92,6 +116,56 @@ mod app_data_transaction {
             return Err(error);
         }
         Ok(())
+    }
+
+    fn validate_directory(path: &Path) -> io::Result<()> {
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+            && !is_windows_reparse_point(&metadata)
+        {
+            Ok(())
+        } else {
+            Err(invalid_input())
+        }
+    }
+
+    fn is_windows_reparse_point(metadata: &fs::Metadata) -> bool {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+
+    fn invalid_input() -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidInput, "invalid app data transaction")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn owned_directory_creation_rejects_file_components() {
+            let root = tempfile::tempdir().unwrap();
+            let nested = root.path().join("one").join("two");
+            ensure_owned_directory(&nested).unwrap();
+            assert!(nested.is_dir());
+
+            let file = root.path().join("file");
+            fs::write(&file, b"not a directory").unwrap();
+            assert!(ensure_owned_directory(&file.join("child")).is_err());
+        }
+
+        #[test]
+        fn owned_file_creation_is_new_only_and_cleans_temporary_on_collision() {
+            let root = tempfile::tempdir().unwrap();
+            let destination = root.path().join("journal.json");
+            create_owned_file(root.path(), &destination, ".journal-", b"first").unwrap();
+            assert_eq!(fs::read(&destination).unwrap(), b"first");
+            assert!(create_owned_file(root.path(), &destination, ".journal-", b"second").is_err());
+            assert_eq!(fs::read(&destination).unwrap(), b"first");
+            assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+        }
     }
 }
 

@@ -708,6 +708,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tempfile",
  "uuid",
  "windows-sys 0.61.2",
 ]
