@@ -28,6 +28,12 @@ struct BlockingProfile {
     release: Arc<Notify>,
 }
 
+struct StagedMemoryProfile {
+    memory: LocalMemoryOutboxWriter,
+    staged: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
 #[async_trait]
 impl LocalAgentProfile for BlockingProfile {
     async fn execute_step(
@@ -40,6 +46,34 @@ impl LocalAgentProfile for BlockingProfile {
         self.release.notified().await;
         Ok(LocalAgentStepOutcome::Succeed {
             output: json!({"run_id": claim.run.run_id}),
+        })
+    }
+}
+
+#[async_trait]
+impl LocalAgentProfile for StagedMemoryProfile {
+    async fn execute_step(
+        &self,
+        claim: &LocalAgentRunClaim,
+    ) -> Result<LocalAgentStepOutcome, String> {
+        self.memory
+            .save_record(
+                SaveRecordInput::assistant_message("conversation-memory-wakeup", "done")
+                    .with_message_id("final-assistant-memory-wakeup")
+                    .with_metadata(json!({
+                        "tenant_id": "user-1",
+                        "local_agent_step_claim": {
+                            "run_id": claim.run.run_id,
+                            "claim_token": claim.claim_token,
+                            "version": claim.run.version,
+                        },
+                    })),
+            )
+            .await?;
+        self.staged.notify_one();
+        self.release.notified().await;
+        Ok(LocalAgentStepOutcome::Succeed {
+            output: json!({"answer": "done"}),
         })
     }
 }
@@ -345,6 +379,102 @@ async fn slow_remote_memory_sync_does_not_block_local_model_scheduling() {
         completed.is_ok(),
         "model scheduling waited for a remote Memory request"
     );
+
+    memory_release.notify_one();
+    shutdown_sender.send(true).expect("shutdown");
+    coordinator.wake();
+    coordinator_task
+        .await
+        .expect("coordinator task")
+        .expect("coordinator shutdown");
+}
+
+#[tokio::test]
+async fn model_commit_wakes_idle_memory_sync_for_final_response() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = Arc::new(LocalAgentRuntime::new(storage.clone()));
+    runtime.initialize("user-1").await.expect("initialize");
+    runtime
+        .try_handle(envelope(
+            "create-memory-wakeup-run",
+            HostCommand::CreateRun(CreateRunCommand {
+                run_id: "memory-wakeup-run".to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "conversation".to_string(),
+                owner_entity_id: "conversation-memory-wakeup".to_string(),
+                profile_key: "memory-wakeup".to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({"message": "finish"}),
+                max_iterations: 4,
+            }),
+        ))
+        .await
+        .expect("create Run");
+
+    let staged = Arc::new(Notify::new());
+    let model_release = Arc::new(Notify::new());
+    let memory =
+        LocalMemoryOutboxWriter::new(storage.clone(), "local_agent").expect("Memory outbox writer");
+    let mut profiles = LocalAgentProfileRegistry::new();
+    profiles
+        .register(
+            "memory-wakeup",
+            StagedMemoryProfile {
+                memory,
+                staged: Arc::clone(&staged),
+                release: Arc::clone(&model_release),
+            },
+        )
+        .expect("profile");
+    let scheduler = LocalAgentScheduler::new(
+        Arc::clone(&runtime),
+        profiles,
+        "user-1",
+        "local-model-worker",
+    )
+    .expect("scheduler");
+
+    let memory_started = Arc::new(Notify::new());
+    let memory_release = Arc::new(Notify::new());
+    let memory_worker = LocalMemorySyncWorker::new(
+        storage,
+        Arc::new(BlockingMemoryWriter {
+            started: Arc::clone(&memory_started),
+            release: Arc::clone(&memory_release),
+        }),
+        "user-1",
+    )
+    .expect("Memory worker");
+    let coordinator = Arc::new(
+        LocalAgentHostCoordinator::new(Arc::clone(&runtime), "user-1", Some(scheduler), None)
+            .expect("coordinator")
+            .with_memory_sync_worker(memory_worker)
+            .expect("Memory coordinator"),
+    );
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let coordinator_task = tokio::spawn({
+        let coordinator = Arc::clone(&coordinator);
+        async move { coordinator.run_until_shutdown(shutdown_receiver).await }
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), staged.notified())
+        .await
+        .expect("final assistant record staged");
+    // The staged record is intentionally invisible to the outbox worker. Give
+    // that worker time to observe an empty queue and enter its 30-second idle
+    // wait before the model commit publishes the final response.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    model_release.notify_one();
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), memory_started.notified())
+        .await
+        .expect("model commit woke Memory sync without waiting for idle recovery");
 
     memory_release.notify_one();
     shutdown_sender.send(true).expect("shutdown");

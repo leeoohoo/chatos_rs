@@ -411,7 +411,7 @@ impl LocalAgentHostCoordinator {
         };
         let committed = matches!(scheduler.run_once().await?, SchedulerTick::Committed(_));
         if committed {
-            self.signal_activity();
+            self.signal_committed_work();
         }
         Ok(committed)
     }
@@ -425,7 +425,7 @@ impl LocalAgentHostCoordinator {
         };
         let committed = matches!(scheduler.run_once().await?, ToolSchedulerTick::Committed(_));
         if committed {
-            self.signal_activity();
+            self.signal_committed_work();
         }
         Ok(committed)
     }
@@ -571,6 +571,14 @@ impl LocalAgentHostCoordinator {
     fn signal_activity(&self) {
         self.activity
             .send_modify(|value| *value = value.wrapping_add(1));
+    }
+
+    fn signal_committed_work(&self) {
+        self.signal_activity();
+        // Model and Tool commits can publish durable transcript records to the
+        // Memory outbox. Wake the dedicated sync lane immediately so a final
+        // assistant response never waits for the 30-second idle recovery tick.
+        self.memory_wakeup.notify_one();
     }
 
     async fn wait_for_events(
