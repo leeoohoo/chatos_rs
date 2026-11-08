@@ -18,6 +18,8 @@ use super::planning::{
 };
 
 const MEMORY_SOURCE_ID: &str = "chatos";
+const STORY_AGENT_SUBJECT_ID: &str = "agent:builtin-story-agent";
+const STORY_AGENT_THREAD_ID: &str = "client-agent:agent:builtin-story-agent";
 const MAXIMUM_MEMORY_RECORDS: usize = 64;
 const MAXIMUM_MEMORY_BLOCKS: usize = 16;
 const MAXIMUM_MEMORY_CONTEXT_BYTES: usize = 2 * 1_024 * 1_024;
@@ -58,10 +60,22 @@ impl StoryMemoryAdapter {
                     external_thread_id: Some(scope.thread_id.clone()),
                     title: None,
                     labels: Some(vec![
-                        "client_agent".into(),
-                        "memory_mapping:client_agent.v1".into(),
+                        "memory-schema:v2".into(),
+                        scope.subject_id.clone(),
+                        "thread-kind:story_agent".into(),
                     ]),
-                    metadata: None,
+                    metadata: Some(json!({
+                        "agent_id": STORY_AGENT_SUBJECT_ID
+                            .strip_prefix("agent:")
+                            .unwrap_or(STORY_AGENT_SUBJECT_ID),
+                        "agent_name": "剧情规划 Agent",
+                        "thread_kind": "story_agent",
+                        "run_id": scope.run_id,
+                        "project_id": scope
+                            .project_subject_id
+                            .strip_prefix("project:")
+                            .unwrap_or(scope.project_subject_id.as_str()),
+                    })),
                     status: None,
                     created_at: None,
                     updated_at: None,
@@ -146,7 +160,7 @@ impl StoryMemoryAdapter {
             .compose_context(&SdkComposeContextRequest {
                 tenant_id: owner_user_id.to_owned(),
                 subject_id: Some(scope.subject_id.clone()),
-                related_subject_ids: None,
+                related_subject_ids: Some(vec![scope.project_subject_id.clone()]),
                 thread_id: scope.thread_id.clone(),
                 policy: Some(ComposeContextPolicy {
                     include_recent_records: Some(true),
@@ -178,6 +192,31 @@ pub(super) fn bind_memory(
     now_unix_ms: u64,
 ) -> Result<(), String> {
     if let Some(memory) = run.checkpoint.memory.as_ref() {
+        let legacy = memory.scope.thread_id != STORY_AGENT_THREAD_ID
+            || memory.scope.subject_id != STORY_AGENT_SUBJECT_ID
+            || memory.scope.project_subject_id.is_empty();
+        if legacy {
+            if memory.sync_in_flight_end.is_some() {
+                return Err(memory_contract_error());
+            }
+            let record_epoch_unix_ms = memory.record_epoch_unix_ms;
+            let pinned_message_count = memory.pinned_message_count;
+            let scope = canonical_scope(run)?;
+            run.checkpoint.memory = Some(StoryAgentMemoryCheckpoint {
+                scope,
+                record_epoch_unix_ms,
+                pinned_message_count,
+                synced_message_count: 0,
+                synced_digest: String::new(),
+                thread_created: false,
+                sync_in_flight_end: None,
+            });
+        }
+        let memory = run
+            .checkpoint
+            .memory
+            .as_ref()
+            .ok_or_else(memory_contract_error)?;
         validate_checkpoint(run, owner_user_id, memory)?;
         run.uses_cloud_memory = true;
         return Ok(());
@@ -196,17 +235,7 @@ pub(super) fn bind_memory(
     {
         return Err(memory_contract_error());
     }
-    let scope = StoryAgentMemoryScope {
-        tenant_hash: run.owner_hash.clone(),
-        source_id: MEMORY_SOURCE_ID.into(),
-        thread_id: format!(
-            "client-agent:story:{}:{}",
-            run.project_id, run.checkpoint.id
-        ),
-        subject_id: format!("client-agent:story:{}", run.project_id),
-        run_id: run.checkpoint.id.clone(),
-        runtime_scope: run.checkpoint.scope.clone(),
-    };
+    let scope = canonical_scope(run)?;
     run.checkpoint.memory = Some(StoryAgentMemoryCheckpoint {
         scope,
         record_epoch_unix_ms: now_unix_ms,
@@ -349,12 +378,9 @@ fn validate_checkpoint(
     validate_scope(&memory.scope, owner_user_id)?;
     if memory.scope.run_id != run.checkpoint.id
         || memory.scope.runtime_scope != run.checkpoint.scope
-        || memory.scope.thread_id
-            != format!(
-                "client-agent:story:{}:{}",
-                run.project_id, run.checkpoint.id
-            )
-        || memory.scope.subject_id != format!("client-agent:story:{}", run.project_id)
+        || memory.scope.thread_id != STORY_AGENT_THREAD_ID
+        || memory.scope.subject_id != STORY_AGENT_SUBJECT_ID
+        || memory.scope.project_subject_id != format!("project:{}", run.project_id)
         || memory.pinned_message_count == 0
         || memory.pinned_message_count > run.checkpoint.messages.len()
         || memory.synced_message_count > run.checkpoint.messages.len()
@@ -401,8 +427,10 @@ fn validate_scope(scope: &StoryAgentMemoryScope, owner_identity: &str) -> Result
     };
     if scope.tenant_hash != owner_hash
         || scope.source_id != MEMORY_SOURCE_ID
-        || scope.thread_id.trim().is_empty()
-        || scope.subject_id.trim().is_empty()
+        || scope.thread_id != STORY_AGENT_THREAD_ID
+        || scope.subject_id != STORY_AGENT_SUBJECT_ID
+        || !scope.project_subject_id.starts_with("project:")
+        || scope.project_subject_id.len() <= "project:".len()
         || scope.run_id.trim().is_empty()
         || scope.runtime_scope.trim().is_empty()
     {
@@ -447,6 +475,30 @@ fn memory_record(
         (
             "client_agent_message_index".into(),
             Value::from(index as u64),
+        ),
+        (
+            "memory_project_id".into(),
+            Value::String(scope.project_subject_id.clone()),
+        ),
+        (
+            "agent_id".into(),
+            Value::String(
+                STORY_AGENT_SUBJECT_ID
+                    .strip_prefix("agent:")
+                    .unwrap_or(STORY_AGENT_SUBJECT_ID)
+                    .into(),
+            ),
+        ),
+        ("thread_kind".into(), Value::String("story_agent".into())),
+        (
+            "project_id".into(),
+            Value::String(
+                scope
+                    .project_subject_id
+                    .strip_prefix("project:")
+                    .unwrap_or(scope.project_subject_id.as_str())
+                    .into(),
+            ),
         ),
     ]);
     if let Some(call_id) = &message.tool_call_id {
@@ -493,6 +545,21 @@ fn memory_record(
         summary_id: None,
         summarized_at: None,
         created_at: timestamp.to_rfc3339_opts(SecondsFormat::Millis, true),
+    })
+}
+
+fn canonical_scope(run: &StoryPlanningRun) -> Result<StoryAgentMemoryScope, String> {
+    if run.project_id.trim().is_empty() || run.checkpoint.scope.trim().is_empty() {
+        return Err(memory_contract_error());
+    }
+    Ok(StoryAgentMemoryScope {
+        tenant_hash: run.owner_hash.clone(),
+        source_id: MEMORY_SOURCE_ID.into(),
+        thread_id: STORY_AGENT_THREAD_ID.into(),
+        subject_id: STORY_AGENT_SUBJECT_ID.into(),
+        project_subject_id: format!("project:{}", run.project_id),
+        run_id: run.checkpoint.id.clone(),
+        runtime_scope: run.checkpoint.scope.clone(),
     })
 }
 

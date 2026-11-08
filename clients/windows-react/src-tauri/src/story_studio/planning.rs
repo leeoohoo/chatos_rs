@@ -150,6 +150,8 @@ pub(super) struct StoryAgentMemoryScope {
     pub source_id: String,
     pub thread_id: String,
     pub subject_id: String,
+    #[serde(default)]
+    pub project_subject_id: String,
     pub run_id: String,
     pub runtime_scope: String,
 }
