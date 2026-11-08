@@ -62,7 +62,8 @@ use windows_sys::Win32::{
 
 use crate::{
     app_data_maintenance::try_remove_stale_owned_directory_tree,
-    app_data_transaction::create_owned_file, terminal_runtime::process::ProcessTermination,
+    app_data_transaction::{create_owned_file, ensure_owned_directory},
+    terminal_runtime::process::ProcessTermination,
 };
 
 #[cfg(test)]
@@ -322,7 +323,7 @@ impl WorkspaceLeaseManager {
         let journal_root = app_data_directory
             .join("local-agent")
             .join("appcontainer-workspace-leases");
-        std::fs::create_dir_all(&journal_root).map_err(|error| {
+        ensure_owned_directory(&journal_root).map_err(|error| {
             format!("Creating the AppContainer workspace lease directory failed: {error}")
         })?;
         let journal_root = std::fs::canonicalize(&journal_root).map_err(|error| {
@@ -331,7 +332,7 @@ impl WorkspaceLeaseManager {
         let profile_journal_root = app_data_directory
             .join("local-agent")
             .join("appcontainer-profile-leases");
-        std::fs::create_dir_all(&profile_journal_root).map_err(|error| {
+        ensure_owned_directory(&profile_journal_root).map_err(|error| {
             format!("Creating the AppContainer profile lease directory failed: {error}")
         })?;
         let profile_journal_root =
@@ -2568,7 +2569,7 @@ fn write_lease_journal(journal_path: &Path, journal: &DirectoryLeaseJournal) -> 
     let parent = journal_path
         .parent()
         .ok_or_else(|| "The workspace ACL journal has no parent directory.".to_owned())?;
-    std::fs::create_dir_all(parent)
+    ensure_owned_directory(parent)
         .map_err(|error| format!("Creating the workspace ACL journal directory failed: {error}"))?;
     let payload = serde_json::to_vec(journal)
         .map_err(|error| format!("Encoding the workspace ACL journal failed: {error}"))?;

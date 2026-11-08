@@ -29,6 +29,7 @@ use crate::terminal_runtime::process::ProcessTermination;
 #[cfg(windows)]
 use crate::windows_appcontainer::{SandboxedChild, WorkspaceAccess, WorkspaceLeaseManager};
 use crate::{
+    app_data_transaction::ensure_owned_directory,
     app_owned_export::try_remove_stale_owned_file,
     host_lifecycle::HostManager,
     machine_resource_governor::{
@@ -2163,14 +2164,11 @@ impl InvocationJournal {
 }
 
 async fn ensure_private_journal_root(root: &Path) -> Result<(), String> {
+    ensure_owned_directory(root).map_err(|_| journal_error())?;
     match tokio::fs::symlink_metadata(root).await {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
         Ok(_) => return Err(journal_error()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            tokio::fs::create_dir_all(root)
-                .await
-                .map_err(|_| journal_error())?;
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Err(journal_error()),
         Err(_) => return Err(journal_error()),
     }
     let metadata = tokio::fs::symlink_metadata(root)
