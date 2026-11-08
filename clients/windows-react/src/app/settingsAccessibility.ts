@@ -13,7 +13,7 @@ const FOCUSABLE_SETTINGS_SELECTOR = [
  * helper outside AppShell makes the modal focus contract easy to regression
  * test without mounting the full Tauri shell.
  */
-export function getSettingsFocusableElements(root: ParentNode): HTMLElement[] {
+export function getFocusableModalElements(root: ParentNode): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SETTINGS_SELECTOR))
     .filter((element) => {
       for (let current: HTMLElement | null = element; current; current = current.parentElement) {

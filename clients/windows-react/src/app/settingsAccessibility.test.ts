@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getSettingsFocusableElements } from "./settingsAccessibility";
+import { getFocusableModalElements } from "./settingsAccessibility";
 
 describe("settings accessibility focus contract", () => {
   it("keeps enabled visible controls in DOM order and excludes disabled/hidden controls", () => {
@@ -14,7 +14,7 @@ describe("settings accessibility focus contract", () => {
       </section>
     `;
 
-    expect(getSettingsFocusableElements(document.querySelector("section")! ).map((element) => element.id))
+    expect(getFocusableModalElements(document.querySelector("section")!).map((element) => element.id))
       .toEqual(["first", "second", "third"]);
   });
 });

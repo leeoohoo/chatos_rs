@@ -33,7 +33,7 @@ import type { WorkspaceIndexPort } from "../features/workspace-index/ports/Works
 import type { QuickSearchNavigationPort } from "../features/quick-search/ports/QuickSearchPort";
 import { WorkspaceSidebar } from "../features/workspace-index/ui/WorkspaceSidebar";
 import { interfaceText } from "../shared/interfaceLocale";
-import { getSettingsFocusableElements } from "./settingsAccessibility";
+import { getFocusableModalElements } from "./settingsAccessibility";
 
 const LocalTerminalWorkspace = lazy(async () => {
   const [adapterModule, viewModule] = await Promise.all([
@@ -418,27 +418,54 @@ export function AppShell({
       settingsOpenRef.current = true;
     }
 
-    const focusable = getSettingsFocusableElements(surface);
+    const focusable = getFocusableModalElements(surface);
     const initialFocus = focusable.find((element) => element.getAttribute("aria-current") === "page")
       ?? focusable[0];
     (initialFocus ?? surface).focus({ preventScroll: true });
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setActiveSurface("workspace");
-        return;
-      }
-      if (event.key !== "Tab") return;
+    const handleSettingsKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setActiveSurface("workspace");
+    };
+    surface.addEventListener("keydown", handleSettingsKeyDown);
+    return () => surface.removeEventListener("keydown", handleSettingsKeyDown);
+  }, [activeSurface, settingsOpen]);
 
-      const currentFocusable = getSettingsFocusableElements(surface);
-      if (currentFocusable.length === 0) {
+  useEffect(() => {
+    const visibleModal = () => Array.from(document.querySelectorAll<HTMLElement>("[aria-modal=\"true\"]"))
+      .filter((modal) => !modal.hidden && modal.getAttribute("aria-hidden") !== "true")
+      .filter((modal) => {
+        const style = window.getComputedStyle(modal);
+        return style.display !== "none" && style.visibility !== "hidden";
+      })
+      .at(-1);
+
+    const focusNewModal = () => {
+      const modal = visibleModal();
+      if (!modal || modal.contains(document.activeElement)) return;
+      const focusable = getFocusableModalElements(modal);
+      (focusable.find((element) => element.hasAttribute("autofocus")) ?? focusable[0] ?? modal)
+        .focus({ preventScroll: true });
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const modal = visibleModal();
+      if (!modal) return;
+      const focusable = getFocusableModalElements(modal);
+      if (focusable.length === 0) {
         event.preventDefault();
-        surface.focus({ preventScroll: true });
+        modal.focus({ preventScroll: true });
         return;
       }
-      const first = currentFocusable[0];
-      const last = currentFocusable[currentFocusable.length - 1];
+      if (!modal.contains(document.activeElement)) {
+        event.preventDefault();
+        focusable[0].focus({ preventScroll: true });
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus({ preventScroll: true });
@@ -448,9 +475,29 @@ export function AppShell({
       }
     };
 
-    surface.addEventListener("keydown", handleKeyDown);
-    return () => surface.removeEventListener("keydown", handleKeyDown);
-  }, [activeSurface, settingsOpen]);
+    const knownModals = new Set<HTMLElement>();
+    const syncModals = () => {
+      const currentModals = Array.from(document.querySelectorAll<HTMLElement>("[aria-modal=\"true\"]"));
+      for (const modal of currentModals) {
+        if (!knownModals.has(modal)) {
+          knownModals.add(modal);
+          focusNewModal();
+        }
+      }
+      for (const modal of knownModals) {
+        if (!currentModals.includes(modal)) knownModals.delete(modal);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    const observer = new MutationObserver(syncModals);
+    observer.observe(document.body, { attributes: true, attributeFilter: ["aria-modal", "aria-hidden", "hidden"], childList: true, subtree: true });
+    syncModals();
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+      observer.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     void start(hostLifecycle, session.user.id);
