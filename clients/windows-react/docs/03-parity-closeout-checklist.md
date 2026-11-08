@@ -13,6 +13,7 @@ Windows 产品版本：`3.0.9`
 以下结论以当前分支 `3.0.9.3.1` 的最新代码、测试和最终 NSIS 安装包为准。文档后面的编号条目保留为历史交付记录，其中较早的“部分完成”措辞不应覆盖本节的最新状态。
 
 - Hook 链路当前已完成：最终 NSIS 安装包能够真实启动 AppContainer runner，写入并激活受信 Bundle，触发 `UserPromptSubmit`，回传上下文，按 `continue=false` 阻断 Prompt，并在 Host 重启后恢复 active Bundle。证据：`%TEMP%\\chatos-windows-installed-hook-restart.json`。
+- 本轮 Host 诊断改动重新生成的 NSIS 安装包已再次完成安装版 Hook smoke：报告 `%TEMP%\\chatos-windows-installed-hook-auth-diagnostic.json` 中 `installExitCode=0`、`hostHealthVerified=true`、`hookBundleStored=true`、`hookBundleActivated=true`、`hookBlockedVerified=true`、`hostRestartVerified=true`、`hostExitCode=0`、`uninstallExitCode=0`；本轮 Installer SHA-256 为 `2240bd8748ab729d4f235fd2a07f06382612fb243fb2d7d22ea06eeed573028d`，sidecar SHA-256 为 `0cfb0c5a0f277cf1a63426453e9519cdbfdfd1c6664b94e1fb0ea3023958a8ff`。
 - 登录入口当前已完成：原生安装版首屏进入 owner-scoped 项目工作区，不再默认落到设置页。证据：`%TEMP%\\chatos-windows-workspace-entry-nsis.json` 与本机原生窗口观察记录。
 - 安装包原生启动 smoke 已增加硬门禁：每次启动都必须观察到安装目录中的 `chatos-windows-react.exe` 自己创建的非零窗口句柄，且窗口标题必须精确为 `ChatOS`，不能只靠进程退出码把浏览器、空进程或错误壳层误判为客户端。最新报告 `%TEMP%\\chatos-windows-native-title-smoke.json` 通过（安装版启动 `3,172 ms`、窗口标题 `ChatOS`、卸载成功、隔离用户数据已清理）。这仍不替代 31 张 macOS 截图的逐页视觉走查。
 - 插件应用 Bridge 当前与 macOS 的真实实现一致：两端只实现 `host.context.read`；`artifact.*` 等尚未闭环的能力不会在 Windows 中伪装成可调用能力。
