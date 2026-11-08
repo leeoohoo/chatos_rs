@@ -3,7 +3,14 @@
 
 use super::{ClientStorageError, SqliteClientStorage, SqliteResultExt};
 use sqlx::{pool::PoolConnection, Sqlite, SqliteConnection};
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops::{Deref, DerefMut},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
+use tokio::sync::watch;
 
 /// Owns the pool permit throughout BEGIN, the business body and completion.
 /// Raw SQL transactions are not tracked by SQLx's Transaction RAII machinery.
@@ -11,6 +18,9 @@ pub(crate) struct WriteConnection {
     connection: Option<PoolConnection<Sqlite>>,
     needs_rollback: bool,
     runtime: tokio::runtime::Handle,
+    memory_outbox_activity: watch::Sender<u64>,
+    memory_outbox_revision_tracking: Arc<AtomicBool>,
+    memory_outbox_revision_before: Option<i64>,
 }
 
 impl Deref for WriteConnection {
@@ -111,6 +121,9 @@ impl SqliteClientStorage {
             connection: Some(self.pool.acquire().await.db()?),
             needs_rollback: false,
             runtime,
+            memory_outbox_activity: self.memory_outbox_activity.clone(),
+            memory_outbox_revision_tracking: Arc::clone(&self.memory_outbox_revision_tracking),
+            memory_outbox_revision_before: None,
         })
     }
 
@@ -124,6 +137,29 @@ impl SqliteClientStorage {
             .execute(&mut **connection)
             .await
             .db()?;
+        connection.memory_outbox_revision_before = if connection
+            .memory_outbox_revision_tracking
+            .load(Ordering::Acquire)
+        {
+            match sqlx::query_scalar(
+                "SELECT revision FROM local_memory_outbox_activity WHERE singleton = 1",
+            )
+            .fetch_one(&mut **connection)
+            .await
+            {
+                Ok(revision) => Some(revision),
+                Err(sqlx::Error::Database(error))
+                    if error
+                        .message()
+                        .contains("no such table: local_memory_outbox_activity") =>
+                {
+                    None
+                }
+                Err(error) => return Err(ClientStorageError::database(error)),
+            }
+        } else {
+            None
+        };
         Ok(())
     }
 
@@ -131,6 +167,22 @@ impl SqliteClientStorage {
         connection: &mut WriteConnection,
         result: Result<T, ClientStorageError>,
     ) -> Result<T, ClientStorageError> {
+        let (result, memory_outbox_changed) =
+            match (result, connection.memory_outbox_revision_before.take()) {
+                (Ok(value), Some(before)) => {
+                    match sqlx::query_scalar::<_, i64>(
+                        "SELECT revision FROM local_memory_outbox_activity WHERE singleton = 1",
+                    )
+                    .fetch_one(&mut **connection)
+                    .await
+                    .db()
+                    {
+                        Ok(after) => (Ok(value), after != before),
+                        Err(error) => (Err(error), false),
+                    }
+                }
+                (result, _) => (result, false),
+            };
         let mut completion = WriteCompletion {
             connection,
             clean: false,
@@ -150,6 +202,12 @@ impl SqliteClientStorage {
                 {
                     Ok(_) => {
                         completion.clean = true;
+                        if memory_outbox_changed {
+                            completion
+                                .connection
+                                .memory_outbox_activity
+                                .send_modify(|revision| *revision = revision.wrapping_add(1));
+                        }
                         #[cfg(all(test, unix))]
                         super::migration_crash_tests::checkpoint("business_commit_returned").await;
                         return Ok(value);

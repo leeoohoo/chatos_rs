@@ -20,6 +20,28 @@ const SELECT_RECORD: &str =
 
 #[async_trait]
 impl LocalMemoryOutboxStore for SqliteClientStorage {
+    fn memory_outbox_revision(&self) -> u64 {
+        *self.memory_outbox_activity.borrow()
+    }
+
+    async fn wait_for_memory_outbox_revision(
+        &self,
+        observed_revision: u64,
+    ) -> Result<u64, ClientStorageError> {
+        let mut activity = self.memory_outbox_activity.subscribe();
+        loop {
+            let current = *activity.borrow_and_update();
+            if current != observed_revision {
+                return Ok(current);
+            }
+            activity.changed().await.map_err(|_| {
+                ClientStorageError::InvalidState(
+                    "Memory outbox activity channel closed".to_string(),
+                )
+            })?;
+        }
+    }
+
     async fn stage_step_memory_record(
         &self,
         claim: &LocalMemoryRunClaim,
@@ -245,8 +267,11 @@ impl LocalMemoryOutboxStore for SqliteClientStorage {
         validate_scope_value("tenant_id", tenant_id)?;
         let mut connection = self.pool.acquire().await.db()?;
         sqlx::query_scalar(
-            "SELECT MIN(next_attempt_at_unix_ms) FROM local_memory_outbox \
-             WHERE tenant_id = ? AND status = 'retry_scheduled'",
+            "SELECT MIN(CASE \
+               WHEN status = 'retry_scheduled' THEN next_attempt_at_unix_ms \
+               WHEN status = 'syncing' THEN claim_until_unix_ms \
+             END) FROM local_memory_outbox \
+             WHERE tenant_id = ? AND status IN ('retry_scheduled', 'syncing')",
         )
         .bind(tenant_id)
         .fetch_one(&mut *connection)
@@ -720,6 +745,94 @@ mod tests {
     use serde_json::json;
 
     #[tokio::test]
+    async fn committed_outbox_work_advances_a_retained_activity_revision() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        let observed = storage.memory_outbox_revision();
+        for index in 1..=2 {
+            storage
+                .enqueue_memory_record(
+                    &format!("message-{index}"),
+                    "user-1",
+                    "local_agent",
+                    "conversation-1",
+                    &json!({"message_id": format!("message-{index}")}),
+                    1_000 + index,
+                )
+                .await
+                .expect("enqueue");
+        }
+
+        let advanced = storage
+            .wait_for_memory_outbox_revision(observed)
+            .await
+            .expect("retained revision");
+        assert_eq!(advanced, observed + 2);
+
+        let claimed = storage
+            .claim_next_memory_record("user-1", "claim-1", 2_000, 12_000)
+            .await
+            .expect("claim")
+            .expect("record");
+        storage
+            .complete_memory_record(
+                &claimed.source_id,
+                &claimed.record_id,
+                "claim-1",
+                claimed.version,
+                3_000,
+            )
+            .await
+            .expect("complete");
+        assert_eq!(storage.memory_outbox_revision(), advanced);
+    }
+
+    #[tokio::test]
+    async fn rolled_back_outbox_work_does_not_publish_activity() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        let observed = storage.memory_outbox_revision();
+        let mut connection = storage.acquire_write().await.expect("write connection");
+        SqliteClientStorage::begin_immediate(&mut connection)
+            .await
+            .expect("begin");
+        enqueue_on(
+            &mut connection,
+            "rolled-back-message",
+            "user-1",
+            "local_agent",
+            "conversation-1",
+            &json!({"message_id": "rolled-back-message"}),
+            1_000,
+        )
+        .await
+        .expect("stage outbox row");
+        let rollback = SqliteClientStorage::finish_write::<()>(
+            &mut connection,
+            Err(ClientStorageError::Conflict("force rollback".to_string())),
+        )
+        .await;
+        assert!(rollback.is_err());
+        assert_eq!(storage.memory_outbox_revision(), observed);
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            storage.wait_for_memory_outbox_revision(observed),
+        )
+        .await
+        .is_err());
+        drop(connection);
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM local_memory_outbox WHERE record_id = 'rolled-back-message'",
+        )
+        .fetch_one(&storage.pool)
+        .await
+        .expect("count rolled back row");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
     async fn outbox_is_immutable_claimed_and_completed_with_cas() {
         let storage = SqliteClientStorage::connect_memory()
             .await
@@ -1053,6 +1166,13 @@ mod tests {
             .await
             .expect("claim")
             .expect("record");
+        assert_eq!(
+            storage
+                .next_memory_retry_at("user-1")
+                .await
+                .expect("active claim deadline"),
+            Some(3_000)
+        );
         assert!(storage
             .claim_next_memory_record("user-1", "claim-2", 2_500, 3_500)
             .await

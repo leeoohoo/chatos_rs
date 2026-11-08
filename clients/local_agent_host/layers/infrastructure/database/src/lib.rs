@@ -13,7 +13,16 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     Row, SqliteConnection, SqlitePool,
 };
-use std::{path::Path, str::FromStr, time::Duration};
+use std::{
+    path::Path,
+    str::FromStr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::sync::watch;
 
 mod artifact_store;
 mod capability_snapshot_store;
@@ -131,6 +140,8 @@ pub struct SqliteClientStorage {
     pub(crate) artifact_root: std::path::PathBuf,
     pub(crate) artifact_staging_root: std::path::PathBuf,
     pub(crate) hook_output_root: std::path::PathBuf,
+    pub(crate) memory_outbox_activity: watch::Sender<u64>,
+    pub(crate) memory_outbox_revision_tracking: Arc<AtomicBool>,
     _temporary_root: Option<std::sync::Arc<tempfile::TempDir>>,
 }
 
@@ -201,11 +212,15 @@ impl SqliteClientStorage {
         let hook_output_root = artifact_root.join(".hook-outputs");
         maintenance::create_private_directory(&hook_output_root)?;
         maintenance::remove_stale_artifact_staging_files(&artifact_staging_root)?;
+        let (memory_outbox_activity, _) = watch::channel(0);
+        let memory_outbox_revision_tracking = Arc::new(AtomicBool::new(false));
         let storage = Self {
             pool,
             artifact_root,
             artifact_staging_root,
             hook_output_root,
+            memory_outbox_activity,
+            memory_outbox_revision_tracking,
             _temporary_root: temporary_root,
         };
         if let Some((path, _)) = file_context {
@@ -240,6 +255,9 @@ impl SqliteClientStorage {
             None
         };
         storage.migrate().await.db()?;
+        storage
+            .memory_outbox_revision_tracking
+            .store(true, Ordering::Release);
         storage
             .prune_hook_output_blobs(chrono::Utc::now().timestamp_millis())
             .await?;

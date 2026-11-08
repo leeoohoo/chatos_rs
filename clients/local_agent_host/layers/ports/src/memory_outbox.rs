@@ -71,6 +71,18 @@ pub struct LocalMemoryRunClaim {
 
 #[async_trait]
 pub trait LocalMemoryOutboxStore: Send + Sync {
+    /// Monotonic in-process revision published only after a transaction makes
+    /// new durable outbox work visible.
+    fn memory_outbox_revision(&self) -> u64;
+
+    /// Waits until committed outbox work advances beyond `observed_revision`.
+    /// The retained revision makes the wait race-free even when the commit
+    /// happens between the caller's empty-queue check and this subscription.
+    async fn wait_for_memory_outbox_revision(
+        &self,
+        observed_revision: u64,
+    ) -> Result<u64, ClientStorageError>;
+
     /// Stages a record under a live Run claim. It becomes syncable atomically
     /// with the matching Run transition; invalidating the claim discards it.
     #[allow(clippy::too_many_arguments)]

@@ -11,14 +11,14 @@ use super::{
         SCHEMA_V16, SCHEMA_V17, SCHEMA_V18, SCHEMA_V19, SCHEMA_V2, SCHEMA_V20, SCHEMA_V21,
         SCHEMA_V22, SCHEMA_V23, SCHEMA_V24, SCHEMA_V25, SCHEMA_V26, SCHEMA_V27, SCHEMA_V28,
         SCHEMA_V29, SCHEMA_V3, SCHEMA_V30, SCHEMA_V31, SCHEMA_V32, SCHEMA_V33, SCHEMA_V34,
-        SCHEMA_V35, SCHEMA_V4, SCHEMA_V44, SCHEMA_V45, SCHEMA_V46, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7,
-        SCHEMA_V8, SCHEMA_V9,
+        SCHEMA_V35, SCHEMA_V4, SCHEMA_V44, SCHEMA_V45, SCHEMA_V46, SCHEMA_V47, SCHEMA_V5,
+        SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9,
     },
     ClientStorageError, SqliteClientStorage, SqliteResultExt,
 };
 use sqlx::SqliteConnection;
 
-pub(super) const SCHEMA_VERSION: i64 = 46;
+pub(super) const SCHEMA_VERSION: i64 = 47;
 
 pub(super) const fn requires_compaction(previous_version: i64) -> bool {
     previous_version < 33
@@ -114,6 +114,7 @@ impl SqliteClientStorage {
             (44, SCHEMA_V44),
             (45, SCHEMA_V45),
             (46, SCHEMA_V46),
+            (47, SCHEMA_V47),
         ] {
             if version < next_version {
                 Self::begin_immediate(&mut connection).await.db()?;

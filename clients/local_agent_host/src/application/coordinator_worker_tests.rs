@@ -467,14 +467,14 @@ async fn model_commit_wakes_idle_memory_sync_for_final_response() {
         .await
         .expect("final assistant record staged");
     // The staged record is intentionally invisible to the outbox worker. Give
-    // that worker time to observe an empty queue and enter its 30-second idle
-    // wait before the model commit publishes the final response.
+    // that worker time to observe an empty queue and wait for a committed
+    // activity revision before the model commit publishes the final response.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     model_release.notify_one();
 
     tokio::time::timeout(std::time::Duration::from_secs(1), memory_started.notified())
         .await
-        .expect("model commit woke Memory sync without waiting for idle recovery");
+        .expect("committed outbox revision woke Memory sync immediately");
 
     memory_release.notify_one();
     shutdown_sender.send(true).expect("shutdown");
