@@ -3,7 +3,7 @@
 
 use crate::db::Db;
 use crate::models::{EngineRecord, EngineSummary};
-use crate::repositories::{records, summaries};
+use crate::repositories::summaries;
 use crate::services::ai_pipeline::{estimate_tokens_text, MIN_TOKEN_LIMIT};
 
 use super::render::{record_to_summary_block, summary_to_rollup_block};
@@ -78,35 +78,6 @@ pub(crate) fn select_records_for_repair(records: Vec<EngineRecord>) -> RepairRec
         selected,
         selected_token_count,
     }
-}
-
-pub(crate) async fn mark_oversized_records_as_summarized(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    oversized_records: &[EngineRecord],
-    job_run_id: &str,
-    summary_id: &str,
-) -> Result<usize, String> {
-    if oversized_records.is_empty() {
-        return Ok(0);
-    }
-
-    let record_ids = oversized_records
-        .iter()
-        .map(|item| item.id.clone())
-        .collect::<Vec<_>>();
-    records::mark_claimed_records_summarized(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        record_ids.as_slice(),
-        job_run_id,
-        summary_id,
-    )
-    .await
 }
 
 pub(crate) async fn select_rollup_batch(

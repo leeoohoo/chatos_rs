@@ -5,7 +5,7 @@ use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::RunSubjectMemoryJobRequest;
 use crate::repositories::subject_memories;
-use crate::services::ai_pipeline::{estimate_tokens_text, SummaryBuildResult};
+use crate::services::ai_pipeline::estimate_tokens_text;
 
 use super::super::builders::build_subject_memory_rollup;
 use super::super::render::{
@@ -43,6 +43,22 @@ pub(crate) async fn process_rollup_selection(
     )
     .ok_or_else(|| "build subject memory rollup digest failed".to_string())?;
 
+    let mut summarizable = Vec::new();
+    let mut oversized = 0usize;
+    for memory in &selection.selected {
+        let block = subject_memory_to_rollup_block(memory);
+        if estimate_tokens_text(block.as_str()) > settings.token_limit.max(500) {
+            oversized += 1;
+        } else {
+            summarizable.push(block);
+        }
+    }
+    if oversized > 0 {
+        return Err(format!(
+            "{oversized} source subject-memory item(s) exceed the rollup token limit; inputs remain pending for lossless splitting"
+        ));
+    }
+
     if let Some(existing) = subject_memories::find_subject_memory_by_source_digest(
         db,
         req.tenant_id.as_str(),
@@ -71,67 +87,42 @@ pub(crate) async fn process_rollup_selection(
         return Ok(());
     }
 
-    let mut summarizable = Vec::new();
-    let mut oversized = 0usize;
-    for memory in &selection.selected {
-        let block = subject_memory_to_rollup_block(memory);
-        if estimate_tokens_text(block.as_str()) > settings.token_limit.max(500) {
-            oversized += 1;
-        } else {
-            summarizable.push(block);
-        }
-    }
-
-    let build = if summarizable.is_empty() {
-        SummaryBuildResult {
-            text: format!(
-                "All {} selected {} memories at level {} exceeded token_limit={}, so this rollup only marks the batch as rolled up.",
-                selection.selected.len(),
-                req.memory_type,
-                level,
-                settings.token_limit.max(500)
-            ),
-            chunk_count: 1,
-            overflow_retry_count: 0,
-        }
-    } else {
-        finish_subject_memory_build(
+    let build = finish_subject_memory_build(
+        db,
+        req,
+        settings,
+        from_scope_runner,
+        input_count,
+        progress,
+        selection.selected.len(),
+        job_run_id,
+        build_subject_memory_rollup(
+            config,
             db,
-            req,
-            settings,
-            from_scope_runner,
-            input_count,
-            progress,
-            selection.selected.len(),
+            req.tenant_id.as_str(),
+            settings.prompt_title.as_str(),
+            req.memory_type.as_str(),
+            summarizable.as_slice(),
+            settings.token_limit,
+            level,
+            target_level,
             job_run_id,
-            build_subject_memory_rollup(
-                config,
-                db,
-                req.tenant_id.as_str(),
-                settings.prompt_title.as_str(),
-                req.memory_type.as_str(),
-                summarizable.as_slice(),
-                settings.token_limit,
-                level,
-                target_level,
-                job_run_id,
-                serde_json::json!({
-                    "resume_kind": "subject_memory_job",
-                    "job_run_id": job_run_id,
-                    "request": req,
-                    "from_scope_runner": from_scope_runner,
-                    "scope_lock_owner": scope_lock_owner,
-                    "scope_key": req.scope_key,
-                }),
-            )
-            .await,
+            serde_json::json!({
+                "resume_kind": "subject_memory_job",
+                "job_run_id": job_run_id,
+                "request": req,
+                "from_scope_runner": from_scope_runner,
+                "scope_lock_owner": scope_lock_owner,
+                "scope_key": req.scope_key,
+            }),
         )
-        .await?
-    };
+        .await,
+    )
+    .await?;
 
     let memory_text = decorate_generated_text(
         build,
-        Some(oversized),
+        None,
         "subject memory rollup",
         settings.keep_level0_count,
     );

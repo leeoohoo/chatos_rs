@@ -77,16 +77,23 @@ mod settings;
 mod thread_repair;
 mod thread_summary;
 
+#[cfg(test)]
+mod fail_closed_contract_tests;
+
 pub use active_summary::{get_thread_active_summary_status, run_thread_active_summary};
 pub(crate) use rollup::{
     prepare_thread_rollup, run_prepared_thread_rollup, run_thread_rollups_until_drained,
     SCHEDULER_TRIGGER,
 };
+pub(crate) use selectors::select_pending_records_for_summary;
 pub use thread_repair::run_thread_repair_summary;
 pub(crate) use thread_repair::run_thread_repair_summary_job as resume_thread_repair_summary;
 pub use thread_summary::run_thread_summary;
 pub(crate) use thread_summary::run_thread_summary_with_thread;
-pub(crate) use thread_summary::{fail_cloud_summary_job, resume_cloud_summary_job};
+pub(crate) use thread_summary::{
+    execute_prepared_thread_summary_job, fail_cloud_summary_job, resume_cloud_summary_job,
+    start_thread_summary_job, ThreadSummaryExecutionContext, THREAD_DIRECT_TRIGGER,
+};
 
 #[cfg(test)]
 mod tests {

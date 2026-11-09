@@ -5,7 +5,7 @@ use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::FinishEngineJobRunRequest;
 use crate::repositories::{summaries, threads};
-use crate::services::ai_pipeline::{estimate_tokens_text, SummaryBuildResult};
+use crate::services::ai_pipeline::estimate_tokens_text;
 
 use super::super::builders::build_rollup_summary_text;
 use super::super::render::{
@@ -180,6 +180,44 @@ pub(crate) async fn run_prepared_thread_rollup(
         let source_digest =
             build_summary_digest(thread.id.as_str(), level, target_level, selected_ids.as_slice());
 
+        let mut summarizable = Vec::new();
+        let mut oversized = 0usize;
+        for summary in &selected {
+            let block = summary_to_rollup_block(summary);
+            if estimate_tokens_text(block.as_str()) > settings.token_limit.max(500) {
+                oversized += 1;
+            } else {
+                summarizable.push(block);
+            }
+        }
+        if oversized > 0 {
+            let error = format!(
+                "{oversized} source summary item(s) exceed the rollup token limit; inputs remain pending for lossless splitting"
+            );
+            finish_rollup_job_run(
+                db,
+                job_run.id.as_str(),
+                FinishEngineJobRunRequest {
+                    status: "failed".to_string(),
+                    input_count: selected.len() as i64,
+                    output_count: 0,
+                    processed_count: 0,
+                    success_count: 0,
+                    error_count: oversized as i64,
+                    metadata: Some(failed_metadata(
+                        Some(selected.len()),
+                        0,
+                        0,
+                        0,
+                        Some(trigger_reason),
+                    )),
+                    error_message: Some(error.clone()),
+                },
+            )
+            .await;
+            return Err(error);
+        }
+
         if let Some(existing) = summaries::find_summary_by_source_digest(
             db,
             tenant_id,
@@ -226,29 +264,7 @@ pub(crate) async fn run_prepared_thread_rollup(
             });
         }
 
-        let mut summarizable = Vec::new();
-        let mut oversized = 0usize;
-        for summary in &selected {
-            let block = summary_to_rollup_block(summary);
-            if estimate_tokens_text(block.as_str()) > settings.token_limit.max(500) {
-                oversized += 1;
-            } else {
-                summarizable.push(block);
-            }
-        }
-
-        let summary_build = if summarizable.is_empty() {
-            SummaryBuildResult {
-                text: format!(
-                    "All {} selected summaries at level {} exceeded token_limit={}, so this rollup only marks the batch as rolled up.",
-                    selected.len(),
-                    level,
-                    settings.token_limit.max(500)
-                ),
-                chunk_count: 1,
-                overflow_retry_count: 0,
-            }
-        } else {
+        let summary_build =
             match build_rollup_summary_text(
                 config,
                 db,
@@ -286,10 +302,8 @@ pub(crate) async fn run_prepared_thread_rollup(
                     .await;
                     return Err(err);
                 }
-            }
-        };
-        let summary_text =
-            decorate_generated_text(summary_build, Some(oversized), "rollup summary");
+            };
+        let summary_text = decorate_generated_text(summary_build, None, "rollup summary");
 
         let created = summaries::create_rollup_summary(
             db,

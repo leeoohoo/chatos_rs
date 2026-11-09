@@ -20,17 +20,44 @@ pub(crate) async fn execute_prepared_thread_summary_job(
 
     let result: Result<RunThreadSummaryResponse, String> = async {
         let selected_pending_tokens = selection.selected_token_count.max(0);
-        let skipped_pending_tokens = selection.oversized_token_count.max(0);
-        let skipped_count = mark_oversized_records_as_summarized(
-            db,
-            tenant_id,
-            source_id,
-            thread_id,
-            selection.oversized.as_slice(),
-            job_run_id,
-            "skipped_single_record_token_limit",
-        )
-        .await?;
+        if !selection.oversized.is_empty() {
+            let error = format!(
+                "{} source record(s) exceed the thread summary token limit; inputs remain pending for lossless splitting",
+                selection.oversized.len()
+            );
+            records::release_records_from_summary(db, tenant_id, source_id, thread_id, job_run_id)
+                .await?;
+            finish_thread_summary_job_run(
+                db,
+                job_run_id,
+                FinishEngineJobRunRequest {
+                    status: "failed".to_string(),
+                    input_count: (selection.selected.len() + selection.oversized.len()) as i64,
+                    output_count: 0,
+                    processed_count: 0,
+                    success_count: 0,
+                    error_count: selection.oversized.len() as i64,
+                    metadata: Some(failed_metadata(
+                        pending_before_count,
+                        Some(selection.selected.len()),
+                        Some(selection.selected_token_count),
+                        selection.oversized.len(),
+                        Some(pending_before_count),
+                        0,
+                        0,
+                    )),
+                    error_message: Some(error.clone()),
+                },
+            )
+            .await;
+            threads::release_summary_slot(
+                db, tenant_id, source_id, thread_id, job_run_id, 0, 0,
+            )
+            .await?;
+            return Err(error);
+        }
+        let skipped_pending_tokens = 0;
+        let skipped_count = 0;
         let skipped_count_i64 = skipped_count as i64;
 
         if selection.selected.is_empty() {

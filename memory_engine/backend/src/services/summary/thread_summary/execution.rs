@@ -10,9 +10,7 @@ use crate::repositories::{control_plane as cp_repo, records, summaries, threads}
 
 use super::super::builders::build_summary_text;
 use super::super::render::decorate_generated_text;
-use super::super::selectors::{
-    mark_oversized_records_as_summarized, select_pending_records_for_summary,
-};
+use super::super::selectors::select_pending_records_for_summary;
 use super::super::settings::load_summary_job_settings;
 use super::super::{PendingRecordSelection, SummaryJobSettings, DEFAULT_PENDING_RECORD_SCAN_LIMIT};
 use super::job::{
@@ -427,6 +425,7 @@ pub(crate) async fn fail_cloud_summary_job(
             (frozen.selected_record_ids.len() + frozen.oversized_record_ids.len()) as i64
         });
     let skipped_count = frozen.oversized_record_ids.len();
+    let input_count = frozen.selected_record_ids.len() + skipped_count;
     let _ = records::release_records_from_summary(db, tenant_id, source_id, thread_id, job_run_id)
         .await;
     finish_thread_summary_job_run(
@@ -434,34 +433,25 @@ pub(crate) async fn fail_cloud_summary_job(
         job_run_id,
         FinishEngineJobRunRequest {
             status: "failed".to_string(),
-            input_count: frozen.selected_record_ids.len() as i64,
+            input_count: input_count as i64,
             output_count: 0,
-            processed_count: skipped_count as i64,
-            success_count: skipped_count as i64,
-            error_count: frozen.selected_record_ids.len() as i64,
+            processed_count: 0,
+            success_count: 0,
+            error_count: input_count as i64,
             metadata: Some(failed_metadata(
                 pending_before_count,
                 Some(frozen.selected_record_ids.len()),
                 Some(frozen.selected_token_count),
                 skipped_count,
-                Some(pending_before_count.saturating_sub(skipped_count as i64)),
-                skipped_count as i64,
+                Some(pending_before_count),
+                0,
                 0,
             )),
             error_message: Some(error),
         },
     )
     .await;
-    threads::release_summary_slot(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        job_run_id,
-        skipped_count as i64,
-        frozen.oversized_token_count,
-    )
-    .await?;
+    threads::release_summary_slot(db, tenant_id, source_id, thread_id, job_run_id, 0, 0).await?;
     Ok(())
 }
 
