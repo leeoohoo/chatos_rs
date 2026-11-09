@@ -68,6 +68,8 @@ async fn partition_ingest_commits_record_counts_forced_dispatch_and_outbox_once(
     let request = crate::models::BatchSyncRecordsRequest {
         tenant_id: tenant.clone(),
         source_id: source.clone(),
+        project_partition_key: "project:alpha".to_string(),
+        runtime_context_assertion: "repository-test".to_string(),
         records: vec![record(
             format!("record-{suffix}").as_str(),
             Some("alpha"),
@@ -76,11 +78,10 @@ async fn partition_ingest_commits_record_counts_forced_dispatch_and_outbox_once(
     };
     let config = test_config("unused".to_string());
 
-    let inserted = crate::repositories::records::batch_sync_records_with_partition_dispatch(
-        &config, &pool, &thread_id, &request, true,
-    )
-    .await
-    .expect("commit v2 partition ingest");
+    let inserted =
+        crate::repositories::records::batch_sync_records(&config, &pool, &thread_id, &request)
+            .await
+            .expect("commit v2 partition ingest");
     assert_eq!(inserted, 1);
 
     let record_partition: Option<String> = sqlx::query_scalar(
@@ -110,22 +111,6 @@ async fn partition_ingest_commits_record_counts_forced_dispatch_and_outbox_once(
     assert_eq!(partition.3, 1);
     assert!(partition.4);
 
-    let thread_state: (i64, i64, i64, i64, bool) = sqlx::query_as(
-        "SELECT pending_record_count,pending_summary_tokens,summary_dispatch_version,summary_dispatch_force_version,summary_dispatch_pending \
-         FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
-    )
-    .bind(&tenant)
-    .bind(&source)
-    .bind(&thread_id)
-    .fetch_one(&pool)
-    .await
-    .expect("load compatibility thread state");
-    assert_eq!(thread_state.0, partition.0);
-    assert_eq!(thread_state.1, partition.1);
-    assert_eq!(thread_state.2, 1);
-    assert_eq!(thread_state.3, 1);
-    assert!(thread_state.4);
-
     let events: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM engine_derived_event_outbox WHERE tenant_id=$1 AND source_id=$2 \
          AND aggregate_kind='thread_partition' AND project_partition_key='project:alpha'",
@@ -137,11 +122,10 @@ async fn partition_ingest_commits_record_counts_forced_dispatch_and_outbox_once(
     .expect("count derived events");
     assert_eq!(events, 1);
 
-    let replayed = crate::repositories::records::batch_sync_records_with_partition_dispatch(
-        &config, &pool, &thread_id, &request, true,
-    )
-    .await
-    .expect("replay v2 partition ingest");
+    let replayed =
+        crate::repositories::records::batch_sync_records(&config, &pool, &thread_id, &request)
+            .await
+            .expect("replay v2 partition ingest");
     assert_eq!(replayed, 0);
     let replay_state: (i64, i64, i64) = sqlx::query_as(
         "SELECT pending_record_count,summary_dispatch_version,summary_dispatch_force_version \
@@ -179,21 +163,22 @@ async fn partition_ingest_rejects_mixed_batches_before_writing() {
     let request = crate::models::BatchSyncRecordsRequest {
         tenant_id: tenant.clone(),
         source_id: source.clone(),
+        project_partition_key: "project:alpha".to_string(),
+        runtime_context_assertion: "repository-test".to_string(),
         records: vec![
             record(format!("record-a-{suffix}").as_str(), Some("alpha"), false),
             record(format!("record-b-{suffix}").as_str(), Some("beta"), false),
         ],
     };
-    let error = crate::repositories::records::batch_sync_records_with_partition_dispatch(
+    let error = crate::repositories::records::batch_sync_records(
         &test_config("unused".to_string()),
         &pool,
         &thread_id,
         &request,
-        true,
     )
     .await
     .expect_err("mixed partition batch must fail");
-    assert!(error.contains("exactly one project_partition_key"));
+    assert!(error.contains("does not match verified partition"));
     let records: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3",
     )
@@ -220,30 +205,30 @@ async fn partition_ingest_rejects_replay_that_changes_immutable_identity() {
     let mut request = crate::models::BatchSyncRecordsRequest {
         tenant_id: tenant.clone(),
         source_id: source.clone(),
+        project_partition_key: "project:alpha".to_string(),
+        runtime_context_assertion: "repository-test".to_string(),
         records: vec![record(&record_id, Some("alpha"), false)],
     };
     let config = test_config("unused".to_string());
-    crate::repositories::records::batch_sync_records_with_partition_dispatch(
-        &config, &pool, &thread_id, &request, true,
-    )
-    .await
-    .expect("commit initial partition identity");
+    crate::repositories::records::batch_sync_records(&config, &pool, &thread_id, &request)
+        .await
+        .expect("commit initial partition identity");
 
     request.records[0] = record(&record_id, Some("beta"), false);
-    let partition_error = crate::repositories::records::batch_sync_records_with_partition_dispatch(
-        &config, &pool, &thread_id, &request, true,
-    )
-    .await
-    .expect_err("partition-changing replay must fail");
+    request.project_partition_key = "project:beta".to_string();
+    let partition_error =
+        crate::repositories::records::batch_sync_records(&config, &pool, &thread_id, &request)
+            .await
+            .expect_err("partition-changing replay must fail");
     assert!(partition_error.contains("cannot change project_partition_key"));
 
     request.records[0] = record(&record_id, Some("alpha"), false);
+    request.project_partition_key = "project:alpha".to_string();
     request.records[0].content = "changed-content".to_string();
-    let content_error = crate::repositories::records::batch_sync_records_with_partition_dispatch(
-        &config, &pool, &thread_id, &request, true,
-    )
-    .await
-    .expect_err("content-changing replay must fail");
+    let content_error =
+        crate::repositories::records::batch_sync_records(&config, &pool, &thread_id, &request)
+            .await
+            .expect_err("content-changing replay must fail");
     assert!(content_error.contains("content identity"));
 
     let stored: (String, i64) = sqlx::query_as(
@@ -273,14 +258,15 @@ async fn partition_ingest_normalizes_missing_project_to_none_partition() {
     let request = crate::models::BatchSyncRecordsRequest {
         tenant_id: tenant.clone(),
         source_id: source.clone(),
+        project_partition_key: "__none__".to_string(),
+        runtime_context_assertion: "repository-test".to_string(),
         records: vec![record(&record_id, None, false)],
     };
-    crate::repositories::records::batch_sync_records_with_partition_dispatch(
+    crate::repositories::records::batch_sync_records(
         &test_config("unused".to_string()),
         &pool,
         &thread_id,
         &request,
-        true,
     )
     .await
     .expect("commit no-project record");
@@ -324,15 +310,16 @@ async fn partition_ingest_rolls_back_record_and_thread_projection_on_partition_f
     let request = crate::models::BatchSyncRecordsRequest {
         tenant_id: tenant.clone(),
         source_id: source.clone(),
+        project_partition_key: "project:alpha".to_string(),
+        runtime_context_assertion: "repository-test".to_string(),
         records: vec![record(&record_id, Some("alpha"), false)],
     };
 
-    let error = crate::repositories::records::batch_sync_records_with_partition_dispatch(
+    let error = crate::repositories::records::batch_sync_records(
         &test_config("unused".to_string()),
         &pool,
         &thread_id,
         &request,
-        true,
     )
     .await
     .expect_err("partition arithmetic failure must abort ingest");
@@ -348,15 +335,4 @@ async fn partition_ingest_rolls_back_record_and_thread_projection_on_partition_f
     .await
     .expect("count rolled back record");
     assert_eq!(stored_records, 0);
-    let thread_projection: (i64, i64) = sqlx::query_as(
-        "SELECT pending_record_count,pending_summary_tokens FROM engine_threads \
-         WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
-    )
-    .bind(&tenant)
-    .bind(&source)
-    .bind(&thread_id)
-    .fetch_one(&pool)
-    .await
-    .expect("load rolled back thread projection");
-    assert_eq!(thread_projection, (0, 0));
 }

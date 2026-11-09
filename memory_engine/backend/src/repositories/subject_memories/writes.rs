@@ -1,112 +1,155 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use sqlx::types::Json;
-
 use crate::db::Db;
-use crate::models::{EngineSubjectMemory, UpsertSubjectMemoryRequest};
-use crate::repositories::postgres::{decode, json, timestamp};
+use crate::models::now_rfc3339;
+use crate::repositories::postgres::timestamp;
 
-use super::common::{build_subject_memory, lock_subject_memory_logical_key};
-
-pub async fn upsert_subject_memory(
+pub async fn retire_subject_memory(
     db: &Db,
+    tenant_id: &str,
+    source_id: &str,
     subject_id: &str,
     memory_key: &str,
-    req: UpsertSubjectMemoryRequest,
-) -> Result<EngineSubjectMemory, String> {
-    upsert(db, subject_id, memory_key, req, None, None).await
-}
-
-pub async fn upsert_generated_subject_memory(
-    db: &Db,
-    subject_id: &str,
-    memory_key: &str,
-    req: UpsertSubjectMemoryRequest,
-    source_digest: Option<String>,
-    rollup_status: &str,
-) -> Result<EngineSubjectMemory, String> {
-    upsert(
-        db,
-        subject_id,
-        memory_key,
-        req,
-        Some(source_digest),
-        Some(rollup_status),
-    )
-    .await
-}
-
-async fn upsert(
-    db: &Db,
-    subject_id: &str,
-    memory_key: &str,
-    req: UpsertSubjectMemoryRequest,
-    source_digest: Option<Option<String>>,
-    rollup_status: Option<&str>,
-) -> Result<EngineSubjectMemory, String> {
+) -> Result<usize, String> {
+    for (field, value) in [
+        ("tenant_id", tenant_id),
+        ("source_id", source_id),
+        ("subject_id", subject_id),
+        ("memory_key", memory_key),
+    ] {
+        if value.trim().is_empty() {
+            return Err(format!("{field} is required to retire subject memory"));
+        }
+    }
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
-    lock_subject_memory_logical_key(
-        &mut tx,
-        &req.tenant_id,
-        &req.source_id,
-        subject_id,
-        memory_key,
+    let memory_ids = sqlx::query_scalar::<_, String>(
+        "WITH RECURSIVE retired(id) AS ( \
+           SELECT id FROM engine_subject_memories WHERE tenant_id=$1 AND source_id=$2 \
+             AND subject_id=$3 AND memory_key=$4 AND recall_eligible \
+           UNION \
+           SELECT edge.output_id FROM engine_memory_derivation_edges edge \
+             JOIN retired input ON edge.input_kind='subject_memory' AND edge.input_id=input.id \
+            WHERE edge.tenant_id=$1 AND edge.source_id=$2 \
+              AND edge.output_kind='subject_memory' AND edge.status='active' \
+         ) SELECT id FROM retired",
     )
-    .await?;
-    let existing = sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_subject_memories WHERE tenant_id=$1 AND source_id=$2 \
-         AND subject_id=$3 AND memory_key=$4 AND generation_id IS NULL FOR UPDATE",
-    )
-    .bind(&req.tenant_id)
-    .bind(&req.source_id)
+    .bind(tenant_id)
+    .bind(source_id)
     .bind(subject_id)
     .bind(memory_key)
-    .fetch_optional(&mut *tx)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?
-    .map(decode)
-    .transpose()?;
-    let memory = build_subject_memory(
-        existing,
-        subject_id,
-        memory_key,
-        req,
-        source_digest,
-        rollup_status,
-    );
-    let relation_subject_id = memory
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("relation_subject_id"))
-        .and_then(serde_json::Value::as_str);
-    sqlx::query(
-        "INSERT INTO engine_subject_memories \
-         (id,tenant_id,source_id,subject_id,memory_key,memory_type,level,source_digest, \
-          relation_subject_id,status,rollup_status,created_at,updated_at,data) \
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) \
-         ON CONFLICT(tenant_id,source_id,subject_id,memory_key) WHERE generation_id IS NULL DO UPDATE SET \
-         memory_type=EXCLUDED.memory_type,level=EXCLUDED.level,source_digest=EXCLUDED.source_digest, \
-         relation_subject_id=EXCLUDED.relation_subject_id,status=EXCLUDED.status, \
-         rollup_status=EXCLUDED.rollup_status,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data",
+    .map_err(|error| error.to_string())?;
+    if memory_ids.is_empty() {
+        tx.rollback().await.map_err(|error| error.to_string())?;
+        return Ok(0);
+    }
+    sqlx::query_scalar::<_, String>(
+        "SELECT id FROM engine_subject_memories WHERE tenant_id=$1 AND source_id=$2 \
+         AND id=ANY($3) FOR UPDATE",
     )
-    .bind(&memory.id)
-    .bind(&memory.tenant_id)
-    .bind(&memory.source_id)
-    .bind(&memory.subject_id)
-    .bind(&memory.memory_key)
-    .bind(&memory.memory_type)
-    .bind(memory.level)
-    .bind(&memory.source_digest)
-    .bind(relation_subject_id)
-    .bind(&memory.status)
-    .bind(&memory.rollup_status)
-    .bind(timestamp(&memory.created_at)?)
-    .bind(timestamp(&memory.updated_at)?)
-    .bind(json(&memory)?)
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(&memory_ids)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+
+    let affected_summary_ids = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT input_id FROM engine_memory_derivation_edges \
+         WHERE tenant_id=$1 AND source_id=$2 AND status='active' \
+         AND input_kind='thread_summary' AND output_kind='subject_memory' AND output_id=ANY($3)",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(&memory_ids)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    let affected_scope_keys = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT output_scope_key FROM engine_memory_derivation_edges \
+         WHERE tenant_id=$1 AND source_id=$2 AND status='active' \
+           AND output_kind='subject_memory' AND output_id=ANY($3)",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(&memory_ids)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    let now = now_rfc3339();
+    sqlx::query(
+        "UPDATE engine_memory_derivation_edges SET status='retired',retired_at=$4, \
+         retired_reason='memory_retired' WHERE tenant_id=$1 AND source_id=$2 AND status='active' \
+         AND ((input_kind='subject_memory' AND input_id=ANY($3)) \
+           OR (output_kind='subject_memory' AND output_id=ANY($3)))",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(&memory_ids)
+    .bind(timestamp(&now)?)
     .execute(&mut *tx)
     .await
     .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE engine_memory_fact_projections SET status='retired',retired_at=$4 \
+         WHERE tenant_id=$1 AND source_id=$2 AND output_kind='subject_memory' \
+         AND output_id=ANY($3) AND status IN ('active','uncertain')",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(&memory_ids)
+    .bind(timestamp(&now)?)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if !affected_summary_ids.is_empty() {
+        sqlx::query(
+            "UPDATE engine_summaries SET subject_memory_summarized=0, \
+             subject_memory_scope_keys='{}'::TEXT[],updated_at=$4 \
+             WHERE tenant_id=$1 AND source_id=$2 AND id=ANY($3) AND recall_eligible",
+        )
+        .bind(tenant_id)
+        .bind(source_id)
+        .bind(&affected_summary_ids)
+        .bind(timestamp(&now)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    if !affected_scope_keys.is_empty() {
+        sqlx::query(
+            "UPDATE engine_subject_memory_scopes SET subject_memory_status='pending', \
+             subject_memory_dispatch_version=subject_memory_dispatch_version+1, \
+             subject_memory_dispatch_pending=true,subject_memory_dispatch_requested_at=$4, \
+             subject_memory_dispatch_last_error=NULL,lock_owner=NULL,lock_expires_at=NULL,updated_at=$4 \
+             WHERE tenant_id=$1 AND source_id=$2 AND scope_key=ANY($3) AND status='active'",
+        )
+        .bind(tenant_id)
+        .bind(source_id)
+        .bind(&affected_scope_keys)
+        .bind(timestamp(&now)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    let retired = sqlx::query(
+        "UPDATE engine_subject_memories SET status='retired',recall_eligible=false,retired_at=$4, \
+         retired_reason='business_delete',updated_at=$4, \
+         data=jsonb_set(jsonb_set(data,'{status}',to_jsonb('retired'::text),true), \
+                        '{updated_at}',to_jsonb($5::text),true) \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=ANY($3) AND recall_eligible",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(&memory_ids)
+    .bind(timestamp(&now)?)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?
+    .rows_affected() as usize;
     tx.commit().await.map_err(|error| error.to_string())?;
-    Ok(memory)
+    Ok(retired)
 }

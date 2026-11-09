@@ -15,7 +15,8 @@ pub async fn get_summary_by_id(
     summary_id: &str,
 ) -> Result<Option<EngineSummary>, String> {
     sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+        "SELECT data FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
+         AND recall_eligible",
     )
     .bind(tenant_id)
     .bind(source_id)
@@ -85,12 +86,8 @@ pub async fn list_latest_thread_summaries_at_level_for_project(
         Some("done"),
         Some(level.max(0)),
     );
-    if let Some(project_subject_id) = project_subject_id {
-        q.push(" AND BTRIM(COALESCE(data #>> '{metadata,project_subject_id}',''))=")
-            .push_bind(project_subject_id);
-    } else {
-        q.push(" AND BTRIM(COALESCE(data #>> '{metadata,project_subject_id}',''))=''");
-    }
+    q.push(" AND project_partition_key=")
+        .push_bind(project_subject_id.unwrap_or("__none__"));
     q.push(" ORDER BY created_at DESC LIMIT ")
         .push_bind(limit.max(1));
     fetch(db, q).await

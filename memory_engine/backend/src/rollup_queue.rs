@@ -163,11 +163,6 @@ async fn process_rollup_event(
 
     let policy = control_plane::get_effective_job_policy(&state.pool, "rollup").await?;
     let event = envelope.as_outbox();
-    if !policy.enabled {
-        summaries::mark_rollup_dispatch_consumed(&state.pool, &event).await?;
-        return Ok(());
-    }
-
     let settings = cp_service::build_rollup_settings_from_policy(&policy)?;
     let Some(prepared) = summary::prepare_thread_rollup(
         &state.pool,
@@ -219,11 +214,8 @@ async fn process_rollup_event(
 
 async fn run_reconciler(state: Arc<AppState>) {
     loop {
-        let scan_interval = match control_plane::get_effective_job_policy(&state.pool, "rollup")
-            .await
-            .and_then(|policy| cp_service::managed_policy_scan_interval(&policy))
-        {
-            Ok(value) => value,
+        let scan_interval = match control_plane::get_effective_job_policy(&state.pool, "rollup").await {
+            Ok(_) => state.config.rollup_outbox_reconcile_interval,
             Err(error) => {
                 warn!(error, "Memory Engine rollup scan policy is invalid");
                 tokio::time::sleep(state.config.rollup_outbox_reconcile_interval).await;
@@ -262,12 +254,8 @@ async fn run_reconciler(state: Arc<AppState>) {
 
 async fn arm_rollup_dispatches(state: &AppState) -> Result<usize, String> {
     let policy = control_plane::get_effective_job_policy(&state.pool, "rollup").await?;
-    if !policy.enabled {
-        return Ok(0);
-    }
     let settings = cp_service::build_rollup_settings_from_policy(&policy)?;
-    let scan_limit =
-        cp_service::managed_policy_scan_limit(&policy, state.config.rollup_outbox_batch_size)?;
+    let scan_limit = state.config.rollup_outbox_batch_size.max(1);
     let candidates = summaries::list_threads_with_pending_rollups(
         &state.pool,
         None,

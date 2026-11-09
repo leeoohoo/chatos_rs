@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeMap;
-
 use crate::db::Db;
-use crate::repositories::{subject_memories, summaries};
+use crate::repositories::subject_memories;
 use crate::services::ai_pipeline::{estimate_tokens_text, MIN_TOKEN_LIMIT};
 
 use super::render::{subject_memory_to_rollup_block, summary_to_subject_memory_block};
@@ -117,54 +115,6 @@ fn select_bounded_batch<T: Clone>(
     Some(selected)
 }
 
-pub(crate) async fn mark_summary_sources_subject_memory_summarized(
-    db: &Db,
-    selected: &[PendingSourceSummary],
-    scope_key: Option<&str>,
-) -> Result<usize, String> {
-    if selected.is_empty() {
-        return Ok(0);
-    }
-
-    let mut grouped = BTreeMap::<(String, String, String), Vec<String>>::new();
-    for item in selected {
-        grouped
-            .entry((
-                item.tenant_id.clone(),
-                item.source_id.clone(),
-                item.thread_id.clone(),
-            ))
-            .or_default()
-            .push(item.id.clone());
-    }
-
-    let mut marked = 0usize;
-    for ((tenant_id, source_id, thread_id), summary_ids) in grouped {
-        marked += if let Some(scope_key) = scope_key {
-            summaries::mark_summaries_subject_memory_summarized_for_scope(
-                db,
-                tenant_id.as_str(),
-                source_id.as_str(),
-                thread_id.as_str(),
-                summary_ids.as_slice(),
-                scope_key,
-            )
-            .await?
-        } else {
-            summaries::mark_summaries_subject_memory_summarized(
-                db,
-                tenant_id.as_str(),
-                source_id.as_str(),
-                thread_id.as_str(),
-                summary_ids.as_slice(),
-            )
-            .await?
-        };
-    }
-
-    Ok(marked)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::models::EngineSummary;
@@ -192,6 +142,8 @@ mod tests {
             subject_memory_summarized: 0,
             subject_memory_summarized_at: None,
             metadata: None,
+            payload_schema: None,
+            structured_payload: None,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         };
@@ -204,6 +156,7 @@ mod tests {
             summary_type: summary.summary_type,
             level: summary.level,
             summary_text: summary.summary_text,
+            structured_payload: summary.structured_payload,
             created_at: summary.created_at,
             metadata: summary.metadata,
         }

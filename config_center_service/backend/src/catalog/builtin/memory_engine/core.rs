@@ -58,6 +58,52 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             363,
             now,
         ),
+        secret_definition(
+            MEMORY_ENGINE_RUNTIME_CONTEXT_ASSERTION_KEYS_CONFIG_KEY,
+            "Runtime Context Assertion Key Set",
+            "Memory Engine 校验 Runtime Context Assertion 的独立轮换密钥集，按 key id 配置 issuer 与 secret",
+            "Memory Engine / Security",
+            "service",
+            Some("memory-engine"),
+            json!({
+                "local-connector-2026-11": {
+                    "issuer": "local-connector-service",
+                    "secret": "change_me_local_connector_memory_assertion_secret"
+                },
+                "local-agent-host-2026-11": {
+                    "issuer": "local-agent-host",
+                    "secret": "change_me_local_agent_host_memory_assertion_secret"
+                }
+            }),
+            "restart_required",
+            &["MEMORY_ENGINE_RUNTIME_CONTEXT_ASSERTION_KEYS_JSON"],
+            363,
+            now,
+        ),
+        definition(
+            MEMORY_ENGINE_MODEL_CAPABILITIES_CONFIG_KEY,
+            "Published Model Capabilities",
+            "Memory Engine 接受的不可变模型能力版本；compose 只接受本目录中已发布的 revision",
+            "Memory Engine / Compose",
+            "service",
+            Some("memory-engine"),
+            "json",
+            json!({
+                "model-capability-200k-v1": {
+                    "context_window_tokens": 200000,
+                    "output_reserve_tokens": 30000,
+                    "protocol_overhead_estimator_id": "responses-json-v1",
+                    "tokenizer_id": "o200k_base"
+                }
+            }),
+            None,
+            None,
+            &[],
+            "restart_required",
+            &["MEMORY_ENGINE_MODEL_CAPABILITIES_JSON"],
+            364,
+            now,
+        ),
         definition(
             MEMORY_ENGINE_HOST_CONFIG_KEY,
             "Host",

@@ -111,6 +111,7 @@ impl ContextualTurnRunner {
         let mut model_request = model_request;
         enable_openai_responses_protocol(&mut model_request);
         model_request.input = contextual_input;
+        validate_complete_request_budget(&model_request)?;
         self.runtime.run_turn(model_request, runtime_options).await
     }
 
@@ -150,6 +151,7 @@ impl ContextualTurnRunner {
         }
         enable_openai_responses_protocol(&mut model_request);
         model_request.input = contextual_input;
+        validate_complete_request_budget(&model_request)?;
         let single_step = AiSingleStepRequest {
             model_request,
             runtime_options,
@@ -168,6 +170,48 @@ impl ContextualTurnRunner {
             Err(err) => AiTurnReport::failed(err),
         }
     }
+}
+
+fn validate_complete_request_budget(request: &ModelRequest) -> Result<(), String> {
+    if request.model_capability_revision.trim().is_empty()
+        || request.protocol_overhead_estimator_id.trim().is_empty()
+        || request.context_window_tokens < 2_048
+        || request.output_reserve_tokens < 256
+        || request.output_reserve_tokens >= request.context_window_tokens
+    {
+        return Err("published model capability snapshot is required".to_string());
+    }
+    let input_bytes = serde_json::to_vec(&request.input)
+        .map_err(|error| format!("serialize model input for budget precheck failed: {error}"))?
+        .len();
+    let tool_bytes = serde_json::to_vec(&request.tools)
+        .map_err(|error| format!("serialize model tools for budget precheck failed: {error}"))?
+        .len();
+    let instruction_bytes = request.instructions.as_deref().map_or(0, str::len);
+    let protocol_overhead_tokens = 256usize
+        .saturating_add(request.tools.len().saturating_mul(64))
+        .saturating_add(
+            request
+                .input
+                .as_array()
+                .map_or(1, Vec::len)
+                .saturating_mul(16),
+        );
+    let estimated_input_tokens = input_bytes
+        .saturating_add(tool_bytes)
+        .saturating_add(instruction_bytes)
+        .saturating_add(2)
+        / 3
+        + protocol_overhead_tokens;
+    if estimated_input_tokens.saturating_add(request.output_reserve_tokens)
+        > request.context_window_tokens
+    {
+        return Err(format!(
+            "complete model request exceeds frozen context budget: estimated_input_tokens={estimated_input_tokens}, output_reserve_tokens={}, context_window_tokens={}",
+            request.output_reserve_tokens, request.context_window_tokens
+        ));
+    }
+    Ok(())
 }
 
 fn enable_openai_responses_protocol(request: &mut ModelRequest) {

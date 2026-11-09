@@ -31,6 +31,12 @@ pub struct InternalModelRuntimeConfigResponse {
     pub thinking_level: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
+    pub model_capability_revision: String,
+    pub context_window_tokens: i64,
+    pub output_reserve_tokens: i64,
+    pub protocol_overhead_estimator_id: String,
+    pub tokenizer_id: Option<String>,
+    pub responses_compaction_threshold: Option<i64>,
     pub supports_images: bool,
     pub supports_reasoning: bool,
     pub supports_responses: bool,
@@ -184,6 +190,23 @@ pub async fn get_user_model_runtime_config(
                 .map(|vendor| vendor.as_str().to_string())
         });
 
+        let model_capability_revision = model_config
+            .model_capability_revision
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| bad_request("model capability is not published"))?;
+        let context_window_tokens = model_config
+            .context_window_tokens
+            .ok_or_else(|| bad_request("model capability is not published"))?;
+        let output_reserve_tokens = model_config
+            .output_reserve_tokens
+            .ok_or_else(|| bad_request("model capability is not published"))?;
+        let protocol_overhead_estimator_id = model_config
+            .protocol_overhead_estimator_id
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| bad_request("model capability is not published"))?;
+
         Ok(Json(InternalModelRuntimeConfigResponse {
             id: model_config.id,
             owner_user_id: model_config.owner_user_id,
@@ -196,6 +219,12 @@ pub async fn get_user_model_runtime_config(
             thinking_level: model_config.thinking_level,
             temperature: model_config.temperature,
             max_output_tokens: model_config.max_output_tokens,
+            model_capability_revision,
+            context_window_tokens,
+            output_reserve_tokens,
+            protocol_overhead_estimator_id,
+            tokenizer_id: model_config.tokenizer_id,
+            responses_compaction_threshold: model_config.responses_compaction_threshold,
             supports_images: model_config.supports_images,
             supports_reasoning: model_config.supports_reasoning,
             supports_responses: model_config.supports_responses,
@@ -259,6 +288,7 @@ pub async fn list_user_model_runtime_configs(
                 || model_config.model.trim().is_empty()
                 || !is_supported_provider(model_config.provider.as_str())
                 || !model_config_has_backing_provider(&model_config, providers.as_slice())
+                || !has_complete_model_capability(&model_config)
             {
                 continue;
             }
@@ -296,6 +326,20 @@ pub async fn list_user_model_runtime_configs(
                 thinking_level: model_config.thinking_level,
                 temperature: model_config.temperature,
                 max_output_tokens: model_config.max_output_tokens,
+                model_capability_revision: model_config
+                    .model_capability_revision
+                    .expect("validated capability revision"),
+                context_window_tokens: model_config
+                    .context_window_tokens
+                    .expect("validated context window"),
+                output_reserve_tokens: model_config
+                    .output_reserve_tokens
+                    .expect("validated output reserve"),
+                protocol_overhead_estimator_id: model_config
+                    .protocol_overhead_estimator_id
+                    .expect("validated overhead estimator"),
+                tokenizer_id: model_config.tokenizer_id,
+                responses_compaction_threshold: model_config.responses_compaction_threshold,
                 supports_images: model_config.supports_images,
                 supports_reasoning: model_config.supports_reasoning,
                 supports_responses: model_config.supports_responses,
@@ -321,4 +365,26 @@ pub async fn list_user_model_runtime_configs(
         },
     );
     result
+}
+
+fn has_complete_model_capability(model: &crate::models::UserModelConfigRecord) -> bool {
+    model
+        .model_capability_revision
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+        && model.context_window_tokens.is_some_and(|value| value >= 2_048)
+        && model.output_reserve_tokens.is_some_and(|value| value >= 256)
+        && model
+            .context_window_tokens
+            .zip(model.output_reserve_tokens)
+            .is_some_and(|(window, reserve)| reserve < window)
+        && model
+            .protocol_overhead_estimator_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        && model.max_output_tokens.is_none_or(|max_output| {
+            model
+                .output_reserve_tokens
+                .is_some_and(|reserve| max_output > 0 && max_output <= reserve)
+        })
 }

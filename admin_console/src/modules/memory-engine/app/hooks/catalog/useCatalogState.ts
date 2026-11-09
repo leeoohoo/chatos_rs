@@ -16,9 +16,7 @@ import type { CatalogForms, CatalogState } from './types';
 const POLICY_VIEW_KEYS: PolicyViewKey[] = [
   'summary',
   'rollup',
-  'memory_from_summary',
-  'memory_rollup',
-  'thread_repair',
+  'subject_memory',
 ];
 
 export function useCatalogState(): CatalogState & CatalogForms {
@@ -28,8 +26,6 @@ export function useCatalogState(): CatalogState & CatalogForms {
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<EngineSource | null>(null);
   const [rotatedSecret, setRotatedSecret] = useState<RotateSourceSecretResponse | null>(null);
-  const [savingPolicyJobType, setSavingPolicyJobType] = useState<string | null>(null);
-  const [generatingPolicyJobType, setGeneratingPolicyJobType] = useState<string | null>(null);
   const [sources, setSources] = useState<EngineSource[]>([]);
   const [jobPolicies, setJobPolicies] = useState<EngineJobPolicy[]>([]);
   const [selectedPolicyViewKey, setSelectedPolicyViewKey] =
@@ -43,8 +39,7 @@ export function useCatalogState(): CatalogState & CatalogForms {
         if (
           policy.job_type === 'summary' ||
           policy.job_type === 'rollup' ||
-          policy.job_type === 'subject_memory' ||
-          policy.job_type === 'thread_repair'
+          policy.job_type === 'subject_memory'
         ) {
           acc[policy.job_type as JobTypeKey] = policy;
         }
@@ -57,7 +52,6 @@ export function useCatalogState(): CatalogState & CatalogForms {
     const availableKeys = POLICY_VIEW_KEYS.filter((key) => {
       if (key === 'summary') return Boolean(policyMap.summary);
       if (key === 'rollup') return Boolean(policyMap.rollup);
-      if (key === 'thread_repair') return Boolean(policyMap.thread_repair);
       return Boolean(policyMap.subject_memory);
     });
     if (availableKeys.length === 0) {
@@ -75,8 +69,6 @@ export function useCatalogState(): CatalogState & CatalogForms {
     sourceModalOpen,
     editingSource,
     rotatedSecret,
-    savingPolicyJobType,
-    generatingPolicyJobType,
     sources,
     jobPolicies,
     selectedPolicyViewKey,
@@ -87,8 +79,6 @@ export function useCatalogState(): CatalogState & CatalogForms {
     setSourceSubmitting,
     setSourceModalOpen,
     setEditingSource,
-    setSavingPolicyJobType,
-    setGeneratingPolicyJobType,
     setSources,
     setJobPolicies,
     setSelectedPolicyViewKey,

@@ -62,6 +62,8 @@ struct NativeLocalAgentCredentialEnvironmentTests {
     private func snapshot(_ model: String, owner: String = "user-1", credentialRef: String? = nil) -> LocalAgentModelConfigSnapshot {
         let variable = NativeLocalAgentModelCredentialStore().environmentVariable(modelConfigRef: model)
         return .init(ownerUserID: owner, modelConfigRef: model, modelConfigRevision: "revision-1",
+                     modelCapabilityRevision: "capability-v1", contextWindowTokens: 200_000,
+                     outputReserveTokens: 30_000, protocolOverheadEstimatorID: "responses-json-v1",
                      credentialRef: credentialRef ?? "env:\(variable)", baseURL: "https://example.invalid/v1",
                      model: model, provider: "test", supportsResponses: true)
     }

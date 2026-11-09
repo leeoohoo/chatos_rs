@@ -864,7 +864,9 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
             let Some(hooks) = self.hook_coordinator.as_ref() else {
                 return HostResponseEnvelope::success(
                     request.command_id,
-                    HostResult::AgentTeamHookContext { contexts: Vec::new() },
+                    HostResult::AgentTeamHookContext {
+                        contexts: Vec::new(),
+                    },
                 );
             };
             return match hooks.resolve_agent_team_context(command).await {

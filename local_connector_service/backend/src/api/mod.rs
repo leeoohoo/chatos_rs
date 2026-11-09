@@ -33,6 +33,7 @@ mod plugin_management_plugins;
 mod plugin_management_prompts;
 mod project_bindings;
 mod router;
+mod runtime_context_assertions;
 mod workspaces;
 
 pub use self::auth_middleware::ApiError;
@@ -58,6 +59,7 @@ use self::project_bindings::{
     create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
 };
 pub use self::router::build_public_router;
+use self::runtime_context_assertions::issue_runtime_context_assertion;
 use self::workspaces::{
     create_workspace, delete_workspace, list_workspaces, load_owned_workspace, update_workspace,
 };

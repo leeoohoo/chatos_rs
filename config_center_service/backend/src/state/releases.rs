@@ -337,7 +337,6 @@ impl AppState {
                 );
             }
         }
-        validate_memory_feature_flags(values, &mut errors);
         validate_postgres_pool_budget(values, &mut errors);
         validate_mtls_url(
             values,
@@ -400,55 +399,6 @@ impl AppState {
             );
         }
         Ok(errors)
-    }
-}
-
-fn validate_memory_feature_flags(values: &BTreeMap<String, Value>, errors: &mut Vec<String>) {
-    let mut parsed = BTreeMap::new();
-    for definition in memory_engine_sdk::MEMORY_FEATURE_FLAG_DEFINITIONS {
-        let key = definition.config_key();
-        let Some(value) = values.get(key.as_str()) else {
-            errors.push(format!("{key} is required"));
-            continue;
-        };
-        let config = match serde_json::from_value::<memory_engine_sdk::MemoryFeatureFlagConfig>(
-            value.clone(),
-        ) {
-            Ok(config) => config,
-            Err(error) => {
-                errors.push(format!("{key} has invalid feature flag JSON: {error}"));
-                continue;
-            }
-        };
-        for error in config.validate_for(*definition) {
-            errors.push(format!("{key}: {error}"));
-        }
-        parsed.insert(definition.name, config);
-    }
-
-    for definition in memory_engine_sdk::MEMORY_FEATURE_FLAG_DEFINITIONS {
-        let Some(config) = parsed.get(definition.name) else {
-            continue;
-        };
-        if !config.enabled || config.emergency_disabled {
-            continue;
-        }
-        for scope in &config.tenant_source_allowlist {
-            for dependency in definition.dependencies {
-                let dependency_enabled = parsed.get(dependency).is_some_and(|value| {
-                    value.is_enabled_for(scope.tenant_id.as_str(), scope.source_id.as_str())
-                });
-                if !dependency_enabled {
-                    errors.push(format!(
-                        "{} requires {} for tenant_id={} source_id={}",
-                        definition.config_key(),
-                        memory_engine_sdk::memory_feature_flag_config_key(dependency),
-                        scope.tenant_id,
-                        scope.source_id
-                    ));
-                }
-            }
-        }
     }
 }
 
@@ -635,53 +585,5 @@ mod postgres_budget_tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("connection budget requires")));
-    }
-}
-
-#[cfg(test)]
-mod memory_feature_flag_tests {
-    use super::*;
-    use memory_engine_sdk::{MemoryFeatureFlagScope, MEMORY_COVERAGE_V2_FLAG};
-
-    fn defaults() -> BTreeMap<String, Value> {
-        memory_engine_sdk::MEMORY_FEATURE_FLAG_DEFINITIONS
-            .iter()
-            .map(|definition| {
-                (
-                    definition.config_key(),
-                    serde_json::to_value(definition.default_config()).unwrap(),
-                )
-            })
-            .collect()
-    }
-
-    #[test]
-    fn feature_flag_defaults_validate_fail_closed() {
-        let mut errors = Vec::new();
-        validate_memory_feature_flags(&defaults(), &mut errors);
-        assert!(errors.is_empty(), "{errors:?}");
-    }
-
-    #[test]
-    fn enabled_scope_requires_its_dependency_for_the_same_scope() {
-        let mut values = defaults();
-        let definition =
-            memory_engine_sdk::memory_feature_flag_definition(MEMORY_COVERAGE_V2_FLAG).unwrap();
-        let mut coverage = definition.default_config();
-        coverage.enabled = true;
-        coverage.tenant_source_allowlist = vec![MemoryFeatureFlagScope {
-            tenant_id: "tenant-1".to_string(),
-            source_id: "source-1".to_string(),
-        }];
-        values.insert(
-            definition.config_key(),
-            serde_json::to_value(coverage).unwrap(),
-        );
-
-        let mut errors = Vec::new();
-        validate_memory_feature_flags(&values, &mut errors);
-        assert!(errors
-            .iter()
-            .any(|error| error.contains("memory_generation_commit_v2")));
     }
 }

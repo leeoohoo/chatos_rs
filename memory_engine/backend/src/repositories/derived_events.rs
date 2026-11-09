@@ -327,14 +327,10 @@ pub async fn consume_thread_summary_request(
     thread_id: &str,
     project_partition_key: &str,
     dispatch_version: i64,
-    worker_version: &str,
 ) -> Result<bool, String> {
-    if !matches!(worker_version, "v1" | "v2") {
-        return Err("partition consumer writer version must be v1 or v2".to_string());
-    }
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
-    let state = sqlx::query_as::<_, (String, i64, i64)>(
-        "SELECT authoritative_writer,summary_dispatch_version,summary_dispatch_consumed_version \
+    let state = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT summary_dispatch_version,summary_dispatch_consumed_version \
          FROM engine_thread_summary_partitions WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
          AND project_partition_key=$4 FOR UPDATE",
     )
@@ -346,18 +342,12 @@ pub async fn consume_thread_summary_request(
     .await
     .map_err(|error| error.to_string())?
     .ok_or_else(|| "thread partition not found for derived event consume".to_string())?;
-    if state.0 != worker_version {
-        return Err(format!(
-            "partition consumer {worker_version} is not authoritative; expected {}",
-            state.0
-        ));
-    }
-    if dispatch_version > state.1 {
+    if dispatch_version > state.0 {
         return Err(
             "derived event dispatch version is ahead of durable partition state".to_string(),
         );
     }
-    if dispatch_version <= state.2 {
+    if dispatch_version <= state.1 {
         tx.rollback().await.map_err(|error| error.to_string())?;
         return Ok(false);
     }
@@ -387,8 +377,29 @@ pub async fn rearm_dead_lettered_thread_summary(
     project_partition_key: &str,
     dead_letter_version: i64,
 ) -> Result<Option<String>, String> {
-    let aggregate_id = thread_partition_aggregate_id(thread_id, project_partition_key);
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let event_id = rearm_dead_lettered_thread_summary_in_tx(
+        &mut tx,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_partition_key,
+        dead_letter_version,
+    )
+    .await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(event_id)
+}
+
+pub async fn rearm_dead_lettered_thread_summary_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    project_partition_key: &str,
+    dead_letter_version: i64,
+) -> Result<Option<String>, String> {
+    let aggregate_id = thread_partition_aggregate_id(thread_id, project_partition_key);
     let dead_letter_exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM engine_derived_event_outbox \
          WHERE tenant_id=$1 AND source_id=$2 AND event_kind='thread_summary_requested' \
@@ -399,11 +410,10 @@ pub async fn rearm_dead_lettered_thread_summary(
     .bind(source_id)
     .bind(&aggregate_id)
     .bind(dead_letter_version)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;
     if !dead_letter_exists {
-        tx.rollback().await.map_err(|error| error.to_string())?;
         return Ok(None);
     }
     let next_version = sqlx::query_scalar::<_, i64>(
@@ -420,15 +430,14 @@ pub async fn rearm_dead_lettered_thread_summary(
     .bind(thread_id)
     .bind(project_partition_key)
     .bind(dead_letter_version)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(|error| error.to_string())?;
     let Some(next_version) = next_version else {
-        tx.rollback().await.map_err(|error| error.to_string())?;
         return Ok(None);
     };
     let event_id = enqueue_thread_summary_request(
-        &mut tx,
+        tx,
         tenant_id,
         source_id,
         thread_id,
@@ -436,8 +445,119 @@ pub async fn rearm_dead_lettered_thread_summary(
         next_version,
     )
     .await?;
-    tx.commit().await.map_err(|error| error.to_string())?;
     Ok(Some(event_id))
+}
+
+pub async fn rearm_dead_lettered_event(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    event_id: &str,
+) -> Result<Option<String>, String> {
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let event_id =
+        rearm_dead_lettered_event_in_tx(&mut tx, tenant_id, source_id, event_id).await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(event_id)
+}
+
+pub async fn rearm_dead_lettered_event_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: &str,
+    source_id: &str,
+    event_id: &str,
+) -> Result<Option<String>, String> {
+    let event = sqlx::query_as::<_, DerivedEventOutbox>(sqlx::AssertSqlSafe(format!(
+        "SELECT tenant_id,source_id,event_id,event_kind,aggregate_kind,aggregate_id, \
+         project_partition_key,dispatch_version,generation_id,payload,status,attempt_count, \
+         lease_owner,lease_token FROM engine_derived_event_outbox \
+         WHERE tenant_id=$1 AND source_id=$2 AND event_id=$3 AND status='dead_letter' FOR UPDATE"
+    )))
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(event_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    let Some(event) = event else {
+        return Ok(None);
+    };
+    let next_version = event.dispatch_version.saturating_add(1);
+    match event.event_kind.as_str() {
+        "thread_summary_requested" => {
+            let thread_id = event.payload.get("thread_id").and_then(Value::as_str)
+                .ok_or_else(|| "dead-lettered thread summary event has no thread_id".to_string())?;
+            let partition = event.project_partition_key.as_deref()
+                .ok_or_else(|| "dead-lettered thread summary event has no partition".to_string())?;
+            let updated = sqlx::query(
+                "UPDATE engine_thread_summary_partitions SET summary_dispatch_version=$6, \
+                 summary_dispatch_pending=true,summary_dispatch_requested_at=now(), \
+                 summary_dispatch_last_error=NULL,summary_dispatch_dead_letter_version=NULL, \
+                 summary_dispatch_dead_lettered_at=NULL,updated_at=now() \
+                 WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
+                   AND summary_dispatch_version=$5",
+            ).bind(tenant_id).bind(source_id).bind(thread_id).bind(partition)
+                .bind(event.dispatch_version).bind(next_version).execute(&mut **tx).await
+                .map_err(|error| error.to_string())?;
+            if updated.rows_affected() != 1 {
+                return Ok(None);
+            }
+        }
+        "thread_rollup_requested" => {
+            let updated = sqlx::query(
+                "UPDATE engine_summaries SET rollup_dispatch_version=$5,rollup_dispatch_pending=true, \
+                 rollup_dispatch_requested_at=now(),rollup_dispatch_last_error=NULL, \
+                 rollup_dispatch_dead_letter_version=NULL,rollup_dispatch_dead_lettered_at=NULL, \
+                 updated_at=now() WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
+                   AND recall_eligible AND rollup_dispatch_version=$4",
+            ).bind(tenant_id).bind(source_id).bind(&event.aggregate_id)
+                .bind(event.dispatch_version).bind(next_version).execute(&mut **tx).await
+                .map_err(|error| error.to_string())?;
+            if updated.rows_affected() != 1 {
+                return Ok(None);
+            }
+        }
+        "subject_memory_source_requested" => {
+            let updated = sqlx::query(
+                "UPDATE engine_summaries SET subject_memory_source_dispatch_version=$5, \
+                 subject_memory_source_dispatch_pending=true, \
+                 subject_memory_source_dispatch_requested_at=now(), \
+                 subject_memory_source_dispatch_last_error=NULL, \
+                 subject_memory_source_dispatch_dead_letter_version=NULL, \
+                 subject_memory_source_dispatch_dead_lettered_at=NULL,updated_at=now() \
+                 WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND recall_eligible \
+                   AND subject_memory_source_dispatch_version=$4",
+            ).bind(tenant_id).bind(source_id).bind(&event.aggregate_id)
+                .bind(event.dispatch_version).bind(next_version).execute(&mut **tx).await
+                .map_err(|error| error.to_string())?;
+            if updated.rows_affected() != 1 {
+                return Ok(None);
+            }
+        }
+        "subject_memory_rollup_requested" => {
+            let eligible = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM engine_subject_memories WHERE tenant_id=$1 \
+                 AND source_id=$2 AND id=$3 AND status='active' AND recall_eligible)",
+            ).bind(tenant_id).bind(source_id).bind(&event.aggregate_id)
+                .fetch_one(&mut **tx).await.map_err(|error| error.to_string())?;
+            if !eligible {
+                return Ok(None);
+            }
+        }
+        value => return Err(format!("unsupported dead-lettered derived event kind: {value}")),
+    }
+    let new_event_id = format!("mevt_{}", Uuid::new_v4());
+    let mut payload = event.payload.0;
+    payload["dispatch_version"] = serde_json::json!(next_version);
+    sqlx::query(
+        "INSERT INTO engine_derived_event_outbox(tenant_id,source_id,event_id,event_kind, \
+         aggregate_kind,aggregate_id,project_partition_key,dispatch_version,generation_id,payload) \
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+    ).bind(tenant_id).bind(source_id).bind(&new_event_id).bind(&event.event_kind)
+        .bind(&event.aggregate_kind).bind(&event.aggregate_id).bind(&event.project_partition_key)
+        .bind(next_version).bind(&event.generation_id).bind(Json(payload))
+        .execute(&mut **tx).await.map_err(|error| error.to_string())?;
+    Ok(Some(new_event_id))
 }
 
 fn required_lease_token(event: &DerivedEventOutbox) -> Result<&str, String> {
@@ -485,24 +605,6 @@ async fn update_partition_published(
     .map_err(|error| error.to_string())?;
     if result.rows_affected() != 1 {
         return Err("thread partition is missing or behind the published event".to_string());
-    }
-    let compatibility = sqlx::query(
-        "UPDATE engine_threads SET \
-         summary_dispatch_pending=CASE WHEN summary_dispatch_consumed_version<summary_dispatch_version THEN true ELSE summary_dispatch_pending END, \
-         summary_dispatch_requested_at=COALESCE(summary_dispatch_requested_at,now()) \
-         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND summary_dispatch_version>=$4",
-    )
-    .bind(&event.tenant_id)
-    .bind(&event.source_id)
-    .bind(thread_id)
-    .bind(event.dispatch_version)
-    .execute(&mut **tx)
-    .await
-    .map_err(|error| error.to_string())?;
-    if compatibility.rows_affected() != 1 {
-        return Err(
-            "compatibility summary dispatch is missing or behind the published event".to_string(),
-        );
     }
     Ok(())
 }

@@ -169,14 +169,6 @@ extension NativeLocalConnectorService {
             throw NativeLocalAgentBootstrapError.executionAgentUnavailable
         }
         let taskMaxIterations = UInt32(configuredTaskMaxIterations)
-        guard let managedAgentRuntime = managedRuntime.nativeAgentRuntimeSettings,
-              managedAgentRuntime.contextWindowTokens > managedAgentRuntime.outputReserveTokens,
-              let responsesCompactionThreshold = UInt64(exactly:
-                managedAgentRuntime.contextWindowTokens - managedAgentRuntime.outputReserveTokens
-              ),
-              (2_048...2_000_000).contains(responsesCompactionThreshold) else {
-            throw NativeLocalAgentBootstrapError.executionAgentUnavailable
-        }
         // Main Chat may use every enabled model with a valid credential. `taskEnabled`
         // only controls whether create_task may bind that model to a background Task.
         let configs = catalog.required.filter {
@@ -238,6 +230,12 @@ extension NativeLocalConnectorService {
         for resolved in resolvedConfigs {
             guard let credential = resolved.apiKey?.trimmedNonEmpty,
                   let baseURL = resolved.baseURL?.trimmedNonEmpty,
+                  let modelCapabilityRevision = resolved.modelCapabilityRevision?.trimmedNonEmpty,
+                  let contextWindowTokens = resolved.contextWindowTokens.flatMap(UInt64.init(exactly:)),
+                  let outputReserveTokens = resolved.outputReserveTokens.flatMap(UInt64.init(exactly:)),
+                  outputReserveTokens >= 256,
+                  outputReserveTokens < contextWindowTokens,
+                  let protocolOverheadEstimatorID = resolved.protocolOverheadEstimatorID?.trimmedNonEmpty,
                   let parsedBaseURL = URL(string: baseURL),
                   parsedBaseURL.scheme == "https" || parsedBaseURL.scheme == "http",
                   !resolved.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -259,9 +257,13 @@ extension NativeLocalConnectorService {
                 ownerUserID: ownerUserID,
                 modelConfigRef: resolved.id,
                 modelConfigRevision: modelRevision(
-                    resolved,
-                    responsesCompactionThreshold: responsesCompactionThreshold
+                    resolved
                 ),
+                modelCapabilityRevision: modelCapabilityRevision,
+                contextWindowTokens: contextWindowTokens,
+                outputReserveTokens: outputReserveTokens,
+                protocolOverheadEstimatorID: protocolOverheadEstimatorID,
+                tokenizerID: resolved.tokenizerID?.trimmedNonEmpty,
                 credentialRef: "env:\(variable)",
                 baseURL: baseURL,
                 model: resolved.model,
@@ -274,7 +276,8 @@ extension NativeLocalConnectorService {
                 maxTransientRetries: settings?.modelRequestMaxRetries.flatMap {
                     UInt32(exactly: min(20, max(0, $0)))
                 },
-                responsesCompactionThreshold: responsesCompactionThreshold
+                responsesCompactionThreshold: resolved.responsesCompactionThreshold
+                    .flatMap(UInt64.init(exactly:))
             )
             snapshots.append(snapshot)
             let supportsReasoning = ModelReasoningCapabilities.forModel(resolved.model) != nil

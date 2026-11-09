@@ -36,7 +36,8 @@ pub async fn get_thread(
         .push(" AND tenant_id=")
         .push_bind(tenant_id)
         .push(" AND source_id=")
-        .push_bind(source_id);
+        .push_bind(source_id)
+        .push(" AND recall_eligible");
     query
         .build_query_scalar::<Json<serde_json::Value>>()
         .fetch_optional(db)
@@ -44,42 +45,6 @@ pub async fn get_thread(
         .map_err(|error| error.to_string())?
         .map(decode)
         .transpose()
-}
-
-pub async fn list_threads_with_pending_records_by_token_threshold(
-    db: &Db,
-    tenant_id: Option<&str>,
-    source_id: Option<&str>,
-    token_threshold: i64,
-    limit: i64,
-) -> Result<Vec<EngineThread>, String> {
-    let mut query = QueryBuilder::<Postgres>::new(
-        "SELECT data FROM engine_threads WHERE summary_status='pending' AND pending_summary_tokens>=",
-    );
-    query.push_bind(token_threshold.max(1));
-    append_optional_eq(&mut query, "tenant_id", tenant_id);
-    append_optional_eq(&mut query, "source_id", source_id);
-    query
-        .push(" ORDER BY updated_at ASC,created_at ASC LIMIT ")
-        .push_bind(limit.clamp(1, 500));
-    fetch_threads(db, query).await
-}
-
-pub async fn list_expired_summary_threads(
-    db: &Db,
-    limit: i64,
-) -> Result<Vec<EngineThread>, String> {
-    let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_threads WHERE summary_status='running' \
-         AND (summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now()) \
-         ORDER BY COALESCE(summary_lock_expires_at,summary_locked_at,updated_at),updated_at \
-         LIMIT $1",
-    )
-    .bind(limit.clamp(1, 10_000))
-    .fetch_all(db)
-    .await
-    .map_err(|error| error.to_string())?;
-    decode_threads(rows)
 }
 
 pub async fn list_threads_by_label(
@@ -101,6 +66,7 @@ pub async fn list_threads_by_label(
         .push_bind(tenant_id)
         .push(" AND source_id=")
         .push_bind(source_id)
+        .push(" AND recall_eligible")
         .push(" AND data->'labels' ? ")
         .push_bind(label);
     append_optional_eq(&mut query, "status", status);
@@ -116,7 +82,8 @@ pub async fn list_threads(
     db: &Db,
     values: ListThreadsQuery<'_>,
 ) -> Result<Vec<EngineThread>, String> {
-    let mut query = QueryBuilder::<Postgres>::new("SELECT data FROM engine_threads WHERE TRUE");
+    let mut query =
+        QueryBuilder::<Postgres>::new("SELECT data FROM engine_threads WHERE recall_eligible");
     append_optional_eq(&mut query, "tenant_id", values.tenant_id);
     append_optional_eq(&mut query, "source_id", values.source_id);
     append_optional_eq(&mut query, "subject_id", values.subject_id);

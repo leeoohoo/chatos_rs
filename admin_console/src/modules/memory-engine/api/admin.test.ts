@@ -20,16 +20,6 @@ describe('adminApi', () => {
     vi.clearAllMocks();
   });
 
-  it('encodes dynamic policy identifiers in admin paths', async () => {
-    vi.mocked(client.put).mockResolvedValue({ data: {} } as never);
-    await adminApi.updateJobPolicy('summary/rollup', {});
-
-    expect(client.put).toHaveBeenCalledWith(
-      '/admin/job-policies/summary%2Frollup',
-      {},
-    );
-  });
-
   it('loads the agent directory and encodes agent subjects in project paths', async () => {
     vi.mocked(client.get)
       .mockResolvedValueOnce({ data: { items: [{ agent_id: 'jiguli' }] } } as never)
@@ -122,23 +112,94 @@ describe('adminApi', () => {
     await expect(adminApi.listJobPolicies()).resolves.toEqual([
       {
         job_type: 'thread_summary',
-        enabled: true,
-        summary_prompt: null,
-        summary_prompt_zh: null,
-        summary_prompt_en: null,
-        summary_prompt_language: 'zh',
-        rollup_summary_prompt: null,
-        rollup_summary_prompt_zh: null,
-        rollup_summary_prompt_en: null,
-        rollup_summary_prompt_language: 'zh',
-        token_limit: null,
-        interval_seconds: null,
-        max_threads_per_tick: null,
+        dispatch_threshold_tokens: null,
+        max_source_batch_tokens: null,
+        max_model_input_tokens: null,
+        max_leaf_tokens: null,
+        max_merge_rounds: null,
         count_limit: null,
         keep_level0_count: null,
         max_level: null,
         updated_at: '2026-05-21T00:00:00Z',
       },
     ]);
+  });
+
+  it('uses dedicated reliability read, dry-run, audit and rearm endpoints', async () => {
+    const scope = { tenant_id: 'tenant-1', source_id: 'source-1', limit: 500 };
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({ data: { finding_count: 0, alerts: [] } } as never)
+      .mockResolvedValueOnce({ data: [{ stream: 'rebuild' }] } as never)
+      .mockResolvedValueOnce({ data: [{ action_kind: 'rearm' }] } as never);
+    vi.mocked(client.post)
+      .mockResolvedValueOnce({ data: { thread_id: 'thread-1', selected: [], meta: {} } } as never)
+      .mockResolvedValueOnce({ data: { operation_id: 'operation-1' } } as never)
+      .mockResolvedValueOnce({ data: { accepted: true, running: true, job_run_id: 'job-1' } } as never)
+      .mockResolvedValue({ data: { operation_id: 'operation-2' } } as never);
+
+    await expect(adminApi.getReliabilityDashboard(scope)).resolves.toEqual({ finding_count: 0, alerts: [] });
+    expect(client.get).toHaveBeenNthCalledWith(1, '/admin/reliability/dashboard', { params: scope });
+    await expect(adminApi.listReliabilityQueues(scope)).resolves.toEqual([
+      { stream: 'rebuild' },
+    ]);
+    expect(client.get).toHaveBeenNthCalledWith(2, '/admin/reliability/queues', { params: scope });
+    await expect(adminApi.listReliabilityOperatorActions(scope)).resolves.toEqual([
+      { action_kind: 'rearm' },
+    ]);
+    expect(client.get).toHaveBeenNthCalledWith(3, '/admin/reliability/operator-actions', {
+      params: scope,
+    });
+
+    const dryRun = {
+      tenant_id: 'tenant-1',
+      source_id: 'source-1',
+      thread_id: 'thread-1',
+      model_capability_revision: 'capability-1',
+      policy: {
+        max_memory_tokens: 12000,
+        max_recent_record_tokens: 4000,
+        max_thread_summary_tokens: 4000,
+        max_project_memory_tokens: 3000,
+        max_agent_memory_tokens: 2000,
+      },
+    };
+    await adminApi.composeReliabilityDryRun(dryRun);
+    expect(client.post).toHaveBeenNthCalledWith(1, '/admin/reliability/compose-dry-run', dryRun);
+
+    const rearm = {
+      tenant_id: 'tenant-1',
+      source_id: 'source-1',
+      thread_id: 'thread-1',
+      project_partition_key: 'project:alpha',
+      rebuild_kind: 'thread_l0',
+      reason: 'operator confirmed recovery',
+    };
+    await adminApi.rearmPartitionRebuild(rearm);
+    expect(client.post).toHaveBeenNthCalledWith(
+      2,
+      '/admin/reliability/rebuild-backlog/rearm',
+      rearm,
+    );
+
+    const resummarize = {
+      tenant_id: 'tenant-1',
+      source_id: 'source-1',
+      summary_id: 'summary-1',
+      reason: 'correct outdated summary',
+    };
+    await adminApi.resummarizeCoveredRange(resummarize);
+    expect(client.post).toHaveBeenNthCalledWith(
+      3,
+      '/admin/reliability/resummarize',
+      resummarize,
+    );
+    await adminApi.retireSummary(resummarize);
+    expect(client.post).toHaveBeenNthCalledWith(4, '/admin/reliability/retire-summary', resummarize);
+    const restore = { tenant_id: 'tenant-1', source_id: 'source-1', record_id: 'record-1', reason: 'repair missing coverage' };
+    await adminApi.restoreRecordPending(restore);
+    expect(client.post).toHaveBeenNthCalledWith(5, '/admin/reliability/restore-pending', restore);
+    const queueRearm = { tenant_id: 'tenant-1', source_id: 'source-1', stream: 'derived_event', item_id: 'event-1', version: 2, reason: 'retry after repair' };
+    await adminApi.rearmReliabilityQueue(queueRearm);
+    expect(client.post).toHaveBeenNthCalledWith(6, '/admin/reliability/queues/rearm', queueRearm);
   });
 });

@@ -14,6 +14,7 @@ pub(crate) fn required_thread_summary_token_limit(configured: Option<i64>) -> Re
 #[derive(Debug, Clone)]
 pub struct RollupSettings {
     pub token_limit: i64,
+    pub source_batch_token_limit: i64,
     pub count_limit: i64,
     pub keep_level0_count: i64,
     pub max_level: i64,
@@ -40,15 +41,19 @@ pub struct ThreadRollupDrainError {
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedThreadRollup {
     pub(crate) thread_id: String,
+    pub(crate) project_partition_key: String,
     pub(crate) level: i64,
     pub(crate) selected: Vec<EngineSummary>,
-    pub(crate) trigger_reason: &'static str,
+    pub(crate) trigger_reason: String,
     pub(crate) cloud_job_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct SummaryJobSettings {
     pub(crate) token_limit: i64,
+    pub(crate) source_batch_token_limit: i64,
+    pub(crate) max_leaf_tokens: i64,
+    pub(crate) max_merge_rounds: usize,
     pub(crate) cloud_owner_entity_id: Option<String>,
     pub(crate) cloud_resume_kind: Option<String>,
 }
@@ -60,12 +65,6 @@ pub(crate) struct PendingRecordSelection {
     pub(crate) selected_token_count: i64,
     pub(crate) oversized_token_count: i64,
     pub(crate) project_subject_id: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RepairRecordSelection {
-    pub(crate) selected: Vec<EngineRecord>,
-    pub(crate) selected_token_count: i64,
 }
 
 mod active_summary;
@@ -87,10 +86,14 @@ pub(crate) use rollup::{
 };
 #[cfg(test)]
 pub(crate) use selectors::select_pending_records_for_summary;
-pub use thread_repair::run_thread_repair_summary;
-pub(crate) use thread_repair::run_thread_repair_summary_job as resume_thread_repair_summary;
+pub use thread_repair::run_pending_summary_rebuild;
+pub(crate) use thread_repair::{
+    execute_prepared_covered_range_resummarize, fail_covered_range_resummarize,
+    prepare_covered_range_resummarize, refresh_covered_range_resummarize_claim,
+    resume_covered_range_resummarize,
+};
 pub use thread_summary::run_thread_summary;
-pub(crate) use thread_summary::run_thread_summary_with_thread;
+pub(crate) use thread_summary::run_thread_summary_partition_with_thread;
 #[cfg(test)]
 pub(crate) use thread_summary::{
     execute_prepared_thread_summary_job, start_thread_summary_job, ThreadSummaryExecutionContext,

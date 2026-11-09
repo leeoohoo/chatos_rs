@@ -133,7 +133,8 @@ pub async fn get_record_by_id(
         .push(" AND tenant_id=")
         .push_bind(tenant_id)
         .push(" AND source_id=")
-        .push_bind(source_id);
+        .push_bind(source_id)
+        .push(" AND recall_eligible");
     if let Some(value) = normalized(thread_id) {
         query.push(" AND thread_id=").push_bind(value);
     }
@@ -157,8 +158,16 @@ pub(crate) async fn list_records_by_ids(
         return Ok(Vec::new());
     }
     let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=ANY($4)"
-    ).bind(tenant_id).bind(source_id).bind(thread_id).bind(record_ids).fetch_all(db).await.map_err(|error| error.to_string())?;
+        "SELECT data FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
+         AND id=ANY($4) AND recall_eligible",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(record_ids)
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?;
     let records = decode_records(rows)?;
     let mut by_id = records
         .into_iter()
@@ -194,6 +203,30 @@ pub async fn list_pending_records(
         .push(" ORDER BY created_at ASC,id ASC LIMIT ")
         .push_bind(limit.max(1));
     fetch(db, query).await
+}
+
+pub async fn list_pending_records_for_partition(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    project_partition_key: &str,
+    limit: i64,
+) -> Result<Vec<EngineRecord>, String> {
+    let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
+         AND project_partition_key=$4 AND summary_status='pending' AND recall_eligible \
+         ORDER BY created_at,id LIMIT $5",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(project_partition_key)
+    .bind(limit.max(1))
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    decode_records(rows)
 }
 
 pub async fn list_context_records(
@@ -243,6 +276,7 @@ async fn list_context_records_inner(
         .push_bind(source_id)
         .push(" AND thread_id=")
         .push_bind(thread_id)
+        .push(" AND recall_eligible")
         .push(" AND summary_status IN ('pending','summarizing','')");
     if filter_project {
         append_context_project_filter(&mut query, project_subject_id);
@@ -266,25 +300,10 @@ fn append_context_project_filter(
     query: &mut QueryBuilder<Postgres>,
     project_subject_id: Option<&str>,
 ) {
-    const PROJECT_PATH: &str = "data #>> '{metadata,memory_project_id}'";
-    if let Some(subject_id) = project_subject_id {
-        let project_id = subject_id.strip_prefix("project:").unwrap_or(subject_id);
-        query
-            .push(" AND (BTRIM(COALESCE(")
-            .push(PROJECT_PATH)
-            .push(",''))=")
-            .push_bind(subject_id)
-            .push(" OR BTRIM(COALESCE(")
-            .push(PROJECT_PATH)
-            .push(",''))=")
-            .push_bind(project_id)
-            .push(")");
-    } else {
-        query
-            .push(" AND BTRIM(COALESCE(")
-            .push(PROJECT_PATH)
-            .push(",''))=''");
-    }
+    let partition = project_subject_id.unwrap_or("__none__");
+    query
+        .push(" AND project_partition_key=")
+        .push_bind(partition);
 }
 
 pub async fn list_compact_turn_slices(

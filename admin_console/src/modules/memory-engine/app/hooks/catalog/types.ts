@@ -10,7 +10,6 @@ import type {
   RotateSourceSecretResponse,
 } from '../../../types';
 import type {
-  PolicyFormValues,
   PolicyMap,
   PolicyViewKey,
   SourceFormValues,
@@ -25,8 +24,6 @@ export type CatalogState = {
   sourceModalOpen: boolean;
   editingSource: EngineSource | null;
   rotatedSecret: RotateSourceSecretResponse | null;
-  savingPolicyJobType: string | null;
-  generatingPolicyJobType: string | null;
   sources: EngineSource[];
   jobPolicies: EngineJobPolicy[];
   selectedPolicyViewKey: PolicyViewKey;
@@ -36,8 +33,6 @@ export type CatalogState = {
   setSourceSubmitting: Dispatch<SetStateAction<boolean>>;
   setSourceModalOpen: Dispatch<SetStateAction<boolean>>;
   setEditingSource: Dispatch<SetStateAction<EngineSource | null>>;
-  setSavingPolicyJobType: Dispatch<SetStateAction<string | null>>;
-  setGeneratingPolicyJobType: Dispatch<SetStateAction<string | null>>;
   setSources: Dispatch<SetStateAction<EngineSource[]>>;
   setJobPolicies: Dispatch<SetStateAction<EngineJobPolicy[]>>;
   setSelectedPolicyViewKey: Dispatch<SetStateAction<PolicyViewKey>>;
@@ -63,10 +58,4 @@ export type CatalogActions = {
   closeSourceModal: () => void;
   handleSubmitSource: () => Promise<void>;
   handleRotateSourceSecret: (source: EngineSource) => Promise<void>;
-  handleSavePolicy: (jobType: string, values: PolicyFormValues) => Promise<void>;
-  handleGeneratePolicyPrompt: (
-    jobType: string,
-    promptField: 'summary_prompt' | 'rollup_summary_prompt',
-    userInput: string,
-  ) => Promise<{ prompt_zh: string; prompt_en: string }>;
 };

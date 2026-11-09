@@ -429,6 +429,7 @@ mod tests {
             owner_user_id: "owner-1".into(),
             model_config_ref: name.into(),
             model_config_revision: "revision-1".into(),
+            model_capability_revision: "test-capability-v1".into(),
             credential_ref: "env:MODEL_KEY".into(),
             base_url: "https://example.test/v1".into(),
             model: name.into(),
@@ -438,10 +439,15 @@ mod tests {
             instructions: None,
             temperature: None,
             max_output_tokens: None,
+            context_window_tokens: 200_000,
+            output_reserve_tokens: 30_000,
+            protocol_overhead_estimator_id: "responses-json-v1".into(),
+            tokenizer_id: Some("o200k_base".into()),
             thinking_level: None,
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
             max_transient_retries: None,
+            responses_compaction_threshold: Some(170_000),
             output_format: None,
         }
     }

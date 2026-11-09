@@ -6,7 +6,8 @@ use super::blocks::{
     thread_agent_subject_id, thread_allows_dynamic_project_recall,
 };
 use super::policy::ResolvedComposeContextPolicy;
-use super::validate_requested_subjects;
+use super::retain_newest_records_within_budget;
+use super::validate_requested_subject;
 use crate::models::{EngineSubjectMemory, EngineSummary, EngineThread};
 use serde_json::json;
 use uuid::Uuid;
@@ -32,6 +33,8 @@ fn summary(id: &str, level: i64, created_at: &str, text: &str) -> EngineSummary 
         subject_memory_summarized: 0,
         subject_memory_summarized_at: None,
         metadata: None,
+        payload_schema: None,
+        structured_payload: None,
         created_at: created_at.to_string(),
         updated_at: created_at.to_string(),
     }
@@ -57,6 +60,8 @@ fn subject_memory(
         confidence: None,
         last_seen_at: None,
         metadata: None,
+        payload_schema: None,
+        structured_payload: None,
         status: "active".to_string(),
         rollup_status: "pending".to_string(),
         rollup_memory_key: None,
@@ -64,6 +69,48 @@ fn subject_memory(
         created_at: "2026-05-12T00:00:00Z".to_string(),
         updated_at: "2026-05-12T00:00:00Z".to_string(),
     }
+}
+
+#[test]
+fn recent_record_budget_keeps_a_tool_turn_as_one_atomic_unit() {
+    let make_record =
+        |id: &str, role: &str, content: &str, turn_id: &str| crate::models::EngineRecord {
+            id: id.to_string(),
+            thread_id: "thread-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            source_id: "source-1".to_string(),
+            external_record_id: None,
+            role: role.to_string(),
+            record_type: "message".to_string(),
+            content: content.to_string(),
+            structured_payload: None,
+            metadata: Some(json!({"conversation_turn_id": turn_id})),
+            summary_status: "pending".to_string(),
+            summary_id: None,
+            summarized_at: None,
+            created_at: "2026-11-09T00:00:00Z".to_string(),
+        };
+    let records = vec![
+        make_record("old", "user", "old", "turn-old"),
+        make_record("call", "assistant", "calling tool", "turn-tool"),
+        make_record("output", "tool", "tool output", "turn-tool"),
+        make_record("answer", "assistant", "finished", "turn-tool"),
+    ];
+    let tool_turn_budget = records[1..]
+        .iter()
+        .map(super::estimate_record_tokens)
+        .sum::<usize>();
+    let retained = retain_newest_records_within_budget(records.clone(), tool_turn_budget);
+    assert_eq!(
+        retained
+            .records
+            .iter()
+            .map(|record| record.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["call", "output", "answer"]
+    );
+    let too_small = retain_newest_records_within_budget(records, tool_turn_budget - 1);
+    assert!(too_small.records.is_empty());
 }
 
 fn thread(
@@ -82,12 +129,6 @@ fn thread(
         labels: labels.map(|items| items.into_iter().map(ToOwned::to_owned).collect()),
         metadata,
         status: "active".to_string(),
-        summary_status: "idle".to_string(),
-        summary_job_run_id: None,
-        summary_locked_at: None,
-        summary_lock_expires_at: None,
-        pending_record_count: 0,
-        pending_summary_tokens: 0,
         created_at: "2026-05-12T00:00:00Z".to_string(),
         updated_at: "2026-05-12T00:00:00Z".to_string(),
         archived_at: None,
@@ -169,6 +210,17 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
         )
         .await
         .expect("insert context record");
+        sqlx::query(
+            "UPDATE engine_records SET project_partition_key=$4 \
+             WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+        )
+        .bind(&tenant)
+        .bind(&source)
+        .bind(format!("record-{index}-{suffix}"))
+        .bind(project.unwrap_or("__none__"))
+        .execute(&mut *tx)
+        .await
+        .expect("set trusted context record partition");
     }
     tx.commit().await.expect("commit context records");
 
@@ -177,7 +229,7 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
         ("thread-summary-b", Some(project_b.as_str())),
         ("thread-summary-main", None),
     ] {
-        crate::repositories::summaries::create_thread_summary(
+        crate::repositories::summaries::insert_test_thread_summary(
             &pool, &tenant, &source, &thread_id, &agent_id, text, None, None, 1, project,
         )
         .await
@@ -204,7 +256,7 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
             "durable-project-b",
         ),
     ] {
-        crate::repositories::subject_memories::upsert_subject_memory(
+        crate::repositories::subject_memories::insert_test_subject_memory(
             &pool,
             subject,
             key,
@@ -237,7 +289,7 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
         .await
         .expect("upsert context memory");
     }
-    crate::repositories::subject_memories::upsert_subject_memory(
+    crate::repositories::subject_memories::insert_test_subject_memory(
         &pool,
         agent_id.as_str(),
         "legacy-agent-memory",
@@ -267,15 +319,19 @@ async fn compose_context_includes_agent_memory_and_only_the_current_project_cont
         tenant_id: tenant.clone(),
         source_id: source.clone(),
         subject_id: Some(agent_id.clone()),
-        related_subject_ids: project.map(|value| vec![value.to_string()]),
+        context_project_subject_id: project.map(str::to_string),
         thread_id: thread_id.clone(),
-        policy: Some(crate::models::ComposeContextPolicy {
-            include_recent_records: Some(true),
-            include_thread_summary: Some(true),
-            include_subject_memory: Some(true),
-            recent_record_limit: None,
-            summary_limit: Some(10),
-        }),
+        query_text: Some("project context".to_string()),
+        current_turn_id: Some("turn-current".to_string()),
+        model_capability_revision: "test-model-capability-v1".to_string(),
+        policy: crate::models::ComposeContextPolicy {
+            max_memory_tokens: 32_768,
+            max_recent_record_tokens: 16_384,
+            max_thread_summary_tokens: 8_192,
+            max_project_memory_tokens: 8_192,
+            max_agent_memory_tokens: 8_192,
+        },
+        runtime_context_assertion: "service-test".to_string(),
     };
 
     let project_context = super::compose_context(&pool, compose(Some(project_a.as_str())))
@@ -415,33 +471,29 @@ fn thread_agent_subject_id_ignores_legacy_and_metadata_identity() {
 }
 
 #[test]
-fn compose_context_policy_uses_standard_summary_rule_without_recent_record_cap() {
-    let policy = ResolvedComposeContextPolicy::from_request(None);
+fn compose_context_policy_enforces_server_caps() {
+    let requested = crate::models::ComposeContextPolicy {
+        max_memory_tokens: usize::MAX,
+        max_recent_record_tokens: usize::MAX,
+        max_thread_summary_tokens: usize::MAX,
+        max_project_memory_tokens: usize::MAX,
+        max_agent_memory_tokens: usize::MAX,
+    };
+    let policy = ResolvedComposeContextPolicy::from_request(&requested)
+        .expect("resolve capped compose policy");
 
-    assert!(policy.include_recent_records);
-    assert!(policy.include_thread_summary);
-    assert!(policy.include_subject_memory);
-    assert_eq!(policy.summary_limit, 2);
-    assert_eq!(policy.recent_limit, None);
+    assert_eq!(policy.max_memory_tokens, 32_768);
+    assert_eq!(policy.max_recent_record_tokens, 16_384);
+    assert_eq!(policy.max_thread_summary_tokens, 8_192);
+    assert_eq!(policy.max_project_memory_tokens, 8_192);
+    assert_eq!(policy.max_agent_memory_tokens, 8_192);
 }
 
 #[test]
 fn compose_rejects_subjects_not_bound_to_the_thread() {
     let bound = vec!["agent:a-1".to_string(), "project:p-1".to_string()];
-    assert!(validate_requested_subjects(
-        &bound,
-        Some("agent:a-1"),
-        Some(&vec!["project:p-1".to_string()]),
-        false,
-    )
-    .is_ok());
-    assert!(validate_requested_subjects(
-        &bound,
-        Some("agent:a-2"),
-        Some(&vec!["project:p-1".to_string()]),
-        false,
-    )
-    .is_err());
+    assert!(validate_requested_subject(&bound, Some("agent:a-1")).is_ok());
+    assert!(validate_requested_subject(&bound, Some("agent:a-2")).is_err());
 }
 
 #[test]
@@ -457,18 +509,6 @@ fn stable_agent_thread_allows_only_dynamic_project_recall() {
     );
     assert!(thread_allows_dynamic_project_recall(&item));
     let bound = vec!["agent:a-1".to_string()];
-    assert!(validate_requested_subjects(
-        &bound,
-        Some("agent:a-1"),
-        Some(&vec!["project:p-2".to_string()]),
-        true,
-    )
-    .is_ok());
-    assert!(validate_requested_subjects(
-        &bound,
-        Some("agent:a-1"),
-        Some(&vec!["agent:a-2".to_string()]),
-        true,
-    )
-    .is_err());
+    assert!(validate_requested_subject(&bound, Some("agent:a-1")).is_ok());
+    assert!(validate_requested_subject(&bound, Some("agent:a-2")).is_err());
 }

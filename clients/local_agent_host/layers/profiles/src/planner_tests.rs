@@ -64,6 +64,11 @@ impl LocalModelRuntimeResolver for OwnerCheckingModelResolver {
         Ok(TransientLocalModelRuntime {
             runner: Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None)),
             model_config: ModelRuntimeConfig {
+                model_capability_revision: "test-capability-v1".to_string(),
+                context_window_tokens: 200_000,
+                output_reserve_tokens: 16_000,
+                protocol_overhead_estimator_id: "responses-json-v1".to_string(),
+                tokenizer_id: Some("o200k_base".to_string()),
                 model: "test-model".to_string(),
                 ..ModelRuntimeConfig::default()
             },

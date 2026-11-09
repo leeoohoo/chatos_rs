@@ -18,7 +18,9 @@ pub(crate) fn build_record_query<'a>(
     summary_status: Option<&'a str>,
 ) -> QueryBuilder<Postgres> {
     let mut query = QueryBuilder::new(select);
-    query.push(" WHERE thread_id=").push_bind(thread_id);
+    query
+        .push(" WHERE recall_eligible AND thread_id=")
+        .push_bind(thread_id);
     append(&mut query, "tenant_id", tenant_id);
     append(&mut query, "source_id", source_id);
     append(&mut query, "role", role);

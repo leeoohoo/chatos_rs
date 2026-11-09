@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde_json::json;
-use std::time::Duration;
 use tracing::info;
 
 use crate::ai::AiClient;
@@ -20,6 +19,8 @@ pub struct ManagedMemoryAgentRuntime {
     pub ai: AiClient,
     pub prompt: String,
     pub model_config_id: String,
+    pub model_provider: String,
+    pub model_id: String,
     pub prompt_revision: i64,
     pub prompt_checksum: String,
 }
@@ -80,6 +81,8 @@ pub async fn build_managed_memory_agent_runtime(
         ai,
         prompt: prompt.content,
         model_config_id: profile.id,
+        model_provider: profile.provider,
+        model_id: profile.model,
         prompt_revision: prompt.revision,
         prompt_checksum: prompt.checksum,
     })
@@ -97,7 +100,12 @@ pub fn build_rollup_settings_from_policy(
         })
     };
     Ok(RollupSettings {
-        token_limit: required("token_limit", policy.token_limit)?.max(500),
+        token_limit: required("max_model_input_tokens", policy.max_model_input_tokens)?.max(500),
+        source_batch_token_limit: required(
+            "max_source_batch_tokens",
+            policy.max_source_batch_tokens,
+        )?
+        .max(500),
         count_limit: required("count_limit", policy.count_limit)?.max(0),
         keep_level0_count: required("keep_level0_count", policy.keep_level0_count)?.max(0),
         max_level: required("max_level", policy.max_level)?.max(1),
@@ -105,50 +113,6 @@ pub fn build_rollup_settings_from_policy(
         cloud_source_id: None,
         cloud_thread_id: None,
     })
-}
-
-pub fn managed_policy_scan_interval(policy: &EngineJobPolicy) -> Result<Duration, String> {
-    let seconds = policy.interval_seconds.ok_or_else(|| {
-        format!(
-            "{} job policy interval_seconds is not configured in Configuration Center",
-            policy.job_type
-        )
-    })?;
-    Ok(Duration::from_secs(seconds.max(3) as u64))
-}
-
-pub fn managed_policy_scan_limit(
-    policy: &EngineJobPolicy,
-    infrastructure_limit: i64,
-) -> Result<i64, String> {
-    let policy_limit = policy.max_threads_per_tick.ok_or_else(|| {
-        format!(
-            "{} job policy max_threads_per_tick is not configured in Configuration Center",
-            policy.job_type
-        )
-    })?;
-    Ok(policy_limit.max(1).min(infrastructure_limit.max(1)))
-}
-
-pub fn apply_rollup_setting_overrides(
-    settings: &mut RollupSettings,
-    token_limit: Option<i64>,
-    count_limit: Option<i64>,
-    keep_level0_count: Option<i64>,
-    max_level: Option<i64>,
-) {
-    if let Some(value) = token_limit {
-        settings.token_limit = value.max(500);
-    }
-    if let Some(value) = count_limit {
-        settings.count_limit = value.max(0);
-    }
-    if let Some(value) = keep_level0_count {
-        settings.keep_level0_count = value.max(0);
-    }
-    if let Some(value) = max_level {
-        settings.max_level = value.max(1);
-    }
 }
 
 pub fn merge_metadata(
@@ -171,10 +135,11 @@ pub fn merge_metadata(
 pub fn policy_meta(policy: &EngineJobPolicy) -> serde_json::Value {
     json!({
         "policy_job_type": policy.job_type,
-        "policy_enabled": policy.enabled,
-        "policy_token_limit": policy.token_limit,
-        "policy_interval_seconds": policy.interval_seconds,
-        "policy_max_threads_per_tick": policy.max_threads_per_tick,
+        "policy_dispatch_threshold_tokens": policy.dispatch_threshold_tokens,
+        "policy_max_source_batch_tokens": policy.max_source_batch_tokens,
+        "policy_max_model_input_tokens": policy.max_model_input_tokens,
+        "policy_max_leaf_tokens": policy.max_leaf_tokens,
+        "policy_max_merge_rounds": policy.max_merge_rounds,
         "policy_count_limit": policy.count_limit,
         "policy_keep_level0_count": policy.keep_level0_count,
         "policy_max_level": policy.max_level,
@@ -188,18 +153,11 @@ mod tests {
     fn rollup_policy() -> EngineJobPolicy {
         EngineJobPolicy {
             job_type: "rollup".to_string(),
-            enabled: true,
-            summary_prompt: None,
-            summary_prompt_zh: None,
-            summary_prompt_en: None,
-            summary_prompt_language: "zh".to_string(),
-            rollup_summary_prompt: None,
-            rollup_summary_prompt_zh: None,
-            rollup_summary_prompt_en: None,
-            rollup_summary_prompt_language: "zh".to_string(),
-            token_limit: None,
-            interval_seconds: None,
-            max_threads_per_tick: None,
+            dispatch_threshold_tokens: None,
+            max_source_batch_tokens: None,
+            max_model_input_tokens: None,
+            max_leaf_tokens: None,
+            max_merge_rounds: None,
             count_limit: None,
             keep_level0_count: None,
             max_level: None,
@@ -213,39 +171,25 @@ mod tests {
         let error = build_rollup_settings_from_policy(&policy).unwrap_err();
         assert_eq!(
             error,
-            "rollup job policy token_limit is not configured in Configuration Center"
+            "rollup job policy max_model_input_tokens is not configured in Configuration Center"
         );
     }
 
     #[test]
     fn rollup_settings_use_policy_values_without_runtime_defaults() {
         let mut policy = rollup_policy();
-        policy.token_limit = Some(12_345);
+        policy.max_model_input_tokens = Some(12_345);
+        policy.max_source_batch_tokens = Some(10_000);
         policy.count_limit = Some(6);
         policy.keep_level0_count = Some(3);
         policy.max_level = Some(7);
 
         let settings = build_rollup_settings_from_policy(&policy).unwrap();
         assert_eq!(settings.token_limit, 12_345);
+        assert_eq!(settings.source_batch_token_limit, 10_000);
         assert_eq!(settings.count_limit, 6);
         assert_eq!(settings.keep_level0_count, 3);
         assert_eq!(settings.max_level, 7);
     }
 
-    #[test]
-    fn scan_controls_require_configuration_center_values() {
-        let policy = rollup_policy();
-        assert!(managed_policy_scan_interval(&policy).is_err());
-        assert!(managed_policy_scan_limit(&policy, 100).is_err());
-
-        let mut policy = policy;
-        policy.interval_seconds = Some(120);
-        policy.max_threads_per_tick = Some(8);
-        assert_eq!(
-            managed_policy_scan_interval(&policy).unwrap().as_secs(),
-            120
-        );
-        assert_eq!(managed_policy_scan_limit(&policy, 100).unwrap(), 8);
-        assert_eq!(managed_policy_scan_limit(&policy, 5).unwrap(), 5);
-    }
 }

@@ -7,10 +7,10 @@ mod cloud_agent_queue;
 mod config;
 mod db;
 mod derived_event_queue;
-mod feature_flags;
 mod internal_tls;
 mod jobs;
 mod models;
+mod partition_rebuild_queue;
 mod pressure;
 mod reliability_audit;
 mod repositories;
@@ -30,7 +30,6 @@ use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, Tr
 use tracing::{info, Level};
 
 use crate::config::AppConfig;
-use crate::feature_flags::{MemoryEngineFeatureFlags, MemoryEngineFeatureState};
 use crate::internal_tls::{
     load_internal_mtls_config, MemoryEngineInternalTlsConfig, MEMORY_ENGINE_INTERNAL_MTLS_ENV,
 };
@@ -56,7 +55,7 @@ async fn main() -> Result<(), String> {
         .load_strict()
         .await
         .map_err(|err| format!("load Memory Engine pressure config failed: {err}"))?;
-    repositories::control_plane::initialize_managed_memory_policy().await;
+    repositories::control_plane::initialize_managed_memory_policy().await?;
     let mut config = AppConfig::from_env()?;
     config.user_service_base_url = chatos_service_runtime::resolve_service_base_url(
         "user-service",
@@ -65,6 +64,7 @@ async fn main() -> Result<(), String> {
     .await;
     let pool = db::init_pool(&config).await?;
     db::init_schema(&pool).await?;
+    repositories::memory_facts::verify_memory_pipeline_ready(&pool).await?;
     let user_service_http = build_http_client(HttpClientTimeouts::new(Duration::from_millis(
         config.user_service_request_timeout_ms.max(300),
     )))
@@ -73,7 +73,6 @@ async fn main() -> Result<(), String> {
         &pressure_snapshot,
         config.worker_summary_concurrency,
     )?;
-    let feature_flags = MemoryEngineFeatureFlags::from_snapshot(&pressure_snapshot)?;
     let cloud_agent_store = chatos_cloud_agent_runtime::CloudAgentStateStore::from_repository(
         repositories::cloud_agent::CloudAgentPostgresStore::new(pool.clone()),
     );
@@ -84,7 +83,6 @@ async fn main() -> Result<(), String> {
         user_service_http,
         runtime_stats: Arc::new(MemoryEngineRuntimeStats::default()),
         pressure: pressure::MemoryEnginePressureState::new(pressure_policy),
-        feature_flags: MemoryEngineFeatureState::new(feature_flags),
         cloud_agent_store,
     });
     pressure::start_config_watcher(state.clone(), pressure_config_client.clone());
@@ -103,6 +101,7 @@ async fn main() -> Result<(), String> {
     if config.worker_enabled {
         cloud_agent_queue::start(state.clone());
         derived_event_queue::start(state.clone(), service_id.clone());
+        partition_rebuild_queue::start(state.clone(), service_id.clone());
         summary_queue::start(state.clone());
         rollup_queue::start(state.clone());
         subject_memory_queue::start(state.clone());

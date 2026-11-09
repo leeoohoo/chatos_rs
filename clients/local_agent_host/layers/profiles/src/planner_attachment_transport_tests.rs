@@ -16,17 +16,23 @@ impl LocalModelRuntimeResolver for LoopbackModel {
         _: &str,
         _: &str,
     ) -> Result<TransientLocalModelRuntime, String> {
+        let mut model_config = ModelRuntimeConfig::openai_compatible(
+            &self.endpoint,
+            "synthetic-key",
+            "test-image-model",
+            "gpt",
+        )
+        .with_responses_support(self.responses)
+        .with_images_support(Some(true))
+        .with_max_transient_retries(Some(0));
+        model_config.model_capability_revision = "test-capability-v1".to_string();
+        model_config.context_window_tokens = 200_000;
+        model_config.output_reserve_tokens = 16_000;
+        model_config.protocol_overhead_estimator_id = "responses-json-v1".to_string();
+        model_config.tokenizer_id = Some("o200k_base".to_string());
         Ok(TransientLocalModelRuntime {
             runner: Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None)),
-            model_config: ModelRuntimeConfig::openai_compatible(
-                &self.endpoint,
-                "synthetic-key",
-                "test-image-model",
-                "gpt",
-            )
-            .with_responses_support(self.responses)
-            .with_images_support(Some(true))
-            .with_max_transient_retries(Some(0)),
+            model_config,
         })
     }
 }

@@ -62,6 +62,8 @@ async fn postgres_summary_cursor_preserves_mixed_sort_and_offset_compatibility()
             subject_memory_summarized: 0,
             subject_memory_summarized_at: None,
             metadata: (index % 2 == 0).then(|| json!({"project_subject_id": "project:project-a"})),
+            payload_schema: None,
+            structured_payload: None,
             created_at: created_at.to_string(),
             updated_at: created_at.to_string(),
         };
@@ -141,6 +143,8 @@ async fn postgres_summary_cursor_preserves_mixed_sort_and_offset_compatibility()
         subject_memory_summarized: 0,
         subject_memory_summarized_at: None,
         metadata: None,
+        payload_schema: None,
+        structured_payload: None,
         created_at: "2026-09-18T10:01:00Z".to_string(),
         updated_at: "2026-09-18T10:01:00Z".to_string(),
     };

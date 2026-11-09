@@ -24,7 +24,7 @@ fn record(id: &str, project: &str) -> UpsertRecordInput {
 }
 
 #[tokio::test]
-async fn partition_claims_enforce_writer_cutover_and_isolate_projects() {
+async fn partition_claims_use_one_writer_and_isolate_projects() {
     let Some(pool) = pool().await else {
         return;
     };
@@ -57,57 +57,41 @@ async fn partition_claims_enforce_writer_cutover_and_isolate_projects() {
         let request = crate::models::BatchSyncRecordsRequest {
             tenant_id: tenant.clone(),
             source_id: source.clone(),
+            project_partition_key: format!("project:{project}"),
+            runtime_context_assertion: "repository-test".to_string(),
             records: vec![record(
                 format!("record-{project}-{suffix}").as_str(),
                 project,
             )],
         };
-        crate::repositories::records::batch_sync_records_with_partition_dispatch(
+        crate::repositories::records::batch_sync_records(
             &test_config("unused".to_string()),
             &pool,
             &thread_id,
             &request,
-            true,
         )
         .await
         .expect("seed project partition");
     }
 
-    let wrong_writer = crate::repositories::thread_partitions::try_claim_summary(
+    let _alpha = crate::repositories::thread_partitions::try_claim_summary(
         &pool,
         &tenant,
         &source,
         &thread_id,
         "project:alpha",
-        "v2",
-        "job-v2-early",
-        300,
-    )
-    .await
-    .expect_err("v2 cannot claim before cutover");
-    assert!(wrong_writer.contains("not authoritative"));
-
-    let alpha = crate::repositories::thread_partitions::try_claim_summary(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "project:alpha",
-        "v1",
         "job-alpha",
         300,
     )
     .await
     .expect("claim alpha")
     .expect("alpha claim");
-    assert_eq!(alpha.authoritative_writer, "v1");
     assert!(crate::repositories::thread_partitions::try_claim_summary(
         &pool,
         &tenant,
         &source,
         &thread_id,
         "project:alpha",
-        "v1",
         "job-alpha-race",
         300,
     )
@@ -120,7 +104,6 @@ async fn partition_claims_enforce_writer_cutover_and_isolate_projects() {
         &source,
         &thread_id,
         "project:beta",
-        "v1",
         "job-beta",
         300,
     )
@@ -136,7 +119,6 @@ async fn partition_claims_enforce_writer_cutover_and_isolate_projects() {
             &source,
             &thread_id,
             "project:alpha",
-            "v1",
             "job-alpha",
             0,
             0,
@@ -144,88 +126,29 @@ async fn partition_claims_enforce_writer_cutover_and_isolate_projects() {
         .await
         .expect("release alpha")
     );
-    assert!(!crate::repositories::thread_partitions::mark_ready(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "project:alpha",
-        alpha.pending_record_count,
-        alpha.pending_summary_tokens + 1,
-    )
-    .await
-    .expect("reject mismatched readiness snapshot"));
-    assert!(crate::repositories::thread_partitions::mark_ready(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "project:alpha",
-        alpha.pending_record_count,
-        alpha.pending_summary_tokens,
-    )
-    .await
-    .expect("mark alpha ready"));
-    assert!(crate::repositories::thread_partitions::cutover_to_v2(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "project:alpha",
-    )
-    .await
-    .expect("cut over alpha"));
-    let retired_v1 = crate::repositories::thread_partitions::try_claim_summary(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "project:alpha",
-        "v1",
-        "job-v1-late",
-        300,
-    )
-    .await
-    .expect_err("v1 cannot claim after cutover");
-    assert!(retired_v1.contains("not authoritative"));
     assert!(crate::repositories::thread_partitions::try_claim_summary(
         &pool,
         &tenant,
         &source,
         &thread_id,
         "project:alpha",
-        "v2",
-        "job-v2",
+        "job-alpha-next",
         300,
     )
     .await
-    .expect("claim alpha after v2 cutover")
+    .expect("claim alpha after release")
     .is_some());
-    let retired_rollup_v1 = crate::repositories::thread_partitions::try_claim_rollup(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "project:alpha",
-        "v1",
-        "rollup-v1-late",
-        300,
-    )
-    .await
-    .expect_err("v1 rollup cannot claim after cutover");
-    assert!(retired_rollup_v1.contains("not authoritative"));
     assert!(crate::repositories::thread_partitions::try_claim_rollup(
         &pool,
         &tenant,
         &source,
         &thread_id,
         "project:alpha",
-        "v2",
-        "rollup-v2",
+        "rollup-alpha",
         300,
     )
     .await
-    .expect("claim v2 rollup after cutover")
+    .expect("claim rollup")
     .is_some());
     assert!(
         crate::repositories::thread_partitions::release_rollup_claim(
@@ -234,23 +157,9 @@ async fn partition_claims_enforce_writer_cutover_and_isolate_projects() {
             &source,
             &thread_id,
             "project:alpha",
-            "v2",
-            "rollup-v2",
+            "rollup-alpha",
         )
         .await
         .expect("release v2 rollup claim")
     );
-    let rollback = sqlx::query(
-        "UPDATE engine_thread_summary_partitions SET migration_state='ready',authoritative_writer='v1' \
-         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key='project:alpha'",
-    )
-    .bind(&tenant)
-    .bind(&source)
-    .bind(&thread_id)
-    .execute(&pool)
-    .await
-    .expect_err("database must reject writer rollback");
-    assert!(rollback
-        .to_string()
-        .contains("invalid partition writer transition"));
 }

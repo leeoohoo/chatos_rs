@@ -80,6 +80,25 @@ pub(in crate::api) async fn create_model_config(
     let task_usage_scenario = normalize_optional_string(input.task_usage_scenario);
     let temperature = validate_temperature(input.temperature)?;
     let max_output_tokens = validate_max_output_tokens(input.max_output_tokens)?;
+    let model_capability_revision = normalize_optional_string(input.model_capability_revision)
+        .ok_or_else(|| bad_request("model_capability_revision is required"))?;
+    let context_window_tokens = input
+        .context_window_tokens
+        .ok_or_else(|| bad_request("context_window_tokens is required"))?;
+    let output_reserve_tokens = input
+        .output_reserve_tokens
+        .ok_or_else(|| bad_request("output_reserve_tokens is required"))?;
+    let protocol_overhead_estimator_id =
+        normalize_optional_string(input.protocol_overhead_estimator_id)
+            .ok_or_else(|| bad_request("protocol_overhead_estimator_id is required"))?;
+    let tokenizer_id = normalize_optional_string(input.tokenizer_id);
+    let responses_compaction_threshold = input.responses_compaction_threshold;
+    validate_model_capability(
+        context_window_tokens,
+        output_reserve_tokens,
+        max_output_tokens,
+        responses_compaction_threshold,
+    )?;
     let now = now_rfc3339();
     let Some(model) = normalize_optional_string(input.model) else {
         return Err(bad_request(
@@ -126,6 +145,12 @@ pub(in crate::api) async fn create_model_config(
         temperature: temperature.or_else(|| existing.as_ref().and_then(|item| item.temperature)),
         max_output_tokens: max_output_tokens
             .or_else(|| existing.as_ref().and_then(|item| item.max_output_tokens)),
+        model_capability_revision: Some(model_capability_revision),
+        context_window_tokens: Some(context_window_tokens),
+        output_reserve_tokens: Some(output_reserve_tokens),
+        protocol_overhead_estimator_id: Some(protocol_overhead_estimator_id),
+        tokenizer_id,
+        responses_compaction_threshold,
         api_key: api_key.or_else(|| existing.as_ref().and_then(|item| item.api_key.clone())),
         has_api_key: input.has_api_key.unwrap_or_else(|| {
             api_key_present || existing.as_ref().is_some_and(|item| item.has_api_key)
@@ -145,6 +170,12 @@ pub(in crate::api) async fn create_model_config(
             .unwrap_or_else(|| now.clone()),
         updated_at: now,
     };
+    validate_model_capability(
+        context_window_tokens,
+        output_reserve_tokens,
+        record.max_output_tokens,
+        record.responses_compaction_threshold,
+    )?;
 
     let saved = state
         .store
@@ -290,6 +321,55 @@ pub(in crate::api) async fn update_model_config(
     } else if input.max_output_tokens.is_some() {
         record.max_output_tokens = validate_max_output_tokens(input.max_output_tokens)?;
     }
+    if let Some(value) = input.model_capability_revision {
+        record.model_capability_revision = normalize_optional_string(Some(value));
+    }
+    if let Some(value) = input.context_window_tokens {
+        record.context_window_tokens = Some(value);
+    }
+    if let Some(value) = input.output_reserve_tokens {
+        record.output_reserve_tokens = Some(value);
+    }
+    if let Some(value) = input.protocol_overhead_estimator_id {
+        record.protocol_overhead_estimator_id = normalize_optional_string(Some(value));
+    }
+    if input.clear_tokenizer_id.unwrap_or(false) {
+        record.tokenizer_id = None;
+    } else if let Some(value) = input.tokenizer_id {
+        record.tokenizer_id = normalize_optional_string(Some(value));
+    }
+    if input.clear_responses_compaction_threshold.unwrap_or(false) {
+        record.responses_compaction_threshold = None;
+    } else if let Some(value) = input.responses_compaction_threshold {
+        record.responses_compaction_threshold = Some(value);
+    }
+    let context_window_tokens = record
+        .context_window_tokens
+        .ok_or_else(|| bad_request("context_window_tokens is required"))?;
+    let output_reserve_tokens = record
+        .output_reserve_tokens
+        .ok_or_else(|| bad_request("output_reserve_tokens is required"))?;
+    if record
+        .model_capability_revision
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+        || record
+            .protocol_overhead_estimator_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+    {
+        return Err(bad_request("complete model capability metadata is required"));
+    }
+    validate_model_capability(
+        context_window_tokens,
+        output_reserve_tokens,
+        record.max_output_tokens,
+        record.responses_compaction_threshold,
+    )?;
     record.updated_at = now_rfc3339();
 
     let saved = state
@@ -327,6 +407,35 @@ fn validate_max_output_tokens(
         Some(value) if value <= 0 => Err(bad_request("max_output_tokens must be positive")),
         value => Ok(value),
     }
+}
+
+fn validate_model_capability(
+    context_window_tokens: i64,
+    output_reserve_tokens: i64,
+    max_output_tokens: Option<i64>,
+    responses_compaction_threshold: Option<i64>,
+) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
+    if context_window_tokens < 2_048
+        || output_reserve_tokens < 256
+        || output_reserve_tokens >= context_window_tokens
+    {
+        return Err(bad_request(
+            "output_reserve_tokens must be smaller than context_window_tokens",
+        ));
+    }
+    if max_output_tokens.is_some_and(|value| value > output_reserve_tokens) {
+        return Err(bad_request(
+            "max_output_tokens must not exceed output_reserve_tokens",
+        ));
+    }
+    if responses_compaction_threshold.is_some_and(|value| {
+        value < 2_048 || value >= context_window_tokens - output_reserve_tokens
+    }) {
+        return Err(bad_request(
+            "responses_compaction_threshold must fit the frozen input budget",
+        ));
+    }
+    Ok(())
 }
 
 pub(in crate::api) async fn delete_model_config(

@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{default_active, default_idle};
+use super::default_active;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkUpsertThreadRequest {
@@ -34,15 +34,6 @@ pub struct EngineThread {
     pub metadata: Option<Value>,
     #[serde(default = "default_active")]
     pub status: String,
-    #[serde(default = "default_idle")]
-    pub summary_status: String,
-    pub summary_job_run_id: Option<String>,
-    pub summary_locked_at: Option<String>,
-    pub summary_lock_expires_at: Option<String>,
-    #[serde(default)]
-    pub pending_record_count: i64,
-    #[serde(default)]
-    pub pending_summary_tokens: i64,
     pub created_at: String,
     pub updated_at: String,
     pub archived_at: Option<String>,
@@ -91,7 +82,7 @@ mod tests {
     use super::{DeleteThreadResponse, EngineThread};
 
     #[test]
-    fn engine_thread_deserializes_summary_state_fields() {
+    fn engine_thread_ignores_removed_summary_projection_fields() {
         let thread: EngineThread = serde_json::from_value(serde_json::json!({
             "id": "thread-1",
             "tenant_id": "tenant-1",
@@ -115,10 +106,7 @@ mod tests {
         }))
         .expect("thread");
 
-        assert_eq!(thread.summary_status, "running");
-        assert_eq!(thread.pending_record_count, 3);
-        assert_eq!(thread.pending_summary_tokens, 128);
-        assert_eq!(thread.summary_job_run_id.as_deref(), Some("job-1"));
+        assert_eq!(thread.status, "active");
     }
 
     #[test]
@@ -149,11 +137,6 @@ mod tests {
             "title": null,
             "labels": null,
             "metadata": null,
-            "summary_job_run_id": null,
-            "summary_locked_at": null,
-            "summary_lock_expires_at": null,
-            "pending_record_count": 0,
-            "pending_summary_tokens": 0,
             "created_at": "2026-05-21T00:00:00Z",
             "updated_at": "2026-05-21T00:00:00Z",
             "archived_at": null
@@ -161,6 +144,5 @@ mod tests {
         .expect("thread");
 
         assert_eq!(thread.status, "active");
-        assert_eq!(thread.summary_status, "idle");
     }
 }

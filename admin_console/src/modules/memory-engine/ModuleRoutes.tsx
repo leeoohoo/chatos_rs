@@ -10,6 +10,7 @@ const DataSectionContainer = lazy(() => import('./app/sections/DataSectionContai
 const SourcesSectionContainer = lazy(() => import('./app/sections/SourcesSectionContainer').then((module) => ({ default: module.SourcesSectionContainer })));
 const PoliciesSectionContainer = lazy(() => import('./app/sections/PoliciesSectionContainer').then((module) => ({ default: module.PoliciesSectionContainer })));
 const RunsSectionContainer = lazy(() => import('./app/sections/RunsSectionContainer').then((module) => ({ default: module.RunsSectionContainer })));
+const ReliabilitySection = lazy(() => import('./app/sections/ReliabilitySection').then((module) => ({ default: module.ReliabilitySection })));
 
 export default function MemoryEngineModuleRoutes() {
   const { user } = useAdminAuth();
@@ -25,6 +26,7 @@ export default function MemoryEngineModuleRoutes() {
         <Route path="sources" element={requireSuperAdmin(<SourcesSectionContainer refreshNonce={0} />)} />
         <Route path="policies" element={requireSuperAdmin(<PoliciesSectionContainer refreshNonce={0} />)} />
         <Route path="runs" element={<RunsSectionContainer refreshNonce={0} />} />
+        <Route path="reliability" element={requireSuperAdmin(<ReliabilitySection />)} />
         <Route path="*" element={<Navigate to={canAccessAdmin ? 'dashboard' : 'data'} replace />} />
       </Routes>
     </Suspense>

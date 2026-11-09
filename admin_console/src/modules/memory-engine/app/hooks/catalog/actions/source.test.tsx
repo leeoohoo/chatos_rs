@@ -52,8 +52,6 @@ describe('buildCatalogSourceActions', () => {
           setSourceSubmitting: vi.fn(),
           setSourceModalOpen: vi.fn(),
           setEditingSource: vi.fn(),
-          setSavingPolicyJobType: vi.fn(),
-          setGeneratingPolicyJobType: vi.fn(),
         },
         loaders: {
           loadSources,
@@ -114,8 +112,6 @@ describe('buildCatalogSourceActions', () => {
           setSourceSubmitting: vi.fn(),
           setSourceModalOpen: vi.fn(),
           setEditingSource: vi.fn(),
-          setSavingPolicyJobType: vi.fn(),
-          setGeneratingPolicyJobType: vi.fn(),
         },
         loaders: {
           loadSources,
@@ -185,8 +181,6 @@ describe('buildCatalogSourceActions', () => {
           setSourceSubmitting: vi.fn(),
           setSourceModalOpen: vi.fn(),
           setEditingSource: vi.fn(),
-          setSavingPolicyJobType: vi.fn(),
-          setGeneratingPolicyJobType: vi.fn(),
         },
         loaders: {
           loadSources: vi.fn().mockResolvedValue([]),

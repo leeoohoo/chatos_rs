@@ -97,8 +97,10 @@ private actor AgentWorkerPeer {
 private struct WorkerProxyModel: AgentModelClient {
     let peer: AgentWorkerPeer
     let serverSideCompaction: Bool
+    let capabilitySnapshot: AgentModelCapabilitySnapshot?
 
     var usesServerSideCompaction: Bool { serverSideCompaction }
+    var memoryCapabilitySnapshot: AgentModelCapabilitySnapshot? { capabilitySnapshot }
 
     func complete(
         messages: [AgentMessage],
@@ -149,8 +151,10 @@ private struct WorkerProxyModel: AgentModelClient {
 private struct WorkerDirectModel: AgentModelClient {
     let peer: AgentWorkerPeer
     let model: any AgentModelClient
+    let capabilitySnapshot: AgentModelCapabilitySnapshot?
 
     var usesServerSideCompaction: Bool { model.usesServerSideCompaction }
+    var memoryCapabilitySnapshot: AgentModelCapabilitySnapshot? { capabilitySnapshot }
 
     func complete(
         messages: [AgentMessage],
@@ -208,6 +212,7 @@ private struct WorkerProxyContextProvider: AgentContextProviding {
         checkpoint initial: AgentRunCheckpoint,
         tools: [AgentToolDefinition],
         policy: AgentContextPolicy,
+        modelCapability: AgentModelCapabilitySnapshot,
         deadline: Date,
         synchronizeOnly: Bool,
         shouldPause: @escaping @Sendable () async -> Bool,
@@ -219,6 +224,7 @@ private struct WorkerProxyContextProvider: AgentContextProviding {
             checkpoint: initial,
             tools: tools,
             policy: policy,
+            modelCapability: modelCapability,
             deadline: deadline,
             synchronizeOnly: synchronizeOnly
         )
@@ -289,7 +295,8 @@ do {
 
     guard case let .start(start) = try await peer.receive(),
           start.checkpoint.id == hello.runID,
-          start.checkpoint.scope == start.scope else {
+          start.checkpoint.scope == start.scope,
+          !start.hasContextProvider || start.modelCapabilitySnapshot != nil else {
         terminate(.protocolFailure)
     }
     let model: any AgentModelClient
@@ -300,12 +307,14 @@ do {
         }
         model = WorkerDirectModel(
             peer: peer,
-            model: try configuration.makeModelClient()
+            model: try configuration.makeModelClient(),
+            capabilitySnapshot: start.modelCapabilitySnapshot
         )
     } else {
         model = WorkerProxyModel(
             peer: peer,
-            serverSideCompaction: start.modelUsesServerSideCompaction
+            serverSideCompaction: start.modelUsesServerSideCompaction,
+            capabilitySnapshot: start.modelCapabilitySnapshot
         )
     }
     let contextProvider: (any AgentContextProviding)? = if start.hasContextProvider {

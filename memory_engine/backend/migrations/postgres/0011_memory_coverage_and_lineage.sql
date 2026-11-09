@@ -1,9 +1,8 @@
 -- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 -- Required Notice: Copyright (c) 2025 AI Chat Team
 
--- M1a additive foundation. Later M1 stages attach generation/coverage/lineage
--- constraints after the compatible writers have shipped. Every new write path
--- remains behind Configuration Center feature flags.
+-- Foundation for the single authoritative generation/coverage/lineage path.
+-- The maintenance-window migration is completed before application traffic resumes.
 
 ALTER TABLE engine_records
     ADD COLUMN project_partition_key TEXT NULL;

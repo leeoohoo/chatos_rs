@@ -446,10 +446,12 @@ final class AgentMemoryContextTests: XCTestCase {
         let provider = AgentMemoryContextProvider(scope: scope, service: memory)
         var checkpoint = try provider.bind(initial)
         checkpoint = try await provider.prepare(checkpoint: checkpoint, tools: tools, policy: contextPolicy,
+            modelCapability: try modelCapability(),
             deadline: Date().addingTimeInterval(60), synchronizeOnly: true, record: { _, _ in }).checkpoint
         checkpoint.messages[1].content = "mutated"
         do {
             _ = try await provider.prepare(checkpoint: checkpoint, tools: tools, policy: contextPolicy,
+                modelCapability: try modelCapability(),
                 deadline: Date().addingTimeInterval(60), record: { _, _ in })
             XCTFail("Should fail")
         } catch { XCTAssertTrue(error is AgentContextPreparationFailure) }
@@ -459,9 +461,77 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(writes, 1)
     }
 
+    func testModelCapabilityIsFrozenAndLegacyOrChangedSnapshotsFailClosed() async throws {
+        let (initial, scope) = try fixture()
+        let memory = TestMemory(scope: scope)
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+        let model = CountingModel(finishAt: 1)
+        let frozen = try XCTUnwrap(model.memoryCapabilitySnapshot)
+
+        let completed = try await AgentRuntime().run(
+            checkpoint: provider.bind(initial),
+            scope: initial.scope,
+            policy: .init(),
+            model: model,
+            tools: tools,
+            execute: { _ in .init("done") },
+            contextProvider: provider
+        )
+        XCTAssertEqual(completed.memory?.modelCapability, frozen)
+
+        var changed = try provider.bind(initial)
+        changed.memory?.modelCapability = try AgentModelCapabilitySnapshot(
+            revision: "different-capability-v1",
+            contextWindowTokens: frozen.contextWindowTokens,
+            outputReserveTokens: frozen.outputReserveTokens,
+            protocolOverheadEstimatorID: frozen.protocolOverheadEstimatorID,
+            tokenizerID: frozen.tokenizerID
+        )
+        do {
+            _ = try await AgentRuntime().run(
+                checkpoint: changed,
+                scope: changed.scope,
+                policy: .init(),
+                model: model,
+                tools: tools,
+                execute: { _ in .init("not reached") },
+                contextProvider: provider
+            )
+            XCTFail("Changed model capability must be rejected")
+        } catch AgentRuntimeError.modelConfigurationUnavailable {
+            // Expected.
+        }
+
+        var legacy = try provider.bind(initial)
+        legacy.modelCalls = 1
+        do {
+            _ = try await AgentRuntime().run(
+                checkpoint: legacy,
+                scope: legacy.scope,
+                policy: .init(),
+                model: model,
+                tools: tools,
+                execute: { _ in .init("not reached") },
+                contextProvider: provider
+            )
+            XCTFail("A used legacy checkpoint cannot adopt current model limits")
+        } catch AgentRuntimeError.modelConfigurationUnavailable {
+            // Expected.
+        }
+    }
+
     private var contextPolicy: AgentContextPolicy {
         var policy = AgentContextPolicy(); policy.windowTokens = 2_048; policy.outputReserveTokens = 512
         return policy
+    }
+    private func modelCapability() throws -> AgentModelCapabilitySnapshot {
+        try AgentModelCapabilitySnapshot(
+            revision: "test-capability-v1",
+            contextWindowTokens: 2_048,
+            outputReserveTokens: 512,
+            protocolOverheadEstimatorID: "responses-json-v1",
+            tokenizerID: nil
+        )
     }
     private func fixture() throws -> (AgentRunCheckpoint, AgentMemoryScope) {
         let checkpoint = AgentRunCheckpoint(scope: "account:story:version1", messages: [.init(role: .system, content: "Only authorized tools"), .init(role: .user, content: "Plan the story")])
@@ -478,6 +548,13 @@ let runtimeTestTools: [AgentToolDefinition] = [
 
 actor CountingModel: AgentModelClient {
     nonisolated let usesServerSideCompaction = true
+    nonisolated let memoryCapabilitySnapshot = try? AgentModelCapabilitySnapshot(
+        revision: "test-capability-v1",
+        contextWindowTokens: 200_000,
+        outputReserveTokens: 30_000,
+        protocolOverheadEstimatorID: "responses-json-v1",
+        tokenizerID: nil
+    )
     let finishAt: Int
     var count = 0
     init(finishAt: Int) { self.finishAt = finishAt }
@@ -512,7 +589,8 @@ private actor TestMemory: AgentMemoryServicing {
             loseSyncAck = false; throw URLError(.networkConnectionLost)
         }
     }
-    func compose() -> AgentMemoryContext {
+    func compose(_ request: AgentMemoryComposeRequest) -> AgentMemoryContext {
+        _ = request
         composeCalls += 1
         return .init(
             blocks: [],

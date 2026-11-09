@@ -5,95 +5,34 @@ use std::sync::Arc;
 
 use tracing::{info, warn};
 
-use crate::models::now_rfc3339;
-use crate::repositories::{control_plane, threads};
-use crate::services::{control_plane as cp_service, summary};
+use crate::repositories::{control_plane, thread_partitions, threads};
+use crate::services::summary;
 use crate::state::AppState;
 
 const SUMMARY_QUEUE_TRIGGER: &str = "database_worker";
-const SUMMARY_DISPATCH_CLAIM_LEASE_SECS: i64 = 300;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SummaryRequestedEnvelope {
-    tenant_id: String,
-    source_id: String,
-    thread_id: String,
-    version: i64,
-    force_version: i64,
-    attempt: u32,
-    requested_at: String,
-}
-
-impl SummaryRequestedEnvelope {
-    fn from_outbox(event: &threads::SummaryDispatchOutbox) -> Self {
-        Self {
-            tenant_id: event.tenant_id.clone(),
-            source_id: event.source_id.clone(),
-            thread_id: event.thread_id.clone(),
-            version: event.summary_dispatch_version,
-            force_version: event.summary_dispatch_force_version,
-            attempt: 0,
-            requested_at: now_rfc3339(),
-        }
-    }
-
-    fn as_outbox(&self) -> threads::SummaryDispatchOutbox {
-        threads::SummaryDispatchOutbox {
-            tenant_id: self.tenant_id.clone(),
-            source_id: self.source_id.clone(),
-            thread_id: self.thread_id.clone(),
-            summary_dispatch_version: self.version,
-            summary_dispatch_published_version: self.version,
-            summary_dispatch_consumed_version: 0,
-            summary_dispatch_force_version: self.force_version,
-        }
-    }
-}
-
-pub async fn publish_rearmed_summary_dispatch(
-    _state: &AppState,
-    _event: &threads::SummaryDispatchOutbox,
-) -> Result<(), String> {
-    Ok(())
-}
-
-pub async fn archive_summary_dead_letter(
-    _config: &crate::config::AppConfig,
-    _tenant_id: &str,
-    _source_id: &str,
-    _thread_id: &str,
-    _version: i64,
-    _scan_limit: usize,
-) -> Result<bool, String> {
-    // Dead letters are database state now. Replay clears the old marker atomically.
-    Ok(true)
-}
 
 pub async fn dead_letter_current_summary_dispatch(
     state: &AppState,
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
+    project_partition_key: &str,
     error: &str,
 ) -> Result<bool, String> {
-    let Some(event) =
-        threads::get_summary_dispatch_state(&state.pool, tenant_id, source_id, thread_id).await?
-    else {
-        return Ok(false);
-    };
-    if event.summary_dispatch_version <= 0
-        || event.summary_dispatch_consumed_version >= event.summary_dispatch_version
-    {
-        return Ok(false);
-    }
-    threads::mark_summary_dispatch_dead_lettered(&state.pool, &event, error).await?;
+    let archived = crate::repositories::thread_partitions::dead_letter_current_summary_dispatch(
+        &state.pool,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_partition_key,
+        error,
+    )
+    .await?;
     warn!(
         thread_id,
-        version = event.summary_dispatch_version,
-        error,
-        "Memory Engine summary database dispatch was dead-lettered"
+        project_partition_key, error, "Memory Engine partition summary dispatch was dead-lettered"
     );
-    Ok(true)
+    Ok(archived)
 }
 
 pub fn start(state: Arc<AppState>) {
@@ -151,15 +90,14 @@ fn summary_consumer_enabled(
 }
 
 async fn process_claimed_batch(state: &Arc<AppState>) -> Result<usize, String> {
-    let events = threads::claim_pending_summary_dispatches(
+    let events = thread_partitions::list_ready_summary_dispatches(
         &state.pool,
         state.config.summary_outbox_batch_size,
     )
     .await?;
     let mut processed = 0usize;
     for event in events {
-        let envelope = SummaryRequestedEnvelope::from_outbox(&event);
-        match process_summary_event(state, &envelope).await {
+        match process_partition_summary_event(state, &event).await {
             Ok(()) => processed = processed.saturating_add(1),
             Err(error)
                 if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED =>
@@ -167,11 +105,15 @@ async fn process_claimed_batch(state: &Arc<AppState>) -> Result<usize, String> {
                 processed = processed.saturating_add(1);
             }
             Err(error) => {
-                threads::mark_summary_dispatch_failed(&state.pool, &event, error.as_str()).await?;
-                threads::defer_summary_dispatch_until_unlock(&state.pool, &event).await?;
+                thread_partitions::mark_summary_dispatch_failed(
+                    &state.pool,
+                    &event,
+                    "summary_worker_error",
+                )
+                .await?;
                 warn!(
                     thread_id = event.thread_id,
-                    version = event.summary_dispatch_version,
+                    project_partition_key = event.project_partition_key,
                     error,
                     retry_delay_ms = state.config.summary_retry_delay.as_millis(),
                     "Memory Engine summary database dispatch was deferred"
@@ -182,104 +124,45 @@ async fn process_claimed_batch(state: &Arc<AppState>) -> Result<usize, String> {
     Ok(processed)
 }
 
-async fn process_summary_event(
+async fn process_partition_summary_event(
     state: &Arc<AppState>,
-    envelope: &SummaryRequestedEnvelope,
+    event: &thread_partitions::PartitionSummaryDispatch,
 ) -> Result<(), String> {
-    let Some(dispatch_state) = threads::get_summary_dispatch_state(
-        &state.pool,
-        envelope.tenant_id.as_str(),
-        envelope.source_id.as_str(),
-        envelope.thread_id.as_str(),
-    )
-    .await?
-    else {
-        return Ok(());
-    };
-    if dispatch_state.summary_dispatch_consumed_version >= envelope.version {
-        return Ok(());
-    }
-
     let policy = control_plane::get_effective_job_policy(&state.pool, "summary").await?;
-    let event = envelope.as_outbox();
-    if !policy.enabled {
-        threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
+    let token_threshold = policy
+        .dispatch_threshold_tokens
+        .ok_or_else(|| "summary dispatch_threshold_tokens is missing".to_string())?;
+    if !event.forced() && event.pending_summary_tokens < token_threshold {
+        thread_partitions::consume_summary_dispatch(&state.pool, event).await?;
         return Ok(());
     }
-
-    let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
-    let Some(thread) = threads::get_thread_by_id(
+    let thread = threads::get_thread_by_id(
         &state.pool,
-        envelope.tenant_id.as_str(),
-        envelope.source_id.as_str(),
-        envelope.thread_id.as_str(),
+        event.tenant_id.as_str(),
+        event.source_id.as_str(),
+        event.thread_id.as_str(),
     )
     .await?
-    else {
-        return Ok(());
-    };
-    if summary_slot_is_active(&thread, now_rfc3339().as_str()) {
-        threads::defer_summary_dispatch_until_unlock(&state.pool, &event).await?;
-        return Ok(());
-    }
-    if !event.forced() && thread.pending_summary_tokens < token_threshold {
-        threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
-        return Ok(());
-    }
-
-    let run_response = match summary::run_thread_summary_with_thread(
+    .ok_or_else(|| "partition summary thread is missing".to_string())?;
+    let result = summary::run_thread_summary_partition_with_thread(
         &state.config,
         &state.pool,
         thread,
+        event.project_partition_key.as_str(),
         SUMMARY_QUEUE_TRIGGER,
     )
-    .await
-    {
-        Ok(response) => response,
-        Err(error) if error.contains("summary slot already occupied") => {
-            return Err(
-                crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED.to_string(),
-            );
+    .await;
+    match result {
+        Ok(_) => {
+            thread_partitions::consume_summary_dispatch(&state.pool, event).await?;
+            Ok(())
         }
-        Err(error) => return Err(error),
-    };
-
-    if !run_response.generated {
-        threads::refresh_summary_queue_state(
-            &state.pool,
-            envelope.tenant_id.as_str(),
-            envelope.source_id.as_str(),
-            envelope.thread_id.as_str(),
-        )
-        .await?;
+        Err(error) => Err(error),
     }
-    threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
-    let _ = threads::rearm_summary_dispatch_after_processing(&state.pool, &event, token_threshold)
-        .await?;
-    Ok(())
-}
-
-fn summary_slot_is_active(thread: &crate::models::EngineThread, now: &str) -> bool {
-    thread.summary_status == "running"
-        && thread
-            .summary_lock_expires_at
-            .as_deref()
-            .is_some_and(|expires_at| expires_at > now)
 }
 
 async fn run_reconciler(state: Arc<AppState>) {
     loop {
-        let scan_interval = match control_plane::get_effective_job_policy(&state.pool, "summary")
-            .await
-            .and_then(|policy| cp_service::managed_policy_scan_interval(&policy))
-        {
-            Ok(value) => value,
-            Err(error) => {
-                warn!(error, "Memory Engine summary scan policy is invalid");
-                tokio::time::sleep(state.config.summary_outbox_reconcile_interval).await;
-                continue;
-            }
-        };
         match release_expired_summary_slots(&state).await {
             Ok(count) if count > 0 => info!(
                 recovered_count = count,
@@ -291,115 +174,17 @@ async fn run_reconciler(state: Arc<AppState>) {
                 "Memory Engine failed to release expired summary thread slots"
             ),
         }
-        match recover_stale_claims(&state).await {
-            Ok(count) if count > 0 => info!(
-                recovered_count = count,
-                lease_seconds = SUMMARY_DISPATCH_CLAIM_LEASE_SECS,
-                "Memory Engine recovered stale summary database claims"
-            ),
-            Ok(_) => {}
-            Err(error) => warn!(
-                error,
-                "Memory Engine failed to recover summary database claims"
-            ),
-        }
-        match arm_automatic_summary_dispatches(&state).await {
-            Ok(count) if count > 0 => info!(
-                armed_count = count,
-                "Memory Engine armed automatic summary database dispatches"
-            ),
-            Ok(_) => {}
-            Err(error) => warn!(
-                error,
-                "Memory Engine failed to arm summary database dispatches"
-            ),
-        }
-        tokio::time::sleep(scan_interval).await;
+        tokio::time::sleep(state.config.summary_outbox_reconcile_interval).await;
     }
 }
 
 async fn release_expired_summary_slots(state: &AppState) -> Result<usize, String> {
-    let threads =
-        threads::list_expired_summary_threads(&state.pool, state.config.summary_outbox_batch_size)
-            .await?;
-    let mut recovered = 0usize;
-    for thread in threads {
-        if threads::release_expired_summary_slot(
-            &state.pool,
-            thread.tenant_id.as_str(),
-            thread.source_id.as_str(),
-            thread.id.as_str(),
-        )
-        .await?
-        .is_some()
-        {
-            recovered = recovered.saturating_add(1);
-        }
-    }
-    Ok(recovered)
-}
-
-async fn recover_stale_claims(state: &AppState) -> Result<usize, String> {
-    let policy = control_plane::get_effective_job_policy(&state.pool, "summary").await?;
-    if !policy.enabled {
-        return Ok(0);
-    }
-    let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
-    let scan_limit =
-        cp_service::managed_policy_scan_limit(&policy, state.config.summary_outbox_batch_size)?;
-    let stale_before = (chrono::Utc::now()
-        - chrono::Duration::seconds(SUMMARY_DISPATCH_CLAIM_LEASE_SECS))
-    .to_rfc3339();
-    let candidates = threads::list_stale_published_summary_dispatches(
+    thread_partitions::release_expired_summary_claims(
         &state.pool,
-        token_threshold,
-        stale_before.as_str(),
-        scan_limit,
+        state.config.summary_outbox_batch_size,
     )
-    .await?;
-    let mut recovered = 0usize;
-    for candidate in candidates {
-        if threads::rearm_stale_published_summary_dispatch(
-            &state.pool,
-            &candidate,
-            token_threshold,
-            stale_before.as_str(),
-        )
-        .await?
-        .is_some()
-        {
-            recovered = recovered.saturating_add(1);
-        }
-    }
-    Ok(recovered)
-}
-
-async fn arm_automatic_summary_dispatches(state: &AppState) -> Result<usize, String> {
-    let policy = control_plane::get_effective_job_policy(&state.pool, "summary").await?;
-    if !policy.enabled {
-        return Ok(0);
-    }
-    let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
-    let scan_limit =
-        cp_service::managed_policy_scan_limit(&policy, state.config.summary_outbox_batch_size)?;
-    let candidates =
-        threads::list_eligible_summary_dispatches(&state.pool, token_threshold, scan_limit).await?;
-    let mut armed = 0usize;
-    for candidate in candidates {
-        if threads::rearm_summary_dispatch_if_eligible(
-            &state.pool,
-            candidate.tenant_id.as_str(),
-            candidate.source_id.as_str(),
-            candidate.thread_id.as_str(),
-            token_threshold,
-        )
-        .await?
-        .is_some()
-        {
-            armed = armed.saturating_add(1);
-        }
-    }
-    Ok(armed)
+    .await
+    .map(|count| usize::try_from(count).unwrap_or(usize::MAX))
 }
 
 #[cfg(test)]

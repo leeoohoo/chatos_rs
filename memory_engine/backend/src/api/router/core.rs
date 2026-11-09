@@ -9,9 +9,9 @@ use axum::{
 };
 
 use crate::api::{
-    context_api, health_api, jobs_api, queue_operations_api, records_api, sources_api,
-    subject_memories_api, subject_memory_scopes_api, subjects_api, summaries_api, system_api,
-    thread_snapshots_api, threads_api,
+    context_api, erasure_api, health_api, history_migrations_api, jobs_api, queue_operations_api,
+    records_api, sources_api, subject_memories_api, subject_memory_scopes_api, subjects_api,
+    summaries_api, system_api, thread_snapshots_api, threads_api,
 };
 use crate::state::AppState;
 
@@ -48,6 +48,14 @@ pub fn operator_routes() -> Router<Arc<AppState>> {
             "/api/memory-engine/v1/queue-operations/replay",
             post(queue_operations_api::replay_queue_dead_letter),
         )
+        .route(
+            "/api/memory-engine/v1/privileged-erasure/threads",
+            post(erasure_api::erase_thread),
+        )
+        .route(
+            "/api/memory-engine/v1/reliability-migrations/m2a/run",
+            post(history_migrations_api::run_m2a_history_repair),
+        )
 }
 
 pub fn data_routes() -> Router<Arc<AppState>> {
@@ -66,7 +74,7 @@ pub fn data_routes() -> Router<Arc<AppState>> {
         )
         .route(
             "/api/memory-engine/v1/subjects/{subject_id}/memories/{memory_key}",
-            put(subject_memories_api::upsert_subject_memory),
+            axum::routing::delete(subject_memories_api::retire_subject_memory),
         )
         .route(
             "/api/memory-engine/v1/subjects/{subject_id}/memories",
@@ -137,11 +145,11 @@ pub fn data_routes() -> Router<Arc<AppState>> {
         )
         .route(
             "/api/memory-engine/v1/threads/{thread_id}/active-summary/status",
-            get(summaries_api::get_thread_active_summary_status),
+            post(summaries_api::get_thread_active_summary_status),
         )
         .route(
             "/api/memory-engine/v1/threads/{thread_id}/summaries",
-            get(summaries_api::list_thread_summaries),
+            post(summaries_api::list_thread_summaries),
         )
         .route(
             "/api/memory-engine/v1/summaries/query-by-thread-label",
@@ -149,15 +157,15 @@ pub fn data_routes() -> Router<Arc<AppState>> {
         )
         .route(
             "/api/memory-engine/v1/threads/{thread_id}/summaries/{summary_id}",
-            put(summaries_api::upsert_thread_summary).delete(summaries_api::delete_thread_summary),
+            axum::routing::delete(summaries_api::delete_thread_summary),
         )
         .route(
             "/api/memory-engine/v1/threads/{thread_id}/summaries/mark-subject-memory",
             post(summaries_api::mark_subject_memory_summarized),
         )
         .route(
-            "/api/memory-engine/v1/threads/{thread_id}/repair-summaries/run",
-            post(summaries_api::run_thread_repair_summary),
+            "/api/memory-engine/v1/threads/{thread_id}/pending-rebuild/run",
+            post(summaries_api::run_pending_summary_rebuild),
         )
         .route(
             "/api/memory-engine/v1/context/compose",

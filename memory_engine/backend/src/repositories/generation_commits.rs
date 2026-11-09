@@ -196,6 +196,26 @@ pub async fn get_generation(
     .map_err(|error| error.to_string())
 }
 
+pub async fn get_generation_by_job_step(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    job_run_id: &str,
+    generation_step_key: &str,
+) -> Result<Option<GenerationCommit>, String> {
+    sqlx::query_as::<_, GenerationCommit>(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM engine_generation_commits WHERE tenant_id=$1 AND source_id=$2 \
+         AND job_run_id=$3 AND generation_step_key=$4"
+    )))
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(job_run_id)
+    .bind(generation_step_key)
+    .fetch_optional(db)
+    .await
+    .map_err(|error| error.to_string())
+}
+
 async fn fetch_by_job_step(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: &str,

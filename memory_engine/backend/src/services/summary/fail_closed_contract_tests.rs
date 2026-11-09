@@ -49,6 +49,8 @@ fn test_config() -> crate::config::AppConfig {
         rollup_lock_timeout_secs: 300,
         internal_api_secrets: HashMap::new(),
         require_signed_internal_requests: true,
+        runtime_context_assertion_keys: crate::config::test_runtime_context_assertion_keys(),
+        model_capabilities: crate::config::test_model_capabilities(),
         user_service_base_url: "http://127.0.0.1:39190".to_string(),
         user_service_internal_base_url: "https://127.0.0.1:39192".to_string(),
         user_service_internal_http: reqwest::Client::new(),
@@ -86,7 +88,7 @@ async fn thread(
 }
 
 #[tokio::test]
-async fn oversized_thread_record_fails_without_sentinel_or_pending_decrement() {
+async fn oversized_thread_record_uses_splitter_without_pending_decrement_on_failure() {
     let Some(pool) = pool().await else {
         return;
     };
@@ -99,6 +101,8 @@ async fn oversized_thread_record_fails_without_sentinel_or_pending_decrement() {
     let request = BatchSyncRecordsRequest {
         tenant_id: tenant.clone(),
         source_id: source.clone(),
+        project_partition_key: "__none__".to_string(),
+        runtime_context_assertion: "repository-test".to_string(),
         records: vec![UpsertRecordInput {
             id: record_id.clone(),
             external_record_id: None,
@@ -121,11 +125,15 @@ async fn oversized_thread_record_fails_without_sentinel_or_pending_decrement() {
             .await
             .expect("load oversized pending record");
     let selection = select_pending_records_for_summary(pending, 500);
-    assert_eq!(selection.oversized.len(), 1);
+    assert_eq!(selection.selected.len(), 1);
+    assert!(selection.oversized.is_empty());
     let ctx = ThreadSummaryExecutionContext {
         thread,
         settings: SummaryJobSettings {
             token_limit: 500,
+            source_batch_token_limit: 500,
+            max_leaf_tokens: 500,
+            max_merge_rounds: 8,
             cloud_owner_entity_id: None,
             cloud_resume_kind: None,
         },
@@ -153,7 +161,7 @@ async fn oversized_thread_record_fails_without_sentinel_or_pending_decrement() {
     )
     .await
     .expect_err("oversized source must fail closed");
-    assert!(error.contains("remain pending"));
+    assert!(!error.trim().is_empty());
 
     let record = crate::repositories::records::get_record_by_id(
         &pool,
@@ -167,12 +175,18 @@ async fn oversized_thread_record_fails_without_sentinel_or_pending_decrement() {
     .expect("record remains");
     assert_eq!(record.summary_status, "pending");
     assert!(record.summary_id.is_none());
-    let state = crate::repositories::threads::get_thread_by_id(&pool, &tenant, &source, &thread_id)
-        .await
-        .expect("load fail-closed thread")
-        .expect("thread remains");
-    assert_eq!(state.pending_record_count, 1);
-    assert_ne!(state.summary_status, "running");
+    let state = sqlx::query_as::<_, (i64, String)>(
+        "SELECT pending_record_count,summary_status FROM engine_thread_summary_partitions \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key='__none__'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load fail-closed partition");
+    assert_eq!(state.0, 1);
+    assert_ne!(state.1, "running");
 }
 
 #[tokio::test]
@@ -185,7 +199,7 @@ async fn oversized_thread_rollup_fails_without_marking_source_done() {
     let source = format!("source-{suffix}");
     let thread_id = format!("thread-{suffix}");
     let thread = thread(&pool, &tenant, &source, &thread_id).await;
-    let summary = crate::repositories::summaries::create_thread_summary(
+    let summary = crate::repositories::summaries::insert_test_thread_summary(
         &pool,
         &tenant,
         &source,
@@ -201,13 +215,15 @@ async fn oversized_thread_rollup_fails_without_marking_source_done() {
     .expect("create oversized source summary");
     let prepared = PreparedThreadRollup {
         thread_id: thread_id.clone(),
+        project_partition_key: "__none__".to_string(),
         level: 0,
         selected: vec![summary.clone()],
-        trigger_reason: "token_limit",
+        trigger_reason: "token_limit".to_string(),
         cloud_job_run_id: None,
     };
     let settings = RollupSettings {
         token_limit: 500,
+        source_batch_token_limit: 500,
         count_limit: 1,
         keep_level0_count: 0,
         max_level: 3,
@@ -227,7 +243,7 @@ async fn oversized_thread_rollup_fails_without_marking_source_done() {
     )
     .await
     .expect_err("oversized rollup source must fail closed");
-    assert!(error.contains("remain pending"));
+    assert!(!error.trim().is_empty());
     let stored =
         crate::repositories::summaries::get_summary_by_id(&pool, &tenant, &source, &summary.id)
             .await

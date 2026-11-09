@@ -92,7 +92,8 @@ actor DurableAgentMemoryService: AgentMemoryServicing {
         }
     }
 
-    func compose() async throws -> AgentMemoryContext {
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        _ = request
         guard await store.shouldAttemptRemote() else {
             return try await store.compose(scope: scope)
         }
@@ -100,7 +101,7 @@ actor DurableAgentMemoryService: AgentMemoryServicing {
             let service = try await remoteService()
             try await service.ensureThread()
             try await flush(using: service)
-            let context = try await service.compose()
+            let context = try await service.compose(request)
             try await store.save(context: context, scope: scope)
             await store.recordRemoteSuccess()
             return context
@@ -158,16 +159,27 @@ actor SQLiteAgentMemoryCacheStore {
         let index: Int
         let message: AgentMessage
         let createdAt: Date
+        let conversationTurnID: String
+        let toolExchange: AgentMemoryToolExchange?
 
         init(_ entry: AgentMemoryEntry) {
             id = entry.id
             index = entry.index
             message = entry.message
             createdAt = entry.createdAt
+            conversationTurnID = entry.conversationTurnID
+            toolExchange = entry.toolExchange
         }
 
         var entry: AgentMemoryEntry {
-            .init(id: id, index: index, message: message, createdAt: createdAt)
+            .init(
+                id: id,
+                index: index,
+                message: message,
+                createdAt: createdAt,
+                conversationTurnID: conversationTurnID,
+                toolExchange: toolExchange
+            )
         }
 
         func isEquivalent(to entry: AgentMemoryEntry) -> Bool {
@@ -175,6 +187,8 @@ actor SQLiteAgentMemoryCacheStore {
                 && index == entry.index
                 && message == entry.message
                 && abs(createdAt.timeIntervalSince(entry.createdAt)) <= 0.001
+                && conversationTurnID == entry.conversationTurnID
+                && toolExchange == entry.toolExchange
         }
     }
 

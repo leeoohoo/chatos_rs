@@ -5,6 +5,21 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chatos_service_runtime::{env_text, parse_bool_text, validate_production_secret};
+use serde::Deserialize;
+
+#[derive(Debug, Clone)]
+pub struct RuntimeContextAssertionVerificationKey {
+    pub issuer: String,
+    pub secret: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublishedModelCapability {
+    pub context_window_tokens: usize,
+    pub output_reserve_tokens: usize,
+    pub protocol_overhead_estimator_id: String,
+    pub tokenizer_id: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -36,6 +51,8 @@ pub struct AppConfig {
     pub rollup_lock_timeout_secs: i64,
     pub internal_api_secrets: HashMap<String, String>,
     pub require_signed_internal_requests: bool,
+    pub runtime_context_assertion_keys: HashMap<String, RuntimeContextAssertionVerificationKey>,
+    pub model_capabilities: HashMap<String, PublishedModelCapability>,
     pub user_service_base_url: String,
     pub user_service_internal_base_url: String,
     pub user_service_internal_http: reqwest::Client,
@@ -142,6 +159,8 @@ impl AppConfig {
             require_signed_internal_requests: required_managed_bool(
                 "MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS",
             )?,
+            runtime_context_assertion_keys: runtime_context_assertion_keys()?,
+            model_capabilities: published_model_capabilities()?,
             user_service_base_url,
             user_service_internal_base_url,
             user_service_internal_http,
@@ -168,8 +187,102 @@ impl AppConfig {
                 ],
             )?;
         }
+        if config.runtime_context_assertion_keys.is_empty() {
+            return Err(
+                "at least one Runtime Context Assertion verification key is required".to_string(),
+            );
+        }
+        for (key_id, key) in &config.runtime_context_assertion_keys {
+            validate_production_secret(
+                format!("Runtime Context Assertion key {key_id}").as_str(),
+                Some(key.secret.as_str()),
+                &["change_me_runtime_context_assertion_secret"],
+            )?;
+        }
         Ok(config)
     }
+}
+
+fn published_model_capabilities() -> Result<HashMap<String, PublishedModelCapability>, String> {
+    let raw = required_text("MEMORY_ENGINE_MODEL_CAPABILITIES_JSON")?;
+    let values: HashMap<String, PublishedModelCapability> = serde_json::from_str(raw.as_str())
+        .map_err(|error| format!("MEMORY_ENGINE_MODEL_CAPABILITIES_JSON is invalid: {error}"))?;
+    if values.is_empty() {
+        return Err("MEMORY_ENGINE_MODEL_CAPABILITIES_JSON must not be empty".to_string());
+    }
+    for (revision, capability) in &values {
+        if revision.trim().is_empty()
+            || capability.context_window_tokens < 2_048
+            || capability.output_reserve_tokens < 256
+            || capability.output_reserve_tokens >= capability.context_window_tokens
+            || capability.protocol_overhead_estimator_id.trim().is_empty()
+        {
+            return Err(format!("invalid published model capability: {revision}"));
+        }
+    }
+    Ok(values)
+}
+
+#[cfg(test)]
+pub(crate) fn test_model_capabilities() -> HashMap<String, PublishedModelCapability> {
+    HashMap::from([(
+        "test-model-capability-v1".to_string(),
+        PublishedModelCapability {
+            context_window_tokens: 200_000,
+            output_reserve_tokens: 30_000,
+            protocol_overhead_estimator_id: "responses-json-v1".to_string(),
+            tokenizer_id: Some("o200k_base".to_string()),
+        },
+    )])
+}
+
+#[derive(Debug, Deserialize)]
+struct RuntimeContextAssertionKeyDocument {
+    issuer: String,
+    secret: String,
+}
+
+fn runtime_context_assertion_keys(
+) -> Result<HashMap<String, RuntimeContextAssertionVerificationKey>, String> {
+    let raw = required_text("MEMORY_ENGINE_RUNTIME_CONTEXT_ASSERTION_KEYS_JSON")?;
+    let documents: HashMap<String, RuntimeContextAssertionKeyDocument> =
+        serde_json::from_str(raw.as_str()).map_err(|error| {
+            format!("MEMORY_ENGINE_RUNTIME_CONTEXT_ASSERTION_KEYS_JSON is invalid: {error}")
+        })?;
+    documents
+        .into_iter()
+        .map(|(key_id, document)| {
+            let key_id = key_id.trim().to_string();
+            let issuer = document.issuer.trim().to_string();
+            if key_id.is_empty() || key_id.chars().any(char::is_control) {
+                return Err("Runtime Context Assertion key_id is invalid".to_string());
+            }
+            if issuer.is_empty() || issuer.chars().any(char::is_control) {
+                return Err(format!(
+                    "Runtime Context Assertion issuer is invalid for key {key_id}"
+                ));
+            }
+            Ok((
+                key_id,
+                RuntimeContextAssertionVerificationKey {
+                    issuer,
+                    secret: document.secret,
+                },
+            ))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn test_runtime_context_assertion_keys(
+) -> HashMap<String, RuntimeContextAssertionVerificationKey> {
+    HashMap::from([(
+        "test-runtime-context-key".to_string(),
+        RuntimeContextAssertionVerificationKey {
+            issuer: "test-runtime".to_string(),
+            secret: "test-runtime-context-assertion-secret-long-enough".to_string(),
+        },
+    )])
 }
 
 fn caller_internal_api_secrets() -> HashMap<String, String> {

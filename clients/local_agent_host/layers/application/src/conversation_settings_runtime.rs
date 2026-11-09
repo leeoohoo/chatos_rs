@@ -142,6 +142,11 @@ mod tests {
 
     fn model(owner_user_id: &str) -> LocalModelConfigSnapshot {
         LocalModelConfigSnapshot {
+            model_capability_revision: "capability-v1".to_string(),
+            context_window_tokens: 200_000,
+            output_reserve_tokens: 30_000,
+            protocol_overhead_estimator_id: "responses-json-v1".to_string(),
+            tokenizer_id: Some("o200k_base".to_string()),
             owner_user_id: owner_user_id.to_string(),
             model_config_ref: "model-1".to_string(),
             model_config_revision: "revision-1".to_string(),

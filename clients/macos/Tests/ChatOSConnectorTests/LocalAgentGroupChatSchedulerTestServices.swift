@@ -7,6 +7,20 @@ import XCTest
 enum SchedulerTestError: Error {
     case memoryOffline
 }
+
+protocol MemoryCapableTestModel: AgentModelClient {}
+
+extension MemoryCapableTestModel {
+    nonisolated var memoryCapabilitySnapshot: AgentModelCapabilitySnapshot? {
+        try? AgentModelCapabilitySnapshot(
+            revision: "scheduler-test-capability-v1",
+            contextWindowTokens: 200_000,
+            outputReserveTokens: 30_000,
+            protocolOverheadEstimatorID: "responses-json-v1",
+            tokenizerID: nil
+        )
+    }
+}
 struct MemoryOfflineSchedulerServices: AgentServiceProviding {
     func makeAgentModel(
         configID: String,
@@ -26,7 +40,8 @@ struct SchedulerOfflineMemory: AgentMemoryServicing {
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
         throw SchedulerTestError.memoryOffline
     }
-    func compose() async throws -> AgentMemoryContext {
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        _ = request
         throw SchedulerTestError.memoryOffline
     }
 }
@@ -89,8 +104,9 @@ actor SchedulerTestMemory: AgentMemoryServicing {
         }
     }
 
-    func compose() async throws -> AgentMemoryContext {
-        .init(
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        _ = request
+        return .init(
             blocks: [],
             recentRecords: records.keys.sorted().compactMap { records[$0] }
         )
@@ -114,7 +130,7 @@ struct TodoRetrySchedulerTestServices: AgentServiceProviding {
     }
 }
 
-actor TodoRetrySchedulerTestModel: AgentModelClient {
+actor TodoRetrySchedulerTestModel: MemoryCapableTestModel {
     private var requestCount = 0
     private var acceptanceRecorded = false
 
@@ -149,7 +165,7 @@ actor TodoRetrySchedulerTestModel: AgentModelClient {
     }
 }
 
-actor SchedulerTestModel: AgentModelClient {
+actor SchedulerTestModel: MemoryCapableTestModel {
     private var requestCount = 0
     private var inboxRead = false
 
@@ -300,7 +316,7 @@ actor RecoveryRollingWindowProbe {
     }
 }
 
-actor RecoveryRollingWindowModel: AgentModelClient {
+actor RecoveryRollingWindowModel: MemoryCapableTestModel {
     private let probe: RecoveryRollingWindowProbe
     private var inboxRead = false
 
@@ -351,7 +367,7 @@ actor SchedulerConcurrencyProbe {
     }
 }
 
-actor ParallelSchedulerTestModel: AgentModelClient {
+actor ParallelSchedulerTestModel: MemoryCapableTestModel {
     private let probe: SchedulerConcurrencyProbe
     private var requestCount = 0
 

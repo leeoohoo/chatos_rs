@@ -831,3 +831,16 @@ pub(super) const SCHEMA_V47: &[&str] = &[
          UPDATE local_memory_outbox_activity SET revision = revision + 1 WHERE singleton = 1; \
        END",
 ];
+
+/// Replaces incomplete model snapshots with the full immutable capability
+/// contract required for hard request budgeting. Old snapshots cannot be
+/// upgraded by guessing values from a model name, so they are discarded and
+/// must be republished by the authenticated control plane.
+pub(super) const SCHEMA_V48: &[&str] = &[
+    "ALTER TABLE local_model_config_snapshots ADD COLUMN model_capability_revision TEXT",
+    "ALTER TABLE local_model_config_snapshots ADD COLUMN context_window_tokens INTEGER",
+    "ALTER TABLE local_model_config_snapshots ADD COLUMN output_reserve_tokens INTEGER",
+    "ALTER TABLE local_model_config_snapshots ADD COLUMN protocol_overhead_estimator_id TEXT",
+    "ALTER TABLE local_model_config_snapshots ADD COLUMN tokenizer_id TEXT",
+    "DELETE FROM local_model_config_snapshots",
+];

@@ -6,29 +6,10 @@ import type {
   EngineJobRun,
   EngineSource,
   ThreadQuery,
-  UpsertEngineJobPolicyPayload,
   UpsertEngineSourcePayload,
 } from '../types';
 
-export type TabKey = 'dashboard' | 'data' | 'sources' | 'policies' | 'runs';
-
-export type PolicyFormValues = {
-  enabled: boolean;
-  summary_prompt?: string;
-  summary_prompt_zh?: string;
-  summary_prompt_en?: string;
-  summary_prompt_language?: 'zh' | 'en';
-  rollup_summary_prompt?: string;
-  rollup_summary_prompt_zh?: string;
-  rollup_summary_prompt_en?: string;
-  rollup_summary_prompt_language?: 'zh' | 'en';
-  token_limit?: number | null;
-  interval_seconds?: number | null;
-  max_threads_per_tick?: number | null;
-  count_limit?: number | null;
-  keep_level0_count?: number | null;
-  max_level?: number | null;
-};
+export type TabKey = 'dashboard' | 'data' | 'sources' | 'policies' | 'runs' | 'reliability';
 
 export type SourceFormValues = {
   tenant_id: string;
@@ -39,36 +20,8 @@ export type SourceFormValues = {
 };
 
 export type ThreadFilterFormValues = ThreadQuery;
-export type JobTypeKey = 'summary' | 'rollup' | 'subject_memory' | 'thread_repair';
-export type PolicyViewKey =
-  | 'summary'
-  | 'rollup'
-  | 'memory_from_summary'
-  | 'memory_rollup'
-  | 'thread_repair';
-
-export type PolicyMeta = {
-  tabLabel: string;
-  title: string;
-  tagColor: string;
-  description: string;
-  inputText: string;
-  outputText: string;
-  purposeText: string;
-  promptLabel: string;
-  promptPlaceholder?: string;
-  managedAgentKey?: string;
-  tokenLimitLabel: string;
-  intervalSecondsLabel: string;
-  maxThreadsPerTickLabel?: string;
-  showMaxThreadsPerTick?: boolean;
-  countLimitLabel?: string;
-  keepLevel0Label?: string;
-  maxLevelLabel?: string;
-  sharedPolicyHint?: string;
-  showKeepLevel0: boolean;
-  showMaxLevel: boolean;
-};
+export type JobTypeKey = 'summary' | 'rollup' | 'subject_memory';
+export type PolicyViewKey = JobTypeKey;
 
 export type ToolSection = {
   key: string;
@@ -92,19 +45,6 @@ export type SourcePayloadResult = {
 };
 
 export type ThreadNameLookup = Record<string, string>;
-
-export type PolicySaveHandler = (
-  jobType: string,
-  values: PolicyFormValues,
-) => Promise<void>;
-
-export type PolicyPromptGenerator = (
-  jobType: string,
-  promptField: 'summary_prompt' | 'rollup_summary_prompt',
-  userInput: string,
-) => Promise<{ prompt_zh: string; prompt_en: string }>;
-
-export type BuildPolicyPayload = UpsertEngineJobPolicyPayload;
 
 export type ThreadRunLookupInput = Pick<
   EngineJobRun,

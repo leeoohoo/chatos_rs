@@ -8,10 +8,7 @@ use crate::models::{
 };
 use crate::repositories::control_plane as cp_repo;
 
-use super::{
-    SubjectMemoryJobProgress, SUBJECT_MEMORY_COMPAT_JOB_TYPE, SUBJECT_MEMORY_JOB_TYPE,
-    SUBJECT_MEMORY_MANUAL_TRIGGER, SUBJECT_MEMORY_SCOPE_TRIGGER,
-};
+use super::{SubjectMemoryJobProgress, SUBJECT_MEMORY_JOB_TYPE};
 
 pub(crate) async fn create_subject_memory_job_run(
     db: &Db,
@@ -51,36 +48,6 @@ pub(crate) async fn finish_subject_memory_job_run(
     let _ = cp_repo::finish_job_run(db, job_run_id, req).await;
 }
 
-pub(crate) fn build_failed_job_run(
-    req: &RunSubjectMemoryJobRequest,
-    relation_subject_id: &str,
-    from_scope_runner: bool,
-    input_count: usize,
-    progress: &SubjectMemoryJobProgress,
-    selected_count: usize,
-    error_message: String,
-) -> FinishEngineJobRunRequest {
-    FinishEngineJobRunRequest {
-        status: "failed".to_string(),
-        input_count: input_count as i64,
-        output_count: progress.output_count(),
-        processed_count: selected_count as i64,
-        success_count: progress.output_count(),
-        error_count: 1,
-        metadata: Some(serde_json::json!({
-            "compat_job_type": SUBJECT_MEMORY_COMPAT_JOB_TYPE,
-            "compat_trigger_type": compat_trigger_type(from_scope_runner),
-            "memory_type": req.memory_type,
-            "relation_subject_id": relation_subject_id,
-            "selected_count": selected_count,
-            "marked_count": progress.marked_count(),
-            "generated_level0": progress.generated_level0,
-            "generated_rollups": progress.generated_rollups,
-        })),
-        error_message: Some(error_message),
-    }
-}
-
 pub(crate) fn build_success_job_run(
     req: &RunSubjectMemoryJobRequest,
     relation_subject_id: &str,
@@ -97,8 +64,7 @@ pub(crate) fn build_success_job_run(
         success_count: response.generated_memories as i64,
         error_count: 0,
         metadata: Some(serde_json::json!({
-            "compat_job_type": SUBJECT_MEMORY_COMPAT_JOB_TYPE,
-            "compat_trigger_type": compat_trigger_type(from_scope_runner),
+            "scope_runner": from_scope_runner,
             "memory_type": req.memory_type,
             "relation_subject_id": relation_subject_id,
             "selected_count": progress.processed_count,
@@ -126,8 +92,7 @@ pub(crate) fn build_outer_failed_job_run(
         success_count: progress.output_count(),
         error_count: 1,
         metadata: Some(serde_json::json!({
-            "compat_job_type": SUBJECT_MEMORY_COMPAT_JOB_TYPE,
-            "compat_trigger_type": compat_trigger_type(from_scope_runner),
+            "scope_runner": from_scope_runner,
             "memory_type": req.memory_type,
             "relation_subject_id": relation_subject_id,
             "selected_count": progress.processed_count,
@@ -146,17 +111,9 @@ fn base_metadata(
     relation_subject_id: &str,
 ) -> serde_json::Value {
     serde_json::json!({
-        "compat_job_type": SUBJECT_MEMORY_COMPAT_JOB_TYPE,
-        "compat_trigger_type": compat_trigger_type(from_scope_runner),
+        "pipeline": "subject_memory",
+        "scope_runner": from_scope_runner,
         "memory_type": memory_type,
         "relation_subject_id": relation_subject_id,
     })
-}
-
-fn compat_trigger_type(from_scope_runner: bool) -> &'static str {
-    if from_scope_runner {
-        SUBJECT_MEMORY_SCOPE_TRIGGER
-    } else {
-        SUBJECT_MEMORY_MANUAL_TRIGGER
-    }
 }

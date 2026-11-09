@@ -3,12 +3,7 @@
 
 export { isObjectRecord, numberOrNull, textOrUndefined } from './utils/common';
 export { statusColor, toLocal } from './utils/display';
-export {
-  buildPolicyPayload,
-  buildSourcePayload,
-  policyFormInitialValues,
-  sourceFormInitialValues,
-} from './utils/forms';
+export { buildSourcePayload, sourceFormInitialValues } from './utils/forms';
 export { formatStructuredText, getRecordToolSections, isJsonLikeText } from './utils/record';
 export {
   fallbackThreadDisplayName,

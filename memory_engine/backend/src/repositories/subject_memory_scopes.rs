@@ -3,7 +3,7 @@
 
 use serde::Deserialize;
 use sqlx::types::Json;
-use sqlx::{Postgres, QueryBuilder};
+use sqlx::{Postgres, QueryBuilder, Transaction};
 use uuid::Uuid;
 
 use crate::db::Db;
@@ -74,6 +74,35 @@ pub async fn ensure_project_identity_scope(
         project_subject_id,
         "project_summary",
         "Project shared summary",
+    );
+    if get_subject_memory_scope(db, tenant_id, source_id, scope_key.as_str())
+        .await?
+        .as_ref()
+        .is_some_and(|existing| identity_scope_is_current(existing, &request))
+    {
+        return Ok(());
+    }
+    upsert_subject_memory_scope(db, scope_key.as_str(), request).await?;
+    Ok(())
+}
+
+pub async fn ensure_agent_identity_scope(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    agent_subject_id: &str,
+) -> Result<(), String> {
+    let agent_subject_id = agent_subject_id.trim();
+    if !is_canonical_agent_subject_id(agent_subject_id) {
+        return Err("agent identity subject is invalid".to_string());
+    }
+    let scope_key = format!("identity:{agent_subject_id}");
+    let request = identity_scope_request(
+        tenant_id,
+        source_id,
+        agent_subject_id,
+        "agent_memory",
+        "Agent durable memory",
     );
     if get_subject_memory_scope(db, tenant_id, source_id, scope_key.as_str())
         .await?
@@ -593,6 +622,26 @@ pub async fn replay_dead_lettered_subject_memory_dispatch(
     scope_key: &str,
     dead_letter_version: i64,
 ) -> Result<Option<SubjectMemoryScopeDispatchOutbox>, String> {
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let replayed = replay_dead_lettered_subject_memory_dispatch_in_tx(
+        &mut tx,
+        tenant_id,
+        source_id,
+        scope_key,
+        dead_letter_version,
+    )
+    .await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(replayed)
+}
+
+pub async fn replay_dead_lettered_subject_memory_dispatch_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: &str,
+    source_id: &str,
+    scope_key: &str,
+    dead_letter_version: i64,
+) -> Result<Option<SubjectMemoryScopeDispatchOutbox>, String> {
     sqlx::query_as::<_, SubjectMemoryScopeDispatchOutbox>(
         "UPDATE engine_subject_memory_scopes SET subject_memory_dispatch_version=subject_memory_dispatch_version+1, \
          subject_memory_dispatch_requested_at=now(),subject_memory_dispatch_last_error=NULL, \
@@ -605,7 +654,7 @@ pub async fn replay_dead_lettered_subject_memory_dispatch(
          subject_memory_dispatch_published_version,subject_memory_dispatch_consumed_version, \
          subject_memory_dispatch_pending",
     ).bind(tenant_id).bind(source_id).bind(scope_key).bind(dead_letter_version)
-      .fetch_optional(db).await.map_err(|error| error.to_string())
+      .fetch_optional(&mut **tx).await.map_err(|error| error.to_string())
 }
 
 async fn load_dispatch(
@@ -691,12 +740,6 @@ mod identity_tests {
             labels: Some(labels.into_iter().map(ToOwned::to_owned).collect()),
             metadata: None,
             status: "active".into(),
-            summary_status: "idle".into(),
-            summary_job_run_id: None,
-            summary_locked_at: None,
-            summary_lock_expires_at: None,
-            pending_record_count: 0,
-            pending_summary_tokens: 0,
             created_at: "2026-11-04T00:00:00Z".into(),
             updated_at: "2026-11-04T00:00:00Z".into(),
             archived_at: None,

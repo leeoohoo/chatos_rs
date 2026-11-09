@@ -27,6 +27,7 @@ struct NativeApprovalAgentModelConfiguration: Sendable, Equatable {
     let apiKey: String
     let temperature: Double?
     let maxOutputTokens: Int?
+    let capability: AgentModelCapabilitySnapshot
 
     init(snapshot: LocalAgentModelConfigSnapshot, apiKey: String) throws {
         guard let baseURL = URL(string: snapshot.baseURL),
@@ -41,6 +42,17 @@ struct NativeApprovalAgentModelConfiguration: Sendable, Equatable {
         self.apiKey = apiKey
         temperature = snapshot.temperature
         maxOutputTokens = snapshot.maxOutputTokens.flatMap(Int.init(exactly:))
+        guard let contextWindowTokens = Int(exactly: snapshot.contextWindowTokens),
+              let outputReserveTokens = Int(exactly: snapshot.outputReserveTokens) else {
+            throw NativeApprovalAgentError.invalidModelConfiguration
+        }
+        capability = try AgentModelCapabilitySnapshot(
+            revision: snapshot.modelCapabilityRevision,
+            contextWindowTokens: contextWindowTokens,
+            outputReserveTokens: outputReserveTokens,
+            protocolOverheadEstimatorID: snapshot.protocolOverheadEstimatorID,
+            tokenizerID: snapshot.tokenizerID
+        )
     }
 }
 
@@ -84,15 +96,15 @@ struct NativeApprovalAgent: Sendable {
         policy: AgentRunPolicy,
         thinkingLevel: String?
     ) throws -> any AgentModelClient {
-        let reserve = (policy.context ?? .init()).outputReserveTokens
-        let context = policy.context ?? .init()
+        let reserve = model.capability.outputReserveTokens
         let maximumOutputTokens = min(max(1, model.maxOutputTokens ?? 1_200), reserve)
         return try AgentResponsesModelClient(
             baseURL: model.baseURL, model: model.model, apiKey: model.apiKey,
             thinking: thinkingLevel, maximumOutputTokens: maximumOutputTokens,
             temperature: model.temperature ?? 0,
             promptCacheKey: "approval-agent:\(model.configID)",
-            compactionThreshold: context.windowTokens - context.outputReserveTokens
+            compactionThreshold: model.capability.contextWindowTokens - model.capability.outputReserveTokens,
+            capabilitySnapshot: model.capability
         )
     }
 

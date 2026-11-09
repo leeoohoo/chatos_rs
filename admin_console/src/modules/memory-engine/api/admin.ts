@@ -9,12 +9,25 @@ import type {
   EngineAgentProject,
   EngineJobPolicy,
   EngineSource,
-  GenerateJobPolicyPromptPayload,
-  GenerateJobPolicyPromptResult,
   JobRunsBundle,
   JobRunQuery,
   RotateSourceSecretResponse,
-  UpsertEngineJobPolicyPayload,
+  DerivationLineage,
+  ComposeDryRunRequest,
+  ComposeDryRunResponse,
+  PartitionRebuildBacklogItem,
+  RearmRebuildRequest,
+  ResummarizeCoveredRangeRequest,
+  ResummarizeCoveredRangeResponse,
+  RecordCoverage,
+  ReliabilityOperatorAction,
+  ReliabilityQueueItem,
+  ReliabilityMigrationRun,
+  ReliabilityDashboard,
+  ReliabilityScope,
+  RetireSummaryRequest,
+  RestoreRecordPendingRequest,
+  RearmReliabilityQueueRequest,
   UpsertEngineSourcePayload,
 } from '../types';
 
@@ -41,19 +54,11 @@ function normalizeSource(data: Partial<EngineSource>): EngineSource {
 function normalizeJobPolicy(data: Partial<EngineJobPolicy>): EngineJobPolicy {
   return {
     job_type: data.job_type ?? '',
-    enabled: data.enabled ?? true,
-    summary_prompt: data.summary_prompt ?? null,
-    summary_prompt_zh: data.summary_prompt_zh ?? data.summary_prompt ?? null,
-    summary_prompt_en: data.summary_prompt_en ?? null,
-    summary_prompt_language: data.summary_prompt_language ?? 'zh',
-    rollup_summary_prompt: data.rollup_summary_prompt ?? null,
-    rollup_summary_prompt_zh:
-      data.rollup_summary_prompt_zh ?? data.rollup_summary_prompt ?? null,
-    rollup_summary_prompt_en: data.rollup_summary_prompt_en ?? null,
-    rollup_summary_prompt_language: data.rollup_summary_prompt_language ?? 'zh',
-    token_limit: data.token_limit ?? null,
-    interval_seconds: data.interval_seconds ?? null,
-    max_threads_per_tick: data.max_threads_per_tick ?? null,
+    dispatch_threshold_tokens: data.dispatch_threshold_tokens ?? null,
+    max_source_batch_tokens: data.max_source_batch_tokens ?? null,
+    max_model_input_tokens: data.max_model_input_tokens ?? null,
+    max_leaf_tokens: data.max_leaf_tokens ?? null,
+    max_merge_rounds: data.max_merge_rounds ?? null,
     count_limit: data.count_limit ?? null,
     keep_level0_count: data.keep_level0_count ?? null,
     max_level: data.max_level ?? null,
@@ -62,6 +67,90 @@ function normalizeJobPolicy(data: Partial<EngineJobPolicy>): EngineJobPolicy {
 }
 
 export const adminApi = {
+  async getReliabilityDashboard(params: ReliabilityScope): Promise<ReliabilityDashboard> {
+    const { data } = await client.get('/admin/reliability/dashboard', { params });
+    return data;
+  },
+
+  async composeReliabilityDryRun(
+    payload: ComposeDryRunRequest,
+  ): Promise<ComposeDryRunResponse> {
+    const { data } = await client.post('/admin/reliability/compose-dry-run', payload);
+    return data;
+  },
+
+  async listReliabilityQueues(params: ReliabilityScope): Promise<ReliabilityQueueItem[]> {
+    const { data } = await client.get('/admin/reliability/queues', { params });
+    return data ?? [];
+  },
+
+  async listReliabilityOperatorActions(
+    params: ReliabilityScope,
+  ): Promise<ReliabilityOperatorAction[]> {
+    const { data } = await client.get('/admin/reliability/operator-actions', { params });
+    return data ?? [];
+  },
+
+  async rearmPartitionRebuild(payload: RearmRebuildRequest): Promise<void> {
+    await client.post('/admin/reliability/rebuild-backlog/rearm', payload);
+  },
+
+  async resummarizeCoveredRange(
+    payload: ResummarizeCoveredRangeRequest,
+  ): Promise<ResummarizeCoveredRangeResponse> {
+    const { data } = await client.post('/admin/reliability/resummarize', payload);
+    return data;
+  },
+
+  async retireSummary(payload: RetireSummaryRequest): Promise<void> {
+    await client.post('/admin/reliability/retire-summary', payload);
+  },
+
+  async restoreRecordPending(payload: RestoreRecordPendingRequest): Promise<void> {
+    await client.post('/admin/reliability/restore-pending', payload);
+  },
+
+  async rearmReliabilityQueue(payload: RearmReliabilityQueueRequest): Promise<void> {
+    await client.post('/admin/reliability/queues/rearm', payload);
+  },
+
+  async listReliabilityMigrations(
+    params: ReliabilityScope,
+  ): Promise<ReliabilityMigrationRun[]> {
+    const { data } = await client.get('/admin/reliability/migrations', { params });
+    return data ?? [];
+  },
+
+  async listPartitionRebuildBacklog(
+    params: ReliabilityScope,
+  ): Promise<PartitionRebuildBacklogItem[]> {
+    const { data } = await client.get('/admin/reliability/rebuild-backlog', { params });
+    return data ?? [];
+  },
+
+  async getRecordCoverage(
+    recordId: string,
+    params: ReliabilityScope,
+  ): Promise<RecordCoverage[]> {
+    const { data } = await client.get(
+      `/admin/reliability/records/${encodeURIComponent(recordId)}/coverage`,
+      { params },
+    );
+    return data ?? [];
+  },
+
+  async getOutputLineage(
+    outputKind: 'thread_summary' | 'subject_memory',
+    outputId: string,
+    params: ReliabilityScope,
+  ): Promise<DerivationLineage[]> {
+    const { data } = await client.get(
+      `/admin/reliability/outputs/${outputKind}/${encodeURIComponent(outputId)}/lineage`,
+      { params },
+    );
+    return data ?? [];
+  },
+
   async listAgents(params?: AgentDirectoryQuery): Promise<EngineAgentDirectoryItem[]> {
     const { data } = await client.get('/admin/agents', {
       params: {
@@ -132,31 +221,6 @@ export const adminApi = {
     return (data.items ?? []).map((item: Partial<EngineJobPolicy>) =>
       normalizeJobPolicy(item),
     );
-  },
-
-  async updateJobPolicy(
-    jobType: string,
-    payload: UpsertEngineJobPolicyPayload,
-  ): Promise<EngineJobPolicy> {
-    const { data } = await client.put(
-      `/admin/job-policies/${encodeURIComponent(jobType)}`,
-      payload,
-    );
-    return normalizeJobPolicy(data);
-  },
-
-  async generateJobPolicyPrompt(
-    jobType: string,
-    payload: GenerateJobPolicyPromptPayload,
-  ): Promise<GenerateJobPolicyPromptResult> {
-    const { data } = await client.post(
-      `/admin/job-policies/${encodeURIComponent(jobType)}/generate-prompt`,
-      payload,
-    );
-    return {
-      prompt_zh: data.prompt_zh ?? '',
-      prompt_en: data.prompt_en ?? '',
-    };
   },
 
   async getDashboardOverview(): Promise<DashboardOverview> {

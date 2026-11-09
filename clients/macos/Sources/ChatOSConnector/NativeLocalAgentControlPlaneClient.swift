@@ -5,6 +5,11 @@ public struct LocalAgentModelConfigSnapshot: Codable, Sendable, Equatable {
     public let ownerUserID: String
     public let modelConfigRef: String
     public let modelConfigRevision: String
+    public let modelCapabilityRevision: String
+    public let contextWindowTokens: UInt64
+    public let outputReserveTokens: UInt64
+    public let protocolOverheadEstimatorID: String
+    public let tokenizerID: String?
     public let credentialRef: String
     public let baseURL: String
     public let model: String
@@ -25,6 +30,11 @@ public struct LocalAgentModelConfigSnapshot: Codable, Sendable, Equatable {
         ownerUserID: String,
         modelConfigRef: String,
         modelConfigRevision: String,
+        modelCapabilityRevision: String,
+        contextWindowTokens: UInt64,
+        outputReserveTokens: UInt64,
+        protocolOverheadEstimatorID: String,
+        tokenizerID: String? = nil,
         credentialRef: String,
         baseURL: String,
         model: String,
@@ -44,6 +54,11 @@ public struct LocalAgentModelConfigSnapshot: Codable, Sendable, Equatable {
         self.ownerUserID = ownerUserID
         self.modelConfigRef = modelConfigRef
         self.modelConfigRevision = modelConfigRevision
+        self.modelCapabilityRevision = modelCapabilityRevision
+        self.contextWindowTokens = contextWindowTokens
+        self.outputReserveTokens = outputReserveTokens
+        self.protocolOverheadEstimatorID = protocolOverheadEstimatorID
+        self.tokenizerID = tokenizerID
         self.credentialRef = credentialRef
         self.baseURL = baseURL
         self.model = model
@@ -66,6 +81,11 @@ public struct LocalAgentModelConfigSnapshot: Codable, Sendable, Equatable {
         case ownerUserID = "owner_user_id"
         case modelConfigRef = "model_config_ref"
         case modelConfigRevision = "model_config_revision"
+        case modelCapabilityRevision = "model_capability_revision"
+        case contextWindowTokens = "context_window_tokens"
+        case outputReserveTokens = "output_reserve_tokens"
+        case protocolOverheadEstimatorID = "protocol_overhead_estimator_id"
+        case tokenizerID = "tokenizer_id"
         case credentialRef = "credential_ref"
         case baseURL = "base_url"
         case supportsResponses = "supports_responses"

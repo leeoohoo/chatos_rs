@@ -8,7 +8,7 @@ use std::time::Duration;
 pub(crate) use chatos_service_runtime::env_text as normalized_env;
 use chatos_service_runtime::parse_bool_text;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
@@ -32,6 +32,7 @@ pub struct AppConfig {
     pub controlled_network_signing_key_path: Option<PathBuf>,
     pub controlled_network_signing_key_id: Option<String>,
     pub controlled_network_policy_ttl: Duration,
+    pub runtime_context_assertion_issuer: memory_engine_sdk::RuntimeContextAssertionIssuer,
 }
 
 impl AppConfig {
@@ -112,6 +113,14 @@ impl AppConfig {
             controlled_network_policy_ttl: Duration::from_secs(
                 controlled_network_policy_ttl_seconds,
             ),
+            runtime_context_assertion_issuer:
+                memory_engine_sdk::RuntimeContextAssertionIssuer::new(
+                    required_text("LOCAL_CONNECTOR_MEMORY_ASSERTION_SECRET")?,
+                    required_text("LOCAL_CONNECTOR_MEMORY_ASSERTION_KEY_ID")?,
+                    required_text("LOCAL_CONNECTOR_MEMORY_ASSERTION_ISSUER")?,
+                    required_text("LOCAL_CONNECTOR_MEMORY_IDENTITY_REVISION")?,
+                    60,
+                )?,
         };
 
         if config.valkey_key_prefix.trim().is_empty() {

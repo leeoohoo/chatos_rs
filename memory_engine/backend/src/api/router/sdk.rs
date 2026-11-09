@@ -84,8 +84,8 @@ pub fn routes() -> Router<Arc<AppState>> {
             post(sdk_api::get_thread_active_summary_status),
         )
         .route(
-            "/api/memory-engine/v1/sdk/threads/{thread_id}/repair-summaries/run",
-            post(sdk_api::run_thread_repair_summary),
+            "/api/memory-engine/v1/sdk/threads/{thread_id}/pending-rebuild/run",
+            post(sdk_api::run_pending_summary_rebuild),
         )
         .route(
             "/api/memory-engine/v1/sdk/subject-memory-scopes/{scope_key}",

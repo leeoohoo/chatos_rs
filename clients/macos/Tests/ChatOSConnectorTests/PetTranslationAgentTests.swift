@@ -65,7 +65,7 @@ final class PetTranslationAgentTests: XCTestCase {
     }
 }
 
-private actor PetTranslationRecordingModel: AgentModelClient {
+private actor PetTranslationRecordingModel: MemoryCapableTestModel {
     struct Request: Sendable {
         var messages: [AgentMessage]
         var tools: [AgentToolDefinition]
@@ -151,7 +151,8 @@ private actor PetTranslationTestServices: AgentServiceProviding {
 private struct PetTranslationTestMemory: AgentMemoryServicing {
     func ensureThread() async throws {}
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {}
-    func compose() async throws -> AgentMemoryContext {
-        .init(blocks: [], recentRecords: [])
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        _ = request
+        return .init(blocks: [], recentRecords: [])
     }
 }

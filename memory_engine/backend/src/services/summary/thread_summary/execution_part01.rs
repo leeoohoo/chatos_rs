@@ -14,381 +14,281 @@ pub(crate) async fn execute_prepared_thread_summary_job(
         selection,
     } = ctx;
     settings.cloud_owner_entity_id = Some(job_run_id.to_string());
+    let project_partition_key = project_partition_key(&selection).to_string();
 
-    let mut processed_count = 0_i64;
-    let output_count = 0_i64;
-
-    let result: Result<RunThreadSummaryResponse, String> = async {
-        let selected_pending_tokens = selection.selected_token_count.max(0);
-        if !selection.oversized.is_empty() {
-            let error = format!(
-                "{} source record(s) exceed the thread summary token limit; inputs remain pending for lossless splitting",
-                selection.oversized.len()
-            );
-            records::release_records_from_summary(db, tenant_id, source_id, thread_id, job_run_id)
-                .await?;
-            finish_thread_summary_job_run(
-                db,
-                job_run_id,
-                FinishEngineJobRunRequest {
-                    status: "failed".to_string(),
-                    input_count: (selection.selected.len() + selection.oversized.len()) as i64,
-                    output_count: 0,
-                    processed_count: 0,
-                    success_count: 0,
-                    error_count: selection.oversized.len() as i64,
-                    metadata: Some(failed_metadata(
-                        pending_before_count,
-                        Some(selection.selected.len()),
-                        Some(selection.selected_token_count),
-                        selection.oversized.len(),
-                        Some(pending_before_count),
-                        0,
-                        0,
-                    )),
-                    error_message: Some(error.clone()),
-                },
-            )
-            .await;
-            threads::release_summary_slot(
-                db, tenant_id, source_id, thread_id, job_run_id, 0, 0,
-            )
-            .await?;
-            return Err(error);
-        }
-        let skipped_pending_tokens = 0;
-        let skipped_count = 0;
-        let skipped_count_i64 = skipped_count as i64;
-
-        if selection.selected.is_empty() {
-            finish_thread_summary_job_run(
-                db,
-                job_run_id,
-                FinishEngineJobRunRequest {
-                    status: "done".to_string(),
-                    input_count: 0,
-                    output_count: 0,
-                    processed_count: 0,
-                    success_count: 0,
-                    error_count: 0,
-                    metadata: Some(noop_metadata(
-                        pending_before_count,
-                        pending_before_count.saturating_sub(skipped_count_i64),
-                        skipped_count,
-                    )),
-                    error_message: None,
-                },
-            )
-            .await;
-            let _ = threads::release_summary_slot(
-                db,
-                tenant_id,
-                source_id,
-                thread_id,
-                job_run_id,
-                skipped_count_i64,
-                skipped_pending_tokens,
-            )
-            .await;
-            return Ok(noop_response(thread_id));
-        }
-
-        let summary_build = match build_summary_text(
-            config,
-            db,
-            tenant_id,
-            thread.title.as_deref(),
-            selection.selected.as_slice(),
-            &settings,
-        )
-        .await
-        {
-            Ok(build) => build,
-            Err(err) if err == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED => {
-                return Err(err);
-            }
-            Err(err) => {
-                finish_thread_summary_job_run(
-                    db,
-                    job_run_id,
-                    FinishEngineJobRunRequest {
-                        status: "failed".to_string(),
-                        input_count: selection.selected.len() as i64,
-                        output_count: 0,
-                        processed_count: selection.selected.len() as i64 + skipped_count as i64,
-                        success_count: 0,
-                        error_count: selection.selected.len() as i64,
-                        metadata: Some(failed_metadata(
-                            pending_before_count,
-                            Some(selection.selected.len()),
-                            Some(selection.selected_token_count),
-                            skipped_count,
-                            Some(pending_before_count.saturating_sub(skipped_count_i64)),
-                            selection.selected.len() as i64 + skipped_count as i64,
-                            0,
-                        )),
-                        error_message: Some(err.clone()),
-                    },
-                )
-                .await;
-                let _ = threads::release_summary_slot(
-                    db,
-                    tenant_id,
-                    source_id,
-                    thread_id,
-                    job_run_id,
-                    skipped_count_i64,
-                    skipped_pending_tokens,
-                )
-                .await;
-                let _ = records::release_records_from_summary(
-                    db, tenant_id, source_id, thread_id, job_run_id,
-                )
-                .await;
-                return Err(err);
-            }
-        };
-        let summary_text =
-            decorate_generated_text(summary_build, Some(skipped_count), "message summary");
-        let summary = summaries::create_thread_summary(
-            db,
-            tenant_id,
-            source_id,
-            thread_id,
-            thread.subject_id.as_str(),
-            summary_text.as_str(),
-            selection.selected.first().map(|item| item.id.clone()),
-            selection.selected.last().map(|item| item.id.clone()),
-            selection.selected.len(),
-            selection.project_subject_id.as_deref(),
-        )
-        .await?;
-        processed_count = selection.selected.len() as i64 + skipped_count as i64;
-
-        let record_ids = selection
-            .selected
-            .iter()
-            .map(|item| item.id.clone())
-            .collect::<Vec<_>>();
-        let marked_messages = match records::mark_claimed_records_summarized(
-            db,
-            tenant_id,
-            source_id,
-            thread_id,
-            record_ids.as_slice(),
-            job_run_id,
-            summary.id.as_str(),
-        )
-        .await
-        {
-            Ok(marked) => marked,
-            Err(err) => {
-                let _ = summaries::delete_thread_summary(
-                    db,
-                    thread_id,
-                    summary.id.as_str(),
-                    Some(tenant_id),
-                    Some(source_id),
-                )
-                .await;
-                finish_thread_summary_job_run(
-                    db,
-                    job_run_id,
-                    FinishEngineJobRunRequest {
-                        status: "failed".to_string(),
-                        input_count: selection.selected.len() as i64,
-                        output_count: 0,
-                        processed_count: selection.selected.len() as i64 + skipped_count as i64,
-                        success_count: 0,
-                        error_count: selection.selected.len() as i64,
-                        metadata: Some(failed_metadata(
-                            pending_before_count,
-                            Some(selection.selected.len()),
-                            Some(selection.selected_token_count),
-                            skipped_count,
-                            Some(pending_before_count.saturating_sub(skipped_count_i64)),
-                            selection.selected.len() as i64 + skipped_count as i64,
-                            0,
-                        )),
-                        error_message: Some(format!("mark records summarized failed: {}", err)),
-                    },
-                )
-                .await;
-                let _ = threads::release_summary_slot(
-                    db,
-                    tenant_id,
-                    source_id,
-                    thread_id,
-                    job_run_id,
-                    skipped_count_i64,
-                    skipped_pending_tokens,
-                )
-                .await;
-                let _ = records::release_records_from_summary(
-                    db, tenant_id, source_id, thread_id, job_run_id,
-                )
-                .await;
-                return Err(err);
-            }
-        };
-        let pending_after_count = pending_before_count
-            .saturating_sub(skipped_count_i64)
-            .saturating_sub(marked_messages as i64);
+    if selection.selected.is_empty() {
         finish_thread_summary_job_run(
             db,
             job_run_id,
             FinishEngineJobRunRequest {
                 status: "done".to_string(),
-                input_count: selection.selected.len() as i64,
-                output_count: 1,
-                processed_count: selection.selected.len() as i64 + skipped_count as i64,
-                success_count: selection.selected.len() as i64 + skipped_count as i64,
+                input_count: 0,
+                output_count: 0,
+                processed_count: 0,
+                success_count: 0,
                 error_count: 0,
-                metadata: Some(done_metadata(
-                    pending_before_count,
-                    selection.selected.len(),
-                    selection.selected_token_count,
-                    marked_messages + skipped_count,
-                    pending_after_count,
-                    skipped_count,
-                    summary.id.as_str(),
-                )),
+                metadata: Some(noop_metadata(pending_before_count, pending_before_count, 0)),
                 error_message: None,
             },
         )
         .await;
-        let _ = threads::release_summary_slot(
+        let _ = thread_partitions::release_summary_claim(
             db,
             tenant_id,
             source_id,
             thread_id,
+            project_partition_key.as_str(),
             job_run_id,
-            skipped_count_i64.saturating_add(marked_messages as i64),
-            skipped_pending_tokens.saturating_add(selected_pending_tokens),
+            0,
+            0,
         )
         .await;
-        if let Err(err) = crate::rollup_queue::publish_pending_rollup_for_summary(
-            config,
-            db,
-            tenant_id,
-            source_id,
-            summary.id.as_str(),
-        )
-        .await
-        {
-            tracing::warn!(
-                summary_id = summary.id.as_str(),
-                error = err.as_str(),
-                "Memory Engine left thread summary rollup event in Outbox for recovery"
-            );
-        }
-        if let Err(err) = crate::subject_memory_queue::publish_pending_source_for_summary(
-            config,
-            db,
-            tenant_id,
-            source_id,
-            summary.id.as_str(),
-        )
-        .await
-        {
-            tracing::warn!(
-                summary_id = summary.id.as_str(),
-                error = err.as_str(),
-                "Memory Engine left thread summary subject-memory event in Outbox for recovery"
-            );
-        }
-
-        Ok(RunThreadSummaryResponse {
-            thread_id: thread_id.to_string(),
-            generated: true,
-            summary_id: Some(summary.id),
-            source_record_count: selection.selected.len(),
-        })
-    }
-    .await;
-
-    if let Err(err) = &result {
-        if err == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED {
-            return result;
-        }
-        finish_thread_summary_job_run(
-            db,
-            job_run_id,
-            FinishEngineJobRunRequest {
-                status: "failed".to_string(),
-                input_count: pending_before_count.max(0),
-                output_count,
-                processed_count,
-                success_count: output_count,
-                error_count: 1,
-                metadata: Some(failed_metadata(
-                    pending_before_count,
-                    None,
-                    None,
-                    0,
-                    None,
-                    processed_count,
-                    output_count,
-                )),
-                error_message: Some(err.clone()),
-            },
-        )
-        .await;
-        let _ =
-            threads::release_summary_slot(db, tenant_id, source_id, thread_id, job_run_id, 0, 0)
-                .await;
-        let _ =
-            records::release_records_from_summary(db, tenant_id, source_id, thread_id, job_run_id)
-                .await;
+        return Ok(noop_response(thread_id));
     }
 
-    result
-}
+    let generation_descriptor = thread_summary_generation_descriptor(
+        selection.selected.as_slice(),
+        settings.token_limit,
+        project_partition_key.as_str(),
+    )?;
+    let summary_build = match build_summary_text(
+        config,
+        db,
+        tenant_id,
+        thread.title.as_deref(),
+        thread.subject_id.as_str(),
+        selection.selected.as_slice(),
+        &settings,
+        generation_descriptor,
+    )
+    .await
+    {
+        Ok(build) => build,
+        Err(error) if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED => {
+            return Err(error);
+        }
+        Err(error) => {
+            fail_prepared_summary_job(
+                db,
+                tenant_id,
+                source_id,
+                thread_id,
+                job_run_id,
+                project_partition_key.as_str(),
+                pending_before_count,
+                &selection,
+                error.clone(),
+            )
+            .await;
+            return Err(error);
+        }
+    };
 
-fn noop_response(thread_id: &str) -> RunThreadSummaryResponse {
-    RunThreadSummaryResponse {
+    let generation = claim_thread_summary_generation(
+        db,
+        tenant_id,
+        source_id,
+        job_run_id,
+    )
+    .await?;
+    let record_ids = selection
+        .selected
+        .iter()
+        .map(|record| record.id.clone())
+        .collect::<Vec<_>>();
+    let structured_payload = summary_build.structured_payload;
+    let summary_text = crate::models::structured_payload::render_payload(&structured_payload)?;
+    let pending_after_count = pending_before_count.saturating_sub(record_ids.len() as i64);
+    let job_result = FinishEngineJobRunRequest {
+        status: "done".to_string(),
+        input_count: record_ids.len() as i64,
+        output_count: 1,
+        processed_count: record_ids.len() as i64,
+        success_count: record_ids.len() as i64,
+        error_count: 0,
+        metadata: Some(done_metadata(
+            pending_before_count,
+            record_ids.len(),
+            selection.selected_token_count,
+            record_ids.len(),
+            pending_after_count,
+            0,
+            "pending_generation_output",
+        )),
+        error_message: None,
+    };
+    let summary = generation_output_commits::commit_thread_summary_generation_final(
+        db,
+        &generation,
+        generation_output_commits::ThreadSummaryGenerationOutput {
+            thread_id,
+            subject_id: thread.subject_id.as_str(),
+            summary_type: "thread_incremental",
+            level: 0,
+            source_digest: None,
+            summary_text: summary_text.as_str(),
+            source_record_start_id: record_ids.first().cloned(),
+            source_record_end_id: record_ids.last().cloned(),
+            source_record_count: record_ids.len(),
+            metadata: Some(serde_json::json!({
+                "project_subject_id": selection.project_subject_id,
+                "generation_profile": THREAD_SUMMARY_GENERATION_PROFILE,
+            })),
+            generation_reason: "pending_records",
+            generation_profile: THREAD_SUMMARY_GENERATION_PROFILE,
+            project_partition_key: project_partition_key.as_str(),
+            payload_schema: crate::models::structured_payload::MEMORY_PAYLOAD_SCHEMA,
+            structured_payload: &structured_payload,
+            pipeline_revision: THREAD_SUMMARY_PIPELINE_REVISION,
+        },
+        generation_output_commits::ThreadL0GenerationFinalization {
+            record_ids: record_ids.as_slice(),
+            consumed_summary_tokens: selection.selected_token_count,
+            job_result,
+        },
+    )
+    .await?;
+
+    if let Err(error) = crate::rollup_queue::publish_pending_rollup_for_summary(
+        config,
+        db,
+        tenant_id,
+        source_id,
+        summary.id.as_str(),
+    )
+    .await
+    {
+        tracing::warn!(summary_id = summary.id, error, "thread summary rollup Outbox publish deferred");
+    }
+    if let Err(error) = crate::subject_memory_queue::publish_pending_source_for_summary(
+        config,
+        db,
+        tenant_id,
+        source_id,
+        summary.id.as_str(),
+    )
+    .await
+    {
+        tracing::warn!(summary_id = summary.id, error, "thread summary subject-memory Outbox publish deferred");
+    }
+
+    Ok(RunThreadSummaryResponse {
         thread_id: thread_id.to_string(),
-        generated: false,
-        summary_id: None,
-        source_record_count: 0,
-    }
+        generated: true,
+        summary_id: Some(summary.id),
+        source_record_count: record_ids.len(),
+    })
 }
 
-fn validate_summary_job_scope(
-    job_run: &EngineJobRun,
+fn thread_summary_generation_descriptor(
+    records: &[crate::models::EngineRecord],
+    token_limit: i64,
+    project_partition_key: &str,
+) -> Result<serde_json::Value, String> {
+    let inputs = records
+        .iter()
+        .map(|record| {
+            serde_json::json!({
+                "id": record.id,
+                "thread_id": record.thread_id,
+                "role": record.role,
+                "record_type": record.record_type,
+                "content": record.content,
+                "structured_payload": record.structured_payload,
+                "metadata": record.metadata,
+                "created_at": record.created_at,
+            })
+        })
+        .collect::<Vec<_>>();
+    let (manifest, digest) = crate::services::generation_identity::input_manifest(inputs)?;
+    Ok(crate::services::generation_identity::descriptor(
+        THREAD_SUMMARY_GENERATION_STEP,
+        "thread_summary",
+        THREAD_SUMMARY_GENERATION_PROFILE,
+        THREAD_SUMMARY_PIPELINE_REVISION,
+        Some(project_partition_key),
+        manifest,
+        digest,
+        serde_json::json!({"max_model_input_tokens": token_limit}),
+    ))
+}
+
+async fn claim_thread_summary_generation(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    job_run_id: &str,
+) -> Result<generation_commits::GenerationCommit, String> {
+    let generation = generation_commits::get_generation_by_job_step(
+        db,
+        tenant_id,
+        source_id,
+        job_run_id,
+        THREAD_SUMMARY_GENERATION_STEP,
+    )
+    .await?
+    .ok_or_else(|| "thread summary generation was not frozen before model execution".to_string())?;
+    if generation.status == "committed" {
+        return Ok(generation);
+    }
+    generation_commits::claim_generation(
+        db,
+        tenant_id,
+        source_id,
+        generation.generation_id.as_str(),
+        format!("thread-summary-finalizer:{job_run_id}").as_str(),
+        GENERATION_FINALIZE_LEASE_SECONDS,
+    )
+    .await?
+    .ok_or_else(|| "thread summary generation finalization lease is occupied".to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fail_prepared_summary_job(
+    db: &Db,
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
-) -> Result<(), String> {
-    if job_run.job_type != "summary"
-        || job_run.tenant_id.as_deref() != Some(tenant_id)
-        || job_run.source_id.as_deref() != Some(source_id)
-        || job_run.thread_id.as_deref() != Some(thread_id)
-    {
-        return Err("summary job scope does not match its Cloud Agent callback".to_string());
-    }
-    Ok(())
-}
-
-fn completed_job_response(thread_id: &str, job_run: &EngineJobRun) -> RunThreadSummaryResponse {
-    let summary_id = job_run
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("generated_summary_id"))
-        .and_then(|value| value.as_str())
-        .map(ToOwned::to_owned);
-    RunThreadSummaryResponse {
-        thread_id: thread_id.to_string(),
-        generated: summary_id.is_some(),
-        summary_id,
-        source_record_count: metadata_i64(job_run.metadata.as_ref(), "selected_count")
-            .unwrap_or(0)
-            .max(0) as usize,
-    }
-}
-
-fn metadata_i64(metadata: Option<&serde_json::Value>, key: &str) -> Option<i64> {
-    metadata
-        .and_then(|value| value.get(key))
-        .and_then(|value| value.as_i64())
+    job_run_id: &str,
+    project_partition_key: &str,
+    pending_before_count: i64,
+    selection: &PendingRecordSelection,
+    error: String,
+) {
+    let _ = records::release_records_from_summary(db, tenant_id, source_id, thread_id, job_run_id)
+        .await;
+    let _ = thread_partitions::release_summary_claim(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        project_partition_key,
+        job_run_id,
+        0,
+        0,
+    )
+    .await;
+    finish_thread_summary_job_run(
+        db,
+        job_run_id,
+        FinishEngineJobRunRequest {
+            status: "failed".to_string(),
+            input_count: selection.selected.len() as i64,
+            output_count: 0,
+            processed_count: 0,
+            success_count: 0,
+            error_count: selection.selected.len() as i64,
+            metadata: Some(failed_metadata(
+                pending_before_count,
+                Some(selection.selected.len()),
+                Some(selection.selected_token_count),
+                0,
+                Some(pending_before_count),
+                0,
+                0,
+            )),
+            error_message: Some(error),
+        },
+    )
+    .await;
 }

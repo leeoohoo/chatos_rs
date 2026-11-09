@@ -12,7 +12,7 @@ use serde_json::json;
 
 use crate::models::{
     EngineSummary, GetThreadActiveSummaryStatusRequest, RunThreadActiveSummaryResponse,
-    RunThreadRepairSummaryResponse, RunThreadSummaryResponse,
+    RunPendingSummaryRebuildResponse, RunThreadSummaryResponse,
 };
 use crate::repositories::summaries;
 use crate::services::summary;
@@ -23,7 +23,7 @@ use super::internal_error;
 use super::requests::{
     SdkDeleteThreadSummaryRequest, SdkGetThreadActiveSummaryStatusRequest,
     SdkListThreadSummariesRequest, SdkRunThreadActiveSummaryRequest,
-    SdkRunThreadRepairSummaryRequest, SdkRunThreadSummaryRequest,
+    SdkRunPendingSummaryRebuildRequest, SdkRunThreadSummaryRequest,
 };
 
 pub async fn list_thread_summaries(
@@ -33,12 +33,23 @@ pub async fn list_thread_summaries(
     Json(req): Json<SdkListThreadSummariesRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
+    crate::api::runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        auth.source_id(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "summarize",
+    )
+    .await?;
     let values = summaries::ListSummariesQuery {
         thread_id: thread_id.as_str(),
         tenant_id: Some(req.tenant_id.as_str()),
         source_id: Some(auth.source_id()),
-        project_id: req.project_id.as_deref(),
-        project_id_missing: req.project_id_missing,
+        project_id: (req.project_partition_key != "__none__")
+            .then_some(req.project_partition_key.as_str()),
+        project_id_missing: req.project_partition_key == "__none__",
         summary_type: req.summary_type.as_deref(),
         status: req.status.as_deref(),
         level: req.level,
@@ -65,12 +76,23 @@ pub async fn delete_thread_summary(
     Json(req): Json<SdkDeleteThreadSummaryRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
+    crate::api::runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        auth.source_id(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "summarize",
+    )
+    .await?;
     let reset_records = summaries::delete_thread_summary(
         &state.pool,
         thread_id.as_str(),
         summary_id.as_str(),
         Some(req.tenant_id.as_str()),
         Some(auth.source_id()),
+        req.project_partition_key.as_str(),
     )
     .await
     .map_err(internal_error)?;
@@ -84,12 +106,23 @@ pub async fn run_thread_summary(
     Json(req): Json<SdkRunThreadSummaryRequest>,
 ) -> Result<Json<RunThreadSummaryResponse>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
+    crate::api::runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        auth.source_id(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "summarize",
+    )
+    .await?;
     summary::run_thread_summary(
         &state.config,
         &state.pool,
         req.tenant_id.as_str(),
         auth.source_id(),
         thread_id.as_str(),
+        req.project_partition_key.as_str(),
     )
     .await
     .map(Json)
@@ -103,12 +136,23 @@ pub async fn run_thread_active_summary(
     Json(req): Json<SdkRunThreadActiveSummaryRequest>,
 ) -> Result<Json<RunThreadActiveSummaryResponse>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
+    crate::api::runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        auth.source_id(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "summarize",
+    )
+    .await?;
     summary::run_thread_active_summary(
         &state.config,
         &state.pool,
         req.tenant_id.as_str(),
         auth.source_id(),
         thread_id.as_str(),
+        req.project_partition_key.as_str(),
         req.trigger_reason.as_deref(),
     )
     .await
@@ -123,12 +167,24 @@ pub async fn get_thread_active_summary_status(
     Json(req): Json<SdkGetThreadActiveSummaryStatusRequest>,
 ) -> Result<Json<RunThreadActiveSummaryResponse>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
+    crate::api::runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        auth.source_id(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "summarize",
+    )
+    .await?;
     summary::get_thread_active_summary_status(
         &state.pool,
         thread_id.as_str(),
         GetThreadActiveSummaryStatusRequest {
             tenant_id: req.tenant_id,
             source_id: auth.source_id().to_string(),
+            project_partition_key: req.project_partition_key,
+            runtime_context_assertion: req.runtime_context_assertion,
             job_run_id: req.job_run_id,
         },
     )
@@ -137,19 +193,30 @@ pub async fn get_thread_active_summary_status(
     .map_err(internal_error)
 }
 
-pub async fn run_thread_repair_summary(
+pub async fn run_pending_summary_rebuild(
     State(state): State<Arc<AppState>>,
     auth: SdkAuthContext,
     Path(thread_id): Path<String>,
-    Json(req): Json<SdkRunThreadRepairSummaryRequest>,
-) -> Result<Json<RunThreadRepairSummaryResponse>, (StatusCode, String)> {
+    Json(req): Json<SdkRunPendingSummaryRebuildRequest>,
+) -> Result<Json<RunPendingSummaryRebuildResponse>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
-    summary::run_thread_repair_summary(
+    crate::api::runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        auth.source_id(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "repair",
+    )
+    .await?;
+    summary::run_pending_summary_rebuild(
         &state.config,
         &state.pool,
         req.tenant_id.as_str(),
         auth.source_id(),
         thread_id.as_str(),
+        req.project_partition_key.as_str(),
     )
     .await
     .map(Json)

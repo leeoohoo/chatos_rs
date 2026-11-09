@@ -263,7 +263,14 @@ pub async fn list_agent_conversations(
     let rows = sqlx::query_as::<_, AgentConversationRow>(
         "WITH matching_threads AS ( \
            SELECT thread.id,thread.tenant_id,thread.source_id,thread.subject_id AS agent_subject_id, \
-                  thread.status,thread.summary_status,thread.updated_at, \
+                  thread.status,CASE \
+                    WHEN EXISTS(SELECT 1 FROM engine_thread_summary_partitions partition \
+                      WHERE partition.tenant_id=thread.tenant_id AND partition.source_id=thread.source_id \
+                        AND partition.thread_id=thread.id AND partition.summary_status='running') THEN 'running' \
+                    WHEN EXISTS(SELECT 1 FROM engine_thread_summary_partitions partition \
+                      WHERE partition.tenant_id=thread.tenant_id AND partition.source_id=thread.source_id \
+                        AND partition.thread_id=thread.id AND partition.summary_status='pending') THEN 'pending' \
+                    ELSE 'idle' END AS summary_status,thread.updated_at, \
                   labels.project_subject_id,labels.thread_kind \
              FROM engine_threads thread \
              LEFT JOIN LATERAL ( \

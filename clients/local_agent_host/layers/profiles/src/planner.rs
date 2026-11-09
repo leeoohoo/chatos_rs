@@ -3,7 +3,9 @@
 
 use crate::{memory::memory_plan, LocalAiStepPlanner, PreparedLocalAiStep};
 use async_trait::async_trait;
-use chatos_ai_runtime::{message_item, ContextualTurnRunner, ModelRuntimeConfig, RuntimeTurnSpec};
+use chatos_ai_runtime::{
+    message_item, ComposeContextPolicy, ContextualTurnRunner, ModelRuntimeConfig, RuntimeTurnSpec,
+};
 use chatos_local_agent_protocol::{
     task_acceptance_report_for_run, task_acceptance_report_is_terminal, LocalAgentRunClaim,
 };
@@ -439,6 +441,7 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 &claim.run.model_config_revision,
             )
             .await?;
+        transient.model_config.validate_model_capability()?;
         apply_run_thinking_level(&mut transient.model_config, &claim.run.input)?;
         let mut capabilities = self
             .capability_resolver
@@ -739,11 +742,26 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 ),
             ));
         }
-        let memory = self
+        let mut memory = self
             .memory_source_id
             .as_deref()
             .map(|source_id| memory_plan(claim, source_id, self.initial_text_field))
             .transpose()?;
+        if let Some(memory) = &mut memory {
+            memory.scope.model_capability_revision =
+                transient.model_config.model_capability_revision.clone();
+            let available = transient
+                .model_config
+                .context_window_tokens
+                .saturating_sub(transient.model_config.output_reserve_tokens);
+            memory.scope.policy = Some(ComposeContextPolicy {
+                max_memory_tokens: available.min(24_000),
+                max_recent_record_tokens: available.min(12_000),
+                max_thread_summary_tokens: available.min(6_000),
+                max_project_memory_tokens: available.min(4_000),
+                max_agent_memory_tokens: available.min(4_000),
+            });
+        }
         let caller_model = transient.model_config.model.clone();
         let conversation_id = memory
             .as_ref()

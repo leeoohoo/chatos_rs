@@ -59,24 +59,27 @@ async fn m0_audit_lists_p0_migration_objects_without_mutating_them() {
     .expect("insert oversized sentinel");
     tx.commit().await.expect("commit sentinel");
 
-    let repair = crate::repositories::summaries::create_thread_summary_with_type(
+    let repair = crate::repositories::summaries::insert_test_summary(
         &pool,
+        None,
         &tenant,
         &source,
         &thread_id,
         &subject_id,
         "thread_repair",
+        0,
         None,
         "legacy repair",
         None,
         None,
         1,
         Some(json!({"project_subject_id":"project:alpha"})),
+        Some("project:alpha"),
     )
     .await
     .expect("create legacy repair");
 
-    let left = crate::repositories::summaries::create_thread_summary(
+    let left = crate::repositories::summaries::insert_test_thread_summary(
         &pool,
         &tenant,
         &source,
@@ -90,7 +93,7 @@ async fn m0_audit_lists_p0_migration_objects_without_mutating_them() {
     )
     .await
     .expect("create alpha summary");
-    let right = crate::repositories::summaries::create_thread_summary(
+    let right = crate::repositories::summaries::insert_test_thread_summary(
         &pool,
         &tenant,
         &source,
@@ -104,12 +107,14 @@ async fn m0_audit_lists_p0_migration_objects_without_mutating_them() {
     )
     .await
     .expect("create beta summary");
-    let rollup = crate::repositories::summaries::create_rollup_summary(
+    let rollup = crate::repositories::summaries::insert_test_summary(
         &pool,
+        None,
         &tenant,
         &source,
         &thread_id,
         &subject_id,
+        "thread_incremental",
         1,
         Some(format!(
             "thread_rollup:{thread_id}:0:1:{},{}",
@@ -120,6 +125,7 @@ async fn m0_audit_lists_p0_migration_objects_without_mutating_them() {
         Some(right.id.clone()),
         2,
         Some(json!({"generator":"memory_engine_rollup_v1"})),
+        Some("__none__"),
     )
     .await
     .expect("create mixed rollup");

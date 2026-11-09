@@ -43,7 +43,7 @@ pub(crate) fn build_subject_memory_query<'a>(
         .push_bind(source_id)
         .push(" AND subject_id=")
         .push_bind(subject_id)
-        .push(" AND status='active'");
+        .push(" AND status='active' AND recall_eligible");
     if let Some(value) = memory_type.map(str::trim).filter(|value| !value.is_empty()) {
         query.push(" AND memory_type=").push_bind(value);
     }
@@ -85,6 +85,8 @@ pub(crate) fn build_subject_memory(
         confidence: req.confidence,
         last_seen_at: req.last_seen_at,
         metadata: req.metadata,
+        payload_schema: None,
+        structured_payload: None,
         status: req.status.unwrap_or_else(|| "active".to_string()),
         rollup_status: rollup_status
             .map(ToOwned::to_owned)

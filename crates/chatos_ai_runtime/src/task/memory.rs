@@ -19,6 +19,14 @@ pub struct TaskMemoryRuntimeConfig {
     pub internal_secret: Option<String>,
     #[serde(default, skip_serializing)]
     pub internal_caller: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub runtime_assertion_secret: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub runtime_assertion_key_id: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub runtime_assertion_issuer: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub runtime_identity_revision: Option<String>,
     #[serde(default = "default_memory_timeout_ms")]
     pub timeout_ms: u64,
     #[serde(default = "default_memory_compose_context")]
@@ -35,6 +43,10 @@ impl TaskMemoryRuntimeConfig {
             access_token: None,
             internal_secret: None,
             internal_caller: None,
+            runtime_assertion_secret: None,
+            runtime_assertion_key_id: None,
+            runtime_assertion_issuer: None,
+            runtime_identity_revision: None,
             timeout_ms: default_memory_timeout_ms(),
             compose_context: default_memory_compose_context(),
             record_scope: None,
@@ -71,6 +83,21 @@ impl TaskMemoryRuntimeConfig {
         self
     }
 
+    pub fn with_runtime_context_assertion_issuer(
+        mut self,
+        secret: impl Into<String>,
+        key_id: impl Into<String>,
+        issuer: impl Into<String>,
+        runtime_identity_revision: impl Into<String>,
+    ) -> Self {
+        self.runtime_assertion_secret = normalize_optional_token(Some(secret.into()));
+        self.runtime_assertion_key_id = normalize_optional_token(Some(key_id.into()));
+        self.runtime_assertion_issuer = normalize_optional_token(Some(issuer.into()));
+        self.runtime_identity_revision =
+            normalize_optional_token(Some(runtime_identity_revision.into()));
+        self
+    }
+
     pub fn timeout(&self) -> Duration {
         Duration::from_millis(self.timeout_ms)
     }
@@ -80,7 +107,7 @@ impl TaskMemoryRuntimeConfig {
         builder: TaskRuntimeBuilder,
     ) -> Result<TaskRuntimeBuilder, String> {
         let client = self.build_client()?;
-        Ok(self.apply_client_to_builder(builder, client))
+        self.apply_client_to_builder(builder, client)
     }
 
     pub fn apply_to_builder_with_http_client(
@@ -89,27 +116,54 @@ impl TaskMemoryRuntimeConfig {
         http_client: reqwest::Client,
     ) -> Result<TaskRuntimeBuilder, String> {
         let client = self.build_client_with_http_client(http_client)?;
-        Ok(self.apply_client_to_builder(builder, client))
+        self.apply_client_to_builder(builder, client)
     }
 
     fn apply_client_to_builder(
         &self,
         mut builder: TaskRuntimeBuilder,
         client: memory_engine_sdk::MemoryEngineClient,
-    ) -> TaskRuntimeBuilder {
+    ) -> Result<TaskRuntimeBuilder, String> {
+        let assertion_issuer = self.runtime_context_assertion_issuer()?;
         if self.compose_context {
             builder = builder.with_memory_composer(
-                crate::memory_context::MemoryContextComposer::from_client(client.clone()),
+                crate::memory_context::MemoryContextComposer::from_client(client.clone())
+                    .with_runtime_context_assertion_issuer(assertion_issuer.clone()),
             );
         }
         if let Some(record_scope) = self.record_scope.clone() {
-            let writer = MemoryEngineRecordWriter::from_client(client.clone(), record_scope);
+            let writer = MemoryEngineRecordWriter::from_client(client.clone(), record_scope)
+                .with_runtime_context_assertion_issuer(assertion_issuer);
             // Task conversation records are authoritative Memory Engine data.
             // Do not hide persistence failures and let the task continue with a
             // history that the next model turn cannot recover.
             builder = builder.with_record_writer(writer);
         }
-        builder
+        Ok(builder)
+    }
+
+    fn runtime_context_assertion_issuer(
+        &self,
+    ) -> Result<memory_engine_sdk::RuntimeContextAssertionIssuer, String> {
+        memory_engine_sdk::RuntimeContextAssertionIssuer::new(
+            required_runtime_assertion_value(
+                "runtime_assertion_secret",
+                self.runtime_assertion_secret.as_deref(),
+            )?,
+            required_runtime_assertion_value(
+                "runtime_assertion_key_id",
+                self.runtime_assertion_key_id.as_deref(),
+            )?,
+            required_runtime_assertion_value(
+                "runtime_assertion_issuer",
+                self.runtime_assertion_issuer.as_deref(),
+            )?,
+            required_runtime_assertion_value(
+                "runtime_identity_revision",
+                self.runtime_identity_revision.as_deref(),
+            )?,
+            60,
+        )
     }
 
     fn build_client(&self) -> Result<memory_engine_sdk::MemoryEngineClient, String> {
@@ -159,4 +213,14 @@ fn normalize_optional_token(token: Option<String>) -> Option<String> {
             Some(trimmed)
         }
     })
+}
+
+fn required_runtime_assertion_value<'a>(
+    field: &str,
+    value: Option<&'a str>,
+) -> Result<&'a str, String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("Memory Engine {field} is required"))
 }

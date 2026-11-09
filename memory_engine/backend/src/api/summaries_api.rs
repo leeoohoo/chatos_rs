@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
     Json,
 };
@@ -15,9 +15,9 @@ use super::{memory_auth::MemoryAuthContext, source_guard};
 use crate::models::{
     EngineSummary, GetThreadActiveSummaryStatusRequest, ListSummariesByThreadLabelRequest,
     MarkSummariesSubjectMemoryRequest, MarkSummariesSubjectMemoryResponse,
-    RunThreadActiveSummaryRequest, RunThreadActiveSummaryResponse, RunThreadRepairSummaryRequest,
-    RunThreadRepairSummaryResponse, RunThreadSummaryRequest, RunThreadSummaryResponse,
-    UpsertThreadSummaryRequest,
+    RunPendingSummaryRebuildRequest, RunPendingSummaryRebuildResponse,
+    RunThreadActiveSummaryRequest, RunThreadActiveSummaryResponse, RunThreadSummaryRequest,
+    RunThreadSummaryResponse,
 };
 use crate::repositories::summaries;
 use crate::services::summary;
@@ -25,11 +25,10 @@ use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct ListSummariesQuery {
-    tenant_id: Option<String>,
-    source_id: Option<String>,
-    project_id: Option<String>,
-    #[serde(default)]
-    project_id_missing: bool,
+    tenant_id: String,
+    source_id: String,
+    project_partition_key: String,
+    runtime_context_assertion: String,
     summary_type: Option<String>,
     status: Option<String>,
     level: Option<i64>,
@@ -44,6 +43,8 @@ pub struct ListSummariesQuery {
 pub struct ThreadScopeQuery {
     tenant_id: String,
     source_id: String,
+    project_partition_key: String,
+    runtime_context_assertion: String,
 }
 
 pub async fn run_thread_summary(
@@ -54,32 +55,54 @@ pub async fn run_thread_summary(
 ) -> Result<Json<RunThreadSummaryResponse>, (axum::http::StatusCode, String)> {
     auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
+    crate::api::runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        req.source_id.as_str(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "summarize",
+    )
+    .await?;
     summary::run_thread_summary(
         &state.config,
         &state.pool,
         req.tenant_id.as_str(),
         req.source_id.as_str(),
         thread_id.as_str(),
+        req.project_partition_key.as_str(),
     )
     .await
     .map(Json)
     .map_err(internal_error)
 }
 
-pub async fn run_thread_repair_summary(
+pub async fn run_pending_summary_rebuild(
     State(state): State<Arc<AppState>>,
     auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
-    Json(req): Json<RunThreadRepairSummaryRequest>,
-) -> Result<Json<RunThreadRepairSummaryResponse>, (axum::http::StatusCode, String)> {
+    Json(req): Json<RunPendingSummaryRebuildRequest>,
+) -> Result<Json<RunPendingSummaryRebuildResponse>, (axum::http::StatusCode, String)> {
     auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
-    summary::run_thread_repair_summary(
+    crate::api::runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        req.source_id.as_str(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "repair",
+    )
+    .await?;
+    summary::run_pending_summary_rebuild(
         &state.config,
         &state.pool,
         req.tenant_id.as_str(),
         req.source_id.as_str(),
         thread_id.as_str(),
+        req.project_partition_key.as_str(),
     )
     .await
     .map(Json)
@@ -90,15 +113,27 @@ pub async fn list_thread_summaries(
     State(state): State<Arc<AppState>>,
     auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
-    Query(query): Query<ListSummariesQuery>,
+    Json(query): Json<ListSummariesQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
-    let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
+    auth.ensure_tenant_scope(query.tenant_id.as_str())?;
+    source_guard::ensure_write_source_allowed(&state.pool, query.source_id.as_str()).await?;
+    crate::api::runtime_context::verify(
+        &state,
+        query.runtime_context_assertion.as_str(),
+        query.tenant_id.as_str(),
+        query.source_id.as_str(),
+        thread_id.as_str(),
+        query.project_partition_key.as_str(),
+        "summarize",
+    )
+    .await?;
     let values = summaries::ListSummariesQuery {
         thread_id: thread_id.as_str(),
-        tenant_id: tenant_id.as_deref(),
-        source_id: query.source_id.as_deref(),
-        project_id: query.project_id.as_deref(),
-        project_id_missing: query.project_id_missing,
+        tenant_id: Some(query.tenant_id.as_str()),
+        source_id: Some(query.source_id.as_str()),
+        project_id: (query.project_partition_key != "__none__")
+            .then_some(query.project_partition_key.as_str()),
+        project_id_missing: query.project_partition_key == "__none__",
         summary_type: query.summary_type.as_deref(),
         status: query.status.as_deref(),
         level: query.level,
@@ -141,53 +176,6 @@ pub async fn list_summaries_by_thread_label(
     Ok(Json(json!({ "items": items })))
 }
 
-pub async fn upsert_thread_summary(
-    State(state): State<Arc<AppState>>,
-    auth: MemoryAuthContext,
-    Path((thread_id, summary_id)): Path<(String, String)>,
-    Json(req): Json<UpsertThreadSummaryRequest>,
-) -> Result<Json<EngineSummary>, (axum::http::StatusCode, String)> {
-    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
-    source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
-    let tenant_id = req.tenant_id.clone();
-    let source_id = req.source_id.clone();
-    let summary =
-        summaries::upsert_thread_summary(&state.pool, thread_id.as_str(), summary_id.as_str(), req)
-            .await
-            .map_err(internal_error)?;
-    if let Err(err) = crate::rollup_queue::publish_pending_rollup_for_summary(
-        &state.config,
-        &state.pool,
-        tenant_id.as_str(),
-        source_id.as_str(),
-        summary_id.as_str(),
-    )
-    .await
-    {
-        tracing::warn!(
-            summary_id = summary_id.as_str(),
-            error = err.as_str(),
-            "Memory Engine left upserted summary rollup event in Outbox for recovery"
-        );
-    }
-    if let Err(err) = crate::subject_memory_queue::publish_pending_source_for_summary(
-        &state.config,
-        &state.pool,
-        tenant_id.as_str(),
-        source_id.as_str(),
-        summary_id.as_str(),
-    )
-    .await
-    {
-        tracing::warn!(
-            summary_id = summary_id.as_str(),
-            error = err.as_str(),
-            "Memory Engine left upserted summary subject-memory event in Outbox for recovery"
-        );
-    }
-    Ok(Json(summary))
-}
-
 pub async fn run_thread_active_summary(
     State(state): State<Arc<AppState>>,
     auth: MemoryAuthContext,
@@ -196,12 +184,23 @@ pub async fn run_thread_active_summary(
 ) -> Result<Json<RunThreadActiveSummaryResponse>, (axum::http::StatusCode, String)> {
     auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
+    crate::api::runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        req.source_id.as_str(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "summarize",
+    )
+    .await?;
     summary::run_thread_active_summary(
         &state.config,
         &state.pool,
         req.tenant_id.as_str(),
         req.source_id.as_str(),
         thread_id.as_str(),
+        req.project_partition_key.as_str(),
         req.trigger_reason.as_deref(),
     )
     .await
@@ -213,10 +212,20 @@ pub async fn get_thread_active_summary_status(
     State(state): State<Arc<AppState>>,
     auth: MemoryAuthContext,
     Path(thread_id): Path<String>,
-    Query(query): Query<GetThreadActiveSummaryStatusRequest>,
+    Json(query): Json<GetThreadActiveSummaryStatusRequest>,
 ) -> Result<Json<RunThreadActiveSummaryResponse>, (axum::http::StatusCode, String)> {
     auth.ensure_tenant_scope(query.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, query.source_id.as_str()).await?;
+    crate::api::runtime_context::verify(
+        &state,
+        query.runtime_context_assertion.as_str(),
+        query.tenant_id.as_str(),
+        query.source_id.as_str(),
+        thread_id.as_str(),
+        query.project_partition_key.as_str(),
+        "summarize",
+    )
+    .await?;
     summary::get_thread_active_summary_status(&state.pool, thread_id.as_str(), query)
         .await
         .map(Json)
@@ -227,16 +236,27 @@ pub async fn delete_thread_summary(
     State(state): State<Arc<AppState>>,
     auth: MemoryAuthContext,
     Path((thread_id, summary_id)): Path<(String, String)>,
-    Query(query): Query<ThreadScopeQuery>,
+    Json(query): Json<ThreadScopeQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     auth.ensure_tenant_scope(query.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, query.source_id.as_str()).await?;
+    crate::api::runtime_context::verify(
+        &state,
+        query.runtime_context_assertion.as_str(),
+        query.tenant_id.as_str(),
+        query.source_id.as_str(),
+        thread_id.as_str(),
+        query.project_partition_key.as_str(),
+        "summarize",
+    )
+    .await?;
     let reset_records = summaries::delete_thread_summary(
         &state.pool,
         thread_id.as_str(),
         summary_id.as_str(),
         Some(query.tenant_id.as_str()),
         Some(query.source_id.as_str()),
+        query.project_partition_key.as_str(),
     )
     .await
     .map_err(internal_error)?;

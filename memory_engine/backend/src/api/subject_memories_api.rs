@@ -12,8 +12,8 @@ use serde_json::json;
 
 use super::{memory_auth::MemoryAuthContext, source_guard};
 use crate::models::{
-    EngineSubjectMemory, MarkSubjectMemoriesRolledUpRequest, MarkSubjectMemoriesRolledUpResponse,
-    QuerySubjectMemoriesRequest, UpsertSubjectMemoryRequest,
+    MarkSubjectMemoriesRolledUpRequest, MarkSubjectMemoriesRolledUpResponse,
+    QuerySubjectMemoriesRequest,
 };
 use crate::repositories::subject_memories;
 use crate::state::AppState;
@@ -28,23 +28,10 @@ pub struct ListSubjectMemoriesQuery {
     offset: Option<i64>,
 }
 
-pub async fn upsert_subject_memory(
-    State(state): State<Arc<AppState>>,
-    auth: MemoryAuthContext,
-    Path((subject_id, memory_key)): Path<(String, String)>,
-    Json(req): Json<UpsertSubjectMemoryRequest>,
-) -> Result<Json<EngineSubjectMemory>, (axum::http::StatusCode, String)> {
-    auth.ensure_tenant_scope(req.tenant_id.as_str())?;
-    source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
-    subject_memories::upsert_subject_memory(
-        &state.pool,
-        subject_id.as_str(),
-        memory_key.as_str(),
-        req,
-    )
-    .await
-    .map(Json)
-    .map_err(internal_error)
+#[derive(Debug, Deserialize)]
+pub struct RetireSubjectMemoryQuery {
+    tenant_id: String,
+    source_id: String,
 }
 
 pub async fn list_subject_memories(
@@ -67,6 +54,26 @@ pub async fn list_subject_memories(
     .await
     .map_err(internal_error)?;
     Ok(Json(json!({ "items": items })))
+}
+
+pub async fn retire_subject_memory(
+    State(state): State<Arc<AppState>>,
+    auth: MemoryAuthContext,
+    Path((subject_id, memory_key)): Path<(String, String)>,
+    Query(query): Query<RetireSubjectMemoryQuery>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    auth.ensure_tenant_scope(query.tenant_id.as_str())?;
+    source_guard::ensure_write_source_allowed(&state.pool, query.source_id.as_str()).await?;
+    let retired = subject_memories::retire_subject_memory(
+        &state.pool,
+        query.tenant_id.as_str(),
+        query.source_id.as_str(),
+        subject_id.as_str(),
+        memory_key.as_str(),
+    )
+    .await
+    .map_err(internal_error)?;
+    Ok(Json(json!({ "retired": retired })))
 }
 
 pub async fn mark_subject_memories_rolled_up(

@@ -5,6 +5,7 @@ mod chunking;
 pub(crate) mod cloud_agent;
 mod input;
 mod overflow;
+pub(crate) mod profiles;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -14,4 +15,4 @@ pub use chunking::estimate_tokens_text;
 pub use overflow::is_context_overflow_error;
 pub use types::{SummaryBuildResult, MIN_TOKEN_LIMIT};
 
-pub(crate) use types::{MAX_MERGE_ROUNDS, MAX_OVERFLOW_RETRIES};
+pub(crate) use types::MAX_OVERFLOW_RETRIES;

@@ -125,6 +125,10 @@ final class NativeApprovalAgentTests: XCTestCase {
             ownerUserID: "owner-1",
             modelConfigRef: "model-1",
             modelConfigRevision: "revision-1",
+            modelCapabilityRevision: "capability-v1",
+            contextWindowTokens: 200_000,
+            outputReserveTokens: 30_000,
+            protocolOverheadEstimatorID: "responses-json-v1",
             credentialRef: "env:MODEL_1",
             baseURL: "https://example.com/v1",
             model: "approval-model",
@@ -154,7 +158,7 @@ final class NativeApprovalAgentTests: XCTestCase {
     }
 }
 
-private actor ApprovalTestModel: AgentModelClient {
+private actor ApprovalTestModel: MemoryCapableTestModel {
     let finishAt: Int
     let fail: Bool
     let invalidDecision: Bool
@@ -185,7 +189,8 @@ private actor ApprovalTestMemory: AgentMemoryServicing {
         self.entries.append(contentsOf: entries)
     }
 
-    func compose() -> AgentMemoryContext {
+    func compose(_ request: AgentMemoryComposeRequest) -> AgentMemoryContext {
+        _ = request
         composeCalls += 1
         return .init(
             blocks: [],

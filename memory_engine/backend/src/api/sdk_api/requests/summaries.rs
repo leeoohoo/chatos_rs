@@ -3,6 +3,6 @@
 
 pub use memory_engine_sdk::{
     SdkDeleteThreadSummaryRequest, SdkGetThreadActiveSummaryStatusRequest,
-    SdkListThreadSummariesRequest, SdkRunThreadActiveSummaryRequest,
-    SdkRunThreadRepairSummaryRequest, SdkRunThreadSummaryRequest,
+    SdkListThreadSummariesRequest, SdkRunPendingSummaryRebuildRequest,
+    SdkRunThreadActiveSummaryRequest, SdkRunThreadSummaryRequest,
 };

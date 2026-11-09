@@ -59,3 +59,11 @@ pub const LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY: &str =
     "local_connector.pressure.pending_relay_critical_requests";
 pub const LOCAL_CONNECTOR_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY: &str =
     "local_connector.pressure.report_interval_ms";
+pub const LOCAL_CONNECTOR_MEMORY_ASSERTION_SECRET_CONFIG_KEY: &str =
+    "local_connector.memory.runtime_assertion_secret";
+pub const LOCAL_CONNECTOR_MEMORY_ASSERTION_KEY_ID_CONFIG_KEY: &str =
+    "local_connector.memory.runtime_assertion_key_id";
+pub const LOCAL_CONNECTOR_MEMORY_ASSERTION_ISSUER_CONFIG_KEY: &str =
+    "local_connector.memory.runtime_assertion_issuer";
+pub const LOCAL_CONNECTOR_MEMORY_IDENTITY_REVISION_CONFIG_KEY: &str =
+    "local_connector.memory.runtime_identity_revision";

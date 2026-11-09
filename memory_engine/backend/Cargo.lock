@@ -1507,11 +1507,13 @@ name = "memory_engine_sdk"
 version = "0.1.0"
 dependencies = [
  "chatos_service_runtime",
+ "jsonwebtoken",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]

@@ -14,25 +14,6 @@ fn catalog_exposes_managed_postgres_pool_profiles() {
 }
 
 #[test]
-fn catalog_exposes_fail_closed_memory_reliability_flags() {
-    let definitions = builtin_definitions();
-    for flag in memory_engine_sdk::MEMORY_FEATURE_FLAG_DEFINITIONS {
-        let key = flag.config_key();
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.key == key)
-            .unwrap_or_else(|| panic!("missing managed feature flag {key}"));
-        assert_eq!(definition.value_type, "json");
-        assert_eq!(definition.reload_mode, "hot_reload");
-        assert_eq!(definition.service_name.as_deref(), Some("memory-engine"));
-        let value: memory_engine_sdk::MemoryFeatureFlagConfig =
-            serde_json::from_value(definition.default_value.clone()).unwrap();
-        assert!(!value.enabled);
-        assert!(value.validate_for(*flag).is_empty());
-    }
-}
-
-#[test]
 fn catalog_does_not_reintroduce_retired_configuration() {
     let definitions = builtin_definitions();
     let retired = RETIRED_CONFIG_KEYS
@@ -380,16 +361,62 @@ fn catalog_exposes_shared_memory_policies_for_server_and_client() {
     assert!(memory_definitions
         .iter()
         .all(|definition| !definition.key.ends_with("model_profile_id")));
-    assert!(memory_definitions.iter().any(|definition| {
-        definition.key == "memory_engine.policy.rollup.keep_level0_count"
-            && definition.default_value == json!(null)
-            && definition.nullable
-    }));
-    assert!(memory_definitions.iter().any(|definition| {
-        definition.key == "memory_engine.policy.thread_repair.token_limit"
-            && definition.default_value == json!(null)
-            && definition.nullable
-    }));
+    for (key, expected_default) in [
+        (
+            "memory_engine.policy.summary.dispatch_threshold_tokens",
+            json!(4_000),
+        ),
+        (
+            "memory_engine.policy.summary.max_source_batch_tokens",
+            json!(16_000),
+        ),
+        (
+            "memory_engine.policy.summary.max_model_input_tokens",
+            json!(32_000),
+        ),
+        ("memory_engine.policy.summary.max_leaf_tokens", json!(6_000)),
+        ("memory_engine.policy.summary.max_merge_rounds", json!(8)),
+        (
+            "memory_engine.policy.rollup.dispatch_threshold_tokens",
+            json!(12_000),
+        ),
+        (
+            "memory_engine.policy.rollup.max_source_batch_tokens",
+            json!(48_000),
+        ),
+        (
+            "memory_engine.policy.rollup.max_model_input_tokens",
+            json!(32_000),
+        ),
+        ("memory_engine.policy.rollup.count_limit", json!(12)),
+        ("memory_engine.policy.rollup.keep_level0_count", json!(4)),
+        ("memory_engine.policy.rollup.max_level", json!(4)),
+        (
+            "memory_engine.policy.subject_memory.dispatch_threshold_tokens",
+            json!(8_000),
+        ),
+        (
+            "memory_engine.policy.subject_memory.max_source_batch_tokens",
+            json!(32_000),
+        ),
+        (
+            "memory_engine.policy.subject_memory.max_model_input_tokens",
+            json!(32_000),
+        ),
+        ("memory_engine.policy.subject_memory.count_limit", json!(12)),
+        (
+            "memory_engine.policy.subject_memory.keep_level0_count",
+            json!(4),
+        ),
+        ("memory_engine.policy.subject_memory.max_level", json!(4)),
+    ] {
+        let definition = memory_definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing Memory policy definition for {key}"));
+        assert_eq!(definition.default_value, expected_default, "{key}");
+        assert!(definition.nullable, "{key}");
+    }
     for unused_key in [
         "memory_engine.policy.summary.count_limit",
         "memory_engine.policy.summary.keep_level0_count",
@@ -399,6 +426,7 @@ fn catalog_exposes_shared_memory_policies_for_server_and_client() {
         "memory_engine.policy.thread_repair.count_limit",
         "memory_engine.policy.thread_repair.keep_level0_count",
         "memory_engine.policy.thread_repair.max_level",
+        "memory_engine.policy.thread_repair.token_limit",
     ] {
         assert!(
             memory_definitions

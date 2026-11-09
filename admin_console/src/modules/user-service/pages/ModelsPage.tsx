@@ -48,6 +48,12 @@ type ModelTaskPreferencesDraft = {
   task_thinking_level?: string;
   temperature?: number;
   max_output_tokens?: number;
+  model_capability_revision: string;
+  context_window_tokens?: number;
+  output_reserve_tokens?: number;
+  protocol_overhead_estimator_id: string;
+  tokenizer_id: string;
+  responses_compaction_threshold?: number;
 };
 
 const TASK_THINKING_LEVEL_OPTIONS = [
@@ -155,6 +161,14 @@ export function ModelsPage() {
         clear_temperature: draft.temperature == null,
         max_output_tokens: draft.max_output_tokens,
         clear_max_output_tokens: draft.max_output_tokens == null,
+        model_capability_revision: draft.model_capability_revision.trim(),
+        context_window_tokens: draft.context_window_tokens,
+        output_reserve_tokens: draft.output_reserve_tokens,
+        protocol_overhead_estimator_id: draft.protocol_overhead_estimator_id.trim(),
+        tokenizer_id: draft.tokenizer_id.trim(),
+        clear_tokenizer_id: !draft.tokenizer_id.trim(),
+        responses_compaction_threshold: draft.responses_compaction_threshold,
+        clear_responses_compaction_threshold: draft.responses_compaction_threshold == null,
       }),
     onSuccess: async (result) => {
       showWarnings(result.sync_warnings);
@@ -569,6 +583,72 @@ export function ModelsPage() {
                         }
                       />
                     </Col>
+                    <Col xs={24} sm={12} lg={6}>
+                      <Typography.Text type="secondary">Capability Revision</Typography.Text>
+                      <Input
+                        value={draft.model_capability_revision}
+                        placeholder="例如 capability-2026-11"
+                        onChange={(event) => updateModelTaskDraft(model.id, {
+                          model_capability_revision: event.target.value,
+                        })}
+                      />
+                    </Col>
+                    <Col xs={24} sm={8} lg={4}>
+                      <Typography.Text type="secondary">Context Window</Typography.Text>
+                      <InputNumber
+                        value={draft.context_window_tokens}
+                        min={2048}
+                        precision={0}
+                        style={{ width: '100%' }}
+                        onChange={(value) => updateModelTaskDraft(model.id, {
+                          context_window_tokens: value ?? undefined,
+                        })}
+                      />
+                    </Col>
+                    <Col xs={24} sm={8} lg={4}>
+                      <Typography.Text type="secondary">Output Reserve</Typography.Text>
+                      <InputNumber
+                        value={draft.output_reserve_tokens}
+                        min={256}
+                        precision={0}
+                        style={{ width: '100%' }}
+                        onChange={(value) => updateModelTaskDraft(model.id, {
+                          output_reserve_tokens: value ?? undefined,
+                        })}
+                      />
+                    </Col>
+                    <Col xs={24} sm={12} lg={5}>
+                      <Typography.Text type="secondary">Overhead Estimator</Typography.Text>
+                      <Input
+                        value={draft.protocol_overhead_estimator_id}
+                        placeholder="responses-json-v1"
+                        onChange={(event) => updateModelTaskDraft(model.id, {
+                          protocol_overhead_estimator_id: event.target.value,
+                        })}
+                      />
+                    </Col>
+                    <Col xs={24} sm={12} lg={5}>
+                      <Typography.Text type="secondary">Tokenizer</Typography.Text>
+                      <Input
+                        value={draft.tokenizer_id}
+                        placeholder="不支持时留空"
+                        onChange={(event) => updateModelTaskDraft(model.id, {
+                          tokenizer_id: event.target.value,
+                        })}
+                      />
+                    </Col>
+                    <Col xs={24} sm={8} lg={4}>
+                      <Typography.Text type="secondary">Compaction Threshold</Typography.Text>
+                      <InputNumber
+                        value={draft.responses_compaction_threshold}
+                        min={2048}
+                        precision={0}
+                        style={{ width: '100%' }}
+                        onChange={(value) => updateModelTaskDraft(model.id, {
+                          responses_compaction_threshold: value ?? undefined,
+                        })}
+                      />
+                    </Col>
                   </Row>
                 </Card>
               );
@@ -598,5 +678,11 @@ function taskPreferencesDraft(model: UserModelConfigRecord): ModelTaskPreference
     task_thinking_level: model.task_thinking_level || undefined,
     temperature: model.temperature ?? undefined,
     max_output_tokens: model.max_output_tokens ?? undefined,
+    model_capability_revision: model.model_capability_revision ?? '',
+    context_window_tokens: model.context_window_tokens ?? undefined,
+    output_reserve_tokens: model.output_reserve_tokens ?? undefined,
+    protocol_overhead_estimator_id: model.protocol_overhead_estimator_id ?? '',
+    tokenizer_id: model.tokenizer_id ?? '',
+    responses_compaction_threshold: model.responses_compaction_threshold ?? undefined,
   };
 }

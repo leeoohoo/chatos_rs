@@ -86,6 +86,21 @@ pub enum MemoryAuthContext {
 }
 
 impl MemoryAuthContext {
+    pub fn operator_audit_id(&self) -> String {
+        match self {
+            Self::Operator => "internal-operator".to_string(),
+            Self::User(principal) => format!(
+                "{}:{}",
+                principal.principal_type,
+                principal
+                    .user_id
+                    .as_deref()
+                    .or(principal.owner_user_id.as_deref())
+                    .unwrap_or("unknown")
+            ),
+        }
+    }
+
     pub fn runtime_owner_user_id(&self) -> Result<String, (StatusCode, String)> {
         match self {
             Self::User(principal) => principal

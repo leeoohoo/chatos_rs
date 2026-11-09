@@ -387,6 +387,23 @@ fn resolved_snapshot(
     let model_name = required("model", model.model)?;
     let provider = required("provider", model.provider)?;
     let model_config_ref = required("model_config_ref", model.id)?;
+    let model_capability_revision = model
+        .model_capability_revision
+        .and_then(non_empty)
+        .ok_or_else(|| "模型配置缺少 capability revision。".to_owned())?;
+    let context_window_tokens = model
+        .context_window_tokens
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or_else(|| "模型配置缺少有效的上下文窗口能力。".to_owned())?;
+    let output_reserve_tokens = model
+        .output_reserve_tokens
+        .and_then(|value| u64::try_from(value).ok())
+        .ok_or_else(|| "模型配置缺少有效的输出预留能力。".to_owned())?;
+    let protocol_overhead_estimator_id = model
+        .protocol_overhead_estimator_id
+        .and_then(non_empty)
+        .ok_or_else(|| "模型配置缺少协议开销估算器。".to_owned())?;
+    let tokenizer_id = model.tokenizer_id.and_then(non_empty);
     let variable = model_credential_environment_variable(&model_config_ref);
     let revision = model_revision(
         &model_config_ref,
@@ -396,6 +413,11 @@ fn resolved_snapshot(
         model.task_thinking_level.as_deref(),
         model.temperature,
         model.max_output_tokens,
+        &model_capability_revision,
+        context_window_tokens,
+        output_reserve_tokens,
+        &protocol_overhead_estimator_id,
+        tokenizer_id.as_deref(),
         model.supports_images,
         model.supports_responses,
     );
@@ -404,6 +426,11 @@ fn resolved_snapshot(
             owner_user_id: owner_user_id.to_owned(),
             model_config_ref,
             model_config_revision: revision,
+            model_capability_revision,
+            context_window_tokens,
+            output_reserve_tokens,
+            protocol_overhead_estimator_id,
+            tokenizer_id,
             credential_ref: format!("env:{variable}"),
             base_url,
             model: model_name,
@@ -417,6 +444,9 @@ fn resolved_snapshot(
             include_prompt_cache_retention: false,
             request_body_limit_bytes: None,
             max_transient_retries: None,
+            responses_compaction_threshold: model
+                .responses_compaction_threshold
+                .and_then(|value| u64::try_from(value).ok()),
             output_format: None,
         },
         credential,
@@ -684,6 +714,11 @@ fn model_revision(
     thinking_level: Option<&str>,
     temperature: Option<f64>,
     max_output_tokens: Option<i64>,
+    model_capability_revision: &str,
+    context_window_tokens: u64,
+    output_reserve_tokens: u64,
+    protocol_overhead_estimator_id: &str,
+    tokenizer_id: Option<&str>,
     supports_images: bool,
     supports_responses: bool,
 ) -> String {
@@ -699,6 +734,11 @@ fn model_revision(
         max_output_tokens
             .map(|value| value.to_string())
             .unwrap_or_default(),
+        model_capability_revision.to_owned(),
+        context_window_tokens.to_string(),
+        output_reserve_tokens.to_string(),
+        protocol_overhead_estimator_id.to_owned(),
+        tokenizer_id.unwrap_or_default().to_owned(),
         supports_images.to_string(),
         supports_responses.to_string(),
     ];

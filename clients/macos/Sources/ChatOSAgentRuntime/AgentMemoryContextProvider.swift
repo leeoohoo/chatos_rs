@@ -28,6 +28,7 @@ public protocol AgentContextProviding: Sendable {
         checkpoint initial: AgentRunCheckpoint,
         tools: [AgentToolDefinition],
         policy: AgentContextPolicy,
+        modelCapability: AgentModelCapabilitySnapshot,
         deadline: Date,
         synchronizeOnly: Bool,
         shouldPause: @escaping @Sendable () async -> Bool,
@@ -72,6 +73,7 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
 
     public func prepare(checkpoint initial: AgentRunCheckpoint, tools: [AgentToolDefinition],
                         policy: AgentContextPolicy,
+                        modelCapability: AgentModelCapabilitySnapshot,
                         deadline: Date, synchronizeOnly: Bool = false,
                         shouldPause: @escaping @Sendable () async -> Bool = { false },
                         record: @escaping AgentRuntime.Recorder) async throws -> AgentPreparedContext {
@@ -106,9 +108,15 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
                 let reconciling = state.memory!.syncInFlightEnd != nil
                 let end = state.memory!.syncInFlightEnd ?? min(start + 32, state.messages.count)
                 guard end > start, end <= state.messages.count, end - start <= 32 else { throw AgentContextError.invalidHistory }
-                let entries = (start..<end).map { index in
-                    AgentMemoryEntry(id: scope.recordID(at: index), index: index, message: state.messages[index],
-                                     createdAt: bound.recordEpoch.addingTimeInterval(Double(index) / 1_000))
+                let entries = try (start..<end).map { index in
+                    AgentMemoryEntry(
+                        id: scope.recordID(at: index),
+                        index: index,
+                        message: state.messages[index],
+                        createdAt: bound.recordEpoch.addingTimeInterval(Double(index) / 1_000),
+                        conversationTurnID: conversationTurnID(state.messages, index: index),
+                        toolExchange: try toolExchange(state.messages, index: index)
+                    )
                 }
                 state.memory!.syncInFlightEnd = end
                 try await emit(state, "memory_syncing", "正在同步运行记录 \(start + 1)–\(end)", record: record)
@@ -124,8 +132,16 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
             // The engine owns durable records and background summaries. It is
             // composed at this turn boundary, but it is never used as an
             // in-loop overflow recovery mechanism.
+            guard let currentUserIndex = state.messages.indices.reversed().first(where: {
+                state.messages[$0].role == .user && !state.messages[$0].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }) else { throw AgentContextError.invalidHistory }
+            let composeRequest = try AgentMemoryComposeRequest(
+                modelCapability: modelCapability,
+                queryText: state.messages[currentUserIndex].content,
+                currentTurnID: conversationTurnID(state.messages, index: currentUserIndex)
+            )
             let messages = try AgentContextAssembler.assemble(
-                checkpoint: state, memory: state.memory!, context: await service.compose()
+                checkpoint: state, memory: state.memory!, context: await service.compose(composeRequest)
             )
             try await check(deadline: deadline, shouldPause: shouldPause)
             return .init(checkpoint: state, messages: messages)
@@ -135,6 +151,34 @@ public struct AgentMemoryContextProvider: AgentContextProviding, Sendable {
             throw AgentContextPreparationFailure(checkpoint: state, reason: error.localizedDescription,
                                                  cancelled: error is CancellationError)
         }
+    }
+
+    private func conversationTurnID(_ messages: [AgentMessage], index: Int) -> String {
+        let start = messages[...index].lastIndex(where: { $0.role == .user }) ?? index
+        return "agent:\(scope.runID.uuidString):turn:\(start)"
+    }
+
+    private func toolExchange(_ messages: [AgentMessage], index: Int) throws -> AgentMemoryToolExchange? {
+        let message = messages[index]
+        guard message.role == .tool else {
+            guard message.toolCallID == nil else { throw AgentContextError.invalidHistory }
+            return nil
+        }
+        guard let callID = message.toolCallID,
+              let assistantIndex = messages[..<index].lastIndex(where: { candidate in
+                  candidate.role == .assistant && candidate.toolCalls.contains(where: { $0.id == callID })
+              }),
+              let ordinal = messages[assistantIndex].toolCalls.firstIndex(where: { $0.id == callID }) else {
+            throw AgentContextError.invalidHistory
+        }
+        let calls = messages[assistantIndex].toolCalls
+        return try .init(
+            assistantRecordID: scope.recordID(at: assistantIndex),
+            exchangeID: "agent:\(scope.runID.uuidString):tool:\(assistantIndex)",
+            callID: callID,
+            resultOrdinal: ordinal,
+            resultCount: calls.count
+        )
     }
 
     private func check(deadline: Date, shouldPause: @escaping @Sendable () async -> Bool) async throws {

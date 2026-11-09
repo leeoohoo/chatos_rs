@@ -237,6 +237,12 @@ mod tests {
 
     fn model(source_provider_id: Option<&str>) -> UserModelConfigRecord {
         UserModelConfigRecord {
+            model_capability_revision: Some("capability-v1".to_string()),
+            context_window_tokens: Some(200_000),
+            output_reserve_tokens: Some(30_000),
+            protocol_overhead_estimator_id: Some("responses-json-v1".to_string()),
+            tokenizer_id: Some("o200k_base".to_string()),
+            responses_compaction_threshold: Some(160_000),
             id: "model-1".to_string(),
             owner_user_id: "user-1".to_string(),
             source_provider_id: source_provider_id.map(ToOwned::to_owned),

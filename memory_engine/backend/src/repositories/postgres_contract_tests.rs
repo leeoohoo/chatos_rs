@@ -10,10 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::models::{
-    EngineRecord, EngineSummary, UpsertSubjectMemoryRequest, UpsertThreadRequest,
-    UpsertThreadSummaryRequest,
-};
+use crate::models::{EngineRecord, EngineSummary, UpsertSubjectMemoryRequest, UpsertThreadRequest};
 use crate::repositories::postgres::{json, timestamp};
 
 async fn pool() -> Option<crate::db::Db> {
@@ -55,6 +52,8 @@ fn test_config(database_url: String) -> crate::config::AppConfig {
         rollup_lock_timeout_secs: 300,
         internal_api_secrets: HashMap::new(),
         require_signed_internal_requests: true,
+        runtime_context_assertion_keys: crate::config::test_runtime_context_assertion_keys(),
+        model_capabilities: crate::config::test_model_capabilities(),
         user_service_base_url: "http://127.0.0.1:39190".to_string(),
         user_service_internal_base_url: "https://127.0.0.1:39192".to_string(),
         user_service_internal_http: reqwest::Client::new(),
@@ -69,7 +68,11 @@ mod cursor_contracts;
 mod derived_event_contracts;
 mod forced_summary_contracts;
 mod generation_commit_contracts;
+mod history_migration_contracts;
+mod lifecycle_contracts;
+mod memory_fact_contracts;
 mod memory_pipeline_contracts;
+mod operator_audit_contracts;
 mod partition_claim_contracts;
 mod partition_ingest_contracts;
 mod reliability_audit_contracts;

@@ -321,10 +321,25 @@ pub(super) async fn refresh_provider_models_from_record(
             task_thinking_level: existing.and_then(|item| item.task_thinking_level.clone()),
             temperature: existing.and_then(|item| item.temperature),
             max_output_tokens: existing.and_then(|item| item.max_output_tokens),
+            model_capability_revision: existing
+                .and_then(|item| item.model_capability_revision.clone()),
+            context_window_tokens: existing.and_then(|item| item.context_window_tokens),
+            output_reserve_tokens: existing.and_then(|item| item.output_reserve_tokens),
+            protocol_overhead_estimator_id: existing
+                .and_then(|item| item.protocol_overhead_estimator_id.clone()),
+            tokenizer_id: existing.and_then(|item| item.tokenizer_id.clone()),
+            responses_compaction_threshold: existing
+                .and_then(|item| item.responses_compaction_threshold),
             api_key: provider_record.api_key.clone(),
             has_api_key: true,
             base_url: provider_record.base_url.clone(),
-            enabled: imported_model_enabled(existing, provider_record.enabled),
+            enabled: existing.is_some_and(|item| {
+                imported_model_enabled(Some(item), provider_record.enabled)
+                    && item.model_capability_revision.is_some()
+                    && item.context_window_tokens.is_some()
+                    && item.output_reserve_tokens.is_some()
+                    && item.protocol_overhead_estimator_id.is_some()
+            }),
             task_enabled: existing
                 .and_then(|item| item.task_enabled)
                 .or_else(|| existing.map(|item| item.enabled))
@@ -388,6 +403,12 @@ mod tests {
 
     fn model(enabled: bool) -> UserModelConfigRecord {
         UserModelConfigRecord {
+            model_capability_revision: Some("capability-v1".to_string()),
+            context_window_tokens: Some(200_000),
+            output_reserve_tokens: Some(30_000),
+            protocol_overhead_estimator_id: Some("responses-json-v1".to_string()),
+            tokenizer_id: Some("o200k_base".to_string()),
+            responses_compaction_threshold: Some(160_000),
             id: "model-1".to_string(),
             owner_user_id: "user-1".to_string(),
             source_provider_id: Some("provider-1".to_string()),

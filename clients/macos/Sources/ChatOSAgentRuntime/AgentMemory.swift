@@ -163,13 +163,91 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     }
 }
 
+public struct AgentMemoryToolExchange: Codable, Equatable, Sendable {
+    public let assistantRecordID: String
+    public let exchangeID: String
+    public let callID: String
+    public let resultOrdinal: Int
+    public let resultCount: Int
+
+    public init(
+        assistantRecordID: String,
+        exchangeID: String,
+        callID: String,
+        resultOrdinal: Int,
+        resultCount: Int
+    ) throws {
+        guard !assistantRecordID.isEmpty, !exchangeID.isEmpty, !callID.isEmpty,
+              resultOrdinal >= 0, resultCount > 0, resultOrdinal < resultCount else {
+            throw AgentContextError.invalidHistory
+        }
+        self.assistantRecordID = assistantRecordID
+        self.exchangeID = exchangeID
+        self.callID = callID
+        self.resultOrdinal = resultOrdinal
+        self.resultCount = resultCount
+    }
+}
+
 public struct AgentMemoryEntry: Sendable {
     public let id: String
     public let index: Int
     public let message: AgentMessage
     public let createdAt: Date
-    public init(id: String, index: Int, message: AgentMessage, createdAt: Date) {
+    public let conversationTurnID: String
+    public let toolExchange: AgentMemoryToolExchange?
+    public init(
+        id: String,
+        index: Int,
+        message: AgentMessage,
+        createdAt: Date,
+        conversationTurnID: String,
+        toolExchange: AgentMemoryToolExchange? = nil
+    ) {
         self.id = id; self.index = index; self.message = message; self.createdAt = createdAt
+        self.conversationTurnID = conversationTurnID
+        self.toolExchange = toolExchange
+    }
+}
+
+public struct AgentModelCapabilitySnapshot: Codable, Equatable, Sendable {
+    public let revision: String
+    public let contextWindowTokens: Int
+    public let outputReserveTokens: Int
+    public let protocolOverheadEstimatorID: String
+    public let tokenizerID: String?
+
+    public init(revision: String, contextWindowTokens: Int, outputReserveTokens: Int,
+                protocolOverheadEstimatorID: String, tokenizerID: String?) throws {
+        guard !revision.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !protocolOverheadEstimatorID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              contextWindowTokens >= 2_048,
+              outputReserveTokens >= 256,
+              outputReserveTokens < contextWindowTokens else {
+            throw AgentRuntimeError.modelConfigurationUnavailable
+        }
+        self.revision = revision
+        self.contextWindowTokens = contextWindowTokens
+        self.outputReserveTokens = outputReserveTokens
+        self.protocolOverheadEstimatorID = protocolOverheadEstimatorID
+        self.tokenizerID = tokenizerID
+    }
+}
+
+public struct AgentMemoryComposeRequest: Equatable, Sendable {
+    public let modelCapability: AgentModelCapabilitySnapshot
+    public let queryText: String
+    public let currentTurnID: String
+
+    public init(modelCapability: AgentModelCapabilitySnapshot, queryText: String,
+                currentTurnID: String) throws {
+        guard !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !currentTurnID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AgentContextError.invalidHistory
+        }
+        self.modelCapability = modelCapability
+        self.queryText = queryText
+        self.currentTurnID = currentTurnID
     }
 }
 
@@ -199,7 +277,7 @@ public struct AgentMemoryContext: Sendable {
 public protocol AgentMemoryServicing: Sendable {
     func ensureThread() async throws
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws
-    func compose() async throws -> AgentMemoryContext
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext
     func flushSummary() async throws
 }
 
@@ -212,12 +290,23 @@ public struct AgentMemoryCheckpoint: Codable, Equatable, Sendable {
     public let scope: AgentMemoryScope
     public let recordEpoch: Date
     public let pinnedMessageCount: Int
+    /// Frozen before the first model call. Optional only so legacy checkpoints remain decodable;
+    /// a legacy checkpoint that already called a model is rejected instead of adopting new limits.
+    public var modelCapability: AgentModelCapabilitySnapshot?
     public var syncedMessageCount = 0
     public var syncedDigest: String = ""
     public var threadCreated = false
     public var syncInFlightEnd: Int?
-    public init(scope: AgentMemoryScope, pinnedMessageCount: Int, recordEpoch: Date = Date()) {
-        self.scope = scope; self.pinnedMessageCount = pinnedMessageCount; self.recordEpoch = recordEpoch
+    public init(
+        scope: AgentMemoryScope,
+        pinnedMessageCount: Int,
+        recordEpoch: Date = Date(),
+        modelCapability: AgentModelCapabilitySnapshot? = nil
+    ) {
+        self.scope = scope
+        self.pinnedMessageCount = pinnedMessageCount
+        self.recordEpoch = recordEpoch
+        self.modelCapability = modelCapability
     }
 }
 

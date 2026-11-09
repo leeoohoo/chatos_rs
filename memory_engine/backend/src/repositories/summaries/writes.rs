@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::common::new_summary;
 use crate::db::Db;
-use crate::models::{now_rfc3339, EngineSummary, UpsertThreadSummaryRequest};
+use crate::models::{now_rfc3339, EngineRecord, EngineSummary};
 use crate::repositories::postgres::{decode, json, timestamp};
-use crate::repositories::threads;
 use sqlx::types::Json;
+use sqlx::{Postgres, Transaction};
 
 pub async fn delete_thread_summary(
     db: &Db,
@@ -14,6 +13,29 @@ pub async fn delete_thread_summary(
     summary_id: &str,
     tenant_id: Option<&str>,
     source_id: Option<&str>,
+    expected_project_partition_key: &str,
+) -> Result<usize, String> {
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let restored = delete_thread_summary_in_tx(
+        &mut tx,
+        thread_id,
+        summary_id,
+        tenant_id,
+        source_id,
+        expected_project_partition_key,
+    )
+    .await?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(restored)
+}
+
+pub async fn delete_thread_summary_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    thread_id: &str,
+    summary_id: &str,
+    tenant_id: Option<&str>,
+    source_id: Option<&str>,
+    expected_project_partition_key: &str,
 ) -> Result<usize, String> {
     let tenant = tenant_id
         .map(str::trim)
@@ -23,212 +45,145 @@ pub async fn delete_thread_summary(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "source_id is required to delete a summary".to_string())?;
-    let reset = crate::repositories::records::reset_records_summary_by_summary_id(
-        db, tenant, source, thread_id, summary_id,
-    )
-    .await?;
-    let q = sqlx::query(
-        "DELETE FROM engine_summaries \
-         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=$4",
+    let selected = sqlx::query_as::<_, (Json<serde_json::Value>, Option<String>)>(
+        "SELECT data,project_partition_key FROM engine_summaries WHERE tenant_id=$1 \
+         AND source_id=$2 AND thread_id=$3 AND id=$4 AND recall_eligible FOR UPDATE",
     )
     .bind(tenant)
     .bind(source)
     .bind(thread_id)
-    .bind(summary_id);
-    let deleted = q
-        .execute(db)
-        .await
-        .map_err(|e| e.to_string())?
-        .rows_affected();
-    if reset > 0 {
-        crate::repositories::threads::refresh_summary_queue_state(db, tenant, source, thread_id)
-            .await?;
-    }
-    Ok(if deleted > 0 || reset > 0 { reset } else { 0 })
-}
-
-pub async fn create_thread_summary(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    subject_id: &str,
-    summary_text: &str,
-    source_record_start_id: Option<String>,
-    source_record_end_id: Option<String>,
-    source_record_count: usize,
-    project_subject_id: Option<&str>,
-) -> Result<EngineSummary, String> {
-    let mut metadata = serde_json::json!({"generator":"memory_engine_summary_v1"});
-    if let Some(project_subject_id) = project_subject_id
-        .map(str::trim)
-        .filter(|value| value.starts_with("project:") && value.len() > "project:".len())
-    {
-        metadata["project_subject_id"] = serde_json::json!(project_subject_id);
-    }
-    create_thread_summary_with_type(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        subject_id,
-        "thread_incremental",
-        None,
-        summary_text,
-        source_record_start_id,
-        source_record_end_id,
-        source_record_count,
-        Some(metadata),
-    )
-    .await
-}
-
-pub async fn upsert_thread_summary(
-    db: &Db,
-    thread_id: &str,
-    summary_id: &str,
-    req: UpsertThreadSummaryRequest,
-) -> Result<EngineSummary, String> {
-    threads::ensure_thread_scope(db, &req.tenant_id, &req.source_id, thread_id).await?;
-    let existing = sqlx::query_scalar::<_, Json<serde_json::Value>>(
-        "SELECT data FROM engine_summaries \
-         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=$4",
-    )
-    .bind(&req.tenant_id)
-    .bind(&req.source_id)
-    .bind(thread_id)
     .bind(summary_id)
-    .fetch_optional(db)
+    .fetch_optional(&mut **tx)
     .await
-    .map_err(|e| e.to_string())?
-    .map(decode::<EngineSummary>)
-    .transpose()?;
-    let now = now_rfc3339();
-    let summary = EngineSummary {
-        id: summary_id.to_string(),
-        tenant_id: req.tenant_id,
-        source_id: req.source_id,
-        thread_id: thread_id.to_string(),
-        subject_id: req.subject_id,
-        summary_type: req.summary_type,
-        level: req.level.unwrap_or(0).max(0),
-        source_digest: req.source_digest,
-        summary_text: req.summary_text,
-        source_record_start_id: req.source_record_start_id,
-        source_record_end_id: req.source_record_end_id,
-        source_record_count: req.source_record_count.unwrap_or(0).max(0),
-        status: req.status.unwrap_or_else(|| "done".to_string()),
-        rollup_status: req.rollup_status.unwrap_or_else(|| "pending".to_string()),
-        rollup_summary_id: req.rollup_summary_id,
-        rolled_up_at: req.rolled_up_at,
-        subject_memory_summarized: req.subject_memory_summarized.unwrap_or(0).max(0),
-        subject_memory_summarized_at: req.subject_memory_summarized_at,
-        metadata: req.metadata,
-        created_at: existing
-            .map(|v| v.created_at)
-            .or(req.created_at)
-            .unwrap_or_else(|| now.clone()),
-        updated_at: req.updated_at.unwrap_or_else(|| now.clone()),
+    .map_err(|error| error.to_string())?;
+    let Some((data, project_partition_key)) = selected else {
+        return Ok(0);
     };
-    upsert_summary_row(db, &summary, true).await?;
-    Ok(summary)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn create_thread_summary_with_type(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    subject_id: &str,
-    summary_type: &str,
-    source_digest: Option<String>,
-    summary_text: &str,
-    source_record_start_id: Option<String>,
-    source_record_end_id: Option<String>,
-    source_record_count: usize,
-    metadata: Option<serde_json::Value>,
-) -> Result<EngineSummary, String> {
-    let summary = new_summary(
-        tenant_id,
-        source_id,
-        thread_id,
-        subject_id,
-        summary_type,
-        0,
-        source_digest,
-        summary_text,
-        source_record_start_id,
-        source_record_end_id,
-        source_record_count,
-        metadata,
-    );
-    insert_summary(db, &summary).await?;
-    Ok(summary)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn create_rollup_summary(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    subject_id: &str,
-    level: i64,
-    source_digest: Option<String>,
-    summary_text: &str,
-    source_record_start_id: Option<String>,
-    source_record_end_id: Option<String>,
-    source_record_count: usize,
-    metadata: Option<serde_json::Value>,
-) -> Result<EngineSummary, String> {
-    let summary = new_summary(
-        tenant_id,
-        source_id,
-        thread_id,
-        subject_id,
-        "thread_incremental",
-        level,
-        source_digest,
-        summary_text,
-        source_record_start_id,
-        source_record_end_id,
-        source_record_count,
-        metadata,
-    );
-    insert_summary(db, &summary).await?;
-    Ok(summary)
-}
-
-async fn insert_summary(db: &Db, summary: &EngineSummary) -> Result<(), String> {
-    threads::ensure_thread_scope(
-        db,
-        &summary.tenant_id,
-        &summary.source_id,
-        &summary.thread_id,
+    let project_partition_key = project_partition_key
+        .ok_or_else(|| "summary has no canonical project partition".to_string())?;
+    if project_partition_key != expected_project_partition_key {
+        return Err("summary project partition does not match verified scope".to_string());
+    }
+    let mut summary = decode::<EngineSummary>(data)?;
+    let covered_rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT record.data FROM engine_summary_record_coverage coverage \
+         JOIN engine_records record ON record.tenant_id=coverage.tenant_id \
+          AND record.source_id=coverage.source_id AND record.id=coverage.record_id \
+         WHERE coverage.tenant_id=$1 AND coverage.source_id=$2 AND coverage.summary_id=$3 \
+          AND coverage.status='active' AND record.recall_eligible FOR UPDATE OF record",
+    )
+    .bind(tenant)
+    .bind(source)
+    .bind(summary_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    let records = covered_rows
+        .into_iter()
+        .map(decode::<EngineRecord>)
+        .collect::<Result<Vec<_>, _>>()?;
+    let pending_tokens = records
+        .iter()
+        .map(crate::repositories::records::estimate_pending_record_tokens)
+        .sum::<i64>();
+    let now = now_rfc3339();
+    for mut record in records.iter().cloned() {
+        record.summary_status = "pending".to_string();
+        record.summary_id = None;
+        record.summarized_at = None;
+        sqlx::query(
+            "UPDATE engine_records SET summary_status='pending',summary_id=NULL, \
+             summary_job_run_id=NULL,summary_started_at=NULL,data=$4 \
+             WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND recall_eligible",
+        )
+        .bind(tenant)
+        .bind(source)
+        .bind(&record.id)
+        .bind(json(&record)?)
+        .execute(&mut **tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    sqlx::query(
+        "UPDATE engine_summary_record_coverage SET status='retired',retired_at=$4, \
+         retired_reason='summary_retired' WHERE tenant_id=$1 AND source_id=$2 \
+         AND summary_id=$3 AND status='active'",
+    )
+    .bind(tenant)
+    .bind(source)
+    .bind(summary_id)
+    .bind(timestamp(&now)?)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE engine_memory_derivation_edges SET status='retired',retired_at=$4, \
+         retired_reason='summary_retired' WHERE tenant_id=$1 AND source_id=$2 AND status='active' \
+         AND ((input_kind='thread_summary' AND input_id=$3) \
+           OR (output_kind='thread_summary' AND output_id=$3))",
+    )
+    .bind(tenant)
+    .bind(source)
+    .bind(summary_id)
+    .bind(timestamp(&now)?)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    crate::repositories::memory_facts::retire_output(
+        tx,
+        tenant,
+        source,
+        "thread_summary",
+        summary_id,
     )
     .await?;
-    sqlx::query("INSERT INTO engine_summaries(id,tenant_id,source_id,thread_id,subject_id,summary_type,level,source_digest,status,rollup_status,subject_memory_summarized,rollup_dispatch_pending,rollup_dispatch_version,rollup_dispatch_requested_at,subject_memory_source_dispatch_pending,subject_memory_source_dispatch_version,subject_memory_source_dispatch_requested_at,created_at,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,1,$12,true,1,$12,$12,$13,$14)")
-        .bind(&summary.id).bind(&summary.tenant_id).bind(&summary.source_id).bind(&summary.thread_id).bind(&summary.subject_id).bind(&summary.summary_type)
-        .bind(summary.level).bind(&summary.source_digest).bind(&summary.status).bind(&summary.rollup_status).bind(summary.subject_memory_summarized)
-        .bind(timestamp(&summary.created_at)?).bind(timestamp(&summary.updated_at)?).bind(json(summary)?)
-        .execute(db).await.map(|_|()).map_err(|e|e.to_string())
-}
-
-async fn upsert_summary_row(
-    db: &Db,
-    summary: &EngineSummary,
-    increment_dispatch: bool,
-) -> Result<(), String> {
-    let rollup = summary.status == "done" && summary.rollup_status == "pending";
-    let subject = summary.status == "done" && summary.subject_memory_summarized == 0;
-    let result = sqlx::query("INSERT INTO engine_summaries(id,tenant_id,source_id,thread_id,subject_id,summary_type,level,source_digest,status,rollup_status,subject_memory_summarized,rollup_dispatch_pending,rollup_dispatch_version,rollup_dispatch_requested_at,subject_memory_source_dispatch_pending,subject_memory_source_dispatch_version,subject_memory_source_dispatch_requested_at,created_at,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CASE WHEN $12 THEN 1 ELSE 0 END,CASE WHEN $12 THEN now() ELSE NULL END,$13,CASE WHEN $13 THEN 1 ELSE 0 END,CASE WHEN $13 THEN now() ELSE NULL END,$14,$15,$16) ON CONFLICT(tenant_id,source_id,id) DO UPDATE SET subject_id=EXCLUDED.subject_id,summary_type=EXCLUDED.summary_type,level=EXCLUDED.level,source_digest=EXCLUDED.source_digest,status=EXCLUDED.status,rollup_status=EXCLUDED.rollup_status,subject_memory_summarized=EXCLUDED.subject_memory_summarized,rollup_dispatch_pending=$12,rollup_dispatch_version=engine_summaries.rollup_dispatch_version+CASE WHEN $12 THEN 1 ELSE 0 END,rollup_dispatch_requested_at=CASE WHEN $12 THEN now() ELSE engine_summaries.rollup_dispatch_requested_at END,rollup_dispatch_last_error=CASE WHEN $12 THEN NULL ELSE engine_summaries.rollup_dispatch_last_error END,subject_memory_source_dispatch_pending=$13,subject_memory_source_dispatch_version=engine_summaries.subject_memory_source_dispatch_version+CASE WHEN $13 THEN 1 ELSE 0 END,subject_memory_source_dispatch_requested_at=CASE WHEN $13 THEN now() ELSE engine_summaries.subject_memory_source_dispatch_requested_at END,subject_memory_source_dispatch_last_error=CASE WHEN $13 THEN NULL ELSE engine_summaries.subject_memory_source_dispatch_last_error END,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data WHERE engine_summaries.thread_id=EXCLUDED.thread_id")
-        .bind(&summary.id).bind(&summary.tenant_id).bind(&summary.source_id).bind(&summary.thread_id).bind(&summary.subject_id).bind(&summary.summary_type)
-        .bind(summary.level).bind(&summary.source_digest).bind(&summary.status).bind(&summary.rollup_status).bind(summary.subject_memory_summarized)
-        .bind(rollup&&increment_dispatch).bind(subject&&increment_dispatch).bind(timestamp(&summary.created_at)?).bind(timestamp(&summary.updated_at)?).bind(json(summary)?)
-        .execute(db).await.map_err(|e|e.to_string())?;
-    if result.rows_affected() == 0 {
-        return Err("summary id is already owned by another tenant, source, or thread".to_string());
+    summary.status = "retired".to_string();
+    summary.updated_at = now.clone();
+    sqlx::query(
+        "UPDATE engine_summaries SET status='retired',recall_eligible=false,retired_at=$5, \
+         retired_reason='business_delete',updated_at=$5,data=$6 WHERE tenant_id=$1 \
+         AND source_id=$2 AND thread_id=$3 AND id=$4 AND recall_eligible",
+    )
+    .bind(tenant)
+    .bind(source)
+    .bind(thread_id)
+    .bind(summary_id)
+    .bind(timestamp(&now)?)
+    .bind(json(&summary)?)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if !records.is_empty() {
+        crate::repositories::thread_partitions::lock_or_create(
+            tx,
+            tenant,
+            source,
+            thread_id,
+            project_partition_key.as_str(),
+        )
+        .await?;
+        let version = crate::repositories::thread_partitions::apply_ingest_delta(
+            tx,
+            tenant,
+            source,
+            thread_id,
+            project_partition_key.as_str(),
+            records.len() as i64,
+            pending_tokens,
+            true,
+        )
+        .await?;
+        if let Some(version) = version {
+            crate::repositories::derived_events::enqueue_thread_summary_request(
+                tx,
+                tenant,
+                source,
+                thread_id,
+                project_partition_key.as_str(),
+                version,
+            )
+            .await?;
+        }
     }
-    Ok(())
+    Ok(records.len())
 }

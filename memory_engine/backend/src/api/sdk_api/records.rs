@@ -32,9 +32,21 @@ pub async fn batch_sync_records(
     Json(req): Json<SdkBatchSyncRecordsRequest>,
 ) -> Result<Json<BatchSyncRecordsResponse>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
+    crate::api::runtime_context::verify(
+        &state,
+        req.runtime_context_assertion.as_str(),
+        req.tenant_id.as_str(),
+        auth.source_id(),
+        thread_id.as_str(),
+        req.project_partition_key.as_str(),
+        "record_ingest",
+    )
+    .await?;
     let direct = BatchSyncRecordsRequest {
         tenant_id: req.tenant_id,
         source_id: auth.source_id().to_string(),
+        project_partition_key: req.project_partition_key,
+        runtime_context_assertion: req.runtime_context_assertion,
         records: req
             .records
             .into_iter()
@@ -53,20 +65,10 @@ pub async fn batch_sync_records(
             })
             .collect(),
     };
-    let partition_dispatch_v2 = state.feature_flags.snapshot().is_enabled_for(
-        memory_engine_sdk::MEMORY_PARTITION_DISPATCH_V2_FLAG,
-        direct.tenant_id.as_str(),
-        direct.source_id.as_str(),
-    );
-    let upserted_count = records::batch_sync_records_with_partition_dispatch(
-        &state.config,
-        &state.pool,
-        thread_id.as_str(),
-        &direct,
-        partition_dispatch_v2,
-    )
-    .await
-    .map_err(internal_error)?;
+    let upserted_count =
+        records::batch_sync_records(&state.config, &state.pool, thread_id.as_str(), &direct)
+            .await
+            .map_err(internal_error)?;
     Ok(Json(BatchSyncRecordsResponse {
         thread_id,
         received_count: direct.records.len(),

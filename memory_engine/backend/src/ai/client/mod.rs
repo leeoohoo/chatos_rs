@@ -115,6 +115,45 @@ impl AiClient {
         input_chars: Option<usize>,
         title_present: bool,
     ) -> Result<String, AiGenerateTextError> {
+        self.generate_once(
+            system_prompt,
+            user_prompt,
+            max_tokens,
+            input_chars,
+            title_present,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn generate_memory_payload_once(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        max_tokens: Option<i64>,
+        input_chars: Option<usize>,
+        response_format: &serde_json::Value,
+    ) -> Result<String, AiGenerateTextError> {
+        self.generate_once(
+            system_prompt,
+            user_prompt,
+            max_tokens,
+            input_chars,
+            true,
+            Some(response_format),
+        )
+        .await
+    }
+
+    async fn generate_once(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        max_tokens: Option<i64>,
+        input_chars: Option<usize>,
+        title_present: bool,
+        response_format: Option<&serde_json::Value>,
+    ) -> Result<String, AiGenerateTextError> {
         let api_key = self
             .api_key
             .as_deref()
@@ -158,6 +197,7 @@ impl AiClient {
             user_prompt,
             requested_max_tokens,
             effective_temperature,
+            response_format,
         )
         .await
         .map_err(|err| {

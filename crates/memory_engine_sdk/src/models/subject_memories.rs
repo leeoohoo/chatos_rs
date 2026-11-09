@@ -20,6 +20,10 @@ pub struct EngineSubjectMemory {
     pub confidence: Option<f64>,
     pub last_seen_at: Option<String>,
     pub metadata: Option<Value>,
+    #[serde(default)]
+    pub payload_schema: Option<String>,
+    #[serde(default)]
+    pub structured_payload: Option<Value>,
     #[serde(default = "default_active")]
     pub status: String,
     #[serde(default = "default_pending")]

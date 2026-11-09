@@ -25,10 +25,7 @@ pub(super) async fn create_rollup_job_run(
             thread_id: Some(thread_id.to_string()),
             subject_id: Some(subject_id.to_string()),
             thread_label: None,
-            metadata: Some(serde_json::json!({
-                "compat_job_type": "summary_rollup",
-                "compat_trigger_type": "manual_rollup",
-            })),
+            metadata: Some(serde_json::json!({"pipeline": "thread_rollup"})),
         },
     )
     .await
@@ -49,8 +46,6 @@ pub(super) fn done_metadata(
     trigger_reason: &str,
 ) -> serde_json::Value {
     let mut value = serde_json::json!({
-        "compat_job_type": "summary_rollup",
-        "compat_trigger_type": "manual_rollup",
         "selected_count": selected_count,
         "marked_count": marked_count,
         "pending_after_count": 0,
@@ -70,8 +65,6 @@ pub(super) fn failed_metadata(
     trigger_reason: Option<&str>,
 ) -> serde_json::Value {
     let mut value = serde_json::json!({
-        "compat_job_type": "summary_rollup",
-        "compat_trigger_type": "manual_rollup",
         "marked_count": marked_count,
         "pending_after_count": 0,
         "processed_count": processed_count,

@@ -17,23 +17,27 @@ use super::super::{
 };
 
 impl MemoryEngineClient {
-    pub async fn batch_sync_records(
+    pub async fn ingest_thread_records(
         &self,
         thread_id: &str,
         req: &SdkBatchSyncRecordsRequest,
     ) -> Result<BatchSyncRecordsResponse, String> {
         match &self.auth {
             AuthMode::Direct { source_id } => {
-                let source_id = require_direct_source_id(source_id, "batch_sync_records")?;
+                let source_id = require_direct_source_id(source_id, "ingest_thread_records")?;
                 #[derive(Serialize)]
                 struct DirectBatchRequest<'a> {
                     tenant_id: &'a str,
                     source_id: &'a str,
+                    project_partition_key: &'a str,
+                    runtime_context_assertion: &'a str,
                     records: &'a [crate::models::UpsertRecordInput],
                 }
                 let direct = DirectBatchRequest {
                     tenant_id: req.tenant_id.as_str(),
                     source_id,
+                    project_partition_key: req.project_partition_key.as_str(),
+                    runtime_context_assertion: req.runtime_context_assertion.as_str(),
                     records: req.records.as_slice(),
                 };
                 self.send_json(
@@ -58,14 +62,6 @@ impl MemoryEngineClient {
                 .await
             }
         }
-    }
-
-    pub async fn ingest_thread_records(
-        &self,
-        thread_id: &str,
-        req: &SdkBatchSyncRecordsRequest,
-    ) -> Result<BatchSyncRecordsResponse, String> {
-        self.batch_sync_records(thread_id, req).await
     }
 
     pub async fn delete_thread_records(

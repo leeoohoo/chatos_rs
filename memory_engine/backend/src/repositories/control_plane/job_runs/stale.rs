@@ -7,13 +7,15 @@ use tracing::warn;
 use crate::db::Db;
 use crate::models::{now_rfc3339, EngineJobRun};
 use crate::repositories::postgres::{decode, json, optional_timestamp};
-use crate::repositories::threads;
+use crate::repositories::thread_partitions;
 
-use super::super::common::{JOB_TYPE_THREAD_REPAIR, STALE_THREAD_REPAIR_JOB_TIMEOUT_SECS};
+use super::super::common::{
+    LEGACY_JOB_TYPE_THREAD_REPAIR, STALE_LEGACY_REPAIR_JOB_TIMEOUT_SECS,
+};
 
 fn stale_timeout_secs(job: &EngineJobRun, default_timeout_secs: i64) -> i64 {
-    if job.job_type == JOB_TYPE_THREAD_REPAIR {
-        STALE_THREAD_REPAIR_JOB_TIMEOUT_SECS
+    if job.job_type == LEGACY_JOB_TYPE_THREAD_REPAIR {
+        STALE_LEGACY_REPAIR_JOB_TIMEOUT_SECS
     } else {
         default_timeout_secs.max(30)
     }
@@ -81,14 +83,12 @@ pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i
                     job.source_id.as_deref(),
                     job.thread_id.as_deref(),
                 ) {
-                    let _ = threads::release_summary_slot(
+                    let _ = thread_partitions::release_summary_claim_by_job(
                         db,
                         tenant_id,
                         source_id,
                         thread_id,
                         job.id.as_str(),
-                        0,
-                        0,
                     )
                     .await;
                 }
@@ -98,7 +98,7 @@ pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i
                     job.source_id.as_deref(),
                     job.thread_id.as_deref(),
                 ) {
-                    let _ = threads::release_rollup_slot(
+                    let _ = thread_partitions::release_rollup_claim_by_job(
                         db,
                         tenant_id,
                         source_id,

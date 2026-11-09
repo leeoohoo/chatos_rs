@@ -6,7 +6,7 @@ use crate::models::{CreateEngineJobRunRequest, EngineJobRun, FinishEngineJobRunR
 use crate::repositories::control_plane as cp_repo;
 use serde::{Deserialize, Serialize};
 
-use super::super::PendingRecordSelection;
+use super::super::{PendingRecordSelection, SummaryJobSettings};
 
 pub(crate) const THREAD_DIRECT_TRIGGER: &str = "thread_direct";
 
@@ -56,7 +56,7 @@ pub(super) async fn create_thread_summary_job_run(
     thread_id: &str,
     subject_id: &str,
     pending_before_count: i64,
-    policy_token_limit: i64,
+    settings: &SummaryJobSettings,
     trigger_type: &str,
     selection: &PendingRecordSelection,
 ) -> Result<EngineJobRun, String> {
@@ -72,7 +72,7 @@ pub(super) async fn create_thread_summary_job_run(
             thread_label: None,
             metadata: Some(start_metadata(
                 pending_before_count,
-                policy_token_limit,
+                settings,
                 selection,
             )),
         },
@@ -90,14 +90,16 @@ pub(super) async fn finish_thread_summary_job_run(
 
 pub(super) fn start_metadata(
     pending_before_count: i64,
-    policy_token_limit: i64,
+    settings: &SummaryJobSettings,
     selection: &PendingRecordSelection,
 ) -> serde_json::Value {
     serde_json::json!({
-        "compat_job_type": "summary_l0",
-        "compat_trigger_type": "manual_session",
         "pending_before_count": pending_before_count,
-        "policy_token_limit": policy_token_limit,
+        "policy_max_source_batch_tokens": settings.source_batch_token_limit,
+        "policy_max_model_input_tokens": settings.token_limit,
+        "policy_max_leaf_tokens": settings.max_leaf_tokens,
+        "policy_max_merge_rounds": settings.max_merge_rounds,
+        "project_partition_key": super::execution::project_partition_key(selection),
         "frozen_selection": FrozenThreadSummarySelection::from_selection(selection),
     })
 }
@@ -108,8 +110,6 @@ pub(super) fn noop_metadata(
     skipped_count: usize,
 ) -> serde_json::Value {
     serde_json::json!({
-        "compat_job_type": "summary_l0",
-        "compat_trigger_type": "manual_session",
         "pending_before_count": pending_before_count,
         "selected_count": 0,
         "marked_count": skipped_count,
@@ -128,8 +128,6 @@ pub(super) fn failed_metadata(
     output_count: i64,
 ) -> serde_json::Value {
     let mut value = serde_json::json!({
-        "compat_job_type": "summary_l0",
-        "compat_trigger_type": "manual_session",
         "pending_before_count": pending_before_count,
         "processed_count": processed_count,
         "output_count": output_count,
@@ -158,8 +156,6 @@ pub(super) fn done_metadata(
     summary_id: &str,
 ) -> serde_json::Value {
     serde_json::json!({
-        "compat_job_type": "summary_l0",
-        "compat_trigger_type": "manual_session",
         "pending_before_count": pending_before_count,
         "selected_count": selected_count,
         "selected_token_count": selected_token_count,
@@ -173,7 +169,7 @@ pub(super) fn done_metadata(
 #[cfg(test)]
 mod tests {
     use crate::models::EngineRecord;
-    use crate::services::summary::PendingRecordSelection;
+    use crate::services::summary::{PendingRecordSelection, SummaryJobSettings};
 
     use super::{start_metadata, FrozenThreadSummarySelection};
 
@@ -205,7 +201,15 @@ mod tests {
             oversized_token_count: 654,
             project_subject_id: Some("project:p-1".to_string()),
         };
-        let metadata = start_metadata(3, 12_345, &selection);
+        let settings = SummaryJobSettings {
+            token_limit: 12_345,
+            source_batch_token_limit: 6_789,
+            max_leaf_tokens: 4_096,
+            max_merge_rounds: 7,
+            cloud_owner_entity_id: None,
+            cloud_resume_kind: None,
+        };
+        let metadata = start_metadata(3, &settings, &selection);
 
         let frozen = FrozenThreadSummarySelection::from_metadata(Some(&metadata))
             .expect("frozen selection should decode");

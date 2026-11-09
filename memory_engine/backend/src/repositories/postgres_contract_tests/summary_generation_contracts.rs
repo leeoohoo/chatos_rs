@@ -120,12 +120,41 @@ async fn claimed_generation(
 }
 
 fn output<'a>(
+    generation: &'a GenerationCommit,
     thread_id: &'a str,
     subject: &'a str,
     level: i64,
     profile: &'a str,
     text: &'a str,
 ) -> ThreadSummaryGenerationOutput<'a> {
+    let source_refs = generation
+        .input_manifest
+        .get("inputs")
+        .and_then(serde_json::Value::as_array)
+        .expect("generation inputs")
+        .iter()
+        .map(|input| {
+            input
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .expect("input id")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    let payload = Box::leak(Box::new(
+        crate::models::structured_payload::build_generated_payload(
+            generation.generation_id.as_str(),
+            crate::models::structured_payload::GeneratedPayloadScope {
+                kind: "thread",
+                subject_id: subject,
+                project_partition_key: Some(PARTITION),
+            },
+            text,
+            &source_refs,
+            None,
+        )
+        .expect("test summary payload"),
+    ));
     ThreadSummaryGenerationOutput {
         thread_id,
         subject_id: subject,
@@ -140,8 +169,8 @@ fn output<'a>(
         generation_reason: "threshold",
         generation_profile: profile,
         project_partition_key: PARTITION,
-        payload_schema: Some("thread_summary_v2"),
-        structured_payload: None,
+        payload_schema: crate::models::structured_payload::MEMORY_PAYLOAD_SCHEMA,
+        structured_payload: payload,
         pipeline_revision: PIPELINE,
     }
 }
@@ -172,14 +201,28 @@ async fn thread_summary_generation_commit_is_idempotent_and_persists_frozen_iden
     let summary = crate::repositories::generation_output_commits::commit_thread_summary_generation(
         &pool,
         &generation,
-        output(&thread_id, &subject, 0, PROFILE, "first summary"),
+        output(
+            &generation,
+            &thread_id,
+            &subject,
+            0,
+            PROFILE,
+            "first summary",
+        ),
     )
     .await
     .expect("commit generated thread summary");
     let replay = crate::repositories::generation_output_commits::commit_thread_summary_generation(
         &pool,
         &generation,
-        output(&thread_id, &subject, 0, PROFILE, "ignored replay"),
+        output(
+            &generation,
+            &thread_id,
+            &subject,
+            0,
+            PROFILE,
+            "ignored replay",
+        ),
     )
     .await
     .expect("replay generated thread summary callback");
@@ -278,7 +321,14 @@ async fn summary_generation_scope_constraint_rolls_back_wrong_thread_then_allows
     let error = crate::repositories::generation_output_commits::commit_thread_summary_generation(
         &pool,
         &generation,
-        output(&wrong_thread, &subject, 0, PROFILE, "wrong thread"),
+        output(
+            &generation,
+            &wrong_thread,
+            &subject,
+            0,
+            PROFILE,
+            "wrong thread",
+        ),
     )
     .await
     .expect_err("database rejects summary output outside job thread");
@@ -308,7 +358,14 @@ async fn summary_generation_scope_constraint_rolls_back_wrong_thread_then_allows
     let summary = crate::repositories::generation_output_commits::commit_thread_summary_generation(
         &pool,
         &generation,
-        output(&expected_thread, &subject, 0, PROFILE, "correct thread"),
+        output(
+            &generation,
+            &expected_thread,
+            &subject,
+            0,
+            PROFILE,
+            "correct thread",
+        ),
     )
     .await
     .expect("retry summary commit after scope rollback");
@@ -342,7 +399,7 @@ async fn thread_rollup_generation_requires_rollup_kind_and_matching_frozen_confi
         crate::repositories::generation_output_commits::commit_thread_summary_generation(
             &pool,
             &generation,
-            output(&thread_id, &subject, 1, PROFILE, "rollup"),
+            output(&generation, &thread_id, &subject, 1, PROFILE, "rollup"),
         )
         .await
         .expect_err("rollup callback cannot change frozen profile");
@@ -350,7 +407,14 @@ async fn thread_rollup_generation_requires_rollup_kind_and_matching_frozen_confi
     let rollup = crate::repositories::generation_output_commits::commit_thread_summary_generation(
         &pool,
         &generation,
-        output(&thread_id, &subject, 1, rollup_profile, "rollup"),
+        output(
+            &generation,
+            &thread_id,
+            &subject,
+            1,
+            rollup_profile,
+            "rollup",
+        ),
     )
     .await
     .expect("commit rollup generation");
@@ -369,13 +433,15 @@ async fn thread_l0_final_commit_atomically_finishes_records_partition_projection
     let subject = format!("agent:{suffix}");
     let record_id = format!("record-{suffix}");
     thread(&pool, &tenant, &source, &thread_id, &subject).await;
-    crate::repositories::records::batch_sync_records_with_partition_dispatch(
+    crate::repositories::records::batch_sync_records(
         &test_config("unused".to_string()),
         &pool,
         &thread_id,
         &crate::models::BatchSyncRecordsRequest {
             tenant_id: tenant.clone(),
             source_id: source.clone(),
+            project_partition_key: PARTITION.to_string(),
+            runtime_context_assertion: "repository-test".to_string(),
             records: vec![crate::models::UpsertRecordInput {
                 id: record_id.clone(),
                 external_record_id: None,
@@ -393,7 +459,6 @@ async fn thread_l0_final_commit_atomically_finishes_records_partition_projection
                 created_at: "2026-11-09T00:00:00Z".to_string(),
             }],
         },
-        true,
     )
     .await
     .expect("ingest L0 source record");
@@ -410,17 +475,6 @@ async fn thread_l0_final_commit_atomically_finishes_records_partition_projection
     .await
     .expect("load pending L0 partition");
     assert_eq!(pending.0, 1);
-    assert!(crate::repositories::thread_partitions::mark_ready(
-        &pool, &tenant, &source, &thread_id, PARTITION, pending.0, pending.1,
-    )
-    .await
-    .expect("mark L0 partition ready"));
-    assert!(crate::repositories::thread_partitions::cutover_to_v2(
-        &pool, &tenant, &source, &thread_id, PARTITION,
-    )
-    .await
-    .expect("cut over L0 partition"));
-
     let job = crate::repositories::control_plane::create_job_run(
         &pool,
         crate::models::CreateEngineJobRunRequest {
@@ -437,7 +491,7 @@ async fn thread_l0_final_commit_atomically_finishes_records_partition_projection
     .await
     .expect("create atomic L0 job");
     crate::repositories::thread_partitions::try_claim_summary(
-        &pool, &tenant, &source, &thread_id, PARTITION, "v2", &job.id, 300,
+        &pool, &tenant, &source, &thread_id, PARTITION, &job.id, 300,
     )
     .await
     .expect("claim v2 L0 partition")
@@ -486,7 +540,14 @@ async fn thread_l0_final_commit_atomically_finishes_records_partition_projection
     .await
     .expect("claim atomic L0 generation")
     .expect("atomic L0 generation claim");
-    let mut summary_output = output(&thread_id, &subject, 0, PROFILE, "atomic L0 summary");
+    let mut summary_output = output(
+        &generation,
+        &thread_id,
+        &subject,
+        0,
+        PROFILE,
+        "atomic L0 summary",
+    );
     summary_output.source_record_start_id = Some(record_id.clone());
     summary_output.source_record_end_id = Some(record_id.clone());
     summary_output.source_record_count = 1;
@@ -539,17 +600,6 @@ async fn thread_l0_final_commit_atomically_finishes_records_partition_projection
     .await
     .expect("load finalized L0 partition");
     assert_eq!(partition_state, (0, 0, "idle".to_string(), None));
-    let thread_state = sqlx::query_as::<_, (i64, i64, String)>(
-        "SELECT pending_record_count,pending_summary_tokens,summary_status FROM engine_threads \
-         WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
-    )
-    .bind(&tenant)
-    .bind(&source)
-    .bind(&thread_id)
-    .fetch_one(&pool)
-    .await
-    .expect("load finalized thread projection");
-    assert_eq!(thread_state, (0, 0, "idle".to_string()));
     let job_state = sqlx::query_as::<_, (String, i64, i64)>(
         "SELECT status,(data->>'success_count')::bigint,(data->>'output_count')::bigint \
          FROM engine_job_runs WHERE id=$1",
@@ -559,6 +609,232 @@ async fn thread_l0_final_commit_atomically_finishes_records_partition_projection
     .await
     .expect("load finalized L0 job");
     assert_eq!(job_state, ("done".to_string(), 1, 1));
+}
+
+#[tokio::test]
+async fn covered_range_resummarization_atomically_swaps_active_coverage_without_pending_gap() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("thread-{suffix}");
+    let subject = format!("agent:{suffix}");
+    let record_id = format!("record-{suffix}");
+    thread(&pool, &tenant, &source, &thread_id, &subject).await;
+    crate::repositories::records::batch_sync_records(
+        &test_config("unused".to_string()),
+        &pool,
+        &thread_id,
+        &crate::models::BatchSyncRecordsRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            project_partition_key: PARTITION.to_string(),
+            runtime_context_assertion: "repository-test".to_string(),
+            records: vec![crate::models::UpsertRecordInput {
+                id: record_id.clone(),
+                external_record_id: None,
+                role: "user".to_string(),
+                record_type: "message".to_string(),
+                content: "covered range source".to_string(),
+                structured_payload: None,
+                metadata: Some(json!({
+                    "conversation_turn_id": format!("turn-{suffix}"),
+                    "memory_project_id": "alpha"
+                })),
+                summary_status: None,
+                summary_id: None,
+                summarized_at: None,
+                created_at: "2026-11-09T00:00:00Z".to_string(),
+            }],
+        },
+    )
+    .await
+    .expect("ingest resummarization source");
+    let pending_tokens: i64 = sqlx::query_scalar(
+        "SELECT pending_summary_tokens FROM engine_thread_summary_partitions \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .bind(PARTITION)
+    .fetch_one(&pool)
+    .await
+    .expect("load resummarization partition");
+    let first_job = crate::repositories::control_plane::create_job_run(
+        &pool,
+        crate::models::CreateEngineJobRunRequest {
+            job_type: "summary".to_string(),
+            trigger_type: "database_worker".to_string(),
+            tenant_id: Some(tenant.clone()),
+            source_id: Some(source.clone()),
+            thread_id: Some(thread_id.clone()),
+            subject_id: Some(subject.clone()),
+            thread_label: None,
+            metadata: Some(json!({"phase":"running"})),
+        },
+    )
+    .await
+    .expect("create initial summary job");
+    crate::repositories::thread_partitions::try_claim_summary(
+        &pool, &tenant, &source, &thread_id, PARTITION, &first_job.id, 300,
+    )
+    .await
+    .expect("claim initial summary partition")
+    .expect("initial summary partition claim");
+    crate::repositories::records::claim_records_for_summary(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        std::slice::from_ref(&record_id),
+        &first_job.id,
+    )
+    .await
+    .expect("claim initial covered record");
+    let frozen_manifest = manifest(&record_id);
+    let frozen_config = config(PROFILE);
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let first_prepared = crate::repositories::generation_commits::prepare_generation(
+        &pool,
+        PrepareGeneration {
+            tenant_id: &tenant,
+            source_id: &source,
+            job_run_id: &first_job.id,
+            generation_step_key: "thread-l0:project:alpha:0",
+            generation_kind: "thread_summary",
+            input_digest: &digest,
+            input_manifest: &frozen_manifest,
+            config_snapshot: &frozen_config,
+            project_partition_key: Some(PARTITION),
+        },
+    )
+    .await
+    .expect("prepare initial summary generation");
+    let first_generation = crate::repositories::generation_commits::claim_generation(
+        &pool,
+        &tenant,
+        &source,
+        &first_prepared.generation_id,
+        "initial-summary-worker",
+        300,
+    )
+    .await
+    .expect("claim initial generation")
+    .expect("initial generation lease");
+    let mut first_output = output(
+        &first_generation,
+        &thread_id,
+        &subject,
+        0,
+        PROFILE,
+        "initial summary",
+    );
+    first_output.source_record_start_id = Some(record_id.clone());
+    first_output.source_record_end_id = Some(record_id.clone());
+    first_output.source_record_count = 1;
+    let first = crate::repositories::generation_output_commits::commit_thread_summary_generation_final(
+        &pool,
+        &first_generation,
+        first_output,
+        crate::repositories::generation_output_commits::ThreadL0GenerationFinalization {
+            record_ids: std::slice::from_ref(&record_id),
+            consumed_summary_tokens: pending_tokens,
+            job_result: crate::models::FinishEngineJobRunRequest {
+                status: "done".to_string(), input_count: 1, output_count: 1,
+                processed_count: 1, success_count: 1, error_count: 0,
+                metadata: Some(json!({"phase":"committed"})), error_message: None,
+            },
+        },
+    )
+    .await
+    .expect("commit initial covered summary");
+
+    let replacement_job = crate::repositories::control_plane::create_job_run(
+        &pool,
+        crate::models::CreateEngineJobRunRequest {
+            job_type: "summary".to_string(),
+            trigger_type: "covered_range_resummarize".to_string(),
+            tenant_id: Some(tenant.clone()), source_id: Some(source.clone()),
+            thread_id: Some(thread_id.clone()), subject_id: Some(subject.clone()),
+            thread_label: None, metadata: Some(json!({"previous_summary_id":first.id})),
+        },
+    )
+    .await
+    .expect("create resummarization job");
+    sqlx::query(
+        "INSERT INTO engine_covered_range_resummarization_claims(tenant_id,source_id,summary_id, \
+         job_run_id,status,lease_token,lease_expires_at,reason) \
+         VALUES($1,$2,$3,$4,'running',$5,now()+interval '5 minutes','correct stale summary')",
+    )
+    .bind(&tenant).bind(&source).bind(&first.id).bind(&replacement_job.id)
+    .bind(format!("resum-lease-{suffix}"))
+    .execute(&pool).await.expect("claim covered range for resummarization");
+    let replacement_prepared = crate::repositories::generation_commits::prepare_generation(
+        &pool,
+        PrepareGeneration {
+            tenant_id: &tenant, source_id: &source, job_run_id: &replacement_job.id,
+            generation_step_key: "thread-resummarize:project:alpha:0",
+            generation_kind: "thread_summary", input_digest: &digest,
+            input_manifest: &frozen_manifest, config_snapshot: &frozen_config,
+            project_partition_key: Some(PARTITION),
+        },
+    )
+    .await
+    .expect("prepare resummarization generation");
+    let replacement_generation = crate::repositories::generation_commits::claim_generation(
+        &pool, &tenant, &source, &replacement_prepared.generation_id,
+        "resummarization-worker", 300,
+    )
+    .await
+    .expect("claim resummarization generation")
+    .expect("resummarization generation lease");
+    let mut replacement_output = output(
+        &replacement_generation, &thread_id, &subject, 0, PROFILE, "corrected summary",
+    );
+    replacement_output.source_record_start_id = Some(record_id.clone());
+    replacement_output.source_record_end_id = Some(record_id.clone());
+    replacement_output.source_record_count = 1;
+    replacement_output.generation_reason = "resummarize";
+    let replacement = crate::repositories::generation_output_commits::commit_thread_summary_resummarization_final(
+        &pool,
+        &replacement_generation,
+        replacement_output,
+        crate::repositories::generation_output_commits::ThreadL0ResummarizationFinalization {
+            previous_summary_id: &first.id,
+            record_ids: std::slice::from_ref(&record_id),
+            job_result: crate::models::FinishEngineJobRunRequest {
+                status: "done".to_string(), input_count: 1, output_count: 1,
+                processed_count: 1, success_count: 1, error_count: 0,
+                metadata: Some(json!({"phase":"resummarized"})), error_message: None,
+            },
+        },
+    )
+    .await
+    .expect("atomically replace covered range");
+
+    let active: (i64, String) = sqlx::query_as(
+        "SELECT COUNT(*),MIN(summary_id) FROM engine_summary_record_coverage \
+         WHERE tenant_id=$1 AND source_id=$2 AND record_id=$3 AND status='active'",
+    )
+    .bind(&tenant).bind(&source).bind(&record_id)
+    .fetch_one(&pool).await.expect("load replacement active coverage");
+    assert_eq!(active, (1, replacement.id.clone()));
+    let prior: (String, bool, String) = sqlx::query_as(
+        "SELECT status,recall_eligible,retired_reason FROM engine_summaries \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(&tenant).bind(&source).bind(&first.id)
+    .fetch_one(&pool).await.expect("load superseded summary");
+    assert_eq!(prior, ("superseded".to_string(), false, "covered_range_resummarized".to_string()));
+    let record_summary: String = sqlx::query_scalar(
+        "SELECT summary_id FROM engine_records WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(&tenant).bind(&source).bind(&record_id)
+    .fetch_one(&pool).await.expect("load resummarized source record");
+    assert_eq!(record_summary, replacement.id);
 }
 
 #[tokio::test]
@@ -584,7 +860,14 @@ async fn thread_rollup_final_commit_atomically_marks_sources_releases_claim_and_
         PROFILE,
     )
     .await;
-    let mut source_output = output(&thread_id, &subject, 0, PROFILE, "rollup source");
+    let mut source_output = output(
+        &source_generation,
+        &thread_id,
+        &subject,
+        0,
+        PROFILE,
+        "rollup source",
+    );
     source_output.source_record_count = 1;
     let source_summary =
         crate::repositories::generation_output_commits::commit_thread_summary_generation(
@@ -602,17 +885,6 @@ async fn thread_rollup_final_commit_atomically_marks_sources_releases_claim_and_
     .await
     .expect("create rollup partition");
     tx.commit().await.expect("commit rollup partition setup");
-    assert!(crate::repositories::thread_partitions::mark_ready(
-        &pool, &tenant, &source, &thread_id, PARTITION, 0, 0,
-    )
-    .await
-    .expect("mark rollup partition ready"));
-    assert!(crate::repositories::thread_partitions::cutover_to_v2(
-        &pool, &tenant, &source, &thread_id, PARTITION,
-    )
-    .await
-    .expect("cut over rollup partition"));
-
     let job = crate::repositories::control_plane::create_job_run(
         &pool,
         crate::models::CreateEngineJobRunRequest {
@@ -629,7 +901,7 @@ async fn thread_rollup_final_commit_atomically_marks_sources_releases_claim_and_
     .await
     .expect("create atomic rollup job");
     crate::repositories::thread_partitions::try_claim_rollup(
-        &pool, &tenant, &source, &thread_id, PARTITION, "v2", &job.id, 300,
+        &pool, &tenant, &source, &thread_id, PARTITION, &job.id, 300,
     )
     .await
     .expect("claim v2 rollup partition")
@@ -677,7 +949,14 @@ async fn thread_rollup_final_commit_atomically_marks_sources_releases_claim_and_
     .await
     .expect("claim atomic rollup generation")
     .expect("atomic rollup generation claim");
-    let mut rollup_output = output(&thread_id, &subject, 1, rollup_profile, "atomic rollup");
+    let mut rollup_output = output(
+        &generation,
+        &thread_id,
+        &subject,
+        1,
+        rollup_profile,
+        "atomic rollup",
+    );
     rollup_output.source_record_start_id = Some(source_summary.id.clone());
     rollup_output.source_record_end_id = Some(source_summary.id.clone());
     rollup_output.source_record_count = 1;

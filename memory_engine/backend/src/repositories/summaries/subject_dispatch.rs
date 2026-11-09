@@ -24,7 +24,7 @@ pub async fn get_pending_subject_memory_source_dispatch(
     s: &str,
     id: &str,
 ) -> Result<Option<SubjectMemorySourceDispatchOutbox>, String> {
-    fetch(db,&format!("SELECT {COLS} FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND subject_memory_source_dispatch_pending"),t,s,id).await
+    fetch(db,&format!("SELECT {COLS} FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND recall_eligible AND subject_memory_source_dispatch_pending"),t,s,id).await
 }
 pub async fn get_subject_memory_source_dispatch_state(
     db: &Db,
@@ -35,7 +35,7 @@ pub async fn get_subject_memory_source_dispatch_state(
     fetch(
         db,
         &format!(
-            "SELECT {COLS} FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3"
+            "SELECT {COLS} FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND recall_eligible"
         ),
         t,
         s,
@@ -47,7 +47,7 @@ pub async fn claim_pending_subject_memory_source_dispatches(
     db: &Db,
     limit: i64,
 ) -> Result<Vec<SubjectMemorySourceDispatchOutbox>, String> {
-    sqlx::query_as::<_,SubjectMemorySourceDispatchOutbox>(sqlx::AssertSqlSafe(format!("WITH candidates AS (SELECT tenant_id,source_id,id FROM engine_summaries WHERE subject_memory_source_dispatch_pending ORDER BY subject_memory_source_dispatch_requested_at,updated_at LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE engine_summaries s SET subject_memory_source_dispatch_published_version=GREATEST(s.subject_memory_source_dispatch_published_version,s.subject_memory_source_dispatch_version),subject_memory_source_dispatch_published_at=now(),subject_memory_source_dispatch_last_error=NULL,subject_memory_source_dispatch_pending=false FROM candidates c WHERE s.tenant_id=c.tenant_id AND s.source_id=c.source_id AND s.id=c.id RETURNING {RETURNING_COLS}")))
+    sqlx::query_as::<_,SubjectMemorySourceDispatchOutbox>(sqlx::AssertSqlSafe(format!("WITH candidates AS (SELECT tenant_id,source_id,id FROM engine_summaries WHERE recall_eligible AND subject_memory_source_dispatch_pending ORDER BY subject_memory_source_dispatch_requested_at,updated_at LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE engine_summaries s SET subject_memory_source_dispatch_published_version=GREATEST(s.subject_memory_source_dispatch_published_version,s.subject_memory_source_dispatch_version),subject_memory_source_dispatch_published_at=now(),subject_memory_source_dispatch_last_error=NULL,subject_memory_source_dispatch_pending=false FROM candidates c WHERE s.tenant_id=c.tenant_id AND s.source_id=c.source_id AND s.id=c.id RETURNING {RETURNING_COLS}")))
         .bind(limit.clamp(1,10000)).fetch_all(db).await.map_err(|e|e.to_string())
 }
 pub async fn defer_subject_memory_source_dispatch(
@@ -61,7 +61,7 @@ pub async fn recover_stale_subject_memory_source_dispatches(
     stale_before: &str,
     limit: i64,
 ) -> Result<u64, String> {
-    let result=sqlx::query("WITH candidates AS (SELECT tenant_id,source_id,id FROM engine_summaries WHERE NOT subject_memory_source_dispatch_pending AND subject_memory_source_dispatch_consumed_version<subject_memory_source_dispatch_version AND subject_memory_source_dispatch_published_at<=$1 AND COALESCE(subject_memory_source_dispatch_dead_letter_version,-1)<subject_memory_source_dispatch_version ORDER BY subject_memory_source_dispatch_published_at,updated_at LIMIT $2 FOR UPDATE SKIP LOCKED) UPDATE engine_summaries s SET subject_memory_source_dispatch_pending=true,subject_memory_source_dispatch_last_error=NULL FROM candidates c WHERE s.tenant_id=c.tenant_id AND s.source_id=c.source_id AND s.id=c.id")
+    let result=sqlx::query("WITH candidates AS (SELECT tenant_id,source_id,id FROM engine_summaries WHERE recall_eligible AND NOT subject_memory_source_dispatch_pending AND subject_memory_source_dispatch_consumed_version<subject_memory_source_dispatch_version AND subject_memory_source_dispatch_published_at<=$1 AND COALESCE(subject_memory_source_dispatch_dead_letter_version,-1)<subject_memory_source_dispatch_version ORDER BY subject_memory_source_dispatch_published_at,updated_at LIMIT $2 FOR UPDATE SKIP LOCKED) UPDATE engine_summaries s SET subject_memory_source_dispatch_pending=true,subject_memory_source_dispatch_last_error=NULL FROM candidates c WHERE s.tenant_id=c.tenant_id AND s.source_id=c.source_id AND s.id=c.id")
         .bind(crate::repositories::postgres::timestamp(stale_before)?).bind(limit.clamp(1,10000)).execute(db).await.map_err(|e|e.to_string())?;
     Ok(result.rows_affected())
 }
@@ -85,7 +85,7 @@ pub async fn replay_dead_lettered_subject_memory_source_dispatch(
     id: &str,
     v: i64,
 ) -> Result<Option<SubjectMemorySourceDispatchOutbox>, String> {
-    sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE engine_summaries SET subject_memory_source_dispatch_version=subject_memory_source_dispatch_version+1,subject_memory_source_dispatch_requested_at=now(),subject_memory_source_dispatch_last_error=NULL,subject_memory_source_dispatch_pending=true,subject_memory_source_dispatch_dead_letter_version=NULL,subject_memory_source_dispatch_dead_lettered_at=NULL,subject_memory_source_dispatch_last_failed_at=NULL WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND status='done' AND subject_memory_source_dispatch_version=$4 AND subject_memory_source_dispatch_dead_letter_version=$4 AND subject_memory_source_dispatch_consumed_version>=$4 AND NOT subject_memory_source_dispatch_pending RETURNING {COLS}"))).bind(t).bind(s).bind(id).bind(v).fetch_optional(db).await.map_err(|e|e.to_string())
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE engine_summaries SET subject_memory_source_dispatch_version=subject_memory_source_dispatch_version+1,subject_memory_source_dispatch_requested_at=now(),subject_memory_source_dispatch_last_error=NULL,subject_memory_source_dispatch_pending=true,subject_memory_source_dispatch_dead_letter_version=NULL,subject_memory_source_dispatch_dead_lettered_at=NULL,subject_memory_source_dispatch_last_failed_at=NULL WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND recall_eligible AND status='done' AND subject_memory_source_dispatch_version=$4 AND subject_memory_source_dispatch_dead_letter_version=$4 AND subject_memory_source_dispatch_consumed_version>=$4 AND NOT subject_memory_source_dispatch_pending RETURNING {COLS}"))).bind(t).bind(s).bind(id).bind(v).fetch_optional(db).await.map_err(|e|e.to_string())
 }
 async fn fetch(
     db: &Db,
@@ -108,7 +108,7 @@ async fn update(
     set: &str,
     error: Option<&str>,
 ) -> Result<bool, String> {
-    let q=format!("UPDATE engine_summaries SET {set} WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND subject_memory_source_dispatch_version>=$4");
+    let q=format!("UPDATE engine_summaries SET {set} WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND recall_eligible AND subject_memory_source_dispatch_version>=$4");
     let mut query = sqlx::query(sqlx::AssertSqlSafe(q))
         .bind(&e.tenant_id)
         .bind(&e.source_id)

@@ -2,10 +2,12 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::models::{EngineRecord, EngineSummary};
-use crate::services::ai_pipeline::SummaryBuildResult;
 
 pub(crate) fn record_to_summary_block(item: &EngineRecord) -> String {
-    let mut parts = vec![format!("[{}][{}]", item.created_at, item.role)];
+    let mut parts = vec![format!(
+        "[record_id={}][created_at={}][role={}]",
+        item.id, item.created_at, item.role
+    )];
 
     if !item.content.trim().is_empty() {
         parts.push(item.content.clone());
@@ -48,33 +50,6 @@ pub(crate) fn record_to_summary_block(item: &EngineRecord) -> String {
     parts.join("\n")
 }
 
-pub(crate) fn decorate_generated_text(
-    build: SummaryBuildResult,
-    oversized_count: Option<usize>,
-    label: &str,
-) -> String {
-    let mut text = build.text;
-    if build.chunk_count > 1 {
-        text.push_str(&format!(
-            "\n\n[meta] This {} was merged from {} chunks.",
-            label, build.chunk_count
-        ));
-    }
-    if build.overflow_retry_count > 0 {
-        text.push_str(&format!(
-            "\n\n[meta] Context overflow retry count: {}.",
-            build.overflow_retry_count
-        ));
-    }
-    if let Some(count) = oversized_count.filter(|value| *value > 0) {
-        text.push_str(&format!(
-            "\n\n[meta] {} oversized source items were skipped or marked without merging because each one individually exceeded the token limit.",
-            count
-        ));
-    }
-    text
-}
-
 pub(crate) fn build_summary_digest(
     thread_id: &str,
     level: i64,
@@ -91,8 +66,12 @@ pub(crate) fn build_summary_digest(
 }
 
 pub(crate) fn summary_to_rollup_block(summary: &EngineSummary) -> String {
-    format!(
+    let mut rendered = format!(
         "[level={}][created_at={}][id={}]\n{}",
         summary.level, summary.created_at, summary.id, summary.summary_text
-    )
+    );
+    if let Some(payload) = summary.structured_payload.as_ref() {
+        rendered.push_str(format!("\n[structured_payload]\n{payload}").as_str());
+    }
+    rendered
 }

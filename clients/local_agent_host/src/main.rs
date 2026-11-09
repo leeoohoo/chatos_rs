@@ -72,7 +72,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "database has no parent"))?
         .join("HookData");
-    let (runner, memory_services) = match options.memory.as_ref() {
+    // The bootstrap process exists only to read persisted control-plane state before the
+    // Keychain-backed Memory credential has been restored. It cannot execute durable work, so
+    // construct the Memory runtime only for the credentialled worker process.
+    let active_memory = options
+        .workers_enabled
+        .then_some(options.memory.as_ref())
+        .flatten();
+    let (runner, memory_services) = match active_memory {
         Some(memory) => {
             let config = LocalMemoryRuntimeConfig::new(
                 memory.base_url.clone(),

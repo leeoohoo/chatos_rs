@@ -7,7 +7,7 @@ use axum::{extract::State, http::StatusCode, Extension, Json};
 use serde::{Deserialize, Serialize};
 use tracing::{warn, Level};
 
-use crate::repositories::{subject_memory_scopes, summaries, threads};
+use crate::repositories::{derived_events, subject_memory_scopes, summaries};
 use crate::state::AppState;
 
 const DLQ_SCAN_LIMIT: usize = 1_000;
@@ -19,6 +19,7 @@ pub struct ReplayQueueDeadLetterRequest {
     pub tenant_id: String,
     pub source_id: String,
     pub item_id: String,
+    pub project_partition_key: Option<String>,
     pub version: i64,
     pub event_type: Option<String>,
     pub reason: String,
@@ -31,6 +32,7 @@ pub struct ReplayQueueDeadLetterResponse {
     pub tenant_id: String,
     pub source_id: String,
     pub item_id: String,
+    pub project_partition_key: Option<String>,
     pub version: i64,
     pub event_type: Option<String>,
     pub event_enqueued: bool,
@@ -51,6 +53,7 @@ pub async fn replay_queue_dead_letter(
         tenant_id = request.tenant_id.as_str(),
         source_id = request.source_id.as_str(),
         item_id = request.item_id.as_str(),
+        project_partition_key = request.project_partition_key.as_deref().unwrap_or(""),
         version = request.version,
         event_type = request.event_type.as_deref().unwrap_or(""),
         reason = request.reason.as_str(),
@@ -75,6 +78,7 @@ pub async fn replay_queue_dead_letter(
         tenant_id: request.tenant_id,
         source_id: request.source_id,
         item_id: request.item_id,
+        project_partition_key: request.project_partition_key,
         version: request.version,
         event_type: request.event_type,
         event_enqueued: true,
@@ -113,31 +117,24 @@ async fn replay_summary(
     request: &ValidatedReplayRequest,
 ) -> Result<bool, (StatusCode, String)> {
     require_absent_event_type(request)?;
-    let event = threads::replay_dead_lettered_summary_dispatch(
+    let project_partition_key = request.project_partition_key.as_deref().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "summary replay requires project_partition_key".to_string(),
+        )
+    })?;
+    derived_events::rearm_dead_lettered_thread_summary(
         &state.pool,
         request.tenant_id.as_str(),
         request.source_id.as_str(),
         request.item_id.as_str(),
+        project_partition_key,
         request.version,
     )
     .await
     .map_err(internal_error)?
     .ok_or_else(|| ineligible(request))?;
-    crate::summary_queue::publish_rearmed_summary_dispatch(state, &event)
-        .await
-        .map_err(internal_error)?;
-    Ok(archive_result(
-        request,
-        crate::summary_queue::archive_summary_dead_letter(
-            &state.config,
-            request.tenant_id.as_str(),
-            request.source_id.as_str(),
-            request.item_id.as_str(),
-            request.version,
-            DLQ_SCAN_LIMIT,
-        )
-        .await,
-    ))
+    Ok(true)
 }
 
 async fn replay_rollup(
@@ -320,6 +317,7 @@ struct ValidatedReplayRequest {
     tenant_id: String,
     source_id: String,
     item_id: String,
+    project_partition_key: Option<String>,
     version: i64,
     event_type: Option<String>,
     reason: String,
@@ -334,6 +332,10 @@ impl TryFrom<ReplayQueueDeadLetterRequest> for ValidatedReplayRequest {
         let tenant_id = required_bounded(input.tenant_id, "tenant_id", 200)?;
         let source_id = required_bounded(input.source_id, "source_id", 200)?;
         let item_id = required_bounded(input.item_id, "item_id", 500)?;
+        let project_partition_key = input
+            .project_partition_key
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         let reason = input.reason.trim().to_string();
         if input.version < 1 || reason.len() < 8 || reason.len() > 500 {
             return Err((
@@ -352,6 +354,7 @@ impl TryFrom<ReplayQueueDeadLetterRequest> for ValidatedReplayRequest {
             tenant_id,
             source_id,
             item_id,
+            project_partition_key,
             version: input.version,
             event_type,
             reason,
@@ -403,6 +406,7 @@ mod tests {
             tenant_id: "tenant-1".to_string(),
             source_id: "source-1".to_string(),
             item_id: "thread-1".to_string(),
+            project_partition_key: Some("project:one".to_string()),
             version: 3,
             event_type: None,
             reason: "operator requested replay".to_string(),
@@ -420,6 +424,7 @@ mod tests {
             tenant_id: "tenant-1".to_string(),
             source_id: "source-1".to_string(),
             item_id: "scope-1".to_string(),
+            project_partition_key: None,
             version: 1,
             event_type: None,
             reason: "operator requested replay".to_string(),

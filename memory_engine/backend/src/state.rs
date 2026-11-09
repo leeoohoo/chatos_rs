@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use crate::config::AppConfig;
 use crate::db::Db;
-use crate::feature_flags::MemoryEngineFeatureState;
 use crate::models::{
     ComposeContextResponse, MemoryEngineComposeBaselineStats, MemoryEngineWorkerRuntimeStats,
 };
@@ -77,7 +76,6 @@ pub struct AppState {
     pub user_service_http: reqwest::Client,
     pub runtime_stats: Arc<MemoryEngineRuntimeStats>,
     pub pressure: MemoryEnginePressureState,
-    pub feature_flags: MemoryEngineFeatureState,
     pub cloud_agent_store: CloudAgentStateStore,
 }
 
@@ -107,11 +105,13 @@ mod tests {
             blocks: vec![crate::models::ComposeContextBlock {
                 block_type: "thread_summary".to_string(),
                 text: "x".repeat(400),
+                ..Default::default()
             }],
             recent_records: Vec::new(),
             meta: crate::models::ComposeContextMeta {
                 summary_count: 1,
                 recent_record_count: 0,
+                ..Default::default()
             },
         });
         let snapshot = stats.compose_baseline();

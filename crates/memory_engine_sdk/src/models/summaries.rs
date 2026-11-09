@@ -7,9 +7,8 @@ use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkListThreadSummariesRequest {
     pub tenant_id: String,
-    pub project_id: Option<String>,
-    #[serde(default)]
-    pub project_id_missing: bool,
+    pub project_partition_key: String,
+    pub runtime_context_assertion: String,
     pub summary_type: Option<String>,
     pub status: Option<String>,
     pub level: Option<i64>,
@@ -23,6 +22,8 @@ pub struct SdkListThreadSummariesRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkDeleteThreadSummaryRequest {
     pub tenant_id: String,
+    pub project_partition_key: String,
+    pub runtime_context_assertion: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,23 +43,31 @@ pub type SystemListSummariesByThreadLabelRequest = SdkListSummariesByThreadLabel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkRunThreadSummaryRequest {
     pub tenant_id: String,
+    pub project_partition_key: String,
+    pub runtime_context_assertion: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkRunThreadActiveSummaryRequest {
     pub tenant_id: String,
+    pub project_partition_key: String,
+    pub runtime_context_assertion: String,
     pub trigger_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkGetThreadActiveSummaryStatusRequest {
     pub tenant_id: String,
+    pub project_partition_key: String,
+    pub runtime_context_assertion: String,
     pub job_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SdkRunThreadRepairSummaryRequest {
+pub struct SdkRunPendingSummaryRebuildRequest {
     pub tenant_id: String,
+    pub project_partition_key: String,
+    pub runtime_context_assertion: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,7 +115,7 @@ pub struct RunThreadActiveSummaryResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunThreadRepairSummaryResponse {
+pub struct RunPendingSummaryRebuildResponse {
     pub thread_id: String,
     #[serde(default)]
     pub accepted: bool,
@@ -139,6 +148,10 @@ pub struct EngineSummary {
     pub subject_memory_summarized: i64,
     pub subject_memory_summarized_at: Option<String>,
     pub metadata: Option<Value>,
+    #[serde(default)]
+    pub payload_schema: Option<String>,
+    #[serde(default)]
+    pub structured_payload: Option<Value>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -152,12 +165,7 @@ pub struct SdkRunPendingSummariesRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdkRunPendingRollupsRequest {
     pub tenant_id: Option<String>,
-    pub summary_prompt: Option<String>,
     pub max_threads: Option<i64>,
-    pub token_limit: Option<i64>,
-    pub count_limit: Option<i64>,
-    pub keep_level0_count: Option<i64>,
-    pub max_level: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

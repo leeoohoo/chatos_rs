@@ -534,6 +534,13 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         credentialEnvironment: [String: String],
         workersEnabled: Bool
     ) async throws {
+        if workersEnabled, configuration.memoryBaseURL != nil,
+           credentialEnvironment["CHATOS_MEMORY_ACCESS_TOKEN"]?
+               .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            throw NativeLocalAgentHostError.invalidConfiguration(
+                "Local Agent Host Memory access token is required before workers start."
+            )
+        }
         let intent = LaunchIntent(
             ownerUserID: ownerUserID,
             credentialFingerprint: Self.fingerprint(credentialEnvironment),

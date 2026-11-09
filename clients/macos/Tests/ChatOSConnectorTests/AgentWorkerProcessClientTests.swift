@@ -846,8 +846,9 @@ private actor AgentWorkerTestMemory: AgentMemoryServicing {
         messages.append(contentsOf: entries)
     }
 
-    func compose() async throws -> AgentMemoryContext {
-        .init(blocks: [], recentRecords: messages.map {
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        _ = request
+        return .init(blocks: [], recentRecords: messages.map {
             .init(id: $0.id, message: $0.message)
         })
     }

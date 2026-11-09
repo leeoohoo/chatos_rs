@@ -108,6 +108,58 @@ pub async fn prometheus_metrics(State(state): State<Arc<AppState>>) -> impl Into
         )
         .as_str(),
     );
+    body.push_str(
+        "# HELP chatos_memory_reliability_audit_success Whether the latest reliability audit completed.\n\
+# TYPE chatos_memory_reliability_audit_success gauge\n\
+# HELP chatos_memory_reliability_findings Current reliability findings grouped by invariant and severity.\n\
+# TYPE chatos_memory_reliability_findings gauge\n\
+# HELP chatos_memory_reliability_backlog Current durable Memory Engine reliability backlog.\n\
+# TYPE chatos_memory_reliability_backlog gauge\n",
+    );
+    match crate::reliability_audit::run_reliability_audit(
+        &state.pool,
+        crate::reliability_audit::ReliabilityAuditScope {
+            tenant_id: None,
+            source_id: None,
+        },
+    )
+    .await
+    {
+        Ok(report) => {
+            body.push_str("chatos_memory_reliability_audit_success 1\n");
+            for alert in report.alerts {
+                body.push_str(
+                    format!(
+                        "chatos_memory_reliability_findings{{kind=\"{}\",severity=\"{}\"}} {}\n",
+                        alert.code, alert.severity, alert.count
+                    )
+                    .as_str(),
+                );
+            }
+            for (kind, value) in [
+                ("pending_records", report.baseline.pending_records),
+                ("pending_tokens", report.baseline.pending_tokens),
+                ("summary_dispatch_pending", report.baseline.summary_dispatch_pending),
+                ("summary_dispatch_dead_lettered", report.baseline.summary_dispatch_dead_lettered),
+                ("rollup_inputs_pending", report.baseline.rollup_inputs_pending),
+                ("rollup_dispatch_pending", report.baseline.rollup_dispatch_pending),
+                ("subject_memory_source_dispatch_pending", report.baseline.subject_memory_source_dispatch_pending),
+                ("subject_memory_rollup_pending", report.baseline.subject_memory_rollup_pending),
+                ("running_jobs", report.baseline.running_jobs),
+                ("failed_jobs_last_24h", report.baseline.failed_jobs_last_24h),
+                ("provider_overflow_outputs", report.baseline.outputs_with_provider_overflow_retry),
+            ] {
+                body.push_str(
+                    format!("chatos_memory_reliability_backlog{{kind=\"{kind}\"}} {value}\n")
+                        .as_str(),
+                );
+            }
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "Memory Engine reliability metrics audit failed");
+            body.push_str("chatos_memory_reliability_audit_success 0\n");
+        }
+    }
     for level in ["normal", "elevated", "critical"] {
         body.push_str(
             format!(

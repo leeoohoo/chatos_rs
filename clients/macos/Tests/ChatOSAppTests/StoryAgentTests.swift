@@ -607,6 +607,13 @@ final class StoryAgentTests: XCTestCase {
 }
 
 private actor ScriptedStoryModel: AgentModelClient {
+    nonisolated let memoryCapabilitySnapshot = try? AgentModelCapabilitySnapshot(
+        revision: "story-agent-test-capability-v1",
+        contextWindowTokens: 200_000,
+        outputReserveTokens: 30_000,
+        protocolOverheadEstimatorID: "responses-json-v1",
+        tokenizerID: nil
+    )
     var calls: [AgentToolCall]
     let delay: Bool
     var hasStarted = false
@@ -645,7 +652,8 @@ private actor StoryLoopMemory: AgentMemoryServicing {
     var entries: [AgentMemoryEntry] = []
     func ensureThread() async throws {}
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws { self.entries += entries }
-    func compose() async throws -> AgentMemoryContext {
-        .init(blocks: [], recentRecords: entries.map { .init(id: $0.id, message: $0.message) })
+    func compose(_ request: AgentMemoryComposeRequest) async throws -> AgentMemoryContext {
+        _ = request
+        return .init(blocks: [], recentRecords: entries.map { .init(id: $0.id, message: $0.message) })
     }
 }

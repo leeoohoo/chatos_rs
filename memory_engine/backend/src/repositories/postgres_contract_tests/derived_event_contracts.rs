@@ -60,14 +60,15 @@ async fn setup(
     let request = crate::models::BatchSyncRecordsRequest {
         tenant_id: tenant.clone(),
         source_id: source.clone(),
+        project_partition_key: "project:alpha".to_string(),
+        runtime_context_assertion: "repository-test".to_string(),
         records: vec![terminal_record(format!("record-{suffix}").as_str())],
     };
-    crate::repositories::records::batch_sync_records_with_partition_dispatch(
+    crate::repositories::records::batch_sync_records(
         &test_config("unused".to_string()),
         pool,
         &thread_id,
         &request,
-        true,
     )
     .await
     .expect("create derived event");
@@ -160,23 +161,11 @@ async fn derived_event_lease_takeover_and_publish_are_cas_guarded() {
 }
 
 #[tokio::test]
-async fn derived_event_consumer_is_authoritative_idempotent_and_monotonic() {
+async fn derived_event_consumer_is_idempotent_and_monotonic() {
     let Some(pool) = pool().await else {
         return;
     };
     let (tenant, source, thread_id, mut request) = setup(&pool).await;
-    let unauthorized = crate::repositories::derived_events::consume_thread_summary_request(
-        &pool,
-        &tenant,
-        &source,
-        &thread_id,
-        "project:alpha",
-        1,
-        "v2",
-    )
-    .await
-    .expect_err("non-authoritative consumer must fail closed");
-    assert!(unauthorized.contains("not authoritative"));
     assert!(
         crate::repositories::derived_events::consume_thread_summary_request(
             &pool,
@@ -185,7 +174,6 @@ async fn derived_event_consumer_is_authoritative_idempotent_and_monotonic() {
             &thread_id,
             "project:alpha",
             1,
-            "v1",
         )
         .await
         .expect("consume first version")
@@ -198,19 +186,17 @@ async fn derived_event_consumer_is_authoritative_idempotent_and_monotonic() {
             &thread_id,
             "project:alpha",
             1,
-            "v1",
         )
         .await
         .expect("repeat first version")
     );
 
     request.records[0] = terminal_record(format!("record-2-{}", Uuid::new_v4()).as_str());
-    crate::repositories::records::batch_sync_records_with_partition_dispatch(
+    crate::repositories::records::batch_sync_records(
         &test_config("unused".to_string()),
         &pool,
         &thread_id,
         &request,
-        true,
     )
     .await
     .expect("create second dispatch version");
@@ -222,7 +208,6 @@ async fn derived_event_consumer_is_authoritative_idempotent_and_monotonic() {
             &thread_id,
             "project:alpha",
             2,
-            "v1",
         )
         .await
         .expect("consume second version")
@@ -235,7 +220,6 @@ async fn derived_event_consumer_is_authoritative_idempotent_and_monotonic() {
             &thread_id,
             "project:alpha",
             1,
-            "v1",
         )
         .await
         .expect("ignore out-of-order old version")
@@ -260,26 +244,22 @@ async fn derived_event_dead_letter_rearm_preserves_history_and_advances_version(
     .expect("dead-letter derived event");
     assert_eq!(status.as_deref(), Some("dead_letter"));
 
-    let new_event_id = crate::repositories::derived_events::rearm_dead_lettered_thread_summary(
+    let new_event_id = crate::repositories::derived_events::rearm_dead_lettered_event(
         &pool,
         &tenant,
         &source,
-        &thread_id,
-        "project:alpha",
-        1,
+        &event.event_id,
     )
     .await
     .expect("rearm dead-letter")
     .expect("new rearm event");
     assert_ne!(new_event_id, event.event_id);
     assert!(
-        crate::repositories::derived_events::rearm_dead_lettered_thread_summary(
+        crate::repositories::derived_events::rearm_dead_lettered_event(
             &pool,
             &tenant,
             &source,
-            &thread_id,
-            "project:alpha",
-            1,
+            &event.event_id,
         )
         .await
         .expect("repeat rearm")

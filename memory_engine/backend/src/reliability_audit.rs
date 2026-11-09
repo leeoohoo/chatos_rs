@@ -82,10 +82,18 @@ pub struct ReliabilityAuditReport {
     pub scope: ReliabilityAuditScope,
     pub finding_count: usize,
     pub findings: Vec<ReliabilityAuditFinding>,
+    pub alerts: Vec<ReliabilityAlert>,
     pub baseline: ReliabilityAuditBaseline,
     pub source_contract_readiness: Vec<SourceContractReadiness>,
     pub runtime_readiness: RuntimeReadinessInventory,
     pub unavailable_baselines: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReliabilityAlert {
+    pub code: String,
+    pub severity: &'static str,
+    pub count: usize,
 }
 
 pub fn runtime_readiness_inventory() -> Result<RuntimeReadinessInventory, String> {
@@ -98,6 +106,7 @@ pub async fn run_reliability_audit(
     scope: ReliabilityAuditScope,
 ) -> Result<ReliabilityAuditReport, String> {
     let findings = load_findings(db, &scope).await?;
+    let alerts = build_alerts(&findings);
     let baseline = load_baseline(db, &scope).await?;
     let source_contract_readiness = load_source_contract_readiness(db, &scope).await?;
     Ok(ReliabilityAuditReport {
@@ -106,6 +115,7 @@ pub async fn run_reliability_audit(
         scope,
         finding_count: findings.len(),
         findings,
+        alerts,
         baseline,
         source_contract_readiness,
         runtime_readiness: runtime_readiness_inventory()?,
@@ -114,6 +124,28 @@ pub async fn run_reliability_audit(
             "generation replay identity does not exist before M1b",
         ],
     })
+}
+
+fn build_alerts(findings: &[ReliabilityAuditFinding]) -> Vec<ReliabilityAlert> {
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    for finding in findings {
+        *counts.entry(finding.finding_kind.clone()).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .map(|(code, count)| ReliabilityAlert {
+            severity: match code.as_str() {
+                "broken_active_coverage"
+                | "summarized_without_active_coverage"
+                | "broken_active_derivation_edge"
+                | "cross_project_rollup"
+                | "duplicate_ancestor_descendant_derivation" => "critical",
+                _ => "warning",
+            },
+            code,
+            count,
+        })
+        .collect()
 }
 
 async fn load_findings(
@@ -155,28 +187,87 @@ async fn load_source_contract_readiness(
 const FINDINGS_SQL: &str = r#"
 WITH record_rows AS (
     SELECT r.*,
-           CASE
-             WHEN NULLIF(BTRIM(r.data #>> '{metadata,memory_project_id}'),'') IS NULL THEN '__none__'
-             WHEN BTRIM(r.data #>> '{metadata,memory_project_id}') LIKE 'project:%'
-               THEN BTRIM(r.data #>> '{metadata,memory_project_id}')
-             ELSE 'project:' || BTRIM(r.data #>> '{metadata,memory_project_id}')
-           END AS partition_key
+           COALESCE(r.project_partition_key,'__none__') AS partition_key
       FROM engine_records r
      WHERE ($1::TEXT IS NULL OR r.tenant_id=$1)
        AND ($2::TEXT IS NULL OR r.source_id=$2)
 ), summary_rows AS (
     SELECT s.*,
            NULLIF(BTRIM(s.data->>'rollup_summary_id'),'') AS rollup_summary_id,
-           COALESCE(
-             NULLIF(BTRIM(s.data #>> '{metadata,project_subject_id}'),''),
-             NULLIF(BTRIM(s.data #>> '{metadata,project_id}'),''),
-             NULLIF(BTRIM(s.data #>> '{metadata,projectId}'),''),
-             '__none__'
-           ) AS partition_key
+           COALESCE(s.project_partition_key,'__none__') AS partition_key
       FROM engine_summaries s
      WHERE ($1::TEXT IS NULL OR s.tenant_id=$1)
        AND ($2::TEXT IS NULL OR s.source_id=$2)
 ), findings AS (
+    SELECT 'summarized_without_active_coverage'::TEXT AS finding_kind,
+           r.tenant_id,r.source_id,r.thread_id,r.project_partition_key,
+           'record'::TEXT AS object_kind,r.id AS object_id,
+           ARRAY_REMOVE(ARRAY[r.summary_id],NULL) AS related_object_ids,
+           jsonb_build_object('summary_status',r.summary_status,'summary_id',r.summary_id) AS detail
+      FROM engine_records r
+     WHERE r.recall_eligible AND r.summary_status='summarized'
+       AND ($1::TEXT IS NULL OR r.tenant_id=$1) AND ($2::TEXT IS NULL OR r.source_id=$2)
+       AND NOT EXISTS (SELECT 1 FROM engine_summary_record_coverage coverage
+         WHERE coverage.tenant_id=r.tenant_id AND coverage.source_id=r.source_id
+           AND coverage.record_id=r.id AND coverage.status='active')
+    UNION ALL
+    SELECT 'broken_active_coverage',coverage.tenant_id,coverage.source_id,coverage.thread_id,
+           coverage.project_partition_key,'coverage',coverage.id,
+           ARRAY[coverage.summary_id,coverage.record_id],
+           jsonb_build_object('summary_id',coverage.summary_id,'record_id',coverage.record_id)
+      FROM engine_summary_record_coverage coverage
+ LEFT JOIN engine_summaries output ON output.tenant_id=coverage.tenant_id
+       AND output.source_id=coverage.source_id AND output.id=coverage.summary_id
+ LEFT JOIN engine_records input ON input.tenant_id=coverage.tenant_id
+       AND input.source_id=coverage.source_id AND input.id=coverage.record_id
+     WHERE coverage.status='active'
+       AND ($1::TEXT IS NULL OR coverage.tenant_id=$1)
+       AND ($2::TEXT IS NULL OR coverage.source_id=$2)
+       AND (output.id IS NULL OR NOT output.recall_eligible OR output.status<>'done'
+         OR input.id IS NULL OR NOT input.recall_eligible OR input.summary_id IS DISTINCT FROM coverage.summary_id
+         OR output.thread_id IS DISTINCT FROM coverage.thread_id
+         OR input.thread_id IS DISTINCT FROM coverage.thread_id
+         OR output.project_partition_key IS DISTINCT FROM coverage.project_partition_key
+         OR input.project_partition_key IS DISTINCT FROM coverage.project_partition_key)
+    UNION ALL
+    SELECT 'broken_active_derivation_edge',edge.tenant_id,edge.source_id,NULL,
+           edge.input_project_partition_key,'derivation_edge',edge.id,
+           ARRAY[edge.input_id,edge.output_id],
+           jsonb_build_object('input_kind',edge.input_kind,'output_kind',edge.output_kind,
+             'derivation_kind',edge.derivation_kind)
+      FROM engine_memory_derivation_edges edge
+     WHERE edge.status='active'
+       AND ($1::TEXT IS NULL OR edge.tenant_id=$1) AND ($2::TEXT IS NULL OR edge.source_id=$2)
+       AND (CASE edge.input_kind
+              WHEN 'thread_summary' THEN NOT EXISTS (SELECT 1 FROM engine_summaries s
+                WHERE s.tenant_id=edge.tenant_id AND s.source_id=edge.source_id AND s.id=edge.input_id
+                  AND s.recall_eligible AND s.status='done')
+              ELSE NOT EXISTS (SELECT 1 FROM engine_subject_memories m
+                WHERE m.tenant_id=edge.tenant_id AND m.source_id=edge.source_id AND m.id=edge.input_id
+                  AND m.recall_eligible AND m.status='active') END
+         OR CASE edge.output_kind
+              WHEN 'thread_summary' THEN NOT EXISTS (SELECT 1 FROM engine_summaries s
+                WHERE s.tenant_id=edge.tenant_id AND s.source_id=edge.source_id AND s.id=edge.output_id
+                  AND s.recall_eligible AND s.status='done')
+              ELSE NOT EXISTS (SELECT 1 FROM engine_subject_memories m
+                WHERE m.tenant_id=edge.tenant_id AND m.source_id=edge.source_id AND m.id=edge.output_id
+                  AND m.recall_eligible AND m.status='active') END)
+    UNION ALL
+    SELECT 'derived_event_dead_letter',event.tenant_id,event.source_id,NULL,
+           COALESCE(event.project_partition_key,'__none__'),'derived_event',event.event_id,
+           ARRAY[event.aggregate_id],jsonb_build_object('event_kind',event.event_kind,
+             'attempt_count',event.attempt_count,'last_error_code',event.last_error_code)
+      FROM engine_derived_event_outbox event WHERE event.status='dead_letter'
+       AND ($1::TEXT IS NULL OR event.tenant_id=$1) AND ($2::TEXT IS NULL OR event.source_id=$2)
+    UNION ALL
+    SELECT 'partition_rebuild_failed',backlog.tenant_id,backlog.source_id,backlog.thread_id,
+           backlog.project_partition_key,'thread_partition',
+           backlog.thread_id || ':' || backlog.rebuild_kind,ARRAY[]::TEXT[],
+           jsonb_build_object('rebuild_kind',backlog.rebuild_kind,'attempt_count',backlog.attempt_count,
+             'last_error',backlog.last_error)
+      FROM engine_partition_rebuild_backlog backlog WHERE backlog.status='failed'
+       AND ($1::TEXT IS NULL OR backlog.tenant_id=$1) AND ($2::TEXT IS NULL OR backlog.source_id=$2)
+    UNION ALL
     SELECT 'legacy_thread_repair'::TEXT AS finding_kind,
            s.tenant_id,s.source_id,s.thread_id,s.partition_key AS project_partition_key,
            'thread_summary'::TEXT AS object_kind,s.id AS object_id,
@@ -236,7 +327,8 @@ WITH record_rows AS (
             AND CARDINALITY(output.subject_memory_scope_keys)=0
             AND input.subject_memory_summarized>0 AND output.subject_memory_summarized>0)
 )
-SELECT finding_kind,tenant_id,source_id,thread_id,project_partition_key,object_kind,object_id,
+SELECT finding_kind,tenant_id,source_id,thread_id,
+       COALESCE(project_partition_key,'__none__') AS project_partition_key,object_kind,object_id,
        related_object_ids,detail
   FROM findings
  ORDER BY tenant_id,source_id,project_partition_key,finding_kind,object_id
@@ -244,11 +336,11 @@ SELECT finding_kind,tenant_id,source_id,thread_id,project_partition_key,object_k
 
 const BASELINE_SQL: &str = r#"
 SELECT
-  (SELECT COUNT(*) FROM engine_threads t WHERE ($1::TEXT IS NULL OR t.tenant_id=$1) AND ($2::TEXT IS NULL OR t.source_id=$2) AND t.pending_record_count>0)::BIGINT AS pending_threads,
-  (SELECT COALESCE(SUM(t.pending_record_count),0) FROM engine_threads t WHERE ($1::TEXT IS NULL OR t.tenant_id=$1) AND ($2::TEXT IS NULL OR t.source_id=$2))::BIGINT AS pending_records,
-  (SELECT COALESCE(SUM(t.pending_summary_tokens),0) FROM engine_threads t WHERE ($1::TEXT IS NULL OR t.tenant_id=$1) AND ($2::TEXT IS NULL OR t.source_id=$2))::BIGINT AS pending_tokens,
-  (SELECT COUNT(*) FROM engine_threads t WHERE ($1::TEXT IS NULL OR t.tenant_id=$1) AND ($2::TEXT IS NULL OR t.source_id=$2) AND t.summary_dispatch_pending)::BIGINT AS summary_dispatch_pending,
-  (SELECT COUNT(*) FROM engine_threads t WHERE ($1::TEXT IS NULL OR t.tenant_id=$1) AND ($2::TEXT IS NULL OR t.source_id=$2) AND t.summary_dispatch_dead_letter_version IS NOT NULL)::BIGINT AS summary_dispatch_dead_lettered,
+  (SELECT COUNT(DISTINCT (p.tenant_id,p.source_id,p.thread_id)) FROM engine_thread_summary_partitions p WHERE ($1::TEXT IS NULL OR p.tenant_id=$1) AND ($2::TEXT IS NULL OR p.source_id=$2) AND p.pending_record_count>0)::BIGINT AS pending_threads,
+  (SELECT COALESCE(SUM(p.pending_record_count),0) FROM engine_thread_summary_partitions p WHERE ($1::TEXT IS NULL OR p.tenant_id=$1) AND ($2::TEXT IS NULL OR p.source_id=$2))::BIGINT AS pending_records,
+  (SELECT COALESCE(SUM(p.pending_summary_tokens),0) FROM engine_thread_summary_partitions p WHERE ($1::TEXT IS NULL OR p.tenant_id=$1) AND ($2::TEXT IS NULL OR p.source_id=$2))::BIGINT AS pending_tokens,
+  (SELECT COUNT(*) FROM engine_thread_summary_partitions p WHERE ($1::TEXT IS NULL OR p.tenant_id=$1) AND ($2::TEXT IS NULL OR p.source_id=$2) AND p.summary_dispatch_pending)::BIGINT AS summary_dispatch_pending,
+  (SELECT COUNT(*) FROM engine_thread_summary_partitions p WHERE ($1::TEXT IS NULL OR p.tenant_id=$1) AND ($2::TEXT IS NULL OR p.source_id=$2) AND p.summary_dispatch_dead_letter_version IS NOT NULL)::BIGINT AS summary_dispatch_dead_lettered,
   (SELECT COUNT(*) FROM engine_summaries s WHERE ($1::TEXT IS NULL OR s.tenant_id=$1) AND ($2::TEXT IS NULL OR s.source_id=$2) AND s.status='done' AND s.rollup_status='pending')::BIGINT AS rollup_inputs_pending,
   (SELECT COUNT(*) FROM engine_summaries s WHERE ($1::TEXT IS NULL OR s.tenant_id=$1) AND ($2::TEXT IS NULL OR s.source_id=$2) AND s.rollup_dispatch_pending)::BIGINT AS rollup_dispatch_pending,
   (SELECT COUNT(*) FROM engine_summaries s WHERE ($1::TEXT IS NULL OR s.tenant_id=$1) AND ($2::TEXT IS NULL OR s.source_id=$2) AND s.subject_memory_source_dispatch_pending)::BIGINT AS subject_memory_source_dispatch_pending,
@@ -334,9 +426,11 @@ mod tests {
         );
         assert!(inventory.components.iter().all(|component| {
             !component.evidence.is_empty()
-                && !(component.source_unit_ready
-                    && component.runtime_assertion_ready
-                    && component.model_capability_ready)
+                && component.state == "ready"
+                && component.missing.is_empty()
+                && component.source_unit_ready
+                && component.runtime_assertion_ready
+                && component.model_capability_ready
         }));
     }
 

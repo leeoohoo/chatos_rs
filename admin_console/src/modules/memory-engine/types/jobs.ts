@@ -3,50 +3,15 @@
 
 export interface EngineJobPolicy {
   job_type: string;
-  enabled: boolean;
-  summary_prompt?: string | null;
-  summary_prompt_zh?: string | null;
-  summary_prompt_en?: string | null;
-  summary_prompt_language?: 'zh' | 'en';
-  rollup_summary_prompt?: string | null;
-  rollup_summary_prompt_zh?: string | null;
-  rollup_summary_prompt_en?: string | null;
-  rollup_summary_prompt_language?: 'zh' | 'en';
-  token_limit?: number | null;
-  interval_seconds?: number | null;
-  max_threads_per_tick?: number | null;
+  dispatch_threshold_tokens?: number | null;
+  max_source_batch_tokens?: number | null;
+  max_model_input_tokens?: number | null;
+  max_leaf_tokens?: number | null;
+  max_merge_rounds?: number | null;
   count_limit?: number | null;
   keep_level0_count?: number | null;
   max_level?: number | null;
   updated_at: string;
-}
-
-export interface UpsertEngineJobPolicyPayload {
-  enabled?: boolean;
-  summary_prompt?: string | null;
-  summary_prompt_zh?: string | null;
-  summary_prompt_en?: string | null;
-  summary_prompt_language?: 'zh' | 'en';
-  rollup_summary_prompt?: string | null;
-  rollup_summary_prompt_zh?: string | null;
-  rollup_summary_prompt_en?: string | null;
-  rollup_summary_prompt_language?: 'zh' | 'en';
-  token_limit?: number | null;
-  interval_seconds?: number | null;
-  max_threads_per_tick?: number | null;
-  count_limit?: number | null;
-  keep_level0_count?: number | null;
-  max_level?: number | null;
-}
-
-export interface GenerateJobPolicyPromptPayload {
-  prompt_field: 'summary_prompt' | 'rollup_summary_prompt';
-  user_input: string;
-}
-
-export interface GenerateJobPolicyPromptResult {
-  prompt_zh: string;
-  prompt_en: string;
 }
 
 export interface EngineJobRun {

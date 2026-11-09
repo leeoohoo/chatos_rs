@@ -48,13 +48,7 @@ pub struct RunSubjectMemoryJobRequest {
     pub source_thread_label: String,
     pub relation_subject_id: Option<String>,
     pub source_summary_type: Option<String>,
-    pub summary_prompt: Option<String>,
-    pub rollup_summary_prompt: Option<String>,
     pub prompt_title: Option<String>,
-    pub token_limit: Option<i64>,
-    pub count_limit: Option<i64>,
-    pub keep_level0_count: Option<i64>,
-    pub max_level: Option<i64>,
     pub memory_metadata: Option<Value>,
     #[serde(default)]
     pub scope_key: Option<String>,

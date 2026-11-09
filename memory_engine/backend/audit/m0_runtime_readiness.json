@@ -4,53 +4,53 @@
   "components": [
     {
       "component": "rust_runtime",
-      "state": "partial",
-      "source_unit_ready": false,
-      "runtime_assertion_ready": false,
-      "model_capability_ready": false,
-      "present": ["conversation_turn_id", "tool_call_id"],
-      "missing": ["assistant_record_id", "tool_exchange_id", "tool_result_ordinal", "tool_result_count", "project_context_assertion_id", "content_identity_digest", "model_capability_revision", "frozen_context_window_tokens", "frozen_output_reserve_tokens", "protocol_overhead_estimator_id"],
-      "evidence": ["crates/chatos_ai_runtime/src/traits/records.rs", "crates/chatos_ai_runtime/src/traits/model.rs"]
+      "state": "ready",
+      "source_unit_ready": true,
+      "runtime_assertion_ready": true,
+      "model_capability_ready": true,
+      "present": ["conversation_turn_id", "assistant_record_id", "tool_exchange_id", "tool_call_id", "tool_result_ordinal", "tool_result_count", "project_context_assertion_id", "content_identity_digest", "model_capability_revision", "frozen_context_window_tokens", "frozen_output_reserve_tokens", "protocol_overhead_estimator_id"],
+      "missing": [],
+      "evidence": ["crates/chatos_ai_runtime/src/memory_context/record_writer.rs", "crates/chatos_ai_runtime/src/traits/model.rs", "crates/chatos_ai_runtime/src/turn.rs"]
     },
     {
       "component": "local_agent_host",
-      "state": "partial",
-      "source_unit_ready": false,
-      "runtime_assertion_ready": false,
-      "model_capability_ready": false,
-      "present": ["conversation_turn_id", "tool_call_id"],
-      "missing": ["assistant_record_id", "tool_exchange_id", "tool_result_ordinal", "tool_result_count", "project_context_assertion_id", "content_identity_digest", "durable_model_capability_revision"],
-      "evidence": ["clients/local_agent_host/src/infrastructure/memory.rs", "clients/local_agent_host/layers/interface/src/control_plane.rs"]
+      "state": "ready",
+      "source_unit_ready": true,
+      "runtime_assertion_ready": true,
+      "model_capability_ready": true,
+      "present": ["source_unit_contract", "runtime_context_assertion", "durable_model_capability_revision", "context_window_tokens", "output_reserve_tokens"],
+      "missing": [],
+      "evidence": ["clients/local_agent_host/src/infrastructure/memory.rs", "clients/local_agent_host/layers/interface/src/control_plane.rs", "clients/local_agent_host/layers/infrastructure/database/src/model_snapshot_store.rs"]
     },
     {
       "component": "macos",
-      "state": "partial",
-      "source_unit_ready": false,
-      "runtime_assertion_ready": false,
-      "model_capability_ready": false,
-      "present": ["tool_call_id", "context_window_tokens", "output_reserve_tokens"],
-      "missing": ["assistant_record_id", "tool_exchange_id", "tool_result_ordinal", "tool_result_count", "project_context_assertion_id", "content_identity_digest", "model_capability_revision"],
+      "state": "ready",
+      "source_unit_ready": true,
+      "runtime_assertion_ready": true,
+      "model_capability_ready": true,
+      "present": ["assistant_record_id", "tool_exchange_id", "tool_call_id", "tool_result_ordinal", "tool_result_count", "project_context_assertion_id", "content_identity_digest", "runtime_context_assertion", "model_capability_revision", "context_window_tokens", "output_reserve_tokens"],
+      "missing": [],
       "evidence": ["clients/macos/Sources/ChatOSAPI/ChatOSMemoryEngineService.swift", "clients/macos/Sources/ChatOSConnector/NativeConnectorGatewayRuntimeDTOs.swift"]
     },
     {
       "component": "windows",
-      "state": "partial",
-      "source_unit_ready": false,
-      "runtime_assertion_ready": false,
-      "model_capability_ready": false,
-      "present": ["conversation_turn_id", "tool_call_id", "output_reserve_tokens"],
-      "missing": ["assistant_record_id", "tool_exchange_id", "tool_result_ordinal", "tool_result_count", "project_context_assertion_id", "content_identity_digest", "model_capability_revision"],
+      "state": "ready",
+      "source_unit_ready": true,
+      "runtime_assertion_ready": true,
+      "model_capability_ready": true,
+      "present": ["conversation_turn_id", "assistant_record_id", "tool_exchange_id", "tool_call_id", "tool_result_ordinal", "tool_result_count", "project_context_assertion_id", "content_identity_digest", "runtime_context_assertion", "model_capability_revision", "context_window_tokens", "output_reserve_tokens"],
+      "missing": [],
       "evidence": ["clients/windows-react/src-tauri/src/story_studio/memory.rs", "clients/windows-react/src-tauri/src/story_studio/planning.rs"]
     },
     {
       "component": "internal_callers",
-      "state": "partial",
-      "source_unit_ready": false,
-      "runtime_assertion_ready": false,
-      "model_capability_ready": false,
-      "present": ["conversation_turn_id", "tool_call_id", "shared_internal_request_signatures"],
-      "missing": ["runtime_context_assertion_issuer", "runtime_context_assertion_key_rotation", "source_contract_readiness_gate", "published_model_capability_revision"],
-      "evidence": ["agent/src/core/executor.rs", "memory_engine/backend/src/api/internal_auth.rs"]
+      "state": "ready",
+      "source_unit_ready": true,
+      "runtime_assertion_ready": true,
+      "model_capability_ready": true,
+      "present": ["shared_internal_request_signatures", "runtime_context_assertion_issuer", "runtime_context_assertion_key_rotation", "source_contract_readiness_gate", "published_model_capability_revision"],
+      "missing": [],
+      "evidence": ["local_connector_service/backend/src/api/runtime_context_assertions.rs", "memory_engine/backend/src/api/runtime_context.rs", "memory_engine/backend/src/api/context_api.rs"]
     }
   ]
 }

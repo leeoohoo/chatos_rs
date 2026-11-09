@@ -60,6 +60,7 @@ pub struct LocalModelConfigSnapshot {
     pub owner_user_id: String,
     pub model_config_ref: String,
     pub model_config_revision: String,
+    pub model_capability_revision: String,
     pub credential_ref: String,
     pub base_url: String,
     pub model: String,
@@ -69,6 +70,10 @@ pub struct LocalModelConfigSnapshot {
     pub instructions: Option<String>,
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<i64>,
+    pub context_window_tokens: u64,
+    pub output_reserve_tokens: u64,
+    pub protocol_overhead_estimator_id: String,
+    pub tokenizer_id: Option<String>,
     pub thinking_level: Option<String>,
     pub include_prompt_cache_retention: bool,
     pub request_body_limit_bytes: Option<u64>,
@@ -83,6 +88,7 @@ impl LocalModelConfigSnapshot {
         validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("model_config_ref", &self.model_config_ref)?;
         validate_identifier("model_config_revision", &self.model_config_revision)?;
+        validate_identifier("model_capability_revision", &self.model_capability_revision)?;
         validate_text("credential_ref", &self.credential_ref, 512)?;
         validate_text("base_url", &self.base_url, 4096)?;
         if !(self.base_url.starts_with("http://") || self.base_url.starts_with("https://")) {
@@ -96,6 +102,27 @@ impl LocalModelConfigSnapshot {
         }
         if self.max_output_tokens.is_some_and(|value| value <= 0) {
             return Err("max_output_tokens must be greater than zero".to_string());
+        }
+        if self.context_window_tokens < 2_048
+            || self.output_reserve_tokens < 256
+            || self.output_reserve_tokens >= self.context_window_tokens
+        {
+            return Err(
+                "output_reserve_tokens must be smaller than context_window_tokens".to_string(),
+            );
+        }
+        if self
+            .max_output_tokens
+            .is_some_and(|value| value as u64 > self.output_reserve_tokens)
+        {
+            return Err("max_output_tokens must not exceed output_reserve_tokens".to_string());
+        }
+        validate_identifier(
+            "protocol_overhead_estimator_id",
+            &self.protocol_overhead_estimator_id,
+        )?;
+        if let Some(tokenizer_id) = self.tokenizer_id.as_deref() {
+            validate_identifier("tokenizer_id", tokenizer_id)?;
         }
         if let Some(level) = self.thinking_level.as_deref() {
             validate_text("thinking_level", level, 64)?;
@@ -248,6 +275,11 @@ mod tests {
             owner_user_id: "user-1".to_string(),
             model_config_ref: "default".to_string(),
             model_config_revision: "revision-1".to_string(),
+            model_capability_revision: "capability-v1".to_string(),
+            context_window_tokens: 200_000,
+            output_reserve_tokens: 30_000,
+            protocol_overhead_estimator_id: "responses-json-v1".to_string(),
+            tokenizer_id: Some("o200k_base".to_string()),
             credential_ref: "keychain:model/default".to_string(),
             base_url: "https://api.example.test/v1".to_string(),
             model: "example-model".to_string(),
