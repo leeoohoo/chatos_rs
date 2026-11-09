@@ -2,11 +2,32 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use sqlx::types::Json;
-use sqlx::{Postgres, QueryBuilder};
+use sqlx::{Postgres, QueryBuilder, Transaction};
 use uuid::Uuid;
 
 use crate::models::{now_rfc3339, EngineSubjectMemory, UpsertSubjectMemoryRequest};
 use crate::repositories::postgres::decode;
+
+pub(crate) async fn lock_subject_memory_logical_key(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: &str,
+    source_id: &str,
+    subject_id: &str,
+    memory_key: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended(\
+         concat_ws(chr(31),$1,$2,$3,$4),0))",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(subject_id)
+    .bind(memory_key)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
 
 pub(crate) fn build_subject_memory_query<'a>(
     tenant_id: &'a str,

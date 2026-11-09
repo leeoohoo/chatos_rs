@@ -7,7 +7,7 @@ use crate::db::Db;
 use crate::models::{EngineSubjectMemory, UpsertSubjectMemoryRequest};
 use crate::repositories::postgres::{decode, json, timestamp};
 
-use super::common::build_subject_memory;
+use super::common::{build_subject_memory, lock_subject_memory_logical_key};
 
 pub async fn upsert_subject_memory(
     db: &Db,
@@ -45,15 +45,24 @@ async fn upsert(
     source_digest: Option<Option<String>>,
     rollup_status: Option<&str>,
 ) -> Result<EngineSubjectMemory, String> {
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    lock_subject_memory_logical_key(
+        &mut tx,
+        &req.tenant_id,
+        &req.source_id,
+        subject_id,
+        memory_key,
+    )
+    .await?;
     let existing = sqlx::query_scalar::<_, Json<serde_json::Value>>(
         "SELECT data FROM engine_subject_memories WHERE tenant_id=$1 AND source_id=$2 \
-         AND subject_id=$3 AND memory_key=$4",
+         AND subject_id=$3 AND memory_key=$4 AND generation_id IS NULL FOR UPDATE",
     )
     .bind(&req.tenant_id)
     .bind(&req.source_id)
     .bind(subject_id)
     .bind(memory_key)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|error| error.to_string())?
     .map(decode)
@@ -76,7 +85,7 @@ async fn upsert(
          (id,tenant_id,source_id,subject_id,memory_key,memory_type,level,source_digest, \
           relation_subject_id,status,rollup_status,created_at,updated_at,data) \
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) \
-         ON CONFLICT(tenant_id,source_id,subject_id,memory_key) DO UPDATE SET \
+         ON CONFLICT(tenant_id,source_id,subject_id,memory_key) WHERE generation_id IS NULL DO UPDATE SET \
          memory_type=EXCLUDED.memory_type,level=EXCLUDED.level,source_digest=EXCLUDED.source_digest, \
          relation_subject_id=EXCLUDED.relation_subject_id,status=EXCLUDED.status, \
          rollup_status=EXCLUDED.rollup_status,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data",
@@ -95,8 +104,9 @@ async fn upsert(
     .bind(timestamp(&memory.created_at)?)
     .bind(timestamp(&memory.updated_at)?)
     .bind(json(&memory)?)
-    .execute(db)
+    .execute(&mut *tx)
     .await
     .map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(|error| error.to_string())?;
     Ok(memory)
 }

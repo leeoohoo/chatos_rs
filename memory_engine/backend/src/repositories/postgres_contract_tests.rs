@@ -74,5 +74,6 @@ mod partition_claim_contracts;
 mod partition_ingest_contracts;
 mod reliability_audit_contracts;
 mod repository_round_trip;
+mod subject_memory_generation_contracts;
 mod summary_cursor_contracts;
 mod tenant_key_contracts;
