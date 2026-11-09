@@ -101,10 +101,29 @@ impl MemoryPayloadContract {
         if !matches!(self.scope_kind.as_str(), "thread" | "project" | "agent") {
             return Err("memory payload contract scope kind is unsupported".to_string());
         }
-        if self.scope_kind == "agent" && self.project_partition_key.is_some() {
-            return Err(
-                "agent memory payload contract cannot have a project partition".to_string(),
-            );
+        match (
+            self.scope_kind.as_str(),
+            self.project_partition_key.as_deref(),
+        ) {
+            ("agent", None) => {}
+            ("agent", Some(_)) => {
+                return Err(
+                    "agent memory payload contract cannot have a project partition".to_string(),
+                );
+            }
+            ("project", Some(partition)) if valid_project_partition(partition) => {}
+            ("project", _) => {
+                return Err(
+                    "project memory payload contract requires a project partition".to_string(),
+                );
+            }
+            ("thread", Some(partition)) if valid_thread_partition(partition) => {}
+            ("thread", _) => {
+                return Err(
+                    "thread memory payload contract requires a valid frozen partition".to_string(),
+                );
+            }
+            _ => unreachable!("scope kind was validated above"),
         }
         let refs = self
             .source_refs
@@ -237,19 +256,26 @@ impl MemoryPayloadContract {
             .get("scope")
             .and_then(serde_json::Value::as_object)
             .ok_or_else(|| "memory payload scope must be an object".to_string())?;
+        let payload_partition = match scope.get("project_partition_key") {
+            Some(value) if value.is_null() => None,
+            Some(value) => Some(value.as_str().ok_or_else(|| {
+                "model memory payload project partition must be a string or null".to_string()
+            })?),
+            None => {
+                return Err("model memory payload project partition is missing".to_string());
+            }
+        };
         if scope.get("kind").and_then(serde_json::Value::as_str) != Some(self.scope_kind.as_str())
             || scope.get("subject_id").and_then(serde_json::Value::as_str)
                 != Some(self.subject_id.as_str())
-            || scope
-                .get("project_partition_key")
-                .and_then(serde_json::Value::as_str)
-                != self.project_partition_key.as_deref()
+            || payload_partition != self.project_partition_key.as_deref()
         {
             return Err("model memory payload scope does not match frozen generation".to_string());
         }
         let allowed_refs = self.source_refs.iter().collect::<HashSet<_>>();
         let allowed_supersedes = self.supersession_candidates.iter().collect::<HashSet<_>>();
         let mut fact_count = 0usize;
+        let mut deterministic_ids = HashSet::new();
         for collection in FACT_COLLECTIONS {
             let facts = payload
                 .get_mut(collection)
@@ -259,11 +285,46 @@ impl MemoryPayloadContract {
                 let object = fact
                     .as_object_mut()
                     .ok_or_else(|| format!("memory payload {collection} fact must be an object"))?;
+                validate_exact_keys(
+                    object,
+                    &[
+                        "fact_id",
+                        "fact_key",
+                        "value",
+                        "status",
+                        "supersedes",
+                        "source_refs",
+                        "observed_at",
+                        "confidence",
+                    ],
+                    format!("memory payload {collection} fact").as_str(),
+                )?;
+                let model_fact_id = required_model_text(object.get("fact_id"), "fact_id")?;
+                if model_fact_id.chars().count() > 256 {
+                    return Err("model memory fact fact_id exceeds 256 characters".to_string());
+                }
                 let fact_key = required_model_text(object.get("fact_key"), "fact_key")?;
+                if fact_key.chars().count() > 256
+                    || !fact_key.chars().all(|character| {
+                        character.is_ascii_alphanumeric() || "._:/-".contains(character)
+                    })
+                {
+                    return Err("model memory fact fact_key is invalid".to_string());
+                }
                 let value = object
                     .get("value")
                     .filter(|value| value.as_str().is_some_and(|value| !value.trim().is_empty()))
                     .ok_or_else(|| "model memory fact value is missing".to_string())?;
+                if value
+                    .as_str()
+                    .is_some_and(|value| value.chars().count() > 16_384)
+                {
+                    return Err("model memory fact value exceeds 16384 characters".to_string());
+                }
+                let status = required_model_text(object.get("status"), "status")?;
+                if !matches!(status, "active" | "superseded" | "uncertain") {
+                    return Err("model memory fact status is invalid".to_string());
+                }
                 let source_refs = model_string_array(object.get("source_refs"), "source_refs")?;
                 if source_refs.is_empty()
                     || source_refs
@@ -284,6 +345,27 @@ impl MemoryPayloadContract {
                         "model memory fact supersedes is outside the frozen candidates".to_string(),
                     );
                 }
+                match object.get("observed_at") {
+                    Some(value) if value.is_null() => {}
+                    Some(value) => {
+                        let observed_at = value.as_str().ok_or_else(|| {
+                            "model memory fact observed_at must be a timestamp or null".to_string()
+                        })?;
+                        chrono::DateTime::parse_from_rfc3339(observed_at).map_err(|_| {
+                            "model memory fact observed_at must be RFC3339".to_string()
+                        })?;
+                    }
+                    None => {
+                        return Err("model memory fact observed_at is missing".to_string());
+                    }
+                }
+                let confidence = required_model_text(object.get("confidence"), "confidence")?;
+                if !matches!(
+                    confidence,
+                    "explicit_user" | "tool_evidence" | "model_inference" | "uncertain"
+                ) {
+                    return Err("model memory fact confidence is invalid".to_string());
+                }
                 let fact_id = deterministic_fact_id(
                     self.generation_id.as_str(),
                     collection,
@@ -291,6 +373,9 @@ impl MemoryPayloadContract {
                     value,
                     &source_refs,
                 )?;
+                if !deterministic_ids.insert(fact_id.clone()) {
+                    return Err("model memory payload contains duplicate durable facts".to_string());
+                }
                 object.insert("fact_id".to_string(), serde_json::Value::String(fact_id));
                 fact_count = fact_count.saturating_add(1);
             }
@@ -375,6 +460,23 @@ pub(crate) fn validate_envelope_shape(payload: &serde_json::Value) -> Result<(),
     let object = payload
         .as_object()
         .ok_or_else(|| "memory payload must be an object".to_string())?;
+    validate_exact_keys(
+        object,
+        &[
+            "schema_version",
+            "scope",
+            "current_goal",
+            "completed",
+            "decisions",
+            "open_items",
+            "blockers",
+            "artifacts",
+            "constraints",
+            "stable_preferences",
+            "uncertainties",
+        ],
+        "memory payload",
+    )?;
     if object
         .get("schema_version")
         .and_then(serde_json::Value::as_str)
@@ -388,8 +490,20 @@ pub(crate) fn validate_envelope_shape(payload: &serde_json::Value) -> Result<(),
     {
         return Err("memory payload scope must be an object".to_string());
     }
+    validate_exact_keys(
+        object
+            .get("scope")
+            .and_then(serde_json::Value::as_object)
+            .expect("scope object was checked above"),
+        &["kind", "subject_id", "project_partition_key"],
+        "memory payload scope",
+    )?;
     match object.get("current_goal") {
-        Some(value) if value.is_null() || value.is_string() => {}
+        Some(value)
+            if value.is_null()
+                || value
+                    .as_str()
+                    .is_some_and(|value| value.chars().count() <= 16_384) => {}
         _ => return Err("memory payload current_goal must be a string or null".to_string()),
     }
     for collection in FACT_COLLECTIONS {
@@ -401,6 +515,29 @@ pub(crate) fn validate_envelope_shape(payload: &serde_json::Value) -> Result<(),
         }
     }
     Ok(())
+}
+
+fn validate_exact_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    expected: &[&str],
+    label: &str,
+) -> Result<(), String> {
+    let expected = expected.iter().copied().collect::<HashSet<_>>();
+    let actual = object.keys().map(String::as_str).collect::<HashSet<_>>();
+    if actual != expected {
+        return Err(format!("{label} fields do not match the enforced schema"));
+    }
+    Ok(())
+}
+
+fn valid_thread_partition(value: &str) -> bool {
+    value == "__none__" || valid_project_partition(value)
+}
+
+fn valid_project_partition(value: &str) -> bool {
+    value
+        .strip_prefix("project:")
+        .is_some_and(|project_id| !project_id.trim().is_empty() && project_id == project_id.trim())
 }
 
 pub(crate) fn deterministic_fact_id(
@@ -428,5 +565,123 @@ fn render_value(value: &serde_json::Value) -> Result<String, String> {
         serde_json::Value::String(value) => Ok(value.trim().to_string()),
         serde_json::Value::Null => Err("memory payload fact value cannot be null".to_string()),
         value => serde_json::to_string(value).map_err(|error| error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{MemoryPayloadContract, MEMORY_PAYLOAD_SCHEMA};
+
+    fn contract() -> MemoryPayloadContract {
+        MemoryPayloadContract {
+            generation_id: "generation-1".to_string(),
+            scope_kind: "thread".to_string(),
+            subject_id: "agent:test".to_string(),
+            project_partition_key: Some("project:alpha".to_string()),
+            source_refs: vec!["record-1".to_string()],
+            supersession_candidates: vec!["fact-old".to_string()],
+        }
+    }
+
+    fn valid_payload() -> serde_json::Value {
+        json!({
+            "schema_version": MEMORY_PAYLOAD_SCHEMA,
+            "scope": {
+                "kind": "thread",
+                "subject_id": "agent:test",
+                "project_partition_key": "project:alpha"
+            },
+            "current_goal": null,
+            "completed": [],
+            "decisions": [{
+                "fact_id": "model-local",
+                "fact_key": "architecture.current",
+                "value": "use the new architecture",
+                "status": "active",
+                "supersedes": ["fact-old"],
+                "source_refs": ["record-1"],
+                "observed_at": "2026-11-09T00:00:00Z",
+                "confidence": "explicit_user"
+            }],
+            "open_items": [],
+            "blockers": [],
+            "artifacts": [],
+            "constraints": [],
+            "stable_preferences": [],
+            "uncertainties": []
+        })
+    }
+
+    #[test]
+    fn payload_contract_requires_scope_appropriate_frozen_partition() {
+        let mut value = contract();
+        assert!(value.validate().is_ok());
+
+        value.project_partition_key = None;
+        assert!(value.validate().is_err());
+        value.scope_kind = "project".to_string();
+        value.project_partition_key = Some("__none__".to_string());
+        assert!(value.validate().is_err());
+        value.scope_kind = "agent".to_string();
+        value.project_partition_key = Some("project:alpha".to_string());
+        assert!(value.validate().is_err());
+        value.project_partition_key = None;
+        assert!(value.validate().is_ok());
+    }
+
+    #[test]
+    fn finalization_replaces_model_fact_id_and_keeps_frozen_provenance() {
+        let payload = valid_payload();
+        let finalized = contract()
+            .finalize_model_output(payload.to_string().as_str())
+            .expect("valid structured payload");
+        let fact = &finalized["decisions"][0];
+
+        assert!(fact["fact_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("fact-") && value != "model-local"));
+        assert_eq!(fact["source_refs"], json!(["record-1"]));
+        assert_eq!(fact["supersedes"], json!(["fact-old"]));
+    }
+
+    #[test]
+    fn finalization_rejects_schema_scope_provenance_and_fact_field_drift() {
+        let mut invalid_payloads = Vec::new();
+
+        let mut extra = valid_payload();
+        extra["unexpected"] = json!(true);
+        invalid_payloads.push(extra);
+
+        let mut wrong_scope = valid_payload();
+        wrong_scope["scope"]["project_partition_key"] = json!("project:beta");
+        invalid_payloads.push(wrong_scope);
+
+        let mut wrong_ref = valid_payload();
+        wrong_ref["decisions"][0]["source_refs"] = json!(["record-2"]);
+        invalid_payloads.push(wrong_ref);
+
+        let mut wrong_supersession = valid_payload();
+        wrong_supersession["decisions"][0]["supersedes"] = json!(["fact-unknown"]);
+        invalid_payloads.push(wrong_supersession);
+
+        let mut wrong_status = valid_payload();
+        wrong_status["decisions"][0]["status"] = json!("done");
+        invalid_payloads.push(wrong_status);
+
+        let mut wrong_confidence = valid_payload();
+        wrong_confidence["decisions"][0]["confidence"] = json!("guessed");
+        invalid_payloads.push(wrong_confidence);
+
+        let mut wrong_time = valid_payload();
+        wrong_time["decisions"][0]["observed_at"] = json!("yesterday");
+        invalid_payloads.push(wrong_time);
+
+        for payload in invalid_payloads {
+            assert!(contract()
+                .finalize_model_output(payload.to_string().as_str())
+                .is_err());
+        }
     }
 }

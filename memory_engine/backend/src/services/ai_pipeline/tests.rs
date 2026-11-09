@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::chunking::split_chunks_by_token_limit;
+use super::chunking::{
+    contains_source_ref, split_chunks_by_token_limit, split_text_by_token_limit,
+};
 use super::input::build_ai_input;
 use super::{estimate_tokens_text, is_context_overflow_error, MIN_TOKEN_LIMIT};
 
@@ -24,7 +26,7 @@ fn oversized_items_are_split_when_enabled() {
     let items = vec!["a".repeat((MIN_TOKEN_LIMIT as usize * 4) + 32)];
     let chunks = split_chunks_by_token_limit(items.as_slice(), MIN_TOKEN_LIMIT, true);
 
-    assert_eq!(chunks.len(), 2);
+    assert!(chunks.len() > 1);
     assert!(chunks.iter().all(|chunk| {
         chunk
             .iter()
@@ -32,6 +34,89 @@ fn oversized_items_are_split_when_enabled() {
             .sum::<i64>()
             <= MIN_TOKEN_LIMIT
     }));
+}
+
+#[test]
+fn content_aware_chunks_preserve_utf8_order_identity_and_markdown_boundaries() {
+    let source = format!(
+        "[record_id=record-utf8][created_at=2026-11-09T00:00:00Z][role=user]\n# 决策记录\n\n{}\n\n```rust\n{}\n```",
+        "中文段落。".repeat(160),
+        "    let value = \"保持完整\";\n".repeat(80)
+    );
+    let chunks = split_text_by_token_limit(source.as_str(), MIN_TOKEN_LIMIT);
+
+    assert!(chunks.len() > 2);
+    for (index, chunk) in chunks.iter().enumerate() {
+        assert!(chunk.contains("[record_id=record-utf8]"));
+        assert!(
+            chunk.contains(format!("record-utf8#chunk:{}/{}", index + 1, chunks.len()).as_str())
+        );
+        assert!(chunk.contains("chunk_digest=sha256:"));
+        assert!(estimate_tokens_text(chunk) <= MIN_TOKEN_LIMIT);
+    }
+    let rendered = chunks.join("\n");
+    assert!(rendered.contains("# 决策记录"));
+    assert!(rendered.contains("    let value = \"保持完整\";"));
+}
+
+#[test]
+fn tool_json_chunks_keep_call_identity_json_paths_and_unique_conclusion() {
+    let payload = serde_json::json!({
+        "call_id": "call-42",
+        "results": [
+            {"path": "/tmp/a", "detail": "普通输出".repeat(180)},
+            {"path": "/tmp/b", "detail": "唯一关键结论：必须使用新架构"}
+        ]
+    });
+    let source = format!(
+        "[record_id=tool-record][created_at=2026-11-09T00:00:00Z][role=tool]\n[tool_result]\n{payload}"
+    );
+    let chunks = split_text_by_token_limit(source.as_str(), MIN_TOKEN_LIMIT);
+
+    assert!(chunks.len() > 1);
+    assert!(chunks
+        .iter()
+        .all(|chunk| chunk.contains("[record_id=tool-record]")));
+    assert!(chunks
+        .iter()
+        .any(|chunk| chunk.contains("[section=tool_result][json_path=$[\"call_id\"]]")));
+    assert!(chunks
+        .iter()
+        .any(|chunk| chunk.contains("$[\"results\"][1][\"detail\"]")));
+    assert!(chunks
+        .iter()
+        .any(|chunk| chunk.contains("唯一关键结论：必须使用新架构")));
+}
+
+#[test]
+fn raw_reasoning_is_excluded_from_oversized_durable_chunks() {
+    let source = format!(
+        "[record_id=reasoning-record][role=assistant]\n{}\n[reasoning]\nDO_NOT_PERSIST_PRIVATE_REASONING{}\n[tool_result]\n{{\"result\":\"公开结论\"}}",
+        "公开正文".repeat(200),
+        "私密推理".repeat(100)
+    );
+    let chunks = split_text_by_token_limit(source.as_str(), MIN_TOKEN_LIMIT);
+    let rendered = chunks.join("\n");
+
+    assert!(!rendered.contains("DO_NOT_PERSIST_PRIVATE_REASONING"));
+    assert!(!rendered.contains("私密推理"));
+    assert!(rendered.contains("公开正文"));
+    assert!(rendered.contains("公开结论"));
+}
+
+#[test]
+fn source_ref_matching_rejects_prefix_collisions() {
+    let item = "[record_id=record-10][role=user]\ncontent";
+    assert!(contains_source_ref(item, "record-10"));
+    assert!(!contains_source_ref(item, "record-1"));
+
+    let chunk = "[source_ref=record-10#chunk:2/3][chunk_digest=sha256:abc]\ncontent";
+    assert!(contains_source_ref(chunk, "record-10"));
+    assert!(!contains_source_ref(chunk, "record-1"));
+
+    let merge_payload = r#"{"open_items":[{"source_refs":["record-10"]}]}"#;
+    assert!(contains_source_ref(merge_payload, "record-10"));
+    assert!(!contains_source_ref(merge_payload, "record-1"));
 }
 
 #[test]

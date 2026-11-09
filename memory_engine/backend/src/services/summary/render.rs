@@ -14,15 +14,6 @@ pub(crate) fn record_to_summary_block(item: &EngineRecord) -> String {
     }
 
     if let Some(metadata) = item.metadata.as_ref() {
-        if let Some(reasoning) = metadata
-            .get("reasoning")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            parts.push(format!("[reasoning]\n{}", reasoning));
-        }
-
         if let Some(tool_calls) = metadata
             .get("tool_calls")
             .or_else(|| metadata.get("toolCalls"))
@@ -74,4 +65,43 @@ pub(crate) fn summary_to_rollup_block(summary: &EngineSummary) -> String {
         rendered.push_str(format!("\n[structured_payload]\n{payload}").as_str());
     }
     rendered
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::record_to_summary_block;
+
+    #[test]
+    fn durable_summary_input_excludes_raw_reasoning_but_keeps_tool_evidence() {
+        let record = crate::models::EngineRecord {
+            id: "record-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            source_id: "source-1".to_string(),
+            external_record_id: None,
+            role: "assistant".to_string(),
+            record_type: "message".to_string(),
+            content: "public assistant response".to_string(),
+            structured_payload: None,
+            metadata: Some(json!({
+                "reasoning": "private chain of thought",
+                "tool_calls": [{"id":"call-1","name":"inspect"}],
+                "structured_result": {"call_id":"call-1","result":"verified"}
+            })),
+            summary_status: "pending".to_string(),
+            summary_id: None,
+            summarized_at: None,
+            created_at: "2026-11-09T00:00:00Z".to_string(),
+        };
+
+        let rendered = record_to_summary_block(&record);
+
+        assert!(!rendered.contains("private chain of thought"));
+        assert!(!rendered.contains("[reasoning]"));
+        assert!(rendered.contains("[tool_calls]"));
+        assert!(rendered.contains("[tool_result]"));
+        assert!(rendered.contains("verified"));
+    }
 }

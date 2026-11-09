@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use crate::ai::{AiClient, AiGenerateTextError};
 
-use super::chunking::split_chunks_by_token_limit;
+use super::chunking::{contains_source_ref, split_chunks_by_token_limit};
 use super::input::build_ai_input;
 use super::overflow::is_context_overflow_error;
 use super::{SummaryBuildResult, MAX_OVERFLOW_RETRIES, MIN_TOKEN_LIMIT};
@@ -285,7 +285,11 @@ impl CloudSummaryPipelineState {
             .payload_contract
             .source_refs
             .iter()
-            .filter(|source_ref| group.iter().any(|item| item.contains(source_ref.as_str())))
+            .filter(|source_ref| {
+                group
+                    .iter()
+                    .any(|item| contains_source_ref(item, source_ref.as_str()))
+            })
             .cloned()
             .collect::<Vec<_>>();
         if source_refs.is_empty() {
@@ -303,7 +307,8 @@ impl CloudSummaryPipelineState {
         self.phase = PipelinePhase::Leaf;
         self.groups = split_chunks_by_token_limit(
             self.spec.items.as_slice(),
-            self.effective_token_limit.min(self.spec.max_leaf_tokens.max(MIN_TOKEN_LIMIT)),
+            self.effective_token_limit
+                .min(self.spec.max_leaf_tokens.max(MIN_TOKEN_LIMIT)),
             self.spec.split_oversized_items,
         );
         if self.groups.is_empty() {
@@ -523,6 +528,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn one_oversized_tool_output_completes_all_chunks_and_merge_rounds() {
+        let responses = (0..128)
+            .map(|index| success(format!("summary-{index}").as_str()))
+            .collect::<Vec<_>>();
+        let ai = test_ai(responses, 2).await;
+        let oversized = format!(
+            "[tool_result]\n{}",
+            serde_json::json!({
+                "call_id": "call-oversized",
+                "detail": "large output ".repeat(1_200),
+                "conclusion": "unique conclusion"
+            })
+        );
+        let mut state = CloudSummaryPipelineState::new(spec(vec![oversized], 512), contract())
+            .expect("pipeline state");
+        assert!(state.groups.len() > 1);
+
+        for _ in 0..128 {
+            let (outcome, next, result) = state.execute_one(&ai, 1).await.expect("model step");
+            state = next;
+            match outcome {
+                AiSingleStepOutcome::Final(_) => {
+                    assert!(result.expect("oversized result").text.contains("summary-"));
+                    assert!(state.merge_round > 0);
+                    return;
+                }
+                AiSingleStepOutcome::Continue { .. } => {}
+                other => panic!("oversized pipeline did not complete: {other:?}"),
+            }
+        }
+        panic!("oversized pipeline exceeded the bounded test step budget");
+    }
+
+    #[tokio::test]
     async fn transient_failure_is_returned_as_queue_retry() {
         let ai = test_ai(
             vec![error(
@@ -597,5 +636,23 @@ mod tests {
         let decoded =
             serde_json::from_value::<CloudSummaryPipelineState>(encoded).expect("decode state");
         assert_eq!(decoded, state);
+    }
+
+    #[test]
+    fn every_oversized_leaf_chunk_keeps_a_frozen_source_ref() {
+        let state = CloudSummaryPipelineState::new(
+            spec(vec!["超大工具输出".repeat(400)], MIN_TOKEN_LIMIT),
+            contract(),
+        )
+        .expect("pipeline state");
+
+        assert!(state.groups.len() > 1);
+        for group in &state.groups {
+            assert!(group.iter().all(|item| item.contains("source-1")));
+            let group_contract = state
+                .payload_contract_for_group(group)
+                .expect("every chunk remains attributable");
+            assert_eq!(group_contract.source_refs, vec!["source-1"]);
+        }
     }
 }
