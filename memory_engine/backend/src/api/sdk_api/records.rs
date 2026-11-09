@@ -53,10 +53,20 @@ pub async fn batch_sync_records(
             })
             .collect(),
     };
-    let upserted_count =
-        records::batch_sync_records(&state.config, &state.pool, thread_id.as_str(), &direct)
-            .await
-            .map_err(internal_error)?;
+    let partition_dispatch_v2 = state.feature_flags.snapshot().is_enabled_for(
+        memory_engine_sdk::MEMORY_PARTITION_DISPATCH_V2_FLAG,
+        direct.tenant_id.as_str(),
+        direct.source_id.as_str(),
+    );
+    let upserted_count = records::batch_sync_records_with_partition_dispatch(
+        &state.config,
+        &state.pool,
+        thread_id.as_str(),
+        &direct,
+        partition_dispatch_v2,
+    )
+    .await
+    .map_err(internal_error)?;
     Ok(Json(BatchSyncRecordsResponse {
         thread_id,
         received_count: direct.records.len(),

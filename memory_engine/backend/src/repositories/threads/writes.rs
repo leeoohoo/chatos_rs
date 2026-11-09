@@ -13,6 +13,69 @@ use crate::repositories::{records, subject_memory_scopes};
 
 const SUMMARY_LOCK_TIMEOUT_SECS: i64 = 300;
 
+pub(crate) async fn lock_for_record_ingest(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+) -> Result<EngineThread, String> {
+    sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3 FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| "thread not found for record ingest".to_string())
+    .and_then(decode)
+}
+
+pub(crate) async fn apply_record_ingest_state(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    thread: &mut EngineThread,
+    pending_record_count_delta: i64,
+    pending_summary_tokens_delta: i64,
+    force_dispatch: bool,
+) -> Result<Option<i64>, String> {
+    thread.pending_record_count = (thread.pending_record_count + pending_record_count_delta).max(0);
+    thread.pending_summary_tokens =
+        (thread.pending_summary_tokens + pending_summary_tokens_delta).max(0);
+    if thread.summary_status != "running" {
+        thread.summary_status = if thread.pending_record_count > 0 {
+            "pending"
+        } else {
+            "idle"
+        }
+        .to_string();
+    }
+    thread.updated_at = now_rfc3339();
+    let dispatch_version = sqlx::query_scalar::<_, Option<i64>>(
+        "UPDATE engine_threads SET summary_status=$4,pending_record_count=$5,pending_summary_tokens=$6, \
+         summary_dispatch_version=summary_dispatch_version+CASE WHEN $7 AND $5>0 THEN 1 ELSE 0 END, \
+         summary_dispatch_force_version=CASE WHEN $7 AND $5>0 THEN summary_dispatch_version+1 ELSE summary_dispatch_force_version END, \
+         summary_dispatch_requested_at=CASE WHEN $7 AND $5>0 THEN now() ELSE summary_dispatch_requested_at END, \
+         summary_dispatch_last_error=CASE WHEN $7 THEN NULL ELSE summary_dispatch_last_error END, \
+         summary_dispatch_pending=CASE WHEN $7 AND $5>0 THEN true ELSE summary_dispatch_pending END, \
+         updated_at=$8,data=$9 WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
+         RETURNING CASE WHEN $7 AND pending_record_count>0 THEN summary_dispatch_version ELSE NULL END",
+    )
+    .bind(&thread.tenant_id)
+    .bind(&thread.source_id)
+    .bind(&thread.id)
+    .bind(&thread.summary_status)
+    .bind(thread.pending_record_count)
+    .bind(thread.pending_summary_tokens)
+    .bind(force_dispatch)
+    .bind(timestamp(&thread.updated_at)?)
+    .bind(json(thread)?)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(dispatch_version)
+}
+
 pub async fn upsert_thread(
     db: &Db,
     thread_id: &str,

@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use crate::config::AppConfig;
 use crate::db::Db;
+use crate::feature_flags::MemoryEngineFeatureState;
 use crate::models::{
     ComposeContextResponse, MemoryEngineComposeBaselineStats, MemoryEngineWorkerRuntimeStats,
 };
@@ -76,6 +77,7 @@ pub struct AppState {
     pub user_service_http: reqwest::Client,
     pub runtime_stats: Arc<MemoryEngineRuntimeStats>,
     pub pressure: MemoryEnginePressureState,
+    pub feature_flags: MemoryEngineFeatureState,
     pub cloud_agent_store: CloudAgentStateStore,
 }
 

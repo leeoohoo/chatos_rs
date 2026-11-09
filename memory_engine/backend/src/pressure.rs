@@ -162,6 +162,21 @@ pub fn start_config_watcher(state: Arc<AppState>, client: ConfigClient) {
                     "Memory Engine applied pressure policy from configuration center"
                 );
             }
+            match crate::feature_flags::MemoryEngineFeatureFlags::from_snapshot(&snapshot) {
+                Ok(flags) => {
+                    if state.feature_flags.update(flags) {
+                        tracing::info!(
+                            revision = snapshot.revision,
+                            "Memory Engine applied feature flags from configuration center"
+                        );
+                    }
+                }
+                Err(error) => tracing::warn!(
+                    revision = snapshot.revision,
+                    error = error.as_str(),
+                    "Memory Engine rejected invalid feature flag refresh"
+                ),
+            }
         }
     });
 }

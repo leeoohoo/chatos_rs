@@ -31,10 +31,20 @@ pub async fn batch_sync_records(
 ) -> Result<Json<BatchSyncRecordsResponse>, (axum::http::StatusCode, String)> {
     auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
-    let upserted_count =
-        records::batch_sync_records(&state.config, &state.pool, thread_id.as_str(), &req)
-            .await
-            .map_err(internal_error)?;
+    let partition_dispatch_v2 = state.feature_flags.snapshot().is_enabled_for(
+        memory_engine_sdk::MEMORY_PARTITION_DISPATCH_V2_FLAG,
+        req.tenant_id.as_str(),
+        req.source_id.as_str(),
+    );
+    let upserted_count = records::batch_sync_records_with_partition_dispatch(
+        &state.config,
+        &state.pool,
+        thread_id.as_str(),
+        &req,
+        partition_dispatch_v2,
+    )
+    .await
+    .map_err(internal_error)?;
     Ok(Json(BatchSyncRecordsResponse {
         thread_id,
         received_count: req.records.len(),

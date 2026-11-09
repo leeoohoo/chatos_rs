@@ -171,6 +171,9 @@ mod tests {
                 queue_elevated_messages: 100,
                 queue_critical_messages: 1_000,
             }),
+            feature_flags: crate::feature_flags::MemoryEngineFeatureState::new(
+                crate::feature_flags::MemoryEngineFeatureFlags::disabled(0),
+            ),
             cloud_agent_store: chatos_cloud_agent_runtime::CloudAgentStateStore::memory(),
             config,
         })

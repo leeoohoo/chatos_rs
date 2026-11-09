@@ -6,6 +6,7 @@ mod api;
 mod cloud_agent_queue;
 mod config;
 mod db;
+mod feature_flags;
 mod internal_tls;
 mod jobs;
 mod models;
@@ -28,6 +29,7 @@ use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, Tr
 use tracing::{info, Level};
 
 use crate::config::AppConfig;
+use crate::feature_flags::{MemoryEngineFeatureFlags, MemoryEngineFeatureState};
 use crate::internal_tls::{
     load_internal_mtls_config, MemoryEngineInternalTlsConfig, MEMORY_ENGINE_INTERNAL_MTLS_ENV,
 };
@@ -70,6 +72,7 @@ async fn main() -> Result<(), String> {
         &pressure_snapshot,
         config.worker_summary_concurrency,
     )?;
+    let feature_flags = MemoryEngineFeatureFlags::from_snapshot(&pressure_snapshot)?;
     let cloud_agent_store = chatos_cloud_agent_runtime::CloudAgentStateStore::from_repository(
         repositories::cloud_agent::CloudAgentPostgresStore::new(pool.clone()),
     );
@@ -80,6 +83,7 @@ async fn main() -> Result<(), String> {
         user_service_http,
         runtime_stats: Arc::new(MemoryEngineRuntimeStats::default()),
         pressure: pressure::MemoryEnginePressureState::new(pressure_policy),
+        feature_flags: MemoryEngineFeatureState::new(feature_flags),
         cloud_agent_store,
     });
     pressure::start_config_watcher(state.clone(), pressure_config_client.clone());

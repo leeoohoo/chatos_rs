@@ -166,6 +166,7 @@ WITH record_rows AS (
        AND ($2::TEXT IS NULL OR r.source_id=$2)
 ), summary_rows AS (
     SELECT s.*,
+           NULLIF(BTRIM(s.data->>'rollup_summary_id'),'') AS rollup_summary_id,
            COALESCE(
              NULLIF(BTRIM(s.data #>> '{metadata,project_subject_id}'),''),
              NULLIF(BTRIM(s.data #>> '{metadata,project_id}'),''),

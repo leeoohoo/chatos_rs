@@ -69,7 +69,10 @@ pub use status::{
 #[cfg(test)]
 pub(crate) use writes::upsert_record_row;
 #[allow(unused_imports)]
-pub use writes::{batch_sync_records, delete_record_by_id, delete_records_by_thread};
+pub use writes::{
+    batch_sync_records, batch_sync_records_with_partition_dispatch, delete_record_by_id,
+    delete_records_by_thread,
+};
 
 #[cfg(test)]
 mod tests {
