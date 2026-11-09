@@ -10,7 +10,11 @@ use std::path::Path;
 
 const MAX_RECOVERY_FILES: usize = 8;
 const MIN_RECOVERY_TOTAL_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-const MAX_DATABASE_SIZED_RECOVERY_FILES: u64 = 2;
+// A successful migration deliberately retains the newly published snapshot and the earliest
+// compatible recovery point. The next migration therefore needs room for those two verified
+// files plus its replacement snapshot. Keeping this budget at two makes that healthy retained
+// state deadlock the following schema upgrade before post-migration pruning can run.
+const MAX_DATABASE_SIZED_RECOVERY_FILES: u64 = 3;
 const SAFETY_MARGIN_BYTES: u64 = 64 * 1024 * 1024;
 
 pub(super) async fn preflight(
@@ -171,13 +175,14 @@ mod tests {
     }
 
     #[test]
-    fn recovery_byte_budget_allows_two_large_snapshots_but_bounds_retries() {
+    fn recovery_byte_budget_allows_two_retained_snapshots_plus_replacement() {
         let large_database = MIN_RECOVERY_TOTAL_BYTES + 1;
         assert!(check_budget(large_database, 0, u64::MAX, 0, 0).is_ok());
         assert!(check_budget(large_database, 0, u64::MAX, 1, large_database).is_ok());
-        assert!(check_budget(large_database, 0, u64::MAX, 2, large_database * 2).is_err());
+        assert!(check_budget(large_database, 0, u64::MAX, 2, large_database * 2).is_ok());
+        assert!(check_budget(large_database, 0, u64::MAX, 3, large_database * 3).is_err());
 
-        let existing = 6 * 1024 * 1024 * 1024;
+        let existing = 10 * 1024 * 1024 * 1024;
         let next_database = 3 * 1024 * 1024 * 1024;
         let error = check_budget(next_database, 0, u64::MAX, 1, existing).unwrap_err();
         assert_eq!(error.code(), "storage_maintenance_required");
