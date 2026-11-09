@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { useGeneralSettingsStore } from "../../general-settings/application/generalSettingsStore";
 import { useHostLifecycleStore } from "../../host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../../host-lifecycle/ports/HostLifecyclePort";
@@ -13,6 +13,8 @@ export function DeviceGatewayView({ ownerUserId, username, port, hostPort }: { o
   const load = useDeviceGatewayStore((state) => state.load);
   const reset = useDeviceGatewayStore((state) => state.reset);
   const host = useHostLifecycleStore((state) => state.snapshot);
+  const hostDiagnostics = useHostLifecycleStore((state) => state.diagnostics);
+  const previousHostReady = useRef(host.ready);
   const start = useHostLifecycleStore((state) => state.start);
   const stop = useHostLifecycleStore((state) => state.stop);
   const language = useGeneralSettingsStore((state) => state.settings.interfaceLanguage);
@@ -24,7 +26,9 @@ export function DeviceGatewayView({ ownerUserId, username, port, hostPort }: { o
   }, [load, ownerUserId, port, reset]);
 
   useEffect(() => {
-    if (gateway && gateway.connectorRunning !== host.ready) void load(port, ownerUserId);
+    if (!gateway || previousHostReady.current === host.ready) return;
+    previousHostReady.current = host.ready;
+    if (gateway.connectorRunning !== host.ready) void load(port, ownerUserId);
   }, [gateway, host.ready, load, ownerUserId, port]);
 
   if (!gateway && isLoading) return <GatewayStatus loading title={english ? "Reading device status" : "正在读取设备状态"} detail={english ? "Checking the local identity and Rust Host." : "正在检查本机身份与 Rust Host。"} />;
@@ -50,6 +54,20 @@ export function DeviceGatewayView({ ownerUserId, username, port, hostPort }: { o
       {isLoading && <div><span className="mini-spinner" />{english ? "Refreshing…" : "刷新中…"}</div>}
     </header>
     {error && <div className="device-gateway-alert" role="alert">! {error}<button onClick={() => void load(port, ownerUserId)} type="button">{english ? "Retry" : "重试"}</button></div>}
+    {!host.ready && host.phase === "degraded" ? (
+      <div className="device-gateway-alert" role="alert">
+        ! {host.detail}
+        {host.retryable ? <button onClick={() => void start(hostPort, ownerUserId)} type="button">{english ? "Retry local service" : "重试本机服务"}</button> : null}
+        {hostDiagnostics.length > 0 ? (
+          <details>
+            <summary>{english ? "Diagnostics" : "诊断记录"}</summary>
+            <ol>
+              {hostDiagnostics.slice(-5).map((entry) => <li key={entry.sequence}>{entry.event}: {entry.outcome}</li>)}
+            </ol>
+          </details>
+        ) : null}
+      </div>
+    ) : null}
     <GatewayCard icon="⌁" title={english ? "Connection Status" : "连接状态"} subtitle={connectionFootnote}>
       <div className="device-gateway-health"><i className={connected ? "is-online" : ""} /><strong>{connected ? (english ? "Local Agent Host is healthy" : "本机 Agent Host 运行正常") : (connecting ? (english ? "Starting the local service" : "正在启动本机服务") : (english ? "Local service is disconnected" : "本机服务未连接"))}</strong></div>
       <div className="device-gateway-divider" />

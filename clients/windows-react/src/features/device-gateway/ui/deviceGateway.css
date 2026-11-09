@@ -42,6 +42,9 @@
 .device-gateway-note { margin: 10px 2px 0; color: var(--secondary); font-size: 9.5px; line-height: 1.55; }
 .device-gateway-alert { display: flex; align-items: center; gap: 8px; border: 1px solid rgba(255,149,0,.2); border-radius: 11px; padding: 9px 11px; color: #a55c00; background: rgba(255,149,0,.08); font-size: 10px; }
 .device-gateway-alert button { margin-left: auto; border: 0; color: inherit; background: none; }
+.device-gateway-alert details { margin-left: auto; }
+.device-gateway-alert details ol { margin: 6px 0 0; padding-left: 18px; }
+.device-gateway-alert details li { line-height: 1.45; }
 
 .device-gateway-status { display: grid; width: min(520px,100%); margin: 70px auto; justify-items: center; gap: 8px; text-align: center; }
 .device-gateway-status > span { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 14px; color: var(--accent); background: rgba(10,132,255,.1); font-size: 18px; }

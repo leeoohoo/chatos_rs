@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deviceGatewayPort } from "../../../test/deviceGatewayFixture";
 import { useDeviceGatewayStore } from "../application/deviceGatewayStore";
 import type { HostLifecyclePort } from "../../host-lifecycle/ports/HostLifecyclePort";
@@ -7,6 +7,7 @@ import { useHostLifecycleStore } from "../../host-lifecycle/application/hostLife
 import { DeviceGatewayView } from "./DeviceGatewayView";
 
 describe("DeviceGatewayView", () => {
+  afterEach(() => cleanup());
   beforeEach(() => {
     useDeviceGatewayStore.getState().reset();
     useHostLifecycleStore.setState({
@@ -22,6 +23,30 @@ describe("DeviceGatewayView", () => {
     expect(screen.getByText(/不宣称具备 macOS/)).toBeInTheDocument();
     expect(screen.getByText("2 个工作区")).toBeInTheDocument();
     expect(screen.queryByText(/private|fingerprint/i)).not.toBeInTheDocument();
+  });
+
+  it("surfaces Host recovery detail and bounded diagnostics after a failed start", async () => {
+    useHostLifecycleStore.setState({
+      snapshot: {
+        phase: "degraded",
+        ready: false,
+        protocolVersion: 46,
+        detail: "Local Agent Host executable is unavailable.",
+        retryable: true,
+        label: "本地服务需要恢复",
+      },
+      diagnostics: [{
+        sequence: 1,
+        timestampUnixMs: 1,
+        event: "host_executable",
+        outcome: "unavailable",
+      }],
+    });
+    render(<DeviceGatewayView ownerUserId="owner-1" username="alice" port={deviceGatewayPort()} hostPort={hostPort()} />);
+    expect((await screen.findByRole("alert")).textContent).toContain("Local Agent Host executable is unavailable.");
+    expect(screen.getByText("诊断记录")).toBeInTheDocument();
+    expect(screen.getByText("host_executable: unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试本机服务" })).toBeInTheDocument();
   });
 });
 
