@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-mod common;
+pub(crate) mod common;
 mod dispatch;
 mod queries;
 mod status;

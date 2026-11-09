@@ -285,8 +285,10 @@ async fn generation_commit_requires_exactly_one_matching_output_and_current_leas
     let mut tx = pool.begin().await.expect("begin generation commit");
     sqlx::query(
         "INSERT INTO engine_summaries(id,tenant_id,source_id,thread_id,subject_id,summary_type,level,status, \
-         rollup_status,created_at,updated_at,data,generation_id,project_partition_key,generation_profile,recall_eligible) \
-         VALUES($1,$2,$3,$4,$5,'thread_incremental',0,'done','pending',now(),now(),$6,$7,'project:alpha','thread_summary_v2',true)",
+         rollup_status,created_at,updated_at,data,generation_id,project_partition_key,generation_profile, \
+         recall_eligible,pipeline_revision) \
+         VALUES($1,$2,$3,$4,$5,'thread_incremental',0,'done','pending',now(),now(),$6,$7, \
+         'project:alpha','thread_summary_v2',true,'pipeline-v1')",
     )
     .bind(&summary_id)
     .bind(&tenant)
@@ -389,8 +391,10 @@ async fn generation_commit_requires_exactly_one_matching_output_and_current_leas
     let mut orphan_tx = pool.begin().await.expect("begin orphan output");
     sqlx::query(
         "INSERT INTO engine_summaries(id,tenant_id,source_id,thread_id,subject_id,summary_type,level,status, \
-         rollup_status,created_at,updated_at,data,generation_id,project_partition_key,generation_profile,recall_eligible) \
-         VALUES($1,$2,$3,$4,$5,'thread_incremental',0,'done','pending',now(),now(),$6,$7,'project:alpha','thread_summary_v2',true)",
+         rollup_status,created_at,updated_at,data,generation_id,project_partition_key,generation_profile, \
+         recall_eligible,pipeline_revision) \
+         VALUES($1,$2,$3,$4,$5,'thread_incremental',0,'done','pending',now(),now(),$6,$7, \
+         'project:alpha','thread_summary_v2',true,'pipeline-v1')",
     )
     .bind(&orphan_id)
     .bind(&tenant)
