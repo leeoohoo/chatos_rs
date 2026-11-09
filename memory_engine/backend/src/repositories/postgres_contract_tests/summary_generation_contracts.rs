@@ -356,3 +356,207 @@ async fn thread_rollup_generation_requires_rollup_kind_and_matching_frozen_confi
     .expect("commit rollup generation");
     assert_eq!(rollup.level, 1);
 }
+
+#[tokio::test]
+async fn thread_l0_final_commit_atomically_finishes_records_partition_projection_and_job() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("thread-{suffix}");
+    let subject = format!("agent:{suffix}");
+    let record_id = format!("record-{suffix}");
+    thread(&pool, &tenant, &source, &thread_id, &subject).await;
+    crate::repositories::records::batch_sync_records_with_partition_dispatch(
+        &test_config("unused".to_string()),
+        &pool,
+        &thread_id,
+        &crate::models::BatchSyncRecordsRequest {
+            tenant_id: tenant.clone(),
+            source_id: source.clone(),
+            records: vec![crate::models::UpsertRecordInput {
+                id: record_id.clone(),
+                external_record_id: None,
+                role: "user".to_string(),
+                record_type: "message".to_string(),
+                content: "atomic source".to_string(),
+                structured_payload: None,
+                metadata: Some(json!({
+                    "conversation_turn_id": format!("turn-{suffix}"),
+                    "memory_project_id": "alpha"
+                })),
+                summary_status: None,
+                summary_id: None,
+                summarized_at: None,
+                created_at: "2026-11-09T00:00:00Z".to_string(),
+            }],
+        },
+        true,
+    )
+    .await
+    .expect("ingest L0 source record");
+    let pending = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT pending_record_count,pending_summary_tokens \
+         FROM engine_thread_summary_partitions WHERE tenant_id=$1 AND source_id=$2 \
+         AND thread_id=$3 AND project_partition_key=$4",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .bind(PARTITION)
+    .fetch_one(&pool)
+    .await
+    .expect("load pending L0 partition");
+    assert_eq!(pending.0, 1);
+    assert!(crate::repositories::thread_partitions::mark_ready(
+        &pool, &tenant, &source, &thread_id, PARTITION, pending.0, pending.1,
+    )
+    .await
+    .expect("mark L0 partition ready"));
+    assert!(crate::repositories::thread_partitions::cutover_to_v2(
+        &pool, &tenant, &source, &thread_id, PARTITION,
+    )
+    .await
+    .expect("cut over L0 partition"));
+
+    let job = crate::repositories::control_plane::create_job_run(
+        &pool,
+        crate::models::CreateEngineJobRunRequest {
+            job_type: "summary".to_string(),
+            trigger_type: "database_worker".to_string(),
+            tenant_id: Some(tenant.clone()),
+            source_id: Some(source.clone()),
+            thread_id: Some(thread_id.clone()),
+            subject_id: Some(subject.clone()),
+            thread_label: None,
+            metadata: Some(json!({"phase":"running"})),
+        },
+    )
+    .await
+    .expect("create atomic L0 job");
+    crate::repositories::thread_partitions::try_claim_summary(
+        &pool, &tenant, &source, &thread_id, PARTITION, "v2", &job.id, 300,
+    )
+    .await
+    .expect("claim v2 L0 partition")
+    .expect("v2 L0 partition claim");
+    assert_eq!(
+        crate::repositories::records::claim_records_for_summary(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            std::slice::from_ref(&record_id),
+            &job.id,
+        )
+        .await
+        .expect("claim L0 source record"),
+        1
+    );
+
+    let input_manifest = manifest(&record_id);
+    let config_snapshot = config(PROFILE);
+    let input_digest = format!("sha256:{}", "a".repeat(64));
+    let prepared = crate::repositories::generation_commits::prepare_generation(
+        &pool,
+        PrepareGeneration {
+            tenant_id: &tenant,
+            source_id: &source,
+            job_run_id: &job.id,
+            generation_step_key: "thread-l0:project:alpha:0",
+            generation_kind: "thread_summary",
+            input_digest: &input_digest,
+            input_manifest: &input_manifest,
+            config_snapshot: &config_snapshot,
+            project_partition_key: Some(PARTITION),
+        },
+    )
+    .await
+    .expect("prepare atomic L0 generation");
+    let generation = crate::repositories::generation_commits::claim_generation(
+        &pool,
+        &tenant,
+        &source,
+        &prepared.generation_id,
+        "atomic-L0-worker",
+        300,
+    )
+    .await
+    .expect("claim atomic L0 generation")
+    .expect("atomic L0 generation claim");
+    let mut summary_output = output(&thread_id, &subject, 0, PROFILE, "atomic L0 summary");
+    summary_output.source_record_start_id = Some(record_id.clone());
+    summary_output.source_record_end_id = Some(record_id.clone());
+    summary_output.source_record_count = 1;
+    let summary =
+        crate::repositories::generation_output_commits::commit_thread_summary_generation_final(
+            &pool,
+            &generation,
+            summary_output,
+            crate::repositories::generation_output_commits::ThreadL0GenerationFinalization {
+                record_ids: std::slice::from_ref(&record_id),
+                consumed_summary_tokens: pending.1,
+                job_result: crate::models::FinishEngineJobRunRequest {
+                    status: "done".to_string(),
+                    input_count: 1,
+                    output_count: 1,
+                    processed_count: 1,
+                    success_count: 1,
+                    error_count: 0,
+                    metadata: Some(json!({"summary_id":"committed"})),
+                    error_message: None,
+                },
+            },
+        )
+        .await
+        .expect("atomically commit L0 generation");
+
+    let record_state = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+        "SELECT summary_status,summary_id,summary_job_run_id FROM engine_records \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&record_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load committed L0 source record");
+    assert_eq!(record_state.0, "summarized");
+    assert_eq!(record_state.1.as_deref(), Some(summary.id.as_str()));
+    assert!(record_state.2.is_none());
+    let partition_state = sqlx::query_as::<_, (i64, i64, String, Option<String>)>(
+        "SELECT pending_record_count,pending_summary_tokens,summary_status,summary_job_run_id \
+         FROM engine_thread_summary_partitions WHERE tenant_id=$1 AND source_id=$2 \
+         AND thread_id=$3 AND project_partition_key=$4",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .bind(PARTITION)
+    .fetch_one(&pool)
+    .await
+    .expect("load finalized L0 partition");
+    assert_eq!(partition_state, (0, 0, "idle".to_string(), None));
+    let thread_state = sqlx::query_as::<_, (i64, i64, String)>(
+        "SELECT pending_record_count,pending_summary_tokens,summary_status FROM engine_threads \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load finalized thread projection");
+    assert_eq!(thread_state, (0, 0, "idle".to_string()));
+    let job_state = sqlx::query_as::<_, (String, i64, i64)>(
+        "SELECT status,(data->>'success_count')::bigint,(data->>'output_count')::bigint \
+         FROM engine_job_runs WHERE id=$1",
+    )
+    .bind(&job.id)
+    .fetch_one(&pool)
+    .await
+    .expect("load finalized L0 job");
+    assert_eq!(job_state, ("done".to_string(), 1, 1));
+}
