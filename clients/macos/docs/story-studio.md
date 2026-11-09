@@ -8,7 +8,7 @@
 
 Agent 只规划文字；图片与视频由用户单项点击，或在确认页启动确定性制作队列。生产 `ChatOSStoryPlanningService` 通过 `AgentServiceProviding` 进入新循环；`StoryPlanningServicing` 仅作为内部测试接缝，不代表另一套剧情持久化格式。
 
-详细方案保存在仓库根目录 `docs/plans/2026-09-09-reusable-agent-loop.md` 与 `2026-09-09-client-memory-engine.md`（根目录 docs 按仓库规则为本机文档）。
+剧情数据契约见仓库根目录 `docs/plans/2026-09-09-story-data-model.md`；当前 Memory Engine 实施依据为 `docs/plans/2026-11-09-memory-engine-reliability-and-context-retrieval-plan.zh-CN.md`（根目录 docs 按仓库规则为本机文档）。
 
 本批验证覆盖 API、Agent、审批、剧情、媒体、共享循环、关系图谱、确定性队列、提交防重、磁盘恢复，以及 Memory 摘要轮询正常完成和等待中取消两条防崩溃路径。验证不会触发真实付费请求。
 
