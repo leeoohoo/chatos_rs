@@ -6,6 +6,7 @@ mod api;
 mod cloud_agent_queue;
 mod config;
 mod db;
+mod derived_event_queue;
 mod feature_flags;
 mod internal_tls;
 mod jobs;
@@ -95,12 +96,13 @@ async fn main() -> Result<(), String> {
     pressure::start_pressure_reporter(
         state.clone(),
         pressure_config_client,
-        service_id,
+        service_id.clone(),
         running_version,
     );
 
     if config.worker_enabled {
         cloud_agent_queue::start(state.clone());
+        derived_event_queue::start(state.clone(), service_id.clone());
         summary_queue::start(state.clone());
         rollup_queue::start(state.clone());
         subject_memory_queue::start(state.clone());

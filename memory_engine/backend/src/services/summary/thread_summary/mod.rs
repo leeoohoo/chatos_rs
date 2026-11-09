@@ -6,8 +6,12 @@ mod job;
 
 pub use execution::run_thread_summary;
 pub(crate) use execution::{
-    execute_existing_summary_job, execute_prepared_thread_summary_job, fail_cloud_summary_job,
-    load_thread_summary_execution_context, resume_cloud_summary_job,
-    run_thread_summary_with_thread, start_thread_summary_job, ThreadSummaryExecutionContext,
+    execute_existing_summary_job, fail_cloud_summary_job, load_thread_summary_execution_context,
+    resume_cloud_summary_job, run_thread_summary_with_thread,
 };
+#[cfg(test)]
+pub(crate) use execution::{
+    execute_prepared_thread_summary_job, start_thread_summary_job, ThreadSummaryExecutionContext,
+};
+#[cfg(test)]
 pub(crate) use job::THREAD_DIRECT_TRIGGER;

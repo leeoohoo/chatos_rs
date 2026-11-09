@@ -201,4 +201,17 @@ async fn partition_claims_enforce_writer_cutover_and_isolate_projects() {
     .await
     .expect("claim alpha after v2 cutover")
     .is_some());
+    let rollback = sqlx::query(
+        "UPDATE engine_thread_summary_partitions SET migration_state='ready',authoritative_writer='v1' \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key='project:alpha'",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .execute(&pool)
+    .await
+    .expect_err("database must reject writer rollback");
+    assert!(rollback
+        .to_string()
+        .contains("invalid partition writer transition"));
 }

@@ -130,8 +130,13 @@ pub async fn mark_published(db: &Db, event: &DerivedEventOutbox) -> Result<bool,
         tx.rollback().await.map_err(|error| error.to_string())?;
         return Ok(false);
     }
-    if event.event_kind == "thread_summary_requested" {
-        update_partition_published(&mut tx, event).await?;
+    match event.event_kind.as_str() {
+        "thread_summary_requested" => update_partition_published(&mut tx, event).await?,
+        value => {
+            return Err(format!(
+                "unsupported derived event kind for publisher: {value}"
+            ))
+        }
     }
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(true)
@@ -347,6 +352,24 @@ async fn update_partition_published(
     .map_err(|error| error.to_string())?;
     if result.rows_affected() != 1 {
         return Err("thread partition is missing or behind the published event".to_string());
+    }
+    let compatibility = sqlx::query(
+        "UPDATE engine_threads SET \
+         summary_dispatch_pending=CASE WHEN summary_dispatch_consumed_version<summary_dispatch_version THEN true ELSE summary_dispatch_pending END, \
+         summary_dispatch_requested_at=COALESCE(summary_dispatch_requested_at,now()) \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND summary_dispatch_version>=$4",
+    )
+    .bind(&event.tenant_id)
+    .bind(&event.source_id)
+    .bind(thread_id)
+    .bind(event.dispatch_version)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if compatibility.rows_affected() != 1 {
+        return Err(
+            "compatibility summary dispatch is missing or behind the published event".to_string(),
+        );
     }
     Ok(())
 }
