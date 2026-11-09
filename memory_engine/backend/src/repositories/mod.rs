@@ -5,6 +5,7 @@ pub mod agent_directory;
 pub mod cloud_agent;
 pub mod control_plane;
 pub(crate) mod derived_events;
+pub(crate) mod generation_commits;
 pub mod observability;
 pub(crate) mod postgres;
 pub mod records;

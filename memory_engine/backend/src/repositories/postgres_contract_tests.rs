@@ -68,6 +68,7 @@ mod context_scope_contracts;
 mod cursor_contracts;
 mod derived_event_contracts;
 mod forced_summary_contracts;
+mod generation_commit_contracts;
 mod memory_pipeline_contracts;
 mod partition_claim_contracts;
 mod partition_ingest_contracts;
