@@ -897,6 +897,30 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         await worker.reset()
     }
 
+    func testWorkerReturnsPluginInstallerIntentErrorToModel() async throws {
+        let host = PlatformToolHostStub(mode: .oneSideEffectingClaim)
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: PluginInstallerIntentFailingPlatformToolExecutor(),
+            workerID: "worker-1"
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        var outcome: [String: LocalAgentJSONValue]?
+        for _ in 0..<100 where outcome == nil {
+            outcome = try await host.committedOutcome()
+            if outcome == nil {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        XCTAssertEqual(outcome?["type"], .string("failed"))
+        XCTAssertEqual(
+            outcome?["error"],
+            .string("当前用户消息没有明确授权安装；可以继续检查或比较，但不能安装")
+        )
+        await worker.reset()
+    }
+
     func testWorkerCommitsSharedPreflightDenialWithoutExecutingNativeTool() async throws {
         let host = PlatformToolHostStub(mode: .preflightDeniedClaim)
         let executor = CountingPlatformToolExecutor()
@@ -1077,6 +1101,17 @@ private struct RecoverablePlatformToolExecutor: NativeLocalAgentPlatformToolExec
         throw NativeLocalAgentPlatformToolError.projectToolRejected(
             "文本匹配数量不符合预期：期望 4，实际 3"
         )
+    }
+}
+
+private struct PluginInstallerIntentFailingPlatformToolExecutor:
+    NativeLocalAgentPlatformToolExecuting
+{
+    func execute(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord
+    ) async throws -> LocalAgentJSONValue {
+        throw NativeLocalAgentPluginInstallerToolError.explicitInstallIntentRequired
     }
 }
 
@@ -1397,12 +1432,16 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
     }
 
     func committedOutcomeType() throws -> LocalAgentJSONValue? {
+        try committedOutcome()?["type"]
+    }
+
+    func committedOutcome() throws -> [String: LocalAgentJSONValue]? {
         for data in commands.reversed() {
             let value = try JSONDecoder().decode(LocalAgentJSONValue.self, from: data)
             guard case let .object(object) = value,
                   object["type"] == .string("commit_tool"),
                   case let .object(outcome)? = object["outcome"] else { continue }
-            return outcome["type"]
+            return outcome
         }
         return nil
     }

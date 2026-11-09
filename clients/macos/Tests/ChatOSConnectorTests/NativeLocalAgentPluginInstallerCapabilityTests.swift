@@ -149,9 +149,14 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
     func testInstallIntentRequiresAnExplicitNonNegatedRequest() {
         for message in [
             "帮我安装一下 REA",
+            "帮我看一下 rea 这个插件，好像有更新了，帮我也更新一下",
+            "请升级 REA 到最新版",
+            "把这个 MCP 更新一下",
             "直接添加这个 MCP",
             "请配置并使用这个插件",
             "Please install rea-agents for me.",
+            "Please update rea-agents for me.",
+            "Upgrade this MCP plugin.",
             "Set up this MCP plugin.",
         ] {
             XCTAssertTrue(
@@ -165,7 +170,13 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
             "怎么安装 REA？",
             "是否支持安装 Codex 插件？",
             "先不要安装，只查看工具列表",
+            "REA 好像有更新了，帮我看看",
+            "检查一下 REA 有没有更新",
+            "怎么升级 REA？",
+            "先不要更新 REA",
             "How do I install this MCP?",
+            "Is there an update for REA?",
+            "Do not upgrade this package.",
             "Do not install this package.",
         ] {
             XCTAssertFalse(

@@ -167,8 +167,8 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         guard !normalized.isEmpty else { return false }
 
         let deniedPatterns = [
-            #"(?:不要|不用|无需|别|暂不|先不|不想|不需要).{0,8}(?:安装|装上|添加|接入|配置|启用)"#,
-            #"\b(?:do\s+not|don't|dont|without)\s+(?:install|add|set\s*up|configure|enable)\b"#,
+            #"(?:不要|不用|无需|别|暂不|先不|不想|不需要).{0,8}(?:安装|装上|添加|接入|配置|启用|更新|升级)"#,
+            #"\b(?:do\s+not|don't|dont|without)\s+(?:install|add|set\s*up|configure|enable|update|upgrade)\b"#,
         ]
         if deniedPatterns.contains(where: { matches($0, in: normalized) }) {
             return false
@@ -178,6 +178,9 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             #"(?:怎么|如何|哪里).{0,12}(?:安装|添加|接入|配置|启用)"#,
             #"(?:是否支持|能否支持).{0,8}(?:安装|添加|接入|配置|启用)"#,
             #"\b(?:how|where)\s+(?:do\s+i\s+|to\s+)?(?:install|add|set\s*up|configure|enable)\b"#,
+            #"(?:怎么|如何|哪里|看看|查看|检查|有没有|是否有|有无).{0,12}(?:更新|升级)"#,
+            #"\b(?:how|where)\s+(?:do\s+i\s+|to\s+)?(?:update|upgrade)\b"#,
+            #"\b(?:is\s+there|check(?:ing)?\s+for)\s+(?:an?\s+)?updates?\b"#,
         ]
         if informationalPatterns.contains(where: { matches($0, in: normalized) }) {
             return false
@@ -186,6 +189,11 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         let affirmativePatterns = [
             #"(?:请|麻烦|帮我|给我|我要|我想|现在|直接|可以|可否|能不能)?\s*(?:安装|装上|添加|接入|配置(?:并)?使用|启用)(?:一下|上)?"#,
             #"\b(?:please\s+)?(?:install|add|set\s*up|configure|enable)\b"#,
+            #"(?:请|麻烦|帮我|给我|我要|我想|现在|直接|可以|可否|能不能).{0,8}(?:更新|升级)(?:一下)?"#,
+            #"^(?:请\s*)?(?:更新|升级)\b"#,
+            #"(?:请\s*)?把.{1,80}(?:更新|升级)(?:一下)?"#,
+            #"(?:\bplease\s+|\b(?:can|could|would)\s+you\s+(?:please\s+)?)(?:update|upgrade)\b"#,
+            #"^(?:update|upgrade)\b"#,
         ]
         return affirmativePatterns.contains(where: { matches($0, in: normalized) })
     }
