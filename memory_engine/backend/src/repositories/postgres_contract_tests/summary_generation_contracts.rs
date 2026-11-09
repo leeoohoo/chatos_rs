@@ -560,3 +560,179 @@ async fn thread_l0_final_commit_atomically_finishes_records_partition_projection
     .expect("load finalized L0 job");
     assert_eq!(job_state, ("done".to_string(), 1, 1));
 }
+
+#[tokio::test]
+async fn thread_rollup_final_commit_atomically_marks_sources_releases_claim_and_finishes_job() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant = format!("tenant-{suffix}");
+    let source = format!("source-{suffix}");
+    let thread_id = format!("thread-{suffix}");
+    let subject = format!("agent:{suffix}");
+    thread(&pool, &tenant, &source, &thread_id, &subject).await;
+
+    let source_generation = claimed_generation(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        &subject,
+        &format!("source-{suffix}"),
+        "thread_summary",
+        PROFILE,
+    )
+    .await;
+    let mut source_output = output(&thread_id, &subject, 0, PROFILE, "rollup source");
+    source_output.source_record_count = 1;
+    let source_summary =
+        crate::repositories::generation_output_commits::commit_thread_summary_generation(
+            &pool,
+            &source_generation,
+            source_output,
+        )
+        .await
+        .expect("commit rollup source summary");
+
+    let mut tx = pool.begin().await.expect("begin rollup partition setup");
+    crate::repositories::thread_partitions::lock_or_create(
+        &mut tx, &tenant, &source, &thread_id, PARTITION,
+    )
+    .await
+    .expect("create rollup partition");
+    tx.commit().await.expect("commit rollup partition setup");
+    assert!(crate::repositories::thread_partitions::mark_ready(
+        &pool, &tenant, &source, &thread_id, PARTITION, 0, 0,
+    )
+    .await
+    .expect("mark rollup partition ready"));
+    assert!(crate::repositories::thread_partitions::cutover_to_v2(
+        &pool, &tenant, &source, &thread_id, PARTITION,
+    )
+    .await
+    .expect("cut over rollup partition"));
+
+    let job = crate::repositories::control_plane::create_job_run(
+        &pool,
+        crate::models::CreateEngineJobRunRequest {
+            job_type: "rollup".to_string(),
+            trigger_type: "database_worker".to_string(),
+            tenant_id: Some(tenant.clone()),
+            source_id: Some(source.clone()),
+            thread_id: Some(thread_id.clone()),
+            subject_id: Some(subject.clone()),
+            thread_label: None,
+            metadata: Some(json!({"phase":"running"})),
+        },
+    )
+    .await
+    .expect("create atomic rollup job");
+    crate::repositories::thread_partitions::try_claim_rollup(
+        &pool, &tenant, &source, &thread_id, PARTITION, "v2", &job.id, 300,
+    )
+    .await
+    .expect("claim v2 rollup partition")
+    .expect("v2 rollup partition claim");
+
+    let input_manifest = json!({
+        "schema_version": "memory_generation_input_v1",
+        "digest_algorithm": "sha256",
+        "canonicalizer_revision": "canonical-json-v1",
+        "inputs": [{
+            "kind": "summary",
+            "id": source_summary.id,
+            "ordinal": 0,
+            "project_partition_key": PARTITION,
+            "digest": format!("sha256:{}", "b".repeat(64))
+        }]
+    });
+    let rollup_profile = "thread_rollup_v2";
+    let config_snapshot = config(rollup_profile);
+    let input_digest = format!("sha256:{}", "a".repeat(64));
+    let prepared = crate::repositories::generation_commits::prepare_generation(
+        &pool,
+        PrepareGeneration {
+            tenant_id: &tenant,
+            source_id: &source,
+            job_run_id: &job.id,
+            generation_step_key: "thread-rollup:project:alpha:1",
+            generation_kind: "thread_rollup",
+            input_digest: &input_digest,
+            input_manifest: &input_manifest,
+            config_snapshot: &config_snapshot,
+            project_partition_key: Some(PARTITION),
+        },
+    )
+    .await
+    .expect("prepare atomic rollup generation");
+    let generation = crate::repositories::generation_commits::claim_generation(
+        &pool,
+        &tenant,
+        &source,
+        &prepared.generation_id,
+        "atomic-rollup-worker",
+        300,
+    )
+    .await
+    .expect("claim atomic rollup generation")
+    .expect("atomic rollup generation claim");
+    let mut rollup_output = output(&thread_id, &subject, 1, rollup_profile, "atomic rollup");
+    rollup_output.source_record_start_id = Some(source_summary.id.clone());
+    rollup_output.source_record_end_id = Some(source_summary.id.clone());
+    rollup_output.source_record_count = 1;
+    let rollup =
+        crate::repositories::generation_output_commits::commit_thread_rollup_generation_final(
+            &pool,
+            &generation,
+            rollup_output,
+            crate::repositories::generation_output_commits::ThreadRollupGenerationFinalization {
+                summary_ids: std::slice::from_ref(&source_summary.id),
+                job_result: crate::models::FinishEngineJobRunRequest {
+                    status: "done".to_string(),
+                    input_count: 1,
+                    output_count: 1,
+                    processed_count: 1,
+                    success_count: 1,
+                    error_count: 0,
+                    metadata: Some(json!({"phase":"committed"})),
+                    error_message: None,
+                },
+            },
+        )
+        .await
+        .expect("atomically commit rollup generation");
+
+    let source_state = sqlx::query_as::<_, (String, Option<String>, bool)>(
+        "SELECT rollup_status,data->>'rollup_summary_id',rollup_dispatch_pending \
+         FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&source_summary.id)
+    .fetch_one(&pool)
+    .await
+    .expect("load finalized rollup source");
+    assert_eq!(source_state.0, "done");
+    assert_eq!(source_state.1.as_deref(), Some(rollup.id.as_str()));
+    assert!(!source_state.2);
+    let partition_state = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT rollup_status,rollup_job_run_id FROM engine_thread_summary_partitions \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&thread_id)
+    .bind(PARTITION)
+    .fetch_one(&pool)
+    .await
+    .expect("load finalized rollup partition");
+    assert_eq!(partition_state, ("pending".to_string(), None));
+    let job_status =
+        sqlx::query_scalar::<_, String>("SELECT status FROM engine_job_runs WHERE id=$1")
+            .bind(&job.id)
+            .fetch_one(&pool)
+            .await
+            .expect("load finalized rollup job");
+    assert_eq!(job_status, "done");
+}

@@ -18,6 +18,17 @@ pub struct PartitionSummaryClaim {
     pub pending_summary_tokens: i64,
 }
 
+#[derive(Debug, Clone, FromRow, PartialEq, Eq)]
+pub struct PartitionRollupClaim {
+    pub tenant_id: String,
+    pub source_id: String,
+    pub thread_id: String,
+    pub project_partition_key: String,
+    pub migration_state: String,
+    pub authoritative_writer: String,
+    pub rollup_job_run_id: String,
+}
+
 pub(crate) async fn lock_or_create(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: &str,
@@ -186,6 +197,91 @@ pub async fn release_summary_claim(
     .bind(job_run_id)
     .bind(processed_record_count.max(0))
     .bind(processed_tokens.max(0))
+    .execute(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(result.rows_affected() == 1)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn try_claim_rollup(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    project_partition_key: &str,
+    worker_version: &str,
+    job_run_id: &str,
+    lease_seconds: i64,
+) -> Result<Option<PartitionRollupClaim>, String> {
+    if !matches!(worker_version, "v1" | "v2") {
+        return Err("partition rollup worker version must be v1 or v2".to_string());
+    }
+    if job_run_id.trim().is_empty() {
+        return Err("partition rollup job_run_id is required".to_string());
+    }
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let writer = sqlx::query_scalar::<_, String>(
+        "SELECT authoritative_writer FROM engine_thread_summary_partitions \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
+         FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(project_partition_key)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| "thread partition not found for rollup claim".to_string())?;
+    if writer != worker_version {
+        return Err(format!(
+            "partition rollup worker {worker_version} is not authoritative; expected {writer}"
+        ));
+    }
+    let claim = sqlx::query_as::<_, PartitionRollupClaim>(
+        "UPDATE engine_thread_summary_partitions SET rollup_status='running',rollup_job_run_id=$5, \
+         rollup_locked_at=now(),rollup_lock_expires_at=now()+make_interval(secs=>$6),updated_at=now() \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
+         AND (rollup_status<>'running' OR rollup_lock_expires_at IS NULL OR rollup_lock_expires_at<=now()) \
+         RETURNING tenant_id,source_id,thread_id,project_partition_key,migration_state, \
+         authoritative_writer,rollup_job_run_id",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(project_partition_key)
+    .bind(job_run_id)
+    .bind(lease_seconds.clamp(1, 86_400) as f64)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(claim)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn release_rollup_claim(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    project_partition_key: &str,
+    worker_version: &str,
+    job_run_id: &str,
+) -> Result<bool, String> {
+    let result = sqlx::query(
+        "UPDATE engine_thread_summary_partitions SET rollup_status='pending', \
+         rollup_job_run_id=NULL,rollup_locked_at=NULL,rollup_lock_expires_at=NULL,updated_at=now() \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key=$4 \
+         AND authoritative_writer=$5 AND rollup_status='running' AND rollup_job_run_id=$6",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(project_partition_key)
+    .bind(worker_version)
+    .bind(job_run_id)
     .execute(db)
     .await
     .map_err(|error| error.to_string())?;

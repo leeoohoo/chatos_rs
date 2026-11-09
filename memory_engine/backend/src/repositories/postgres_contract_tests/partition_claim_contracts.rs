@@ -201,6 +201,45 @@ async fn partition_claims_enforce_writer_cutover_and_isolate_projects() {
     .await
     .expect("claim alpha after v2 cutover")
     .is_some());
+    let retired_rollup_v1 = crate::repositories::thread_partitions::try_claim_rollup(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "project:alpha",
+        "v1",
+        "rollup-v1-late",
+        300,
+    )
+    .await
+    .expect_err("v1 rollup cannot claim after cutover");
+    assert!(retired_rollup_v1.contains("not authoritative"));
+    assert!(crate::repositories::thread_partitions::try_claim_rollup(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "project:alpha",
+        "v2",
+        "rollup-v2",
+        300,
+    )
+    .await
+    .expect("claim v2 rollup after cutover")
+    .is_some());
+    assert!(
+        crate::repositories::thread_partitions::release_rollup_claim(
+            &pool,
+            &tenant,
+            &source,
+            &thread_id,
+            "project:alpha",
+            "v2",
+            "rollup-v2",
+        )
+        .await
+        .expect("release v2 rollup claim")
+    );
     let rollback = sqlx::query(
         "UPDATE engine_thread_summary_partitions SET migration_state='ready',authoritative_writer='v1' \
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND project_partition_key='project:alpha'",
