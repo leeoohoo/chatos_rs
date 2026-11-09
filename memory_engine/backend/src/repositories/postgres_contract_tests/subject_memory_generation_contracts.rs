@@ -244,6 +244,36 @@ async fn subject_memory_generation_is_immutable_idempotent_and_retires_previous_
         .expect("second row");
     assert_eq!(second_row.2, "active");
     assert!(second_row.3);
+    let downstream = sqlx::query_as::<_, (String, sqlx::types::Json<serde_json::Value>)>(
+        "SELECT event_kind,payload FROM engine_derived_event_outbox \
+         WHERE tenant_id=$1 AND source_id=$2 AND generation_id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&second_generation.generation_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load subject memory rollup event");
+    assert_eq!(downstream.0, "subject_memory_rollup_requested");
+    assert!(downstream.1.get("text").is_none());
+    let claimed = crate::repositories::derived_events::claim_publish_batch_for_scope(
+        &pool,
+        "subject-output-publisher",
+        300,
+        10,
+        Some(&tenant),
+        Some(&source),
+    )
+    .await
+    .expect("claim subject memory downstream events");
+    assert_eq!(claimed.len(), 2);
+    for event in claimed {
+        assert!(
+            crate::repositories::derived_events::mark_published(&pool, &event)
+                .await
+                .expect("publish subject memory downstream event")
+        );
+    }
 
     let legacy_after_v2 = crate::repositories::subject_memories::upsert_subject_memory(
         &pool,
@@ -368,6 +398,17 @@ async fn subject_memory_generation_rejects_stale_lease_and_rolls_back_partial_re
     .await
     .expect("count rolled back output");
     assert_eq!(failed_output_count, 0);
+    let failed_event_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM engine_derived_event_outbox \
+         WHERE tenant_id=$1 AND source_id=$2 AND generation_id=$3",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&takeover.generation_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count rolled back subject memory event");
+    assert_eq!(failed_event_count, 0);
 
     let replacement =
         crate::repositories::generation_output_commits::commit_subject_memory_generation(

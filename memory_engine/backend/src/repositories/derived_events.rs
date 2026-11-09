@@ -62,6 +62,85 @@ pub(crate) async fn enqueue_thread_summary_request(
     Ok(event_id)
 }
 
+pub(crate) async fn enqueue_summary_downstream_requests(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: &str,
+    source_id: &str,
+    summary_id: &str,
+    thread_id: &str,
+    project_partition_key: &str,
+    generation_id: &str,
+) -> Result<(), String> {
+    for event_kind in ["thread_rollup_requested", "subject_memory_source_requested"] {
+        let event_id = format!("mevt_{}", Uuid::new_v4());
+        let payload = serde_json::json!({
+            "schema_version": "memory_derived_event_v1",
+            "summary_id": summary_id,
+            "thread_id": thread_id,
+            "project_partition_key": project_partition_key,
+            "dispatch_version": 1,
+            "generation_id": generation_id,
+        });
+        sqlx::query(
+            "INSERT INTO engine_derived_event_outbox(tenant_id,source_id,event_id,event_kind, \
+             aggregate_kind,aggregate_id,project_partition_key,dispatch_version,generation_id,payload) \
+             VALUES($1,$2,$3,$4,'thread_summary',$5,$6,1,$7,$8) \
+             ON CONFLICT(tenant_id,source_id,event_kind,aggregate_kind,aggregate_id,dispatch_version) \
+             DO NOTHING",
+        )
+        .bind(tenant_id)
+        .bind(source_id)
+        .bind(event_id)
+        .bind(event_kind)
+        .bind(summary_id)
+        .bind(project_partition_key)
+        .bind(generation_id)
+        .bind(Json(payload))
+        .execute(&mut **tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn enqueue_subject_memory_rollup_request(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: &str,
+    source_id: &str,
+    memory_id: &str,
+    subject_id: &str,
+    project_partition_key: Option<&str>,
+    generation_id: &str,
+) -> Result<(), String> {
+    let event_id = format!("mevt_{}", Uuid::new_v4());
+    let payload = serde_json::json!({
+        "schema_version": "memory_derived_event_v1",
+        "memory_id": memory_id,
+        "subject_id": subject_id,
+        "project_partition_key": project_partition_key,
+        "dispatch_version": 1,
+        "generation_id": generation_id,
+    });
+    sqlx::query(
+        "INSERT INTO engine_derived_event_outbox(tenant_id,source_id,event_id,event_kind, \
+         aggregate_kind,aggregate_id,project_partition_key,dispatch_version,generation_id,payload) \
+         VALUES($1,$2,$3,'subject_memory_rollup_requested','subject_memory',$4,$5,1,$6,$7) \
+         ON CONFLICT(tenant_id,source_id,event_kind,aggregate_kind,aggregate_id,dispatch_version) \
+         DO NOTHING",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(event_id)
+    .bind(memory_id)
+    .bind(project_partition_key)
+    .bind(generation_id)
+    .bind(Json(payload))
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 pub async fn claim_publish_batch(
     db: &Db,
     lease_owner: &str,
@@ -132,6 +211,12 @@ pub async fn mark_published(db: &Db, event: &DerivedEventOutbox) -> Result<bool,
     }
     match event.event_kind.as_str() {
         "thread_summary_requested" => update_partition_published(&mut tx, event).await?,
+        "thread_rollup_requested" | "subject_memory_source_requested" => {
+            validate_summary_output_event(&mut tx, event).await?
+        }
+        "subject_memory_rollup_requested" => {
+            validate_subject_memory_output_event(&mut tx, event).await?
+        }
         value => {
             return Err(format!(
                 "unsupported derived event kind for publisher: {value}"
@@ -140,6 +225,54 @@ pub async fn mark_published(db: &Db, event: &DerivedEventOutbox) -> Result<bool,
     }
     tx.commit().await.map_err(|error| error.to_string())?;
     Ok(true)
+}
+
+async fn validate_summary_output_event(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &DerivedEventOutbox,
+) -> Result<(), String> {
+    let valid = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 \
+         AND id=$3 AND generation_id=$4 AND project_partition_key IS NOT DISTINCT FROM $5 \
+        )",
+    )
+    .bind(&event.tenant_id)
+    .bind(&event.source_id)
+    .bind(&event.aggregate_id)
+    .bind(&event.generation_id)
+    .bind(&event.project_partition_key)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if !valid {
+        return Err("summary derived event is missing its eligible generation output".to_string());
+    }
+    Ok(())
+}
+
+async fn validate_subject_memory_output_event(
+    tx: &mut Transaction<'_, Postgres>,
+    event: &DerivedEventOutbox,
+) -> Result<(), String> {
+    let valid = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM engine_subject_memories WHERE tenant_id=$1 AND source_id=$2 \
+         AND id=$3 AND generation_id=$4 AND project_partition_key IS NOT DISTINCT FROM $5 \
+        )",
+    )
+    .bind(&event.tenant_id)
+    .bind(&event.source_id)
+    .bind(&event.aggregate_id)
+    .bind(&event.generation_id)
+    .bind(&event.project_partition_key)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if !valid {
+        return Err(
+            "subject memory derived event is missing its eligible generation output".to_string(),
+        );
+    }
+    Ok(())
 }
 
 pub async fn mark_publish_failed(

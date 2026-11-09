@@ -203,6 +203,40 @@ async fn thread_summary_generation_commit_is_idempotent_and_persists_frozen_iden
     assert_eq!(stored.3, PIPELINE);
     assert!(stored.4);
     assert_eq!((stored.5, stored.6), (1, 1));
+    let downstream = sqlx::query_as::<_, (String, sqlx::types::Json<serde_json::Value>)>(
+        "SELECT event_kind,payload FROM engine_derived_event_outbox \
+         WHERE tenant_id=$1 AND source_id=$2 AND generation_id=$3 ORDER BY event_kind",
+    )
+    .bind(&tenant)
+    .bind(&source)
+    .bind(&generation.generation_id)
+    .fetch_all(&pool)
+    .await
+    .expect("load summary downstream events");
+    assert_eq!(downstream.len(), 2);
+    assert_eq!(downstream[0].0, "subject_memory_source_requested");
+    assert_eq!(downstream[1].0, "thread_rollup_requested");
+    assert!(downstream
+        .iter()
+        .all(|(_, payload)| payload.get("summary_text").is_none()));
+    let claimed = crate::repositories::derived_events::claim_publish_batch_for_scope(
+        &pool,
+        "summary-output-publisher",
+        300,
+        10,
+        Some(&tenant),
+        Some(&source),
+    )
+    .await
+    .expect("claim summary downstream events");
+    assert_eq!(claimed.len(), 2);
+    for event in claimed {
+        assert!(
+            crate::repositories::derived_events::mark_published(&pool, &event)
+                .await
+                .expect("publish summary downstream event")
+        );
+    }
     let count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM engine_summaries \
          WHERE tenant_id=$1 AND source_id=$2 AND generation_id=$3",

@@ -5,6 +5,7 @@ use sqlx::types::Json;
 
 use crate::db::Db;
 use crate::models::{now_rfc3339, EngineSubjectMemory, EngineSummary, UpsertSubjectMemoryRequest};
+use crate::repositories::derived_events;
 use crate::repositories::generation_commits::{self, GenerationCommit};
 use crate::repositories::postgres::{decode, json, timestamp};
 use crate::repositories::subject_memories::common::{
@@ -114,6 +115,16 @@ pub async fn commit_thread_summary_generation(
     .execute(&mut *tx)
     .await
     .map_err(|error| error.to_string())?;
+    derived_events::enqueue_summary_downstream_requests(
+        &mut tx,
+        &current.tenant_id,
+        &current.source_id,
+        &summary.id,
+        &summary.thread_id,
+        output.project_partition_key,
+        &current.generation_id,
+    )
+    .await?;
     if !generation_commits::commit_generation(
         &mut tx,
         generation,
@@ -233,6 +244,16 @@ pub async fn commit_subject_memory_generation(
     .execute(&mut *tx)
     .await
     .map_err(|error| error.to_string())?;
+    derived_events::enqueue_subject_memory_rollup_request(
+        &mut tx,
+        &generation.tenant_id,
+        &generation.source_id,
+        &memory.id,
+        &memory.subject_id,
+        output.project_partition_key,
+        &generation.generation_id,
+    )
+    .await?;
 
     if !generation_commits::commit_generation(
         &mut tx,
