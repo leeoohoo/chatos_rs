@@ -50,6 +50,7 @@ pub async fn system_stats(
             reconcile_concurrency: state.config.worker_reconcile_concurrency,
         },
         worker_runtime: state.runtime_stats.snapshot(),
+        compose_baseline: state.runtime_stats.compose_baseline(),
         pressure: MemoryEnginePressureStats {
             level: pressure.level.as_str(),
             active_summary_concurrency: pressure.active_summary_concurrency,
@@ -72,6 +73,40 @@ pub async fn prometheus_metrics(State(state): State<Arc<AppState>>) -> impl Into
     body.push_str(
         "# HELP chatos_memory_engine_pressure_level Authoritative platform pressure level applied by Memory Engine.\n\
 # TYPE chatos_memory_engine_pressure_level gauge\n",
+    );
+    let compose = state.runtime_stats.compose_baseline();
+    body.push_str(
+        "# HELP chatos_memory_compose_requests_total Compose context responses produced by this process.\n\
+# TYPE chatos_memory_compose_requests_total counter\n",
+    );
+    body.push_str(
+        format!(
+            "chatos_memory_compose_requests_total {}\n",
+            compose.requests_total
+        )
+        .as_str(),
+    );
+    body.push_str(
+        "# HELP chatos_memory_compose_estimated_tokens_total Conservative estimated tokens returned by compose context.\n\
+# TYPE chatos_memory_compose_estimated_tokens_total counter\n",
+    );
+    body.push_str(
+        format!(
+            "chatos_memory_compose_estimated_tokens_total {}\n",
+            compose.estimated_tokens_total
+        )
+        .as_str(),
+    );
+    body.push_str(
+        "# HELP chatos_memory_compose_estimated_tokens_max Largest conservative compose token estimate observed by this process.\n\
+# TYPE chatos_memory_compose_estimated_tokens_max gauge\n",
+    );
+    body.push_str(
+        format!(
+            "chatos_memory_compose_estimated_tokens_max {}\n",
+            compose.estimated_tokens_max
+        )
+        .as_str(),
     );
     for level in ["normal", "elevated", "critical"] {
         body.push_str(

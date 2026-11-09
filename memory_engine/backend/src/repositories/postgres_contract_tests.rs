@@ -68,6 +68,7 @@ mod context_scope_contracts;
 mod cursor_contracts;
 mod forced_summary_contracts;
 mod memory_pipeline_contracts;
+mod reliability_audit_contracts;
 mod repository_round_trip;
 mod summary_cursor_contracts;
 mod tenant_key_contracts;

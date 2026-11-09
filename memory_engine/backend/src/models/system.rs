@@ -53,6 +53,13 @@ pub struct MemoryEngineWorkerRuntimeStats {
     pub max_tick_duration_ms: u64,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct MemoryEngineComposeBaselineStats {
+    pub requests_total: u64,
+    pub estimated_tokens_total: u64,
+    pub estimated_tokens_max: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct MemoryEnginePressureStats {
     pub level: &'static str,
@@ -69,6 +76,7 @@ pub struct MemoryEngineSystemStatsResponse {
     pub roles: MemoryEngineRoleStats,
     pub worker_config: MemoryEngineWorkerConfigStats,
     pub worker_runtime: MemoryEngineWorkerRuntimeStats,
+    pub compose_baseline: MemoryEngineComposeBaselineStats,
     pub pressure: MemoryEnginePressureStats,
     pub dispatch_backend: &'static str,
     pub backlog: MemoryEngineBacklogStats,

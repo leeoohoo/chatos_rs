@@ -60,9 +60,10 @@ pub use self::summaries::{
     RunThreadSummaryResponse, UpsertThreadSummaryRequest,
 };
 pub use self::system::{
-    MemoryEngineBacklogStats, MemoryEnginePressureStats, MemoryEngineReconcileBacklogStats,
-    MemoryEngineRoleStats, MemoryEngineRollupBacklogStats, MemoryEngineSummaryBacklogStats,
-    MemoryEngineSystemStatsResponse, MemoryEngineWorkerConfigStats, MemoryEngineWorkerRuntimeStats,
+    MemoryEngineBacklogStats, MemoryEngineComposeBaselineStats, MemoryEnginePressureStats,
+    MemoryEngineReconcileBacklogStats, MemoryEngineRoleStats, MemoryEngineRollupBacklogStats,
+    MemoryEngineSummaryBacklogStats, MemoryEngineSystemStatsResponse,
+    MemoryEngineWorkerConfigStats, MemoryEngineWorkerRuntimeStats,
 };
 pub use self::thread_snapshots::{
     EngineThreadSnapshot, ThreadSnapshotLookupResponse, UpsertThreadSnapshotRequest,

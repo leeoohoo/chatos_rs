@@ -8,6 +8,8 @@ mod config;
 mod db;
 #[path = "../models/mod.rs"]
 mod models;
+#[path = "../reliability_audit.rs"]
+mod reliability_audit;
 #[path = "../repositories/mod.rs"]
 mod repositories;
 

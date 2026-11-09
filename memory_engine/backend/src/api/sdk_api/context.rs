@@ -27,8 +27,9 @@ pub async fn compose_context(
         thread_id: req.thread_id,
         policy: req.policy,
     };
-    context::compose_context(&state.pool, direct)
+    let response = context::compose_context(&state.pool, direct)
         .await
-        .map(Json)
-        .map_err(internal_error)
+        .map_err(internal_error)?;
+    state.runtime_stats.record_compose_context(&response);
+    Ok(Json(response))
 }

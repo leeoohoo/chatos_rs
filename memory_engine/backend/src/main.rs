@@ -10,6 +10,7 @@ mod internal_tls;
 mod jobs;
 mod models;
 mod pressure;
+mod reliability_audit;
 mod repositories;
 mod rollup_queue;
 mod services;

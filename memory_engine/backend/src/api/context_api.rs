@@ -17,10 +17,11 @@ pub async fn compose_context(
 ) -> Result<Json<ComposeContextResponse>, (axum::http::StatusCode, String)> {
     auth.ensure_tenant_scope(req.tenant_id.as_str())?;
     source_guard::ensure_write_source_allowed(&state.pool, req.source_id.as_str()).await?;
-    context::compose_context(&state.pool, req)
+    let response = context::compose_context(&state.pool, req)
         .await
-        .map(Json)
-        .map_err(internal_error)
+        .map_err(internal_error)?;
+    state.runtime_stats.record_compose_context(&response);
+    Ok(Json(response))
 }
 
 fn internal_error(message: String) -> (axum::http::StatusCode, String) {

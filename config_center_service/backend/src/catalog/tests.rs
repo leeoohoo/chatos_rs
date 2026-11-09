@@ -14,6 +14,25 @@ fn catalog_exposes_managed_postgres_pool_profiles() {
 }
 
 #[test]
+fn catalog_exposes_fail_closed_memory_reliability_flags() {
+    let definitions = builtin_definitions();
+    for flag in memory_engine_sdk::MEMORY_FEATURE_FLAG_DEFINITIONS {
+        let key = flag.config_key();
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing managed feature flag {key}"));
+        assert_eq!(definition.value_type, "json");
+        assert_eq!(definition.reload_mode, "hot_reload");
+        assert_eq!(definition.service_name.as_deref(), Some("memory-engine"));
+        let value: memory_engine_sdk::MemoryFeatureFlagConfig =
+            serde_json::from_value(definition.default_value.clone()).unwrap();
+        assert!(!value.enabled);
+        assert!(value.validate_for(*flag).is_empty());
+    }
+}
+
+#[test]
 fn catalog_does_not_reintroduce_retired_configuration() {
     let definitions = builtin_definitions();
     let retired = RETIRED_CONFIG_KEYS
