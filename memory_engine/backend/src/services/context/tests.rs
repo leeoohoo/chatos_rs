@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::blocks::{
-    build_thread_summary_blocks_from_rows, build_thread_summary_level0_text, format_subject_memory,
-    thread_agent_subject_id, thread_allows_dynamic_project_recall,
+    build_thread_summary_blocks_from_frontier, build_thread_summary_level0_text,
+    format_subject_memory, thread_agent_subject_id, thread_allows_dynamic_project_recall,
 };
 use super::policy::ResolvedComposeContextPolicy;
 use super::retain_newest_records_within_budget;
@@ -398,26 +398,27 @@ fn level0_summaries_are_rendered_in_chronological_order() {
 }
 
 #[test]
-fn thread_summary_blocks_keep_highest_level_before_recent_level0_summaries() {
-    let (blocks, summary_count) = build_thread_summary_blocks_from_rows(
-        vec![
-            summary("sum_3", 0, "2026-05-12T03:00:00Z", "third"),
-            summary("sum_2", 0, "2026-05-12T02:00:00Z", "second"),
-        ],
-        Some(summary(
-            "sum_top",
+fn thread_summary_blocks_keep_all_maximal_rollups_before_uncovered_level0_summaries() {
+    let (blocks, summary_count) = build_thread_summary_blocks_from_frontier(vec![
+        summary("sum_top_b", 3, "2026-05-12T05:00:00Z", "parallel top"),
+        summary(
+            "sum_top_a",
             2,
             "2026-05-12T04:00:00Z",
             "highest level",
-        )),
-    );
+        ),
+        summary("sum_3", 0, "2026-05-12T03:00:00Z", "third"),
+        summary("sum_2", 0, "2026-05-12T02:00:00Z", "second"),
+    ]);
 
-    assert_eq!(summary_count, 3);
-    assert_eq!(blocks.len(), 2);
+    assert_eq!(summary_count, 4);
+    assert_eq!(blocks.len(), 3);
     assert_eq!(blocks[0].block_type, "thread_summary_top_level");
-    assert_eq!(blocks[0].text, "highest level");
-    assert_eq!(blocks[1].block_type, "thread_summary_level0");
-    assert_eq!(blocks[1].text, "second\n\n---\n\nthird");
+    assert_eq!(blocks[0].text, "parallel top");
+    assert_eq!(blocks[1].block_type, "thread_summary_top_level");
+    assert_eq!(blocks[1].text, "highest level");
+    assert_eq!(blocks[2].block_type, "thread_summary_level0");
+    assert_eq!(blocks[2].text, "second\n\n---\n\nthird");
 }
 
 #[test]

@@ -1014,4 +1014,23 @@ async fn thread_rollup_final_commit_atomically_marks_sources_releases_claim_and_
             .await
             .expect("load finalized rollup job");
     assert_eq!(job_status, "done");
+
+    let delta_id = format!("summary-delta-{suffix}");
+    let delta = crate::repositories::summaries::insert_test_summary(
+        &pool, Some(delta_id.as_str()), &tenant, &source, &thread_id, &subject,
+        "thread_incremental", 0, None, "unrolled delta", None, None, 1,
+        Some(json!({"generation_profile": PROFILE})), Some(PARTITION),
+    )
+    .await
+    .expect("insert post-rollup delta");
+    let frontier = crate::repositories::summaries::list_latest_thread_summary_frontier(
+        &pool, &tenant, &source, &thread_id, "thread_incremental", 100,
+    )
+    .await
+    .expect("load canonical summary frontier");
+    assert_eq!(
+        frontier.iter().map(|summary| summary.id.as_str()).collect::<Vec<_>>(),
+        vec![rollup.id.as_str(), delta.id.as_str()]
+    );
+    assert!(!frontier.iter().any(|summary| summary.id == source_summary.id));
 }

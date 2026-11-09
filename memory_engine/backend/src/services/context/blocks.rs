@@ -315,31 +315,38 @@ pub(crate) fn build_thread_summary_level0_text(rows: &[EngineSummary]) -> String
         .join("\n\n---\n\n")
 }
 
-pub(crate) fn build_thread_summary_blocks_from_rows(
-    level0_rows: Vec<EngineSummary>,
-    top_summary: Option<EngineSummary>,
+pub(crate) fn build_thread_summary_blocks_from_frontier(
+    mut frontier: Vec<EngineSummary>,
 ) -> (Vec<ComposeContextBlock>, usize) {
     let mut blocks = Vec::new();
-    let mut summary_count = 0usize;
-
-    if let Some(top_summary) = top_summary.filter(|item| item.level > 0) {
-        summary_count += 1;
+    let summary_count = frontier.len();
+    frontier.sort_by(|left, right| {
+        right
+            .level
+            .cmp(&left.level)
+            .then_with(|| right.created_at.cmp(&left.created_at))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    for top_summary in frontier.iter().filter(|summary| summary.level > 0) {
         let source_ref = top_summary.id.clone();
         blocks.push(context_block(
             source_ref.clone(),
             "thread_summary_top_level",
             "thread_continuity",
-            Some(top_summary.subject_id),
+            Some(top_summary.subject_id.clone()),
             "__none__".to_string(),
             Some(top_summary.level),
             vec![source_ref],
-            top_summary.summary_text,
+            top_summary.summary_text.clone(),
             "canonical_thread_frontier",
         ));
     }
 
+    let level0_rows = frontier
+        .into_iter()
+        .filter(|summary| summary.level == 0)
+        .collect::<Vec<_>>();
     if !level0_rows.is_empty() {
-        summary_count += level0_rows.len();
         let source_refs = level0_rows
             .iter()
             .map(|summary| summary.id.clone())
@@ -419,7 +426,11 @@ async fn load_thread_summary_blocks(
     isolate_dynamic_project: bool,
     context_project_subject_id: Option<&str>,
 ) -> Result<(Vec<ComposeContextBlock>, usize), String> {
-    let level0_rows = if isolate_dynamic_project {
+    // Stable Agent threads may contain several projects. Their existing rollups can combine
+    // those projects, so only project-scoped level-0 summaries are safe as Thread context.
+    // Cross-project durable knowledge is already supplied by Agent Memory, while the current
+    // project's complete rollup is supplied by Project Summary.
+    let frontier = if isolate_dynamic_project {
         summaries::list_latest_thread_summaries_at_level_for_project(
             db,
             tenant_id,
@@ -432,31 +443,18 @@ async fn load_thread_summary_blocks(
         )
         .await?
     } else {
-        summaries::list_latest_thread_summaries_at_level(
+        summaries::list_latest_thread_summary_frontier(
             db,
             tenant_id,
             source_id,
             thread_id,
             "thread_incremental",
-            0,
             summary_limit,
         )
         .await?
     };
-    // Stable Agent threads may contain several projects. Their existing rollups can combine
-    // those projects, so only project-scoped level-0 summaries are safe as Thread context.
-    // Cross-project durable knowledge is already supplied by Agent Memory, while the current
-    // project's complete rollup is supplied by Project Summary.
-    let top_summary = if isolate_dynamic_project {
-        None
-    } else {
-        summaries::list_latest_thread_summaries(db, tenant_id, source_id, thread_id, 1)
-            .await?
-            .into_iter()
-            .next()
-    };
 
-    let (mut blocks, count) = build_thread_summary_blocks_from_rows(level0_rows, top_summary);
+    let (mut blocks, count) = build_thread_summary_blocks_from_frontier(frontier);
     let partition = context_project_subject_id.unwrap_or("__none__");
     for block in &mut blocks {
         block.project_partition_key = partition.to_string();
