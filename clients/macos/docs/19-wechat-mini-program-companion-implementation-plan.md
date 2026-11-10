@@ -127,18 +127,18 @@ ChatOS API Gateway
 | 能力 | 当前实现 | 小程序处理 |
 |---|---|---|
 | ChatOS Token | User Service JWT | 微信身份确认后复用同一签发逻辑 |
-| 客户端侧边栏 | `GET /api/local-connectors/companion/devices/{device_id}/resources` | 实时返回指定客户端当前联系人和项目入口，不读取 Memory Engine thread 目录 |
-| 入口解析 | `POST /api/local-connectors/companion/devices/{device_id}/resources/resolve` | 将选中的客户端入口解析为已有或新建的 conversation ID |
+| 客户端侧边栏 | `GET /api/local/companion/devices/{device_id}/resources` | 实时返回指定客户端当前联系人和项目入口，不读取 Memory Engine thread 目录 |
+| 入口解析 | `POST /api/local/companion/devices/{device_id}/resources/resolve` | 将选中的客户端入口解析为已有或新建的 conversation ID |
 | 会话历史 | `GET /api/companion/conversations/{id}/compact-history` | 分页加载；移除 metadata、reasoning 和工具记录 |
 | 运行状态 | `GET /api/companion/conversations/{id}/state` | 只返回 Turn ID、状态和是否运行中 |
 | 任务过程 | `GET /api/companion/messages/{message_id}/tasks` | 懒加载关联任务详情；只返回可展示过程与结果，不返回执行上下文 |
 | Ask User | `GET/POST /api/companion/conversations/{id}/ask-user-prompts...` | 查看待回答请求并提交或取消；服务端校验会话归属 |
-| 本机审批 | `GET/POST /api/local-connectors/companion/devices/{device_id}/approvals...` | 通过设备级签名 Relay 查看和处理桌面内存中的等待审批 |
+| 本机审批 | `GET/POST /api/local/companion/devices/{device_id}/approvals...` | 通过设备级签名 Relay 查看和处理桌面内存中的等待审批 |
 | 新消息 | `POST /api/agent/chat/send` | 生成 UUID `turn_id` 后发送 |
 | 追加指导 | `POST /api/agent/chat/guidance` | 活动 Turn 使用 |
 | 停止执行 | `POST /api/agent/chat/stop` | 会话详情页提供 |
 | Realtime | `POST /api/auth/ws-ticket` + `/api/realtime/ws` | 用一次性 Ticket 建立 `wx.connectSocket` |
-| 设备状态 | `GET /api/local-connectors/companion/devices` | 只读脱敏展示 `status/last_seen_at` |
+| 设备状态 | `GET /api/local/companion/devices` | 只读脱敏展示 `status/last_seen_at` |
 | 执行目标 | 会话 metadata 中的 `project_context.execution_target` | 仅服务端解析；小程序不会收到 metadata 或真实路径 |
 | 本地工具路由 | 服务端从会话 metadata 恢复上下文 | 小程序不传设备、Workspace 或路径 |
 

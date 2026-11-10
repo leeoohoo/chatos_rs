@@ -17,9 +17,9 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(calls.count, 5)
         XCTAssertEqual(calls.map(\.url.path), [
             "/prefix/api/memory/threads/\(scope.threadID)",
-            "/prefix/api/local-connectors/runtime-context-assertions",
+            "/prefix/api/local/runtime-context-assertions",
             "/prefix/api/memory/threads/\(scope.threadID)/records/batch-sync",
-            "/prefix/api/local-connectors/runtime-context-assertions",
+            "/prefix/api/local/runtime-context-assertions",
             "/prefix/api/memory/context/compose",
         ])
         XCTAssertEqual(calls.map(\.method), ["PUT", "POST", "PUT", "POST", "POST"])
@@ -188,7 +188,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         let requests = await transport.requests
         XCTAssertFalse(requests.contains { $0.method == "PUT" })
         XCTAssertEqual(requests.filter { $0.method == "POST" }.map(\.url.path), [
-            "/prefix/api/local-connectors/runtime-context-assertions",
+            "/prefix/api/local/runtime-context-assertions",
         ])
         XCTAssertTrue(requests.filter { $0.method == "GET" }.allSatisfy {
             $0.url.path.contains("/records/")

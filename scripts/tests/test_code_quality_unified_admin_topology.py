@@ -128,6 +128,35 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
             "https://admin.jgoool.com/api/admin/user-service/auth/admin/session",
             deploy,
         )
+        self.assertIn(
+            "wait_for_http_probe public-local-runtime-context-assertion-route unauthorized",
+            deploy,
+        )
+        self.assertIn(
+            "https://gateway.jgoool.com/api/local/runtime-context-assertions",
+            deploy,
+        )
+
+    def test_external_clients_never_call_backend_local_connector_namespace(self) -> None:
+        client_source_roots = [
+            ROOT / "clients/local_agent_host/src",
+            ROOT / "clients/macos/Sources",
+        ]
+        source_extensions = {".rs", ".swift", ".ts", ".tsx", ".js", ".jsx"}
+        offenders = []
+        for source_root in client_source_roots:
+            for path in source_root.rglob("*"):
+                if (
+                    path.suffix in source_extensions
+                    and "/api/local-connectors" in path.read_text()
+                ):
+                    offenders.append(str(path.relative_to(ROOT)))
+
+        self.assertEqual(
+            offenders,
+            [],
+            "external clients must use the public /api/local namespace",
+        )
 
     def test_every_release_restores_canonical_public_ingress(self) -> None:
         deploy = (ROOT / "scripts/deploy-production.sh").read_text()

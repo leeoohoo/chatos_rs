@@ -68,7 +68,7 @@ extension NativeLocalConnectorService {
         let token = try requireAccessToken()
         guard let deviceID = state.deviceID else { throw NativeConnectorError.notPaired }
         let identity = try deviceIdentity()
-        let path = "/api/local-connectors/devices/\(deviceID)/connect"
+        let path = "/api/local/devices/\(deviceID)/connect"
         let base = configuration.gatewayBaseURL.absoluteString
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard var components = URLComponents(string: base + path) else {

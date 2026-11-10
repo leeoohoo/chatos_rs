@@ -366,9 +366,7 @@ fn runtime_context_assertion_endpoint(memory_base_url: &str) -> Result<String, S
         .find("/api/memory")
         .map(|index| &path[..index])
         .unwrap_or(path);
-    url.set_path(&format!(
-        "{prefix}/api/local-connectors/runtime-context-assertions"
-    ));
+    url.set_path(&format!("{prefix}/api/local/runtime-context-assertions"));
     url.set_query(None);
     url.set_fragment(None);
     Ok(url.to_string())
@@ -485,6 +483,21 @@ mod tests {
             user_service_refresh_endpoint("https://gateway.example/prefix/api/memory-engine/v1")
                 .expect("url"),
             "https://gateway.example/prefix/api/user/auth/refresh"
+        );
+    }
+
+    #[test]
+    fn derives_public_runtime_context_assertion_endpoint_from_gateway_memory_url() {
+        assert_eq!(
+            runtime_context_assertion_endpoint("https://gateway.example/api/memory").expect("url"),
+            "https://gateway.example/api/local/runtime-context-assertions"
+        );
+        assert_eq!(
+            runtime_context_assertion_endpoint(
+                "https://gateway.example/prefix/api/memory-engine/v1?ignored=true"
+            )
+            .expect("url"),
+            "https://gateway.example/prefix/api/local/runtime-context-assertions"
         );
     }
 

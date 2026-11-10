@@ -446,6 +446,10 @@ wait_for_http_probe() {
         echo "[OK] deployment probe $label returned HTTP $status"
         return 0
         ;;
+      unauthorized:401)
+        echo "[OK] deployment probe $label returned expected HTTP $status"
+        return 0
+        ;;
       route:???)
         case "$status" in
           000|502|503|504) ;;
@@ -801,6 +805,15 @@ wait_for_http_probe public-admin-session-write-route route \
   --header 'Sec-Fetch-Site: same-origin' \
   --header 'X-Chatos-Admin-Session: 1' \
   https://admin.jgoool.com/api/admin/user-service/auth/admin/session
+
+# The public Local Connector contract is /api/local/*. APISIX rewrites it to
+# the backend-only /api/local-connectors/* namespace. A missing public route
+# returns 404, while the existing unauthenticated assertion route returns 401.
+wait_for_http_probe public-local-runtime-context-assertion-route unauthorized \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --data '{}' \
+  https://gateway.jgoool.com/api/local/runtime-context-assertions
 
 restore_memory_worker_runtime_state
 

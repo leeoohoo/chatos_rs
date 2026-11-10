@@ -25,7 +25,7 @@ struct NativeConnectorGateway: Sendable {
         publicKey: String
     ) async throws -> GatewayDeviceDTO {
         try await request(
-            "/api/local-connectors/devices",
+            "/api/local/devices",
             token: token,
             method: "POST",
             body: GatewayCreateDeviceRequest(
@@ -39,14 +39,14 @@ struct NativeConnectorGateway: Sendable {
 
     func device(token: String, id: String) async throws -> GatewayDeviceDTO {
         try await request(
-            "/api/local-connectors/devices/\(id.urlPathEncoded)",
+            "/api/local/devices/\(id.urlPathEncoded)",
             token: token
         )
     }
 
     func disconnectDevice(token: String, id: String) async throws {
         let _: GatewayDeviceDTO = try await request(
-            "/api/local-connectors/devices/\(id.urlPathEncoded)/disconnect",
+            "/api/local/devices/\(id.urlPathEncoded)/disconnect",
             token: token,
             method: "POST",
             body: EmptyRequest()
@@ -54,7 +54,7 @@ struct NativeConnectorGateway: Sendable {
     }
 
     func listWorkspaces(token: String) async throws -> [GatewayWorkspaceDTO] {
-        try await request("/api/local-connectors/workspaces", token: token)
+        try await request("/api/local/workspaces", token: token)
     }
 
     func createWorkspace(
@@ -64,7 +64,7 @@ struct NativeConnectorGateway: Sendable {
         fingerprint: String
     ) async throws -> GatewayWorkspaceDTO {
         try await request(
-            "/api/local-connectors/workspaces",
+            "/api/local/workspaces",
             token: token,
             method: "POST",
             body: GatewayCreateWorkspaceRequest(
@@ -200,7 +200,7 @@ struct NativeConnectorGateway: Sendable {
     }
 
     func managedRuntimeConfig(token: String) async throws -> GatewayManagedRuntimeConfigDTO {
-        try await request("/api/local-connectors/config/runtime", token: token)
+        try await request("/api/local/config/runtime", token: token)
     }
 
     func downloadPluginArtifact(

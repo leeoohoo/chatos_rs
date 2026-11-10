@@ -287,7 +287,7 @@ public actor ChatOSAPIClient {
         let servicePath = switch service {
         case .userService: "/api/user"
         case .memoryEngine: "/api/memory"
-        case .localConnector: "/api/local-connectors"
+        case .localConnector: "/api/local"
         }
         components.path = (prefix.isEmpty ? "" : "/" + prefix) + servicePath
         guard let baseURL = components.url else { return nil }
